@@ -19,6 +19,7 @@ import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json'
 import photosProtocolDefinition from './fixtures/protocol-definitions/photos.json' with { type: 'json' };
 
 import { DwnApi } from '../src/dwn-api.js';
+import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
 import { PermissionGrant } from '../src/permission-grant.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
@@ -120,8 +121,7 @@ describe('DwnApi', () => {
         dataFormat   : 'application/json',
       });
       expect(writeStatus.code).toBe(202);
-      const { status: recordSendStatus } = await record.send(aliceDid.uri);
-      expect(recordSendStatus.code).toBe(202);
+      await record.send(aliceDid.uri);
 
       await Poller.pollUntilSuccessOrTimeout(async () => {
         expect(events.some(event => getSubscriptionRecordId(event) === record.id)).toBe(true);
@@ -369,8 +369,7 @@ describe('DwnApi', () => {
 
         expect(writeStatus.code).toBe(202);
         expect(record).toBeDefined();
-        const { status: sendStatus } = await record.send();
-        expect(sendStatus.code).toBe(202);
+        await record.send();
 
         const { status: readStatus, record: readRecord } = await delegateDwn.records.read({
           from   : aliceDid.uri,
@@ -438,8 +437,7 @@ describe('DwnApi', () => {
         });
         expect(writeStatus1.code).toBe(202);
         expect(allowedRecord).toBeDefined();
-        const { status: allowedRecordSendStatus } = await allowedRecord.send();
-        expect(allowedRecordSendStatus.code).toBe(202);
+        await allowedRecord.send();
 
         // alice writes a public and private note to the other protocol
         const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.write({
@@ -452,8 +450,7 @@ describe('DwnApi', () => {
         });
         expect(writeStatus2.code).toBe(202);
         expect(publicRecord).toBeDefined();
-        const { status: publicRecordSendStatus } = await publicRecord.send();
-        expect(publicRecordSendStatus.code).toBe(202);
+        await publicRecord.send();
 
         const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.write({
           data         : 'Hello, world!',
@@ -464,8 +461,7 @@ describe('DwnApi', () => {
         });
         expect(writeStatus3.code).toBe(202);
         expect(privateRecord).toBeDefined();
-        const { status: privateRecordSendStatus } = await privateRecord.send();
-        expect(privateRecordSendStatus.code).toBe(202);
+        await privateRecord.send();
 
 
         // sanity: delegateDwn reads from the allowed record from alice's DWN
@@ -534,8 +530,7 @@ describe('DwnApi', () => {
         });
         expect(writeStatus1.code).toBe(202);
         expect(allowedRecord).toBeDefined();
-        const { status: allowedRecordSendStatus } = await allowedRecord.send();
-        expect(allowedRecordSendStatus.code).toBe(202);
+        await allowedRecord.send();
 
         // alice writes a public and private note to the other protocol
         const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.write({
@@ -548,8 +543,7 @@ describe('DwnApi', () => {
         });
         expect(writeStatus2.code).toBe(202);
         expect(publicRecord).toBeDefined();
-        const { status: publicRecordSendStatus } = await publicRecord.send();
-        expect(publicRecordSendStatus.code).toBe(202);
+        await publicRecord.send();
 
         const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.write({
           data         : 'Hello, world!',
@@ -560,8 +554,7 @@ describe('DwnApi', () => {
         });
         expect(writeStatus3.code).toBe(202);
         expect(privateRecord).toBeDefined();
-        const { status: privateRecordSendStatus } = await privateRecord.send();
-        expect(privateRecordSendStatus.code).toBe(202);
+        await privateRecord.send();
 
 
         // sanity: delegateDwn queries for the allowed record from alice's DWN
@@ -1020,10 +1013,10 @@ describe('DwnApi', () => {
           dataFormat   : 'text/plain'
         });
         expect(friendCreateStatus.code).toBe(202);
-        const { status: friendRecordUpdateStatus, record: updatedFriendRecord } = await friendRecord.update({ data: 'update' });
-        expect(friendRecordUpdateStatus.code).toBe(202);
-        const { status: aliceFriendSendStatus } = await updatedFriendRecord.send(aliceDid.uri);
-        expect(aliceFriendSendStatus.code).toBe(202);
+        const updatedFriendRecord = await friendRecord.update({ data: 'update' });
+        expect(updatedFriendRecord).toBe(friendRecord);
+        expect(await updatedFriendRecord.data.text()).toBe('update');
+        await updatedFriendRecord.send(aliceDid.uri);
 
         // Bob creates an album record using the role 'friend' and sends it to Alice
         const { status: albumCreateStatus, record: albumRecord } = await dwnBob.records.write({
@@ -1036,10 +1029,8 @@ describe('DwnApi', () => {
           dataFormat   : 'text/plain'
         });
         expect(albumCreateStatus.code).toBe(202);
-        const { status: bobAlbumSendStatus } = await albumRecord.send(bobDid.uri);
-        expect(bobAlbumSendStatus.code).toBe(202);
-        const { status: aliceAlbumSendStatus } = await albumRecord.send(aliceDid.uri);
-        expect(aliceAlbumSendStatus.code).toBe(202);
+        await albumRecord.send(bobDid.uri);
+        await albumRecord.send(aliceDid.uri);
 
         // Bob makes Alice a `participant` and sends the record to her and his own remote node.
         const { status: participantCreateStatus, record: participantRecord } = await dwnBob.records.write({
@@ -1052,10 +1043,8 @@ describe('DwnApi', () => {
           dataFormat      : 'text/plain'
         });
         expect(participantCreateStatus.code).toBe(202);
-        const { status: bobParticipantSendStatus } = await participantRecord.send(bobDid.uri);
-        expect(bobParticipantSendStatus.code).toBe(202);
-        const { status: aliceParticipantSendStatus } = await participantRecord.send(aliceDid.uri);
-        expect(aliceParticipantSendStatus.code).toBe(202);
+        await participantRecord.send(bobDid.uri);
+        await participantRecord.send(aliceDid.uri);
 
         // Alice fetches the album record as well as the participant record that Bob created and stores it on her local node.
         const aliceAlbumReadResult = await dwnAlice.records.read({
@@ -1066,8 +1055,7 @@ describe('DwnApi', () => {
         });
         expect(aliceAlbumReadResult.status.code).toBe(200);
         expect(aliceAlbumReadResult.record).toBeDefined();
-        const { status: aliceAlbumReadStoreStatus } = await aliceAlbumReadResult.record.store();
-        expect(aliceAlbumReadStoreStatus.code).toBe(202);
+        await aliceAlbumReadResult.record.store();
 
         const aliceParticipantReadResult = await dwnAlice.records.read({
           from   : aliceDid.uri,
@@ -1077,8 +1065,7 @@ describe('DwnApi', () => {
         });
         expect(aliceParticipantReadResult.status.code).toBe(200);
         expect(aliceParticipantReadResult.record).toBeDefined();
-        const { status: aliceParticipantReadStoreStatus } = await aliceParticipantReadResult.record.store();
-        expect(aliceParticipantReadStoreStatus.code).toBe(202);
+        await aliceParticipantReadResult.record.store();
 
         // Using the participant role, Alice can make Bob an `updater` and send the record to him and her own remote node.
         // Only updater roles can update the photo record after it's been created.
@@ -1093,10 +1080,8 @@ describe('DwnApi', () => {
           dataFormat      : 'text/plain'
         });
         expect(updaterCreateStatus.code).toBe(202);
-        const { status: bobUpdaterSendStatus } = await updaterRecord.send(bobDid.uri);
-        expect(bobUpdaterSendStatus.code).toBe(202);
-        const { status: aliceUpdaterSendStatus } = await updaterRecord.send(aliceDid.uri);
-        expect(aliceUpdaterSendStatus.code).toBe(202);
+        await updaterRecord.send(bobDid.uri);
+        await updaterRecord.send(aliceDid.uri);
 
         // Alice creates a photo using her participant role and sends it to her own DWN and Bob's DWN.
         const { status: photoCreateStatus, record: photoRecord } = await dwnAlice.records.write({
@@ -1109,10 +1094,8 @@ describe('DwnApi', () => {
           dataFormat      : 'text/plain'
         });
         expect(photoCreateStatus.code).toBe(202);
-        const { status:alicePhotoSendStatus } = await photoRecord.send(aliceDid.uri);
-        expect(alicePhotoSendStatus.code).toBe(202);
-        const { status: bobPhotoSendStatus } = await photoRecord.send(bobDid.uri);
-        expect(bobPhotoSendStatus.code).toBe(202);
+        await photoRecord.send(aliceDid.uri);
+        await photoRecord.send(bobDid.uri);
 
         // Bob updates the photo using his updater role and sends it to Alice and his own DWN.
         const { status: photoUpdateStatus, record: photoUpdateRecord } = await dwnBob.records.write({
@@ -1128,10 +1111,8 @@ describe('DwnApi', () => {
           dataFormat      : 'text/plain'
         });
         expect(photoUpdateStatus.code).toBe(202);
-        const { status:alicePhotoUpdateSendStatus } = await photoUpdateRecord.send(aliceDid.uri);
-        expect(alicePhotoUpdateSendStatus.code).toBe(202);
-        const { status: bobPhotoUpdateSendStatus } = await photoUpdateRecord.send(bobDid.uri);
-        expect(bobPhotoUpdateSendStatus.code).toBe(202);
+        await photoUpdateRecord.send(aliceDid.uri);
+        await photoUpdateRecord.send(bobDid.uri);
 
         // Alice fetches the photo and stores it on her local DWN.
         const alicePhotoReadResult = await dwnAlice.records.read({
@@ -1142,8 +1123,7 @@ describe('DwnApi', () => {
         });
         expect(alicePhotoReadResult.status.code).toBe(200);
         expect(alicePhotoReadResult.record).toBeDefined();
-        const { status: alicePhotoReadStoreStatus } = await alicePhotoReadResult.record.store();
-        expect(alicePhotoReadStoreStatus.code).toBe(202);
+        await alicePhotoReadResult.record.store();
       });
     });
 
@@ -1252,8 +1232,7 @@ describe('DwnApi', () => {
         expect(record).toBeDefined();
 
         // Write the record to Alice's remote DWN.
-        const { status } = await record.send(aliceDid.uri);
-        expect(status.code).toBe(202);
+        await record.send(aliceDid.uri);
 
         const deleteResult = await dwnAlice.records.delete({
           protocol : protocolUri,
@@ -1362,16 +1341,16 @@ describe('DwnApi', () => {
         expect(initialWriteStatus.code).toBe(202);
 
         // Delete the record without storing it
-        const { status: deleteStatus } = await initialWriteRecord.delete({ store: false });
-        expect(deleteStatus.code).toBe(202);
+        await initialWriteRecord.delete({ store: false });
+        expect(initialWriteRecord.deleted).toBe(true);
 
         // delete the record storing it
-        const { status: deleteStoreStatus } = await initialWriteRecord.delete();
-        expect(deleteStoreStatus.code).toBe(202);
+        await initialWriteRecord.delete();
 
         // attempting to delete again is beaten by the standing tombstone: 409 Conflict
-        const { status: deleteStatus2 } = await initialWriteRecord.delete();
-        expect(deleteStatus2.code).toBe(409);
+        const repeatedDelete = initialWriteRecord.delete();
+        await expect(repeatedDelete).rejects.toBeInstanceOf(DwnResponseError);
+        await expect(repeatedDelete).rejects.toHaveProperty('status.code', 409);
       });
     });
 
@@ -1389,8 +1368,7 @@ describe('DwnApi', () => {
         expect(record).toBeDefined();
 
         // Write the record to the remote DWN.
-        const { status } = await record.send(aliceDid.uri);
-        expect(status.code).toBe(202);
+        await record.send(aliceDid.uri);
 
         // Attempt to delete a record from the remote DWN.
         const deleteResult = await dwnAlice.records.delete({
@@ -1413,8 +1391,7 @@ describe('DwnApi', () => {
         expect(writeResult.status.code).toBe(202);
 
         // Write the record to Bob's remote DWN.
-        const sendResult = await writeResult.record.send(bobDid.uri);
-        expect(sendResult.status.code).toBe(202);
+        await writeResult.record.send(bobDid.uri);
 
         // Alice attempts to delete a record from Bob's remote DWN specifying a recordId.
         const deleteResult = await dwnAlice.records.delete({
@@ -1463,8 +1440,7 @@ describe('DwnApi', () => {
         /**
          *   4. Alice writes the record to Bob's remote DWN.
          */
-        const { status: sendStatus } = await testRecord.send(bobDid.uri);
-        expect(sendStatus.code).toBe(202);
+        await testRecord.send(bobDid.uri);
         /**
          *   5. Bob deletes the record from his remote DWN.
          */
@@ -1803,8 +1779,7 @@ describe('DwnApi', () => {
         /**
          *   4. Alice writes the record to Bob's remote DWN.
          */
-        const { status: sendStatus } = await testRecord.send(bobDid.uri);
-        expect(sendStatus.code).toBe(202);
+        await testRecord.send(bobDid.uri);
         /**
          *   5. Bob queries his remote DWN for the record.
          */
@@ -1835,8 +1810,7 @@ describe('DwnApi', () => {
           }
         });
         expect(status.code).toBe(202);
-        const { status: sendFooBarStatus } = await record.send(aliceDid.uri);
-        expect(sendFooBarStatus.code).toBe(202);
+        await record.send(aliceDid.uri);
 
         // Write a record to alice's remote DWN that includes a tag `foo` with value `baz`
         const { status: status2, record: record2 } = await dwnAlice.records.write({
@@ -1851,8 +1825,7 @@ describe('DwnApi', () => {
           }
         });
         expect(status2.code).toBe(202);
-        const { status: sendFooBazStatus } = await record2.send(aliceDid.uri);
-        expect(sendFooBazStatus.code).toBe(202);
+        await record2.send(aliceDid.uri);
 
         // Control: query the agent's local DWN for the record without any tag filters
         const result = await dwnAlice.records.query({
@@ -1924,8 +1897,7 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           });
           expect(noteCreateStatus.code).toBe(202);
-          const { status: noteSendStatus } = await noteRecord.send();
-          expect(noteSendStatus.code).toBe(202);
+          await noteRecord.send();
           recordData.set(noteRecord.id, data);
         }
 
@@ -1939,8 +1911,7 @@ describe('DwnApi', () => {
           dataFormat   : 'text/plain'
         });
         expect(friendCreateStatus.code).toBe(202);
-        const { status: bobFriendSendStatus } = await friendRecord.send(bobDid.uri);
-        expect(bobFriendSendStatus.code).toBe(202);
+        await friendRecord.send(bobDid.uri);
 
         // alice uses the role to query for the available notes
         const { status: notesQueryStatus, records: noteRecords } = await dwnAlice.records.query({
@@ -2127,8 +2098,7 @@ describe('DwnApi', () => {
         /**
          *   4. Alice writes the record to Bob's remote DWN.
          */
-        const { status: sendStatus } = await testRecord.send(bobDid.uri);
-        expect(sendStatus.code).toBe(202);
+        await testRecord.send(bobDid.uri);
         /**
          *   5. Bob queries his remote DWN for the record.
          */

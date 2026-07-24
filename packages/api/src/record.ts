@@ -5,7 +5,6 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type {
-  AudienceKeyDeliveryOutcome,
   DwnDateSort,
   DwnMessage,
   DwnMessageDescriptor,
@@ -42,6 +41,7 @@ import type { RecordData } from './record-data.js';
 
 import { captureRecordDataAccess } from './record-data-access.js';
 import { createRecordData } from './record-data.js';
+import { requireDwnSuccess } from './dwn-response-error.js';
 import { dataToBlob, SendCache } from './utils.js';
 
 type StoredRecordDataReadParams = {
@@ -66,37 +66,6 @@ export type {
 } from './record-types.js';
 
 export type { RecordData } from './record-data.js';
-
-/**
- * The result of a {@link Record.update} operation.
- *
- * @typeParam T - The record payload type retained by the updated record.
- *
- * @beta
- */
-export type RecordUpdateResult<T = unknown> = DwnResponseStatus & {
-  /** The updated Record instance reflecting the new state. */
-  record: Record<T>;
-
-  /**
-   * Outcome of role-audience key delivery provisioning, forwarded from the agent. Present only
-   * when the accepted update wrote a `$role` record with a `recipient`, which re-provisions the
-   * recipient's key delivery — the retry idiom for a previously skipped best-effort delivery.
-   */
-  audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
-};
-
-/**
- * The result of a {@link Record.delete} operation.
- *
- * @typeParam T - The record payload type retained by the deleted record handle.
- *
- * @beta
- */
-export type RecordDeleteResult<T = unknown> = DwnResponseStatus & {
-  /** The deleted Record instance reflecting the deleted state. */
-  record: Record<T>;
-};
 
 /**
  * The shallow JSON-object update accepted by {@link Record.patch}.
@@ -376,13 +345,14 @@ export class Record<T = unknown> implements RecordModel {
    * Stores the current record state as well as any initial write to the owner's DWN.
    *
    * @param importRecord - if true, the record will signed by the owner before storing it to the owner's DWN. Defaults to false.
-   * @returns the status of the store request
+   * @returns A promise that resolves when the record is stored.
    *
    * @beta
    */
-  async store(importRecord: boolean = false): Promise<DwnResponseStatus> {
+  async store(importRecord: boolean = false): Promise<void> {
     // if we are importing the record we sign it as the owner
-    return this.processRecord({ signAsOwner: importRecord, store: true });
+    const result = await this.processRecord({ signAsOwner: importRecord, store: true });
+    requireDwnSuccess('Record.store', result);
   }
 
   /**
@@ -390,12 +360,13 @@ export class Record<T = unknown> implements RecordModel {
    * This is useful when importing a record that was signed by someone else into your own DWN.
    *
    * @param store - if true, the record will be stored to the owner's DWN after signing. Defaults to true.
-   * @returns the status of the import request
+   * @returns A promise that resolves when the record is imported.
    *
    * @beta
    */
-  async import(store: boolean = true): Promise<DwnResponseStatus> {
-    return this.processRecord({ store, signAsOwner: true });
+  async import(store: boolean = true): Promise<void> {
+    const result = await this.processRecord({ store, signAsOwner: true });
+    requireDwnSuccess('Record.import', result);
   }
 
   /**
@@ -410,11 +381,11 @@ export class Record<T = unknown> implements RecordModel {
    * regular DWN sync).
    *
    * @param target - the optional DID to send the record to, if none is set it is sent to the connectedDid
-   * @returns the status of the send record request
+   * @returns A promise that resolves when the record is sent.
    *
    * @beta
    */
-  async send(target?: string): Promise<DwnResponseStatus> {
+  async send(target?: string): Promise<void> {
     const initialWrite = this._initialWrite;
     target ??= this._connectedDid;
 
@@ -458,7 +429,7 @@ export class Record<T = unknown> implements RecordModel {
 
     // Send the current/latest state to the target.
     const { reply } = await this._agent.sendDwnRequest(sendRequestOptions);
-    return reply;
+    requireDwnSuccess('Record.send', reply);
   }
 
   /**
@@ -531,10 +502,7 @@ export class Record<T = unknown> implements RecordModel {
   /**
    * Update the current record on the DWN.
    *
-   * On success, **both** a new `Record` instance is returned *and* the
-   * current instance (`this`) is mutated in-place to reflect the updated
-   * state. This means callers can safely continue using the original
-   * reference after an update without capturing the returned record.
+   * On success, this instance is mutated in place and returned.
    *
    * By default the update targets the connected DID's local DWN — even for
    * records that were read from a remote tenant. Pass
@@ -543,14 +511,14 @@ export class Record<T = unknown> implements RecordModel {
    * co-update of a record owned by another tenant).
    *
    * @param params - Parameters to update the record.
-   * @returns the status of the update request and the updated Record
+   * @returns This record with its accepted state applied.
    * @throws `Error` if the record has already been deleted.
    *
    * @beta
    */
   async update(
     { timestamp, data, protocolRole, store = true, recipientRolePublicKey, from, ...params }: RecordUpdateParams<T>
-  ): Promise<RecordUpdateResult<T>> {
+  ): Promise<Record<T>> {
 
     if (this.deleted) {
       throw new Error('Record: Cannot revive a deleted record.');
@@ -628,18 +596,12 @@ export class Record<T = unknown> implements RecordModel {
       await this._agent.sendDwnRequest(requestOptions) :
       await this._agent.processDwnRequest(requestOptions);
 
-    const { message: responseMessage, reply: { status }, audienceKeyDelivery, data: responseData } = agentResponse;
+    const { message: responseMessage, reply, data: responseData } = agentResponse;
+    requireDwnSuccess('Record.update', reply);
 
-    if (!(200 <= status.code && status.code <= 299)) {
-      // Return a shallow copy of this record on failure — no state change.
-      return { status, record: this };
-    }
-
-    // Determine the initial write for the new Record instance.
+    // Preserve the initial write while advancing this handle to the accepted state.
     const initialWrite = this._initialWrite ?? { ...this.rawMessage as DwnMessage[DwnInterface.RecordsWrite] };
 
-    // Construct a new Record instance reflecting the updated state.
-    //
     // The author is derived from the NEWLY SIGNED response message (not
     // carried over): after a co-update, the record's most recent author is
     // whoever signed this update, which may differ from the previous author.
@@ -653,25 +615,9 @@ export class Record<T = unknown> implements RecordModel {
       !store && this._storedData?.dataCid === msg.descriptor.dataCid ? this._storedData : undefined
     );
 
-    const updatedRecord = new Record<T>(this._agent, {
-      author       : updatedAuthor,
-      connectedDid : this._connectedDid,
-      delegateDid  : this._delegateDid,
-      dataAccess,
-      protocolRole : protocolRole ?? this._protocolRole,
-      initialWrite,
-      storedData,
-      ...msg,
-    }, this._permissionsApi);
-
-    // Also mutate *this* record's internal state so that the caller's
-    // original reference reflects the update without having to capture
-    // the returned record. This eliminates the common footgun where
-    // `await record.update({ data }); await record.data.json()` returns
-    // stale data because `update()` historically only returned a *new* Record.
-    // Author and data access are kept consistent with the returned record: a
-    // cross-tenant update re-homes the authoritative copy on the target tenant,
-    // so later lazy data reads must target it.
+    // Mutate this record's internal state so callers keep one canonical handle.
+    // A cross-tenant update re-homes the authoritative copy on the target
+    // tenant, so later lazy data reads must target it.
     this._descriptor = msg.descriptor;
     this._attestation = msg.attestation;
     this._authorization = msg.authorization;
@@ -684,7 +630,7 @@ export class Record<T = unknown> implements RecordModel {
     this._storedData = this.createStoredDataSource(storedData);
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
 
-    return { status, record: updatedRecord, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
+    return this;
   }
 
   /**
@@ -712,7 +658,7 @@ export class Record<T = unknown> implements RecordModel {
    * @param options - Optional {@link RecordUpdateParams} (minus `data`)
    *   forwarded to the underlying `update()` call — e.g. `tags`, `from`,
    *   `protocolRole`.
-   * @returns the status of the update request and the updated Record
+   * @returns This record with its accepted state applied.
    * @throws `Error` if the record has been deleted, or if the record's
    *   current data is not a JSON object (arrays and primitives cannot be
    *   merged).
@@ -722,7 +668,7 @@ export class Record<T = unknown> implements RecordModel {
   async patch(
     data: RecordPatch<T>,
     options: Omit<RecordUpdateParams<T>, 'data'> = {},
-  ): Promise<RecordUpdateResult<T>> {
+  ): Promise<Record<T>> {
     if (this.deleted) {
       throw new Error('Record: Cannot patch a deleted record.');
     }
@@ -750,14 +696,10 @@ export class Record<T = unknown> implements RecordModel {
   /**
    * Delete the current record on the DWN.
    *
-   * On success, **both** a new `Record` instance is returned *and* the
-   * current instance (`this`) is mutated in-place to reflect the deleted
-   * state (the {@link Record.deleted | deleted} getter will return `true`).
-   *
    * @param params - Parameters to delete the record.
-   * @returns the status and a new Record instance reflecting the deleted state
+   * @returns A promise that resolves after this record reflects the accepted tombstone.
    */
-  async delete(deleteParams?: RecordDeleteParams): Promise<RecordDeleteResult<T>> {
+  async delete(deleteParams?: RecordDeleteParams): Promise<void> {
     const { store = true, signAsOwner, timestamp } = deleteParams || {};
 
     const signAsOwnerValue = signAsOwner && this._delegateDid === undefined;
@@ -817,35 +759,20 @@ export class Record<T = unknown> implements RecordModel {
     await this.applyDelegateGrant(deleteOptions);
 
     const agentResponse = await this._agent.processDwnRequest(deleteOptions);
-    const { message, reply: { status } } = agentResponse;
+    const { message, reply } = agentResponse;
+    requireDwnSuccess('Record.delete', reply);
 
-    if (status.code !== 202) {
-      // If the delete was not successful, return this record unchanged.
-      return { status, record: this };
-    }
-
-    // Construct a new Record instance reflecting the deleted state.
-    const initialWrite = this._initialWrite;
-    const deletedRecord = new Record<T>(this._agent, {
-      author       : getRecordAuthor(message),
-      connectedDid : this._connectedDid,
-      delegateDid  : this._delegateDid,
-      dataAccess   : this._dataAccess,
-      protocolRole : deleteParams?.protocolRole ?? this._protocolRole,
-      initialWrite,
-      ...message as DwnMessage[DwnInterface.RecordsDelete],
-    }, this._permissionsApi);
-
-    // Also mutate *this* record so the caller's original reference reflects
-    // the deletion without having to capture the returned record.
+    // Advance this handle to the accepted tombstone.
     const deleteMsg = message as DwnMessage[DwnInterface.RecordsDelete];
+    this._attestation = undefined;
+    this._author = getRecordAuthor(deleteMsg) ?? this._author;
     this._descriptor = deleteMsg.descriptor;
+    this._encryption = undefined;
     this._authorization = deleteMsg.authorization;
+    this._contextId = undefined;
     this._protocolRole = deleteParams?.protocolRole ?? this._protocolRole;
     this._storedData = undefined;
     this._rawMessageDirty = true;
-
-    return { status, record: deletedRecord };
   }
 
   /**

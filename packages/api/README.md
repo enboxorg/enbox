@@ -74,7 +74,7 @@ const NotesProtocol = defineProtocol({
 const { enbox } = await Enbox.connect({ password: userPassword, createIdentity: true });
 const notes = enbox.using(NotesProtocol);
 
-const { record } = await notes.records.create('note', {
+const record = await notes.records.create('note', {
   data : { title: 'Hello', body: 'World' },
   tags : { category: 'draft' },
 });
@@ -90,14 +90,15 @@ record methods can infer paths and payload shapes.
 
 ```ts
 // Create
-const { record } = await notes.records.create('note', {
+const record = await notes.records.create('note', {
   data: { title: 'Launch', body: 'Ship it' },
 });
 
 const selection = { pagination: { limit: 20 } };
 
 // Query
-const { records, cursor } = await notes.records.query('note', selection);
+const page = await notes.records.query('note', selection);
+const { records, cursor } = page;
 
 // Observe one bounded local materialization
 const view = await notes.records.observe('note', selection);
@@ -106,12 +107,16 @@ const unsubscribe = view.subscribe((snapshot) => {
 });
 
 // Count the same selection before pagination
-const { count } = await notes.records.count('note', selection);
+const count = await notes.records.count('note', selection);
 
 // Read
-const { record: found } = await notes.records.read('note', {
+const found = await notes.records.read('note', {
   filter: { recordId: record.id },
 });
+
+if (found === undefined) {
+  throw new Error('Note not found');
+}
 
 // Update
 await found.update({
@@ -123,6 +128,25 @@ await found.delete();
 
 unsubscribe();
 await view.close();
+```
+
+Typed record operations return application values directly: `create()` returns
+a `Record`, `query()` returns a `RecordPage`, `count()` returns a number, and
+`read()` returns a `Record` or `undefined`. `Record.update()` and `patch()`
+return the same updated handle; successful delete, store, import, and send
+operations resolve without a value. Other non-success DWN statuses throw a
+`DwnResponseError` with the original status:
+
+```ts
+import { DwnResponseError } from '@enbox/api';
+
+try {
+  await notes.records.delete('note', { recordId: record.id });
+} catch (error) {
+  if (error instanceof DwnResponseError) {
+    console.error(error.status.code, error.status.errorCode, error.status.detail);
+  }
+}
 ```
 
 Returned records are canonical `Record<T>` instances. They expose typed
@@ -172,7 +196,8 @@ const { records } = await dwn.records.query({
 ## Advanced DWN Access
 
 Most apps should use `enbox.using(protocol)`. If you need raw DWN methods, use
-the advanced export:
+the advanced export. Low-level methods keep their exact DWN response envelopes,
+including `status`:
 
 ```ts
 import { DwnApi } from '@enbox/api/advanced';
@@ -211,9 +236,11 @@ coordinates writes across browser contexts.
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
+| `RecordPage<T>` | One page of typed records and its optional continuation cursor. |
 | `RecordView<T>` | Closeable bounded local query materialization with immutable snapshots. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |
+| `DwnResponseError` | Typed-operation error carrying the original non-success DWN status. |
 | `ReadOnlyRecord` | Anonymous-read record handle. |
 | `DidApi` | DID resolution helpers. |
 | `DwnReaderApi` | Anonymous read-only DWN API. |

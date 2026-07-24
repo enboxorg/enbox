@@ -1,4 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { Record } from '../src/record.js';
 import type { DwnApi, RecordsWriteRequest } from '../src/dwn-api.js';
 
 import { beforeEach, describe, expect, it } from 'bun:test';
@@ -39,27 +40,29 @@ type SquashSchemaMap = { doc: { n?: string }; snapshot: { v?: string } };
 
 const SquashProtocol = defineProtocol(SquashDefinition, {} as SquashSchemaMap);
 
-/** A fake DwnApi that records every `records.write` request and returns 202. */
-function makeCapturingDwn(): { dwn: DwnApi; writes: RecordsWriteRequest[] } {
+/** A fake DwnApi that records every `records.write` request and returns one accepted record. */
+function makeCapturingDwn(): { dwn: DwnApi; record: Record; writes: RecordsWriteRequest[] } {
   const writes: RecordsWriteRequest[] = [];
+  const record = { id: 'captured-record' } as Record;
   const dwn = {
     records: {
       write: async (request: RecordsWriteRequest) => {
         writes.push(request);
-        return { status: { code: 202, detail: 'Accepted' }, record: undefined };
+        return { status: { code: 202, detail: 'Accepted' }, record };
       },
     },
   } as unknown as DwnApi;
-  return { dwn, writes };
+  return { dwn, record, writes };
 }
 
 describe('TypedEnbox create() — squash forwarding (#972)', () => {
   let dwn: DwnApi;
+  let record: Record;
   let writes: RecordsWriteRequest[];
   let typed: TypedEnbox<typeof SquashDefinition, SquashSchemaMap>;
 
   beforeEach(() => {
-    ({ dwn, writes } = makeCapturingDwn());
+    ({ dwn, record, writes } = makeCapturingDwn());
     typed = new TypedEnbox(dwn, SquashProtocol);
     // Skip auto-configure: _ensureReady() then only validates the path against
     // the in-memory definition (no agent/DWN calls).
@@ -67,12 +70,12 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
   });
 
   it('forwards squash: true to the low-level records.write', async () => {
-    const { status } = await typed.records.create('doc/snapshot', {
+    const created = await typed.records.create('doc/snapshot', {
       data   : { v: 's1' },
       squash : true,
     });
 
-    expect(status.code).toBe(202);
+    expect(created).toBe(record);
     expect(writes).toHaveLength(1);
     expect(writes[0].squash).toBe(true);
   });

@@ -21,6 +21,7 @@ import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json'
 
 import { dataToBlob } from '../src/utils.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
 import { Record } from '../src/record.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
@@ -265,9 +266,8 @@ describe('Record', () => {
       expect(record).toBeDefined();
 
       // attempt to update the record with the delegated grant
-      const updateResult = await record!.update({ data: 'Delegate Updated' });
-      expect(updateResult.status.code).toBe(202);
-      const updatedRecord = updateResult.record;
+      const updatedRecord = await record!.update({ data: 'Delegate Updated' });
+      expect(updatedRecord).toBe(record);
 
       // attempt to read the record with the delegated grant
       const readResult = await delegateDwn.records.read({
@@ -306,8 +306,7 @@ describe('Record', () => {
       expect(record).toBeDefined();
 
       // alice sends the record to her remote
-      const sendResult = await record!.send();
-      expect(sendResult.status.code).toBe(202);
+      await record!.send();
 
       // alice device queries alice remote for the record
       const aliceDeviceRemoteQuery = await delegateDwn.records.query({
@@ -323,13 +322,12 @@ describe('Record', () => {
       const aliceRecord = aliceDeviceRemoteQuery.records[0];
 
       // attempt to delete the record with the delegated grant
-      const deleteResult = await aliceRecord.delete();
-      expect(deleteResult.status.code).toBe(202);
-      const deletedRecord = deleteResult.record;
+      await aliceRecord.delete();
+      const deletedRecord = aliceRecord;
+      expect(deletedRecord.deleted).toBe(true);
 
       // send the delete to the remote DWN
-      const sendDeleteResult = await deletedRecord.send();
-      expect(sendDeleteResult.status.code).toBe(202);
+      await deletedRecord.send();
 
       // expect the delete to be signed by the delegateDid
       const deleteSignature = Jws.getSignerDid(deletedRecord.rawMessage.authorization.signature.signatures[0]);
@@ -359,8 +357,13 @@ describe('Record', () => {
       expect(queryResult.records).toHaveLength(0);
 
       // attempting to delete again is beaten by the standing tombstone: 409 Conflict
-      const deleteResult2 = await deletedRecord.delete();
-      expect(deleteResult2.status.code).toBe(409);
+      try {
+        await deletedRecord.delete();
+        throw new Error('Expected the standing tombstone to reject the second delete.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(409);
+      }
     });
 
     it('should import a record with a delegated grant', async () => {
@@ -376,8 +379,7 @@ describe('Record', () => {
       expect(bobWriteStatus.code).toBe(202);
 
       // bob sends it to his remote DWN
-      const { status: bobSendStatus } = await bobRecord!.send();
-      expect(bobSendStatus.code).toBe(202);
+      await bobRecord!.send();
 
       // confirm that alice delegate does not have it stored locally
       let aliceDeviceLocal = await delegateDwn.records.query({
@@ -403,8 +405,7 @@ describe('Record', () => {
 
       const recordFromBob = aliceQueryFromBobRecords[0];
       // alice delegate imports the note
-      const { status: importStatus } = await recordFromBob.import();
-      expect(importStatus.code).toBe(202);
+      await recordFromBob.import();
 
       // confirm the note is stored locally
       aliceDeviceLocal = await delegateDwn.records.query({
@@ -430,8 +431,7 @@ describe('Record', () => {
       expect(aliceWritesStatus.code).toBe(202);
 
       // alice sends it to her remote DWN
-      const { status: aliceSendStatus } = await aliceRecord!.send();
-      expect(aliceSendStatus.code).toBe(202);
+      await aliceRecord!.send();
 
       // sanity: alice delegate does not have the note stored locally
       let aliceDelegateResults = await delegateDwn.records.query({
@@ -458,8 +458,7 @@ describe('Record', () => {
       const recordFromBob = aliceQueryFromBobRecords[0];
 
       // alicedevice stores the note locally
-      const { status: storeStatus } = await recordFromBob.store();
-      expect(storeStatus.code).toBe(202);
+      await recordFromBob.store();
 
       // confirm the note is stored locally
       aliceDelegateResults = await delegateDwn.records.query({
@@ -528,8 +527,7 @@ describe('Record', () => {
         dataFormat   : 'application/json',
       });
       expect(aliceWritesStatus.code).toBe(202);
-      const { status: aliceSendStatus } = await aliceRecord!.send();
-      expect(aliceSendStatus.code).toBe(202);
+      await aliceRecord!.send();
 
       const largeDataJson2 = TestDataGenerator.randomJson(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
       const publicRecordDataBytes = new TextEncoder().encode(JSON.stringify(largeDataJson2));
@@ -543,8 +541,7 @@ describe('Record', () => {
         dataFormat   : 'application/json',
       });
       expect(aliceWritesStatus2.code).toBe(202);
-      const { status: aliceSendStatus2 } = await alicePublicRecord!.send();
-      expect(aliceSendStatus2.code).toBe(202);
+      await alicePublicRecord!.send();
 
       // the delegate attempts to read the public note
       const { records: publicRecords, status: publicStatus } = await delegateDwn.records.query({
@@ -594,8 +591,7 @@ describe('Record', () => {
       schema       : 'http://email-protocol.xyz/schema/thread',
     });
     expect(aliceThreadStatus.code).toBe(202);
-    const { status: sendStatus } = await aliceThreadRecord!.send(aliceDid.uri);
-    expect(sendStatus.code).toBe(202);
+    await aliceThreadRecord!.send(aliceDid.uri);
 
     // Bob queries for the record on his own DWN (should not find it)
     let bobQueryBobDwn = await dwnBob.records.query({
@@ -621,12 +617,10 @@ describe('Record', () => {
 
     // Bob imports the record.
     const importRecord = bobQueryAliceDwn.records[0];
-    const { status: importRecordStatus } = await importRecord.import();
-    expect(importRecordStatus.code).toBe(202);
+    await importRecord.import();
 
     // Bob sends the record to his remote DWN.
-    const { status: importSendStatus } = await importRecord!.send();
-    expect(importSendStatus.code).toBe(202);
+    await importRecord!.send();
 
     // Bob queries for the record on his own DWN (should now return it)
     bobQueryBobDwn = await dwnBob.records.query({
@@ -641,24 +635,21 @@ describe('Record', () => {
     expect(bobQueryBobDwn.records[0].id).toBe(importRecord.id);
 
     // Alice updates her record
-    const { status: aliceThreadStatusUpdated, record: aliceThreadUpdated1 } = await aliceThreadRecord.update({
+    const aliceThreadUpdated1 = await aliceThreadRecord.update({
       data: TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000)
     });
-    expect(aliceThreadStatusUpdated.code).toBe(202);
-    const { status: sentToSelfStatus } = await aliceThreadUpdated1!.send();
-    expect(sentToSelfStatus.code).toBe(202);
+    expect(aliceThreadUpdated1).toBe(aliceThreadRecord);
+    await aliceThreadUpdated1.send();
 
-    const { status: sentToBobStatus } = await aliceThreadUpdated1!.send(bobDid.uri);
-    expect(sentToBobStatus.code).toBe(202);
+    await aliceThreadUpdated1.send(bobDid.uri);
 
     // Alice updates her record and sends it to her own DWN again
     const updatedText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
-    const { status: aliceThreadStatusUpdatedAgain, record: aliceThreadUpdated2 } = await aliceThreadUpdated1.update({
+    const aliceThreadUpdated2 = await aliceThreadUpdated1.update({
       data: updatedText
     });
-    expect(aliceThreadStatusUpdatedAgain.code).toBe(202);
-    const { status: sentToSelfAgainStatus } = await aliceThreadUpdated2!.send();
-    expect(sentToSelfAgainStatus.code).toBe(202);
+    expect(aliceThreadUpdated2).toBe(aliceThreadUpdated1);
+    await aliceThreadUpdated2.send();
 
     // Bob queries for the updated record on alice's DWN
     bobQueryAliceDwn = await dwnBob.records.query({
@@ -673,13 +664,11 @@ describe('Record', () => {
     const updatedRecord = bobQueryAliceDwn.records[0];
 
     // Bob stores the record on his own DWN.
-    const { status: updatedRecordStoredStatus } = await updatedRecord.store();
-    expect(updatedRecordStoredStatus.code).toBe(202);
+    await updatedRecord.store();
     expect(await updatedRecord.data.text()).toBe(updatedText);
 
     // sends the record to his own DWN
-    const { status: updatedRecordToSelfStatus } = await updatedRecord!.send();
-    expect(updatedRecordToSelfStatus.code).toBe(202);
+    await updatedRecord.send();
 
     // Bob queries for the updated record on his own DWN.
     bobQueryBobDwn = await dwnBob.records.query({
@@ -1415,8 +1404,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      const { status: sendStatus } = await record!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // Query for the record that was just created on the remote DWN.
       const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
@@ -1447,8 +1435,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      const { status: sendStatus } = await record!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // Read the record that was just created on the remote DWN.
       const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
@@ -1601,8 +1588,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      const { status: sendStatus } = await record!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // Read the record that was just created on the remote DWN.
       const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
@@ -1642,8 +1628,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      const { status: sendStatus } = await record!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // Read the record that was just created on the remote DWN.
       const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
@@ -1684,8 +1669,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      const { status: sendStatus } = await record!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // Read the record that was just created on the remote DWN.
       const { records: queriedRecords, status: queriedRecordStatus } = await dwnAlice.records.query({
@@ -1728,8 +1712,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      const { status: sendStatus } = await record!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // Query for the record that was just created on the remote DWN.
       const { records: queriedRecords, status: queriedRecordStatus } = await dwnAlice.records.query({
@@ -1842,8 +1825,7 @@ describe('Record', () => {
         /**
          *   2. Alice writes the record to Carol's remote DWN.
          */
-        const { status: sendStatus } = await record!.send(carolDid.uri);
-        expect(sendStatus.code).toBe(202);
+        await record!.send(carolDid.uri);
         /**
          *   3. Carol queries his remote DWN for the record that Alice just wrote.
          */
@@ -1899,8 +1881,7 @@ describe('Record', () => {
         /**
          *   2. Alice writes the record to Carol's remote DWN.
          */
-        const { status: sendStatus } = await record!.send(carolDid.uri);
-        expect(sendStatus.code).toBe(202);
+        await record!.send(carolDid.uri);
         /**
          *   3. Carol queries her remote DWN for the record that Alice just wrote.
          */
@@ -1912,8 +1893,7 @@ describe('Record', () => {
         /**
          *   4. Validate that Carol is able to write the record to Alice's remote DWN.
          */
-        const { status: sendStatusToAlice } = await queryRecordsFrom[0]!.send(aliceDid.uri);
-        expect(sendStatusToAlice.code).toBe(202);
+        await queryRecordsFrom[0]!.send(aliceDid.uri);
         /**
          *  5. Alice queries her remote DWN for the record that Carol just wrote.
          */
@@ -1959,8 +1939,7 @@ describe('Record', () => {
       expect(await aliceAgentEmailRecord.data.text()).toBe(dataString);
 
       // Attempt to write the record to Alice's remote DWN.
-      const { status } = await aliceEmailRecord!.send(aliceDid.uri);
-      expect(status.code).toBe(202);
+      await aliceEmailRecord!.send(aliceDid.uri);
 
       // Query Alices's remote DWN for `email` schema records.
       const aliceRemoteQueryResult = await dwnAlice.records.query({
@@ -2003,8 +1982,7 @@ describe('Record', () => {
       const [ aliceAgentEmailRecord ] = aliceAgentQueryResult.records;
 
       // Attempt to write the record to Alice's remote DWN.
-      const { status } = await aliceAgentEmailRecord!.send(aliceDid.uri);
-      expect(status.code).toBe(202);
+      await aliceAgentEmailRecord!.send(aliceDid.uri);
     });
 
     it('writes large records to remote DWNs that were initially read from a local DWN', async () => {
@@ -2032,8 +2010,7 @@ describe('Record', () => {
       expect(aliceAgentReadResult.record).toBeDefined();
 
       // Attempt to write the record to Alice's remote DWN.
-      const { status } = await aliceAgentReadResult.record.send(aliceDid.uri);
-      expect(status.code).toBe(202);
+      await aliceAgentReadResult.record.send(aliceDid.uri);
     });
 
     it('writes updated records to a remote DWN', async () => {
@@ -2056,26 +2033,21 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the record to Alice's remote DWN.
-      let sendResult = await record.send(aliceDid.uri);
-      expect(sendResult.status.code).toBe(202);
+      await record.send(aliceDid.uri);
 
       // Update the record by mutating the data property.
-      let updateResult = await record!.update({ data: 'hi' });
-      expect(updateResult.status.code).toBe(202);
-      let updatedRecord = updateResult.record;
+      const updatedRecord = await record!.update({ data: 'hi' });
+      expect(updatedRecord).toBe(record);
 
       // Write the updated record to Alice's remote DWN a second time.
-      sendResult = await updatedRecord!.send(aliceDid.uri);
-      expect(sendResult.status.code).toBe(202);
+      await updatedRecord.send(aliceDid.uri);
 
       // Update the record again.
-      updateResult = await updatedRecord!.update({ data: 'bye' });
-      expect(updateResult.status.code).toBe(202);
-      updatedRecord = updateResult.record;
+      const updatedAgain = await updatedRecord.update({ data: 'bye' });
+      expect(updatedAgain).toBe(record);
 
       // Write the updated record to Alice's remote DWN a third time.
-      sendResult = await updatedRecord!.send(aliceDid.uri);
-      expect(sendResult.status.code).toBe(202);
+      await updatedAgain.send(aliceDid.uri);
     });
 
     it('automatically sends the initial write and update of a record to a remote DWN', async () => {
@@ -2090,12 +2062,11 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Update the record by mutating the data property.
-      const updateResult = await record!.update({ data: 'hi' });
-      expect(updateResult.status.code).toBe(202);
+      const updatedRecord = await record!.update({ data: 'hi' });
+      expect(updatedRecord).toBe(record);
 
       // Write the updated record to Alice's remote DWN a second time.
-      const sendResult = await updateResult.record.send(aliceDid.uri);
-      expect(sendResult.status.code).toBe(202);
+      await updatedRecord.send(aliceDid.uri);
     });
 
     it('writes large records to remote DWNs that were initially queried from a remote DWN', async () => {
@@ -2114,8 +2085,7 @@ describe('Record', () => {
       expect(aliceEmailStatus.code).toBe(202);
 
       // Alice writes the large record to her own remote DWN.
-      const { status: sendStatus } = await aliceEmailRecord!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await aliceEmailRecord!.send(aliceDid.uri);
 
       // Alice queries for the record that was just created on her remote DWN.
       const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
@@ -2126,8 +2096,7 @@ describe('Record', () => {
 
       // Attempt to write the record to Bob's DWN.
       const [ queryRecord ] = queryRecords;
-      const { status } = await queryRecord!.send(bobDid.uri);
-      expect(status.code).toBe(202);
+      await queryRecord!.send(bobDid.uri);
 
       // Confirm Bob can query his own remote DWN for the created record.
       const bobQueryResult = await dwnBob.records.query({
@@ -2158,8 +2127,7 @@ describe('Record', () => {
       expect(aliceEmailStatus.code).toBe(202);
 
       // Alice writes the large record to her own remote DWN.
-      const { status: sendStatus } = await aliceEmailRecord!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await aliceEmailRecord!.send(aliceDid.uri);
 
       // Alice queries for the record that was just created on her remote DWN.
       const { record: queryRecord, status: queryRecordStatus } = await dwnAlice.records.read({
@@ -2169,8 +2137,7 @@ describe('Record', () => {
       expect(queryRecordStatus.code).toBe(200);
 
       // Attempt to write the record to Bob's DWN.
-      const { status } = await queryRecord!.send(bobDid.uri);
-      expect(status.code).toBe(202);
+      await queryRecord!.send(bobDid.uri);
 
       // Confirm Bob can query his own remote DWN for the created record.
       const bobQueryResult = await dwnBob.records.query({
@@ -2199,8 +2166,7 @@ describe('Record', () => {
       expect(aliceEmailStatus.code).toBe(202);
 
       // Attempt to write the message to Bob's DWN.
-      const { status } = await aliceEmailRecord!.send(bobDid.uri);
-      expect(status.code).toBe(202);
+      await aliceEmailRecord!.send(bobDid.uri);
 
       // Query Bob's remote DWN for `thread` schema records.
       const bobQueryResult = await dwnBob.records.query({
@@ -2251,7 +2217,7 @@ describe('Record', () => {
         expect(writeResult.record!.encryption).toBeDefined();
 
         const processRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-        expect((await writeResult.record!.send(aliceDid.uri)).status.code).toBe(202);
+        await writeResult.record!.send(aliceDid.uri);
         expect(processRequestSpy.getCalls().some(
           (call) => call.args[0].messageType === DwnInterface.RecordsRead
         )).toBe(false);
@@ -2296,8 +2262,7 @@ describe('Record', () => {
         expect(queryResult.records).toHaveLength(0);
 
         // Alice writes the message to her remote DWN.
-        const { status } = await writeResult.record.send(aliceDid.uri);
-        expect(status.code).toBe(202);
+        await writeResult.record.send(aliceDid.uri);
 
         // Query Alice's remote DWN for `plain/text` records.
         const aliceRemoteQueryResult = await dwnAlice.records.query({
@@ -2349,8 +2314,7 @@ describe('Record', () => {
         expect(queryResult.records).toHaveLength(0);
 
         // Alice writes the message to Bob's remote DWN.
-        const { status } = await writeResult.record.send(bobDid.uri);
-        expect(status.code).toBe(202);
+        await writeResult.record.send(bobDid.uri);
 
         // Query Bobs's remote DWN for `thread` schema records.
         const bobQueryResult = await dwnBob.records.query({
@@ -2404,8 +2368,7 @@ describe('Record', () => {
         expect(await aliceAgentRecord.data.text()).toBe(dataString);
 
         // Alice writes the message to her remote DWN.
-        const { status } = await writeResult.record.send(aliceDid.uri);
-        expect(status.code).toBe(202);
+        await writeResult.record.send(aliceDid.uri);
 
         // Query Alice's remote DWN for `plain/text` records.
         const aliceRemoteQueryResult = await dwnAlice.records.query({
@@ -2602,8 +2565,9 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // delete the record
-      const { status: deleteStatus, record: deletedRecord } = await record!.delete();
-      expect(deleteStatus.code).toBe(202);
+      await record!.delete();
+      const deletedRecord = record;
+      expect(deletedRecord.deleted).toBe(true);
 
       const recordString = deletedRecord!.toString();
       expect(typeof recordString).toBe('string');
@@ -2681,9 +2645,8 @@ describe('Record', () => {
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
 
-      const updateResult = await record!.update({ data: 'bye' });
-      expect(updateResult.status.code).toBe(202);
-      const updatedRecord = updateResult.record;
+      const updatedRecord = await record!.update({ data: 'bye' });
+      expect(updatedRecord).toBe(record);
 
       const readResult = await dwnAlice.records.read({
         filter: {
@@ -2715,8 +2678,7 @@ describe('Record', () => {
       expect(record).toBeDefined();
 
       // send the record to alice's DWN
-      const sendResult = await record!.send(aliceDid.uri);
-      expect(sendResult.status.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // bob reads the record to confirm it is published
       const readResult = await dwnBob.records.read({
@@ -2730,12 +2692,11 @@ describe('Record', () => {
       expect(readResult.record.id).toBe(record!.id);
 
       // alice updates the record to be unpublished
-      const updateResult = await record!.update({ published: false });
-      expect(updateResult.status.code).toBe(202);
+      const updatedRecord = await record!.update({ published: false });
+      expect(updatedRecord).toBe(record);
 
       // send the updated record to alice's DWN
-      const sendResultAfterUpdate = await updateResult.record.send(aliceDid.uri);
-      expect(sendResultAfterUpdate.status.code).toBe(202);
+      await updatedRecord.send(aliceDid.uri);
 
       // bob attempts to read the record again but it should not be authorized as it's unpublished
       const readResultAfterUpdate = await dwnBob.records.read({
@@ -2764,8 +2725,7 @@ describe('Record', () => {
       const dataCidBeforeDataUpdate = record!.dataCid;
 
       // Write the record to a remote DWN.
-      const { status: sendStatus } = await record!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // Read the record from the remote DWN.
       let readResult = await dwnAlice.records.read({
@@ -2780,17 +2740,20 @@ describe('Record', () => {
       const readRecord = readResult.record;
 
       // Attempt to update the record without storing, should fail
-      let updateResult = await readRecord.update({ data: 'bye' });
-      expect(updateResult.status.code).toBe(400);
+      try {
+        await readRecord.update({ data: 'bye' });
+        throw new Error('Expected an unstored remote record update to fail.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(400);
+      }
 
       // store the record locally
-      const { status: storeStatus } = await readRecord.store();
-      expect(storeStatus.code).toBe(202);
+      await readRecord.store();
 
       // Attempt to update the record, which should write the updated record the local DWN.
-      updateResult = await readRecord.update({ data: 'bye' });
-      expect(updateResult.status.code).toBe(202);
-      const updatedRecord = updateResult.record;
+      const updatedRecord = await readRecord.update({ data: 'bye' });
+      expect(updatedRecord).toBe(readRecord);
 
       // Confirm that the record was written to the local DWN.
       readResult = await dwnAlice.records.read({
@@ -2823,8 +2786,7 @@ describe('Record', () => {
       const _dataCidBeforeDataUpdate = record!.dataCid;
 
       // Write the record to a remote DWN.
-      const { status: sendStatus } = await record!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // Query the record from the remote DWN.
       let queryResult = await dwnAlice.records.query({
@@ -2839,8 +2801,8 @@ describe('Record', () => {
 
       // Attempt to update the queried record
       const [ queriedRecord ] = queryResult.records;
-      const updateResult = await queriedRecord!.update({ data: 'Updated, world!', store: false });
-      expect(updateResult.status.code).toBe(202);
+      const updatedRecord = await queriedRecord!.update({ data: 'Updated, world!', store: false });
+      expect(updatedRecord).toBe(queriedRecord);
 
       // confirm that the record does not exist locally
       queryResult = await dwnAlice.records.read({
@@ -2864,8 +2826,7 @@ describe('Record', () => {
       expect(threadStatus.code).toBe(202);
       expect(threadRecord).toBeDefined();
 
-      const { status: threadSendStatus } = await threadRecord.send();
-      expect(threadSendStatus.code).toBe(202);
+      await threadRecord.send();
 
       // create an email with the thread as a parent
       const { status: emailStatus, record: emailRecord } = await dwnAlice.records.write({
@@ -2879,15 +2840,13 @@ describe('Record', () => {
       expect(emailStatus.code).toBe(202);
       expect(emailRecord).toBeDefined();
 
-      const { status: emailSendStatus } = await emailRecord!.send();
-      expect(emailSendStatus.code).toBe(202);
+      await emailRecord!.send();
 
       // update email record
-      const { status: updateStatus, record: updatedEmailRecord } = await emailRecord!.update({ data: 'updated email record', store: false });
-      expect(updateStatus.code).toBe(202);
+      const updatedEmailRecord = await emailRecord!.update({ data: 'updated email record', store: false });
+      expect(updatedEmailRecord).toBe(emailRecord);
 
-      const { status: updateEmailSendStatus } = await updatedEmailRecord!.send();
-      expect(updateEmailSendStatus.code).toBe(202);
+      await updatedEmailRecord.send();
 
       let readResult = await dwnAlice.records.read({
         from   : aliceDid.uri,
@@ -2940,8 +2899,8 @@ describe('Record', () => {
       expect(emailRecord).toBeDefined();
 
       // update email record
-      const updateResult = await emailRecord!.update({ data: 'updated email record' });
-      expect(updateResult.status.code).toBe(202);
+      const updatedRecord = await emailRecord!.update({ data: 'updated email record' });
+      expect(updatedRecord).toBe(emailRecord);
 
       const readResult = await dwnAlice.records.read({
         filter: {
@@ -2967,19 +2926,19 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // First update of the record.
-      let updateResult = await record!.update({ data: 'hi' });
-      expect(updateResult.status.code).toBe(202);
+      const firstUpdate = await record!.update({ data: 'hi' });
+      expect(firstUpdate).toBe(record);
 
       // Verify that the timestamp was updated.
-      const firstUpdateTimestamp = updateResult.record.timestamp;
+      const firstUpdateTimestamp = firstUpdate.timestamp;
       expect(initialTimestamp).not.toBe(firstUpdateTimestamp);
 
       //  Second update of the record.
-      updateResult = await updateResult.record.update({ data: 'bye' });
-      expect(updateResult.status.code).toBe(202);
+      const secondUpdate = await firstUpdate.update({ data: 'bye' });
+      expect(secondUpdate).toBe(record);
 
       // Verify that the timestamp was updated.
-      const secondUpdateTimestamp = updateResult.record.timestamp;
+      const secondUpdateTimestamp = secondUpdate.timestamp;
       expect(firstUpdateTimestamp).not.toBe(secondUpdateTimestamp);
     });
 
@@ -2999,8 +2958,8 @@ describe('Record', () => {
       expect(originalData).toBe('original');
 
       // Update the record.
-      const { status: updateStatus, record: updatedRecord } = await record!.update({ data: 'updated' });
-      expect(updateStatus.code).toBe(202);
+      const updatedRecord = await record!.update({ data: 'updated' });
+      expect(updatedRecord).toBe(record);
 
       // The returned record should have the new data.
       const returnedData = await updatedRecord!.data.text();
@@ -3048,8 +3007,9 @@ describe('Record', () => {
       expect(writeStatus.code).toBe(202);
 
       // delete the record but do not store it
-      const { status: deleteStatus, record: deletedRecord } = await record.delete();
-      expect(deleteStatus.code).toBe(202);
+      await record.delete();
+      const deletedRecord = record;
+      expect(deletedRecord.deleted).toBe(true);
 
       // store the record
       try {
@@ -3081,25 +3041,23 @@ describe('Record', () => {
       expect(record.tags).toEqual({ tag1: 'value1', tag2: 'value2' });
 
       // if you do not pass any tags they remain unchanged
-      const updateResultWithoutTags = await record!.update({
+      const updatedRecord1 = await record!.update({
         data: 'hi',
       });
 
-      expect(updateResultWithoutTags.status.code).toBe(202);
-      const updatedRecord1 = updateResultWithoutTags.record;
+      expect(updatedRecord1).toBe(record);
       expect(updatedRecord1.tags).toEqual({ tag1: 'value1', tag2: 'value2' }); // unchanged
       expect(await updatedRecord1.data.text()).toBe('hi');
 
       // if you modify the tags they override the existing tags
-      const updateResultWithTags = await updatedRecord1!.update({
+      const updatedRecord2 = await updatedRecord1.update({
         tags: {
           tag1 : 'value3',
           tag3 : 'value4'
         }
       });
 
-      expect(updateResultWithTags.status.code).toBe(202);
-      const updatedRecord2 = updateResultWithTags.record;
+      expect(updatedRecord2).toBe(record);
       expect(updatedRecord2.tags).toEqual({ tag1: 'value3', tag3: 'value4' }); // changed to updated tags
       expect(await updatedRecord2.data.text()).toBe('hi');
     });
@@ -3124,33 +3082,30 @@ describe('Record', () => {
       expect(record.tags).toEqual({ tag1: 'value1', tag2: 'value2' });
 
       // if you use an empty tags object it removes the tags
-      const updateResultWithEmptyTags = await record!.update({
+      const updatedRecord1 = await record!.update({
         tags: {}
       });
 
-      expect(updateResultWithEmptyTags.status.code).toBe(202);
-      const updatedRecord1 = updateResultWithEmptyTags.record;
+      expect(updatedRecord1).toBe(record);
       expect(updatedRecord1.tags).toBeUndefined(); // removed
 
       // add tags to the record again
-      const updateResultWithTags = await updatedRecord1!.update({
+      const updatedRecord2 = await updatedRecord1.update({
         tags: {
           tag1 : 'value3',
           tag3 : 'value4'
         }
       });
 
-      expect(updateResultWithTags.status.code).toBe(202);
-      const updatedRecord2 = updateResultWithTags.record;
+      expect(updatedRecord2).toBe(record);
       expect(updatedRecord2.tags).toEqual({ tag1: 'value3', tag3: 'value4' }); // added tags
 
       // if you use null it removes the tags
-      const updateResultWithNullTags = await updatedRecord2!.update({
+      const updatedRecord3 = await updatedRecord2.update({
         tags: null
       });
 
-      expect(updateResultWithNullTags.status.code).toBe(202);
-      const updatedRecord3 = updateResultWithNullTags.record;
+      expect(updatedRecord3).toBe(record);
       expect(updatedRecord3.tags).toBeUndefined(); // removed
     });
 
@@ -3170,16 +3125,14 @@ describe('Record', () => {
       expect(await record.data.text()).toBe('Hello, world!');
 
       // update the record to JSON
-      const updateResult = await record!.update({ dataFormat: 'application/json', data: { subject: 'some subject', body: 'some body' } });
-      expect(updateResult.status.code).toBe(202);
-      const updatedRecord1 = updateResult.record;
+      const updatedRecord1 = await record!.update({ dataFormat: 'application/json', data: { subject: 'some subject', body: 'some body' } });
+      expect(updatedRecord1).toBe(record);
       expect(updatedRecord1.dataFormat).toBe('application/json');
       expect(await updatedRecord1.data.json()).toEqual({ subject: 'some subject', body: 'some body' });
 
       // update again without changing the dataFormat
-      const updateResult2 = await updatedRecord1!.update({ data: { subject: 'another subject', body: 'another body' } });
-      expect(updateResult2.status.code).toBe(202);
-      const updatedRecord2 = updateResult2.record;
+      const updatedRecord2 = await updatedRecord1.update({ data: { subject: 'another subject', body: 'another body' } });
+      expect(updatedRecord2).toBe(record);
       expect(updatedRecord2.dataFormat).toBe('application/json');
       expect(await updatedRecord2.data.json()).toEqual({ subject: 'another subject', body: 'another body' });
     });
@@ -3194,8 +3147,7 @@ describe('Record', () => {
       });
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
-      const { status: sendStatus } = await record.send();
-      expect(sendStatus.code).toBe(202);
+      await record.send();
 
       // bob reads the record
       const readResult = await dwnBob.records.read({
@@ -3208,13 +3160,11 @@ describe('Record', () => {
       expect(readResult.record).toBeDefined();
 
       const bobRecord = readResult.record;
-      const { status: storeStatus } = await bobRecord!.store();
-      expect(storeStatus.code).toBe(202);
-      const { status: updateStatus, record: updatedBobRecord } = await bobRecord.update({ data: 'Hello, Alice!' });
-      expect(updateStatus.code).toBe(202);
+      await bobRecord!.store();
+      const updatedBobRecord = await bobRecord.update({ data: 'Hello, Alice!' });
+      expect(updatedBobRecord).toBe(bobRecord);
 
-      const updatedData = await updatedBobRecord.send(aliceDid.uri);
-      expect(updatedData.status.code).toBe(202);
+      await updatedBobRecord.send(aliceDid.uri);
 
       // alice reads the record
       const readResultAlice = await dwnAlice.records.read({
@@ -3274,8 +3224,7 @@ describe('Record', () => {
           dataFormat   : 'text/plain',
         });
         expect(noteCreateStatus.code).toBe(202);
-        const { status: noteSendStatus } = await noteRecord.send();
-        expect(noteSendStatus.code).toBe(202);
+        await noteRecord.send();
         records.add(noteRecord.id);
       }
 
@@ -3289,8 +3238,7 @@ describe('Record', () => {
         dataFormat   : 'text/plain'
       });
       expect(friendCreateStatus.code).toBe(202);
-      const { status: bobFriendSendStatus } = await friendRecord.send(bobDid.uri);
-      expect(bobFriendSendStatus.code).toBe(202);
+      await friendRecord.send(bobDid.uri);
 
       // Bob makes alice a 'coAuthor' of one of his notes
       const aliceCoAuthorNoteId = records.keys().next().value;
@@ -3304,8 +3252,7 @@ describe('Record', () => {
         dataFormat      : 'text/plain'
       });
       expect(coAuthorStatus.code).toBe(202);
-      const { status: coAuthorSendStatus } = await coAuthorRecord.send(bobDid.uri);
-      expect(coAuthorSendStatus.code).toBe(202);
+      await coAuthorRecord.send(bobDid.uri);
 
       // Alice querying for bob's notes using her friend role
       const { status: aliceQueryStatus, records: bobNotesAliceQuery } = await dwnAlice.records.query({
@@ -3326,12 +3273,11 @@ describe('Record', () => {
 
       // Alice must import the record to be able to update it
       // NOTE this should be removed after: https://github.com/enboxorg/enbox/issues/955
-      const { status: importStatus } = await coAuthorNote.import();
-      expect(importStatus.code).toBe(202);
+      await coAuthorNote.import();
 
       // Alice updates the co-author note without providing a new role
-      const { status: updateStatus, record: updatedNote } = await coAuthorNote!.update({ data: 'updated note' });
-      expect(updateStatus.code).toBe(202);
+      const updatedNote = await coAuthorNote!.update({ data: 'updated note' });
+      expect(updatedNote).toBe(coAuthorNote);
 
       // spy on sendDwnRequest to ensure that the protocolRole is used to read the data of the notes
       const sendDwnRequestSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
@@ -3340,21 +3286,25 @@ describe('Record', () => {
       expect(sendDwnRequestSpy.callCount).toBe(0);
 
       // This is accepted locally but will fail when sending the update to the remote DWN
-      const { status: sendStatus } = await updatedNote.send(bobDid.uri);
-      expect(sendStatus.code).toBe(401);
+      try {
+        await updatedNote.send(bobDid.uri);
+        throw new Error('Expected the friend role update to be rejected.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(401);
+      }
       expect(sendDwnRequestSpy.callCount).toBe(2); // the first call is for the initialWrite
       let record = (sendDwnRequestSpy.secondCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
       let sendAuthorizationRole = getRecordProtocolRole(record);
       expect(sendAuthorizationRole).toBe('friend');
 
-      const { status: updateStatusCoAuthor, record: updatedNoteCoAuthor } = await updatedNote!.update({ data: 'updated note', protocolRole: 'note/coAuthor' });
-      expect(updateStatusCoAuthor.code).toBe(202);
+      const updatedNoteCoAuthor = await updatedNote.update({ data: 'updated note', protocolRole: 'note/coAuthor' });
+      expect(updatedNoteCoAuthor).toBe(updatedNote);
 
       sendDwnRequestSpy.resetHistory();
 
       // Now update the record with the correct role
-      const { status: sendStatusCoAuthor } = await updatedNoteCoAuthor.send(bobDid.uri);
-      expect(sendStatusCoAuthor.code).toBe(202);
+      await updatedNoteCoAuthor.send(bobDid.uri);
       expect(sendDwnRequestSpy.callCount).toBe(1); // the initialWrite was already sent and added to the sent-cache, only the update is sent
       record = (sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
       sendAuthorizationRole = getRecordProtocolRole(record);
@@ -3402,8 +3352,8 @@ describe('Record', () => {
 
       // Update the record — encryption should be auto-detected
       const updatedPlaintext = 'Updated secret note';
-      const { status: updateStatus, record: updatedRecord } = await record!.update({ data: updatedPlaintext });
-      expect(updateStatus.code).toBe(202);
+      const updatedRecord = await record!.update({ data: updatedPlaintext });
+      expect(updatedRecord).toBe(record);
 
       // Verify the record's encryption metadata was updated
       expect(updatedRecord!.encryption).toBeDefined();
@@ -3418,6 +3368,13 @@ describe('Record', () => {
 
       const decryptedText = await readRecord!.data.text();
       expect(decryptedText).toBe(updatedPlaintext);
+
+      await updatedRecord.delete();
+
+      expect(updatedRecord.deleted).toBe(true);
+      expect(updatedRecord.encryption).toBeUndefined();
+      expect(updatedRecord.attestation).toBeUndefined();
+      expect(updatedRecord.toJSON().encryption).toBeUndefined();
     });
 
     it('should retain the stored data and envelope for metadata-only encrypted updates', async () => {
@@ -3447,11 +3404,11 @@ describe('Record', () => {
 
       const originalDataCid = record!.dataCid;
       const originalEncryption = structuredClone(record!.encryption);
-      const { status: updateStatus, record: updatedRecord } = await record!.update({
+      const updatedRecord = await record!.update({
         tags: { state: 'reviewed' },
       });
 
-      expect(updateStatus.code).toBe(202);
+      expect(updatedRecord).toBe(record);
       expect(updatedRecord.dataCid).toBe(originalDataCid);
       expect(updatedRecord.encryption).toEqual(originalEncryption);
       expect(await updatedRecord.data.text()).toBe(plaintext);
@@ -3471,8 +3428,8 @@ describe('Record', () => {
       expect(record!.encryption).toBeUndefined();
 
       // Update — should remain non-encrypted since original was not encrypted
-      const { status: updateStatus } = await record!.update({ data: 'Still not encrypted' });
-      expect(updateStatus.code).toBe(202);
+      const updatedRecord = await record!.update({ data: 'Still not encrypted' });
+      expect(updatedRecord).toBe(record);
 
       // Read back to verify no encryption
       const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
@@ -3611,8 +3568,8 @@ describe('Record', () => {
       expect(readRecord!.id).toBe(record.id);
 
       // delete the record
-      const { status: deleteStatus, record: deletedRecord } = await record.delete();
-      expect(deleteStatus.code).toBe(202);
+      await record.delete();
+      const deletedRecord = record;
 
       // confirm record is in a deleted state
       expect(deletedRecord.deleted).toBe(true);
@@ -3639,8 +3596,7 @@ describe('Record', () => {
       expect(record).toBeDefined();
 
       // Write the record to Alice's remote DWN.
-      const { status } = await record!.send(aliceDid.uri);
-      expect(status.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       // confirm the record has been written to the remote DWN
       const readResult = await dwnAlice.records.read({
@@ -3654,15 +3610,14 @@ describe('Record', () => {
       expect(readResult.record.id).toBe(record.id);
 
       // delete the record
-      const { status: deleteLocalStatus, record: deletedRecord } = await record.delete();
-      expect(deleteLocalStatus.code).toBe(202);
+      await record.delete();
+      const deletedRecord = record;
 
       // confirm record is in a deleted state
       expect(deletedRecord.deleted).toBe(true);
 
       // send the delete request to the remote DWN
-      const { status: deleteSendStatus } = await deletedRecord.send(aliceDid.uri);
-      expect(deleteSendStatus.code).toBe(202);
+      await deletedRecord.send(aliceDid.uri);
 
       // confirm the record has been deleted
       const readResultDeleted = await dwnAlice.records.read({
@@ -3746,8 +3701,8 @@ describe('Record', () => {
       expect(childrenRecords.map(r => r.id)).toEqual(expect.arrayContaining([child1Record.id, child2Record.id]));
 
       // Delete the parent record and its children.
-      const { status: deleteStatus } = await parentRecord.delete({ prune: true });
-      expect(deleteStatus.code).toBe(202);
+      await parentRecord.delete({ prune: true });
+      expect(parentRecord.deleted).toBe(true);
 
       // query for child records to confirm it was deleted
       const { status: childrenStatusAfterDelete, records: childrenRecordsAfterDelete } = await dwnAlice.records.query({
@@ -3798,8 +3753,7 @@ describe('Record', () => {
       });
       expect(parentWriteStatus.code).toBe(202);
       expect(parentRecord).toBeDefined();
-      const { status: parentSendStatus } = await parentRecord.send(aliceDid.uri);
-      expect(parentSendStatus.code).toBe(202);
+      await parentRecord.send(aliceDid.uri);
 
       // Write a child record.
       const { status: child1WriteStatus, record: childRecord1 } = await dwnAlice.records.write({
@@ -3813,8 +3767,7 @@ describe('Record', () => {
       });
       expect(child1WriteStatus.code).toBe(202);
       expect(childRecord1).toBeDefined();
-      const { status: child1SendStatus } = await childRecord1.send(aliceDid.uri);
-      expect(child1SendStatus.code).toBe(202);
+      await childRecord1.send(aliceDid.uri);
 
       // Write a second child record.
       const { status: child2WriteStatus, record: childRecord2 } = await dwnAlice.records.write({
@@ -3828,8 +3781,7 @@ describe('Record', () => {
       });
       expect(child2WriteStatus.code).toBe(202);
       expect(childRecord2).toBeDefined();
-      const { status: child2SendStatus } = await childRecord2.send(aliceDid.uri);
-      expect(child2SendStatus.code).toBe(202);
+      await childRecord2.send(aliceDid.uri);
 
       // query for child records to confirm it exists
       const { status: childrenStatus, records: childrenRecords } = await dwnAlice.records.query({
@@ -3846,10 +3798,10 @@ describe('Record', () => {
       expect(childrenRecords.map(r => r.id)).toEqual(expect.arrayContaining([childRecord1.id, childRecord2.id]));
 
       // Delete the parent record and its children.
-      const { status: deleteStatus, record: deletedParentRecord } = await parentRecord.delete({ store: false, prune: true });
-      expect(deleteStatus.code).toBe(202);
-      const { status: parentDeleteStatus } = await deletedParentRecord.send(aliceDid.uri);
-      expect(parentDeleteStatus.code).toBe(202);
+      await parentRecord.delete({ store: false, prune: true });
+      const deletedParentRecord = parentRecord;
+      expect(deletedParentRecord.deleted).toBe(true);
+      await deletedParentRecord.send(aliceDid.uri);
 
       // query for child records to confirm it was deleted
       const { status: childrenStatusAfterDelete, records: childrenRecordsAfterDelete } = await dwnAlice.records.query({
@@ -3878,8 +3830,8 @@ describe('Record', () => {
       expect(writeStatus.code).toBe(202);
 
       // delete the record but do not store it
-      const { status: deleteStatus, record: deletedRecord } = await record.delete({ store: false });
-      expect(deleteStatus.code).toBe(202);
+      await record.delete({ store: false });
+      const deletedRecord = record;
 
       // purposefully delete the _initialWrite property
       delete deletedRecord['_initialWrite'];
@@ -3893,7 +3845,7 @@ describe('Record', () => {
       }
     });
 
-    it('duplicate delete with store should return conflict', async () => {
+    it('throws a conflict for a duplicate delete with store', async () => {
       // create a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
         data         : 'Hello, world!',
@@ -3915,13 +3867,18 @@ describe('Record', () => {
       expect(readRecord!.id).toBe(record.id);
 
       // delete the record
-      const { status: deleteStatus, record: deletedRecord } = await record.delete();
-      expect(deleteStatus.code).toBe(202);
+      await record.delete();
+      const deletedRecord = record;
       expect(deletedRecord.deleted).toBe(true);
 
       // attempting to delete again is beaten by the standing tombstone: 409 Conflict
-      const { status: deleteStatus2 } = await deletedRecord.delete();
-      expect(deleteStatus2.code).toBe(409);
+      try {
+        await deletedRecord.delete();
+        throw new Error('Expected the standing tombstone to reject the second delete.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(409);
+      }
     });
 
     it('escalates a deleted record to a prune instead of resending the cached tombstone', async () => {
@@ -3936,20 +3893,25 @@ describe('Record', () => {
       expect(writeStatus.code).toBe(202);
 
       // plain delete first
-      const { status: deleteStatus, record: deletedRecord } = await record.delete();
-      expect(deleteStatus.code).toBe(202);
+      await record.delete();
+      const deletedRecord = record;
       expect(deletedRecord.deleted).toBe(true);
 
       // requesting a prune constructs a new tombstone that beats the standing plain delete
       // (prune dominates plain in the tombstone lattice), rather than resending the cached
       // message and failing with a 409
-      const { status: pruneStatus, record: prunedRecord } = await deletedRecord.delete({ prune: true });
-      expect(pruneStatus.code).toBe(202);
+      await deletedRecord.delete({ prune: true });
+      const prunedRecord = deletedRecord;
       expect(prunedRecord.deleted).toBe(true);
 
       // a repeated prune request reuses the cached prune tombstone and is beaten: 409
-      const { status: pruneStatus2 } = await prunedRecord.delete({ prune: true });
-      expect(pruneStatus2.code).toBe(409);
+      try {
+        await prunedRecord.delete({ prune: true });
+        throw new Error('Expected the standing prune tombstone to reject the second prune.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(409);
+      }
     });
 
     it('re-stamps a pruned record without downgrading its tombstone class', async () => {
@@ -3962,21 +3924,26 @@ describe('Record', () => {
         dataFormat   : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
-      const { status: pruneStatus, record: prunedRecord } = await record.delete({ prune: true });
-      expect(pruneStatus.code).toBe(202);
+      await record.delete({ prune: true });
+      const prunedRecord = record;
 
       // a timestamp-only re-stamp inherits the cached tombstone's prune class — constructing a
       // plain delete here would be beaten by the standing prune as a 409
       const newerTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
-      const { status: restampStatus, record: restampedRecord } = await prunedRecord.delete({ timestamp: newerTimestamp });
-      expect(restampStatus.code).toBe(202);
+      await prunedRecord.delete({ timestamp: newerTimestamp });
+      const restampedRecord = prunedRecord;
       expect(restampedRecord.deleted).toBe(true);
       expect((restampedRecord.rawMessage as DwnMessage[DwnInterface.RecordsDelete]).descriptor.prune).toBe(true);
 
       // an explicitly OLDER timestamp constructs a tombstone that is beaten: 409
       const olderTimestamp = Time.createOffsetTimestamp({ seconds: -60 });
-      const { status: olderStatus } = await restampedRecord.delete({ timestamp: olderTimestamp });
-      expect(olderStatus.code).toBe(409);
+      try {
+        await restampedRecord.delete({ timestamp: olderTimestamp });
+        throw new Error('Expected an older tombstone to be rejected.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(409);
+      }
     });
 
     it('a record in a deleted state returns undefined for data related fields', async () => {
@@ -4010,8 +3977,8 @@ describe('Record', () => {
       expect(timestamp).toBeDefined();
 
       // delete the record
-      const { status: deleteStatus, record: deletedRecord } = await record.delete();
-      expect(deleteStatus.code).toBe(202);
+      await record.delete();
+      const deletedRecord = record;
 
       // sanity: should be unchanged
       expect(deletedRecord.id).toBe(recordId);
@@ -4047,8 +4014,7 @@ describe('Record', () => {
       expect(bobWriteStatus.code).toBe(202);
 
       // send the record to alice's DWN
-      const { status: recordSend } = await bobWriteRecord.send(aliceDid.uri);
-      expect(recordSend.code).toBe(202);
+      await bobWriteRecord.send(aliceDid.uri);
 
       let bobsRecordToDelete: Record | undefined;
       await Poller.pollUntilSuccessOrTimeout(async () => {
@@ -4061,10 +4027,12 @@ describe('Record', () => {
       });
 
       expect(bobsRecordToDelete!.deleted).toBe(false);
+      expect(bobsRecordToDelete!.author).toBe(bobDid.uri);
 
-      const { status: storeStatus, record: deletedBobRecord } = await bobsRecordToDelete!.delete();
-      expect(storeStatus.code).toBe(202);
+      await bobsRecordToDelete!.delete();
+      const deletedBobRecord = bobsRecordToDelete!;
       expect(deletedBobRecord.deleted).toBe(true);
+      expect(deletedBobRecord.author).toBe(aliceDid.uri);
     });
 
     it('deletes a record as owner from someone else', async () => {
@@ -4080,8 +4048,7 @@ describe('Record', () => {
       expect(bobWriteStatus.code).toBe(202);
 
       // send the record to alice's DWN
-      const { status: recordSend } = await bobWriteRecord.send(bobDid.uri);
-      expect(recordSend.code).toBe(202);
+      await bobWriteRecord.send(bobDid.uri);
 
       let bobsRecordToDelete: Record | undefined;
       await Poller.pollUntilSuccessOrTimeout(async () => {
@@ -4095,8 +4062,8 @@ describe('Record', () => {
 
       expect(bobsRecordToDelete!.deleted).toBe(false);
 
-      const { status: storeStatus, record: deletedBobRecord } = await bobsRecordToDelete!.delete({ signAsOwner: true });
-      expect(storeStatus.code).toBe(202);
+      await bobsRecordToDelete!.delete({ signAsOwner: true });
+      const deletedBobRecord = bobsRecordToDelete!;
       expect(deletedBobRecord.deleted).toBe(true);
     });
 
@@ -4140,8 +4107,7 @@ describe('Record', () => {
           dataFormat   : 'text/plain',
         });
         expect(noteCreateStatus.code).toBe(202);
-        const { status: noteSendStatus } = await noteRecord.send();
-        expect(noteSendStatus.code).toBe(202);
+        await noteRecord.send();
         records.add(noteRecord.id);
       }
 
@@ -4155,8 +4121,7 @@ describe('Record', () => {
         dataFormat   : 'text/plain'
       });
       expect(friendCreateStatus.code).toBe(202);
-      const { status: bobFriendSendStatus } = await friendRecord.send(bobDid.uri);
-      expect(bobFriendSendStatus.code).toBe(202);
+      await friendRecord.send(bobDid.uri);
 
       // Bob makes alice a 'coAuthor' of one of his notes
       const aliceCoAuthorNoteId = records.keys().next().value;
@@ -4170,8 +4135,7 @@ describe('Record', () => {
         dataFormat      : 'text/plain'
       });
       expect(coAuthorStatus.code).toBe(202);
-      const { status: coAuthorSendStatus } = await coAuthorRecord.send(bobDid.uri);
-      expect(coAuthorSendStatus.code).toBe(202);
+      await coAuthorRecord.send(bobDid.uri);
 
       // Alice querying for bob's notes using her friend role
       const { status: aliceQueryStatus, records: bobNotesAliceQuery } = await dwnAlice.records.query({
@@ -4196,11 +4160,16 @@ describe('Record', () => {
       // confirm that it starts with 0 calls
       expect(sendDwnRequestSpy.callCount).toBe(0);
 
-      const { status: deleteStatus, record: deletedNote } = await coDeleteNote.delete({ store: false });
-      expect(deleteStatus.code).toBe(202);
+      await coDeleteNote.delete({ store: false });
+      const deletedNote = coDeleteNote;
 
-      const { status: sendDeleteStatus } = await deletedNote.send(bobDid.uri);
-      expect(sendDeleteStatus.code).toBe(401);
+      try {
+        await deletedNote.send(bobDid.uri);
+        throw new Error('Expected the friend role delete to be rejected.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(401);
+      }
 
       expect(sendDwnRequestSpy.callCount).toBe(2); // the first call is for the initialWrite
       let record = (sendDwnRequestSpy.secondCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
@@ -4210,11 +4179,10 @@ describe('Record', () => {
       sendDwnRequestSpy.resetHistory();
 
       // Now delete the record with the correct role
-      const { status: updateStatusCoAuthor, record: deletedNoteCoAuthor } = await deletedNote.delete({ protocolRole: 'note/coAuthor', store: false });
-      expect(updateStatusCoAuthor.code).toBe(202);
+      await deletedNote.delete({ protocolRole: 'note/coAuthor', store: false });
+      const deletedNoteCoAuthor = deletedNote;
 
-      const { status: sendStatusCoAuthor } = await deletedNoteCoAuthor.send(bobDid.uri);
-      expect(sendStatusCoAuthor.code).toBe(202);
+      await deletedNoteCoAuthor.send(bobDid.uri);
 
       expect(sendDwnRequestSpy.callCount).toBe(1); // the initialWrite was already sent and added to the sent-cache, only the update is sent
       record = (sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
@@ -4278,8 +4246,7 @@ describe('Record', () => {
         schema       : notesProtocol.types.note.schema
       });
       expect(status.code).toBe(202, status.detail);
-      const sendResponse = await record.send();
-      expect(sendResponse.status.code).toBe(202, sendResponse.status.detail);
+      await record.send();
 
       // Bob queries Alice's DWN for the record.
       const aliceQueryResult = await dwnBob.records.query({
@@ -4302,12 +4269,16 @@ describe('Record', () => {
       expect(bobQueryResult.records).toHaveLength(0);
 
       // Attempts to store the record without importing it, which should fail.
-      let { status: storeRecordStatus } = await queriedRecord.store();
-      expect(storeRecordStatus.code).toBe(401, storeRecordStatus.detail);
+      try {
+        await queriedRecord.store();
+        throw new Error('Expected storing an external record without importing it to fail.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(401);
+      }
 
       // Attempts to store the record flagging it for import.
-      ({ status: storeRecordStatus } = await queriedRecord.store(true));
-      expect(storeRecordStatus.code).toBe(202, storeRecordStatus.detail);
+      await queriedRecord.store(true);
 
       // Bob queries his own DWN for the record, which should return the record.
       bobQueryResult = await dwnBob.records.query({
@@ -4335,11 +4306,10 @@ describe('Record', () => {
       });
       expect(status.code).toBe(202, status.detail);
       const updatedText = 'updated text';
-      const updateResult = await record!.update({ data: updatedText });
-      expect(updateResult.status.code).toBe(202, updateResult.status.detail);
+      const updatedRecord = await record!.update({ data: updatedText });
+      expect(updatedRecord).toBe(record);
 
-      const sendResponse = await updateResult.record.send();
-      expect(sendResponse.status.code).toBe(202, sendResponse.status.detail);
+      await updatedRecord.send();
 
       // Bob queries for the record from his own node, should not return any results
       let queryResult = await dwnBob.records.query({
@@ -4363,14 +4333,18 @@ describe('Record', () => {
       expect(await queriedRecord.data.text()).toBe(updatedText);
 
       // Attempts to store the record without signing it, which should fail.
-      let { status: storeRecordStatus } = await queriedRecord.store();
-      expect(storeRecordStatus.code).toBe(400, storeRecordStatus.detail);
-      expect(storeRecordStatus.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
+      try {
+        await queriedRecord.store();
+        throw new Error('Expected storing an unsigned external update to fail.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(400);
+        expect((error as DwnResponseError).status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
+      }
 
       // Stores the record in Bob's DWN, the importRecord parameter is set to true so that Bob
       // signs the record before storing it.
-      ({ status: storeRecordStatus } = await queriedRecord.store(true));
-      expect(storeRecordStatus.code).toBe(202, storeRecordStatus.detail);
+      await queriedRecord.store(true);
 
       // The record should now exist on Bob's DWN.
       queryResult = await dwnBob.records.query({
@@ -4402,8 +4376,8 @@ describe('Record', () => {
       expect(record).toBeDefined();
 
       // delete the record without storing
-      const { status: deleteStatus, record: deletedRecord } = await record.delete({ store: false });
-      expect(deleteStatus.code).toBe(202);
+      await record.delete({ store: false });
+      const deletedRecord = record;
 
       // check that the record is in a deleted state
       expect(deletedRecord.deleted).toBe(true);
@@ -4419,8 +4393,7 @@ describe('Record', () => {
       expect(storedRecordCallCount()).toBe(0);
 
       // store the record
-      const { status: storeStatus } = await deletedRecord.store();
-      expect(storeStatus.code).toBe(202);
+      await deletedRecord.store();
 
       // check that it was called once for initial write and once for the delete
       expect(storedRecordCallCount()).toBe(2);
@@ -4436,14 +4409,13 @@ describe('Record', () => {
       });
       expect(writeStatus.code).toBe(202);
 
-      const { status: deleteStatus, record: deletedRecord } = await record.delete();
-      expect(deleteStatus.code).toBe(202);
+      await record.delete();
+      const deletedRecord = record;
 
       const receivedRecord = rehydrateExternalDeletedRecordForAlice(deletedRecord);
       expect(receivedRecord.deleted).toBe(true);
 
-      const { status: storeStatus } = await receivedRecord.store(true);
-      expect(storeStatus.code).toBe(202, storeStatus.detail);
+      await receivedRecord.store(true);
 
       const readResult = await dwnAlice.records.read({ filter: { recordId: receivedRecord.id } });
       expect(readResult.status.code).toBe(404);
@@ -4508,8 +4480,7 @@ describe('Record', () => {
         schema       : notesProtocol.types.note.schema,
       });
       expect(status.code).toBe(202, status.detail);
-      const sendResponse = await record.send();
-      expect(sendResponse.status.code).toBe(202, sendResponse.status.detail);
+      await record.send();
 
       // Bob queries Alice's DWN for the record.
       const aliceQueryResult = await dwnBob.records.query({
@@ -4523,8 +4494,7 @@ describe('Record', () => {
       const queriedRecord = aliceQueryResult.records[0];
 
       // Imports the record without storing it.
-      const { status: importRecordStatus } = await queriedRecord.import();
-      expect(importRecordStatus.code).toBe(202, importRecordStatus.detail);
+      await queriedRecord.import();
 
       // Bob queries his own DWN for the record, which should return the record.
       const bobQueryResult = await dwnBob.records.query({
@@ -4552,10 +4522,9 @@ describe('Record', () => {
       });
       expect(status.code).toBe(202, status.detail);
       const updatedText = 'updated text';
-      const updateResult = await record!.update({ data: updatedText });
-      expect(updateResult.status.code).toBe(202, updateResult.status.detail);
-      const sendResponse = await updateResult.record.send();
-      expect(sendResponse.status.code).toBe(202, sendResponse.status.detail);
+      const updatedRecord = await record!.update({ data: updatedText });
+      expect(updatedRecord).toBe(record);
+      await updatedRecord.send();
 
       // Bob queries Alice's DWN for the record.
       const aliceQueryResult = await dwnBob.records.query({
@@ -4569,8 +4538,7 @@ describe('Record', () => {
       const queriedRecord = aliceQueryResult.records[0];
 
       // Imports the record without storing it.
-      const { status: importRecordStatus } = await queriedRecord.import();
-      expect(importRecordStatus.code).toBe(202, importRecordStatus.detail);
+      await queriedRecord.import();
 
       // Bob queries his own DWN for the record, which should return the record.
       const bobQueryResult = await dwnBob.records.query({
@@ -4595,14 +4563,13 @@ describe('Record', () => {
       });
       expect(writeStatus.code).toBe(202);
 
-      const { status: deleteStatus, record: deletedRecord } = await record.delete();
-      expect(deleteStatus.code).toBe(202);
+      await record.delete();
+      const deletedRecord = record;
 
       const receivedRecord = rehydrateExternalDeletedRecordForAlice(deletedRecord);
       expect(receivedRecord.deleted).toBe(true);
 
-      const { status: importStatus } = await receivedRecord.import();
-      expect(importStatus.code).toBe(202, importStatus.detail);
+      await receivedRecord.import();
 
       const readResult = await dwnAlice.records.read({ filter: { recordId: receivedRecord.id } });
       expect(readResult.status.code).toBe(404);
@@ -4624,8 +4591,7 @@ describe('Record', () => {
           schema       : notesProtocol.types.note.schema
         });
         expect(status.code).toBe(202, status.detail);
-        const sendResponse = await record.send();
-        expect(sendResponse.status.code).toBe(202, sendResponse.status.detail);
+        await record.send();
 
         // Bob queries Alice's DWN for the record.
         const aliceQueryResult = await dwnBob.records.query({
@@ -4639,8 +4605,7 @@ describe('Record', () => {
         const queriedRecord = aliceQueryResult.records[0];
 
         // Imports the record without storing it.
-        let { status: importRecordStatus } = await queriedRecord.import(false);
-        expect(importRecordStatus.code).toBe(202, importRecordStatus.detail);
+        await queriedRecord.import(false);
 
         // Queries for the record from Bob's DWN, which should not return any results.
         let bobQueryResult = await dwnBob.records.query({
@@ -4653,8 +4618,7 @@ describe('Record', () => {
 
         // Attempts to store the record without explicitly marking it for import as it's already
         // been imported
-        ({ status: importRecordStatus } = await queriedRecord.store());
-        expect(importRecordStatus.code).toBe(202, importRecordStatus.detail);
+        await queriedRecord.store();
 
         // Bob queries his own DWN for the record, which should return the record.
         bobQueryResult = await dwnBob.records.query({
@@ -4682,10 +4646,9 @@ describe('Record', () => {
         });
         expect(status.code).toBe(202, status.detail);
         const updatedText = 'updated text';
-        const updateResult = await record.update({ data: updatedText });
-        expect(updateResult.status.code).toBe(202, updateResult.status.detail);
-        const sendResponse = await updateResult.record.send();
-        expect(sendResponse.status.code).toBe(202, sendResponse.status.detail);
+        const updatedRecord = await record.update({ data: updatedText });
+        expect(updatedRecord).toBe(record);
+        await updatedRecord.send();
 
         // Bob queries Alice's DWN for the record.
         const aliceQueryResult = await dwnBob.records.query({
@@ -4699,8 +4662,7 @@ describe('Record', () => {
         const queriedRecord = aliceQueryResult.records[0];
 
         // Imports the record without storing it.
-        let { status: importRecordStatus } = await queriedRecord.import(false);
-        expect(importRecordStatus.code).toBe(202, importRecordStatus.detail);
+        await queriedRecord.import(false);
 
         // Queries for the record from Bob's DWN, which should not return any results.
         let bobQueryResult = await dwnBob.records.query({
@@ -4712,8 +4674,7 @@ describe('Record', () => {
         expect(bobQueryResult.records).toHaveLength(0);
 
         // Attempts to store the record without explicitly marking it for import as it's already been imported.
-        ({ status: importRecordStatus } = await queriedRecord.store());
-        expect(importRecordStatus.code).toBe(202, importRecordStatus.detail);
+        await queriedRecord.store();
 
         // Bob queries his own DWN for the record, which should return the record.
         bobQueryResult = await dwnBob.records.query({
@@ -4738,8 +4699,8 @@ describe('Record', () => {
         });
         expect(writeStatus.code).toBe(202);
 
-        const { status: deleteStatus, record: deletedRecord } = await record.delete();
-        expect(deleteStatus.code).toBe(202);
+        await record.delete();
+        const deletedRecord = record;
 
         const receivedRecord = rehydrateExternalDeletedRecordForAlice(deletedRecord);
         expect(receivedRecord.deleted).toBe(true);
@@ -4751,12 +4712,10 @@ describe('Record', () => {
             isDwnMessage(DwnInterface.RecordsDelete, call.args[1])
           ).length;
 
-        const { status: importStatus } = await receivedRecord.import(false);
-        expect(importStatus.code).toBe(202, importStatus.detail);
+        await receivedRecord.import(false);
         expect(storedRecordCallCount()).toBe(0);
 
-        const { status: storeStatus } = await receivedRecord.store();
-        expect(storeStatus.code).toBe(202, storeStatus.detail);
+        await receivedRecord.store();
         expect(storedRecordCallCount()).toBe(2);
 
         const readResult = await dwnAlice.records.read({ filter: { recordId: receivedRecord.id } });
@@ -4825,17 +4784,17 @@ describe('Record', () => {
       });
       expect(secondStatus.code).toBe(202);
 
-      const { status: firstUpdateStatus } = await firstRecord.update({
+      const firstUpdatedRecord = await firstRecord.update({
         data      : 'first record updated last',
         timestamp : '2025-01-04T00:00:00.000000Z'
       });
-      expect(firstUpdateStatus.code).toBe(202);
+      expect(firstUpdatedRecord).toBe(firstRecord);
 
-      const { status: secondUpdateStatus } = await secondRecord.update({
+      const secondUpdatedRecord = await secondRecord.update({
         data      : 'second record updated first',
         timestamp : '2025-01-03T00:00:00.000000Z'
       });
-      expect(secondUpdateStatus.code).toBe(202);
+      expect(secondUpdatedRecord).toBe(secondRecord);
 
       const filter = {
         protocol     : protocolDefinition.protocol,
@@ -4927,8 +4886,8 @@ describe('Record', () => {
       expect(writeStatus.code).toBe(202);
 
       // delete the record
-      const { status: deleteStatus, record: deletedRecord } = await record.delete({ store: false });
-      expect(deleteStatus.code).toBe(202);
+      await record.delete({ store: false });
+      const deletedRecord = record;
 
       // get a pagination cursor
       const paginationCursor = await deletedRecord.paginationCursor(DwnDateSort.CreatedAscending);
@@ -5021,16 +4980,15 @@ describe('Record', () => {
       expect(writeStatus.code).toBe(202);
 
       // Delete the record without storing.
-      const { status: deleteStatus, record: deletedRecord } = await record.delete({ store: false });
-      expect(deleteStatus.code).toBe(202);
+      await record.delete({ store: false });
+      const deletedRecord = record;
       expect(deletedRecord.deleted).toBe(true);
 
       // Spy on processDwnRequest to verify the deleted branch sends RecordsDelete.
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
       // Store the deleted record — this should invoke processRecord() which takes the deleted branch.
-      const { status: storeStatus } = await deletedRecord.store();
-      expect(storeStatus.code).toBe(202);
+      await deletedRecord.store();
 
       // The spy should have been called: once for the initial write and once for the delete.
       // Find the RecordsDelete call.

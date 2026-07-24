@@ -33,3 +33,4 @@ export type {
 } from './dwn-api.js';
 
 export type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
+export type { AudienceKeyDeliveryOutcome } from '@enbox/agent';

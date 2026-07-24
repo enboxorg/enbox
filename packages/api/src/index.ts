@@ -25,12 +25,7 @@
 export * from './connection-store.js';
 export * from './define-protocol.js';
 export * from './did-api.js';
-export type {
-  RecordsCountResponse,
-  RecordsQueryResponse,
-  RecordsReadResponse,
-  RecordsWriteResponse,
-} from './dwn-api.js';
+export { DwnResponseError } from './dwn-response-error.js';
 export * from './dwn-reader-api.js';
 export * from './enbox.js';
 export type * from './enbox-types.js';
@@ -46,10 +41,6 @@ export * from './record.js';
 export * from './typed-enbox.js';
 export * from './vc-api.js';
 
-// Agent types surfaced on public API responses — re-exported so apps can name
-// them without depending on `@enbox/agent` directly.
-export type { AudienceKeyDeliveryOutcome } from '@enbox/agent';
 export { AudienceDecryptError, type AudienceDecryptFailureCause } from '@enbox/agent';
 
 export * as utils from './utils.js';
-export { isOk } from './utils.js';

@@ -92,10 +92,7 @@ async function main(): Promise<void> {
   await profile.configure();
   log('Profile protocol installed');
 
-  const writeResult = await profile.records.create('profile', { data: persona });
-  if (writeResult.status.code !== 202 && writeResult.status.code !== 200) {
-    throw new Error(`Failed to write profile: ${writeResult.status.code}`);
-  }
+  await profile.records.create('profile', { data: persona });
   log(`Profile written: ${persona.displayName}`);
 
   // Verify local read-back

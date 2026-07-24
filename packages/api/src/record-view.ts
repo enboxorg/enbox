@@ -6,7 +6,7 @@ import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent, SyncIdentityOptions } from '@enbox/agent';
 
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
-import { isOk } from './utils.js';
+import { requireDwnSuccess } from './dwn-response-error.js';
 
 /** Currentness of one locally materialized records view. */
 export type RecordViewState = 'loading' | 'ready' | 'stale' | 'error';
@@ -149,11 +149,14 @@ class ObservedRecordView<T> implements RecordView<T> {
         throw new Error('RecordView: closed while opening the local subscription.');
       }
 
-      if (!isOk(reply) || reply.subscription === undefined) {
+      try {
+        requireDwnSuccess('RecordView subscription', reply);
+      } catch (error: unknown) {
         await reply.subscription?.close();
-        throw new Error(
-          `RecordView: unable to open local subscription (${reply.status.code}): ${reply.status.detail}`,
-        );
+        throw error;
+      }
+      if (reply.subscription === undefined) {
+        throw new Error('RecordView: DWN returned success without a subscription.');
       }
 
       this._subscription = reply.subscription;
@@ -314,9 +317,7 @@ class ObservedRecordView<T> implements RecordView<T> {
 
     try {
       const result = await this._dwn.records.query(this._query);
-      if (!isOk(result)) {
-        throw new Error(`RecordView: query failed (${result.status.code}): ${result.status.detail}`);
-      }
+      requireDwnSuccess('RecordView query', result);
 
       const currentness = await this.resolveCurrentness();
       if (!this.canPublishGeneration(generation)) {

@@ -160,8 +160,8 @@ export type RecordUpdateParams<T = unknown> = {
    *   `from` — role-audience key delivery is provisioned on the owner's local
    *   DWN via `processRequest` only, and the agent throws rather than
    *   silently ignoring the key.
-   * - `audienceKeyDelivery` is never reported for remote updates — delivery
-   *   provisioning is a local-processing (`processRequest`-only) concept.
+   * - Delivery outcomes are available only through the low-level DWN API;
+   *   {@link Record.update} returns the updated record itself.
    */
   from?: string;
 

@@ -282,7 +282,7 @@ export class Enbox {
    *
    * await social.configure();
    *
-   * const { record } = await social.records.write('friend', {
+   * const record = await social.records.create('friend', {
    *   data: { did: 'did:example:alice', alias: 'Alice' },
    * });
    *

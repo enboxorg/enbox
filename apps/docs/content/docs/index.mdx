@@ -63,7 +63,7 @@ const enbox = Enbox.fromSession(session);
 
 ```ts
 // Create
-const { record } = await tasks.records.create('task', {
+const record = await tasks.records.create('task', {
   data: { title: 'Buy milk', done: false },
 });
 

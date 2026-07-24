@@ -1,4 +1,5 @@
 import type { DidResolutionLike } from './utils/identity-helpers.js';
+import type { Record as EnboxRecord } from '@enbox/api';
 import type { ProfileSchemaMap } from '@enbox/protocols';
 import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
 
@@ -705,14 +706,14 @@ class IdentityRuntimeController implements IdentityRuntime {
     const { dwn } = await this._createDwnApiForDid(normalizedDidUri);
     const typed = new TypedEnbox(dwn, ProfileProtocol);
     const { records: profileRecords } = await typed.records.query('profile');
-    const profileResult = profileRecords[0]
+    const profileRecord = profileRecords[0]
       ? await profileRecords[0].update({ data: profileData })
       : await typed.records.create('profile', { data: profileData });
-    if (profileResult.status.code >= 300 || !profileResult.record?.contextId) {
-      throw new Error(profileResult.status.detail || `Failed to save profile (${profileResult.status.code}).`);
+    if (!profileRecord.contextId) {
+      throw new Error('Profile record is missing its context ID.');
     }
 
-    const profileContextId = profileResult.record.contextId;
+    const profileContextId = profileRecord.contextId;
     const { records: avatarRecords } = await typed.records.query('profile/avatar', {
       filter: { contextId: profileContextId },
     });
@@ -770,24 +771,16 @@ class IdentityRuntimeController implements IdentityRuntime {
 
       const existingRecord = rawLink.id ? existingLinksById.get(rawLink.id) : undefined;
       if (existingRecord) {
-        const updateResult = await existingRecord.update({ data: linkData });
-        if (updateResult.status.code >= 300) {
-          throw new Error(updateResult.status.detail || `Failed to update link (${updateResult.status.code}).`);
-        }
-
+        await existingRecord.update({ data: linkData });
         retainedLinkIds.add(existingRecord.id);
         continue;
       }
 
-      const createResult = await typed.records.create('profile/link', {
+      const createdRecord = await typed.records.create('profile/link', {
         data            : linkData,
         parentContextId : profileContextId,
       });
-      if (createResult.status.code >= 300 || !createResult.record) {
-        throw new Error(createResult.status.detail || `Failed to create link (${createResult.status.code}).`);
-      }
-
-      retainedLinkIds.add(createResult.record.id);
+      retainedLinkIds.add(createdRecord.id);
     }
 
     for (const existingRecord of existingLinks) {
@@ -795,10 +788,7 @@ class IdentityRuntimeController implements IdentityRuntime {
         continue;
       }
 
-      const deleteResult = await existingRecord.delete();
-      if (deleteResult.status.code >= 300) {
-        throw new Error(deleteResult.status.detail || `Failed to delete link (${deleteResult.status.code}).`);
-      }
+      await existingRecord.delete();
     }
 
     return {
@@ -1074,12 +1064,7 @@ class IdentityRuntimeController implements IdentityRuntime {
   }: {
     action: 'keep' | 'replace' | 'remove';
     file?: Blob;
-    existingRecord?: {
-      id: string;
-      dataFormat?: string;
-      update: (options: { data: Blob; dataFormat?: string }) => Promise<{ status: { code: number; detail: string } }>;
-      delete: () => Promise<{ status: { code: number; detail: string } }>;
-    };
+    existingRecord?: EnboxRecord<Blob>;
     parentContextId: string;
     typed: TypedEnbox<typeof ProfileDefinition, ProfileSchemaMap>;
     path: 'profile/avatar' | 'profile/hero';
@@ -1093,10 +1078,7 @@ class IdentityRuntimeController implements IdentityRuntime {
         return;
       }
 
-      const deleteResult = await existingRecord.delete();
-      if (deleteResult.status.code >= 300) {
-        throw new Error(deleteResult.status.detail || `Failed to remove ${path} image (${deleteResult.status.code}).`);
-      }
+      await existingRecord.delete();
       return;
     }
 
@@ -1106,21 +1088,15 @@ class IdentityRuntimeController implements IdentityRuntime {
 
     const dataFormat = file.type || existingRecord?.dataFormat || undefined;
     if (existingRecord) {
-      const updateResult = await existingRecord.update({ data: file, dataFormat });
-      if (updateResult.status.code >= 300) {
-        throw new Error(updateResult.status.detail || `Failed to update ${path} image (${updateResult.status.code}).`);
-      }
+      await existingRecord.update({ data: file, dataFormat });
       return;
     }
 
-    const createResult = await typed.records.create(path, {
+    await typed.records.create(path, {
       data: file,
       parentContextId,
       dataFormat,
     });
-    if (createResult.status.code >= 300) {
-      throw new Error(createResult.status.detail || `Failed to create ${path} image (${createResult.status.code}).`);
-    }
   }
 
   private async _ensureConnected(password?: string): Promise<void> {

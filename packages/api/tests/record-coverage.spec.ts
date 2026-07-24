@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DwnDateSort, DwnInterface } from '@enbox/agent';
 
+import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Record } from '../src/record.js';
 
 // ---------------------------------------------------------------------------
@@ -135,8 +136,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         reply      : { status: { code: 202, detail: 'Accepted' } },
       } as any);
 
-      const result = await record.send('did:example:target');
-      expect(result.status.code).toBe(202);
+      await record.send('did:example:target');
 
       // Verify a RecordsDelete was sent (the last call should be the current record state).
       const lastCall = agentStub.sendDwnRequest.lastCall;
@@ -236,8 +236,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         reply      : { status: { code: 202, detail: 'Accepted' } },
       } as any);
 
-      const result = await record.import(true);
-      expect(result.status.code).toBe(202);
+      await record.import(true);
 
       // The authorization should have been updated to the response message's authorization.
       expect(record.authorization).toEqual(newAuth);
@@ -254,8 +253,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         reply      : { status: { code: 202, detail: 'Accepted' } },
       } as any);
 
-      const result = await record.store();
-      expect(result.status.code).toBe(202);
+      await record.store();
 
       const call = agentStub.processDwnRequest.firstCall;
       expect(call.args[0].dataStream).toBe(dataStream);
@@ -287,8 +285,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         reply      : { status: { code: 202, detail: 'Accepted' } },
       } as any);
 
-      const result = await record.store();
-      expect(result.status.code).toBe(202);
+      await record.store();
 
       // Find the RecordsDelete call among processDwnRequest calls.
       const deleteCall = agentStub.processDwnRequest.getCalls().find(
@@ -420,9 +417,13 @@ describe('Record — coverage gaps (stubbed)', () => {
         reply: { status: { code: 400, detail: 'Bad Request' } },
       } as any);
 
-      const result = await record.update({ data: 'updated' });
-
-      expect(result.status.code).toBe(400);
+      try {
+        await record.update({ data: 'updated' });
+        throw new Error('Expected Record.update() to reject.');
+      } catch (error: unknown) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status).toEqual({ code: 400, detail: 'Bad Request' });
+      }
       expect(permissionsApi.getPermissionForRequest.calledOnceWithExactly({
         connectedDid : 'did:example:alice',
         delegateDid  : 'did:example:delegate',

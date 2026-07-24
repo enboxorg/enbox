@@ -1,31 +1,4 @@
-import type { DwnResponseStatus } from '@enbox/agent';
 import { Convert, universalTypeOf } from '@enbox/common';
-
-/**
- * Returns `true` if the DWN response status indicates success (2xx code).
- *
- * Use this instead of manually checking `status.code >= 200 && status.code <= 299`
- * on every API call.
- *
- * @param response - Any object that conforms to {@link DwnResponseStatus}.
- * @returns `true` for 2xx status codes, `false` otherwise.
- *
- * @example
- * ```ts
- * const result = await proto.records.create('note', { data: { text: 'hello' } });
- * if (!isOk(result)) {
- *   console.error('Create failed:', result.status.detail);
- *   return;
- * }
- * // result.record is safe to use here
- * ```
- *
- * @beta
- */
-export function isOk(response: DwnResponseStatus): boolean {
-  const code = response.status.code;
-  return code >= 200 && code <= 299;
-}
 
 /**
  * Converts various data types to a `Blob` object, automatically detecting the data type or using
