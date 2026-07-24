@@ -1,4 +1,5 @@
 import type { RecordsCollectionVisibility } from './records-collection.js';
+import type { ResolvedProtocolRole } from '../core/protocol-authorization-action.js';
 import type { EventSubscription, ProgressGapInfo, ProgressToken, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
@@ -11,26 +12,33 @@ import { isRecordLimitOccupant } from '../utils/record-limit-occupancy.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
-import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import { Time } from '../utils/time.js';
+import { verifyProtocolRoleRecord } from '../core/protocol-authorization-action.js';
 import {
+  authorizeRecordsCollection,
   buildRecordsEventFilters,
   queryVisibleRecordsPage,
-  resolveRecordsCollectionVisibility,
 } from './records-collection.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
-type RecordsSubscribeGrantAuthorization = {
+type RecordsSubscribeEmbeddedGrantAuthorization = {
   expectedGrantee: string;
   expectedGrantor: string;
   permissionGrant: PermissionGrant;
 };
 
+type RecordsSubscribeStoredGrantAuthorization = {
+  expectedGrantee: string;
+  expectedGrantor: string;
+  permissionGrantId: string;
+};
+
 type RecordsSubscribeDeliveryAuthorization = {
-  grants: RecordsSubscribeGrantAuthorization[];
-  invokesProtocolRole: boolean;
+  authorDelegate?: RecordsSubscribeEmbeddedGrantAuthorization;
+  resolvedRole?: ResolvedProtocolRole;
+  targetGrant?: RecordsSubscribeStoredGrantAuthorization;
 };
 
 type GuardedRecordsSubscriptionHandler = {
@@ -113,8 +121,14 @@ export class RecordsSubscribeHandler implements MethodHandler {
     let deliveryAuthorization: RecordsSubscribeDeliveryAuthorization | undefined;
     let visibility: RecordsCollectionVisibility;
     try {
-      visibility = await resolveRecordsCollectionVisibility(tenant, recordsSubscribe, this.deps);
-      deliveryAuthorization = await this.resolveDeliveryAuthorization(tenant, recordsSubscribe);
+      const authorization = await authorizeRecordsCollection(tenant, recordsSubscribe, this.deps);
+      visibility = authorization.visibility;
+      deliveryAuthorization = this.createDeliveryAuthorization({
+        permissionGrantId : authorization.permissionGrantId,
+        resolvedRole      : authorization.resolvedRole,
+        recordsSubscribe,
+        tenant,
+      });
     } catch (error) {
       return { errorReply: messageReplyFromError(error, 401) };
     }
@@ -130,41 +144,40 @@ export class RecordsSubscribeHandler implements MethodHandler {
     };
   }
 
-  /** Retains the immutable authority used at open so only its live state is revalidated during delivery. */
-  private async resolveDeliveryAuthorization(
-    tenant: string,
-    recordsSubscribe: RecordsSubscribe,
-  ): Promise<RecordsSubscribeDeliveryAuthorization | undefined> {
-    const grants: RecordsSubscribeGrantAuthorization[] = [];
+  /**
+   * Retains the authority proven at open so delivery rechecks only dynamic state.
+   * Protocol policy remains pinned to the signed subscription timestamp; current role membership does not.
+   */
+  private createDeliveryAuthorization(input: {
+    permissionGrantId?: string;
+    resolvedRole?: ResolvedProtocolRole;
+    recordsSubscribe: RecordsSubscribe;
+    tenant: string;
+  }): RecordsSubscribeDeliveryAuthorization | undefined {
+    const { permissionGrantId, resolvedRole, recordsSubscribe, tenant } = input;
+    let authorDelegate: RecordsSubscribeEmbeddedGrantAuthorization | undefined;
 
     if (Message.isSignedByAuthorDelegate(recordsSubscribe.message)) {
-      grants.push({
+      authorDelegate = {
         expectedGrantor : recordsSubscribe.author!,
         expectedGrantee : recordsSubscribe.signer!,
         permissionGrant : PermissionGrant.parse(recordsSubscribe.message.authorization!.authorDelegatedGrant!),
-      });
+      };
     }
 
-    const permissionGrantId = recordsSubscribe.signaturePayload === undefined
+    const targetGrant = permissionGrantId === undefined
       ? undefined
-      : Message.getPermissionGrantId(recordsSubscribe.signaturePayload);
-    if (permissionGrantId !== undefined) {
-      grants.push({
+      : {
         expectedGrantor : tenant,
         expectedGrantee : recordsSubscribe.author!,
-        permissionGrant : await this.deps.validationStateReader.fetchGrant(tenant, permissionGrantId),
-      });
-    }
+        permissionGrantId,
+      };
 
-    // Direct grants take precedence over an invoked protocol role at subscribe-open.
-    // Retain only the authority path that actually authorized the target read.
-    const invokesProtocolRole = permissionGrantId === undefined
-      && recordsSubscribe.signaturePayload?.protocolRole !== undefined;
-    if (grants.length === 0 && !invokesProtocolRole) {
+    if (authorDelegate === undefined && targetGrant === undefined && resolvedRole === undefined) {
       return undefined;
     }
 
-    return { grants, invokesProtocolRole };
+    return { authorDelegate, resolvedRole, targetGrant };
   }
 
   /**
@@ -278,7 +291,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
       Promise.resolve(subscription?.close()).catch(() => {});
     };
 
-    const emitTerminalDeliveryError = (cursor: SubscriptionEvent['cursor'], code: string, detail: string): void => {
+    const emitTerminalDeliveryError = (cursor: SubscriptionEvent['cursor'], code: DwnErrorCode, detail: string): void => {
       if (terminalErrorEmitted) {
         return;
       }
@@ -301,7 +314,8 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
       const authorizationTimestamp = Time.getCurrentTimestamp();
       try {
-        for (const grantAuthorization of deliveryAuthorization.grants) {
+        if (deliveryAuthorization.authorDelegate !== undefined) {
+          const grantAuthorization = deliveryAuthorization.authorDelegate;
           await GrantAuthorization.performBaseValidation({
             incomingMessage       : recordsSubscribe.message,
             expectedGrantor       : grantAuthorization.expectedGrantor,
@@ -312,16 +326,33 @@ export class RecordsSubscribeHandler implements MethodHandler {
           });
         }
 
-        if (deliveryAuthorization.invokesProtocolRole) {
-          await ProtocolAuthorization.authorizeQueryOrSubscribe(
-            tenant,
-            recordsSubscribe,
-            deps.validationStateReader,
+        if (deliveryAuthorization.targetGrant !== undefined) {
+          const grantAuthorization = deliveryAuthorization.targetGrant;
+          const permissionGrant = await deps.validationStateReader.fetchGrant(
+            grantAuthorization.expectedGrantor,
+            grantAuthorization.permissionGrantId,
+          );
+          await GrantAuthorization.performBaseValidation({
+            incomingMessage       : recordsSubscribe.message,
+            expectedGrantor       : grantAuthorization.expectedGrantor,
+            expectedGrantee       : grantAuthorization.expectedGrantee,
+            permissionGrant,
+            validationStateReader : deps.validationStateReader,
             authorizationTimestamp,
+          });
+        }
+
+        if (deliveryAuthorization.resolvedRole !== undefined) {
+          await verifyProtocolRoleRecord(
+            tenant,
+            recordsSubscribe.author!,
+            deliveryAuthorization.resolvedRole,
+            deps.validationStateReader,
           );
         }
       } catch (error) {
-        const authorizationFailure = error instanceof DwnError;
+        const authorizationFailure = error instanceof DwnError
+          && error.code !== DwnErrorCode.GrantAuthorizationGrantNotYetActive;
         emitTerminalDeliveryError(
           subscriptionEvent.cursor,
           authorizationFailure
@@ -377,7 +408,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
         } catch {
           emitTerminalDeliveryError(
             subscriptionEvent.cursor,
-            'RecordsSubscribeProjectionFailed',
+            DwnErrorCode.RecordsSubscribeProjectionFailed,
             'record-limit occupancy projection failed during delivery',
           );
           return;

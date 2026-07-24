@@ -253,6 +253,7 @@ export enum DwnErrorCode {
   RecordsSubscribeEventLogUnimplemented = 'RecordsSubscribeEventLogUnimplemented',
   RecordsSubscribeFilterMissingRequiredProperties = 'RecordsSubscribeFilterMissingRequiredProperties',
   RecordsSubscribeNestedProtocolPathContextIdInvalid = 'RecordsSubscribeNestedProtocolPathContextIdInvalid',
+  RecordsSubscribeProjectionFailed = 'RecordsSubscribeProjectionFailed',
 
   RecordsWriteAttestationIntegrityMoreThanOneSignature = 'RecordsWriteAttestationIntegrityMoreThanOneSignature',
   RecordsWriteAttestationIntegrityDescriptorCidMismatch = 'RecordsWriteAttestationIntegrityDescriptorCidMismatch',

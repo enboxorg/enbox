@@ -805,6 +805,29 @@ export function testRecordsSubscribeHandler(): void {
           expect(closeSpy.calledOnce).toBe(true);
         });
 
+        it('stops direct grant delivery after the referenced grant is deleted', async () => {
+          const protocol = 'http://records-subscribe-direct-deleted';
+          const { alice, grant, received, subscription } = await createGrantAuthorizedSubscription({
+            delegated: false,
+            protocol,
+          });
+          const closeSpy = sinon.spy(subscription, 'close');
+
+          await writeNote(alice, protocol);
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(received.filter(message => message.type === 'event')).toHaveLength(1);
+          });
+          const grantDelete = await TestDataGenerator.generateRecordsDelete({
+            author   : alice,
+            recordId : grant.message.recordId,
+          });
+          expect((await dwn.processMessage(alice.did, grantDelete.message)).status.code).toBe(202);
+          await writeNote(alice, protocol);
+
+          await expectTerminalAuthorizationFailure(received, 1);
+          expect(closeSpy.calledOnce).toBe(true);
+        });
+
         it('keeps direct-grant delivery independent from an ignored protocol role', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -948,7 +971,6 @@ export function testRecordsSubscribeHandler(): void {
               protocolPath : 'note',
             },
           });
-          expect((await dwn.processMessage(bob.did, delegateGrant.message, { dataStream: delegateGrant.dataStream })).status.code).toBe(202);
           const targetGrant = await TestDataGenerator.generateGrantCreate({
             author      : alice,
             grantedTo   : bob,
@@ -1053,6 +1075,107 @@ export function testRecordsSubscribeHandler(): void {
           expect(authorizationStub.callCount).toBe(1);
         });
 
+        it('treats a not-yet-active delivery grant as retryable', async () => {
+          const protocol = 'http://records-subscribe-not-yet-active';
+          const { alice, received, subscription } = await createGrantAuthorizedSubscription({
+            delegated: false,
+            protocol,
+          });
+          const closeSpy = sinon.spy(subscription, 'close');
+          sinon.stub(GrantAuthorization, 'performBaseValidation').rejects(new DwnError(
+            DwnErrorCode.GrantAuthorizationGrantNotYetActive,
+            'grant is not active yet',
+          ));
+
+          await writeNote(alice, protocol);
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(received.filter(message => message.type === 'error')).toHaveLength(1);
+          });
+          expect(received.find(message => message.type === 'error')?.error.code)
+            .toBe(DwnErrorCode.RecordsSubscribeDeliveryFailed);
+          expect(received.filter(message => message.type === 'event')).toHaveLength(0);
+          expect(closeSpy.calledOnce).toBe(true);
+        });
+
+        it('terminates cursor catch-up without delivering EOSE when authority expires', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocol = 'http://records-subscribe-cursor-authorization';
+          const protocolDefinition: ProtocolDefinition = {
+            protocol,
+            published : false,
+            types     : { note: {} },
+            structure : { note: {} },
+          };
+          const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+          expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+          const grant = await TestDataGenerator.generateGrantCreate({
+            author      : alice,
+            grantedTo   : bob,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+            scope       : {
+              interface    : DwnInterfaceName.Records,
+              method       : DwnMethodName.Read,
+              protocol,
+              protocolPath : 'note',
+            },
+          });
+          expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+          const { cursor } = await eventLog.read(alice.did);
+          await writeNote(alice, protocol);
+          await writeNote(alice, protocol);
+
+          const subscribe = await RecordsSubscribe.create({
+            cursor,
+            filter            : { protocol, protocolPath: 'note' },
+            permissionGrantId : grant.message.recordId,
+            signer            : Jws.createSigner(bob),
+          });
+
+          const permissionGrant = PermissionGrant.parse(grant.dataEncodedMessage);
+          const validTimestamp = Time.createOffsetTimestamp({ seconds: 1 }, permissionGrant.dateGranted);
+          const expiredTimestamp = Time.createOffsetTimestamp({ seconds: 1 }, permissionGrant.dateExpires);
+          sinon.stub(Time, 'getCurrentTimestamp')
+            .onFirstCall().returns(validTimestamp)
+            .onSecondCall().returns(expiredTimestamp);
+
+          const received: SubscriptionMessage[] = [];
+          let replyReturned = false;
+          let terminalArrivedBeforeReply: boolean | undefined;
+          let terminalReceived!: () => void;
+          const terminalReceivedPromise = new Promise<void>((resolve) => { terminalReceived = resolve; });
+          const originalSubscribe = eventLog.subscribe.bind(eventLog);
+          let closeCallCount = 0;
+          sinon.stub(eventLog, 'subscribe').callsFake(async (...args): Promise<EventSubscription> => {
+            const subscription = await originalSubscribe(...args);
+            const originalClose = subscription.close.bind(subscription);
+            subscription.close = async (): Promise<void> => {
+              closeCallCount++;
+              await originalClose();
+            };
+            await terminalReceivedPromise;
+            return subscription;
+          });
+
+          const reply = await dwn.processMessage(alice.did, subscribe.message, {
+            subscriptionHandler: (message): void => {
+              received.push(message);
+              if (message.type === 'error') {
+                terminalArrivedBeforeReply = !replyReturned;
+                terminalReceived();
+              }
+            },
+          });
+          replyReturned = true;
+
+          expect(reply.status.code).toBe(200);
+          expect(received.map(message => message.type)).toEqual(['event', 'error']);
+          expect(received[1].type === 'error' && received[1].error.code)
+            .toBe(DwnErrorCode.RecordsSubscribeDeliveryAuthorizationFailed);
+          expect(terminalArrivedBeforeReply).toBe(true);
+          expect(closeCallCount).toBe(1);
+        });
+
         it('closes before invoking a terminal listener that throws', async () => {
           const protocol = 'http://records-subscribe-throwing-terminal-listener';
           const { alice, grant, received, subscription } = await createGrantAuthorizedSubscription({
@@ -1115,6 +1238,7 @@ export function testRecordsSubscribeHandler(): void {
           });
           expect(subscribeReply.status.code).toBe(200);
           const closeSpy = sinon.spy(subscribeReply.subscription!, 'close');
+          const protocolAuthorizationSpy = sinon.spy(ProtocolAuthorization, 'authorizeQueryOrSubscribe');
 
           await writeNote(alice, protocolDefinition.protocol);
           await Poller.pollUntilSuccessOrTimeout(async () => {
@@ -1126,6 +1250,7 @@ export function testRecordsSubscribeHandler(): void {
 
           await expectTerminalAuthorizationFailure(received, 1);
           expect(closeSpy.calledOnce).toBe(true);
+          expect(protocolAuthorizationSpy.callCount).toBe(0);
           await writeNote(alice, protocolDefinition.protocol);
           await Time.minimalSleep();
           expect(received.filter(message => message.type === 'error')).toHaveLength(1);

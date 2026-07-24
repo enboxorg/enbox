@@ -9,7 +9,7 @@ import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Records } from '../utils/records.js';
 import { RecordsCount } from '../interfaces/records-count.js';
-import { buildRecordsSnapshotFilters, resolveRecordsCollectionVisibility } from './records-collection.js';
+import { authorizeRecordsCollection, buildRecordsSnapshotFilters } from './records-collection.js';
 import {
   countRecordsWithRecordLimitOccupancy,
   queryRecordsWithRecordLimitOccupancy,
@@ -34,7 +34,7 @@ export class RecordsCountHandler implements MethodHandler {
     const requester = Message.getRequester(recordsCount.message);
     let visibility: RecordsCollectionVisibility;
     try {
-      visibility = await resolveRecordsCollectionVisibility(tenant, recordsCount, this.deps);
+      ({ visibility } = await authorizeRecordsCollection(tenant, recordsCount, this.deps));
     } catch (error) {
       return messageReplyFromError(error, 401);
     }
