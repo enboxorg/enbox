@@ -6,9 +6,9 @@
  * and schema into every operation, and provides compile-time path
  * autocompletion plus typed data payloads via the schema map.
  *
- * All record-returning methods wrap the underlying `Record` instances in
- * {@link TypedRecord} so that type information flows through reads, queries,
- * and updates without manual casts.
+ * Record-returning methods preserve the protocol payload type on the canonical
+ * {@link Record} class so type information flows through reads, queries, and
+ * updates without a second runtime wrapper.
  *
  * @example
  * ```ts
@@ -21,18 +21,19 @@
  * const { record } = await social.records.create('thread', {
  *   data: { title: 'Hello World', body: '...' },
  * });
- * // record is TypedRecord<ThreadData>
+ * // record is Record<ThreadData>
  *
  * const data = await record.data.json(); // ThreadData — no cast needed
  *
  * // Query — protocol and protocolPath are auto-injected
  * const { records } = await social.records.query('thread');
- * // records is TypedRecord<ThreadData>[]
+ * // records is Record<ThreadData>[]
  * ```
  */
 
 import type { Protocol } from './protocol.js';
 
+import type { Record } from './record.js';
 import type { RecordView } from './record-view.js';
 
 import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, SyncEngine } from '@enbox/agent';
@@ -43,7 +44,6 @@ import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createRecordView } from './record-view.js';
 import { getTypeName } from '@enbox/dwn-sdk-js';
-import { TypedRecord } from './typed-record.js';
 import { compileRecordFilter, compileRecordQuery } from './record-query.js';
 
 // ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ export type TypedCreateRequest<
    * The context ID of the parent record.
    *
    * Required when creating a child record under a parent in a hierarchical
-   * protocol structure. Use the parent record's {@link TypedRecord.contextId | contextId}
+   * protocol structure. Use the parent record's {@link Record.contextId | contextId}
    * as this value.
    *
    * @example
@@ -260,7 +260,7 @@ export type TypedCreateRequest<
    * Whether to persist the record to the local DWN immediately.
    *
    * Defaults to `true`. Set to `false` to create the record in memory
-   * only — you can call {@link TypedRecord.store | record.store()} later.
+   * only — you can call {@link Record.store | record.store()} later.
    */
   store?: boolean;
 
@@ -270,12 +270,12 @@ export type TypedCreateRequest<
  * Response from {@link TypedEnbox} `records.create()`.
  *
  * Uses a discriminated union so that TypeScript narrows `record` to
- * `TypedRecord<T>` after a `status.code` check:
+ * `Record<T>` after a `status.code` check:
  *
  * ```ts
  * const result = await proto.records.create('notebook', { data });
  * if (result.record) {
- *   // TypeScript knows `record` is TypedRecord<NotebookData> here
+ *   // TypeScript knows `record` is Record<NotebookData> here
  *   console.log(result.record.id);
  * }
  * ```
@@ -288,7 +288,7 @@ export type TypedCreateRequest<
  * @typeParam T - The data type of the created record.
  */
 export type TypedCreateResponse<T = unknown> =
-  | (DwnResponseStatus & { record: TypedRecord<T>; audienceKeyDelivery?: AudienceKeyDeliveryOutcome })
+  | (DwnResponseStatus & { record: Record<T>; audienceKeyDelivery?: AudienceKeyDeliveryOutcome })
   | (DwnResponseStatus & { record: undefined; audienceKeyDelivery?: AudienceKeyDeliveryOutcome });
 
 /**
@@ -298,11 +298,11 @@ export type TypedCreateResponse<T = unknown> =
  */
 export type TypedQueryResponse<T = unknown> = DwnResponseStatus & {
   /**
-   * The matching records, each wrapped as {@link TypedRecord | TypedRecord<T>}.
+   * The matching canonical {@link Record} instances.
    *
    * The array is empty if no records match the filter criteria.
    */
-  records: TypedRecord<T>[];
+  records: Record<T>[];
 
   /**
    * A pagination cursor for fetching the next page of results.
@@ -353,7 +353,7 @@ export type TypedReadRequest<
  * Response from {@link TypedEnbox} `records.read()`.
  *
  * Uses a discriminated union so that TypeScript narrows `record` to
- * `TypedRecord<T>` after a truthiness check:
+ * `Record<T>` after a truthiness check:
  *
  * ```ts
  * const result = await proto.records.read('notebook', { filter: { recordId } });
@@ -365,7 +365,7 @@ export type TypedReadRequest<
  * @typeParam T - The data type of the read record.
  */
 export type TypedReadResponse<T = unknown> =
-  | (DwnResponseStatus & { record: TypedRecord<T> })
+  | (DwnResponseStatus & { record: Record<T> })
   | (DwnResponseStatus & { record: undefined });
 
 /**
@@ -395,7 +395,7 @@ export type TypedDeleteRequest = {
   /**
    * The unique `recordId` of the record to delete.
    *
-   * Use {@link TypedRecord.id | record.id} to obtain this value.
+   * Use {@link Record.id | record.id} to obtain this value.
    */
   recordId: string;
 
@@ -504,9 +504,9 @@ export type VerifyInstalledResult = {
  * A protocol-scoped API that auto-injects `protocol`, `protocolPath`, and
  * `schema` into every DWN operation.
  *
- * All record-returning methods wrap results in {@link TypedRecord} so that
- * the data type `T` (resolved from the schema map) flows end-to-end — from
- * write through read, query, and update — without manual casts.
+ * All record-returning methods preserve the data type `T` on the canonical
+ * {@link Record} class so it flows end-to-end — from write through read,
+ * query, and update — without manual casts.
  *
  * Obtain an instance via `enbox.using(typedProtocol)`.
  *
@@ -958,8 +958,8 @@ export class TypedEnbox<
    * Path parameters provide **compile-time autocompletion** via
    * `ProtocolPaths<D>`, and data types are resolved from the schema map.
    *
-   * Record-returning methods use {@link TypedRecord} instances that carry the
-   * resolved data type from the schema map, providing end-to-end type safety.
+   * Record-returning methods use canonical {@link Record} instances carrying
+   * the resolved data type from the schema map.
    *
    * Available methods:
    * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
@@ -1020,7 +1020,7 @@ export class TypedEnbox<
        * @param request - Create options including the typed `data` payload
        *   and optional fields like `parentContextId`, `tags`, `recipient`.
        * @returns A {@link TypedCreateResponse} containing the DWN response
-       *   `status` and the created {@link TypedRecord}.
+       *   `status` and the created typed {@link Record}.
        *
        * @example
        * ```ts
@@ -1066,7 +1066,7 @@ export class TypedEnbox<
 
         return {
           status,
-          record: record ? new TypedRecord<DataForPath<D, M, Path>>(record) : undefined,
+          record: record as Record<DataForPath<D, M, Path>> | undefined,
           ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}),
         };
       },
@@ -1082,7 +1082,7 @@ export class TypedEnbox<
        * @param request - Optional filter, sort, and pagination options.
        *   Omit entirely to return all records at the path.
        * @returns A {@link TypedQueryResponse} containing `status`, `records`
-       *   (as {@link TypedRecord | TypedRecord<T>[]}), and an optional
+       *   (as typed {@link Record} instances), and an optional
        *   `cursor` for pagination.
        *
        * @example
@@ -1117,7 +1117,7 @@ export class TypedEnbox<
 
         return {
           status,
-          records: records.map((r) => new TypedRecord<DataForPath<D, M, Path>>(r)),
+          records: records as Record<DataForPath<D, M, Path>>[],
           cursor,
         };
       },
@@ -1187,7 +1187,7 @@ export class TypedEnbox<
        * @param request - Read options including a `filter` to identify the
        *   record. See {@link TypedReadRequest} for details.
        * @returns A {@link TypedReadResponse} containing `status` and the
-       *   matching {@link TypedRecord}.
+       *   matching typed {@link Record}.
        *
        * @example
        * ```ts
@@ -1213,7 +1213,7 @@ export class TypedEnbox<
 
         return {
           status,
-          record: record ? new TypedRecord<DataForPath<D, M, Path>>(record) : undefined,
+          record: record as Record<DataForPath<D, M, Path>> | undefined,
         };
       },
 
@@ -1298,8 +1298,8 @@ export function stripEncryptionBlocks(value: unknown): unknown {
     return value.map((item) => stripEncryptionBlocks(item));
   }
 
-  const result: Record<string, unknown> = {};
-  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+  const result: globalThis.Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(value as globalThis.Record<string, unknown>)) {
     if (key === '$encryption' || key === '$keyAgreement') { continue; }
     result[key] = stripEncryptionBlocks(val);
   }
@@ -1310,7 +1310,7 @@ export function stripEncryptionBlocks(value: unknown): unknown {
  * Returns `true` when the given structure node carries an injected
  * `$keyAgreement.publicKeyJwk`.
  */
-function hasKeyAgreementKey(node: Record<string, unknown>): boolean {
+function hasKeyAgreementKey(node: globalThis.Record<string, unknown>): boolean {
   const keyAgreement = node.$keyAgreement as { publicKeyJwk?: unknown } | undefined;
   return keyAgreement?.publicKeyJwk !== undefined;
 }
@@ -1330,18 +1330,18 @@ function hasKeyAgreementKey(node: Record<string, unknown>): boolean {
 function collectMissingKeyAgreementPaths(definition: ProtocolDefinition): string[] {
   const missing: string[] = [];
 
-  if (!hasKeyAgreementKey(definition as unknown as Record<string, unknown>)) {
+  if (!hasKeyAgreementKey(definition as unknown as globalThis.Record<string, unknown>)) {
     missing.push('');
   }
 
-  const walk = (structure: Record<string, unknown>, prefix: string): void => {
+  const walk = (structure: globalThis.Record<string, unknown>, prefix: string): void => {
     for (const key of Object.keys(structure)) {
       if (key.startsWith('$')) { continue; }
 
       const node = structure[key];
       if (node === null || typeof node !== 'object') { continue; }
 
-      const nodeRecord = node as Record<string, unknown>;
+      const nodeRecord = node as globalThis.Record<string, unknown>;
       const path = prefix ? `${prefix}/${key}` : key;
 
       // `$ref` nodes are skipped by the injection (governed by the referenced
@@ -1354,7 +1354,7 @@ function collectMissingKeyAgreementPaths(definition: ProtocolDefinition): string
     }
   };
 
-  walk(definition.structure as Record<string, unknown>, '');
+  walk(definition.structure as globalThis.Record<string, unknown>, '');
   return missing;
 }
 
@@ -1379,7 +1379,7 @@ function normalizePath(path: string): string {
  * Keys starting with `$` are skipped.
  */
 function collectPaths(
-  structure: Record<string, unknown>,
+  structure: globalThis.Record<string, unknown>,
   prefix: string = '',
 ): Set<string> {
   const paths = new Set<string>();
@@ -1392,7 +1392,7 @@ function collectPaths(
 
     const child = structure[key];
     if (child !== null && typeof child === 'object') {
-      for (const nested of collectPaths(child as Record<string, unknown>, fullPath)) {
+      for (const nested of collectPaths(child as globalThis.Record<string, unknown>, fullPath)) {
         paths.add(nested);
       }
     }

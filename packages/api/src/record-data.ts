@@ -5,9 +5,10 @@
  * evaluated `stream()` function with convenience accessors that mirror the
  * Fetch `Response` API (`blob()`, `bytes()`, `json()`, `text()`).
  *
- * Data is **cached after first read** so that subsequent calls to any accessor
- * return the same data without re-fetching. Concurrent calls are safe — only
- * one fetch is performed and all callers share the result.
+ * Convenience consumption is cached after the first read so subsequent calls
+ * on the same accessor do not re-fetch. Concurrent convenience calls are safe
+ * and share one fetch. Direct `stream()` access remains unbuffered unless a
+ * convenience call has already populated the cache.
  *
  * Extracted from `record.ts` so the convenience-method boilerplate lives in
  * its own module while the stream-resolution logic (which is tightly coupled
@@ -32,19 +33,21 @@ const DATA_CACHE_LIMIT = 10 * 1024 * 1024; // 10 MB
  * formats, plus `then`/`catch` so the object can be awaited directly to
  * obtain the underlying `ReadableStream`.
  *
- * Data is cached after the first read so that repeated calls (e.g.,
- * `data.json()` followed by `data.text()`) do not trigger redundant
- * network requests.
+ * Convenience calls on the same accessor are cached after the first read so
+ * sequences such as `data.json()` followed by `data.text()` do not trigger
+ * redundant network requests. Direct `stream()` calls remain unbuffered.
+ *
+ * @typeParam T - The JSON payload type returned by {@link RecordData.json | json()}.
  *
  * @beta
  */
-export type RecordData = {
+export type RecordData<T = unknown> = {
   /** Consume the data as a `Blob`. */
   blob: () => Promise<Blob>;
   /** Consume the data as raw bytes. */
   bytes: () => Promise<Uint8Array>;
   /** Parse the data as JSON. */
-  json: <T = unknown>() => Promise<T>;
+  json: () => Promise<T>;
   /** Consume the data as a UTF-8 string. */
   text: () => Promise<string>;
   /** Obtain the underlying Web `ReadableStream`. */
@@ -61,11 +64,10 @@ export type RecordData = {
 /**
  * Create a {@link RecordData} wrapper around a `stream` provider function.
  *
- * The first call to any accessor (`blob`, `bytes`, `json`, `text`, `stream`)
- * consumes the underlying stream and caches the raw bytes (up to
- * {@link DATA_CACHE_LIMIT}). Subsequent calls reconstruct a fresh stream
- * from the cache, preventing the common footgun of stale data after stream
- * consumption.
+ * The first convenience call (`blob`, `bytes`, `json`, or `text`) consumes the
+ * underlying stream and caches the raw bytes (up to {@link DATA_CACHE_LIMIT}).
+ * Subsequent calls on that accessor reconstruct a fresh stream from the cache.
+ * A direct `stream()` call preserves streaming and does not eagerly buffer.
  *
  * Concurrent calls are safe: if multiple accessors are called simultaneously,
  * only one stream fetch is performed and all callers share the result.
@@ -73,10 +75,14 @@ export type RecordData = {
  * @param streamFn   - A function that returns a `Promise<ReadableStream>` for the record data.
  * @param dataFormat - The MIME type used when constructing Blobs.
  * @returns A {@link RecordData} object with convenience accessors.
+ * @typeParam T - The JSON payload type returned by the accessor.
  *
  * @beta
  */
-export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFormat: string | undefined): RecordData {
+export function createRecordData<T = unknown>(
+  streamFn: () => Promise<ReadableStream>,
+  dataFormat: string | undefined,
+): RecordData<T> {
   // In-memory byte cache. Populated after the first successful read.
   let cachedBytes: Uint8Array | undefined;
   // In-flight read promise. Ensures concurrent callers share a single fetch.
@@ -117,7 +123,21 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
     }
   }
 
-  const dataObj: RecordData = {
+  const stream = async (): Promise<ReadableStream> => {
+    // If we have cached bytes, reconstruct a fresh stream from them.
+    if (cachedBytes) {
+      return new ReadableStream({
+        start(controller): void {
+          controller.enqueue(cachedBytes);
+          controller.close();
+        },
+      });
+    }
+    // Otherwise delegate to the original stream provider.
+    return streamFn();
+  };
+
+  const dataObj: RecordData<T> = {
 
     /**
      * Returns the data of the current record as a `Blob`.
@@ -151,7 +171,7 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
      *
      * @beta
      */
-    async json<T = unknown>(): Promise<T> {
+    async json(): Promise<T> {
       const bytes = await getBytes();
       return JSON.parse(new TextDecoder().decode(bytes)) as T;
     },
@@ -183,19 +203,7 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
      *
      * @beta
      */
-    async stream(): Promise<ReadableStream> {
-      // If we have cached bytes, reconstruct a fresh stream from them.
-      if (cachedBytes) {
-        return new ReadableStream({
-          start(controller): void {
-            controller.enqueue(cachedBytes);
-            controller.close();
-          },
-        });
-      }
-      // Otherwise delegate to the original stream provider.
-      return streamFn();
-    },
+    stream,
 
     /**
      * Attaches callbacks for the resolution and/or rejection of the `Promise` returned by
@@ -213,7 +221,7 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
       onFulfilled?: (value: ReadableStream) => ReadableStream | PromiseLike<ReadableStream>,
       onRejected?: (reason: any) => PromiseLike<never>,
     ): Promise<ReadableStream> {
-      return this.stream().then(onFulfilled, onRejected);
+      return stream().then(onFulfilled, onRejected);
     },
 
     /**
@@ -228,7 +236,7 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
      *          original fulfillment value if the promise is instead fulfilled.
      */
     catch(onRejected?: (reason: any) => PromiseLike<never>): Promise<ReadableStream> {
-      return this.stream().catch(onRejected);
+      return stream().catch(onRejected);
     }
   };
 

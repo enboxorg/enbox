@@ -120,7 +120,7 @@ function createTyped(
   return typed;
 }
 
-function rawRecord(id: string): Record {
+function testRecord(id: string): Record {
   return {
     id,
     data: {
@@ -260,8 +260,8 @@ describe('RecordView', () => {
   });
 
   it('installs a structural wake before querying and closes the opening race', async () => {
-    let visibleRecord = rawRecord('before-wake');
-    const committedRecord = rawRecord('after-wake');
+    let visibleRecord = testRecord('before-wake');
+    const committedRecord = testRecord('after-wake');
     const harness = createHarness(async () => ok([visibleRecord]));
     const originalSubscribe = harness.dwn.records.subscribe;
     let handlerReturn: unknown;
@@ -288,7 +288,7 @@ describe('RecordView', () => {
 
     await waitFor(() => {
       expect(harness.queryRequests).toHaveLength(1);
-      expect(view.getSnapshot().records[0]?.rawRecord).toBe(committedRecord);
+      expect(view.getSnapshot().records[0]).toBe(committedRecord);
     });
     expect(handlerReturn).toBeUndefined();
     expect(harness.subscribeRequests).toHaveLength(1);
@@ -357,7 +357,7 @@ describe('RecordView', () => {
   });
 
   it('rematerializes when a record changes out of a mutable query predicate', async () => {
-    const draft = rawRecord('draft');
+    const draft = testRecord('draft');
     const harness = createHarness(async (_request, call) => ok(call === 1 ? [draft] : []));
     const view = await createTyped(harness).records.observe('note', {
       filter     : { tags: { status: 'draft' } },
@@ -375,7 +375,7 @@ describe('RecordView', () => {
   });
 
   it('wakes a full-record limited view when sibling changes demote and promote its record', async () => {
-    const target = rawRecord('i1');
+    const target = testRecord('i1');
     const harness = createHarness(async (_request, call) => ok(call === 2 ? [] : [target]));
     const view = await createTyped(harness).records.observe('folder/section/item', {
       filter: {
@@ -401,7 +401,7 @@ describe('RecordView', () => {
     // the still-stored target without requiring a second event for it.
     harness.emit(recordEvent());
     await waitFor(() => {
-      expect(view.getSnapshot().records[0]?.rawRecord).toBe(target);
+      expect(view.getSnapshot().records[0]).toBe(target);
       expect(harness.queryRequests).toHaveLength(3);
     });
     await view.close();
@@ -427,9 +427,9 @@ describe('RecordView', () => {
 
   it('coalesces a wake storm and never publishes the superseded pass', async () => {
     let releaseActive!: (response: RecordsQueryResponse) => void;
-    const first = rawRecord('initial');
-    const stale = rawRecord('stale');
-    const latest = rawRecord('latest');
+    const first = testRecord('initial');
+    const stale = testRecord('stale');
+    const latest = testRecord('latest');
     const harness = createHarness(async (_request, call) => {
       if (call === 1) {
         return ok([first]);
@@ -445,7 +445,7 @@ describe('RecordView', () => {
     view.subscribe((snapshot): void => {
       const record = snapshot.records[0];
       if (record !== undefined) {
-        published.push(record.rawRecord.id);
+        published.push(record.id);
       }
     });
 
@@ -458,14 +458,14 @@ describe('RecordView', () => {
 
     await waitFor(() => {
       expect(harness.queryRequests).toHaveLength(3);
-      expect(view.getSnapshot().records[0]?.rawRecord).toBe(latest);
+      expect(view.getSnapshot().records[0]).toBe(latest);
     });
     expect(published).toEqual(['latest']);
     await view.close();
   });
 
   it('publishes immutable bounded snapshots without consuming record data', async () => {
-    const record = rawRecord('bounded');
+    const record = testRecord('bounded');
     const harness = createHarness(async () => ok([record], { messageCid: 'next', value: '2' }));
     const view = await createTyped(harness).records.observe('note', { pagination: { limit: 1 } });
 
@@ -474,7 +474,7 @@ describe('RecordView', () => {
     expect(snapshot.hasMore).toBe(true);
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.records)).toBe(true);
-    expect(snapshot.records[0]?.rawRecord).toBe(record);
+    expect(snapshot.records[0]).toBe(record);
 
     const { getSnapshot, subscribe } = view;
     let notified = false;
@@ -487,9 +487,9 @@ describe('RecordView', () => {
   });
 
   it('isolates listener failures and applies listener mutations to later publications', async () => {
-    const initial = rawRecord('initial');
-    const firstWake = rawRecord('first-wake');
-    const secondWake = rawRecord('second-wake');
+    const initial = testRecord('initial');
+    const firstWake = testRecord('first-wake');
+    const secondWake = testRecord('second-wake');
     const harness = createHarness(async (_request, call) => {
       return ok([call === 1 ? initial : call === 2 ? firstWake : secondWake]);
     });
@@ -500,18 +500,18 @@ describe('RecordView', () => {
     let lateListenerAdded = false;
     let unsubscribeSecond = (): void => {};
     view.subscribe((snapshot): void => {
-      notifications.push(`first:${snapshot.records[0]?.rawRecord.id}`);
+      notifications.push(`first:${snapshot.records[0]?.id}`);
       unsubscribeSecond();
       if (!lateListenerAdded) {
         lateListenerAdded = true;
         view.subscribe((laterSnapshot): void => {
-          notifications.push(`late:${laterSnapshot.records[0]?.rawRecord.id}`);
+          notifications.push(`late:${laterSnapshot.records[0]?.id}`);
         });
       }
       throw new Error('consumer failed');
     });
     unsubscribeSecond = view.subscribe((snapshot): void => {
-      notifications.push(`second:${snapshot.records[0]?.rawRecord.id}`);
+      notifications.push(`second:${snapshot.records[0]?.id}`);
     });
 
     harness.emit(recordEvent());
@@ -547,7 +547,7 @@ describe('RecordView', () => {
   });
 
   it('publishes the fresh initial materialization when replication is paused', async () => {
-    const local = rawRecord('local-while-paused');
+    const local = testRecord('local-while-paused');
     const harness = createHarness(async () => ok([local], { messageCid: 'next-page', value: 'cursor' }));
     const fakeSync = createSync();
     fakeSync.links = [link('paused', 'offline')];
@@ -558,7 +558,7 @@ describe('RecordView', () => {
 
     await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
     const snapshot = view.getSnapshot();
-    expect(snapshot.records[0]?.rawRecord).toBe(local);
+    expect(snapshot.records[0]).toBe(local);
     expect(snapshot.hasMore).toBe(true);
     if (snapshot.state !== 'error') {
       throw new Error(`expected an error snapshot, received '${snapshot.state}'`);
@@ -568,8 +568,8 @@ describe('RecordView', () => {
   });
 
   it('publishes a fresh local materialization when a wake arrives while replication is paused', async () => {
-    const initial = rawRecord('initial');
-    const local = rawRecord('local-while-paused');
+    const initial = testRecord('initial');
+    const local = testRecord('local-while-paused');
     const harness = createHarness(async (_request, call) => call === 1
       ? ok([initial])
       : ok([local], { messageCid: 'next-page', value: 'cursor' }));
@@ -585,7 +585,7 @@ describe('RecordView', () => {
 
     await waitFor(() => {
       expect(view.getSnapshot().state).toBe('error');
-      expect(view.getSnapshot().records[0]?.rawRecord).toBe(local);
+      expect(view.getSnapshot().records[0]).toBe(local);
     });
     const snapshot = view.getSnapshot();
     expect(snapshot.hasMore).toBe(true);
@@ -597,7 +597,7 @@ describe('RecordView', () => {
   });
 
   it('requires every relevant link to be live, online, and pull-current', async () => {
-    const harness = createHarness(async () => ok([rawRecord('local')]));
+    const harness = createHarness(async () => ok([testRecord('local')]));
     const fakeSync = createSync();
     fakeSync.links = [
       link('live'),
@@ -642,7 +642,7 @@ describe('RecordView', () => {
   });
 
   it('ignores unrelated tenants, protocols, and replication links', async () => {
-    const harness = createHarness(async () => ok([rawRecord('local')]));
+    const harness = createHarness(async () => ok([testRecord('local')]));
     const fakeSync = createSync();
     fakeSync.options = { protocols: 'all' };
     fakeSync.links = [
@@ -705,7 +705,7 @@ describe('RecordView', () => {
   });
 
   it('recovers a query error on the next wake', async () => {
-    const recovered = rawRecord('recovered');
+    const recovered = testRecord('recovered');
     const harness = createHarness(async (_request, call) => call === 1
       ? { status: { code: 500, detail: 'query failed' }, records: [] }
       : ok([recovered]));
@@ -716,13 +716,13 @@ describe('RecordView', () => {
     harness.emit(recordEvent());
     await waitFor(() => {
       expect(view.getSnapshot().state).toBe('ready');
-      expect(view.getSnapshot().records[0]?.rawRecord).toBe(recovered);
+      expect(view.getSnapshot().records[0]).toBe(recovered);
     });
     await view.close();
   });
 
   it('publishes a terminal subscription error before closing the view', async () => {
-    const harness = createHarness(async () => ok([rawRecord('retained')]));
+    const harness = createHarness(async () => ok([testRecord('retained')]));
     const view = await createTyped(harness).records.observe('note', { pagination: { limit: 10 } });
     await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
     const published: string[] = [];
@@ -737,14 +737,14 @@ describe('RecordView', () => {
     await waitFor(() => { expect(harness.closeCount()).toBe(1); });
     expect(published).toEqual(['error']);
     expect(view.getSnapshot().state).toBe('error');
-    expect(view.getSnapshot().records[0]?.rawRecord.id).toBe('retained');
+    expect(view.getSnapshot().records[0]?.id).toBe('retained');
     expect(view.getSnapshot().error?.message).toContain('GrantRevoked');
   });
 
   it('publishes one terminal error and fences an in-flight query when the session aborts', async () => {
     let release!: (response: RecordsQueryResponse) => void;
-    const initial = rawRecord('initial');
-    const late = rawRecord('late');
+    const initial = testRecord('initial');
+    const late = testRecord('late');
     const harness = createHarness(async (_request, call) => call === 1
       ? ok([initial])
       : new Promise<RecordsQueryResponse>((resolve) => { release = resolve; }));
@@ -762,7 +762,7 @@ describe('RecordView', () => {
     abortController.abort(abortReason);
     const abortedSnapshot = view.getSnapshot();
     expect(abortedSnapshot.state).toBe('error');
-    expect(abortedSnapshot.records[0]?.rawRecord).toBe(initial);
+    expect(abortedSnapshot.records[0]).toBe(initial);
     expect(abortedSnapshot.error?.message).toBe('RecordView: owning session ended.');
     expect(abortedSnapshot.error?.cause).toBe(abortReason);
     expect(published).toEqual(['error']);
@@ -868,7 +868,7 @@ describe('RecordView', () => {
 
   it('invalidates a local-only ready snapshot when a replication registration is added', async () => {
     let releaseRegistrationQuery!: (response: RecordsQueryResponse) => void;
-    const local = rawRecord('local');
+    const local = testRecord('local');
     const harness = createHarness(async (_request, call) => call === 2
       ? new Promise<RecordsQueryResponse>((resolve) => { releaseRegistrationQuery = resolve; })
       : ok([local]));
@@ -906,8 +906,8 @@ describe('RecordView', () => {
   });
 
   it('distinguishes an unbaselined replica, a completed pull, stale links, and paused links', async () => {
-    const first = rawRecord('first');
-    const offlineResult = rawRecord('offline-local-change');
+    const first = testRecord('first');
+    const offlineResult = testRecord('offline-local-change');
     const harness = createHarness(async (_request, call) => ok([call < 3 ? first : offlineResult]));
     const fakeSync = createSync();
     fakeSync.links = [link('live', 'unknown')];
@@ -918,7 +918,7 @@ describe('RecordView', () => {
       expect(view.getSnapshot().state).toBe('loading');
       expect(view.getSnapshot().records).toHaveLength(1);
     });
-    expect(view.getSnapshot().records[0]?.rawRecord).toBe(first);
+    expect(view.getSnapshot().records[0]).toBe(first);
 
     fakeSync.links = [link('live')];
     fakeSync.emit({
@@ -946,7 +946,7 @@ describe('RecordView', () => {
     expect(view.getSnapshot().state).toBe('stale');
     expect(view.getSnapshot().records).toEqual(readyRecords);
     await waitFor(() => {
-      expect(view.getSnapshot().records[0]?.rawRecord).toBe(offlineResult);
+      expect(view.getSnapshot().records[0]).toBe(offlineResult);
     });
     expect(view.getSnapshot().state).toBe('stale');
 
@@ -962,14 +962,14 @@ describe('RecordView', () => {
     });
     await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
     expect(view.getSnapshot().error?.message).toContain('replication is paused');
-    expect(view.getSnapshot().records[0]?.rawRecord).toBe(offlineResult);
+    expect(view.getSnapshot().records[0]).toBe(offlineResult);
     await view.close();
   });
 
   it('keeps a paused error through a following offline event while rematerialization is blocked', async () => {
     let releaseQuery!: (response: RecordsQueryResponse) => void;
-    const initial = rawRecord('initial');
-    const localWhilePaused = rawRecord('local-while-paused');
+    const initial = testRecord('initial');
+    const localWhilePaused = testRecord('local-while-paused');
     const harness = createHarness(async (_request, call) => {
       if (call === 1) {
         return ok([initial]);
@@ -1000,7 +1000,7 @@ describe('RecordView', () => {
     });
     const pausedSnapshot = view.getSnapshot();
     expect(pausedSnapshot.state).toBe('error');
-    expect(pausedSnapshot.records[0]?.rawRecord).toBe(initial);
+    expect(pausedSnapshot.records[0]).toBe(initial);
 
     fakeSync.emit({
       type           : 'link:connectivity-change',
@@ -1013,9 +1013,9 @@ describe('RecordView', () => {
     });
     expect(view.getSnapshot()).toBe(pausedSnapshot);
 
-    releaseQuery(ok([rawRecord('superseded')]));
+    releaseQuery(ok([testRecord('superseded')]));
     await waitFor(() => {
-      expect(view.getSnapshot().records[0]?.rawRecord).toBe(localWhilePaused);
+      expect(view.getSnapshot().records[0]).toBe(localWhilePaused);
     });
     expect(view.getSnapshot().state).toBe('error');
     await view.close();
@@ -1051,8 +1051,8 @@ describe('RecordView session lifecycle integration', () => {
       await typed.configure();
 
       let releaseQuery!: (response: RecordsQueryResponse) => void;
-      const initial = rawRecord('initial');
-      const late = rawRecord('late');
+      const initial = testRecord('initial');
+      const late = testRecord('late');
       const queryHarness = createHarness(async (_request, call) => call === 1
         ? ok([initial])
         : new Promise((resolve) => { releaseQuery = resolve; }));
@@ -1072,7 +1072,7 @@ describe('RecordView session lifecycle integration', () => {
       expect(replacementSignal.aborted).toBe(false);
       const abortedSnapshot = view.getSnapshot();
       expect(abortedSnapshot.state).toBe('error');
-      expect(abortedSnapshot.records[0]?.rawRecord).toBe(initial);
+      expect(abortedSnapshot.records[0]).toBe(initial);
       expect(abortedSnapshot.error?.message).toBe('RecordView: owning session ended.');
       expect((abortedSnapshot.error?.cause as Error).name).toBe('AbortError');
       expect(publications).toBe(1);

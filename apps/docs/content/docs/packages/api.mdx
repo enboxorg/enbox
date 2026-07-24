@@ -123,7 +123,7 @@ const { status, record } = await tasks.records.create('task', {
   data : { title: 'Buy milk', done: false },
   tags : { done: false },
 });
-// record is TypedRecord<TaskData>
+// record is Record<TaskData>
 ```
 
 Create options:
@@ -201,7 +201,7 @@ await view.close();
 
 Observed views are local-replica resources: they do not accept `from`.
 Subscription payloads never mutate collection truth directly, and record data
-continues to decrypt lazily through each `TypedRecord`. Views created through
+continues to decrypt lazily through each `Record<T>`. Views created through
 `enbox.using()` publish one terminal `error` snapshot and close when that Enbox
 session ends. After automatic grant refresh, `ConnectionStore` publishes a
 replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
@@ -215,7 +215,7 @@ writes remain visible. Query, authorization, or terminal sync failures report
 `error` while retaining the latest successful records. `hasMore` is always a
 boolean and is false until the first query completes.
 
-Snapshots and their record arrays are immutable. A `TypedRecord` represents
+Snapshots and their record arrays are immutable. A `Record<T>` represents
 the queried version until the caller explicitly invokes that handle's regular
 `update()` or `delete()` method; its data is still read lazily.
 
@@ -273,9 +273,12 @@ Or delete via the record instance:
 await record.delete();
 ```
 
-## TypedRecord
+## Record&lt;T&gt;
 
-Every record returned by `TypedEnbox` is wrapped in `TypedRecord<T>`, which provides type-safe data access and lifecycle methods.
+`Record<T>` is the one mutable record class. `TypedEnbox` returns the same
+runtime `Record` used by the lower-level DWN API while carrying the selected
+protocol payload type as `T`; there is no second wrapper or `rawRecord` escape
+hatch.
 
 ### Data accessors
 
@@ -287,7 +290,9 @@ const bytes = await record.data.bytes();  // Promise<Uint8Array>
 const stream = await record.data.stream(); // Promise<ReadableStream>
 ```
 
-Data is cached in memory up to 10 MB — subsequent calls to any accessor return the cached value without re-reading from the DWN.
+When consuming multiple representations, capture `const data = record.data`.
+Convenience calls on that accessor cache up to 10 MB without re-reading from
+the DWN. Direct `stream()` calls remain streaming and are not eagerly buffered.
 
 ### Metadata
 
@@ -316,12 +321,31 @@ Data is cached in memory up to 10 MB — subsequent calls to any accessor return
 
 ```ts
 const { status, record: updated } = await record.update({
-  data: { title: 'Buy oat milk', done: false },  // Partial<TaskData>
+  data: { title: 'Buy oat milk', done: false },  // complete TaskData
   tags: { priority: 'high' },
 });
 ```
 
-The `data` field accepts `Partial<T>` — only supply the fields you want to change. Both the returned record and the original instance reflect the updated state.
+`update({ data })` replaces the payload wholesale, so `data` must contain the
+complete `T`. Omitting a field removes it from the stored payload. Both the
+returned record and the original instance reflect the updated state.
+
+#### patch
+
+Use `patch()` when only part of a JSON object should change:
+
+```ts
+const { status, record: updated } = await record.patch({
+  done: true,
+});
+```
+
+`patch()` reads the current JSON object, performs a shallow merge, and writes
+the complete merged payload. Nested objects are replaced rather than
+deep-merged, `undefined` leaves a field unchanged, and `null` deletes an
+optional field. Set a required nullable field to `null` with a complete
+`update()` instead. Like any read-merge-write operation, `patch()` can overwrite
+a concurrent update that lands between its read and write.
 
 #### delete
 
@@ -343,7 +367,7 @@ await record.delete({ prune: true });  // also delete child records
 | `record.send(target?)` | Push the record to a remote DWN. Defaults to your own remote DWN. |
 | `record.store(importRecord?)` | Persist to local DWN (for records created with `store: false`) |
 | `record.import(store?)` | Re-sign under your identity and optionally store (for importing others' records) |
-| `record.rawRecord` | Escape hatch to the underlying untyped `Record` |
+| `record.rawMessage` | Exact `RecordsWrite` or `RecordsDelete` message backing the current record state |
 
 ## Anonymous queries
 

@@ -216,7 +216,7 @@ Binary-only types (`avatar`, `hero`) do not have JSON Schemas since they store r
 Types annotated with `$recordLimit: { max: 1 }` expose one deterministic occupant per parent scope through Query, Read, Count, and subscription snapshots:
 
 - Create the record with `records.create()` and load it with `records.query()`.
-- Update the returned `TypedRecord` explicitly with `record.update()`.
+- Update the returned `Record<T>` explicitly with `record.update()`.
 - Competing valid writes remain stored but hidden from the projected population and may become visible if the current occupant is deleted.
 - Currently annotated singletons: `profile`, `avatar`, `hero`, `theme`, `locale`, `privacy`, `wallet`
 

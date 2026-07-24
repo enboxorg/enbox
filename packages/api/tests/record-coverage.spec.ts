@@ -43,7 +43,7 @@ function createValidAuthorization(did: string = 'did:example:alice'): any {
   };
 }
 
-function createRecordOptions(overrides: Record<string, unknown> = {}): any {
+function createRecordOptions(overrides: globalThis.Record<string, unknown> = {}): any {
   return {
     author       : 'did:example:alice',
     connectedDid : 'did:example:alice',

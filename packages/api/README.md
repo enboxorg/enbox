@@ -125,9 +125,10 @@ unsubscribe();
 await view.close();
 ```
 
-Returned records are `TypedRecord<T>` instances. They expose typed
+Returned records are canonical `Record<T>` instances. They expose typed
 `data.json()` plus `data.text()`, `data.bytes()`, `data.blob()`, and
-`data.stream()`.
+`data.stream()` without wrapping a second record object. `update({ data })`
+replaces the full payload; use `patch()` for a shallow partial JSON update.
 
 `observe()` watches only the connected tenant's local replica. Subscription
 events are wake hints: every immutable snapshot is rebuilt from the same
@@ -147,7 +148,7 @@ failures publish `error` while retaining the latest successful records.
 `hasMore` is always present: it is `false` before the first query and whenever
 the latest bounded result has no continuation cursor.
 
-The snapshot object and records array are immutable. Each `TypedRecord` handle
+The snapshot object and records array are immutable. Each `Record<T>` handle
 represents the queried version until the caller explicitly uses that handle's
 normal `update()` or `delete()` method; record data remains lazily read.
 
@@ -212,8 +213,8 @@ coordinates writes across browser contexts.
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
 | `RecordView<T>` | Closeable bounded local query materialization with immutable snapshots. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
-| `TypedRecord<T>` | Type-safe record wrapper. |
-| `Record` / `ReadOnlyRecord` | Mutable and anonymous-read record wrappers. |
+| `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |
+| `ReadOnlyRecord` | Anonymous-read record handle. |
 | `DidApi` | DID resolution helpers. |
 | `DwnReaderApi` | Anonymous read-only DWN API. |
 

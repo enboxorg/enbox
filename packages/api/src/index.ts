@@ -38,10 +38,7 @@ export * from './read-only-record.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
 export type { RecordView, RecordViewListener, RecordViewSnapshot, RecordViewState } from './record-view.js';
 export * from './record.js';
-export * from './record-data.js';
-export * from './record-types.js';
 export * from './typed-enbox.js';
-export * from './typed-record.js';
 export * from './vc-api.js';
 
 // Agent types surfaced on public API responses — re-exported so apps can name

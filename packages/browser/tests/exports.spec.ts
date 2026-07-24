@@ -47,6 +47,14 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.defineProtocol).toBe('function');
   });
 
+  it('re-exports the canonical Record class from @enbox/api', async () => {
+    const [browser, api] = await Promise.all([
+      getBrowserExports(),
+      import('@enbox/api'),
+    ]);
+    expect(browser.Record).toBe(api.Record);
+  });
+
   it('re-exports AuthManager from @enbox/auth', async () => {
     const mod = await getBrowserExports();
     expect(mod.AuthManager).toBeDefined();

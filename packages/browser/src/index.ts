@@ -152,8 +152,8 @@ export type { QrCode, QrSvgOptions } from './ui/qr.js';
 // more specialized is still available by importing the underlying package
 // directly.
 
-// Typed record wrapper (from @enbox/api).
-export { TypedRecord } from '@enbox/api';
+// Canonical typed record (from @enbox/api).
+export { Record } from '@enbox/api';
 
 // Custom storage adapter + DWN registration provider-auth callback shapes
 // (from @enbox/auth).

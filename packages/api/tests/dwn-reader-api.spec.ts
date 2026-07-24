@@ -266,13 +266,19 @@ describe('ReadOnlyRecord', () => {
   it('should expose all read-only metadata properties', () => {
     anonStub = createAnonymousDwnStub();
 
+    const authorization = { signature: { signatures: [] } };
+    const attestation = { payload: 'attestation', signatures: [] };
+    const initialWrite = createMockRecordsWriteMessage({ recordId: 'initial-record' });
     const msg = createMockRecordsWriteMessage({
-      recordId  : 'record-123',
-      contextId : 'ctx-456',
+      recordId      : 'record-123',
+      contextId     : 'ctx-456',
+      authorization : authorization as any,
+      attestation   : attestation as any,
     });
 
     const record = new ReadOnlyRecord({
       rawMessage   : msg,
+      initialWrite,
       remoteOrigin : targetDid,
       anonymousDwn : anonStub as unknown as AnonymousDwnApi,
     });
@@ -290,6 +296,9 @@ describe('ReadOnlyRecord', () => {
     expect(record.datePublished).toBe('2024-06-15T10:00:00.000000Z');
     expect(record.timestamp).toBe('2024-06-15T10:00:00.000000Z');
     expect(record.remoteOrigin).toBe(targetDid);
+    expect(record.authorization).toBe(authorization);
+    expect(record.attestation).toBe(attestation);
+    expect(record.initialWrite).toBe(initialWrite);
   });
 
   it('should return data from encodedData when available', async () => {
@@ -367,6 +376,38 @@ describe('ReadOnlyRecord', () => {
     const readArgs = anonStub.recordsRead.args[0];
     expect(readArgs[0]).toBe(targetDid);
     expect(readArgs[1].filter.recordId).toBe('refetch-test');
+  });
+
+  it('should coalesce concurrent convenience reads from a captured data accessor', async () => {
+    anonStub = createAnonymousDwnStub();
+
+    const msg = createMockRecordsWriteMessage({ recordId: 'coalesced-read-test' });
+    const record = new ReadOnlyRecord({
+      rawMessage   : msg,
+      remoteOrigin : targetDid,
+      anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+    });
+    const expectedText = 'shared remote data';
+
+    anonStub.recordsRead.resolves({
+      status : { code: 200, detail: 'OK' },
+      entry  : {
+        recordsWrite : msg,
+        data         : new ReadableStream({
+          start(controller): void {
+            controller.enqueue(new TextEncoder().encode(expectedText));
+            controller.close();
+          },
+        }),
+      },
+    } as RecordsReadReply);
+
+    const data = record.data;
+    const [text, bytes] = await Promise.all([data.text(), data.bytes()]);
+
+    expect(text).toBe(expectedText);
+    expect(bytes).toEqual(new TextEncoder().encode(expectedText));
+    expect(anonStub.recordsRead.calledOnce).toBe(true);
   });
 
   it('should serialize to JSON with toJSON()', () => {

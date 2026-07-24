@@ -31,9 +31,9 @@ import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { Record } from '../src/record.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
-import { TypedRecord } from '../src/typed-record.js';
 
 // ---------------------------------------------------------------------------
 // Local protocol fixtures
@@ -440,7 +440,7 @@ describe('protocol API integration fixtures', () => {
       });
 
       expect(status.code).toBe(202);
-      expect(record).toBeInstanceOf(TypedRecord);
+      expect(record).toBeInstanceOf(Record);
       expect(record.protocolPath).toBe('friend');
 
       const data = await record.data.json();
@@ -504,7 +504,6 @@ describe('protocol API integration fixtures', () => {
 
       const { records } = await typed.records.query('friend');
       expect(records).toHaveLength(2);
-      expect(records[0]).toBeInstanceOf(TypedRecord);
     });
   });
 
@@ -532,14 +531,11 @@ describe('protocol API integration fixtures', () => {
       });
 
       expect(result.status.code).toBe(202);
-      expect(result.record).toBeInstanceOf(TypedRecord);
-
       const data = await result.record.data.json();
       expect(data.displayName).toBe('Alice');
 
       const { records } = await typed.records.query('profile');
       const fetched = records[0];
-      expect(fetched).toBeInstanceOf(TypedRecord);
       const fetchedData = await fetched.data.json();
       expect(fetchedData.displayName).toBe('Alice');
     });
@@ -559,7 +555,6 @@ describe('protocol API integration fixtures', () => {
 
       const { records } = await typed.records.query('profile');
       const fetched = records[0];
-      expect(fetched).toBeInstanceOf(TypedRecord);
       const data = await fetched.data.json();
       expect(data.displayName).toBe('Alice v2');
       expect(data.bio).toBe('Updated bio');
@@ -605,7 +600,6 @@ describe('protocol API integration fixtures', () => {
 
       const { records } = await typed.records.query('wallet');
       const fetched = records[0];
-      expect(fetched).toBeInstanceOf(TypedRecord);
       const data = await fetched.data.json();
       expect(data.webWallets).toEqual(['https://wallet.example.com']);
     });
@@ -624,7 +618,6 @@ describe('protocol API integration fixtures', () => {
 
       const { records } = await typed.records.query('wallet');
       const fetched = records[0];
-      expect(fetched).toBeInstanceOf(TypedRecord);
       const data = await fetched.data.json();
       expect(data.webWallets).toEqual(['https://v2.wallet.com', 'https://alt.wallet.com']);
     });
@@ -646,7 +639,6 @@ describe('protocol API integration fixtures', () => {
       });
 
       expect(status.code).toBe(202);
-      expect(record).toBeInstanceOf(TypedRecord);
       expect(record.protocolPath).toBe('status');
 
       const data = await record.data.json();
