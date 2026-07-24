@@ -375,7 +375,7 @@ export function testAuthorDelegatedGrant(): void {
       expect(carolWriteReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
     });
 
-    it('should only allow correct entity invoking an author-delegated grant to read and query ', async () => {
+    it('should independently enforce target protocol roles for author-delegated reads and queries', async () => {
       // scenario:
       // 1. Alice creates read and query delegated grants for device X,
       // 2. Bob starts a chat thread with Alice on his DWN
@@ -491,7 +491,31 @@ export function testAuthorDelegatedGrant(): void {
       expect(deviceXRecordsQueryReply.status.code).toBe(200);
       expect(deviceXRecordsQueryReply.entries).toHaveLength(1);
 
-      // verify device X is able to read the chat message from Bob's DWN
+      // The author-to-device delegation does not grant Alice access to Bob's data.
+      // Verify that Bob's protocol still independently authorizes Alice.
+      const recordsReadByDeviceXWithoutRole = await RecordsRead.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : readGrantForDeviceX.dataEncodedMessage,
+        filter         : {
+          recordId: chatRecord.message.recordId
+        }
+      });
+      const deviceXRecordsReadWithoutRoleReply = await dwn.processMessage(bob.did, recordsReadByDeviceXWithoutRole.message);
+      expect(deviceXRecordsReadWithoutRoleReply.status.code).toBe(401);
+
+      const recordsReadByDeviceXWithWrongRole = await RecordsRead.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : readGrantForDeviceX.dataEncodedMessage,
+        protocolRole   : 'globalAdmin',
+        filter         : {
+          recordId: chatRecord.message.recordId
+        }
+      });
+      const deviceXRecordsReadWithWrongRoleReply = await dwn.processMessage(bob.did, recordsReadByDeviceXWithWrongRole.message);
+      expect(deviceXRecordsReadWithWrongRoleReply.status.code).toBe(401);
+      expect(deviceXRecordsReadWithWrongRoleReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+
+      // Device X can read only when Alice invokes the role Bob assigned to her.
       const recordsReadByDeviceX = await RecordsRead.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : readGrantForDeviceX.dataEncodedMessage,

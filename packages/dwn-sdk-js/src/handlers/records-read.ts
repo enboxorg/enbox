@@ -208,9 +208,14 @@ export class RecordsReadHandler implements MethodHandler {
         recordsWriteMessage   : matchedRecordsWrite.message,
         validationStateReader : deps.validationStateReader,
       });
-    } else if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
+      return;
+    }
+
+    if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
       await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.validationStateReader);
-    } else if (recordsRead.author === tenant) {
+    }
+
+    if (recordsRead.author === tenant) {
       // if author is the same as the target tenant, we can directly grant access
       return;
     } else if (descriptor.published === true) {
