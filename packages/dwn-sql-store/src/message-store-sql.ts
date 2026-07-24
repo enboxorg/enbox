@@ -464,6 +464,9 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     if (recordLimit.contextId !== undefined) {
       candidateFilter.contextId = { subtree: recordLimit.contextId };
     }
+    if (recordLimit.parentId !== undefined) {
+      candidateFilter.parentId = recordLimit.parentId;
+    }
 
     let rankedCandidates = db
       .selectFrom('messageStoreMessages')

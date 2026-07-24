@@ -28,6 +28,7 @@ import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../.
 
 export function testRecordsRecordLimit(): void {
   describe('Records $recordLimit', () => {
+    const roomTitlePath = 'room/title';
     let didResolver: DidResolver;
     let messageStore: MessageStore;
     let dataStore: DataStore;
@@ -104,6 +105,7 @@ export function testRecordsRecordLimit(): void {
       protocol: string;
       protocolPath: string;
       contextId?: string;
+      parentId?: string | string[];
       dateSort?: DateSort;
       pagination?: Pagination;
       targetDwn?: Dwn;
@@ -114,6 +116,7 @@ export function testRecordsRecordLimit(): void {
           protocol     : input.protocol,
           protocolPath : input.protocolPath,
           ...(input.contextId === undefined ? {} : { contextId: input.contextId }),
+          ...(input.parentId === undefined ? {} : { parentId: input.parentId }),
         },
         dateSort   : input.dateSort,
         pagination : input.pagination,
@@ -133,6 +136,7 @@ export function testRecordsRecordLimit(): void {
       protocol: string;
       protocolPath: string;
       contextId?: string;
+      parentId?: string | string[];
       targetDwn?: Dwn;
     }): Promise<number> {
       const recordsCount = await TestDataGenerator.generateRecordsCount({
@@ -141,6 +145,7 @@ export function testRecordsRecordLimit(): void {
           protocol     : input.protocol,
           protocolPath : input.protocolPath,
           ...(input.contextId === undefined ? {} : { contextId: input.contextId }),
+          ...(input.parentId === undefined ? {} : { parentId: input.parentId }),
         },
       });
 
@@ -167,6 +172,8 @@ export function testRecordsRecordLimit(): void {
       protocol: string;
       protocolPath: string;
       contextId?: string;
+      parentId?: string | string[];
+      pagination?: Pagination;
       targetDwn?: Dwn;
     }): Promise<string[]> {
       const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
@@ -175,7 +182,9 @@ export function testRecordsRecordLimit(): void {
           protocol     : input.protocol,
           protocolPath : input.protocolPath,
           ...(input.contextId === undefined ? {} : { contextId: input.contextId }),
+          ...(input.parentId === undefined ? {} : { parentId: input.parentId }),
         },
+        pagination: input.pagination,
       });
 
       const reply = await (input.targetDwn ?? dwn).processMessage(
@@ -602,6 +611,125 @@ export function testRecordsRecordLimit(): void {
         const broadReply = await dwn.processMessage(alice.did, broadQuery.message) as RecordsQueryReply;
         expect(broadReply.status.code).toBe(400);
         expect(broadReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
+      });
+
+      it('should project selected direct-parent groups independently in one request', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+          published : true,
+          types     : {
+            room  : {},
+            title : {},
+          },
+          structure: {
+            room: {
+              title: {
+                $recordLimit: { max: 1 },
+              },
+            },
+          },
+        };
+        const protocol = protocolDefinition.protocol;
+        await installProtocol({ author: alice, definition: protocolDefinition });
+
+        const room1 = await writeProtocolRecord({
+          author       : alice,
+          protocol,
+          protocolPath : 'room',
+          dateCreated  : '2025-01-01T00:00:00.000000Z',
+        });
+        const room2 = await writeProtocolRecord({
+          author       : alice,
+          protocol,
+          protocolPath : 'room',
+          dateCreated  : '2025-01-02T00:00:00.000000Z',
+        });
+        const room1Title = await writeProtocolRecord({
+          author          : alice,
+          protocol,
+          protocolPath    : roomTitlePath,
+          parentContextId : room1.message.contextId,
+          dateCreated     : '2025-02-01T00:00:00.000000Z',
+        });
+        const room2Title = await writeProtocolRecord({
+          author          : alice,
+          protocol,
+          protocolPath    : roomTitlePath,
+          parentContextId : room2.message.contextId,
+          dateCreated     : '2025-02-02T00:00:00.000000Z',
+        });
+        await writeProtocolRecord({
+          author          : alice,
+          protocol,
+          protocolPath    : roomTitlePath,
+          parentContextId : room1.message.contextId,
+          dateCreated     : '2025-02-03T00:00:00.000000Z',
+        });
+        await writeProtocolRecord({
+          author          : alice,
+          protocol,
+          protocolPath    : roomTitlePath,
+          parentContextId : room2.message.contextId,
+          dateCreated     : '2025-02-04T00:00:00.000000Z',
+        });
+
+        const parentIds = [room1.message.recordId, room2.message.recordId];
+        const expectedRecordIds = [room1Title.message.recordId, room2Title.message.recordId];
+        const queryInput = {
+          author       : alice,
+          protocol,
+          protocolPath : roomTitlePath,
+          parentId     : parentIds,
+        };
+
+        expect((await queryProtocolRecordIds(queryInput)).recordIds).toEqual(expectedRecordIds);
+        expect(await countProtocolRecords(queryInput)).toBe(expectedRecordIds.length);
+        expect(await subscribeSnapshotRecordIds(queryInput)).toEqual(expectedRecordIds);
+        expect(await subscribeSnapshotRecordIds({
+          author       : alice,
+          protocol,
+          protocolPath : roomTitlePath,
+          pagination   : { limit: 2 },
+        })).toEqual(expectedRecordIds);
+        expect((await queryProtocolRecordIds({
+          ...queryInput,
+          parentId: room2.message.recordId,
+        })).recordIds).toEqual([room2Title.message.recordId]);
+
+        const scopedInput = {
+          ...queryInput,
+          contextId: room1.message.contextId,
+        };
+        expect((await queryProtocolRecordIds(scopedInput)).recordIds).toEqual([room1Title.message.recordId]);
+        expect(await countProtocolRecords(scopedInput)).toBe(1);
+        expect(await subscribeSnapshotRecordIds(scopedInput)).toEqual([room1Title.message.recordId]);
+      });
+
+      it('should reject empty and duplicate parentId arrays', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const filter = {
+          protocol     : 'http://record-limit-parent-filter.xyz',
+          protocolPath : roomTitlePath,
+          parentId     : [] as string[],
+        };
+
+        await expect(TestDataGenerator.generateRecordsQuery({ author: alice, filter })).rejects.toThrow('SchemaValidatorFailure');
+        await expect(TestDataGenerator.generateRecordsCount({ author: alice, filter })).rejects.toThrow('SchemaValidatorFailure');
+        await expect(TestDataGenerator.generateRecordsSubscribe({ author: alice, filter })).rejects.toThrow('SchemaValidatorFailure');
+        await expect(TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { ...filter, parentId: ['same-parent', 'same-parent'] },
+        })).rejects.toThrow('SchemaValidatorFailure');
+        await expect(TestDataGenerator.generateRecordsCount({
+          author : alice,
+          filter : { ...filter, parentId: '' },
+        })).rejects.toThrow('SchemaValidatorFailure');
+        await expect(TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { ...filter, parentId: [''] },
+        })).rejects.toThrow('SchemaValidatorFailure');
       });
 
       it('should project ancestor queries independently across parent contexts', async () => {

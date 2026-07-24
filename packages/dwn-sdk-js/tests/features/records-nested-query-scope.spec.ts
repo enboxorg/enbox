@@ -224,11 +224,12 @@ export function testRecordsNestedQueryScope(): void {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await installProtocol(alice);
 
-      const expectInvalidScope = async (contextId?: string): Promise<void> => {
+      const expectInvalidScope = async (contextId?: string, parentId?: string): Promise<void> => {
         const filter = {
           protocol     : protocolDefinition.protocol,
           protocolPath : 'community/channel/message',
           ...(contextId === undefined ? {} : { contextId }),
+          ...(parentId === undefined ? {} : { parentId }),
         };
 
         const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter });
@@ -253,6 +254,23 @@ export function testRecordsNestedQueryScope(): void {
 
       await expectInvalidScope();
       await expectInvalidScope('community/channel/message/tooDeep');
+      await expectInvalidScope('community/channel/message/tooDeep', 'selected-parent');
+
+      const boundedPathWideSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+        author : alice,
+        filter : {
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'community/channel/message',
+        },
+        pagination: { limit: 1 },
+      });
+      const boundedPathWideReply = await dwn.processMessage(
+        alice.did,
+        boundedPathWideSubscribe.message,
+      ) as RecordsSubscribeReply;
+      expect(boundedPathWideReply.status.code).toBe(200);
+      expect(boundedPathWideReply.entries).toEqual([]);
+      await boundedPathWideReply.subscription?.close();
 
       const malformedFilter = {
         contextId    : 'community//channel',

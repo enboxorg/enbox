@@ -1,7 +1,7 @@
 import type { compileRecordQuery } from './record-query.js';
-import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
+import type { DwnApi } from './dwn-api.js';
 import type { Record } from './record.js';
-import type { DwnApi, RecordsQueryResponse } from './dwn-api.js';
+import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent, SyncIdentityOptions } from '@enbox/agent';
 
@@ -11,22 +11,21 @@ import { requireDwnSuccess } from './dwn-response-error.js';
 /** Currentness of one locally materialized records view. */
 export type RecordViewState = 'loading' | 'ready' | 'stale' | 'error';
 
-type RecordViewContents<T> = Readonly<{
+type RecordViewContents<Item> = Readonly<{
   /**
-   * Record handles from the latest publishable query result.
+   * Items from the latest publishable query result.
    *
-   * The array and snapshot are immutable. Each handle identifies the queried
-   * record version until the caller explicitly invokes one of that handle's
-   * normal mutating `Record` methods.
+   * The array and snapshot are immutable. The query selects each item's
+   * record or materialized-record representation.
    */
-  records: readonly Record<T>[];
+  records: readonly Item[];
 
   /** True when another page is available; false before the first query completes. */
   hasMore: boolean;
 }>;
 
 /** Immutable materialization published by a {@link RecordView}. */
-export type RecordViewSnapshot<T> = RecordViewContents<T> & Readonly<
+export type RecordViewSnapshot<Item = Record> = RecordViewContents<Item> & Readonly<
   | {
     /** Whether the local materialization is current with its configured replicated sources. */
     state: Exclude<RecordViewState, 'error'>;
@@ -40,7 +39,7 @@ export type RecordViewSnapshot<T> = RecordViewContents<T> & Readonly<
 >;
 
 /** Listener notified after a records view publishes a new snapshot. */
-export type RecordViewListener<T> = (snapshot: RecordViewSnapshot<T>) => void;
+export type RecordViewListener<Item = Record> = (snapshot: RecordViewSnapshot<Item>) => void;
 
 /**
  * A closeable local materialized view over one canonical record query.
@@ -48,24 +47,25 @@ export type RecordViewListener<T> = (snapshot: RecordViewSnapshot<T>) => void;
  * Subscription events are wake signals only. Consumers render immutable
  * snapshots and never maintain collection truth from event payloads.
  */
-export interface RecordView<T> {
+export interface RecordView<Item = Record> {
   /** Return the current immutable snapshot. Safe to pass as a bare callback. */
-  getSnapshot: () => RecordViewSnapshot<T>;
+  getSnapshot: () => RecordViewSnapshot<Item>;
 
   /** Subscribe to later snapshot publications. Safe to pass as a bare callback. */
-  subscribe: (listener: RecordViewListener<T>) => () => void;
+  subscribe: (listener: RecordViewListener<Item>) => () => void;
 
-  /** Fence callbacks and close the underlying local subscription without publishing a new snapshot. */
+  /** Fence callbacks and close the underlying local subscriptions without publishing a new snapshot. */
   close(): Promise<void>;
 }
 
 type CompiledRecordQuery = ReturnType<typeof compileRecordQuery>;
 
 /** @internal Dependencies supplied by {@link TypedEnbox} for one view. */
-type RecordViewOptions<T> = {
+type RecordViewOptions<Item> = {
+  additionalWakeFilters?: readonly RecordsFilter[];
   definition: ProtocolDefinition;
   dwn: DwnApi;
-  prepareRecord: (record: Record) => Record<T>;
+  materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   query: CompiledRecordQuery;
   signal?: AbortSignal;
   sync?: SyncEngine;
@@ -81,19 +81,22 @@ type LinkConnectivityChangeEvent = Extract<SyncEvent, { type: 'link:connectivity
 type PullCurrentnessChangeEvent = Extract<SyncEvent, { type: 'pull:currentness-change' }>;
 
 /** @internal Create and open one local observed records view. */
-export async function createRecordView<T>(options: RecordViewOptions<T>): Promise<RecordView<T>> {
+export async function createRecordView<Item = Record>(
+  options: RecordViewOptions<Item>,
+): Promise<RecordView<Item>> {
   options.signal?.throwIfAborted();
-  const view = new ObservedRecordView<T>(options);
+  const view = new ObservedRecordView<Item>(options);
   await view.open();
   return view;
 }
 
 /** One serialized, wake-driven materialization resource. */
-class ObservedRecordView<T> implements RecordView<T> {
+class ObservedRecordView<Item> implements RecordView<Item> {
+  private readonly _additionalWakeFilters: readonly RecordsFilter[];
   private readonly _definition: ProtocolDefinition;
   private readonly _dwn: DwnApi;
-  private readonly _listeners = new Set<RecordViewListener<T>>();
-  private readonly _prepareRecord: (record: Record) => Record<T>;
+  private readonly _listeners = new Set<RecordViewListener<Item>>();
+  private readonly _materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   private readonly _query: CompiledRecordQuery;
   private readonly _signal?: AbortSignal;
   private readonly _sync?: SyncEngine;
@@ -105,12 +108,12 @@ class ObservedRecordView<T> implements RecordView<T> {
   private _isOpen = false;
   private _materializationRequested = false;
   private _requestGeneration = 0;
-  private _snapshot: RecordViewSnapshot<T> = immutableSnapshot({
+  private _snapshot: RecordViewSnapshot<Item> = immutableSnapshot({
     state   : 'loading',
     records : [],
     hasMore : false,
   });
-  private _subscription?: { close(): Promise<void> };
+  private readonly _subscriptions: { close(): Promise<void> }[] = [];
   private _syncUnsubscribe?: () => void;
 
   private readonly _handleAbort = (): void => {
@@ -118,10 +121,11 @@ class ObservedRecordView<T> implements RecordView<T> {
     void this.close().catch((): void => {});
   };
 
-  public constructor(options: RecordViewOptions<T>) {
+  public constructor(options: RecordViewOptions<Item>) {
+    this._additionalWakeFilters = options.additionalWakeFilters ?? [];
     this._definition = options.definition;
     this._dwn = options.dwn;
-    this._prepareRecord = options.prepareRecord;
+    this._materializeRecords = options.materializeRecords;
     this._query = options.query;
     this._signal = options.signal;
     this._sync = options.sync;
@@ -139,30 +143,14 @@ class ObservedRecordView<T> implements RecordView<T> {
     };
 
     try {
-      const reply = await this._dwn.records.subscribe({
-        filter       : structuralWakeFilter(this._definition, this._query.filter),
-        pagination   : { limit: 1 },
-        protocolRole : this._query.protocolRole,
-        subscriptionHandler,
-      });
-
-      if (this._closed) {
-        await reply.subscription?.close();
-        this._signal?.throwIfAborted();
-        throw new Error('RecordView: closed while opening the local subscription.');
+      const wakeFilters = [
+        structuralWakeFilter(this._definition, this._query.filter),
+        ...this._additionalWakeFilters,
+      ];
+      for (const filter of wakeFilters) {
+        await this.openSubscription(filter, subscriptionHandler);
       }
 
-      try {
-        requireDwnSuccess('RecordView subscription', reply);
-      } catch (error: unknown) {
-        await reply.subscription?.close();
-        throw error;
-      }
-      if (reply.subscription === undefined) {
-        throw new Error('RecordView: DWN returned success without a subscription.');
-      }
-
-      this._subscription = reply.subscription;
       this._isOpen = true;
       this.requestMaterialization();
     } catch (error: unknown) {
@@ -173,11 +161,11 @@ class ObservedRecordView<T> implements RecordView<T> {
     }
   }
 
-  public readonly getSnapshot = (): RecordViewSnapshot<T> => {
+  public readonly getSnapshot = (): RecordViewSnapshot<Item> => {
     return this._snapshot;
   };
 
-  public readonly subscribe = (listener: RecordViewListener<T>): (() => void) => {
+  public readonly subscribe = (listener: RecordViewListener<Item>): (() => void) => {
     if (this._closed) {
       return (): void => {};
     }
@@ -200,11 +188,39 @@ class ObservedRecordView<T> implements RecordView<T> {
     this._signal?.removeEventListener('abort', this._handleAbort);
     this._listeners.clear();
 
-    const subscription = this._subscription;
-    this._subscription = undefined;
-    if (subscription !== undefined) {
-      await subscription.close();
+    const subscriptions = this._subscriptions.splice(0);
+    await Promise.all(subscriptions.map(async (subscription): Promise<void> => subscription.close()));
+  }
+
+  /** Open one wake subscription and retain its handle only after validating the reply. */
+  private async openSubscription(
+    filter: RecordsFilter,
+    subscriptionHandler: DwnSubscriptionHandler,
+  ): Promise<void> {
+    const reply = await this._dwn.records.subscribe({
+      filter,
+      pagination   : { limit: 1 },
+      protocolRole : this._query.protocolRole,
+      subscriptionHandler,
+    });
+
+    if (this._closed) {
+      await reply.subscription?.close();
+      this._signal?.throwIfAborted();
+      throw new Error('RecordView: closed while opening the local subscription.');
     }
+
+    try {
+      requireDwnSuccess('RecordView subscription', reply);
+    } catch (error: unknown) {
+      await reply.subscription?.close();
+      throw error;
+    }
+    if (reply.subscription === undefined) {
+      throw new Error('RecordView: DWN returned success without a subscription.');
+    }
+
+    this._subscriptions.push(reply.subscription);
   }
 
   /** Keep transport acknowledgements independent from query latency. */
@@ -321,12 +337,13 @@ class ObservedRecordView<T> implements RecordView<T> {
     try {
       const result = await this._dwn.records.query(this._query);
       requireDwnSuccess('RecordView query', result);
+      const records = await this._materializeRecords(result.records);
 
       const currentness = await this.resolveCurrentness();
       if (!this.canPublishGeneration(generation)) {
         return;
       }
-      this.publishMaterialization(result, currentness);
+      this.publishMaterialization(records, result.cursor !== undefined, currentness);
     } catch (error: unknown) {
       if (this.canPublishGeneration(generation)) {
         this.publishError(toError(error));
@@ -339,11 +356,10 @@ class ObservedRecordView<T> implements RecordView<T> {
   }
 
   private publishMaterialization(
-    result: RecordsQueryResponse,
+    records: readonly Item[],
+    hasMore: boolean,
     currentness: RecordViewCurrentness,
   ): void {
-    const records = result.records.map(this._prepareRecord);
-    const hasMore = result.cursor !== undefined;
     if (currentness.state === 'error') {
       this.publish(immutableSnapshot({
         state : 'error',
@@ -426,7 +442,7 @@ class ObservedRecordView<T> implements RecordView<T> {
     }));
   }
 
-  private publish(snapshot: RecordViewSnapshot<T>): void {
+  private publish(snapshot: RecordViewSnapshot<Item>): void {
     if (this._closed) {
       return;
     }
@@ -444,7 +460,7 @@ class ObservedRecordView<T> implements RecordView<T> {
   }
 }
 
-function immutableSnapshot<T>(snapshot: RecordViewSnapshot<T>): RecordViewSnapshot<T> {
+function immutableSnapshot<Item>(snapshot: RecordViewSnapshot<Item>): RecordViewSnapshot<Item> {
   const records = Object.freeze([...snapshot.records]);
   return Object.freeze({ ...snapshot, records });
 }

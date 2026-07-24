@@ -161,7 +161,7 @@ export type RecordsFilter = {
   schema?: string;
   tags?: { [property:string]: RecordsWriteTagsFilter }
   recordId?: string;
-  parentId?: string;
+  parentId?: string | string[];
   dataFormat?: string;
   dataSize?: RangeFilter;
   dataCid?: string;

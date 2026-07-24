@@ -12,6 +12,8 @@ import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { AuthManager, MemoryStorage } from '@enbox/auth';
 import { describe, expect, it } from 'bun:test';
 
+import { compileRecordQuery } from '../src/record-query.js';
+import { createRecordView } from '../src/record-view.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
@@ -30,9 +32,15 @@ const ViewDefinition = {
       dataFormats : ['application/json'],
       schema      : 'https://example.com/schemas/record-view-item',
     },
+    label: {
+      dataFormats: ['text/plain'],
+    },
     note: {
       dataFormats : ['application/json'],
       schema      : 'https://example.com/schemas/record-view-note',
+    },
+    preference: {
+      dataFormats: ['text/plain'],
     },
     section: {
       dataFormats : ['application/json'],
@@ -51,15 +59,23 @@ const ViewDefinition = {
       $tags: {
         status: { type: 'string', enum: ['draft', 'published'] },
       },
+      label: {
+        $recordLimit: { max: 1 },
+      },
+    },
+    preference: {
+      $recordLimit: { max: 1 },
     },
   },
 } as const satisfies ProtocolDefinition;
 
 const ViewProtocol = defineProtocol(ViewDefinition, {
-  folder  : recordCodecs.json<{ name: string }>(),
-  item    : recordCodecs.json<{ value: string }>(),
-  note    : recordCodecs.json<{ title: string }>(),
-  section : recordCodecs.json<{ name: string }>(),
+  folder     : recordCodecs.json<{ name: string }>(),
+  item       : recordCodecs.json<{ value: string }>(),
+  label      : recordCodecs.text(),
+  note       : recordCodecs.json<{ title: string }>(),
+  preference : recordCodecs.text(),
+  section    : recordCodecs.json<{ name: string }>(),
 });
 const TENANT_DID = 'did:example:alice';
 
@@ -68,7 +84,7 @@ type QueryFactory = (request: RecordsQueryRequest, call: number) => Promise<Reco
 type ViewHarness = {
   closeCount: () => number;
   dwn: DwnApi;
-  emit(message: DwnSubscriptionMessage): void;
+  emit(message: DwnSubscriptionMessage, subscriptionIndex?: number): void;
   queryRequests: RecordsQueryRequest[];
   subscribeRequests: RecordsSubscribeRequest[];
 };
@@ -77,23 +93,25 @@ function createHarness(query: QueryFactory): ViewHarness {
   const queryRequests: RecordsQueryRequest[] = [];
   const subscribeRequests: RecordsSubscribeRequest[] = [];
   let closeCalls = 0;
-  let handler: DwnSubscriptionHandler | undefined;
+  const handlers: DwnSubscriptionHandler[] = [];
+  const runQuery = async (request: RecordsQueryRequest): Promise<RecordsQueryResponse> => {
+    queryRequests.push(request);
+    return query(request, queryRequests.length);
+  };
 
   const dwn = {
-    connectedDid : TENANT_DID,
-    records      : {
-      query: async (request: RecordsQueryRequest): Promise<RecordsQueryResponse> => {
-        queryRequests.push(request);
-        return query(request, queryRequests.length);
-      },
-      subscribe: async (request: RecordsSubscribeRequest) => {
+    connectedDid                  : TENANT_DID,
+    queryRecordsWithRequiredGrant : runQuery,
+    records                       : {
+      query     : runQuery,
+      subscribe : async (request: RecordsSubscribeRequest) => {
         subscribeRequests.push(request);
-        handler = request.subscriptionHandler;
+        handlers.push(request.subscriptionHandler);
         return {
           status       : { code: 200, detail: 'OK' },
           entries      : [],
           subscription : {
-            id    : 'record-view-test',
+            id    : `record-view-test-${handlers.length}`,
             close : async (): Promise<void> => { closeCalls += 1; },
           },
         };
@@ -104,8 +122,8 @@ function createHarness(query: QueryFactory): ViewHarness {
   return {
     closeCount : (): number => closeCalls,
     dwn,
-    emit       : (message): void => {
-      handler?.(message);
+    emit       : (message, subscriptionIndex = 0): void => {
+      void handlers[subscriptionIndex]?.(message);
     },
     queryRequests,
     subscribeRequests,
@@ -131,6 +149,14 @@ function testRecord(id: string): Record {
       stream : async (): Promise<ReadableStream> => { throw new Error('view must not read data'); },
       text   : async (): Promise<string> => { throw new Error('view must not read data'); },
     },
+  } as unknown as Record;
+}
+
+function decodedRecord(id: string, value: unknown, parentId?: string): Record {
+  return {
+    id,
+    parentId,
+    value: async (): Promise<unknown> => value,
   } as unknown as Record;
 }
 
@@ -220,8 +246,21 @@ describe('RecordView', () => {
     const typed = new TypedEnbox(harness.dwn, ViewProtocol);
     const observe = typed.records.observe as (
       path: 'note',
-      request?: { from?: string; pagination?: { limit: number } },
+      request?: {
+        from?: string;
+        materialize?: unknown;
+        pagination?: { limit: number };
+      },
     ) => Promise<unknown>;
+    const query = typed.records.query as (
+      path: 'note',
+      request?: { materialize?: unknown; pagination?: { limit: number } },
+    ) => Promise<unknown>;
+    const set = typed.records.set as unknown as (
+      path: string,
+      request: { data: unknown; from?: string; protocolRole?: string },
+    ) => Promise<unknown>;
+    const nestedItemPath = 'folder/section/item';
 
     await expect(observe('note')).rejects.toThrow('pagination.limit is required');
     await expect(observe('note', {
@@ -231,10 +270,107 @@ describe('RecordView', () => {
     await expect(observe('note', {
       pagination: { limit: 0 },
     })).rejects.toThrow('pagination.limit must be a finite number greater than or equal to 1');
+    await expect(query('note', { materialize: true }))
+      .rejects.toThrow('pagination.limit is required to bound decoded values');
+    await expect(observe('note', {
+      materialize : null,
+      pagination  : { limit: 10 },
+    })).rejects.toThrow('children must be a non-empty array');
+    await expect(observe('note', {
+      materialize : { children: [] },
+      pagination  : { limit: 10 },
+    })).rejects.toThrow('children must be a non-empty array');
+    await expect(observe('note', {
+      materialize : { children: [nestedItemPath, nestedItemPath] },
+      pagination  : { limit: 10 },
+    })).rejects.toThrow('children must contain unique protocol paths');
+    await expect(observe('note', {
+      materialize : { children: [nestedItemPath] },
+      pagination  : { limit: 10 },
+    })).rejects.toThrow('must be a direct child of \'note\' with $recordLimit.max: 1');
+    await expect(set('note', { data: { title: 'not a singleton' } }))
+      .rejects.toThrow('path \'note\' must declare $recordLimit.max: 1');
+    await expect(set('preference', {
+      data : 'dark',
+      from : 'did:example:remote',
+    })).rejects.toThrow('remote targets are not supported');
+    await expect(set('preference', {
+      data         : 'dark',
+      protocolRole : 'member',
+    })).rejects.toThrow('protocol roles are not supported');
     expect(queryProtocols.notCalled).toBe(true);
     expect(configureProtocol.notCalled).toBe(true);
     expect(harness.queryRequests).toHaveLength(0);
     expect(harness.subscribeRequests).toHaveLength(0);
+  });
+
+  it('uses a grant-required selection query before treating an empty singleton scope as authoritative', async () => {
+    const harness = createHarness(async () => ok([]));
+    const missingGrant = new Error('matching Records.Read grant was not found');
+    const queryRecordsWithRequiredGrant = sinon.stub().rejects(missingGrant);
+    Object.defineProperty(harness.dwn, 'queryRecordsWithRequiredGrant', {
+      value: queryRecordsWithRequiredGrant,
+    });
+    const typed = createTyped(harness);
+
+    await expect(typed.records.set('preference', { data: 'dark' })).rejects.toBe(missingGrant);
+    expect(queryRecordsWithRequiredGrant.calledOnce).toBe(true);
+    expect(queryRecordsWithRequiredGrant.firstCall.args[0]).toMatchObject({
+      filter: {
+        protocol     : ViewDefinition.protocol,
+        protocolPath : 'preference',
+      },
+      pagination: { limit: 1 },
+    });
+    expect(harness.queryRequests).toHaveLength(0);
+  });
+
+  it('uses the nested singleton context for the grant-required selection query', async () => {
+    const harness = createHarness(async () => ok([]));
+    const missingGrant = new Error('matching Records.Read grant was not found');
+    const queryRecordsWithRequiredGrant = sinon.stub().rejects(missingGrant);
+    Object.defineProperty(harness.dwn, 'queryRecordsWithRequiredGrant', {
+      value: queryRecordsWithRequiredGrant,
+    });
+    const typed = createTyped(harness);
+
+    await expect(typed.records.set('note/label', {
+      data   : 'important',
+      within : 'notecontext',
+    })).rejects.toBe(missingGrant);
+    expect(queryRecordsWithRequiredGrant.calledOnce).toBe(true);
+    expect(queryRecordsWithRequiredGrant.firstCall.args[0]).toMatchObject({
+      filter: {
+        contextId    : 'notecontext',
+        protocol     : ViewDefinition.protocol,
+        protocolPath : 'note/label',
+      },
+      pagination: { limit: 1 },
+    });
+  });
+
+  it('forwards the source and protocol role to a batched child materialization query', async () => {
+    const parent = decodedRecord('note-1', { title: 'First' });
+    const child = decodedRecord('label-1', 'important', parent.id);
+    const harness = createHarness(async (_request, call) => ok(call === 1 ? [parent] : [child]));
+    const typed = createTyped(harness);
+
+    const page = await typed.records.query('note', {
+      from         : 'did:example:remote',
+      materialize  : { children: ['note/label'] as const },
+      pagination   : { limit: 10 },
+      protocolRole : 'member',
+    });
+
+    expect(page.records[0]?.children.label?.value).toBe('important');
+    expect(harness.queryRequests[1]).toMatchObject({
+      from         : 'did:example:remote',
+      protocolRole : 'member',
+      filter       : {
+        parentId     : [parent.id],
+        protocolPath : 'note/label',
+      },
+    });
   });
 
   it('rejects an already-aborted session without acquiring view resources', async () => {
@@ -317,6 +453,130 @@ describe('RecordView', () => {
       },
       pagination: { limit: 10 },
     });
+    await view.close();
+  });
+
+  it('installs every exact dependency wake before querying and rematerializes on a child-only wake', async () => {
+    const initial = testRecord('initial');
+    const updated = testRecord('updated');
+    const harness = createHarness(async (_request, call) => {
+      expect(harness.subscribeRequests).toHaveLength(2);
+      return ok([call === 1 ? initial : updated]);
+    });
+    const materializeRecords = sinon.stub().callsFake(async (records: Record[]): Promise<readonly string[]> => {
+      return records.map((record): string => record.id);
+    });
+
+    const view = await createRecordView<string>({
+      additionalWakeFilters: [{
+        contextId    : 'folder-1',
+        protocol     : ViewDefinition.protocol,
+        protocolPath : 'folder/section/item',
+      }],
+      definition : ViewDefinition,
+      dwn        : harness.dwn,
+      materializeRecords,
+      query      : compileRecordQuery(ViewDefinition, 'note', { pagination: { limit: 10 } }),
+    });
+    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['initial']); });
+
+    expect(harness.subscribeRequests.map((request) => request.filter)).toEqual([
+      {
+        protocol     : ViewDefinition.protocol,
+        protocolPath : 'note',
+      },
+      {
+        contextId    : 'folder-1',
+        protocol     : ViewDefinition.protocol,
+        protocolPath : 'folder/section/item',
+      },
+    ]);
+
+    harness.emit(recordEvent(), 1);
+    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['updated']); });
+    expect(materializeRecords.callCount).toBe(2);
+
+    await view.close();
+    expect(harness.closeCount()).toBe(2);
+  });
+
+  it('keeps the prior snapshot when page materialization fails and recovers on the next wake', async () => {
+    const retained = testRecord('retained');
+    const rejected = testRecord('rejected');
+    const recovered = testRecord('recovered');
+    const harness = createHarness(async (_request, call) => {
+      if (call === 1) {
+        return ok([retained], { messageCid: 'next', value: '1' });
+      }
+      return ok([call === 2 ? rejected : recovered]);
+    });
+    const materializationError = new Error('codec rejected the page');
+    let materializationCount = 0;
+    const view = await createRecordView<string>({
+      definition         : ViewDefinition,
+      dwn                : harness.dwn,
+      materializeRecords : async (records): Promise<readonly string[]> => {
+        materializationCount += 1;
+        if (materializationCount === 2) {
+          throw materializationError;
+        }
+        return records.map((record): string => record.id);
+      },
+      query: compileRecordQuery(ViewDefinition, 'note', { pagination: { limit: 10 } }),
+    });
+    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['retained']); });
+
+    harness.emit(recordEvent());
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
+    expect(view.getSnapshot()).toMatchObject({
+      records : ['retained'],
+      hasMore : true,
+      error   : materializationError,
+    });
+
+    harness.emit(recordEvent());
+    await waitFor(() => {
+      expect(view.getSnapshot()).toMatchObject({ state: 'ready', records: ['recovered'], hasMore: false });
+    });
+    await view.close();
+  });
+
+  it('fences a slow materialization after a newer wake requests another generation', async () => {
+    const initial = testRecord('initial');
+    const stale = testRecord('stale');
+    const latest = testRecord('latest');
+    const harness = createHarness(async (_request, call) => ok([call === 1 ? initial : call === 2 ? stale : latest]));
+    let releaseStale!: () => void;
+    let markStaleStarted!: () => void;
+    const staleStarted = new Promise<void>((resolve) => { markStaleStarted = resolve; });
+    const materializeRecords = async (records: Record[]): Promise<readonly string[]> => {
+      if (records[0]?.id === 'stale') {
+        markStaleStarted();
+        await new Promise<void>((resolve) => { releaseStale = resolve; });
+      }
+      return records.map((record): string => record.id);
+    };
+    const view = await createRecordView<string>({
+      definition : ViewDefinition,
+      dwn        : harness.dwn,
+      materializeRecords,
+      query      : compileRecordQuery(ViewDefinition, 'note', { pagination: { limit: 10 } }),
+    });
+    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['initial']); });
+    const publications: string[] = [];
+    view.subscribe((snapshot): void => {
+      if (snapshot.records[0] !== undefined) {
+        publications.push(snapshot.records[0]);
+      }
+    });
+
+    harness.emit(recordEvent());
+    await staleStarted;
+    harness.emit(recordEvent());
+    releaseStale();
+
+    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['latest']); });
+    expect(publications).toEqual(['latest']);
     await view.close();
   });
 
@@ -805,6 +1065,34 @@ describe('RecordView', () => {
 
     expect(anomalousCloseCalls).toBe(1);
     expect(fakeSync.listenerCount()).toBe(0);
+    expect(harness.queryRequests).toHaveLength(0);
+  });
+
+  it('closes earlier dependency subscriptions when a later subscription fails', async () => {
+    const harness = createHarness(async () => ok([]));
+    const originalSubscribe = harness.dwn.records.subscribe;
+    harness.dwn.records.subscribe = async (request): Promise<RecordsSubscribeResponse> => {
+      const reply = await originalSubscribe(request);
+      if (harness.subscribeRequests.length === 2) {
+        reply.status = { code: 403, detail: 'child subscription denied' };
+      }
+      return reply;
+    };
+
+    const opening = createRecordView<string>({
+      additionalWakeFilters: [{
+        protocol     : ViewDefinition.protocol,
+        protocolPath : 'folder/section/item',
+      }],
+      definition         : ViewDefinition,
+      dwn                : harness.dwn,
+      materializeRecords : async (): Promise<readonly string[]> => [],
+      query              : compileRecordQuery(ViewDefinition, 'note', { pagination: { limit: 10 } }),
+    });
+
+    await expect(opening).rejects.toBeInstanceOf(DwnResponseError);
+    expect(harness.subscribeRequests).toHaveLength(2);
+    expect(harness.closeCount()).toBe(2);
     expect(harness.queryRequests).toHaveLength(0);
   });
 

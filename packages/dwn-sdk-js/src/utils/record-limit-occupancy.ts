@@ -110,7 +110,7 @@ export async function resolveRecordLimitOccupancy(input: RecordLimitPolicyDepend
   recordsFilter: RecordsFilter;
   messageTimestamp: string;
 }): Promise<RecordLimitOccupancy | undefined> {
-  const { contextId, protocol, protocolPath } = input.recordsFilter;
+  const { contextId, parentId, protocol, protocolPath } = input.recordsFilter;
   if (protocol === undefined || protocolPath === undefined) {
     return undefined;
   }
@@ -134,8 +134,11 @@ export async function resolveRecordLimitOccupancy(input: RecordLimitPolicyDepend
   if (!protocolPath.includes('/')) {
     return recordLimit;
   }
+  if (parentId !== undefined) {
+    recordLimit.parentId = parentId;
+  }
   if (contextId === undefined) {
-    return undefined;
+    return recordLimit;
   }
 
   const contextDepth = contextId.split('/').length;

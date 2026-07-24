@@ -117,7 +117,7 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   void createdData;
   void deleted;
 
-  const queried: RecordPage<TaskData> = await typed.records.query('task');
+  const queried: RecordPage<Record<TaskData>> = await typed.records.query('task');
   const queriedRecord: Record<TaskData> | undefined = queried.records[0];
   void queriedRecord;
 
@@ -126,7 +126,7 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   });
   void readRecord;
 
-  const view: RecordView<TaskData> = await typed.records.observe('task', {
+  const view: RecordView<Record<TaskData>> = await typed.records.observe('task', {
     pagination: { limit: 10 },
   });
   const observedRecord: Record<TaskData> | undefined = view.getSnapshot().records[0];

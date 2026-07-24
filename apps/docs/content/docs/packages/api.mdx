@@ -194,6 +194,27 @@ if (page.cursor) {
 }
 ```
 
+Eagerly decode a bounded page when application code needs values immediately:
+
+```ts
+const { records } = await tasks.records.query('task', {
+  materialize: true,
+  pagination: { limit: 25 },
+});
+
+for (const item of records) {
+  console.log(item.value.title);
+  await item.record.delete();
+}
+```
+
+For a direct child whose protocol rule declares `$recordLimit: { max: 1 }`,
+`materialize: { children: [...] }` fetches that child path once for the whole
+parent page. Each selected key is present and is `undefined` when that parent
+has no visible child. Query and observe publish the same shape.
+Materialization decodes eagerly and may buffer codec output; omit it for large
+payloads and consume `record.data.stream()` instead.
+
 #### observe
 
 `observe()` is the normal reactive collection primitive. It installs a local
@@ -240,6 +261,26 @@ boolean and is false until the first query completes.
 Snapshots and their record arrays are immutable. A `Record<T>` represents
 the queried version until the caller explicitly invokes that handle's regular
 `update()` or `delete()` method; its data is still read lazily.
+
+#### set
+
+`set()` is the one create-or-replace operation. It is available only on paths
+whose protocol rule declares `$recordLimit: { max: 1 }`:
+
+```ts
+const title = await library.records.set('book/title', {
+  data: 'The Left Hand of Darkness',
+  within: book.contextId,
+});
+```
+
+Nested singleton paths require their direct-parent context; root singletons do
+not accept one. This operation targets only the connected tenant's local replica
+and does not accept remote targets or protocol-role invocation. Because `set()`
+first selects the current occupant, callers need both read and write
+authorization; a delegate's Records.Read grant must cover RecordsQuery.
+Concurrent first creates retain the DWN's normal deterministic visibility
+semantics rather than adding a lock.
 
 #### count
 

@@ -23,6 +23,13 @@ export type IndexLevelConfig = {
 
 export type IndexedItem = { messageCid: string, indexes: KeyValues };
 
+type RecordLimitParentGroupsInput = {
+  candidateFilter: Filter;
+  filters: Filter[];
+  max: number;
+  parentIds: readonly string[];
+};
+
 /** A value that can be encoded into a lexicographically sortable index key. */
 type IndexableValue = string | number | boolean;
 
@@ -429,25 +436,108 @@ export class IndexLevel {
 
     const indexName = parentId === undefined ? 'protocolPath' : 'parentId';
     const indexValue = parentId ?? protocolPath;
-    const matchPrefix = IndexLevel.keySegmentJoin(IndexLevel.encodeValue(indexValue), '');
-    const partition = await this.getIndexPartition(tenant, indexName);
     const rankHeap: string[] = [];
 
-    for await (const [key, value] of partition.iterator({ gt: matchPrefix }, options)) {
-      if (!key.startsWith(matchPrefix)) {
-        break;
-      }
-
-      const item = JSON.parse(value) as IndexedItem;
+    for await (const item of this.iterateExactMatches(tenant, indexName, indexValue, options)) {
       if ((parentId === undefined && item.indexes.parentId !== undefined) ||
           !FilterUtility.matchFilter(item.indexes, candidateFilter)) {
         continue;
       }
 
-      IndexLevel.addToBoundedMaxHeap(rankHeap, IndexLevel.createRecordLimitRankKey(item.indexes), max);
+      IndexLevel.addToBoundedMaxHeap(
+        rankHeap,
+        IndexLevel.createRecordLimitRankKey(item.indexes),
+        max,
+        lexicographicalCompare,
+      );
     }
 
     return rankHeap[0];
+  }
+
+  /**
+   * Queries the bounded occupants of explicitly selected direct-parent groups.
+   * Occupancy is resolved before caller filters, then the survivors are globally
+   * sorted and paginated using ordinary IndexLevel cursor semantics.
+   */
+  public async queryRecordLimitParentGroups(
+    tenant: string,
+    input: RecordLimitParentGroupsInput & { queryOptions: QueryOptions },
+    options?: IndexLevelOptions,
+  ): Promise<IndexedItem[]> {
+    assertValidSubtreeFilters([input.candidateFilter, ...input.filters]);
+    const { filters, queryOptions } = input;
+    const { cursor, limit, sortDirection = SortDirection.Ascending, sortProperty } = queryOptions;
+    if (limit !== undefined && limit <= 0) {
+      return [];
+    }
+
+    const cursorStartingKey = cursor === undefined ? undefined : this.createStartingKeyFromCursor(cursor);
+    const compareItems = (left: IndexedItem, right: IndexedItem): number =>
+      this.sortItems(left, right, sortProperty, sortDirection);
+    const matches: IndexedItem[] = [];
+
+    for await (const item of this.iterateRecordLimitParentGroupOccupants(tenant, input, options)) {
+      if (item.indexes[sortProperty] === undefined ||
+          !FilterUtility.matchAnyFilter(item.indexes, filters) ||
+          (cursorStartingKey !== undefined &&
+            !this.isItemAfterCursor(item, sortDirection, sortProperty, cursorStartingKey))) {
+        continue;
+      }
+
+      if (limit === undefined) {
+        matches.push(item);
+      } else {
+        IndexLevel.addToBoundedMaxHeap(matches, item, limit, compareItems);
+      }
+    }
+
+    return matches.sort(compareItems);
+  }
+
+  /** Counts the bounded occupants of explicitly selected direct-parent groups. */
+  public async countRecordLimitParentGroups(
+    tenant: string,
+    input: RecordLimitParentGroupsInput & { sortProperty: string },
+    options?: IndexLevelOptions,
+  ): Promise<number> {
+    assertValidSubtreeFilters([input.candidateFilter, ...input.filters]);
+    let count = 0;
+    for await (const item of this.iterateRecordLimitParentGroupOccupants(tenant, input, options)) {
+      if (item.indexes[input.sortProperty] !== undefined &&
+          FilterUtility.matchAnyFilter(item.indexes, input.filters)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /** Streams occupants from exact parentId ranges without opening the requested-sort index. */
+  private async * iterateRecordLimitParentGroupOccupants(
+    tenant: string,
+    input: RecordLimitParentGroupsInput,
+    options?: IndexLevelOptions,
+  ): AsyncGenerator<IndexedItem> {
+    for (const parentId of new Set(input.parentIds)) {
+      const candidateFilter: Filter = { ...input.candidateFilter, parentId };
+      const cutoff = await this.findRecordLimitRankCutoff(
+        tenant,
+        candidateFilter,
+        parentId,
+        input.max,
+        options,
+      );
+      if (cutoff === undefined) {
+        continue;
+      }
+
+      for await (const item of this.iterateExactMatches(tenant, 'parentId', parentId, options)) {
+        if (FilterUtility.matchFilter(item.indexes, candidateFilter) &&
+            lexicographicalCompare(IndexLevel.createRecordLimitRankKey(item.indexes), cutoff) <= 0) {
+          yield item;
+        }
+      }
+    }
   }
 
   /**
@@ -464,26 +554,35 @@ export class IndexLevel {
     return IndexLevel.keySegmentJoin(IndexLevel.encodeValue(dateCreated), IndexLevel.encodeValue(recordId));
   }
 
-  private static addToBoundedMaxHeap(heap: string[], value: string, max: number): void {
+  private static addToBoundedMaxHeap<T>(
+    heap: T[],
+    value: T,
+    max: number,
+    compare: (left: T, right: T) => number,
+  ): void {
     if (heap.length < max) {
       heap.push(value);
-      IndexLevel.siftRecordLimitRankUp(heap, heap.length - 1);
+      IndexLevel.siftMaxHeapUp(heap, heap.length - 1, compare);
       return;
     }
 
-    if (lexicographicalCompare(value, heap[0]) >= 0) {
+    if (compare(value, heap[0]) >= 0) {
       return;
     }
 
     heap[0] = value;
-    IndexLevel.siftRecordLimitRankDown(heap, 0);
+    IndexLevel.siftMaxHeapDown(heap, 0, compare);
   }
 
-  private static siftRecordLimitRankUp(heap: string[], startIndex: number): void {
+  private static siftMaxHeapUp<T>(
+    heap: T[],
+    startIndex: number,
+    compare: (left: T, right: T) => number,
+  ): void {
     let index = startIndex;
     while (index > 0) {
       const parentIndex = (index - 1) >>> 1;
-      if (lexicographicalCompare(heap[parentIndex], heap[index]) >= 0) {
+      if (compare(heap[parentIndex], heap[index]) >= 0) {
         return;
       }
 
@@ -492,7 +591,11 @@ export class IndexLevel {
     }
   }
 
-  private static siftRecordLimitRankDown(heap: string[], startIndex: number): void {
+  private static siftMaxHeapDown<T>(
+    heap: T[],
+    startIndex: number,
+    compare: (left: T, right: T) => number,
+  ): void {
     let index = startIndex;
     while (true) {
       const leftIndex = index * 2 + 1;
@@ -501,10 +604,10 @@ export class IndexLevel {
       }
 
       const rightIndex = leftIndex + 1;
-      const largerChildIndex = rightIndex < heap.length && lexicographicalCompare(heap[rightIndex], heap[leftIndex]) > 0
+      const largerChildIndex = rightIndex < heap.length && compare(heap[rightIndex], heap[leftIndex]) > 0
         ? rightIndex
         : leftIndex;
-      if (lexicographicalCompare(heap[index], heap[largerChildIndex]) >= 0) {
+      if (compare(heap[index], heap[largerChildIndex]) >= 0) {
         return;
       }
 
@@ -774,22 +877,29 @@ export class IndexLevel {
     propertyValue: EqualFilter,
     options?: IndexLevelOptions
   ): Promise<IndexedItem[]> {
-
-    const matchPrefix = IndexLevel.keySegmentJoin(IndexLevel.encodeValue(propertyValue));
-    const iteratorOptions: LevelWrapperIteratorOptions<string> = {
-      gt: matchPrefix
-    };
-
-    const filterPartition = await this.getIndexPartition(tenant, propertyName);
     const matches: IndexedItem[] = [];
-    for await (const [ key, value ] of filterPartition.iterator(iteratorOptions, options)) {
-      // immediately stop if we arrive at an index that contains a different property value
-      if (!key.startsWith(matchPrefix)) {
-        break;
-      }
-      matches.push(JSON.parse(value) as IndexedItem);
+    for await (const item of this.iterateExactMatches(tenant, propertyName, propertyValue, options)) {
+      matches.push(item);
     }
     return matches;
+  }
+
+  /** Streams one exact property-value range without materializing the range. */
+  private async * iterateExactMatches(
+    tenant: string,
+    propertyName: string,
+    propertyValue: EqualFilter,
+    options?: IndexLevelOptions,
+  ): AsyncGenerator<IndexedItem> {
+    const matchPrefix = IndexLevel.keySegmentJoin(IndexLevel.encodeValue(propertyValue));
+    const filterPartition = await this.getIndexPartition(tenant, propertyName);
+
+    for await (const [key, value] of filterPartition.iterator({ gt: matchPrefix }, options)) {
+      if (!key.startsWith(matchPrefix)) {
+        return;
+      }
+      yield JSON.parse(value) as IndexedItem;
+    }
   }
 
   /**
@@ -891,24 +1001,13 @@ export class IndexLevel {
    * Since the array is already sorted, binary search provides O(log n) performance instead of O(n).
    */
   private findCursorStartingIndex(items: IndexedItem[], sortDirection: SortDirection, sortProperty: string, cursorStartingKey: string): number {
-
-    const isAfterCursor = (item: IndexedItem): boolean => {
-      const { messageCid, indexes } = item;
-      const sortValue = indexes[sortProperty] as string | number;
-      const itemCompareValue = IndexLevel.keySegmentJoin(IndexLevel.encodeValue(sortValue), messageCid);
-
-      return sortDirection === SortDirection.Ascending ?
-        itemCompareValue > cursorStartingKey :
-        itemCompareValue < cursorStartingKey;
-    };
-
     // binary search for the first item after the cursor
     let low = 0;
     let high = items.length;
 
     while (low < high) {
       const mid = (low + high) >>> 1;
-      if (isAfterCursor(items[mid])) {
+      if (this.isItemAfterCursor(items[mid], sortDirection, sortProperty, cursorStartingKey)) {
         high = mid;
       } else {
         low = mid + 1;
@@ -916,6 +1015,21 @@ export class IndexLevel {
     }
 
     return low < items.length ? low : -1;
+  }
+
+  private isItemAfterCursor(
+    item: IndexedItem,
+    sortDirection: SortDirection,
+    sortProperty: string,
+    cursorStartingKey: string,
+  ): boolean {
+    const { messageCid, indexes } = item;
+    const sortValue = indexes[sortProperty] as string | number;
+    const itemCompareValue = IndexLevel.keySegmentJoin(IndexLevel.encodeValue(sortValue), messageCid);
+
+    return sortDirection === SortDirection.Ascending ?
+      itemCompareValue > cursorStartingKey :
+      itemCompareValue < cursorStartingKey;
   }
 
   /**
