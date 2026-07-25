@@ -38,7 +38,7 @@ import {
  * the target tenant; those guarantees require a tenant-authenticated feed head
  * or admission receipt.
  */
-export async function verifyRemoteDwnResponse<TReply extends GenericMessageReply>({
+export async function verifyRemoteDwnResponse({
   didResolver,
   message,
   reply,
@@ -46,14 +46,14 @@ export async function verifyRemoteDwnResponse<TReply extends GenericMessageReply
 }: {
   didResolver: DidResolver;
   message: GenericMessage;
-  reply: TReply;
+  reply: GenericMessageReply;
   targetDid: string;
-}): Promise<TReply> {
+}): Promise<void> {
   const { interface: messageInterface, method } = message.descriptor;
   const isRecordsRead = messageInterface === DwnInterfaceName.Records && method === DwnMethodName.Read;
   const recordsReadHasEntry = isRecordsRead && (reply as RecordsReadReply).entry !== undefined;
   if (reply.status.code !== 200 && !recordsReadHasEntry) {
-    return reply;
+    return;
   }
 
   if (messageInterface === DwnInterfaceName.Protocols && method === DwnMethodName.Query) {
@@ -77,7 +77,6 @@ export async function verifyRemoteDwnResponse<TReply extends GenericMessageReply
     });
   }
 
-  return reply;
 }
 
 async function verifyProtocolsQueryReply({
@@ -151,43 +150,86 @@ async function verifyRecordsReadReply({
     throw verificationError('successful RecordsRead response did not contain an entry');
   }
 
-  const hasWrite = entry.recordsWrite !== undefined;
-  const hasDelete = entry.recordsDelete !== undefined;
-  if (hasWrite === hasDelete) {
-    throw verificationError('RecordsRead entry must contain exactly one RecordsWrite or RecordsDelete');
-  }
-
-  if (entry.recordsWrite !== undefined) {
-    const recordsWriteEntry: RecordsQueryReplyEntry = {
-      ...entry.recordsWrite,
-      ...(entry.initialWrite === undefined ? {} : { initialWrite: entry.initialWrite }),
-    };
-    const recordsWrite = await verifyRecordsWriteEntry({
-      allowMissingInitialWrite : reply.status.code === 410,
+  if (entry.recordsWrite !== undefined && entry.recordsDelete === undefined) {
+    await verifyRecordsWriteReadEntry({
       didResolver,
-      entry                    : recordsWriteEntry,
-      filter                   : message.descriptor.filter,
+      entry,
+      message,
+      recordsWriteMessage: entry.recordsWrite,
+      reply,
     });
-
-    if (reply.status.code === 410) {
-      if (entry.data !== undefined) {
-        throw verificationError(`unavailable RecordsRead response for '${recordsWrite.message.recordId}' contained record data`);
-      }
-      return;
-    }
-    if (reply.status.code !== 200) {
-      throw verificationError(
-        `RecordsRead response for '${recordsWrite.message.recordId}' used status ${reply.status.code} with a RecordsWrite entry`
-      );
-    }
-    if (entry.data === undefined) {
-      throw verificationError(`RecordsRead response for '${recordsWrite.message.recordId}' did not contain record data`);
-    }
-
-    entry.data = createVerifiedDataStream(entry.data, recordsWrite.message);
     return;
   }
 
+  if (entry.recordsDelete !== undefined && entry.recordsWrite === undefined) {
+    await verifyRecordsDeleteReadEntry({
+      didResolver,
+      entry,
+      message,
+      recordsDeleteMessage: entry.recordsDelete,
+      reply,
+    });
+    return;
+  }
+
+  throw verificationError('RecordsRead entry must contain exactly one RecordsWrite or RecordsDelete');
+}
+
+async function verifyRecordsWriteReadEntry({
+  didResolver,
+  entry,
+  message,
+  recordsWriteMessage,
+  reply,
+}: {
+  didResolver: DidResolver;
+  entry: NonNullable<RecordsReadReply['entry']>;
+  message: RecordsReadMessage;
+  recordsWriteMessage: RecordsWriteMessage;
+  reply: RecordsReadReply;
+}): Promise<void> {
+  const recordsWriteEntry: RecordsQueryReplyEntry = {
+    ...recordsWriteMessage,
+    ...(entry.initialWrite === undefined ? {} : { initialWrite: entry.initialWrite }),
+  };
+  const recordsWrite = await verifyRecordsWriteEntry({
+    allowMissingInitialWrite : reply.status.code === 410,
+    didResolver,
+    entry                    : recordsWriteEntry,
+    filter                   : message.descriptor.filter,
+  });
+
+  if (reply.status.code === 410) {
+    if (entry.data !== undefined) {
+      throw verificationError(`unavailable RecordsRead response for '${recordsWrite.message.recordId}' contained record data`);
+    }
+    return;
+  }
+  if (reply.status.code !== 200) {
+    throw verificationError(
+      `RecordsRead response for '${recordsWrite.message.recordId}' used status ${reply.status.code} with a RecordsWrite entry`
+    );
+  }
+  if (entry.data === undefined) {
+    throw verificationError(`RecordsRead response for '${recordsWrite.message.recordId}' did not contain record data`);
+  }
+
+  entry.data = DataStream.fromAsyncIterable(verifyDataStream(entry.data, recordsWrite.message));
+}
+
+async function verifyRecordsDeleteReadEntry({
+  didResolver,
+  entry,
+  message,
+  recordsDeleteMessage,
+  reply,
+}: {
+  didResolver: DidResolver;
+  entry: NonNullable<RecordsReadReply['entry']>;
+  message: RecordsReadMessage;
+  recordsDeleteMessage: RecordsDeleteMessage;
+  reply: RecordsReadReply;
+}): Promise<void> {
   if (entry.initialWrite === undefined) {
     throw verificationError('RecordsRead response containing a RecordsDelete did not include its initial RecordsWrite');
   }
@@ -198,7 +240,7 @@ async function verifyRecordsReadReply({
     throw verificationError(`RecordsRead response used status ${reply.status.code} with a RecordsDelete entry`);
   }
 
-  const recordsDelete = await verifyRecordsDelete(entry.recordsDelete!, didResolver);
+  const recordsDelete = await verifyRecordsDelete(recordsDeleteMessage, didResolver);
   const initialWrite = await verifyInitialWrite(entry.initialWrite, didResolver);
   if (recordsDelete.message.descriptor.recordId !== initialWrite.message.recordId) {
     throw verificationError(
@@ -229,25 +271,7 @@ async function verifyRecordsWriteEntry({
   allowMissingInitialWrite?: boolean;
 }): Promise<RecordsWrite> {
   const recordsWrite = await verifyRecordsWrite(entry, didResolver);
-  const isInitialWrite = await recordsWrite.isInitialWrite();
-
-  if (isInitialWrite && entry.initialWrite !== undefined) {
-    throw verificationError(`initial RecordsWrite '${entry.recordId}' contained a redundant initialWrite attachment`);
-  }
-  if (!isInitialWrite) {
-    if (entry.initialWrite === undefined) {
-      if (!allowMissingInitialWrite) {
-        throw verificationError(`updated RecordsWrite '${entry.recordId}' did not include its initial write`);
-      }
-    } else {
-      const initialWrite = await verifyInitialWrite(entry.initialWrite, didResolver);
-      if (initialWrite.message.recordId !== recordsWrite.message.recordId ||
-          initialWrite.message.contextId !== recordsWrite.message.contextId) {
-        throw verificationError(`updated RecordsWrite '${entry.recordId}' does not match its attached initial write`);
-      }
-      RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite.message, recordsWrite.message);
-    }
-  }
+  await verifyInitialWriteAttachment({ allowMissingInitialWrite, didResolver, entry, recordsWrite });
 
   const indexes = await recordsWrite.constructIndexes(true);
   if (!FilterUtility.matchFilter(indexes, Records.convertFilter(filter, dateSort))) {
@@ -262,6 +286,39 @@ async function verifyRecordsWriteEntry({
   }
 
   return recordsWrite;
+}
+
+async function verifyInitialWriteAttachment({
+  allowMissingInitialWrite,
+  didResolver,
+  entry,
+  recordsWrite,
+}: {
+  allowMissingInitialWrite: boolean;
+  didResolver: DidResolver;
+  entry: RecordsQueryReplyEntry;
+  recordsWrite: RecordsWrite;
+}): Promise<void> {
+  if (await recordsWrite.isInitialWrite()) {
+    if (entry.initialWrite !== undefined) {
+      throw verificationError(`initial RecordsWrite '${entry.recordId}' contained a redundant initialWrite attachment`);
+    }
+    return;
+  }
+
+  if (entry.initialWrite === undefined) {
+    if (allowMissingInitialWrite) {
+      return;
+    }
+    throw verificationError(`updated RecordsWrite '${entry.recordId}' did not include its initial write`);
+  }
+
+  const initialWrite = await verifyInitialWrite(entry.initialWrite, didResolver);
+  if (initialWrite.message.recordId !== recordsWrite.message.recordId ||
+      initialWrite.message.contextId !== recordsWrite.message.contextId) {
+    throw verificationError(`updated RecordsWrite '${entry.recordId}' does not match its attached initial write`);
+  }
+  RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite.message, recordsWrite.message);
 }
 
 async function verifyRecordsWrite(message: RecordsWriteMessage, didResolver: DidResolver): Promise<RecordsWrite> {
@@ -296,13 +353,6 @@ async function verifyDataBytes(data: Uint8Array, recordsWrite: RecordsWriteMessa
 }
 
 /** Verifies streamed bytes as they are consumed, before allowing a successful end-of-stream. */
-function createVerifiedDataStream(
-  source: ReadableStream<Uint8Array>,
-  recordsWrite: RecordsWriteMessage,
-): ReadableStream<Uint8Array> {
-  return DataStream.fromAsyncIterable(verifyDataStream(source, recordsWrite));
-}
-
 async function* verifyDataStream(
   source: ReadableStream<Uint8Array>,
   recordsWrite: RecordsWriteMessage,

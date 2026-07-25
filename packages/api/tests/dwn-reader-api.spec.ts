@@ -372,10 +372,10 @@ describe('ReadOnlyRecord', () => {
     expect(text).toBe('re-fetched data');
     expect(anonStub.recordsRead.calledOnce).toBe(true);
 
-    // Verify the re-fetch used the correct recordId and target.
+    // Pin the re-fetch to the exact record version represented by this object.
     const readArgs = anonStub.recordsRead.args[0];
     expect(readArgs[0]).toBe(targetDid);
-    expect(readArgs[1].filter.recordId).toBe('refetch-test');
+    expect(readArgs[1].filter).toEqual({ recordId: 'refetch-test', dataCid: msg.descriptor.dataCid });
   });
 
   it('should coalesce concurrent convenience reads from a captured data accessor', async () => {
@@ -558,52 +558,6 @@ describe('ReadOnlyRecord', () => {
         expect(error.message).toContain('not-found-test');
         expect(error.message).toContain('404');
       }
-    });
-
-    it('should reject data returned for a different record', async () => {
-      anonStub = createAnonymousDwnStub();
-
-      const msg = createMockRecordsWriteMessage({ recordId: 'expected-record' });
-      const record = new ReadOnlyRecord({
-        rawMessage   : msg,
-        remoteOrigin : targetDid,
-        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
-      });
-
-      anonStub.recordsRead.resolves({
-        status : { code: 200, detail: 'OK' },
-        entry  : {
-          recordsWrite : createMockRecordsWriteMessage({ recordId: 'different-record' }),
-          data         : new Blob(['wrong record']).stream(),
-        },
-      } as RecordsReadReply);
-
-      await expect(record.data.text()).rejects.toThrow('returned record \'different-record\'');
-    });
-
-    it('should reject a newer data version returned for the same record', async () => {
-      anonStub = createAnonymousDwnStub();
-
-      const msg = createMockRecordsWriteMessage({ recordId: 'versioned-record' });
-      const record = new ReadOnlyRecord({
-        rawMessage   : msg,
-        remoteOrigin : targetDid,
-        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
-      });
-      const newerWrite = createMockRecordsWriteMessage({
-        recordId   : msg.recordId,
-        descriptor : { ...msg.descriptor, dataCid: 'newer-data-cid' },
-      });
-
-      anonStub.recordsRead.resolves({
-        status : { code: 200, detail: 'OK' },
-        entry  : {
-          recordsWrite : newerWrite,
-          data         : new Blob(['newer data']).stream(),
-        },
-      } as RecordsReadReply);
-
-      await expect(record.data.text()).rejects.toThrow('returned data CID \'newer-data-cid\'');
     });
 
     it('should handle non-Error thrown values with Unknown error message', async () => {

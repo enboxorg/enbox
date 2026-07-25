@@ -3,7 +3,7 @@ import type { BearerDid, DidDereferencingResult, DidResolver, DidUrlDereferencer
 import type { MessageSigner, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidJwk, UniversalResolver } from '@enbox/dids';
 import { Encoder, ProtocolsConfigure, RecordsWrite } from '@enbox/dwn-sdk-js';
 
@@ -15,7 +15,6 @@ describe('AnonymousDwnApi', () => {
   let dereferenceStub: sinon.SinonStub;
   let rpcStub: sinon.SinonStubbedInstance<EnboxRpc>;
   let resolver: DidResolver & DidUrlDereferencer;
-  let target: BearerDid;
   let targetDid: string;
   let targetSigner: MessageSigner;
 
@@ -75,10 +74,13 @@ describe('AnonymousDwnApi', () => {
     } as unknown as sinon.SinonStubbedInstance<EnboxRpc>;
   }
 
-  beforeEach(async () => {
-    target = await DidJwk.create();
+  beforeAll(async () => {
+    const target = await DidJwk.create();
     targetDid = target.uri;
     targetSigner = await signerForDid(target);
+  });
+
+  beforeEach(() => {
     resolver = createResolver();
     rpcStub = createRpcStub();
     anonymousDwn = new AnonymousDwnApi({
@@ -263,6 +265,7 @@ describe('AnonymousDwnApi', () => {
       );
 
       const rpcArgs = rpcStub.sendDwnRequest.args[0][0];
+      expect(rpcArgs.dwnUrl).toBe('wss://dwn.example.com/');
       expect(rpcArgs.subscription).toEqual({ handler });
     });
 
@@ -282,6 +285,8 @@ describe('AnonymousDwnApi', () => {
           () => {},
         )
       ).rejects.toThrow('AnonymousDwnApi: Failed to send request');
+
+      expect(rpcStub.sendDwnRequest.called).toBe(false);
     });
   });
 

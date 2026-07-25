@@ -1,4 +1,5 @@
 import type { DidResolver, DidUrlDereferencer } from '@enbox/dids';
+import type { DwnRpcRequest, EnboxRpc } from '@enbox/dwn-clients';
 
 import type {
   DateSort,
@@ -14,12 +15,11 @@ import type {
   RecordsSubscribeReply,
   SubscriptionListener,
 } from '@enbox/dwn-sdk-js';
-import type { DwnRpcRequest, EnboxRpc } from '@enbox/dwn-clients';
 
 import { ProtocolsQuery, RecordsCount, RecordsQuery, RecordsRead, RecordsSubscribe } from '@enbox/dwn-sdk-js';
 
-import { getDwnServiceEndpointUrls } from './utils.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
+import { getDwnServiceEndpointUrls, resolveDwnSubscriptionUrl } from './utils.js';
 
 /**
  * Parameters for constructing an {@link AnonymousDwnApi}.
@@ -228,20 +228,11 @@ export class AnonymousDwnApi {
     const dwnEndpointUrls = await getDwnServiceEndpointUrls(target, this._didResolver);
     const errorMessages: { url: string; message: string }[] = [];
 
-    for (let dwnUrl of dwnEndpointUrls) {
+    for (const endpointUrl of dwnEndpointUrls) {
       try {
-        // For subscriptions, upgrade to WebSocket transport if available.
-        if (subscriptionHandler !== undefined) {
-          const serverInfo = await this._rpcClient.getServerInfo(dwnUrl);
-          if (!serverInfo.webSocketSupport) {
-            errorMessages.push({ url: dwnUrl, message: 'WebSocket support is not enabled on the server.' });
-            continue;
-          }
-
-          const parsedUrl = new URL(dwnUrl);
-          parsedUrl.protocol = parsedUrl.protocol === 'http:' ? 'ws:' : 'wss:';
-          dwnUrl = parsedUrl.toString();
-        }
+        const dwnUrl = subscriptionHandler === undefined
+          ? endpointUrl
+          : await resolveDwnSubscriptionUrl(endpointUrl, this._rpcClient);
 
         const reply = await this._rpcClient.sendDwnRequest({
           dwnUrl,
@@ -263,7 +254,7 @@ export class AnonymousDwnApi {
         return reply as TReply;
       } catch (error: unknown) {
         errorMessages.push({
-          url     : dwnUrl,
+          url     : endpointUrl,
           message : (error instanceof Error) ? error.message : 'Unknown error',
         });
       }
