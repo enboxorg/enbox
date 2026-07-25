@@ -8,6 +8,7 @@ import type {
   ProtocolsQueryReply,
   RecordsQueryReply,
   RecordsReadReply,
+  RecordsSubscribeReply,
   RecordsWriteMessage,
 } from '@enbox/dwn-sdk-js';
 
@@ -22,6 +23,7 @@ import {
   RecordsDelete,
   RecordsQuery,
   RecordsRead,
+  RecordsSubscribe,
   RecordsWrite,
   Time,
 } from '@enbox/dwn-sdk-js';
@@ -259,6 +261,39 @@ describe('verifyRemoteDwnResponse', () => {
         const reply: RecordsQueryReply = { entries: [entry], status: { code: 200, detail: 'OK' } };
         await expect(verifyResponse(query.message, reply)).rejects.toThrow();
       }
+    });
+  });
+
+  describe('RecordsSubscribe snapshot', () => {
+    it('accepts an authenticated matching initial snapshot', async () => {
+      const data = textEncoder.encode('snapshot record');
+      const recordsWrite = await createRecordsWrite(data, targetSigner, true);
+      const subscribe = await RecordsSubscribe.create({ filter: { protocol: protocolUri } });
+      const reply: RecordsSubscribeReply = {
+        entries      : [{ ...recordsWrite.message, encodedData: Encoder.bytesToBase64Url(data) }],
+        status       : { code: 200, detail: 'OK' },
+        subscription : { id: 'valid-snapshot', close: async (): Promise<void> => {} },
+      };
+
+      await verifyResponse(subscribe.message, reply);
+    });
+
+    it('closes a subscription whose initial snapshot fails verification', async () => {
+      const data = textEncoder.encode('tampered snapshot record');
+      const recordsWrite = await createRecordsWrite(data, targetSigner, true);
+      const tamperedWrite = structuredClone(recordsWrite.message);
+      const signature = tamperedWrite.authorization!.signature.signatures[0].signature;
+      tamperedWrite.authorization!.signature.signatures[0].signature = replaceLastCharacter(signature);
+      const subscribe = await RecordsSubscribe.create({ filter: { protocol: protocolUri } });
+      let closed = false;
+      const reply: RecordsSubscribeReply = {
+        entries      : [{ ...tamperedWrite, encodedData: Encoder.bytesToBase64Url(data) }],
+        status       : { code: 200, detail: 'OK' },
+        subscription : { id: 'invalid-snapshot', close: async (): Promise<void> => { closed = true; } },
+      };
+
+      await expect(verifyResponse(subscribe.message, reply)).rejects.toThrow();
+      expect(closed).toBe(true);
     });
   });
 

@@ -11,6 +11,8 @@ import type {
   RecordsQueryReplyEntry,
   RecordsReadMessage,
   RecordsReadReply,
+  RecordsSubscribeMessage,
+  RecordsSubscribeReply,
   RecordsWriteMessage,
 } from '@enbox/dwn-sdk-js';
 
@@ -60,10 +62,16 @@ export async function verifyRemoteDwnResponse({
       targetDid,
     });
   } else if (messageInterface === DwnInterfaceName.Records && method === DwnMethodName.Query) {
-    await verifyRecordsQueryReply({
+    await verifyRecordsCollectionReply({
       didResolver,
       message : message as RecordsQueryMessage,
       reply   : reply as RecordsQueryReply,
+    });
+  } else if (messageInterface === DwnInterfaceName.Records && method === DwnMethodName.Subscribe) {
+    await verifyRecordsSubscribeReply({
+      didResolver,
+      message : message as RecordsSubscribeMessage,
+      reply   : reply as RecordsSubscribeReply,
     });
   } else if (messageInterface === DwnInterfaceName.Records && method === DwnMethodName.Read) {
     await verifyRecordsReadReply({
@@ -116,18 +124,18 @@ async function verifyProtocolsQueryReply({
   }
 }
 
-async function verifyRecordsQueryReply({
+async function verifyRecordsCollectionReply({
   didResolver,
   message,
   reply,
 }: {
   didResolver: DidResolver;
-  message: RecordsQueryMessage;
-  reply: RecordsQueryReply;
+  message: RecordsQueryMessage | RecordsSubscribeMessage;
+  reply: RecordsQueryReply | RecordsSubscribeReply;
 }): Promise<void> {
   const entries = reply.entries ?? [];
   if (reply.status.code !== 200 && entries.length > 0) {
-    throw verificationError(`RecordsQuery response used status ${reply.status.code} with entries`);
+    throw verificationError(`Records${message.descriptor.method} response used status ${reply.status.code} with entries`);
   }
 
   for (const entry of entries) {
@@ -138,6 +146,25 @@ async function verifyRecordsQueryReply({
       dateSort      : message.descriptor.dateSort,
       publishedOnly : message.authorization === undefined,
     });
+  }
+}
+
+async function verifyRecordsSubscribeReply({
+  didResolver,
+  message,
+  reply,
+}: {
+  didResolver: DidResolver;
+  message: RecordsSubscribeMessage;
+  reply: RecordsSubscribeReply;
+}): Promise<void> {
+  try {
+    await verifyRecordsCollectionReply({ didResolver, message, reply });
+  } catch (error) {
+    if (reply.subscription !== undefined) {
+      await Promise.allSettled([reply.subscription.close()]);
+    }
+    throw error;
   }
 }
 
