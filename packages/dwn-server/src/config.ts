@@ -38,6 +38,20 @@ export function parseByteSize(value: string): number {
   return byteSize;
 }
 
+/** Parses a positive safe integer from a startup configuration value. */
+export function parsePositiveInteger(value: string, name: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new TypeError(`${name} must be a positive integer.`);
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new TypeError(`${name} must be a positive safe integer.`);
+  }
+
+  return parsed;
+}
+
 const configValues = {
   /**
    * Used to populate the `server` property returned by the `/info` endpoint.
@@ -106,6 +120,34 @@ const configValues = {
    * advance the window. Configurable via `DWN_MAX_IN_FLIGHT` env var.
    */
   maxInFlight: Number.parseInt(process.env.DWN_MAX_IN_FLIGHT || '32'),
+
+  /**
+   * Maximum number of WebSocket connections admitted by one server process.
+   * This startup-only limit is intentionally finite and cannot be disabled.
+   */
+  webSocketMaxConnections: parsePositiveInteger(
+    process.env.DWN_WEBSOCKET_MAX_CONNECTIONS || '1000',
+    'DWN_WEBSOCKET_MAX_CONNECTIONS',
+  ),
+
+  /**
+   * Maximum number of WebSocket connections admitted for one peer IP by one
+   * server process. This startup-only limit is intentionally finite.
+   */
+  webSocketMaxConnectionsPerIp: parsePositiveInteger(
+    process.env.DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP || '100',
+    'DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP',
+  ),
+
+  /**
+   * Maximum number of outstanding subscription slots on one WebSocket.
+   * Opening, active, and closing subscriptions retain capacity until their
+   * underlying work settles.
+   */
+  webSocketMaxSubscriptionsPerConnection: parsePositiveInteger(
+    process.env.DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION || '64',
+    'DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION',
+  ),
 
   // whether to enable 'ws:'
   webSocketSupport: { on: true, off: false }[process.env.DS_WEBSOCKET_SERVER] ?? true,
@@ -297,9 +339,21 @@ const configValues = {
   forwardingDeduplicationTtlSeconds: Number.parseInt(process.env.DWN_FORWARDING_DEDUP_TTL || '60'),
 };
 
-export type DwnServerConfig = Omit<typeof configValues, 'maxRecordDataSize'> & {
+export type DwnServerConfig = Omit<
+  typeof configValues,
+  | 'maxRecordDataSize'
+  | 'webSocketMaxConnections'
+  | 'webSocketMaxConnectionsPerIp'
+  | 'webSocketMaxSubscriptionsPerConnection'
+> & {
   /** Startup-only because the HTTP and WebSocket transport ceilings capture it when the server starts. */
   readonly maxRecordDataSize: number;
+  /** Startup-only process-wide WebSocket connection limit. */
+  readonly webSocketMaxConnections: number;
+  /** Startup-only per-peer WebSocket connection limit. */
+  readonly webSocketMaxConnectionsPerIp: number;
+  /** Startup-only per-connection subscription limit. */
+  readonly webSocketMaxSubscriptionsPerConnection: number;
 };
 
 export const config: DwnServerConfig = configValues;

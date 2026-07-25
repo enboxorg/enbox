@@ -39,6 +39,9 @@ Key settings:
 | `POSTGRES_USER` | `dwn_user` | Database user |
 | `POSTGRES_PASSWORD` | `dwn_password` | Database password (change in production) |
 | `MAX_RECORD_DATA_SIZE` | `100mb` | Startup-only maximum record data size |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS` | `1000` | Startup-only process-wide WebSocket connection limit |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP` | `100` | Startup-only connection limit per peer IP |
+| `DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION` | `64` | Startup-only outstanding subscription-slot limit per connection |
 | `LOG_LEVEL` | -- | Set to `debug` for verbose logging |
 
 See the [`@enbox/dwn-server` README](../packages/dwn-server/README.md) for the full list of configuration options, storage backends, plugin system, and JSON-RPC API documentation.
@@ -55,6 +58,10 @@ deployments must include `pg` and `pg-cursor`, MySQL deployments must include
 4. **Configure backup strategies** for PostgreSQL data
 5. **Set resource limits** for containers
 6. **Enable registration** -- configure proof-of-work or terms-of-service tenant registration
+
+Enbox keys peer-IP limits from the direct TCP peer and does not trust forwarded
+headers. When a reverse proxy terminates client connections, enforce client-IP
+admission there and size Enbox's per-peer limit for the proxy's aggregate traffic.
 
 ## Self-Hosting Anywhere
 

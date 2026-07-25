@@ -129,6 +129,9 @@ All configuration is read from environment variables at startup (see [`src/confi
 | `DS_WEBSOCKET_SERVER`  | Enable the WebSocket listener: `on` / `off`                             | `on`                    |
 | `MAX_RECORD_DATA_SIZE` | Startup-only maximum `RecordsWrite` data size (`b`, `kb`, `mb`, `gb`)   | `100mb`                 |
 | `DWN_MAX_IN_FLIGHT`    | Max unacknowledged subscription events per subscription before backpressure | `32`                |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS` | Startup-only process-wide WebSocket connection limit            | `1000`                  |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP` | Startup-only WebSocket connection limit per peer IP       | `100`                   |
+| `DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION` | Startup-only outstanding subscription-slot limit per connection | `64` |
 | `DWN_SERVER_LOG_LEVEL` | Log level: `trace`, `debug`, `info`, `warn`, `error`                    | `INFO`                  |
 | `DWN_SERVER_PACKAGE_NAME` | Server name reported by `/info`                                      | `@enbox/dwn-server`     |
 
@@ -214,7 +217,7 @@ The admin API and UI are **disabled** unless an admin token is provided. See [Ad
 
 | Env var                                      | Description                                              | Default        |
 | -------------------------------------------- | ------------------------------------------------------- | -------------- |
-| `DWN_RATE_LIMIT_REQUESTS_PER_SECOND`         | Per-IP HTTP request rate (0 = disabled)                 | `30`           |
+| `DWN_RATE_LIMIT_REQUESTS_PER_SECOND`         | Per-IP HTTP, WebSocket-upgrade, and WS request rate (0 = disabled) | `30`       |
 | `DWN_RATE_LIMIT_BURST`                        | Per-IP burst allowance                                  | `50`           |
 | `DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND`  | Per-tenant DWN request rate, HTTP + WS (0 = disabled)   | `20`           |
 | `DWN_RATE_LIMIT_TENANT_BURST`                | Per-tenant burst allowance                              | `50`           |
@@ -224,6 +227,11 @@ The admin API and UI are **disabled** unless an admin token is provided. See [Ad
 | `DWN_AUDIT_LOG_MAX_ROWS`                    | Audit-log retention by row count (0 = no row limit)     | `100000`       |
 
 Per-tenant quotas and rate limits can be overridden at runtime via the admin API.
+WebSocket acknowledgements that advance a subscription event window are exempt from
+the ordinary request bucket so flow-control progress cannot be rate-limited away.
+Peer-IP limits use the direct TCP peer and never trust forwarded headers. When a
+reverse proxy terminates connections, enforce client-IP limits there and size
+the Enbox per-peer connection limit for the proxy's aggregate traffic.
 
 ### Sync: delivery & forwarding
 

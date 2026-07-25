@@ -28,6 +28,24 @@ describe('config', () => {
     });
   });
 
+  describe('parsePositiveInteger()', () => {
+    it('should parse positive safe integers', async () => {
+      const { parsePositiveInteger } = await import('../src/config.js');
+
+      expect(parsePositiveInteger('1', 'TEST_LIMIT')).toBe(1);
+      expect(parsePositiveInteger('1000', 'TEST_LIMIT')).toBe(1000);
+      expect(parsePositiveInteger(String(Number.MAX_SAFE_INTEGER), 'TEST_LIMIT')).toBe(Number.MAX_SAFE_INTEGER);
+    });
+
+    it('should reject disabled, partial, negative, and unsafe limits', async () => {
+      const { parsePositiveInteger } = await import('../src/config.js');
+
+      for (const value of ['0', '-1', '64x', '1.5', '', String(Number.MAX_SAFE_INTEGER + 1)]) {
+        expect(() => parsePositiveInteger(value, 'TEST_LIMIT')).toThrow('TEST_LIMIT must be a positive');
+      }
+    });
+  });
+
   // NOTE: The original version of these tests asserted exact default values
   // (e.g. `expect(config.port).toBe(3000)`, `expect(config.maxRecordDataSize).toBe(...)`)
   // which made them snapshot-style assertions that would break any time a default
@@ -45,6 +63,9 @@ describe('config', () => {
       expect(typeof config.maxRecordDataSize).toBe('number');
       expect(config.maxRecordDataSize).toBeGreaterThan(0);
       expect(typeof config.maxInFlight).toBe('number');
+      expect(config.webSocketMaxConnections).toBeGreaterThan(0);
+      expect(config.webSocketMaxConnectionsPerIp).toBeGreaterThan(0);
+      expect(config.webSocketMaxSubscriptionsPerConnection).toBeGreaterThan(0);
       expect(typeof config.webSocketSupport).toBe('boolean');
       expect(config.eventBusPluginPath === undefined || typeof config.eventBusPluginPath === 'string').toBe(true);
       expect(typeof config.logLevel).toBe('string');

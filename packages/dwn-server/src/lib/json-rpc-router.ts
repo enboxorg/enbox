@@ -20,6 +20,8 @@ export type RequestContext = {
     id: JsonRpcId;
     /** The `SubscriptionMessage` handler associated with a subscription request, only used in `ws` requests */
     subscriptionHandler: SubscriptionListener;
+    /** Activates this exact opening after the DWN returns its close handle. */
+    activate: (close: () => Promise<void>) => Promise<void>;
   }
   /** The `ReadableStream` associated with a `RecordsWrite` request only used in `http` requests */
   dataStream?: ReadableStream<Uint8Array>;
@@ -48,22 +50,23 @@ export type JsonRpcHandler = (
 ) => Promise<HandlerResponse>;
 
 export class JsonRpcRouter {
-  private methodHandlers: { [method: string]: JsonRpcHandler };
-
-  constructor() {
-    this.methodHandlers = {};
-  }
+  private readonly methodHandlers: Map<string, JsonRpcHandler> = new Map();
 
   on(methodName: string, handler: JsonRpcHandler): void {
-    this.methodHandlers[methodName] = handler;
+    this.methodHandlers.set(methodName, handler);
+  }
+
+  /** Returns whether a handler is registered for the exact method name. */
+  hasHandler(methodName: string): boolean {
+    return this.methodHandlers.has(methodName);
   }
 
   async handle(
     rpcRequest: JsonRpcRequest,
     context: RequestContext,
   ): Promise<HandlerResponse> {
-    const handler = this.methodHandlers[rpcRequest.method];
-    if (!handler) {
+    const handler = this.methodHandlers.get(rpcRequest.method);
+    if (handler === undefined) {
       return {
         jsonRpcResponse: createJsonRpcErrorResponse(
           rpcRequest.id!,

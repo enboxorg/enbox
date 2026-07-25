@@ -52,6 +52,9 @@ All configuration is via **environment variables**. There are no CLI flags.
 | `DS_WEBSOCKET_SERVER` | `on` | Enable WebSocket support (`on` / `off`) |
 | `MAX_RECORD_DATA_SIZE` | `100mb` | Startup-only maximum payload size per `RecordsWrite` |
 | `DWN_MAX_IN_FLIGHT` | `32` | Max unacknowledged subscription events per subscription |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS` | `1000` | Startup-only process-wide WebSocket connection limit |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP` | `100` | Startup-only WebSocket connection limit per peer IP |
+| `DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION` | `64` | Startup-only outstanding subscription-slot limit per connection |
 
 ### Storage
 
@@ -147,7 +150,7 @@ Per-tenant storage quotas limit resource usage. Defaults are unlimited; per-tena
 
 | Variable | Default | Description |
 |---|---|---|
-| `DWN_RATE_LIMIT_REQUESTS_PER_SECOND` | `30` | Max HTTP requests/sec per IP. `0` disables. |
+| `DWN_RATE_LIMIT_REQUESTS_PER_SECOND` | `30` | Max HTTP, WebSocket-upgrade, and WS requests/sec per IP. `0` disables. |
 | `DWN_RATE_LIMIT_BURST` | `50` | Burst allowance per IP |
 | `DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND` | `20` | Max DWN requests/sec per tenant DID. `0` disables. |
 | `DWN_RATE_LIMIT_TENANT_BURST` | `50` | Burst allowance per tenant |
@@ -185,6 +188,12 @@ When `DS_WEBSOCKET_SERVER=on` (the default), the server accepts WebSocket upgrad
 - JSON-RPC DWN messages (same as HTTP)
 - Real-time subscription events
 - Flow control via `rpc.ack` messages (controlled by `DWN_MAX_IN_FLIGHT`)
+
+Acknowledgements that advance a subscription event window do not consume the ordinary
+per-IP request bucket, so rate limiting cannot stall an already-open event window.
+Peer-IP limits use the direct TCP peer and do not trust forwarded headers. When
+a reverse proxy terminates connections, enforce client-IP limits there and size
+the Enbox per-peer connection limit for the proxy's aggregate traffic.
 
 ### Registration routes
 

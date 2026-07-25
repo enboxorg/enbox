@@ -224,18 +224,20 @@ export class DwnServer {
       },
     );
 
-    await this.#httpApi.start(this.config.port);
-    log.info(`HttpServer listening on port ${this.config.port}`);
-
     if (this.config.webSocketSupport) {
       this.#wsApi = new WsApi(this.#httpApi, this.dwn, { activityLog });
-      this.#wsApi.start();
-      log.info('WebSocketServer ready...');
 
       // Wire connection manager to admin API for connection counting.
       if (adminApi) {
         adminApi.setConnectionManager(this.#wsApi.connectionManager);
       }
+    }
+
+    await this.#httpApi.start(this.config.port);
+    log.info(`HttpServer listening on port ${this.config.port}`);
+
+    if (this.#wsApi !== undefined) {
+      log.info('WebSocketServer ready...');
     }
 
     // Start periodic Prometheus gauge updates.
@@ -524,6 +526,13 @@ export class DwnServer {
       return;
     }
 
+    // Stop accepting work before draining resources. Otherwise an upgrade can
+    // land after the one-time connection drain and outlive server shutdown.
+    await this.#httpApi.close();
+    if (this.#wsApi !== undefined) {
+      await this.#wsApi.close();
+    }
+
     // Stop admin metrics updater and record shutdown audit event.
     if (this.#adminApi) {
       this.#adminApi.stopMetricsUpdater();
@@ -549,19 +558,12 @@ export class DwnServer {
       this.#tenantRateLimiter.destroy();
     }
 
-    // Close WebSocket server if it was initialized.
-    if (this.#wsApi !== undefined) {
-      await this.#wsApi.close();
-    }
-
     await this.dwn.close();
 
     if (this.#eventBus !== undefined) {
       await this.#eventBus.close();
       this.#eventBus = undefined;
     }
-
-    await this.#httpApi.close();
 
     removeProcessHandlers(this.processHandlers);
 

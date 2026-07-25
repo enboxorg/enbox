@@ -55,6 +55,20 @@ export const websocketSubscriptions = new Gauge({
 // Enhanced counters — incremented per-request
 // ---------------------------------------------------------------------------
 
+/** WebSocket connection attempts rejected before or during upgrade. */
+export const websocketConnectionRejections = new Counter({
+  name       : 'dwn_websocket_connection_rejections_total',
+  help       : 'websocket connection attempts rejected by admission controls',
+  labelNames : ['reason'],
+});
+
+/** WebSocket subscription opens rejected by per-connection admission controls. */
+export const websocketSubscriptionRejections = new Counter({
+  name       : 'dwn_websocket_subscription_rejections_total',
+  help       : 'websocket subscription opens rejected by admission controls',
+  labelNames : ['reason'],
+});
+
 /** Total data bytes written via RecordsWrite, labeled by interface + method. */
 export const requestDataBytesTotal = new Counter({
   name       : 'dwn_request_data_bytes_total',

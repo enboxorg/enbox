@@ -28,6 +28,8 @@ export class DwnServerError extends Error {
 export enum DwnServerErrorCode {
   ConnectionSubscriptionJsonRpcIdExists = 'ConnectionSubscriptionJsonRpcIdExists',
   ConnectionSubscriptionJsonRpcIdNotFound = 'ConnectionSubscriptionJsonRpcIdNotFound',
+  ConnectionSubscriptionLimitExceeded = 'ConnectionSubscriptionLimitExceeded',
+  ConnectionSubscriptionOpeningNotFound = 'ConnectionSubscriptionOpeningNotFound',
   ProofOfWorkInsufficientSolutionNonce = 'ProofOfWorkInsufficientSolutionNonce',
   ProofOfWorkInvalidOrExpiredChallenge = 'ProofOfWorkInvalidOrExpiredChallenge',
   ProofOfWorkManagerInvalidChallengeNonce = 'ProofOfWorkManagerInvalidChallengeNonce',

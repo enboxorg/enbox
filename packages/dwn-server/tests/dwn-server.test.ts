@@ -44,6 +44,24 @@ async function waitForWebSocketClose(socket: WebSocket): Promise<void> {
   });
 }
 
+async function expectWebSocketRejection(socket: WebSocket): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout((): void => reject(new Error('WebSocket rejection timeout')), 3000);
+    socket.onopen = (): void => {
+      clearTimeout(timeout);
+      reject(new Error('WebSocket opened during server shutdown'));
+    };
+    socket.onerror = (): void => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    socket.onclose = (): void => {
+      clearTimeout(timeout);
+      resolve();
+    };
+  });
+}
+
 describe('DwnServer', () => {
   const dwnServerConfig = { ...config, port: 0 };
   let dwn: Dwn;
@@ -58,6 +76,17 @@ describe('DwnServer', () => {
     expect(typeof port).toBe('number');
 
     await dwnServer.stop();
+  });
+
+  it('stops accepting WebSocket upgrades as soon as shutdown begins', async () => {
+    ({ dwn } = await getTestDwn({ withEvents: true }));
+    const dwnServer = new DwnServer({ config: dwnServerConfig, dwn });
+    await dwnServer.start();
+    const wsUrl = `ws://127.0.0.1:${dwnServer.httpServer.port}`;
+
+    const stopping = dwnServer.stop();
+    await expectWebSocketRejection(new WebSocket(wsUrl));
+    await stopping;
   });
 
   describe('webSocketSupport config', () => {
@@ -89,8 +118,10 @@ describe('DwnServer', () => {
       });
 
       await withSocketServer.start();
-      // With Bun, WebSocket support is built into the same server — no separate wsServer object.
-      expect(typeof withSocketServer.httpServer.port).toBe('number');
+      const socket = new WebSocket(`ws://127.0.0.1:${withSocketServer.httpServer.port}`);
+      await waitForWebSocketOpen(socket);
+      expect(socket.readyState).toBe(WebSocket.OPEN);
+      socket.terminate();
 
       await withSocketServer.stop();
       console.log('server Stop');

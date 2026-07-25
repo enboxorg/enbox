@@ -11,6 +11,19 @@ export const DEFAULT_MAX_IN_FLIGHT = 32;
 /** Maximum buffer size before the subscription is force-closed to prevent OOM. */
 export const MAX_BUFFER_SIZE = 1000;
 
+/** Validates that a value is a well-formed subscription progress token. */
+export function isProgressToken(value: unknown): value is ProgressToken {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const token = value as Record<string, unknown>;
+  return typeof token.streamId === 'string' && token.streamId !== '' &&
+    typeof token.epoch === 'string' && token.epoch !== '' &&
+    typeof token.position === 'string' && token.position !== '' &&
+    (token.messageCid === undefined || (typeof token.messageCid === 'string' && token.messageCid !== ''));
+}
+
 /**
  * Per-subscription flow controller that enforces a sliding window of
  * unacknowledged events. When the window is full, incoming events are
@@ -28,7 +41,7 @@ export class FlowController {
   /** Buffer of events waiting to be sent once the window opens. */
   private buffer: SubscriptionMessage[] = [];
 
-  /** Whether the controller has been closed due to overflow. */
+  /** Whether the controller has been closed. */
   private closed = false;
 
   constructor(
@@ -57,9 +70,7 @@ export class FlowController {
           `FlowController: buffer overflow for subscription ${String(this.subscriptionId)}, ` +
           `closing subscription (buffer=${this.buffer.length}, unacked=${this.unacked.length})`
         );
-        this.closed = true;
-        this.buffer = [];
-        this.unacked = [];
+        this.close();
         this.onOverflow();
       }
     }
@@ -71,32 +82,8 @@ export class FlowController {
    * newly opened window slots.
    */
   public ack(cursor: ProgressToken): void {
-    if (this.closed) {
-      return;
-    }
-
-    // Reject tokens from a different stream/epoch — these indicate a client
-    // bug or a stale reconnection with an old token domain.
-    if (this.unacked.length > 0) {
-      const expected = this.unacked[0];
-      if (cursor.streamId !== expected.streamId || cursor.epoch !== expected.epoch) {
-        log.debug(
-          `FlowController: rejected ack with mismatched token domain for subscription ${String(this.subscriptionId)}: ` +
-          `expected streamId=${expected.streamId} epoch=${expected.epoch}, ` +
-          `got streamId=${cursor.streamId} epoch=${cursor.epoch}`
-        );
-        return;
-      }
-    }
-
-    // Find the matching token. High-water cursors may omit messageCid, so
-    // those acknowledgements match by position alone within the stream domain.
-    const idx = this.unacked.findIndex(
-      (t) => t.position === cursor.position &&
-        (cursor.messageCid === undefined || t.messageCid === cursor.messageCid)
-    );
+    const idx = this.findAcknowledgementIndex(cursor);
     if (idx === -1) {
-      // Unknown token — could be a stale or duplicate ack. Ignore silently.
       log.debug(`FlowController: unknown cursor in ack for subscription ${String(this.subscriptionId)}: position=${cursor.position}`);
       return;
     }
@@ -109,6 +96,24 @@ export class FlowController {
       const buffered = this.buffer.shift()!;
       this.sendMessage(buffered);
     }
+  }
+
+  /** Returns whether an acknowledgement would advance this flow-control window. */
+  public canAcknowledge(cursor: ProgressToken): boolean {
+    return this.findAcknowledgementIndex(cursor) >= 0;
+  }
+
+  /**
+   * Stops delivery and releases all buffered flow-control state.
+   */
+  public close(): void {
+    if (this.closed) {
+      return;
+    }
+
+    this.closed = true;
+    this.buffer = [];
+    this.unacked = [];
   }
 
   /**
@@ -132,5 +137,23 @@ export class FlowController {
     const response = createJsonRpcSuccessResponse(this.subscriptionId, { subscription: message });
     this.send(response);
     this.unacked.push(message.cursor);
+  }
+
+  /** Finds the cumulative ACK boundary within the current progress-token domain. */
+  private findAcknowledgementIndex(cursor: ProgressToken): number {
+    if (this.closed || this.unacked.length === 0) {
+      return -1;
+    }
+
+    const expected = this.unacked[0];
+    if (cursor.streamId !== expected.streamId || cursor.epoch !== expected.epoch) {
+      return -1;
+    }
+
+    // High-water cursors may omit messageCid and match by position alone.
+    return this.unacked.findIndex(
+      (token) => token.position === cursor.position &&
+        (cursor.messageCid === undefined || token.messageCid === cursor.messageCid)
+    );
   }
 }

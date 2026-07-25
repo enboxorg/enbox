@@ -42,8 +42,9 @@ import { getDialectFromUrl } from './storage.js';
 import { LocalNodePairingManager as InMemoryLocalNodePairingManager } from './local-node-pairing.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
 import { validateAdminAuth } from './admin/admin-auth.js';
+import { WebSocketConnectionLimiter } from './connection/websocket-connection-limiter.js';
 import { assertLocalNodeBindHostname, isLocalNodeHostHeaderAllowed } from './local-node-profile.js';
-import { requestCounter, responseHistogram } from './metrics.js';
+import { requestCounter, responseHistogram, websocketConnectionRejections } from './metrics.js';
 
 /** Property names that must never be used as keys when building objects from user input. */
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -66,6 +67,8 @@ export type LocalNodeWebSocketSession = {
 
 export interface WsData {
   connection: SocketConnection | null;
+  peerIp: string;
+  releaseConnectionReservation: () => void;
   localNodeSession? : LocalNodeWebSocketSession;
 }
 
@@ -217,6 +220,14 @@ export class HttpApi {
       assertLocalNodeBindHostname(this.#config.hostname);
     }
 
+    // Each server lifetime owns independent admission state. A late close
+    // callback from a previous lifetime cannot release capacity in a restarted
+    // server because its reservation closes over this limiter instance.
+    const webSocketConnectionLimiter = new WebSocketConnectionLimiter(
+      this.#config.webSocketMaxConnections,
+      this.#config.webSocketMaxConnectionsPerIp,
+    );
+
     this.#server = Bun.serve<WsData>({
       hostname           : this.#config.hostname,
       maxRequestBodySize : maxHttpDwnRpcRequestBodyBytes(this.#config.maxRecordDataSize),
@@ -233,6 +244,17 @@ export class HttpApi {
         }
 
         const isWebSocketUpgrade = method === 'GET' && req.headers.get('upgrade')?.toLowerCase() === 'websocket';
+        const webSocketPeerIp = isWebSocketUpgrade ? server.requestIP(req)?.address ?? 'unknown' : undefined;
+        if (webSocketPeerIp !== undefined && this.#ipRateLimiter !== undefined) {
+          const rateLimitResult = this.#ipRateLimiter.consume(webSocketPeerIp);
+          if (rateLimitResult.allowed === false) {
+            websocketConnectionRejections.inc({ reason: 'rate-limit' });
+            const response = HttpApi.#rateLimitResponse(rateLimitResult.retryAfterMs);
+            this.#applyCorsHeaders(req, response, path);
+            return response;
+          }
+        }
+
         let localNodeSession: LocalNodeWebSocketSession | undefined;
 
         if (this.#config.localNodeProfileEnabled) {
@@ -247,11 +269,13 @@ export class HttpApi {
 
         // --- WebSocket upgrade ---
         if (isWebSocketUpgrade) {
-          const upgraded = server.upgrade(req, { data: { connection: null, localNodeSession } });
-          if (upgraded) {
-            return undefined;
-          }
-          return new Response('WebSocket upgrade failed', { status: 400 });
+          return this.#handleWebSocketUpgrade(
+            req,
+            server,
+            webSocketConnectionLimiter,
+            webSocketPeerIp ?? 'unknown',
+            localNodeSession,
+          );
         }
 
         // --- Per-IP rate limiting ---
@@ -259,17 +283,7 @@ export class HttpApi {
           const ip = server.requestIP(req)?.address ?? 'unknown';
           const result = this.#ipRateLimiter.consume(ip);
           if (result.allowed === false) {
-            const retryAfterSec = Math.ceil(result.retryAfterMs / 1000);
-            const response = new Response(
-              JSON.stringify({ error: 'Rate limit exceeded' }),
-              {
-                status  : 429,
-                headers : {
-                  'content-type' : 'application/json',
-                  'retry-after'  : String(retryAfterSec),
-                },
-              },
-            );
+            const response = HttpApi.#rateLimitResponse(result.retryAfterMs);
             this.#applyCorsHeaders(req, response, path);
             return response;
           }
@@ -304,8 +318,20 @@ export class HttpApi {
       websocket: {
         maxPayloadLength : maxWsJsonRpcPayloadBytes(this.#config.maxRecordDataSize),
         open             : (ws: ServerWebSocket<WsData>): void => {
-          if (this.onWebSocketConnection) {
+          if (this.onWebSocketConnection === undefined) {
+            ws.data.releaseConnectionReservation();
+            websocketConnectionRejections.inc({ reason: 'setup-failed' });
+            ws.close();
+            return;
+          }
+
+          try {
             this.onWebSocketConnection(ws);
+          } catch (error) {
+            log.error('WebSocket connection setup failed', error);
+            ws.data.releaseConnectionReservation();
+            websocketConnectionRejections.inc({ reason: 'setup-failed' });
+            ws.close();
           }
         },
         message(ws: ServerWebSocket<WsData>, msg: string | Buffer): void {
@@ -317,8 +343,9 @@ export class HttpApi {
         close(ws: ServerWebSocket<WsData>): void {
           const connection = ws.data?.connection;
           if (connection) {
-            connection.close();
+            void connection.close();
           }
+          ws.data.releaseConnectionReservation();
         },
         pong(ws: ServerWebSocket<WsData>): void {
           const connection = ws.data?.connection;
@@ -814,6 +841,82 @@ export class HttpApi {
     return parts[1];
   }
 
+  /** Validates the RFC 6455 handshake fields before reserving connection capacity. */
+  static #isValidWebSocketUpgrade(req: Request): boolean {
+    const connectionTokens = req.headers.get('connection')
+      ?.split(',')
+      .map((token): string => token.trim().toLowerCase());
+    if (!connectionTokens?.includes('upgrade') || req.headers.get('sec-websocket-version') !== '13') {
+      return false;
+    }
+
+    const key = req.headers.get('sec-websocket-key');
+    return key !== null
+      && /^[A-Za-z0-9+/]{22}==$/.test(key)
+      && Buffer.from(key, 'base64').byteLength === 16;
+  }
+
+  /** Applies connection admission and transfers its reservation to an upgraded socket. */
+  #handleWebSocketUpgrade(
+    req: Request,
+    server: Server<WsData>,
+    limiter: WebSocketConnectionLimiter,
+    peerIp: string,
+    localNodeSession?: LocalNodeWebSocketSession,
+  ): Response | undefined {
+    if (!this.#config.webSocketSupport) {
+      return new Response('WebSocket support is disabled', { status: 404 });
+    }
+    // Bun can accept an upgrade before rejecting a malformed key without
+    // emitting an open/close callback, so validate the required handshake
+    // fields before reserving capacity.
+    if (!HttpApi.#isValidWebSocketUpgrade(req)) {
+      websocketConnectionRejections.inc({ reason: 'invalid-upgrade' });
+      return new Response('Invalid WebSocket upgrade', { status: 400 });
+    }
+
+    const admission = limiter.reserve(peerIp);
+    if (admission.status === 'rejected') {
+      websocketConnectionRejections.inc({ reason: admission.reason });
+      return new Response('WebSocket connection limit exceeded', {
+        status: admission.reason === 'peer-limit' ? 429 : 503,
+      });
+    }
+
+    try {
+      if (server.upgrade(req, {
+        data: {
+          connection                   : null,
+          localNodeSession,
+          peerIp,
+          releaseConnectionReservation : admission.reservation.release,
+        },
+      })) {
+        return undefined;
+      }
+    } catch (error) {
+      log.error('WebSocket upgrade failed', error);
+    }
+
+    admission.reservation.release();
+    websocketConnectionRejections.inc({ reason: 'upgrade-failed' });
+    return new Response('WebSocket upgrade failed', { status: 400 });
+  }
+
+  /** Builds the shared HTTP 429 response for the process-wide IP limiter. */
+  static #rateLimitResponse(retryAfterMs: number): Response {
+    return new Response(
+      JSON.stringify({ error: 'Rate limit exceeded' }),
+      {
+        status  : 429,
+        headers : {
+          'content-type' : 'application/json',
+          'retry-after'  : String(Math.ceil(retryAfterMs / 1000)),
+        },
+      },
+    );
+  }
+
   #handleLocalNodePairRequest(req: Request): Response {
     const origin = req.headers.get('origin');
     const result = this.#localNodePairingManager.createRequest(origin);
@@ -949,9 +1052,10 @@ export class HttpApi {
       });
     }
     const { jsonRpcResponse, dataStream: responseDataStream } = routerResult;
+    const methodLabel = jsonRpcRouter.hasHandler(dwnRpcRequest.method) ? dwnRpcRequest.method : 'unknown';
 
     if (jsonRpcResponse.error) {
-      requestCounter.inc({ method: dwnRpcRequest.method, error: 1 });
+      requestCounter.inc({ method: methodLabel, error: 1 });
 
       // Return HTTP 429 with Retry-After header for rate-limit rejections.
       if (jsonRpcResponse.error.code === JsonRpcErrorCodes.TooManyRequests) {
@@ -966,7 +1070,7 @@ export class HttpApi {
     }
 
     requestCounter.inc({
-      method : dwnRpcRequest.method,
+      method : methodLabel,
       status : jsonRpcResponse?.result?.reply?.status?.code || 0,
     });
 

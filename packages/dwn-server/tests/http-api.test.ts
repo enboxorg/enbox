@@ -23,6 +23,7 @@ import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
 import { LocalNodePairingManager } from '../src/local-node-pairing.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
+import { requestCounter } from '../src/metrics.js';
 import { runServerMigrationsIfNeeded } from '../src/storage.js';
 import {
   createHttpDwnRpcRequestBody,
@@ -142,6 +143,20 @@ describe('http api', function () {
       const body = (await response.json()) as JsonRpcErrorResponse;
       expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
       expect(body.error.message).toContain('JSON');
+    });
+
+    it('collapses unregistered JSON-RPC methods into one metric label', async function () {
+      const attackerMethod = `unknown-${crypto.randomUUID()}`;
+      const request = createJsonRpcRequest(crypto.randomUUID(), attackerMethod);
+
+      await fetch(baseUrl, {
+        method  : 'POST',
+        headers : { 'dwn-request': JSON.stringify(request) },
+      });
+
+      const metric = await requestCounter.get();
+      expect(metric.values.some((value) => value.labels.method === attackerMethod)).toBe(false);
+      expect(metric.values.some((value) => value.labels.method === 'unknown')).toBe(true);
     });
 
     it('responds with a structured 400 for malformed body-v1 framing', async function () {

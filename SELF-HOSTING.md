@@ -91,6 +91,9 @@ All configuration is via environment variables. The most common ones:
 | `DWN_BASE_URL`         | `http://localhost:3000`  | Public URL of this DWN. Used in connect flows and OAuth URL construction.   |
 | `DS_WEBSOCKET_SERVER`  | `on`                     | Enable the WebSocket listener. Set to `off` to disable.                     |
 | `MAX_RECORD_DATA_SIZE` | `100mb`                  | Startup-only maximum `RecordsWrite` data size (`b`, `kb`, `mb`, `gb`); restart after changing. |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS` | `1000`        | Startup-only process-wide WebSocket connection limit.                      |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP` | `100`  | Startup-only WebSocket connection limit per peer IP.                       |
+| `DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION` | `64` | Startup-only outstanding subscription-slot limit per connection.     |
 | `DWN_SERVER_LOG_LEVEL` | `info`                   | Log level: `trace`, `debug`, `info`, `warn`, `error`.                       |
 | `DWN_STORAGE`          | `level://data`           | Default storage URL for all stores (see [Storage backends](#storage-backends)). |
 | `DWN_TTL_CACHE_URL`    | `sqlite://`              | TTL/session cache. SQL backends only (not LevelDB).                         |
@@ -162,6 +165,10 @@ host must serve **both HTTP and WebSocket**. Pick whichever fits your host:
   # or Cloudflare Tunnel
   cloudflared tunnel --url http://localhost:3000
   ```
+
+> Enbox keys peer-IP limits from the direct TCP peer and does not trust forwarded
+> headers. If a proxy terminates client connections, enforce client-IP admission
+> there and size Enbox's per-peer limit for the proxy's aggregate traffic.
 
   Then set `DWN_BASE_URL` to the tunnel's public URL.
 

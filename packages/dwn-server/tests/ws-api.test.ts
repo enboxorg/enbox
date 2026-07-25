@@ -41,7 +41,6 @@ describe('websocket api', function () {
     wsUrl = `ws://127.0.0.1:${port}`;
     httpUrl = `http://localhost:${port}`;
     wsApi = new WsApi(httpApi, dwn);
-    wsApi.start();
   });
 
   afterEach(async function () {
@@ -195,7 +194,6 @@ describe('websocket api', function () {
     wsUrl = `ws://127.0.0.1:${httpApi.server.port}`;
     httpUrl = `http://localhost:${httpApi.server.port}`;
     wsApi = new WsApi(httpApi, dwn);
-    wsApi.start();
 
     let connection: JsonRpcSocket | undefined;
     try {
@@ -442,7 +440,7 @@ describe('websocket api', function () {
     });
 
     expect(response2.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
-    expect(response2.error.message).toContain(`${subscribeId} is in use by an active subscription`);
+    expect(response2.error.message).toContain(`subscription with id ${subscribeId} already exists`);
 
     const write1Message = await TestDataGenerator.generateRecordsWrite({
       author     : alice,
@@ -596,13 +594,12 @@ describe('websocket backpressure (rpc.ack)', function () {
    */
   async function setupServer(maxInFlight: number): Promise<void> {
     ({ dwn, dialect } = await getTestDwn({ withEvents: true }));
-    httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
+    httpApi = await HttpApi.create({ ...config, maxInFlight }, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
+    wsApi = new WsApi(httpApi, dwn);
     await httpApi.start(0);
     const port = httpApi.server.port;
     wsUrl = `ws://127.0.0.1:${port}`;
     httpUrl = `http://localhost:${port}`;
-    wsApi = new WsApi(httpApi, dwn, { maxInFlight });
-    wsApi.start();
   }
 
   /**
