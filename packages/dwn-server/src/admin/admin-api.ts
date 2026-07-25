@@ -1100,7 +1100,6 @@ export class AdminApi {
   #handleConfigGet(): Response {
     const runtimeConfig: RuntimeConfig = {
       logLevel                         : this.#config.logLevel,
-      maxRecordDataSize                : this.#config.maxRecordDataSize,
       maxInFlight                      : this.#config.maxInFlight,
       quotaMaxMessages                 : this.#config.quotaMaxMessages,
       quotaMaxStorageBytes             : this.#config.quotaMaxStorageBytes,
@@ -1160,7 +1159,7 @@ export class AdminApi {
     }
 
     const numericFields: (keyof RuntimeConfigPatch)[] = [
-      'maxRecordDataSize', 'maxInFlight', 'quotaMaxMessages', 'quotaMaxStorageBytes',
+      'maxInFlight', 'quotaMaxMessages', 'quotaMaxStorageBytes',
       'rateLimitRequestsPerSecond', 'rateLimitBurst', 'rateLimitTenantRequestsPerSecond', 'rateLimitTenantBurst',
     ];
     for (const field of numericFields) {
@@ -1184,11 +1183,6 @@ export class AdminApi {
       this.#config.logLevel = body.logLevel;
       log.setLevel(body.logLevel as log.LogLevelDesc);
       changes.push('logLevel');
-    }
-
-    if (body.maxRecordDataSize !== undefined) {
-      this.#config.maxRecordDataSize = body.maxRecordDataSize;
-      changes.push('maxRecordDataSize');
     }
 
     if (body.maxInFlight !== undefined) {

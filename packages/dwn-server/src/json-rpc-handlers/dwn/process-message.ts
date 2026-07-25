@@ -10,12 +10,12 @@ import log from 'loglevel';
 import { DwnMethodName } from '@enbox/dwn-sdk-js';
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
+import { capDataStreamAtDescriptorSize, enforceInboundDwnMessageLimits, validateInboundDwnMessageTransport } from './inbound-message.js';
 import {
   createJsonRpcErrorResponse,
   createJsonRpcSuccessResponse,
   JsonRpcErrorCodes,
 } from '@enbox/dwn-clients';
-import { enforceInboundDwnMessageLimits, validateInboundDwnMessageTransport } from './inbound-message.js';
 
 /**
  * Validates subscription-specific preconditions for a `RecordsSubscribe` /
@@ -118,16 +118,32 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
       return subscriptionResult;
     }
 
-    const limitsResult = await enforceInboundDwnMessageLimits({ context, message, requestId, target });
+    const limitsResult = await enforceInboundDwnMessageLimits({
+      context,
+      hasInboundData: dataStream !== undefined,
+      message,
+      requestId,
+      target,
+    });
     if (limitsResult !== undefined) {
       return limitsResult;
     }
 
-    const reply = await dwn.processMessage(target, message, {
-      dataStream,
-      subscriptionHandler: subscriptionRequest?.subscriptionHandler,
-    });
+    const dataStreamForProcessing = dataStream === undefined
+      ? undefined
+      : capDataStreamAtDescriptorSize(message, dataStream);
 
+    let reply: UnionMessageReply;
+    try {
+      reply = await dwn.processMessage(target, message, {
+        dataStream          : dataStreamForProcessing,
+        subscriptionHandler : subscriptionRequest?.subscriptionHandler,
+      });
+    } finally {
+      await dataStreamForProcessing?.cancel().catch((): void => {
+        // Rejected messages may leave their request body unread; cancellation is best-effort.
+      });
+    }
 
     const { entry } = reply;
     // RecordsRead or MessagesRead messages optionally return data as a stream to accommodate large amounts of data

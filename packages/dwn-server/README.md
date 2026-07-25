@@ -127,7 +127,7 @@ All configuration is read from environment variables at startup (see [`src/confi
 | `DS_PORT`              | Port the server listens on                                              | `3000`                  |
 | `DWN_BASE_URL`         | External base URL of this DWN (used for connect flows and provider-auth URLs) | `http://localhost:3000` |
 | `DS_WEBSOCKET_SERVER`  | Enable the WebSocket listener: `on` / `off`                             | `on`                    |
-| `MAX_RECORD_DATA_SIZE` | Maximum `RecordsWrite` data size (`b`, `kb`, `mb`, `gb`)                | `100mb`                 |
+| `MAX_RECORD_DATA_SIZE` | Startup-only maximum `RecordsWrite` data size (`b`, `kb`, `mb`, `gb`)   | `100mb`                 |
 | `DWN_MAX_IN_FLIGHT`    | Max unacknowledged subscription events per subscription before backpressure | `32`                |
 | `DWN_SERVER_LOG_LEVEL` | Log level: `trace`, `debug`, `info`, `warn`, `error`                    | `INFO`                  |
 | `DWN_SERVER_PACKAGE_NAME` | Server name reported by `/info`                                      | `@enbox/dwn-server`     |

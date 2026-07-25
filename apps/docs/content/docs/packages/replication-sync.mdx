@@ -117,7 +117,7 @@ HTTP servers advertise supported request framing through `httpRpcFraming` in `GE
 
 Clients negotiate this capability and retain the legacy `dwn-request` header plus `application/octet-stream` body for servers that do not advertise it. A body backed by a `Blob`/`Uint8Array` remains replayable across transport retries; a one-shot `ReadableStream` uses `duplex: 'half'` and is not replayed after a failed attempt. Large uploads therefore remain streamable without base64 expansion, and the per-attempt timeout is raised to 5 minutes for messages whose `dataSize > 1 MiB` so large sync uploads are not aborted by the normal 30-second budget. (`packages/dwn-clients/src/http-dwn-rpc-client.ts`, `packages/dwn-clients/src/http-dwn-rpc-framing.ts`)
 
-On the server side, an HTTP request body arrives as `context.dataStream` and is capped at the message's declared `descriptor.dataSize` before being handed to the engine. (`packages/dwn-server/src/json-rpc-handlers/dwn/apply-replicated-message.ts`)
+On the server side, an HTTP request body arrives as `context.dataStream`. The shared ingress path caps both ordinary and replicated `RecordsWrite` streams at the message's declared `descriptor.dataSize` before handing them to the engine. (`packages/dwn-server/src/json-rpc-handlers/dwn/inbound-message.ts`)
 
 ### WebSocket
 

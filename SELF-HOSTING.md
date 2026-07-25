@@ -90,7 +90,7 @@ All configuration is via environment variables. The most common ones:
 | `DS_PORT`              | `3000`                   | Port the server listens on (must match your published/`internal` port).     |
 | `DWN_BASE_URL`         | `http://localhost:3000`  | Public URL of this DWN. Used in connect flows and OAuth URL construction.   |
 | `DS_WEBSOCKET_SERVER`  | `on`                     | Enable the WebSocket listener. Set to `off` to disable.                     |
-| `MAX_RECORD_DATA_SIZE` | `100mb`                  | Maximum `RecordsWrite` data size (`b`, `kb`, `mb`, `gb`).                    |
+| `MAX_RECORD_DATA_SIZE` | `100mb`                  | Startup-only maximum `RecordsWrite` data size (`b`, `kb`, `mb`, `gb`); restart after changing. |
 | `DWN_SERVER_LOG_LEVEL` | `info`                   | Log level: `trace`, `debug`, `info`, `warn`, `error`.                       |
 | `DWN_STORAGE`          | `level://data`           | Default storage URL for all stores (see [Storage backends](#storage-backends)). |
 | `DWN_TTL_CACHE_URL`    | `sqlite://`              | TTL/session cache. SQL backends only (not LevelDB).                         |

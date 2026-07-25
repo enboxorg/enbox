@@ -1,4 +1,4 @@
-import { DataStream, Jws, Message, MessagesRead, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnErrorCode, Jws, Message, MessagesRead, RecordsRead, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import { describe, expect, it, spyOn } from 'bun:test';
 
 import type { AdminStore } from '../src/admin/admin-store.js';
@@ -37,6 +37,112 @@ describe('handleDwnProcessMessage', () => {
     const { reply } = jsonRpcResponse.result;
     expect(reply.status.code).toBe(202);
     expect(reply.status.detail).toBe('Accepted');
+    await dwn.close();
+  });
+
+  it('rejects record data above the configured limit before DWN processing', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, {
+      data: new Uint8Array([1, 2, 3, 4]),
+    });
+    const requestId = crypto.randomUUID();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    const processSpy = spyOn(dwn, 'processMessage');
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, {
+      dwn,
+      transport : 'http',
+      config    : { maxRecordDataSize: 3 } as any,
+      dataStream,
+    });
+
+    expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error?.message).toContain(DwnServerErrorCode.RecordDataSizeLimitExceeded);
+    expect(jsonRpcResponse.error?.data).toEqual({ code: DwnServerErrorCode.RecordDataSizeLimitExceeded });
+    expect(processSpy).toHaveBeenCalledTimes(0);
+    await dataStream.cancel();
+    await dwn.close();
+  });
+
+  it('accepts record data at the configured limit and preserves dataless updates after the limit is lowered', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
+    const { dwn } = await getTestDwn();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const initialResult = await handleDwnProcessMessage(initialRequest, {
+      dwn,
+      transport : 'http',
+      config    : { maxRecordDataSize: data.byteLength } as any,
+      dataStream,
+    });
+    expect(initialResult.jsonRpcResponse.result.reply.status.code).toBe(202);
+
+    await Time.minimalSleep();
+    const { recordsWrite: update } = await createRecordsWriteMessage(alice, {
+      dataCid     : recordsWrite.message.descriptor.dataCid,
+      dataSize    : recordsWrite.message.descriptor.dataSize,
+      dateCreated : recordsWrite.message.descriptor.dateCreated,
+      published   : true,
+      recordId    : recordsWrite.message.recordId,
+    });
+    const updateRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+      message : update.toJSON(),
+      target  : alice.did,
+    });
+    const updateResult = await handleDwnProcessMessage(updateRequest, {
+      dwn,
+      transport : 'http',
+      config    : { maxRecordDataSize: data.byteLength - 1 } as any,
+    });
+    expect(updateResult.jsonRpcResponse.result.reply.status.code).toBe(202);
+    await dwn.close();
+  });
+
+  it('cancels an ordinary RecordsWrite stream when it exceeds descriptor dataSize', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const { dwn } = await getTestDwn();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    let pulls = 0;
+    let streamWasCanceled = false;
+    const overlongStream = new ReadableStream<Uint8Array>({
+      pull(controller): void {
+        pulls++;
+        controller.enqueue(pulls === 1 ? data : new Uint8Array([9]));
+      },
+      cancel(): void {
+        streamWasCanceled = true;
+      },
+    }, { highWaterMark: 0 });
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, {
+      dwn,
+      transport  : 'http',
+      config     : { maxRecordDataSize: data.byteLength } as any,
+      dataStream : overlongStream,
+    });
+
+    expect(jsonRpcResponse.error).toBeUndefined();
+    expect(jsonRpcResponse.result.reply.status.code).toBe(400);
+    expect(jsonRpcResponse.result.reply.status.detail).toContain(DwnErrorCode.RecordsWriteDataSizeMismatch);
+    expect(pulls).toBe(2);
+    expect(streamWasCanceled).toBe(true);
     await dwn.close();
   });
 

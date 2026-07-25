@@ -1374,7 +1374,6 @@ describe('AdminApi — runtime config endpoints', () => {
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body.logLevel).toBeDefined();
-      expect(typeof body.maxRecordDataSize).toBe('number');
       expect(typeof body.maxInFlight).toBe('number');
       expect(typeof body.quotaMaxMessages).toBe('number');
       expect(typeof body.quotaMaxStorageBytes).toBe('number');
@@ -1453,24 +1452,20 @@ describe('AdminApi — runtime config endpoints', () => {
       expect(getBody.rateLimitTenantBurst).toBe(25);
     });
 
-    it('should update maxRecordDataSize', async () => {
-      const response = await adminFetch({ port }, '/config', {
-        method  : 'PATCH',
-        headers : { 'content-type': 'application/json' },
-        body    : JSON.stringify({ maxRecordDataSize: 2147483648 }),
-      });
-      expect(response.status).toBe(200);
-
-      const getResponse = await adminFetch({ port }, '/config');
-      const getBody = await getResponse.json();
-      expect(getBody.maxRecordDataSize).toBe(2147483648);
-    });
-
     it('should return 400 when no valid config fields are provided', async () => {
       const response = await adminFetch({ port }, '/config', {
         method  : 'PATCH',
         headers : { 'content-type': 'application/json' },
         body    : JSON.stringify({}),
+      });
+      expect(response.status).toBe(400);
+    });
+
+    it('should keep maxRecordDataSize startup-only', async () => {
+      const response = await adminFetch({ port }, '/config', {
+        method  : 'PATCH',
+        headers : { 'content-type': 'application/json' },
+        body    : JSON.stringify({ maxRecordDataSize: 1 }),
       });
       expect(response.status).toBe(400);
     });

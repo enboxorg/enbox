@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { DataStream, Message, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
+import { DwnServerErrorCode } from '../src/dwn-error.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
 import { WsApi } from '../src/ws-api.js';
@@ -188,9 +189,8 @@ describe('websocket api', function () {
     await wsApi.close();
     await httpApi.close();
 
-    const originalMaxRecordDataSize = config.maxRecordDataSize;
-    config.maxRecordDataSize = 8;
-    httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
+    const testConfig = { ...config, maxRecordDataSize: 8 };
+    httpApi = await HttpApi.create(testConfig, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
     await httpApi.start(0);
     wsUrl = `ws://127.0.0.1:${httpApi.server.port}`;
     httpUrl = `http://localhost:${httpApi.server.port}`;
@@ -218,9 +218,8 @@ describe('websocket api', function () {
       expect(response.id).toBe(requestId);
       expect(response.error).toBeDefined();
       expect(response.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
-      expect(response.error?.message).toContain('exceeds max record data size');
+      expect(response.error?.message).toContain(DwnServerErrorCode.RecordDataSizeLimitExceeded);
     } finally {
-      config.maxRecordDataSize = originalMaxRecordDataSize;
       connection?.close();
     }
   });

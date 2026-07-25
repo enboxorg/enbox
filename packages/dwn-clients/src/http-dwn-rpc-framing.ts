@@ -23,6 +23,11 @@ export type ParsedHttpDwnRpcRequestBody = {
   dataStream?: ReadableStream<Uint8Array>;
 };
 
+/** Maximum HTTP request body needed for body-v1 framing at a record-data limit. */
+export function maxHttpDwnRpcRequestBodyBytes(maxRecordDataSize: number): number {
+  return BODY_V1_HEADER_BYTES + HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES + maxRecordDataSize;
+}
+
 /** A Content-Type value split into its lower-cased media type and parameters. */
 type ParsedContentType = {
   mediaType: string;

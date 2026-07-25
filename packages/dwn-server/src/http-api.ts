@@ -28,6 +28,7 @@ import {
   isHttpDwnRpcBodyV1ContentType,
   isHttpDwnRpcContentType,
   JsonRpcErrorCodes,
+  maxHttpDwnRpcRequestBodyBytes,
   maxWsJsonRpcPayloadBytes,
   normalizeReadableStream,
   parseHttpDwnRpcRequestBody,
@@ -217,7 +218,8 @@ export class HttpApi {
     }
 
     this.#server = Bun.serve<WsData>({
-      hostname: this.#config.hostname,
+      hostname           : this.#config.hostname,
+      maxRequestBodySize : maxHttpDwnRpcRequestBodyBytes(this.#config.maxRecordDataSize),
       port,
 
       fetch: async (req: Request, server): Promise<Response | undefined> => {

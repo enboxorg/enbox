@@ -9,11 +9,16 @@ import {
   HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES,
   isHttpDwnRpcBodyV1ContentType,
   isHttpDwnRpcContentType,
+  maxHttpDwnRpcRequestBodyBytes,
   parseHttpDwnRpcRequestBody,
 } from '../src/http-dwn-rpc-framing.js';
 import { describe, expect, it } from 'bun:test';
 
 describe('HTTP DWN RPC request body framing', () => {
+  it('should include framing overhead in the maximum request body size', () => {
+    expect(maxHttpDwnRpcRequestBodyBytes(123)).toBe(HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES + 5 + 123);
+  });
+
   it('should round-trip a JSON-RPC request without record data', async () => {
     const request = testJsonRpcRequest();
     const body = createHttpDwnRpcRequestBody(request);

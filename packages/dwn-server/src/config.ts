@@ -1,7 +1,5 @@
 import { readFileSync } from 'node:fs';
 
-export type DwnServerConfig = typeof config;
-
 const byteSizeUnits: Record<string, number> = {
   b  : 1,
   gb : 1024 ** 3,
@@ -40,7 +38,7 @@ export function parseByteSize(value: string): number {
   return byteSize;
 }
 
-export const config = {
+const configValues = {
   /**
    * Used to populate the `server` property returned by the `/info` endpoint.
    */
@@ -96,10 +94,9 @@ export const config = {
   packageJsonPath   : process.env.DWN_SERVER_PACKAGE_JSON || '/dwn-server/package.json',
   /**
    * Maximum size of data that can be provided with a RecordsWrite.
-   * Request bodies up to this size are buffered fully into memory, so the
-   * default should be conservative enough to prevent memory exhaustion from
-   * concurrent large uploads. Operators can raise the limit via the
-   * `MAX_RECORD_DATA_SIZE` env var (e.g. `'1gb'`).
+   * This startup-only value also sets the HTTP and WebSocket transport
+   * ceilings, so changing it requires a server restart. Operators can set the
+   * limit via `MAX_RECORD_DATA_SIZE` (e.g. `'1gb'`).
    */
   maxRecordDataSize : parseByteSize(process.env.MAX_RECORD_DATA_SIZE || '100mb'),
 
@@ -299,6 +296,13 @@ export const config = {
    */
   forwardingDeduplicationTtlSeconds: Number.parseInt(process.env.DWN_FORWARDING_DEDUP_TTL || '60'),
 };
+
+export type DwnServerConfig = Omit<typeof configValues, 'maxRecordDataSize'> & {
+  /** Startup-only because the HTTP and WebSocket transport ceilings capture it when the server starts. */
+  readonly maxRecordDataSize: number;
+};
+
+export const config: DwnServerConfig = configValues;
 
 /**
  * Reads the admin token from a file path, trimming whitespace.

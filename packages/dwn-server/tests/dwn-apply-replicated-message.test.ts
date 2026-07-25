@@ -81,7 +81,11 @@ describe('handleDwnApplyReplicatedMessage', () => {
       expect(receivedBytes).toEqual(dataBytes);
       return { kind: 'Applied' };
     });
-    const context: RequestContext = { dwn, transport: 'ws' };
+    const context: RequestContext = {
+      dwn,
+      transport : 'ws',
+      config    : { maxRecordDataSize: dataBytes.byteLength } as any,
+    };
 
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
       dwnRequest,
@@ -207,8 +211,34 @@ describe('handleDwnApplyReplicatedMessage', () => {
 
     expect(jsonRpcResponse.error).toBeDefined();
     expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
-    expect(jsonRpcResponse.error.message).toContain('exceeds max record data size');
+    expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.RecordDataSizeLimitExceeded);
+    expect(jsonRpcResponse.error.data).toEqual({ code: DwnServerErrorCode.RecordDataSizeLimitExceeded });
     expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('rejects streamed replication data above the configured limit before DWN processing', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage');
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport : 'http',
+      config    : { maxRecordDataSize: data.byteLength - 1 } as any,
+      dataStream,
+    });
+
+    expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error?.message).toContain(DwnServerErrorCode.RecordDataSizeLimitExceeded);
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dataStream.cancel();
     await dwn.close();
   });
 
@@ -654,7 +684,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       cancel(): void {
         streamWasCanceled = true;
       },
-    });
+    }, { highWaterMark: 0 });
 
     const apply = await handleDwnApplyReplicatedMessage(
       dwnRequest,
@@ -672,6 +702,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       throw new Error(`expected Invalid replication result, received ${result.kind}`);
     }
     expect(result.reason).toContain(DwnErrorCode.RecordsWriteDataSizeMismatch);
+    expect(pulls).toBe(2);
     expect(streamWasCanceled).toBe(true);
     await dwn.close();
   });

@@ -4,11 +4,12 @@ import type { HandlerResponse, JsonRpcHandler } from '../../lib/json-rpc-router.
 
 import { DwnServerErrorCode } from '../../dwn-error.js';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+import { DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Records } from '@enbox/dwn-sdk-js';
 
 type InboundDwnMessageParams = {
   context: Parameters<JsonRpcHandler>[1];
   hasEncodedData?: boolean;
+  hasInboundData?: boolean;
   message: GenericMessage;
   requestId: JsonRpcId;
   target: string;
@@ -46,21 +47,83 @@ export function validateInboundDwnMessageTransport(params: InboundDwnMessagePara
 }
 
 export async function enforceInboundDwnMessageLimits(params: InboundDwnMessageParams): Promise<HandlerResponse | undefined> {
-  const { context, message, target } = params;
+  const { context, hasInboundData, message, requestId, target } = params;
 
   const rateLimitResult = enforceTenantRateLimit(params);
   if (rateLimitResult !== undefined) {
     return rateLimitResult;
   }
 
+  const isRecordsWrite = Records.isRecordsWrite(message);
+  if (isRecordsWrite && hasInboundData === true) {
+    const dataSize = (message.descriptor as { dataSize?: unknown }).dataSize;
+    if (typeof dataSize === 'number') {
+      const dataSizeResult = enforceRecordDataSizeLimit({ context, dataSize, requestId });
+      if (dataSizeResult !== undefined) {
+        return dataSizeResult;
+      }
+    }
+  }
+
   if (
     context.config &&
     context.adminStore &&
-    message.descriptor.interface === DwnInterfaceName.Records &&
-    message.descriptor.method === DwnMethodName.Write
+    isRecordsWrite
   ) {
     return enforceQuota(target, message, context);
   }
+}
+
+/** Rejects record data whose byte length exceeds the server's configured limit. */
+export function enforceRecordDataSizeLimit({
+  context,
+  dataSize,
+  requestId,
+}: {
+  context: Parameters<JsonRpcHandler>[1];
+  dataSize: number;
+  requestId: JsonRpcId;
+}): HandlerResponse | undefined {
+  const maxRecordDataSize = context.config?.maxRecordDataSize;
+  if (maxRecordDataSize === undefined || dataSize <= maxRecordDataSize) {
+    return undefined;
+  }
+
+  return {
+    jsonRpcResponse: createJsonRpcErrorResponse(
+      requestId,
+      JsonRpcErrorCodes.InvalidParams,
+      `${DwnServerErrorCode.RecordDataSizeLimitExceeded}: record data size ${dataSize} exceeds the configured limit ${maxRecordDataSize}`,
+      { code: DwnServerErrorCode.RecordDataSizeLimitExceeded },
+    ),
+  };
+}
+
+/** Stops a RecordsWrite stream as soon as it exceeds the signed descriptor size. */
+export function capDataStreamAtDescriptorSize(
+  message: GenericMessage,
+  dataStream: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  if (!Records.isRecordsWrite(message) || typeof message.descriptor.dataSize !== 'number') {
+    return dataStream;
+  }
+
+  const dataSize = message.descriptor.dataSize;
+  let bytesRead = 0;
+
+  return dataStream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller): void {
+      bytesRead += chunk.byteLength;
+      if (bytesRead > dataSize) {
+        throw new DwnError(
+          DwnErrorCode.RecordsWriteDataSizeMismatch,
+          `actual data size exceeds descriptor dataSize ${dataSize}`,
+        );
+      }
+
+      controller.enqueue(chunk);
+    },
+  }));
 }
 
 export function enforceTenantRateLimit(params: InboundDwnMessageParams): HandlerResponse | undefined {

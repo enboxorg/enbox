@@ -38,6 +38,7 @@ export enum DwnServerErrorCode {
   ProviderAuthPluginNotConfigured = 'ProviderAuthPluginNotConfigured',
   ProviderAuthTokenInvalid = 'ProviderAuthTokenInvalid',
   RateLimitExceeded = 'RateLimitExceeded',
+  RecordDataSizeLimitExceeded = 'RecordDataSizeLimitExceeded',
   RegistrationManagerInvalidOrOutdatedTermsOfServiceHash = 'RegistrationManagerInvalidOrOutdatedTermsOfServiceHash',
   RegistrationRequestMissingCredentials = 'RegistrationRequestMissingCredentials',
   TenantMessageQuotaExceeded = 'TenantMessageQuotaExceeded',

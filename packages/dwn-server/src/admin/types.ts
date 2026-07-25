@@ -256,7 +256,6 @@ export type RateLimitStatus = {
  */
 export type RuntimeConfig = {
   logLevel : string;
-  maxRecordDataSize : number;
   maxInFlight : number;
   quotaMaxMessages : number;
   quotaMaxStorageBytes : number;

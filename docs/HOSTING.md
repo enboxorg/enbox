@@ -38,7 +38,7 @@ Key settings:
 | `POSTGRES_DB` | `dwn` | Database name |
 | `POSTGRES_USER` | `dwn_user` | Database user |
 | `POSTGRES_PASSWORD` | `dwn_password` | Database password (change in production) |
-| `MAX_RECORD_DATA_SIZE` | `1gb` | Maximum record data size |
+| `MAX_RECORD_DATA_SIZE` | `100mb` | Startup-only maximum record data size |
 | `LOG_LEVEL` | -- | Set to `debug` for verbose logging |
 
 See the [`@enbox/dwn-server` README](../packages/dwn-server/README.md) for the full list of configuration options, storage backends, plugin system, and JSON-RPC API documentation.

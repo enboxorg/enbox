@@ -31,6 +31,7 @@ import {
   HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
   HTTP_DWN_RPC_MEDIA_TYPE,
   JsonRpcErrorCodes,
+  maxHttpDwnRpcRequestBodyBytes,
 } from '@enbox/dwn-clients';
 import {
   createRecordsWriteMessage,
@@ -204,6 +205,9 @@ describe('http api', function () {
       data[0] = 1;
       data[data.length - 1] = 2;
 
+      await httpApi.close();
+      ({ api: httpApi, url: baseUrl } = await createStartedHttpApiWithConfig({ maxRecordDataSize: data.byteLength }));
+
       const message = {
         authorization: {
           signature: {
@@ -257,6 +261,38 @@ describe('http api', function () {
       expect(body.error).toBeUndefined();
       expect(body.result.result).toEqual({ kind: 'Applied' });
       expect(applyStub.callCount).toBe(1);
+
+      const info = await (await fetch(`${baseUrl}/info`)).json() as ServerInfo;
+      expect(info.maxFileSize).toBe(data.byteLength);
+    });
+
+    it('rejects HTTP bodies beyond the configured transport ceiling before dispatch', async function () {
+      const maxRecordDataSize = 8;
+      await httpApi.close();
+      ({ api: httpApi, url: baseUrl } = await createStartedHttpApiWithConfig({ maxRecordDataSize }));
+
+      const applyStub = sinon.stub(dwn, 'applyReplicatedMessage');
+      const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+        message: {
+          descriptor: {
+            dataSize  : maxRecordDataSize,
+            interface : 'Records',
+            method    : 'Write',
+          },
+        },
+        target: alice.did,
+      });
+      const oversizedData = new Uint8Array(maxHttpDwnRpcRequestBodyBytes(maxRecordDataSize));
+      const framedBody = createHttpDwnRpcRequestBody(dwnRequest, oversizedData);
+
+      const response = await fetch(baseUrl, {
+        body    : framedBody,
+        headers : { 'content-type': HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE },
+        method  : 'POST',
+      });
+
+      expect(response.status).toBe(413);
+      expect(applyStub.callCount).toBe(0);
     });
 
     it('responds with a 2XX HTTP status if JSON RPC handler returns 4XX/5XX DWN status code', async function () {
