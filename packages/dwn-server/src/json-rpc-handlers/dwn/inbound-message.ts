@@ -54,24 +54,40 @@ export async function enforceInboundDwnMessageLimits(params: InboundDwnMessagePa
     return rateLimitResult;
   }
 
-  const isRecordsWrite = Records.isRecordsWrite(message);
-  if (isRecordsWrite && hasInboundData === true) {
-    const dataSize = (message.descriptor as { dataSize?: unknown }).dataSize;
-    if (typeof dataSize === 'number') {
-      const dataSizeResult = enforceRecordDataSizeLimit({ context, dataSize, requestId });
-      if (dataSizeResult !== undefined) {
-        return dataSizeResult;
-      }
-    }
+  const dataSizeResult = enforceRecordsWriteDataSizeLimit({ context, hasInboundData, message, requestId });
+  if (dataSizeResult !== undefined) {
+    return dataSizeResult;
   }
 
   if (
     context.config &&
     context.adminStore &&
-    isRecordsWrite
+    Records.isRecordsWrite(message)
   ) {
     return enforceQuota(target, message, context);
   }
+}
+
+/** Applies the configured data-size limit only when a RecordsWrite carries data. */
+export function enforceRecordsWriteDataSizeLimit({
+  context,
+  hasInboundData,
+  message,
+  requestId,
+}: {
+  context: Parameters<JsonRpcHandler>[1];
+  hasInboundData: boolean | undefined;
+  message: GenericMessage;
+  requestId: JsonRpcId;
+}): HandlerResponse | undefined {
+  if (hasInboundData !== true || !Records.isRecordsWrite(message)) {
+    return undefined;
+  }
+
+  const dataSize = (message.descriptor as { dataSize?: unknown }).dataSize;
+  return typeof dataSize === 'number'
+    ? enforceRecordDataSizeLimit({ context, dataSize, requestId })
+    : undefined;
 }
 
 /** Rejects record data whose byte length exceeds the server's configured limit. */

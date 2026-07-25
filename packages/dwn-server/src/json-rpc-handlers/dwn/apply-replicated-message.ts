@@ -9,6 +9,7 @@ import {
   capDataStreamAtDescriptorSize,
   enforceQuota,
   enforceRecordDataSizeLimit,
+  enforceRecordsWriteDataSizeLimit,
   enforceTenantRateLimit,
   validateInboundDwnMessageTransport,
 } from './inbound-message.js';
@@ -144,18 +145,20 @@ async function enforceApplyReplicatedMessageLimits({
     return rateLimitResult;
   }
 
-  if (hasInboundData && Records.isRecordsWrite(message)) {
-    const dataSize = (message.descriptor as { dataSize?: unknown }).dataSize;
-    if (typeof dataSize === 'number') {
-      const dataSizeResult = enforceRecordDataSizeLimit({ context, dataSize, requestId });
-      if (dataSizeResult !== undefined) {
-        return dataSizeResult;
-      }
-    }
+  if (await isFullyStoredDuplicate({ context, hasInboundData, message, target })) {
+    const result = { kind: 'Duplicate' } satisfies ReplicationApplyResult;
+    await context.dataStream?.cancel().catch((): void => {
+      // The stored message already has its data; the supplied body is unnecessary.
+    });
+    recordApplyActivity(target, message, result, context);
+    return {
+      jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
+    };
   }
 
-  if (await isFullyStoredDuplicate({ context, hasInboundData, message, target })) {
-    return undefined;
+  const dataSizeResult = enforceRecordsWriteDataSizeLimit({ context, hasInboundData, message, requestId });
+  if (dataSizeResult !== undefined) {
+    return dataSizeResult;
   }
 
   if (
