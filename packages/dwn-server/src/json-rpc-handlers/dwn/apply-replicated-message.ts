@@ -145,19 +145,18 @@ async function enforceApplyReplicatedMessageLimits({
     return rateLimitResult;
   }
 
-  if (await isFullyStoredDuplicate({ context, hasInboundData, message, target })) {
-    const result = { kind: 'Duplicate' } satisfies ReplicationApplyResult;
-    await context.dataStream?.cancel().catch((): void => {
-      // The stored message already has its data; the supplied body is unnecessary.
-    });
-    recordApplyActivity(target, message, result, context);
-    return {
-      jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
-    };
-  }
-
   const dataSizeResult = enforceRecordsWriteDataSizeLimit({ context, hasInboundData, message, requestId });
   if (dataSizeResult !== undefined) {
+    if (await isFullyStoredDuplicate({ context, hasInboundData, message, target })) {
+      const result = { kind: 'Duplicate' } satisfies ReplicationApplyResult;
+      await context.dataStream?.cancel().catch((): void => {
+        // The stored message already has its data; the supplied body is unnecessary.
+      });
+      recordApplyActivity(target, message, result, context);
+      return {
+        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
+      };
+    }
     return dataSizeResult;
   }
 
