@@ -28,38 +28,22 @@ describe('config', () => {
     });
   });
 
-  describe('parsePositiveInteger()', () => {
-    it('should parse positive safe integers', async () => {
-      const { parsePositiveInteger } = await import('../src/config.js');
+  describe('parseSafeInteger()', () => {
+    it('should parse positive and non-negative safe integers', async () => {
+      const { parseSafeInteger } = await import('../src/config.js');
 
-      expect(parsePositiveInteger('1', 'TEST_LIMIT')).toBe(1);
-      expect(parsePositiveInteger('1000', 'TEST_LIMIT')).toBe(1000);
-      expect(parsePositiveInteger(String(Number.MAX_SAFE_INTEGER), 'TEST_LIMIT')).toBe(Number.MAX_SAFE_INTEGER);
+      expect(parseSafeInteger('0', 'TEST_LIMIT', 0)).toBe(0);
+      expect(parseSafeInteger('1', 'TEST_LIMIT', 1)).toBe(1);
+      expect(parseSafeInteger('1000', 'TEST_LIMIT', 1)).toBe(1000);
+      expect(parseSafeInteger(String(Number.MAX_SAFE_INTEGER), 'TEST_LIMIT', 0)).toBe(Number.MAX_SAFE_INTEGER);
     });
 
-    it('should reject disabled, partial, negative, and unsafe limits', async () => {
-      const { parsePositiveInteger } = await import('../src/config.js');
+    it('should enforce the configured minimum and safe-integer syntax', async () => {
+      const { parseSafeInteger } = await import('../src/config.js');
 
-      for (const value of ['0', '-1', '64x', '1.5', '', String(Number.MAX_SAFE_INTEGER + 1)]) {
-        expect(() => parsePositiveInteger(value, 'TEST_LIMIT')).toThrow('TEST_LIMIT must be a positive');
-      }
-    });
-  });
-
-  describe('parseNonNegativeInteger()', () => {
-    it('should parse zero and positive safe integers', async () => {
-      const { parseNonNegativeInteger } = await import('../src/config.js');
-
-      expect(parseNonNegativeInteger('0', 'TEST_LIMIT')).toBe(0);
-      expect(parseNonNegativeInteger('1000', 'TEST_LIMIT')).toBe(1000);
-      expect(parseNonNegativeInteger(String(Number.MAX_SAFE_INTEGER), 'TEST_LIMIT')).toBe(Number.MAX_SAFE_INTEGER);
-    });
-
-    it('should reject partial, negative, fractional, and unsafe limits', async () => {
-      const { parseNonNegativeInteger } = await import('../src/config.js');
-
+      expect(() => parseSafeInteger('0', 'TEST_LIMIT', 1)).toThrow('TEST_LIMIT must be a positive');
       for (const value of ['-1', '64x', '1.5', '', String(Number.MAX_SAFE_INTEGER + 1)]) {
-        expect(() => parseNonNegativeInteger(value, 'TEST_LIMIT')).toThrow('TEST_LIMIT must be a non-negative');
+        expect(() => parseSafeInteger(value, 'TEST_LIMIT', 0)).toThrow('TEST_LIMIT must be a non-negative');
       }
     });
   });

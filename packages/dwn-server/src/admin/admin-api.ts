@@ -1017,7 +1017,10 @@ export class AdminApi {
     if ((resolvedQuota.maxMessages === 0 || resolvedQuota.maxStorageBytes === 0)
       && !this.#config.allowUnboundedTenantUsage) {
       return Response.json(
-        { error: 'Tenant quota overrides cannot make usage unbounded without DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true.' },
+        {
+          error: 'A zero tenant quota inherits its global default; it does not request a tenant-only unlimited quota. ' +
+            'Each effective quota dimension must be finite unless DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true.',
+        },
         { status: 400 },
       );
     }

@@ -36,6 +36,14 @@ import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolv
 import { getDialectFromUrl, getDwnConfig, runServerMigrationsIfNeeded } from './storage.js';
 import { removeProcessHandlers, setProcessHandlers } from './process-handlers.js';
 
+const externalDwnGlobalQuotaError =
+  'DwnServer: global tenant quotas cannot be enforced with options.dwn. ' +
+  'Let DwnServer own the DWN stores, or set both global quota defaults to 0 ' +
+  '(with DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true on a remote server).';
+const finiteQuotaSqlBackendError =
+  'DwnServer: finite tenant quotas require config.messageStore (DWN_STORAGE_MESSAGES or DWN_STORAGE) ' +
+  'to use a sqlite://, mysql://, or postgres:// URL that supplies usage totals.';
+
 /**
  * Options for the DwnServer constructor.
  * This is different to DwnServerConfig in that the DwnServerConfig defines configuration that come from environment variables so (more) user facing.
@@ -446,7 +454,7 @@ export class DwnServer {
       throw new Error('DwnServer: DWN_QUOTA_MAX_STORAGE_BYTES must be a non-negative safe integer.');
     }
     if (hasFiniteGlobalQuota && this.#hasExternalDwn) {
-      throw new Error('DwnServer: finite tenant quotas are unavailable with a prebuilt DWN.');
+      throw new Error(externalDwnGlobalQuotaError);
     }
     if (!this.config.localNodeProfileEnabled) {
       const hasRegistrationStore = this.#hasExternalDwn
@@ -468,20 +476,26 @@ export class DwnServer {
     }
 
     if (hasFiniteGlobalQuota && !AdminStore.supportsUsageQueries(this.config.messageStore)) {
-      throw new Error(
-        'DwnServer: finite tenant quotas require DWN_STORAGE_MESSAGES to use a SQL backend that supplies usage totals.',
-      );
+      throw new Error(finiteQuotaSqlBackendError);
     }
   }
 
   /** Creates usage accounting whenever admin inspection or quota enforcement needs it. */
   async #createAdminStore(registrationStore: RegistrationStore | undefined): Promise<AdminStore | undefined> {
-    const quotaEnforcementEnabled = this.config.quotaMaxMessages > 0
-      || this.config.quotaMaxStorageBytes > 0
-      || (await registrationStore?.hasFiniteQuota()) === true;
+    const hasFiniteGlobalQuota = this.config.quotaMaxMessages > 0 || this.config.quotaMaxStorageBytes > 0;
+    // Unlike the pre-allocation exposure check, this phase can inspect persisted
+    // per-tenant overrides from the registration store.
+    const hasPersistedTenantQuota = (await registrationStore?.hasFiniteQuota()) === true;
+    const quotaEnforcementEnabled = hasFiniteGlobalQuota || hasPersistedTenantQuota;
     if (this.#hasExternalDwn) {
-      if (quotaEnforcementEnabled) {
-        throw new Error('DwnServer: finite tenant quotas are unavailable with a prebuilt DWN.');
+      if (hasPersistedTenantQuota) {
+        throw new Error(
+          'DwnServer: persisted per-tenant quotas cannot be enforced with options.dwn and an external registration store. ' +
+          'Let DwnServer own both stores, or remove the finite tenant overrides.',
+        );
+      }
+      if (hasFiniteGlobalQuota) {
+        throw new Error(externalDwnGlobalQuotaError);
       }
       return undefined;
     }
@@ -495,15 +509,14 @@ export class DwnServer {
     }
 
     if (adminStore === undefined) {
-      throw new Error(
-        'DwnServer: finite tenant quotas require DWN_STORAGE_MESSAGES to use a SQL backend that supplies usage totals.',
-      );
+      throw new Error(finiteQuotaSqlBackendError);
     }
 
     if (!await adminStore.isAvailable()) {
       await adminStore.close();
       throw new Error(
-        'DwnServer: finite tenant quotas require DWN_STORAGE_MESSAGES to use the migrated DWN message database.',
+        'DwnServer: finite tenant quotas require DWN_STORAGE_MESSAGES to use the migrated DWN message database. ' +
+        'Run the DWN store migrations against that database before starting the server.',
       );
     }
 

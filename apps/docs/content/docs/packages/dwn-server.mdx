@@ -157,6 +157,7 @@ Per-tenant storage quotas limit resource usage. Remote servers must configure
 both global limits or explicitly acknowledge unbounded usage. Finite accounting
 requires a SQL message store. Global defaults are startup-only; per-tenant
 overrides are managed through the admin API, where zero inherits the global limit.
+There is no tenant-only unlimited override for a finite global limit.
 
 | Variable | Default | Description |
 |---|---|---|

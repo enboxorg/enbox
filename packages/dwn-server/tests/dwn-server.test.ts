@@ -12,6 +12,7 @@ import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { DwnServer } from '../src/dwn-server.js';
 import { getTestDwn } from './test-dwn.js';
 import { LocalNodePairingManager } from '../src/local-node-pairing.js';
+import { RegistrationManager } from '../src/registration/registration-manager.js';
 import { RegistrationStore } from '../src/registration/registration-store.js';
 import { runServerMigrationsIfNeeded } from '../src/storage.js';
 
@@ -193,7 +194,7 @@ describe('DwnServer', () => {
       });
 
       await expect(server.start()).rejects.toThrow(
-        'finite tenant quotas require DWN_STORAGE_MESSAGES to use a SQL backend that supplies usage totals.',
+        'require config.messageStore (DWN_STORAGE_MESSAGES or DWN_STORAGE)',
       );
     });
 
@@ -210,9 +211,48 @@ describe('DwnServer', () => {
       });
 
       try {
-        await expect(server.start()).rejects.toThrow('finite tenant quotas are unavailable with a prebuilt DWN');
+        await expect(server.start()).rejects.toThrow('global tenant quotas cannot be enforced with options.dwn');
       } finally {
         await dwn.close();
+      }
+    });
+
+    it('should reject persisted tenant quotas when the server does not own the DWN stores', async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'dwn-external-persisted-quota-'));
+      const registrationStoreUrl = `sqlite://${tmpDir}/registration.db`;
+      const serverConfig = {
+        ...dwnServerConfig,
+        allowOpenTenants     : false,
+        quotaMaxMessages     : 0,
+        quotaMaxStorageBytes : 0,
+        registrationStoreUrl,
+        ttlCacheUrl          : registrationStoreUrl,
+      };
+      const dialect = await runServerMigrationsIfNeeded(serverConfig);
+      if (dialect === undefined) {
+        throw new Error('expected a SQL server dialect');
+      }
+      const registrationManager = await RegistrationManager.create({ registrationStoreUrl });
+      const registrationStore = registrationManager.getRegistrationStore();
+      if (registrationStore === undefined) {
+        throw new Error('expected a registration store');
+      }
+      await registrationManager.recordTenantRegistration({ did: 'did:test:external-quota' });
+      await registrationStore.setQuota({
+        did             : 'did:test:external-quota',
+        maxMessages     : 1,
+        maxStorageBytes : 1,
+      });
+      ({ dwn } = await getTestDwn());
+      const server = new DwnServer({ config: serverConfig, dwn, registrationManager });
+
+      try {
+        await expect(server.start()).rejects.toThrow(
+          'persisted per-tenant quotas cannot be enforced with options.dwn and an external registration store',
+        );
+      } finally {
+        await dwn.close();
+        rmSync(tmpDir, { recursive: true, force: true });
       }
     });
 
@@ -323,8 +363,8 @@ describe('DwnServer', () => {
 
       const server = new DwnServer({ config: serverConfig });
       try {
-        await expect(server.start()).rejects.toThrow('finite tenant quotas require DWN_STORAGE_MESSAGES');
-        await expect(server.start()).rejects.toThrow('finite tenant quotas require DWN_STORAGE_MESSAGES');
+        await expect(server.start()).rejects.toThrow('require config.messageStore (DWN_STORAGE_MESSAGES or DWN_STORAGE)');
+        await expect(server.start()).rejects.toThrow('require config.messageStore (DWN_STORAGE_MESSAGES or DWN_STORAGE)');
       } finally {
         await server.dwn?.close();
         rmSync(tmpDir, { recursive: true, force: true });

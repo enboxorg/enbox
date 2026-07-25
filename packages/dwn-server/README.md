@@ -255,6 +255,7 @@ Remote servers must set both global quota limits to positive values or explicitl
 acknowledge unbounded usage. Finite quota accounting requires a SQL message store.
 Global quota defaults are startup-only; per-tenant quotas and rate limits can be
 changed via the admin API. A zero per-tenant quota inherits that global dimension.
+There is no tenant-only unlimited override for a finite global limit.
 WebSocket acknowledgements that advance a subscription event window are exempt from
 the ordinary request bucket so flow-control progress cannot be rate-limited away.
 Peer-IP limits use the direct TCP peer and never trust forwarded headers. When a
