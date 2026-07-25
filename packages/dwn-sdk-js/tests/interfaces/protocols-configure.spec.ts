@@ -178,6 +178,39 @@ describe('ProtocolsConfigure', () => {
       await expect(ProtocolsConfigure.parse({ descriptor, authorization }))
         .rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRoleIssuance);
     });
+
+    it('should reject a received definition with a record-limited nested role path', async () => {
+      const definition: ProtocolDefinition = {
+        published : true,
+        protocol  : 'http://example.com',
+        types     : {
+          group  : {},
+          member : {},
+        },
+        structure: {
+          group: {
+            member: {
+              $recordLimit : { max: 1 },
+              $role        : true,
+            },
+          },
+        },
+      };
+      const descriptor: ProtocolsConfigureDescriptor = {
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        definition,
+      };
+      const alice = await TestDataGenerator.generatePersona();
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer: Jws.createSigner(alice),
+      });
+
+      await expect(ProtocolsConfigure.parse({ descriptor, authorization }))
+        .rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRoleRecordLimit);
+    });
   });
 
   describe('create()', () => {
@@ -519,6 +552,28 @@ describe('ProtocolsConfigure', () => {
           signer: Jws.createSigner(alice),
           definition,
         })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRoleIssuance);
+      });
+
+      it('should reject a record limit on a root role path', async () => {
+        const definition: ProtocolDefinition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            member: {},
+          },
+          structure: {
+            member: {
+              $recordLimit : { max: 1 },
+              $role        : true,
+            },
+          },
+        };
+        const alice = await TestDataGenerator.generatePersona();
+
+        await expect(ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition,
+        })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRoleRecordLimit);
       });
 
       it('should allow anyone to read a role record assigned by an authorized issuer', async () => {

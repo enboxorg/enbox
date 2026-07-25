@@ -116,7 +116,7 @@
       }
     },
     "$role": {
-      "$comment": "When `true`, this turns a record into a role that may be used within a context/sub-context. Role action rules cannot allow `anyone` to create or squash an initial role record.",
+      "$comment": "When `true`, this turns a record into a role that may be used within a context/sub-context. Role action rules cannot allow `anyone` to create or squash an initial role record, and role paths cannot use `$recordLimit`.",
       "type": "boolean"
     },
     "$ref": {
@@ -139,6 +139,7 @@
       }
     },
     "$recordLimit": {
+      "$comment": "Limits visible records within each direct parent context. This directive cannot be combined with `$role`.",
       "type": "object",
       "additionalProperties": false,
       "required": ["max"],

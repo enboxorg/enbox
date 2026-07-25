@@ -316,6 +316,14 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
           `Invalid $recordLimit.max value ${max} at protocol path '${ruleSetProtocolPath}': must be <= ${DwnConstant.maxRecordLimit}.`
         );
       }
+
+      if (ruleSet.$role === true) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidRoleRecordLimit,
+          `'$recordLimit' cannot be used on role path '${ruleSetProtocolPath}'; ` +
+          `hidden role assignments would remain authorization capabilities.`
+        );
+      }
     }
 
     if (ruleSet.$tags !== undefined) {
