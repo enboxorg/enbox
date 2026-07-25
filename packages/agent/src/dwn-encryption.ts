@@ -62,8 +62,8 @@ import { Ed25519, X25519 } from '@enbox/crypto';
 
 import type { RemoteReadOutcome } from './dwn-read-through.js';
 
-import { collectRecordsQueryEntries } from './records-query.js';
 import { DwnInterface } from './types/dwn.js';
+import { collectRecordsQueryEntries, remoteRecordsQueryCollectionLimits } from './records-query.js';
 import {
   processDwnRequestWithRemoteFallback as processDwnReadThrough,
   processDwnRequestWithRemoteFallbackDetailed as processDwnReadThroughDetailed,
@@ -2362,6 +2362,9 @@ async function verifyAudienceKeyRoleAssignment(params: {
           protocol     : params.protocol,
           protocolPath : params.rolePath,
         },
+        // Role possession is existential: the server-side filter already
+        // selects only matching assignments, so one result is sufficient.
+        pagination: { limit: 1 },
       },
     }, hasRecordsQueryEntries);
   } catch (error: unknown) {
@@ -2485,7 +2488,8 @@ async function queryAllRecordsWithRemoteFallback(
       complete = false;
     }
     return replyStatusCode === 200 ? reply : {};
-  });
+  }, (): typeof remoteRecordsQueryCollectionLimits | undefined =>
+    source === 'local' ? undefined : remoteRecordsQueryCollectionLimits);
 
   return {
     messages: complete ? entries as EncodedRecordsWriteMessage[] : [],

@@ -3,9 +3,9 @@ import type { CreateGrantParams, CreateRequestParams, CreateRevocationParams, Fe
 import type { DwnDataEncodedRecordsWriteMessage, DwnMessageParams, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
 import type { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData } from '@enbox/dwn-sdk-js';
 
-import { collectRecordsQueryEntries } from './records-query.js';
 import { isRecordsType } from './dwn-api.js';
 import { mapConcurrent } from './utils.js';
+import { collectRecordsQueryEntries, remoteRecordsQueryCollectionLimits } from './records-query.js';
 import { Convert, TtlCache } from '@enbox/common';
 import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/dwn.js';
 import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
@@ -317,7 +317,7 @@ export class AgentPermissionsApi implements PermissionsApi {
         throw new Error(`PermissionsApi: Failed to fetch ${kind}: ${reply.status.detail}`);
       }
       return reply;
-    });
+    }, remote ? remoteRecordsQueryCollectionLimits : undefined);
     return entries as DwnDataEncodedRecordsWriteMessage[];
   }
 

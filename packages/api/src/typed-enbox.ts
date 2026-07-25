@@ -1055,6 +1055,7 @@ export class TypedEnbox<
       const childType = this._definition.types[childName];
       const occupiedParentIds = new Set<string>();
       for (let offset = 0; offset < parentIds.length; offset += DwnConstant.maxFilterValues) {
+        const parentIdBatch = parentIds.slice(offset, offset + DwnConstant.maxFilterValues);
         const filter = compileRecordFilter(
           this._definition,
           childPath,
@@ -1062,13 +1063,19 @@ export class TypedEnbox<
           undefined,
           source.within,
         );
-        filter.parentId = parentIds.slice(offset, offset + DwnConstant.maxFilterValues);
+        filter.parentId = parentIdBatch;
         const result = await this._dwn.records.query({
           from         : source.from,
           filter,
+          pagination   : { limit: parentIdBatch.length },
           protocolRole : source.protocolRole,
         });
         requireDwnSuccess('TypedEnbox.records.query child materialization', result);
+        if (result.cursor !== undefined) {
+          throw new Error(
+            `TypedEnbox.records.query: singleton child '${childPath}' returned more records than its selected parents.`,
+          );
+        }
 
         await Promise.all(result.records.map(async (record): Promise<void> => {
           const parentId = record.parentId;
