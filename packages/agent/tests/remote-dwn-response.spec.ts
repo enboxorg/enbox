@@ -50,6 +50,17 @@ describe('verifyRemoteDwnResponse', () => {
     return verifyRemoteDwnResponse({ didResolver, message, reply, targetDid: target.uri });
   }
 
+  it('preserves unsuccessful query responses that contain no artifacts', async () => {
+    const [protocolsQuery, recordsQuery] = await Promise.all([
+      ProtocolsQuery.create({ filter: { protocol: protocolUri } }),
+      RecordsQuery.create({ filter: { protocol: protocolUri }, signer: targetSigner }),
+    ]);
+    const reply = { status: { code: 500, detail: 'Internal Server Error' } };
+
+    await verifyResponse(protocolsQuery.message, reply);
+    await verifyResponse(recordsQuery.message, reply);
+  });
+
   describe('ProtocolsQuery', () => {
     it('accepts a configuration signed directly by the target DID', async () => {
       const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
