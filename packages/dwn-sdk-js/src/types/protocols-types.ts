@@ -234,9 +234,10 @@ export type ProtocolRuleSet = {
   $actions?: ProtocolActionRule[];
 
   /**
-   * If true, this marks a record as a `role` that may used within a context.
+   * If true, this marks a record as a `role` that may be used within a context.
    * The recipient of a $role record may invoke their role by setting `protocolRole` property to the protocol path of the $role record.
    * Role assignments must be issued by an authorized actor; their action rules cannot grant `create` or `squash` to `anyone`.
+   * A role path cannot use `$recordLimit`, because hidden records must never remain authorization capabilities.
    */
   $role?: boolean;
 
@@ -271,7 +272,7 @@ export type ProtocolRuleSet = {
 
   /**
    * If `$recordLimit` is set, reads expose at most `max` records at this protocol path
-   * within each direct parent context.
+   * within each direct parent context. `$recordLimit` cannot be used on a `$role` path.
    */
   $recordLimit?: ProtocolRecordLimitDefinition;
 

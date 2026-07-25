@@ -199,6 +199,7 @@ export enum DwnErrorCode {
   ProtocolsConfigureEncryptionPolicyImmutable = 'ProtocolsConfigureEncryptionPolicyImmutable',
   ProtocolsConfigureInvalidRecipientOfAction = 'ProtocolsConfigureInvalidRecipientOfAction',
   ProtocolsConfigureInvalidRoleIssuance = 'ProtocolsConfigureInvalidRoleIssuance',
+  ProtocolsConfigureInvalidRoleRecordLimit = 'ProtocolsConfigureInvalidRoleRecordLimit',
   ProtocolsConfigureInvalidRuleSetRecordType = 'ProtocolsConfigureInvalidRuleSetRecordType',
   ProtocolsConfigureInvalidTagSchema = 'ProtocolsConfigureInvalidTagSchema',
   ProtocolsConfigureInvalidUsesAlias = 'ProtocolsConfigureInvalidUsesAlias',
