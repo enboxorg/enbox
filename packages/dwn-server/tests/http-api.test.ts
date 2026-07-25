@@ -107,6 +107,9 @@ describe('http api', function () {
 
   afterEach(async function () {
     await httpApi.close();
+    if (httpApi.config !== config) {
+      httpApi = await HttpApi.create(config, dwn, registrationManager, undefined, undefined, { ttlCacheDialect: dialect });
+    }
   });
 
   afterAll(function () {

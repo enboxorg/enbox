@@ -109,21 +109,40 @@ export function capDataStreamAtDescriptorSize(
   }
 
   const dataSize = message.descriptor.dataSize;
+  const reader = dataStream.getReader();
   let bytesRead = 0;
 
-  return dataStream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller): void {
-      bytesRead += chunk.byteLength;
-      if (bytesRead > dataSize) {
-        throw new DwnError(
-          DwnErrorCode.RecordsWriteDataSizeMismatch,
-          `actual data size exceeds descriptor dataSize ${dataSize}`,
-        );
+  return new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      const { done, value } = await reader.read();
+      if (done) {
+        reader.releaseLock();
+        controller.close();
+        return;
       }
 
-      controller.enqueue(chunk);
+      bytesRead += value.byteLength;
+      if (bytesRead > dataSize) {
+        await reader.cancel().catch((): void => {
+          // The stream already exceeded the declared size; cancellation is best-effort.
+        });
+        reader.releaseLock();
+        controller.error(new DwnError(
+          DwnErrorCode.RecordsWriteDataSizeMismatch,
+          `actual data size exceeds descriptor dataSize ${dataSize}`,
+        ));
+        return;
+      }
+
+      controller.enqueue(value);
     },
-  }));
+    async cancel(reason): Promise<void> {
+      await reader.cancel(reason).catch((): void => {
+        // The consumer stopped reading; cancellation is best-effort.
+      });
+      reader.releaseLock();
+    },
+  });
 }
 
 export function enforceTenantRateLimit(params: InboundDwnMessageParams): HandlerResponse | undefined {
