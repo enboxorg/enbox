@@ -448,12 +448,34 @@ describe('AgentPermissionsApi', () => {
       ]);
       expect(sendDwnRequestStub).toHaveBeenCalledTimes(2);
       expect(sendDwnRequestStub.mock.calls[0][0].messageParams.pagination).toEqual({
-        limit: DwnConstant.maxQueryPageSize,
+        limit: DwnConstant.defaultQueryPageSize,
       });
       expect(sendDwnRequestStub.mock.calls[1][0].messageParams.pagination).toEqual({
         cursor,
-        limit: DwnConstant.maxQueryPageSize,
+        limit: DwnConstant.defaultQueryPageSize,
       });
+    });
+
+    it('rejects a remote grant cursor storm without returning a partial catalog', async () => {
+      let page = 0;
+      const sendDwnRequestStub = spyOn(testHarness.agent, 'sendDwnRequest').mockImplementation(async () => {
+        page += 1;
+        return {
+          messageCid : '',
+          reply      : {
+            cursor  : { messageCid: `message-${page}`, value: `value-${page}` },
+            entries : [],
+            status  : { code: 200, detail: 'OK' },
+          },
+        };
+      });
+
+      await expect(testHarness.agent.permissions.fetchGrants({
+        author : aliceDid.uri,
+        remote : true,
+        target : aliceDid.uri,
+      })).rejects.toThrow('RecordsQuery: exceeded the maximum page count of 10.');
+      expect(sendDwnRequestStub).toHaveBeenCalledTimes(10);
     });
 
     it('should fall back to single-grant remote revocation reads when checking remote grants', async () => {

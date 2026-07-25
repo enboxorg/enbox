@@ -385,7 +385,8 @@ describe('admitClosure', () => {
           protocolPath : 'thread/member',
           recipient    : 'did:example:bob',
         },
-        permissionGrantId: 'records-query-grant',
+        pagination        : { limit: 1 },
+        permissionGrantId : 'records-query-grant',
       },
     });
   });

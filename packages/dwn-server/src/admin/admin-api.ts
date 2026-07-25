@@ -35,8 +35,6 @@ import {
   activeTenants,
   totalDataBytes,
   totalMessages,
-  websocketConnections,
-  websocketSubscriptions,
 } from '../metrics.js';
 import { isValidMessageQuotaLimit, isValidQuotaLimit, resolveTenantQuota } from '../tenant-quota.js';
 
@@ -1427,8 +1425,8 @@ export class AdminApi {
   // ---------------------------------------------------------------------------
 
   /**
-   * Starts a periodic timer that updates Prometheus gauge metrics from the
-   * admin store and connection manager. The interval is configured via
+   * Starts a periodic timer that updates Prometheus storage gauges from the
+   * admin store. The interval is configured via
    * `adminMetricsUpdateIntervalSeconds` (default 30s).
    */
   public startMetricsUpdater(): void {
@@ -1456,14 +1454,9 @@ export class AdminApi {
   }
 
   /**
-   * Fetches stats from the admin store and connection manager, and sets
-   * Prometheus gauge values accordingly.
+   * Fetches stats from the admin store and updates Prometheus storage gauges.
    */
   #updateMetrics(): void {
-    // Connection gauges (synchronous).
-    websocketConnections.set(this.#getConnectionCount());
-    websocketSubscriptions.set(this.#getSubscriptionCount());
-
     // Store-based gauges (async — fire and forget).
     if (this.#adminStore) {
       this.#adminStore.getGlobalStats({ refresh: true }).then((stats) => {

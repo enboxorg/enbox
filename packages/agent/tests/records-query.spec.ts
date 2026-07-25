@@ -55,4 +55,30 @@ describe('collectRecordsQueryEntries', () => {
       { cursor, limit: DwnConstant.maxQueryPageSize },
     ]);
   });
+
+  it('rejects fresh cursor pages beyond a finite collection limit', async () => {
+    let pagesRead = 0;
+    const collection = collectRecordsQueryEntries(async (): Promise<{
+      cursor: PaginationCursor;
+    }> => {
+      pagesRead += 1;
+      return {
+        cursor: { messageCid: `message-${pagesRead}`, value: `value-${pagesRead}` },
+      };
+    }, { maxEntries: 10, maxPages: 2, pageSize: 1 });
+
+    await expect(collection).rejects.toThrow('RecordsQuery: exceeded the maximum page count of 2.');
+    expect(pagesRead).toBe(2);
+  });
+
+  it('rejects a page that would exceed a finite entry limit', async () => {
+    const firstEntry = (await TestDataGenerator.generateRecordsWrite()).message;
+    const secondEntry = (await TestDataGenerator.generateRecordsWrite()).message;
+
+    const collection = collectRecordsQueryEntries(async () => ({
+      entries: [firstEntry, secondEntry],
+    }), { maxEntries: 1, maxPages: 1, pageSize: 1 });
+
+    await expect(collection).rejects.toThrow('RecordsQuery: exceeded the maximum entry count of 1.');
+  });
 });
