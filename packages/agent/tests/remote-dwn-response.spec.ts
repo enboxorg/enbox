@@ -15,6 +15,7 @@ import { beforeAll, describe, expect, it } from 'bun:test';
 
 import {
   DataStream,
+  DateSort,
   Encoder,
   ProtocolsConfigure,
   ProtocolsQuery,
@@ -302,6 +303,19 @@ describe('verifyRemoteDwnResponse', () => {
       expect(await DataStream.toBytes(reply.entry!.data!)).toEqual(data);
     });
 
+    it('rejects an unpublished record from a published-sorted read', async () => {
+      const data = textEncoder.encode('unpublished record');
+      const recordsWrite = await createRecordsWrite(data, targetSigner);
+      const read = await RecordsRead.create({
+        dateSort : DateSort.PublishedDescending,
+        filter   : { recordId: recordsWrite.message.recordId },
+        signer   : targetSigner,
+      });
+
+      await expect(verifyResponse(read.message, recordsReadReply(recordsWrite.message, data)))
+        .rejects.toThrow('does not match the request filter');
+    });
+
     it('authenticates and preserves 410 responses whose record data is unavailable', async () => {
       const data = textEncoder.encode('unavailable record');
       const initialWrite = await createRecordsWrite(data, targetSigner);
@@ -360,6 +374,22 @@ describe('verifyRemoteDwnResponse', () => {
 
       await expect(verifyResponse(read.message, reply))
         .rejects.toThrow('cannot be authenticated against a filter');
+    });
+
+    it('rejects a tombstone from a published-sorted read', async () => {
+      const initialWrite = await createRecordsWrite(textEncoder.encode('deleted record'), targetSigner, true);
+      const recordsDelete = await RecordsDelete.create({ recordId: initialWrite.message.recordId, signer: targetSigner });
+      const read = await RecordsRead.create({
+        dateSort : DateSort.PublishedAscending,
+        filter   : { recordId: initialWrite.message.recordId },
+        signer   : targetSigner,
+      });
+      const reply: RecordsReadReply = {
+        entry  : { initialWrite: initialWrite.message, recordsDelete: recordsDelete.message },
+        status : { code: 404, detail: 'Not Found' },
+      };
+
+      await expect(verifyResponse(read.message, reply)).rejects.toThrow('published date sort');
     });
 
     it('rejects inconsistent RecordsRead entry and status combinations', async () => {

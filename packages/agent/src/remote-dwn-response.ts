@@ -18,6 +18,7 @@ import {
   authenticate,
   Cid,
   DataStream,
+  DateSort,
   DwnInterfaceName,
   DwnMethodName,
   Encoder,
@@ -201,6 +202,7 @@ async function verifyRecordsWriteReadEntry({
   };
   const recordsWrite = await verifyRecordsWriteEntry({
     allowMissingInitialWrite : reply.status.code === 410,
+    dateSort                 : message.descriptor.dateSort,
     didResolver,
     entry                    : recordsWriteEntry,
     filter                   : message.descriptor.filter,
@@ -413,6 +415,11 @@ async function* verifyDataStream(
 
 /** Rejects tombstones that cannot be bound to the request without the deleted record's last write. */
 function assertDeleteFilterVerifiable(message: RecordsReadMessage): void {
+  if (message.descriptor.dateSort === DateSort.PublishedAscending ||
+      message.descriptor.dateSort === DateSort.PublishedDescending) {
+    throw verificationError('RecordsDelete cannot be authenticated against a published date sort without its last RecordsWrite');
+  }
+
   const unverifiableProperties: (keyof RecordsFilter)[] = [
     'attester',
     'dataCid',
