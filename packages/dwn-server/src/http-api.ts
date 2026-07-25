@@ -1052,7 +1052,7 @@ export class HttpApi {
       });
     }
     const { jsonRpcResponse, dataStream: responseDataStream } = routerResult;
-    const methodLabel = jsonRpcRouter.hasHandler(dwnRpcRequest.method) ? dwnRpcRequest.method : 'unknown';
+    const methodLabel = jsonRpcRouter.metricLabelFor(dwnRpcRequest.method);
 
     if (jsonRpcResponse.error) {
       requestCounter.inc({ method: methodLabel, error: 1 });

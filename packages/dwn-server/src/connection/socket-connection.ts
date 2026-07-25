@@ -540,7 +540,7 @@ export class SocketConnection {
 
   /** Records only registered method names to keep metric label cardinality finite. */
   private recordRequestMetric(method: string, response: JsonRpcResponse): void {
-    const methodLabel = jsonRpcRouter.hasHandler(method) ? method : 'unknown';
+    const methodLabel = jsonRpcRouter.metricLabelFor(method);
     if (response.error !== undefined) {
       requestCounter.inc({ method: methodLabel, error: 1 });
       return;

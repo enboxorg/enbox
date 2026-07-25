@@ -18,7 +18,7 @@ export const responseHistogram = new Histogram({
 });
 
 // ---------------------------------------------------------------------------
-// Enhanced gauges — updated periodically by AdminApi.startMetricsUpdater()
+// Store gauges — updated periodically by AdminApi.startMetricsUpdater()
 // ---------------------------------------------------------------------------
 
 /** Number of active (registered) tenants. */
@@ -38,6 +38,10 @@ export const totalDataBytes = new Gauge({
   name : 'dwn_total_data_bytes',
   help : 'total data storage bytes across all tenants',
 });
+
+// ---------------------------------------------------------------------------
+// WebSocket gauges — updated by connection and subscription lifecycle owners
+// ---------------------------------------------------------------------------
 
 /** Number of active WebSocket connections. */
 export const websocketConnections = new Gauge({

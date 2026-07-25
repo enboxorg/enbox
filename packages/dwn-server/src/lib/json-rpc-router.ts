@@ -56,9 +56,9 @@ export class JsonRpcRouter {
     this.methodHandlers.set(methodName, handler);
   }
 
-  /** Returns whether a handler is registered for the exact method name. */
-  hasHandler(methodName: string): boolean {
-    return this.methodHandlers.has(methodName);
+  /** Bounds metric cardinality by collapsing unregistered method names. */
+  metricLabelFor(methodName: string): string {
+    return this.methodHandlers.has(methodName) ? methodName : 'unknown';
   }
 
   async handle(
