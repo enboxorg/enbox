@@ -78,15 +78,20 @@ const TaskProtocol = defineProtocol({
       schema:      'https://example.com/schemas/task',
       dataFormats: ['application/json'],
     },
+    member: {
+      dataFormats: ['application/json'],
+    },
   },
   structure: {
     task: {
       $tags: {
         done: { type: 'boolean' },
       },
+      member: { $role: true },
     },
   },
 }, {
+  member: recordCodecs.json<{ label: string }>(),
   task: recordCodecs.json<TaskData>(),
 });
 ```
@@ -156,7 +161,7 @@ Create options:
 | `data` | `T` (type-checked) | The record payload |
 | `parentContextId` | `string?` | Link to a parent record's `contextId` |
 | `published` | `boolean?` | Whether the record is publicly readable |
-| `recipient` | `string?` | DID of the intended recipient |
+| `recipient` | `string` on `$role` paths, otherwise `string?` | DID of the intended recipient or role holder |
 | `protocolRole` | `string?` | Role for permission-scoped writes |
 | `tags` | `Record<string, ...>?` | Indexed key-value metadata |
 | `store` | `boolean?` | Persist locally (default `true`) |
@@ -343,6 +348,39 @@ Or delete via the record instance:
 ```ts
 await record.delete();
 ```
+
+#### protocol roles
+
+A protocol role is an ordinary record on a path declared with `$role: true`.
+Its `recipient` is the role holder, so typed creates require a recipient on
+those paths. Grant, list, and revoke roles through the same Records lifecycle
+as application data—there is no separate permission-record API:
+
+```ts
+const task = await tasks.records.create('task', {
+  data: { title: 'Ship typed roles', done: false },
+});
+const assignment = await tasks.records.create('task/member', {
+  data            : { label: 'maintainer' },
+  parentContextId : task.contextId,
+  recipient       : memberDid,
+});
+
+const { records: members } = await tasks.records.query('task/member', {
+  filter : { recipient: memberDid },
+  within : task.contextId,
+});
+
+await assignment.delete();
+```
+
+`ProtocolRolePaths<typeof TaskProtocol.definition>` exposes the definition's
+exact role paths for reusable typed helpers. The DWN rejects a second active
+assignment for the same role path, direct-parent context, and recipient with
+`ProtocolAuthorizationDuplicateRoleRecipient`; delete the current assignment
+before creating its replacement. Encrypted role records use the normal Records
+encryption and best-effort role-audience key-delivery path; callers can provide
+`recipientRolePublicKey` when the recipient key is supplied out of band.
 
 ## Record&lt;T&gt;
 

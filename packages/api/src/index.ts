@@ -38,6 +38,7 @@ export type {
   ProtocolPaths,
   ProtocolPathTypeNames,
   ProtocolRecordCodecs,
+  ProtocolRolePaths,
   RuleSetPaths,
   TagKeys,
   TagsAtPath,

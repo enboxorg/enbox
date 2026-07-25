@@ -37,6 +37,7 @@ import type { RecordView } from './record-view.js';
 import type {
   DirectSingletonChildPaths,
   ProtocolPaths,
+  ProtocolRolePaths,
   SingletonProtocolPaths,
   TypedProtocol,
   TypeNameAtPath,
@@ -200,7 +201,7 @@ type TypedEnboxOptions = {
  * });
  * ```
  */
-export type TypedCreateRequest<
+type TypedCreateOptions<
   C extends RecordCodecMap,
   Path extends string,
 > = {
@@ -286,13 +287,7 @@ export type TypedCreateRequest<
    */
   messageTimestamp?: string;
 
-  /**
-   * The DID of the intended recipient.
-   *
-   * Sets the recipient for permission-scoped records. The recipient may
-   * have special read/write permissions as defined by the protocol's
-   * `$actions` rules.
-   */
+  /** DID of the intended recipient. Required by the public type on `$role` paths. */
   recipient?: string;
 
   /**
@@ -359,8 +354,35 @@ export type TypedCreateRequest<
    * only — you can call {@link Record.store | record.store()} later.
    */
   store?: boolean;
-
 };
+
+/**
+ * Typed create options for one exact protocol path.
+ *
+ * Paths declared with `$role: true` require the role holder's DID as
+ * `recipient`; all other paths retain the Records API's optional recipient.
+ * Definitions widened to `ProtocolDefinition` cannot expose literal role
+ * paths, so the runtime preflight remains authoritative for dynamic callers.
+ *
+ * @typeParam D - The protocol's literal definition.
+ * @typeParam C - The protocol's runtime codec map.
+ * @typeParam Path - The exact protocol path being created.
+ */
+export type TypedCreateRequest<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  Path extends ProtocolPaths<D> & string,
+> = TypedCreateOptions<C, Path> & ([Extract<Path, ProtocolRolePaths<D>>] extends [never]
+  ? unknown
+  : {
+    /**
+     * DID receiving this protocol role.
+     *
+     * A role assignment is the ordinary `$role` record whose `recipient`
+     * names the holder, so typed role-record creates require this field.
+     */
+    recipient: string;
+  });
 
 /**
  * Options for replacing the visible value at a protocol-declared singleton path.
@@ -373,7 +395,7 @@ export type TypedSetRequest<
   C extends RecordCodecMap,
   Path extends string,
 > = Pick<
-  TypedCreateRequest<C, Path>,
+  TypedCreateOptions<C, Path>,
   | 'data'
   | 'datePublished'
   | 'messageTimestamp'
@@ -1104,9 +1126,13 @@ export class TypedEnbox<
   /** Create one typed record through the protocol-bound DWN API. */
   private async createRecord<Path extends ProtocolPaths<D> & string>(
     path: Path,
-    request: TypedCreateRequest<C, Path>,
+    request: TypedCreateOptions<C, Path>,
   ): Promise<Record<DataForPath<C, Path>>> {
     const normalizedPath = normalizePath(path);
+    if (getRuleSetAtPath(normalizedPath, this._definition.structure)?.$role === true
+      && request.recipient === undefined) {
+      throw new TypeError(`TypedEnbox.records.create: role path '${normalizedPath}' requires a recipient.`);
+    }
     await this._ensureReady(normalizedPath);
     const typeName = getTypeName(normalizedPath);
     const typeEntry = this._definition.types[typeName];
@@ -1289,7 +1315,7 @@ export class TypedEnbox<
   public get records(): {
     create: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request: TypedCreateRequest<C, Path>,
+      request: TypedCreateRequest<D, C, Path>,
     ) => Promise<Record<DataForPath<C, Path>>>;
 
     query: <
@@ -1360,7 +1386,7 @@ export class TypedEnbox<
        */
       create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request: TypedCreateRequest<C, Path>,
+        request: TypedCreateRequest<D, C, Path>,
       ): Promise<Record<DataForPath<C, Path>>> => this.createRecord(path, request),
 
       /**

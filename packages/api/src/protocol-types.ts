@@ -104,6 +104,19 @@ type RuleSetAtPath<R, Path extends string> =
       : never;
 
 // ---------------------------------------------------------------------------
+// Role extraction
+// ---------------------------------------------------------------------------
+
+/** Protocol paths whose literal rule declares `$role: true`. */
+export type ProtocolRolePaths<D extends ProtocolDefinition> = {
+  [Path in ProtocolPaths<D>]: RuleSetAtPath<D['structure'], Path> extends {
+    readonly $role: true;
+  }
+    ? Path
+    : never;
+}[ProtocolPaths<D>];
+
+// ---------------------------------------------------------------------------
 // Singleton extraction
 // ---------------------------------------------------------------------------
 
