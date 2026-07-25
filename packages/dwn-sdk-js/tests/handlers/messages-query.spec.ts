@@ -1,6 +1,8 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ReplicationFeedReader, ResumableTaskStore } from '../../src/index.js';
 
+import sinon from 'sinon';
+
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -62,6 +64,7 @@ export function testMessagesQueryHandler(): void {
     });
 
     beforeEach(async () => {
+      sinon.restore();
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
@@ -83,6 +86,38 @@ export function testMessagesQueryHandler(): void {
 
       expect(reply.status.code).toBe(501);
       expect(reply.status.detail).toContain(DwnErrorCode.MessagesQueryReplicationFeedUnimplemented);
+    });
+
+    it.skipIf(!supportsReplicationFeed)('applies a limit of 100 when the limit is omitted', async () => {
+      const feedReader = getFeedReader(messageStore)!;
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const { message } = await TestDataGenerator.generateMessagesQuery({ author: alice });
+      const logReadSpy = sinon.spy(feedReader, 'logRead');
+
+      const reply = await dwn.processMessage(alice.did, message);
+
+      expect(reply.status.code).toBe(200);
+      expect(message.descriptor.limit).toBeUndefined();
+      expect(logReadSpy.calledOnce).toBe(true);
+      expect(logReadSpy.firstCall.args[1]?.limit).toBe(100);
+    });
+
+    it.skipIf(!supportsReplicationFeed)('preserves an explicit zero-entry probe limit', async () => {
+      const feedReader = getFeedReader(messageStore)!;
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
+      await messageStore.put(alice.did, record.message, await record.recordsWrite.constructIndexes(true));
+
+      const { message } = await TestDataGenerator.generateMessagesQuery({ author: alice, limit: 0 });
+      const logReadSpy = sinon.spy(feedReader, 'logRead');
+
+      const reply = await dwn.processMessage(alice.did, message);
+
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries).toHaveLength(0);
+      expect(reply.drained).toBe(false);
+      expect(logReadSpy.calledOnce).toBe(true);
+      expect(logReadSpy.firstCall.args[1]?.limit).toBe(0);
     });
 
     it.skipIf(!supportsReplicationFeed)('returns full log entries with inline RecordsWrite data detached from the message', async () => {

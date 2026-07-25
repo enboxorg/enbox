@@ -1,6 +1,6 @@
 import type { DwnServerConfig } from '../src/config.js';
 import type { DidDocument, DidResolutionResult, DidResolver } from '@enbox/dids';
-import type { Dwn, GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, Pagination, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -960,6 +960,81 @@ describe('DeliveryService — coverage', () => {
       // Should have sent to bob's DWN endpoint.
       expect(fetchStub.callCount).toBe(1);
       expect(fetchStub.firstCall.args[0]).toBe('http://bob-dwn.example.com');
+    });
+
+    it('should follow role query pagination before resolving delivery targets', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(null, { status: 200 }),
+      );
+
+      const tenant = 'did:test:alice';
+      const firstPageParticipant = 'did:test:bob';
+      const secondPageParticipant = 'did:test:carol';
+      const cursor = { messageCid: 'role-page-1', value: '2026-07-25T00:00:00.000000Z' };
+
+      const protocolDef: ProtocolDefinition = {
+        protocol  : 'http://example.com/chat',
+        published : true,
+        types     : {
+          thread      : {},
+          participant : {},
+          message     : {},
+        },
+        structure: {
+          thread: {
+            participant : { $actions: [{ role: 'thread/participant', can: ['read'] }] },
+            message     : {
+              $delivery : 'direct',
+              $actions  : [{ role: 'thread/participant', can: ['create', 'read'] }],
+            },
+          },
+        },
+      };
+
+      const processStub = sinon.stub();
+      processStub.onFirstCall().resolves({
+        status  : { code: 200 },
+        entries : [{ descriptor: { definition: protocolDef } }],
+      });
+      processStub.onSecondCall().resolves({
+        status  : { code: 200 },
+        entries : [{ descriptor: { recipient: firstPageParticipant } }],
+        cursor,
+      });
+      processStub.onThirdCall().resolves({
+        status  : { code: 200 },
+        entries : [{ descriptor: { recipient: secondPageParticipant } }],
+      });
+
+      const dwn = mockDwn(processStub);
+      const resolver = fakeResolver({
+        [secondPageParticipant]: didDocWithDwnService(secondPageParticipant, ['http://carol-dwn.example.com']),
+      });
+
+      const svc = DeliveryService.create(dwn, resolver, testConfig({
+        forwardingEnabled : false,
+        deliveryEnabled   : true,
+      }));
+
+      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
+        protocol     : 'http://example.com/chat',
+        protocolPath : 'thread/message',
+        contextId    : 'ctx-1',
+        recordId     : 'deliver-paginated-role-1',
+      }), 202);
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+
+      expect(processStub.callCount).toBe(3);
+      const roleQueryPaginations = processStub.getCalls().slice(1).map((call): Pagination => {
+        const message = call.args[1] as GenericMessage & { descriptor: { pagination: Pagination } };
+        return message.descriptor.pagination;
+      });
+      expect(roleQueryPaginations).toEqual([
+        { limit: DwnConstant.maxQueryPageSize },
+        { cursor, limit: DwnConstant.maxQueryPageSize },
+      ]);
+      expect(fetchStub.callCount).toBe(1);
+      expect(fetchStub.firstCall.args[0]).toBe('http://carol-dwn.example.com');
     });
 
     it('should deliver to explicit recipient on the record', async () => {

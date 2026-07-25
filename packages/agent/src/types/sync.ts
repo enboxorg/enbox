@@ -2,6 +2,8 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
 
+import { DwnConstant } from '@enbox/dwn-sdk-js';
+
 /** Deterministic bytewise string comparator for hash inputs and canonical IDs. */
 export function lexicographicalCompare(a: string, b: string): number {
   if (a > b) { return 1; }
@@ -95,6 +97,9 @@ export function normalizeSyncProtocols(protocols: [string, ...string[]] | string
   const unique = [...new Set(protocols)].sort(lexicographicalCompare);
   if (unique.length === 0) {
     throw new Error('SyncScope: protocol-set scope requires at least one protocol URI.');
+  }
+  if (unique.length > DwnConstant.maxFilterValues) {
+    throw new Error(`SyncScope: protocol-set scope supports at most ${DwnConstant.maxFilterValues} protocol URIs.`);
   }
   return unique as NonEmptyStringArray;
 }

@@ -1,6 +1,7 @@
 import type { DidResolutionLike } from './utils/identity-helpers.js';
-import type { Record as EnboxRecord } from '@enbox/api';
+import type { LinkData } from '@enbox/protocols';
 import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
+import type { Record as EnboxRecord, RecordPage } from '@enbox/api';
 
 import { AuthManager } from '@enbox/auth';
 import { DwnApi } from '@enbox/api/advanced';
@@ -12,6 +13,24 @@ import { createResolutionErrorResult, errorMessage, normalizeEndpointList, norma
 
 const defaultDwnEndpoint = 'https://enbox-dwn.fly.dev';
 const localEndpointCacheMs = 5_000;
+
+type ProfileApi = TypedEnbox<typeof ProfileDefinition, typeof ProfileProtocol.codecs>;
+
+async function queryAllProfileLinks(typed: ProfileApi, profileContextId: string): Promise<EnboxRecord<LinkData>[]> {
+  const records: EnboxRecord<LinkData>[] = [];
+  let cursor: RecordPage['cursor'];
+
+  do {
+    const page = await typed.records.query('profile/link', {
+      within: profileContextId,
+      ...(cursor === undefined ? {} : { pagination: { cursor } }),
+    });
+    records.push(...page.records);
+    cursor = page.cursor;
+  } while (cursor !== undefined);
+
+  return records;
+}
 
 export const identityRuntimeWindowKey = '__identityRuntime';
 export const identityWalletEventName = 'identity-wallet-changed';
@@ -620,14 +639,14 @@ class IdentityRuntimeController implements IdentityRuntime {
     const heroResult = profileContextId
       ? await typed.records.query('profile/hero', { within: profileContextId })
       : { records: [] };
-    const linkResult = profileContextId
-      ? await typed.records.query('profile/link', { within: profileContextId })
-      : { records: [] };
+    const linkRecords = profileContextId
+      ? await queryAllProfileLinks(typed, profileContextId)
+      : [];
     const avatarRecord = avatarResult.records[0];
     const heroRecord = heroResult.records[0];
 
     const links = await Promise.all(
-      linkResult.records.map(async (record) => {
+      linkRecords.map(async (record) => {
         const data = await record.value();
 
         return {
@@ -734,7 +753,7 @@ class IdentityRuntimeController implements IdentityRuntime {
       path            : 'profile/hero',
     });
 
-    const { records: existingLinks } = await typed.records.query('profile/link', { within: profileContextId });
+    const existingLinks = await queryAllProfileLinks(typed, profileContextId);
     const existingLinksById = new Map(existingLinks.map((record) => [record.id, record]));
     const retainedLinkIds = new Set<string>();
 
@@ -1058,7 +1077,7 @@ class IdentityRuntimeController implements IdentityRuntime {
     file?: Blob;
     existingRecord?: EnboxRecord<Blob>;
     parentContextId: string;
-    typed: TypedEnbox<typeof ProfileDefinition, typeof ProfileProtocol.codecs>;
+    typed: ProfileApi;
     path: 'profile/avatar' | 'profile/hero';
   }): Promise<void> {
     if (action === 'keep') {

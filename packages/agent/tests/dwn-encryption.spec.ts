@@ -24,12 +24,14 @@ import {
   getKeyDecrypter,
   hasAudienceSealCoverage,
   ivLength,
+  queryAudienceDeliveryMessagesDetailed,
   resolveAudienceDecryptionKey,
   resolveKeyDecrypter,
 } from '../src/dwn-encryption.js';
 import {
   ContentEncryptionAlgorithm,
   DataStream,
+  DwnConstant,
   DwnInterfaceName,
   DwnMethodName,
   Encoder,
@@ -1027,6 +1029,50 @@ describe('dwn-encryption', () => {
       expect(deliveryRecipients.map((request) => request.author)).toEqual([recipientDid]);
       expect(deliveryRecipients.map((request) => request.granteeDid)).toEqual([granteeDid]);
       expect(deliveryRecipients[0].messageParams.delegatedGrant).toBe(delegatedGrant);
+    });
+  });
+
+  describe('queryAudienceDeliveryMessagesDetailed', () => {
+    it('keeps every cursor page on the remote source selected by the first page', async () => {
+      const firstMessage = { recordId: 'remote-first', descriptor: {} } as unknown as RecordsWriteMessage;
+      const secondMessage = { recordId: 'remote-second', descriptor: {} } as unknown as RecordsWriteMessage;
+      const cursor = { messageCid: firstMessage.recordId, value: 'first-page' };
+      const processDwnRequest = sinon.stub().resolves({
+        reply: { entries: [], status: { code: 200, detail: 'OK' } },
+      });
+      const sendDwnRequest = sinon.stub();
+      sendDwnRequest.onFirstCall().resolves({
+        reply: {
+          cursor,
+          entries : [firstMessage],
+          status  : { code: 200, detail: 'OK' },
+        },
+      });
+      sendDwnRequest.onSecondCall().resolves({
+        reply: {
+          entries : [secondMessage],
+          status  : { code: 200, detail: 'OK' },
+        },
+      });
+
+      const result = await queryAudienceDeliveryMessagesDetailed({
+        agent        : { processDwnRequest, sendDwnRequest } as any,
+        contextId    : 'chat-root',
+        keyId        : 'audience-key',
+        protocol     : 'https://example.com/chat',
+        recipientDid : 'did:example:bob',
+        rolePath     : 'chat/member',
+        sourceDid    : 'did:example:alice',
+      }, { authorDid: 'did:example:bob' });
+
+      expect(result.messages.map(({ recordId }) => recordId)).toEqual(['remote-first', 'remote-second']);
+      expect(result.remote).toBe('ok');
+      expect(processDwnRequest.calledOnce).toBe(true);
+      expect(sendDwnRequest.callCount).toBe(2);
+      expect(sendDwnRequest.secondCall.args[0].messageParams.pagination).toEqual({
+        cursor,
+        limit: DwnConstant.maxQueryPageSize,
+      });
     });
   });
 

@@ -2,7 +2,7 @@ import type { DwnPaginationCursor } from '@enbox/agent';
 import type { DataFormatAtPath, ProtocolPaths, TagKeys, TagsAtPath } from './protocol-types.js';
 import type { Pagination, ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 
-import { DateSort, getTypeName } from '@enbox/dwn-sdk-js';
+import { DateSort, DwnConstant, getTypeName } from '@enbox/dwn-sdk-js';
 
 type LowerBound<T extends string | number> =
   | { gt: T; gte?: never }
@@ -215,11 +215,20 @@ function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: Date
   if (Array.isArray(filter?.author) && filter.author.length === 0) {
     throw new TypeError('RecordFilter: author must not be an empty array.');
   }
+  if (Array.isArray(filter?.author) && filter.author.length > DwnConstant.maxFilterValues) {
+    throw new TypeError(`RecordFilter: author must contain at most ${DwnConstant.maxFilterValues} values.`);
+  }
   if (Array.isArray(filter?.recipient) && filter.recipient.length === 0) {
     throw new TypeError('RecordFilter: recipient must not be an empty array.');
   }
+  if (Array.isArray(filter?.recipient) && filter.recipient.length > DwnConstant.maxFilterValues) {
+    throw new TypeError(`RecordFilter: recipient must contain at most ${DwnConstant.maxFilterValues} values.`);
+  }
   if (filter?.tags !== undefined && Object.keys(filter.tags).length === 0) {
     throw new TypeError('RecordFilter: tags must contain at least one tag filter.');
+  }
+  if (filter?.tags !== undefined && Object.keys(filter.tags).length > DwnConstant.maxFilterValues) {
+    throw new TypeError(`RecordFilter: tags must contain at most ${DwnConstant.maxFilterValues} tag filters.`);
   }
   if (filter?.published === false && selectsPublishedRecords(filter, dateSort)) {
     throw new TypeError('RecordFilter: published-date filters and sorting cannot be combined with published: false.');
@@ -261,8 +270,8 @@ function assertValidQueryControls(dateSort: DateSort | undefined, pagination: Pa
     throw new TypeError('RecordQuery: pagination must contain only limit and cursor.');
   }
   if (pagination.limit !== undefined
-    && (typeof pagination.limit !== 'number' || !Number.isFinite(pagination.limit) || pagination.limit < 1)) {
-    throw new TypeError('RecordQuery: pagination.limit must be a finite number greater than or equal to 1.');
+    && (!Number.isInteger(pagination.limit) || pagination.limit < 1 || pagination.limit > DwnConstant.maxQueryPageSize)) {
+    throw new TypeError(`RecordQuery: pagination.limit must be an integer from 1 to ${DwnConstant.maxQueryPageSize}.`);
   }
   if (pagination.cursor === undefined) {
     return;

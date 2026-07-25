@@ -4,7 +4,6 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata } from './types/identity.js';
 import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreSetParams, DataStoreTenantParams } from './store-data.js';
 
-import { DwnInterface } from './types/dwn.js';
 import { IdentityProtocolDefinition } from './store-data-protocols.js';
 import { TENANT_SEPARATOR } from './utils-internal.js';
 import { DwnDataStore, InMemoryDataStore } from './store-data.js';
@@ -53,17 +52,11 @@ export class DwnIdentityStore extends DwnDataStore<IdentityMetadata> implements 
     // Clear the index since it will be rebuilt from the query results.
     this._index.clear();
 
-    // Query the DWN for all stored IdentityMetadata objects.
-    const { reply: queryReply } = await agent.dwn.processRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { ...this._recordProperties } }
-    });
+    const records = await this.queryAllRecordEntries({ agent, tenantDid });
 
     // Loop through all of the stored IdentityMetadata records and accumulate the objects.
     const storedIdentities: IdentityMetadata[] = [];
-    for (const record of queryReply.entries ?? []) {
+    for (const record of records) {
       // All IdentityMetadata records are expected to be small enough such that the data is returned
       // with the query results. If a record is returned without `encodedData` this is unexpected so
       // throw an error.

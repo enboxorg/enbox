@@ -4,6 +4,7 @@ import type { HandlerDependencies, MethodHandler } from '../types/method-handler
 import type { MessagesFilter, MessagesQueryMessage, MessagesQueryReply, MessagesQueryReplyEntry } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
+import { DwnConstant } from '../core/dwn-constant.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
@@ -46,7 +47,7 @@ export class MessagesQueryHandler implements MethodHandler {
       const result = await replicationFeedReader.logRead(tenant, {
         cursor : message.descriptor.cursor,
         filters,
-        limit  : message.descriptor.limit,
+        limit  : message.descriptor.limit ?? DwnConstant.defaultQueryPageSize,
       });
 
       const reply: MessagesQueryReply = {

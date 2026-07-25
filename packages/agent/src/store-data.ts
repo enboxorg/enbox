@@ -1,11 +1,12 @@
 import type { Jwk } from '@enbox/crypto';
-import type { ProtocolDefinition, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, RecordsQueryReplyEntry, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
 
 import { Convert, parseDurationInMilliseconds, Stream, TtlCache } from '@enbox/common';
 
 import type { DwnMessageParams } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 
+import { collectRecordsQueryEntries } from './records-query.js';
 import { DwnInterface } from './types/dwn.js';
 import { getDataStoreTenant, TENANT_SEPARATOR } from './utils-internal.js';
 
@@ -236,6 +237,25 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     tenantDid: string;
   }): Promise<TStoreObject[]> {
     throw new Error('Not implemented: Classes extending DwnDataStore must implement getAllRecords()');
+  }
+
+  /** Queries every record page used to rebuild a DWN-backed store index. */
+  protected async queryAllRecordEntries({ agent, tenantDid }: {
+    agent: EnboxPlatformAgent;
+    tenantDid: string;
+  }): Promise<RecordsQueryReplyEntry[]> {
+    return collectRecordsQueryEntries(async (pagination) => {
+      const { reply } = await agent.dwn.processRequest({
+        author        : tenantDid,
+        target        : tenantDid,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { ...this._recordProperties }, pagination },
+      });
+      if (reply.status.code !== 200) {
+        throw new Error(`${this.name}: Failed to query stored records: (${reply.status.code}) ${reply.status.detail}`);
+      }
+      return reply;
+    });
   }
 
   private async getRecord({ recordId, tenantDid, agent, useCache }: {

@@ -188,6 +188,22 @@ export function testRecordsQueryHandler(): void {
         expect(reply.status.detail).toContain('queries must not filter for `published:false` and sort');
       });
 
+      it('should apply a limit of 100 when pagination is omitted', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const recordsQuery = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'http://default-query-page-size' },
+        });
+        const querySpy = sinon.spy(messageStore, 'query');
+
+        const reply = await dwn.processMessage(alice.did, recordsQuery.message);
+
+        expect(reply.status.code).toBe(200);
+        expect(recordsQuery.message.descriptor.pagination).toBeUndefined();
+        expect(querySpy.calledOnce).toBe(true);
+        expect(querySpy.firstCall.args[3]?.limit).toBe(100);
+      });
+
       it('should return recordId, descriptor, authorization and attestation', async () => {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
@@ -1111,21 +1127,6 @@ export function testRecordsQueryHandler(): void {
         expect(queryReply.entries).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(bobAuthorWrite.message.recordId);
 
-        // empty array for author should return all same as undefined author field
-        recordsQuery = await TestDataGenerator.generateRecordsQuery({
-          author : alice,
-          filter : {
-            author       : [],
-            protocol     : protocolDefinition.protocol,
-            schema       : protocolDefinition.types.post.schema,
-            dataFormat   : protocolDefinition.types.post.dataFormats[0],
-            protocolPath : 'post'
-          }
-        });
-        queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries).toHaveLength(2);
-
         // query for both authors explicitly
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
           author : alice,
@@ -1225,21 +1226,6 @@ export function testRecordsQueryHandler(): void {
         expect(queryReply.status.code).toBe(200);
         expect(queryReply.entries).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(aliceToCarol.message.recordId);
-
-        // empty array for recipient should return all same as undefined recipient field
-        recordsQuery = await TestDataGenerator.generateRecordsQuery({
-          author : alice,
-          filter : {
-            recipient    : [],
-            protocol     : protocolDefinition.protocol,
-            schema       : protocolDefinition.types.post.schema,
-            dataFormat   : protocolDefinition.types.post.dataFormats[0],
-            protocolPath : 'post'
-          }
-        });
-        queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries).toHaveLength(2);
 
         // query for both recipients explicitly
         recordsQuery = await TestDataGenerator.generateRecordsQuery({

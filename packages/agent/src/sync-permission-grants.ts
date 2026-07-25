@@ -3,7 +3,7 @@ import type { GenericMessage, GenericSignaturePayload, MessagesPermissionScope }
 import type { NonEmptyStringArray, SyncAuthorizationGrant, SyncScope } from './types/sync.js';
 import type { PermissionGrantEntry, PermissionsApi } from './types/permissions.js';
 
-import { Jws, Message } from '@enbox/dwn-sdk-js';
+import { DwnConstant, Jws, Message } from '@enbox/dwn-sdk-js';
 
 import { lexicographicalCompare } from './types/sync.js';
 
@@ -27,7 +27,11 @@ export function toMessagesPermissionGrantIds(permissionGrantIds: string[] | unde
   if (permissionGrantIds === undefined || permissionGrantIds.length === 0) {
     return undefined;
   }
-  return [...new Set(permissionGrantIds)].sort(lexicographicalCompare) as NonEmptyStringArray;
+  const unique = [...new Set(permissionGrantIds)].sort(lexicographicalCompare);
+  if (unique.length > DwnConstant.maxFilterValues) {
+    throw new Error(`SyncPermissions: Messages requests support at most ${DwnConstant.maxFilterValues} permission grant IDs.`);
+  }
+  return unique as NonEmptyStringArray;
 }
 
 /**

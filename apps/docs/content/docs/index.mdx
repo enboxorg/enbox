@@ -82,7 +82,7 @@ await record.update({
   data: { title: 'Buy milk', done: true },
 });
 
-// Query all tasks
+// Query the first page of tasks
 const { records } = await tasks.records.query('task');
 for (const r of records) {
   console.log(await r.value());

@@ -8,6 +8,7 @@ import type { RecordsFilter, RecordsQueryReplyEntry } from '../types/records-typ
 
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
+import { DwnConstant } from '../core/dwn-constant.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -117,7 +118,11 @@ export async function queryVisibleRecordsPage(input: {
   visibility: RecordsCollectionVisibility;
 }): Promise<{ messages: RecordsQueryReplyEntry[]; cursor?: PaginationCursor }> {
   const { deps, request, tenant, visibility } = input;
-  const { dateSort, filter, messageTimestamp, pagination } = request.message.descriptor;
+  const { dateSort, filter, messageTimestamp } = request.message.descriptor;
+  const pagination = {
+    ...request.message.descriptor.pagination,
+    limit: request.message.descriptor.pagination?.limit ?? DwnConstant.defaultQueryPageSize,
+  };
   const filters = buildRecordsSnapshotFilters(request, visibility);
   const recordLimit = await resolveRecordLimitOccupancy({
     validationStateReader : deps.validationStateReader,
@@ -162,14 +167,6 @@ export async function queryVisibleRecordsPage(input: {
 
   if (controlFilters.length === 0) {
     return queryProjectedPage();
-  }
-
-  if (pagination?.limit === undefined || pagination.limit <= 0) {
-    const result = await queryProjectedPage();
-    return {
-      messages : await filterVisibleControlRecords(result.messages),
-      cursor   : result.cursor,
-    };
   }
 
   const visibleMessages: RecordsQueryReplyEntry[] = [];
@@ -269,13 +266,13 @@ function invokesProtocolRole(request: RecordsCollectionRequest): boolean {
 function shouldBuildUnpublishedRecipientFilter(filter: RecordsFilter, recipient: string): boolean {
   const { recipient: recipientFilter } = filter;
   return Array.isArray(recipientFilter)
-    ? recipientFilter.length === 0 || recipientFilter.includes(recipient)
+    ? recipientFilter.includes(recipient)
     : recipientFilter === undefined || recipientFilter === recipient;
 }
 
 function shouldBuildUnpublishedAuthorFilter(filter: RecordsFilter, author: string): boolean {
   const { author: authorFilter } = filter;
   return Array.isArray(authorFilter)
-    ? authorFilter.length === 0 || authorFilter.includes(author)
+    ? authorFilter.includes(author)
     : authorFilter === undefined || authorFilter === author;
 }

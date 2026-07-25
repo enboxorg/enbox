@@ -177,6 +177,10 @@ for (const r of page.records) {
 }
 ```
 
+Queries return at most 100 records when `pagination.limit` is omitted. Follow
+`page.cursor` to read additional pages; an explicit limit may be from 1 through
+1,000.
+
 Query with filters, sorting, and pagination:
 
 ```ts
@@ -218,9 +222,9 @@ property is added only when the request explicitly selects child paths; each
 selected child has the same two-field `{ record, value }` shape.
 
 For a direct child whose protocol rule declares `$recordLimit: { max: 1 }`,
-`materialize: { children: [...] }` fetches that child path once for the whole
-parent page. Each selected key is present and is `undefined` when that parent
-has no visible child. Query and observe publish the same shape.
+`materialize: { children: [...] }` fetches that child path in bounded batches
+for the parent page. Each selected key is present and is `undefined` when that
+parent has no visible child. Query and observe publish the same shape.
 Materialization decodes eagerly and may buffer codec output; omit it for large
 payloads and consume `record.data.stream()` instead.
 

@@ -66,17 +66,11 @@ class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<P
     // Clear the index since it will be rebuilt from the query results.
     this._index.clear();
 
-    // Query the DWN for all stored PortableDid objects.
-    const { reply: queryReply } = await agent.dwn.processRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { ...this._recordProperties } }
-    });
+    const records = await this.queryAllRecordEntries({ agent, tenantDid });
 
     // Loop through all of the stored PortableDid records and accumulate the objects.
     const storedObjects: PortableDid[] = [];
-    for (const record of queryReply.entries ?? []) {
+    for (const record of records) {
       // All PortableDid records are expected to be small enough such that the data is returned
       // with the query results. If a record is returned without `encodedData` this is unexpected so
       // throw an error.
@@ -573,16 +567,22 @@ describe('AgentDataStore', () => {
           // since we are writing directly to the dwn we first initialize the storage protocol
           await (testStore as DwnDataStore<PortableDid>)['initialize']({ agent: testHarness.agent });
 
-          // Stub the DWN API to return a failed response.
-          const dwnApiStub = spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
-            messageCid : 'test-cid',
-            message    : {} as RecordsWriteMessage,
-            reply      : {
-              status: {
-                code   : 401,
-                detail : 'Not Authorized'
-              }
+          // Fail only the write; the store's duplicate check still queries the real DWN.
+          const processRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
+          const dwnApiStub = spyOn(testHarness.agent.dwn, 'processRequest').mockImplementation(async (request) => {
+            if (request.messageType !== DwnInterface.RecordsWrite) {
+              return processRequest(request);
             }
+            return {
+              messageCid : 'test-cid',
+              message    : {} as RecordsWriteMessage,
+              reply      : {
+                status: {
+                  code   : 401,
+                  detail : 'Not Authorized'
+                }
+              }
+            };
           });
 
           try {

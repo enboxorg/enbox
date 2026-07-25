@@ -46,8 +46,9 @@
           "additionalProperties": false,
           "properties": {
             "limit": {
-              "type": "number",
-              "minimum": 1
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
             },
             "cursor": {
               "$ref": "https://identity.foundation/dwn/json-schemas/pagination-cursor.json"

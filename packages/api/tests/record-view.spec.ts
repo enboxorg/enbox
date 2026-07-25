@@ -269,7 +269,7 @@ describe('RecordView', () => {
     })).rejects.toThrow('remote queries are not supported');
     await expect(observe('note', {
       pagination: { limit: 0 },
-    })).rejects.toThrow('pagination.limit must be a finite number greater than or equal to 1');
+    })).rejects.toThrow('pagination.limit must be an integer from 1 to 1000');
     await expect(query('note', { materialize: true }))
       .rejects.toThrow('pagination.limit is required to bound decoded values');
     await expect(observe('note', {
@@ -371,6 +371,25 @@ describe('RecordView', () => {
         protocolPath : 'note/label',
       },
     });
+  });
+
+  it('splits child materialization across bounded parent-ID filters', async () => {
+    const parents = Array.from(
+      { length: 101 },
+      (_, index) => decodedRecord(`note-${index}`, { title: `Note ${index}` }),
+    );
+    const harness = createHarness(async (_request, call) => ok(call === 1 ? parents : []));
+    const typed = createTyped(harness);
+
+    const page = await typed.records.query('note', {
+      materialize : { children: ['note/label'] as const },
+      pagination  : { limit: 101 },
+    });
+
+    expect(page.records).toHaveLength(101);
+    expect(harness.queryRequests).toHaveLength(3);
+    expect(harness.queryRequests[1].filter.parentId).toHaveLength(100);
+    expect(harness.queryRequests[2].filter.parentId).toEqual(['note-100']);
   });
 
   it('rejects an already-aborted session without acquiring view resources', async () => {

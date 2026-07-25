@@ -1,3 +1,4 @@
+import { DwnConstant } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
 
 import { getProtocolClosureEdges } from '../src/sync-scope-closure.js';
@@ -25,6 +26,17 @@ describe('sync scope identity', () => {
 
   it('rejects empty protocol sets', () => {
     expect(() => normalizeSyncProtocols([])).toThrow('protocol-set scope requires at least one protocol');
+  });
+
+  it('enforces the protocol-set cardinality limit after deduplication', () => {
+    const protocols = Array.from(
+      { length: DwnConstant.maxFilterValues },
+      (_, index) => `https://example.com/protocols/${index.toString().padStart(3, '0')}`,
+    );
+
+    expect(normalizeSyncProtocols([...protocols, protocols[0]])).toEqual(protocols);
+    expect(() => normalizeSyncProtocols([...protocols, 'https://example.com/protocols/extra']))
+      .toThrow(`protocol-set scope supports at most ${DwnConstant.maxFilterValues} protocol URIs`);
   });
 
   it('uses the durable message-feed projection root version', () => {
