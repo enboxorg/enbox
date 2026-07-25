@@ -131,6 +131,7 @@ describe('dwn-protocol-cache', () => {
       );
       expect(result).toEqual(mockDefinition);
       expect(cache.get(`remote~${targetDid}~${protocolUri}`)).toEqual(mockDefinition);
+      expect(sendDwnRpcRequest.firstCall.args[0].verifyResponse).toBe(true);
     });
 
     it('should throw when remote DWN returns non-200 status', async () => {

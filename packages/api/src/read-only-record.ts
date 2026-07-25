@@ -272,10 +272,10 @@ export class ReadOnlyRecord {
   private async readRecordData(): Promise<ReadableStream> {
     try {
       const reply = await this._anonymousDwn.recordsRead(this._remoteOrigin, {
-        filter: { recordId: this._recordId },
+        filter: { recordId: this._recordId, dataCid: this.dataCid },
       });
 
-      if (reply.status.code !== 200 || !reply.entry?.data) {
+      if (reply.status.code !== 200 || !reply.entry?.recordsWrite || !reply.entry.data) {
         throw new Error(`${reply.status.code}: ${reply.status.detail}`);
       }
 

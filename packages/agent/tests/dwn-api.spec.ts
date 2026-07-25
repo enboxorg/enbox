@@ -13,6 +13,7 @@ import {
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyDerivationScheme,
   Message,
+  RecordsWrite,
   TestDataGenerator,
   Time
 } from '@enbox/dwn-sdk-js';
@@ -2371,6 +2372,45 @@ describe('AgentDwnApi', () => {
       expect(queryReply.entries?.[0]).toHaveProperty('descriptor');
       expect(queryReply.entries?.[0]).toHaveProperty('encodedData');
       expect(queryReply.entries?.[0]).toHaveProperty('recordId', writeMessage.recordId);
+    });
+
+    it('rejects an invalid remote response and tries the next DWN endpoint', async () => {
+      const dataBytes = Convert.string('authentic remote record').toUint8Array();
+      const recordsWrite = await RecordsWrite.create({
+        data         : dataBytes,
+        dataFormat   : 'text/plain',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        signer       : await testHarness.agent.dwn['getSigner'](alice.did.uri),
+      });
+      const tamperedWrite = structuredClone(recordsWrite.message);
+      tamperedWrite.descriptor.dataFormat = 'application/json';
+
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([
+        'https://invalid.example',
+        'https://valid.example',
+      ]);
+      const sendDwnRequest = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest');
+      sendDwnRequest.onFirstCall().resolves({
+        entries : [tamperedWrite],
+        status  : { code: 200, detail: 'OK' },
+      });
+      sendDwnRequest.onSecondCall().resolves({
+        entries : [],
+        status  : { code: 200, detail: 'OK' },
+      });
+
+      const { reply } = await testHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { recordId: recordsWrite.message.recordId } },
+      });
+
+      expect(reply.entries).toEqual([]);
+      expect(sendDwnRequest.callCount).toBe(2);
+      expect(sendDwnRequest.firstCall.args[0].dwnUrl).toBe('https://invalid.example');
+      expect(sendDwnRequest.secondCall.args[0].dwnUrl).toBe('https://valid.example');
     });
 
     it('handles RecordsRead messages', async () => {

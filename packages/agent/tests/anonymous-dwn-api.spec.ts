@@ -1,27 +1,48 @@
 import type { EnboxRpc } from '@enbox/dwn-clients';
-import type { DidDereferencingResult, DidUrlDereferencer } from '@enbox/dids';
+import type { BearerDid, DidDereferencingResult, DidResolver, DidUrlDereferencer } from '@enbox/dids';
+import type { MessageSigner, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DidJwk, UniversalResolver } from '@enbox/dids';
+import { Encoder, ProtocolsConfigure, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import { AnonymousDwnApi } from '../src/anonymous-dwn-api.js';
 
 describe('AnonymousDwnApi', () => {
 
   let anonymousDwn: AnonymousDwnApi;
+  let dereferenceStub: sinon.SinonStub;
   let rpcStub: sinon.SinonStubbedInstance<EnboxRpc>;
-  let resolverStub: sinon.SinonStubbedInstance<DidUrlDereferencer>;
+  let resolver: DidResolver & DidUrlDereferencer;
+  let targetDid: string;
+  let targetSigner: MessageSigner;
 
-  const targetDid = 'did:example:alice';
   const dwnEndpoint = 'https://dwn.example.com';
+  const protocolUri = 'https://blog.example/posts';
+  const textEncoder = new TextEncoder();
+
+  const protocolDefinition: ProtocolDefinition = {
+    protocol  : protocolUri,
+    published : true,
+    types     : {
+      post: {
+        schema      : 'https://blog.example/schemas/post',
+        dataFormats : ['text/plain'],
+      },
+    },
+    structure: {
+      post: {},
+    },
+  };
 
   /**
    * Helper: create a stubbed DidUrlDereferencer that returns a DWN service
    * endpoint for the given DID.
    */
-  function createResolverStub(): sinon.SinonStubbedInstance<DidUrlDereferencer> {
-    const stub = { dereference: sinon.stub() } as sinon.SinonStubbedInstance<DidUrlDereferencer>;
-    stub.dereference.resolves({
+  function createResolver(): DidResolver & DidUrlDereferencer {
+    const universalResolver = new UniversalResolver({ didResolvers: [DidJwk] });
+    dereferenceStub = sinon.stub().resolves({
       dereferencingMetadata : {},
       contentMetadata       : {},
       contentStream         : {
@@ -30,7 +51,11 @@ describe('AnonymousDwnApi', () => {
         serviceEndpoint : [dwnEndpoint],
       },
     } as DidDereferencingResult);
-    return stub;
+
+    return {
+      dereference : dereferenceStub,
+      resolve     : universalResolver.resolve.bind(universalResolver),
+    };
   }
 
   /**
@@ -49,11 +74,17 @@ describe('AnonymousDwnApi', () => {
     } as unknown as sinon.SinonStubbedInstance<EnboxRpc>;
   }
 
+  beforeAll(async () => {
+    const target = await DidJwk.create();
+    targetDid = target.uri;
+    targetSigner = await signerForDid(target);
+  });
+
   beforeEach(() => {
-    resolverStub = createResolverStub();
+    resolver = createResolver();
     rpcStub = createRpcStub();
     anonymousDwn = new AnonymousDwnApi({
-      didResolver : resolverStub,
+      didResolver : resolver,
       rpcClient   : rpcStub,
     });
   });
@@ -64,23 +95,17 @@ describe('AnonymousDwnApi', () => {
 
   describe('recordsQuery()', () => {
     it('should create an unsigned RecordsQuery and send it via RPC', async () => {
-      const mockEntries = [
-        {
-          recordId    : 'record-1',
-          descriptor  : { interface: 'Records', method: 'Write', dataFormat: 'text/plain', dataCid: 'cid1', dataSize: 5, dateCreated: '2024-01-01', messageTimestamp: '2024-01-01' },
-          contextId   : undefined,
-          encodedData : undefined,
-        },
-      ];
+      const data = textEncoder.encode('published post');
+      const recordsWrite = await createPublishedRecord(data);
 
       rpcStub.sendDwnRequest.resolves({
         status  : { code: 200, detail: 'OK' },
-        entries : mockEntries,
+        entries : [{ ...recordsWrite.message, encodedData: Encoder.bytesToBase64Url(data) }],
         cursor  : undefined,
       });
 
       const reply = await anonymousDwn.recordsQuery(targetDid, {
-        filter: { protocol: 'https://blog.example/posts' },
+        filter: { protocol: protocolUri },
       });
 
       expect(reply.status.code).toBe(200);
@@ -126,15 +151,14 @@ describe('AnonymousDwnApi', () => {
 
   describe('recordsRead()', () => {
     it('should create an unsigned RecordsRead and send it via RPC', async () => {
-      const recordId = 'bafyrei-test-record';
+      const data = textEncoder.encode('public value');
+      const recordsWrite = await createPublishedRecord(data);
+      const recordId = recordsWrite.message.recordId;
       rpcStub.sendDwnRequest.resolves({
         status : { code: 200, detail: 'OK' },
         entry  : {
-          recordsWrite: {
-            recordId   : recordId,
-            descriptor : { interface: 'Records', method: 'Write', dataFormat: 'text/plain', dataCid: 'cid1', dataSize: 12, dateCreated: '2024-01-01', messageTimestamp: '2024-01-01' },
-          },
-          data: new ReadableStream(),
+          recordsWrite : recordsWrite.message,
+          data         : new Blob([data]).stream(),
         },
       });
 
@@ -185,20 +209,18 @@ describe('AnonymousDwnApi', () => {
 
   describe('protocolsQuery()', () => {
     it('should create an unsigned ProtocolsQuery and send it via RPC', async () => {
-      const mockDefinition = {
-        protocol  : 'https://blog.example/posts',
-        published : true,
-        types     : { post: { schema: 'https://blog.example/schemas/post' } },
-        structure : { post: {} },
-      };
+      const protocolsConfigure = await ProtocolsConfigure.create({
+        definition : protocolDefinition,
+        signer     : targetSigner,
+      });
 
       rpcStub.sendDwnRequest.resolves({
         status  : { code: 200, detail: 'OK' },
-        entries : [{ descriptor: { definition: mockDefinition } }],
+        entries : [protocolsConfigure.message],
       });
 
       const reply = await anonymousDwn.protocolsQuery(targetDid, {
-        filter: { protocol: 'https://blog.example/posts' },
+        filter: { protocol: protocolUri },
       });
 
       expect(reply.status.code).toBe(200);
@@ -223,6 +245,30 @@ describe('AnonymousDwnApi', () => {
   });
 
   describe('recordsSubscribe()', () => {
+    it('should pass the listener in the current subscription request shape', async () => {
+      const handler = sinon.stub();
+      rpcStub.getServerInfo.resolves({
+        registrationRequirements : [],
+        maxFileSize              : 10_000_000,
+        webSocketSupport         : true,
+      });
+      rpcStub.sendDwnRequest.resolves({
+        status       : { code: 200, detail: 'OK' },
+        entries      : [],
+        subscription : { close: sinon.stub() },
+      });
+
+      await anonymousDwn.recordsSubscribe(
+        targetDid,
+        { filter: { protocol: protocolUri } },
+        handler,
+      );
+
+      const rpcArgs = rpcStub.sendDwnRequest.args[0][0];
+      expect(rpcArgs.dwnUrl).toBe('wss://dwn.example.com/');
+      expect(rpcArgs.subscription).toEqual({ handler });
+    });
+
     it('should throw when WebSocket is not supported and no other endpoints available', async () => {
       rpcStub.getServerInfo.resolves({
         registrationRequirements : [],
@@ -239,6 +285,8 @@ describe('AnonymousDwnApi', () => {
           () => {},
         )
       ).rejects.toThrow('AnonymousDwnApi: Failed to send request');
+
+      expect(rpcStub.sendDwnRequest.called).toBe(false);
     });
   });
 
@@ -254,13 +302,13 @@ describe('AnonymousDwnApi', () => {
       });
 
       // Verify the DID resolver was called with the target DID's #dwn fragment.
-      expect(resolverStub.dereference.calledOnce).toBe(true);
-      const dereferenceArg = resolverStub.dereference.args[0][0];
+      expect(dereferenceStub.calledOnce).toBe(true);
+      const dereferenceArg = dereferenceStub.args[0][0];
       expect(dereferenceArg).toContain(targetDid);
     });
 
     it('should throw when DID has no DWN service endpoints', async () => {
-      resolverStub.dereference.resolves({
+      dereferenceStub.resolves({
         dereferencingMetadata : {},
         contentMetadata       : {},
         contentStream         : undefined,
@@ -273,7 +321,7 @@ describe('AnonymousDwnApi', () => {
 
     it('should try multiple DWN endpoints on failure', async () => {
       // DID resolves to two endpoints.
-      resolverStub.dereference.resolves({
+      dereferenceStub.resolves({
         dereferencingMetadata : {},
         contentMetadata       : {},
         contentStream         : {
@@ -298,5 +346,56 @@ describe('AnonymousDwnApi', () => {
       expect(reply.status.code).toBe(200);
       expect(rpcStub.sendDwnRequest.calledTwice).toBe(true);
     });
+
+    it('should try the next DWN endpoint when response verification fails', async () => {
+      dereferenceStub.resolves({
+        dereferencingMetadata : {},
+        contentMetadata       : {},
+        contentStream         : {
+          id              : '#dwn',
+          type            : 'DecentralizedWebNode',
+          serviceEndpoint : ['https://dwn1.example.com', 'https://dwn2.example.com'],
+        },
+      } as DidDereferencingResult);
+
+      const attacker = await DidJwk.create();
+      const [attackerSigner, validConfigure] = await Promise.all([
+        signerForDid(attacker),
+        ProtocolsConfigure.create({ definition: protocolDefinition, signer: targetSigner }),
+      ]);
+      const invalidConfigure = await ProtocolsConfigure.create({
+        definition : protocolDefinition,
+        signer     : attackerSigner,
+      });
+      rpcStub.sendDwnRequest
+        .onFirstCall().resolves({ status: { code: 200, detail: 'OK' }, entries: [invalidConfigure.message] })
+        .onSecondCall().resolves({ status: { code: 200, detail: 'OK' }, entries: [validConfigure.message] });
+
+      const reply = await anonymousDwn.protocolsQuery(targetDid, { filter: { protocol: protocolUri } });
+
+      expect(reply.entries).toEqual([validConfigure.message]);
+      expect(rpcStub.sendDwnRequest.calledTwice).toBe(true);
+    });
   });
+
+  async function createPublishedRecord(data: Uint8Array): Promise<RecordsWrite> {
+    return RecordsWrite.create({
+      data,
+      dataFormat   : 'text/plain',
+      protocol     : protocolDefinition.protocol,
+      protocolPath : 'post',
+      published    : true,
+      schema       : protocolDefinition.types.post.schema,
+      signer       : targetSigner,
+    });
+  }
 });
+
+async function signerForDid(did: BearerDid): Promise<MessageSigner> {
+  const signer = await did.getSigner();
+  return {
+    algorithm : signer.algorithm,
+    keyId     : signer.keyId,
+    sign      : async (content: Uint8Array): Promise<Uint8Array> => signer.sign({ data: content }),
+  };
+}

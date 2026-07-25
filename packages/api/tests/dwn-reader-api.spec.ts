@@ -372,10 +372,10 @@ describe('ReadOnlyRecord', () => {
     expect(text).toBe('re-fetched data');
     expect(anonStub.recordsRead.calledOnce).toBe(true);
 
-    // Verify the re-fetch used the correct recordId and target.
+    // Pin the re-fetch to the exact record version represented by this object.
     const readArgs = anonStub.recordsRead.args[0];
     expect(readArgs[0]).toBe(targetDid);
-    expect(readArgs[1].filter.recordId).toBe('refetch-test');
+    expect(readArgs[1].filter).toEqual({ recordId: 'refetch-test', dataCid: msg.descriptor.dataCid });
   });
 
   it('should coalesce concurrent convenience reads from a captured data accessor', async () => {

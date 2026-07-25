@@ -1,4 +1,5 @@
 import type { DidUrlDereferencer } from '@enbox/dids';
+import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { PaginationCursor, RecordsDeleteMessage, RecordsWrite, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { utils as didUtils } from '@enbox/dids';
@@ -33,6 +34,18 @@ export async function getDwnServiceEndpointUrls(didUri: string, dereferencer: Di
 
   // If the DID service with ID fragment #dwn was not found or is not valid, return an empty array.
   return [];
+}
+
+/** Resolves the WebSocket transport advertised for a DWN HTTP endpoint. */
+export async function resolveDwnSubscriptionUrl(dwnUrl: string, rpcClient: EnboxRpc): Promise<string> {
+  const serverInfo = await rpcClient.getServerInfo(dwnUrl);
+  if (!serverInfo.webSocketSupport) {
+    throw new Error('WebSocket support is not enabled on the server.');
+  }
+
+  const parsedUrl = new URL(dwnUrl);
+  parsedUrl.protocol = parsedUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+  return parsedUrl.toString();
 }
 
 function normalizeDwnServiceEndpointUrl(endpoint: string): string {

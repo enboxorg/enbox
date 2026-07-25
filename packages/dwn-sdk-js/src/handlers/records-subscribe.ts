@@ -351,6 +351,9 @@ export class RecordsSubscribeHandler implements MethodHandler {
           );
         }
       } catch (error) {
+        // Open-time authorization uses the subscription's signed timestamp, while delivery uses
+        // the current time. A future-dated grant can therefore become valid without authority changing,
+        // so a not-yet-active delivery check is retryable while other authorization failures are terminal.
         const authorizationFailure = error instanceof DwnError
           && error.code !== DwnErrorCode.GrantAuthorizationGrantNotYetActive;
         emitTerminalDeliveryError(

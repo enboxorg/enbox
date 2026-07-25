@@ -77,9 +77,10 @@ import type {
 
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
 import { PermissionGrantNotFoundError } from './permissions-api.js';
+import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import { DEFAULT_LOCAL_DWN_STRATEGY, LocalDwnDiscovery } from './local-dwn.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
-import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
+import { getDwnServiceEndpointUrls, isRecordsWrite, resolveDwnSubscriptionUrl } from './utils.js';
 
 // Re-export DWN type guards from the agent API surface.
 export { isDwnMessage, isDwnRequest, isMessagesPermissionScope, isRecordPermissionScope, isRecordsType } from './dwn-type-guards.js';
@@ -689,6 +690,8 @@ export class AgentDwnApi {
         message,
         data               : dataStream,
         subscriptionHandler,
+        // The configured local DWN already verifies artifacts on admission; this check is for untrusted remote replies.
+        verifyResponse     : false,
         resubscribeFactory : subscriptionHandler === undefined
           ? undefined
           : this.createResubscribeFactory(request, 'local'),
@@ -917,6 +920,8 @@ export class AgentDwnApi {
         dwnEndpointUrls : [this._localDwnEndpoint!],
         message         : message as DwnMessage[DwnInterface],
         data            : options?.dataStream,
+        // The configured local DWN already verifies artifacts on admission; this check is for untrusted remote replies.
+        verifyResponse  : false,
       });
     }
 
@@ -1006,12 +1011,13 @@ export class AgentDwnApi {
 
     // Send the RPC request to the target DID's DWN service endpoint using the Agent's RPC client.
     const reply = await this.sendDwnRpcRequest({
-      targetDid: request.target,
+      targetDid      : request.target,
       dwnEndpointUrls,
       message,
       data,
       subscriptionHandler,
       resubscribeFactory,
+      verifyResponse : true,
     });
     this.invalidateAcceptedProtocolDefinition(request.target, message, reply.status.code);
 
@@ -1038,36 +1044,8 @@ export class AgentDwnApi {
     };
   }
 
-  /**
-   * Resolves the URL to send a subscription request to: upgrades `dwnUrl` to a
-   * WebSocket transport when the server supports it (unsecured `ws` for `http`,
-   * secured `wss` for `https`), or records an error and returns `undefined` to
-   * signal that this endpoint should be skipped.
-   */
-  private async resolveSubscriptionDwnUrl(
-    dwnUrl: string,
-    errorMessages: { url: string, message: string }[],
-  ): Promise<string | undefined> {
-    // we get the server info to check if the server supports WebSocket for subscription requests
-    const serverInfo = await this.agent.rpc.getServerInfo(dwnUrl);
-    if (!serverInfo.webSocketSupport) {
-      // If the server does not support WebSocket, add an error message and continue to the next URL.
-      errorMessages.push({
-        url     : dwnUrl,
-        message : 'WebSocket support is not enabled on the server.'
-      });
-      return undefined;
-    }
-
-    // If the server supports WebSocket, replace the subscription URL with a socket transport.
-    // For `http` we use the unsecured `ws` protocol, and for `https` we use the secured `wss` protocol.
-    const parsedUrl = new URL(dwnUrl);
-    parsedUrl.protocol = parsedUrl.protocol === 'http:' ? 'ws:' : 'wss:';
-    return parsedUrl.toString();
-  }
-
   private async sendDwnRpcRequest<T extends DwnInterface>({
-    targetDid, dwnEndpointUrls, message, data, subscriptionHandler, resubscribeFactory
+    targetDid, dwnEndpointUrls, message, data, subscriptionHandler, resubscribeFactory, verifyResponse
   }: {
       targetDid: string;
       dwnEndpointUrls: string[];
@@ -1075,6 +1053,7 @@ export class AgentDwnApi {
       data?: DwnRpcData;
       subscriptionHandler?: MessageHandler[T];
       resubscribeFactory?: ResubscribeFactory;
+      verifyResponse: boolean;
     }
   ): Promise<DwnMessageReply[T]> {
     const errorMessages: { url: string, message: string }[] = [];
@@ -1084,15 +1063,11 @@ export class AgentDwnApi {
     }
 
     // Try sending to author's publicly addressable DWNs until the first request succeeds.
-    for (let dwnUrl of dwnEndpointUrls) {
+    for (const endpointUrl of dwnEndpointUrls) {
       try {
-        if (subscriptionHandler !== undefined) {
-          const subscriptionDwnUrl = await this.resolveSubscriptionDwnUrl(dwnUrl, errorMessages);
-          if (subscriptionDwnUrl === undefined) {
-            continue;
-          }
-          dwnUrl = subscriptionDwnUrl;
-        }
+        const dwnUrl = subscriptionHandler === undefined
+          ? endpointUrl
+          : await resolveDwnSubscriptionUrl(endpointUrl, this.agent.rpc);
 
         const dwnReply = await this.agent.rpc.sendDwnRequest({
           dwnUrl,
@@ -1105,10 +1080,19 @@ export class AgentDwnApi {
           } : undefined,
         });
 
+        if (verifyResponse) {
+          await verifyRemoteDwnResponse({
+            didResolver : this.agent.did,
+            message,
+            reply       : dwnReply,
+            targetDid,
+          });
+        }
+
         return dwnReply;
       } catch (error: any) {
         errorMessages.push({
-          url     : dwnUrl,
+          url     : endpointUrl,
           message : (error instanceof Error) ? error.message : 'Unknown error',
         });
       }
@@ -2562,6 +2546,8 @@ export class AgentDwnApi {
         targetDid       : author,
         dwnEndpointUrls : [this._localDwnEndpoint!],
         message         : messagesRead.message,
+        // The configured local DWN already verifies artifacts on admission; this check is for untrusted remote replies.
+        verifyResponse  : false,
       });
     }
 
