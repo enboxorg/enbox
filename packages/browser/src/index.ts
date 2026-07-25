@@ -51,6 +51,7 @@ export type {
   EnboxSessionParams,
   EncodedRecordData,
   MaterializedRecord,
+  ProtocolRolePaths,
   RecordCodec,
   RecordCodecValue,
   RecordFilter,

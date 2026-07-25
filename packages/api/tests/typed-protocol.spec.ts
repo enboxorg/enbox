@@ -2,9 +2,10 @@ import type { BearerDid } from '@enbox/dids';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { EncodedRecordData, RecordCodec } from '../src/record-codec.js';
 
-import { DateSort } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
+
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
 
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
@@ -540,6 +541,90 @@ describe('TypedProtocol API', () => {
 
         const readBack = await record.value();
         expect(readBack.v).toBe('payload');
+      });
+    });
+
+    describe('protocol role records', () => {
+      const RoleDefinition = {
+        protocol  : 'https://example.com/protocols/typed-role-records',
+        published : true,
+        types     : {
+          workspace : { dataFormats: ['application/json'] },
+          member    : { dataFormats: ['application/json'] },
+        },
+        structure: {
+          workspace: {
+            member: { $role: true },
+          },
+        },
+      } as const satisfies ProtocolDefinition;
+      const RoleProtocol = defineProtocol(RoleDefinition, {
+        member    : recordCodecs.json<{ label: string }>(),
+        workspace : recordCodecs.json<{ name: string }>(),
+      });
+
+      it('rejects a missing role recipient before issuing a DWN request', async () => {
+        const roles = new TypedEnbox(dwnAlice, RoleProtocol);
+        const processRequest = sinon.spy(testHarness.agent, 'processDwnRequest');
+        const sendRequest = sinon.spy(testHarness.agent, 'sendDwnRequest');
+
+        // @ts-expect-error intentionally bypass the public type to exercise the runtime boundary.
+        await expect(roles.records.create('workspace/member', {
+          data            : { label: 'member' },
+          parentContextId : 'unused-context',
+        })).rejects.toThrow('role path \'workspace/member\' requires a recipient');
+
+        expect(processRequest.notCalled).toBe(true);
+        expect(sendRequest.notCalled).toBe(true);
+      });
+
+      it('manages role assignments through ordinary typed Records operations', async () => {
+        const roles = new TypedEnbox(dwnAlice, RoleProtocol);
+        const configure = await roles.configure();
+        expect(configure.status.code).toBe(202);
+
+        const workspace = await roles.records.create('workspace', {
+          data: { name: 'Enbox' },
+        });
+        const recipient = 'did:example:bob';
+        const assignment = await roles.records.create('workspace/member', {
+          data            : { label: 'maintainer' },
+          parentContextId : workspace.contextId,
+          recipient,
+        });
+
+        const listed = await roles.records.query('workspace/member', {
+          filter : { recipient },
+          within : workspace.contextId,
+        });
+        expect(listed.records.map(({ id }) => id)).toEqual([assignment.id]);
+
+        try {
+          await roles.records.create('workspace/member', {
+            data            : { label: 'duplicate' },
+            parentContextId : workspace.contextId,
+            recipient,
+          });
+          throw new Error('expected duplicate role assignment to be rejected');
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(DwnResponseError);
+          expect((error as DwnResponseError).status.detail)
+            .toContain(DwnErrorCode.ProtocolAuthorizationDuplicateRoleRecipient);
+        }
+
+        await assignment.delete();
+        const afterRevocation = await roles.records.query('workspace/member', {
+          filter : { recipient },
+          within : workspace.contextId,
+        });
+        expect(afterRevocation.records).toEqual([]);
+
+        const reassigned = await roles.records.create('workspace/member', {
+          data            : { label: 'maintainer' },
+          parentContextId : workspace.contextId,
+          recipient,
+        });
+        expect(reassigned.recipient).toBe(recipient);
       });
     });
 
