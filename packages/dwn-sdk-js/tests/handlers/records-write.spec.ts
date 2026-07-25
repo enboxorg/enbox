@@ -53,6 +53,7 @@ import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+import { grantProtocolPathWriteAccess } from '../utils/encryption-control-test-utils.js';
 
 type AudienceControlWrite = {
   dataBytes: Uint8Array;
@@ -567,34 +568,6 @@ export function testRecordsWriteHandler(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        const anyoneProtocol: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-audience-anyone-writer.xyz',
-          published : false,
-          types     : {
-            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
-          },
-          structure: {
-            member: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: ['create'] }],
-            },
-          },
-        };
-        const encryptedAnyoneProtocol = await installEncryptedProtocol(alice, anyoneProtocol);
-        const anyoneRoleRuleSet = encryptedAnyoneProtocol.structure.member as ProtocolRuleSet;
-        const anyoneAudience = await createAudienceControlWrite({
-          author      : bob,
-          protocol    : anyoneProtocol.protocol,
-          rolePath    : 'member',
-          roleRuleSet : anyoneRoleRuleSet,
-        });
-
-        expect(
-          (await dwn.processMessage(alice.did, anyoneAudience.recordsWrite.message, {
-            dataStream: DataStream.fromBytes(anyoneAudience.dataBytes),
-          })).status.code
-        ).toBe(202);
-
         const roleProtocol: ProtocolDefinition = {
           protocol  : 'http://encryption-control-audience-role-writer.xyz',
           published : false,
@@ -922,8 +895,7 @@ export function testRecordsWriteHandler(): void {
           },
           structure: {
             member: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: ['create'] }],
+              $role: true,
             },
           },
         };
@@ -2960,6 +2932,77 @@ export function testRecordsWriteHandler(): void {
               expect(chatReply.status.code).toBe(202);
             });
 
+            it('allows an owner delegate to issue a role that its recipient can invoke', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              const bob = await TestDataGenerator.generateDidKeyPersona();
+              const device = await TestDataGenerator.generateDidKeyPersona();
+              const protocolDefinition: ProtocolDefinition = {
+                protocol  : 'http://delegated-role-issuance.xyz',
+                published : false,
+                types     : {
+                  member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+                  note   : { schema: 'http://note-schema', dataFormats: ['text/plain'] },
+                },
+                structure: {
+                  member : { $role: true },
+                  note   : { $actions: [{ role: 'member', can: ['create'] }] },
+                },
+              };
+              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+                author: alice,
+                protocolDefinition,
+              });
+              expect((await dwn.processMessage(alice.did, protocolsConfig.message)).status.code).toBe(202);
+
+              const grant = await TestDataGenerator.generateGrantCreate({
+                author    : alice,
+                delegated : true,
+                grantedTo : device,
+                scope     : {
+                  interface    : DwnInterfaceName.Records,
+                  method       : DwnMethodName.Write,
+                  protocol     : protocolDefinition.protocol,
+                  protocolPath : 'member',
+                },
+              });
+              expect((await dwn.processMessage(
+                alice.did,
+                grant.message,
+                { dataStream: grant.dataStream }
+              )).status.code).toBe(202);
+
+              const roleData = Encoder.stringToBytes('bob is a member');
+              const roleRecord = await RecordsWrite.create({
+                data           : roleData,
+                dataFormat     : 'application/json',
+                delegatedGrant : grant.dataEncodedMessage,
+                protocol       : protocolDefinition.protocol,
+                protocolPath   : 'member',
+                recipient      : bob.did,
+                schema         : 'http://member-schema',
+                signer         : Jws.createSigner(device),
+              });
+              expect((await dwn.processMessage(
+                alice.did,
+                roleRecord.message,
+                { dataStream: DataStream.fromBytes(roleData) }
+              )).status.code).toBe(202);
+
+              const note = await TestDataGenerator.generateRecordsWrite({
+                author       : bob,
+                dataFormat   : 'text/plain',
+                protocol     : protocolDefinition.protocol,
+                protocolPath : 'note',
+                protocolRole : 'member',
+                schema       : 'http://note-schema',
+              });
+              expect((await dwn.processMessage(
+                alice.did,
+                note.message,
+                { dataStream: note.dataStream }
+              )).status.code).toBe(202);
+            });
+
             it('uses a root-level role to authorize a co-update', async () => {
               // scenario: Alice gives Bob a admin role. Bob invokes his
               //           admin role in order to update a chat message that Alice wrote
@@ -4152,8 +4195,7 @@ export function testRecordsWriteHandler(): void {
             },
             structure: {
               member: {
-                $role    : true,
-                $actions : [{ who: 'anyone', can: ['create'] }],
+                $role: true,
               },
               message: {
                 $actions: [
@@ -4167,13 +4209,23 @@ export function testRecordsWriteHandler(): void {
           const memberRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
           const messageRuleSet = encryptedProtocolDefinition.structure.message as ProtocolRuleSet;
           const rolePath = 'member';
+          const bobGrantId = await grantProtocolPathWriteAccess({
+            dwn,
+            grantee      : bob,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : rolePath,
+            tenant       : alice,
+          });
+          const loserDateCreated = Time.createOffsetTimestamp({ seconds: 1 });
+          const currentDateCreated = Time.createOffsetTimestamp({ seconds: 2 });
 
           const loserAudience = await createAudienceControlWrite({
-            author      : bob,
-            dateCreated : '2025-01-01T00:00:00.000000Z',
-            protocol    : protocolDefinition.protocol,
+            author            : bob,
+            dateCreated       : loserDateCreated,
+            permissionGrantId : bobGrantId,
+            protocol          : protocolDefinition.protocol,
             rolePath,
-            roleRuleSet : memberRuleSet,
+            roleRuleSet       : memberRuleSet,
           });
           expect((await dwn.processMessage(
             alice.did,
@@ -4183,7 +4235,7 @@ export function testRecordsWriteHandler(): void {
 
           const currentAudience = await createAudienceControlWrite({
             author      : alice,
-            dateCreated : '2025-01-02T00:00:00.000000Z',
+            dateCreated : currentDateCreated,
             protocol    : protocolDefinition.protocol,
             rolePath,
             roleRuleSet : memberRuleSet,
@@ -4195,7 +4247,7 @@ export function testRecordsWriteHandler(): void {
           )).status.code).toBe(202);
 
           const bobMemberRole = await TestDataGenerator.generateRecordsWrite({
-            author       : bob,
+            author       : alice,
             data         : Encoder.stringToBytes('bob is a member'),
             dataFormat   : 'application/json',
             protocol     : protocolDefinition.protocol,

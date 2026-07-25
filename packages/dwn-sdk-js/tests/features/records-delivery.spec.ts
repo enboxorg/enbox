@@ -245,8 +245,7 @@ export function testRecordsDelivery(): void {
           },
           structure: {
             participant: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+              $role: true,
             },
             message: {
               $delivery : 'direct',

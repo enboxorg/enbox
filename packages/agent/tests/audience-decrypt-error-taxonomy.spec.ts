@@ -55,7 +55,7 @@ function noteProtocolDefinition(): ProtocolDefinition {
       note  : { dataFormats: ['text/plain'], encryptionRequired: true },
     },
     structure: {
-      admin : { $role: true, $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
+      admin : { $role: true },
       note  : { $actions: [{ role: ROLE_PATH, can: ['read'] }] },
     },
   };

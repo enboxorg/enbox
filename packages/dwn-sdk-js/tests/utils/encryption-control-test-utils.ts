@@ -8,9 +8,9 @@ import { Encoder } from '../../src/utils/encoder.js';
 import { Jws } from '../../src/utils/jws.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { TestDataGenerator } from './test-data-generator.js';
+import { DwnInterfaceName, DwnMethodName, Protocols, RecordsWrite } from '../../src/index.js';
 import { Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
-import { Protocols, RecordsWrite } from '../../src/index.js';
 
 export type AudienceControlWrite = {
   dataBytes: Uint8Array;
@@ -34,6 +34,31 @@ export async function installEncryptedProtocol(
   expect((await dwn.processMessage(author.did, protocolConfig.message)).status.code).toBe(202);
 
   return encryptedProtocolDefinition;
+}
+
+export async function grantProtocolPathWriteAccess(input: {
+  dwn: Dwn;
+  grantee: Persona;
+  protocol: string;
+  protocolPath: string;
+  tenant: Persona;
+}): Promise<string> {
+  const grant = await TestDataGenerator.generateGrantCreate({
+    author    : input.tenant,
+    grantedTo : input.grantee,
+    scope     : {
+      interface    : DwnInterfaceName.Records,
+      method       : DwnMethodName.Write,
+      protocol     : input.protocol,
+      protocolPath : input.protocolPath,
+    },
+  });
+  expect((await input.dwn.processMessage(
+    input.tenant.did,
+    grant.message,
+    { dataStream: grant.dataStream }
+  )).status.code).toBe(202);
+  return grant.message.recordId;
 }
 
 export async function createAudienceControlWrite(input: {

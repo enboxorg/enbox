@@ -18,7 +18,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
-import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, grantProtocolPathWriteAccess, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '../../src/index.js';
@@ -364,27 +364,42 @@ export function testRecordsCountHandler(): void {
           },
           structure: {
             member: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: ['create'] }],
+              $role: true,
             },
           },
         };
         const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
         const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const bobGrantId = await grantProtocolPathWriteAccess({
+          dwn,
+          grantee      : bob,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          tenant       : alice,
+        });
+        const carolGrantId = await grantProtocolPathWriteAccess({
+          dwn,
+          grantee      : carol,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          tenant       : alice,
+        });
         const nonTenantAudience = await createAudienceControlWrite({
-          author      : bob,
-          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
-          protocol    : protocolDefinition.protocol,
-          rolePath    : 'member',
+          author            : bob,
+          dateCreated       : Time.createOffsetTimestamp({ seconds: 1 }),
+          permissionGrantId : bobGrantId,
+          protocol          : protocolDefinition.protocol,
+          rolePath          : 'member',
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, nonTenantAudience);
 
         const otherNonTenantAudience = await createAudienceControlWrite({
-          author      : carol,
-          dateCreated : Time.createOffsetTimestamp({ seconds: 2 }),
-          protocol    : protocolDefinition.protocol,
-          rolePath    : 'member',
+          author            : carol,
+          dateCreated       : Time.createOffsetTimestamp({ seconds: 2 }),
+          permissionGrantId : carolGrantId,
+          protocol          : protocolDefinition.protocol,
+          rolePath          : 'member',
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, otherNonTenantAudience);
@@ -465,13 +480,19 @@ export function testRecordsCountHandler(): void {
           },
           structure: {
             member: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: ['create'] }],
+              $role: true,
             },
           },
         };
         const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
         const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const bobGrantId = await grantProtocolPathWriteAccess({
+          dwn,
+          grantee      : bob,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          tenant       : alice,
+        });
         const loserDateCreated = Time.createOffsetTimestamp({ seconds: 2 });
         const currentAudience = await createAudienceControlWrite({
           author      : alice,
@@ -483,10 +504,11 @@ export function testRecordsCountHandler(): void {
         await processControlWrite(dwn, alice.did, currentAudience);
 
         const loserAudience = await createAudienceControlWrite({
-          author      : bob,
-          dateCreated : loserDateCreated,
-          protocol    : protocolDefinition.protocol,
-          rolePath    : 'member',
+          author            : bob,
+          dateCreated       : loserDateCreated,
+          permissionGrantId : bobGrantId,
+          protocol          : protocolDefinition.protocol,
+          rolePath          : 'member',
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, loserAudience);
