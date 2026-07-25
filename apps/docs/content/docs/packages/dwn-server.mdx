@@ -12,11 +12,18 @@ description: Self-hostable Decentralized Web Node server with PostgreSQL, MySQL,
 ```bash
 docker run -d \
   --name dwn-server \
-  -p 3000:3000 \
-  -e DWN_STORAGE=level://data \
-  -v dwn-data:/data \
+  -p 127.0.0.1:3000:3000 \
+  -e DWN_STORAGE_MESSAGES=level://data \
+  -e DWN_STORAGE_DATA=level://data \
+  -e DWN_STORAGE_RESUMABLE_TASKS=level://data \
+  -e DWN_ALLOW_OPEN_TENANTS=true \
+  -e DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true \
+  -v dwn-data:/app/packages/dwn-server/data \
   ghcr.io/enboxorg/dwn-server:latest
 ```
+
+Those two acknowledgement flags are appropriate for this local development
+example. A remote deployment should configure a tenant gate and finite quotas.
 
 ### From source
 
@@ -24,7 +31,10 @@ docker run -d \
 git clone https://github.com/enboxorg/enbox.git
 cd enbox
 bun install
-bun --filter @enbox/dwn-server start
+DS_HOST=127.0.0.1 \
+DWN_ALLOW_OPEN_TENANTS=true \
+DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true \
+  bun run --filter @enbox/dwn-server server
 ```
 
 ### Verify
@@ -98,11 +108,14 @@ When multiple stores share the same PostgreSQL connection URL, a single shared p
 
 ### Tenant registration
 
-By default, any DID can use the server (open registration). You can require registration via Proof-of-Work, Provider Auth (OAuth), or both.
+Remote startup requires either a registration store or an explicit open-node
+acknowledgement. A configured registration store can admit tenants through
+Proof-of-Work, Provider Auth (OAuth), or pre-registration.
 
 | Variable | Default | Description |
 |---|---|---|
 | `DWN_REGISTRATION_STORE_URL` | `DWN_STORAGE` | Storage URL for registration data |
+| `DWN_ALLOW_OPEN_TENANTS` | `false` | Explicitly run a remote server without a tenant gate |
 | `DWN_REGISTRATION_PROOF_OF_WORK_ENABLED` | `false` | Enable Proof-of-Work registration |
 | `DWN_REGISTRATION_PROOF_OF_WORK_SEED` | *(none)* | Seed for PoW challenge generation |
 | `DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH` | *(none)* | Initial difficulty ceiling |
@@ -133,18 +146,23 @@ The admin API is **disabled by default**. Set `DWN_ADMIN_TOKEN` to enable it.
 | `DWN_ADMIN_TOKEN_FILE` | *(none)* | Read the admin token from a file (useful for Docker secrets) |
 | `DWN_ADMIN_ACTIVITY_LOG_CAPACITY` | `10000` | Max events in the admin activity ring buffer |
 | `DWN_ADMIN_METRICS_UPDATE_INTERVAL` | `30` | Prometheus gauge update interval (seconds) |
+| `DWN_PUBLIC_METRICS_ENABLED` | `false` | Expose remote `/metrics` without admin authentication |
 | `DWN_ADMIN_WEBAUTHN_RP_ID` | *(from DWN_BASE_URL)* | WebAuthn Relying Party ID for passkey auth |
 | `DWN_ADMIN_WEBAUTHN_RP_NAME` | `DWN Admin` | WebAuthn Relying Party display name |
 | `DWN_ADMIN_SESSION_TTL` | `86400` | Passkey session TTL (seconds, default 24 hours) |
 
 ### Quotas
 
-Per-tenant storage quotas limit resource usage. Defaults are unlimited; per-tenant overrides are managed via the admin API.
+Per-tenant storage quotas limit resource usage. Remote servers must configure
+both global limits or explicitly acknowledge unbounded usage. Finite accounting
+requires a SQL message store. Global defaults are startup-only; per-tenant
+overrides are managed through the admin API, where zero inherits the global limit.
 
 | Variable | Default | Description |
 |---|---|---|
 | `DWN_QUOTA_MAX_MESSAGES` | `0` (unlimited) | Default max messages per tenant |
 | `DWN_QUOTA_MAX_STORAGE_BYTES` | `0` (unlimited) | Default max data storage per tenant (bytes) |
+| `DWN_ALLOW_UNBOUNDED_TENANT_USAGE` | `false` | Explicitly allow either quota dimension to remain unlimited |
 
 ### Rate limiting
 
@@ -210,7 +228,9 @@ docker run -d \
   -e DWN_STORAGE=postgres://dwn:secret@db:5432/dwn \
   -e DWN_BASE_URL=https://dwn.example.com \
   -e DWN_ADMIN_TOKEN=your-secret-token \
+  -e DWN_REGISTRATION_PROOF_OF_WORK_ENABLED=true \
   -e DWN_RATE_LIMIT_REQUESTS_PER_SECOND=30 \
+  -e DWN_QUOTA_MAX_MESSAGES=100000 \
   -e DWN_QUOTA_MAX_STORAGE_BYTES=1073741824 \
   ghcr.io/enboxorg/dwn-server:latest
 ```

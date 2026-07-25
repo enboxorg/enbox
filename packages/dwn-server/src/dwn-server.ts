@@ -88,6 +88,7 @@ export type DwnServerOptions = {
  * bootstrap logic can be isolated into its own method.
  */
 type AdminApiSetupParams = {
+  adminStore: AdminStore | undefined;
   serverDialect: Dialect | undefined;
   registrationManager: RegistrationManager | undefined;
   registrationStore: RegistrationStore | undefined;
@@ -102,7 +103,6 @@ type AdminApiSetupParams = {
 type AdminApiSetupResult = {
   adminApi: AdminApi | undefined;
   activityLog: ActivityLog | undefined;
-  adminStore: AdminStore | undefined;
   auditLog: AuditLog | undefined;
   passkeyStore: AdminPasskeyStore | undefined;
   sessionManager: AdminSessionManager | undefined;
@@ -130,19 +130,23 @@ export class DwnServer {
   #httpApi: HttpApi;
   #wsApi: WsApi;
   #adminApi: AdminApi | undefined;
+  #adminStore: AdminStore | undefined;
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
   #auditLog: AuditLog | undefined;
   #passkeyStore: AdminPasskeyStore | undefined;
   #sessionManager: AdminSessionManager | undefined;
   #eventBus: EventBus | undefined;
+  #registrationManager: RegistrationManager | undefined;
   readonly #externalHooks: MessageProcessedHook[];
   readonly #externalRegistrationManager: RegistrationManager | undefined;
   readonly #externalOpenAuthHandler: OpenAuthHandler | undefined;
+  readonly #hasExternalDwn: boolean;
   readonly #localNodePairingManager: LocalNodePairingManager;
 
   /**
-   * @param options.dwn - Dwn instance to use as an override.
+   * @param options.dwn - Dwn instance to use as an override. Store-backed admin
+   * statistics and quotas are unavailable because the server does not own its stores.
    * @param options.registrationManager - External RegistrationManager to use with a pre-built DWN.
    * @param options.openAuthHandler - External OpenAuthHandler to use with a pre-built DWN.
    */
@@ -151,6 +155,7 @@ export class DwnServer {
 
     this.didResolver = options.didResolver;
     this.dwn = options.dwn;
+    this.#hasExternalDwn = options.dwn !== undefined;
     this.#externalHooks = options.messageProcessedHooks ?? [];
     this.#externalRegistrationManager = options.registrationManager;
     this.#externalOpenAuthHandler = options.openAuthHandler;
@@ -170,6 +175,7 @@ export class DwnServer {
     if (this.config.localNodeProfileEnabled) {
       assertLocalNodeBindHostname(this.config.hostname);
     }
+    this.#assertExposurePolicies();
 
     await this.#setupServer();
     this.processHandlers = setProcessHandlers(this);
@@ -191,21 +197,23 @@ export class DwnServer {
 
     const registrationManager = await this.#createDwnAndRegistrationManager();
 
+    const registrationStore = registrationManager?.getRegistrationStore();
+    const adminStore = await this.#createAdminStore(registrationStore);
+
     // Assemble message-processed hooks.
     const messageProcessedHooks = this.#buildMessageProcessedHooks();
 
-    // Create rate limiters when configured.
+    // Create rate limiters only after startup policy and storage probes pass.
     const { ipRateLimiter, tenantRateLimiter } = this.#createRateLimiters();
-
-    const registrationStore = registrationManager?.getRegistrationStore();
 
     // Initialize admin API if an admin token is configured.
     const {
-      adminApi, activityLog, adminStore, auditLog, passkeyStore, sessionManager,
-    } = await this.#setupAdminApi({ serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter });
+      adminApi, activityLog, auditLog, passkeyStore, sessionManager,
+    } = await this.#setupAdminApi({ adminStore, serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter });
 
     // Store references for cleanup in stop().
     this.#adminApi = adminApi;
+    this.#adminStore = adminStore;
     this.#ipRateLimiter = ipRateLimiter;
     this.#tenantRateLimiter = tenantRateLimiter;
     this.#auditLog = auditLog;
@@ -258,6 +266,7 @@ export class DwnServer {
     if (!this.dwn) {
       // No pre-built DWN — create everything from scratch including registration.
       registrationManager = await this.#createRegistrationManager();
+      this.#registrationManager = registrationManager;
       const eventBus = await this.#createEventBus();
       this.#eventBus = eventBus;
 
@@ -288,6 +297,10 @@ export class DwnServer {
       // The caller is responsible for passing this RegistrationManager as the
       // TenantGate when creating the DWN instance.
       registrationManager = this.#externalRegistrationManager;
+    } else if (!this.#hasExternalDwn) {
+      // A previous startup may have created the DWN before a later policy probe
+      // failed. Preserve the same registration and quota state on retry.
+      registrationManager = this.#registrationManager;
     }
 
     return registrationManager;
@@ -351,19 +364,16 @@ export class DwnServer {
    * sequence readable.
    */
   async #setupAdminApi(params: AdminApiSetupParams): Promise<AdminApiSetupResult> {
-    const { serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter } = params;
+    const { adminStore, serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter } = params;
 
     let adminApi: AdminApi | undefined;
     let activityLog: ActivityLog | undefined;
-    let adminStore: AdminStore | undefined;
     let auditLog: AuditLog | undefined;
     let webhookManager: WebhookManager | undefined;
     let passkeyStore: AdminPasskeyStore | undefined;
     let sessionManager: AdminSessionManager | undefined;
 
     if (this.config.adminToken) {
-      const storageUrl = this.config.messageStore;
-      adminStore = AdminStore.create(storageUrl);
       activityLog = new ActivityLog(this.config.adminActivityLogCapacity);
 
       // Reuse the dialect returned by server migrations when available — this
@@ -422,7 +432,82 @@ export class DwnServer {
       log.info('Admin API enabled');
     }
 
-    return { adminApi, activityLog, adminStore, auditLog, passkeyStore, sessionManager };
+    return { adminApi, activityLog, auditLog, passkeyStore, sessionManager };
+  }
+
+  /** Rejects invalid or implicit exposure choices before allocating server resources. */
+  #assertExposurePolicies(): void {
+    const { quotaMaxMessages, quotaMaxStorageBytes } = this.config;
+    const hasFiniteGlobalQuota = quotaMaxMessages > 0 || quotaMaxStorageBytes > 0;
+    if (!Number.isSafeInteger(quotaMaxMessages) || quotaMaxMessages < 0) {
+      throw new Error('DwnServer: DWN_QUOTA_MAX_MESSAGES must be a non-negative safe integer.');
+    }
+    if (!Number.isSafeInteger(quotaMaxStorageBytes) || quotaMaxStorageBytes < 0) {
+      throw new Error('DwnServer: DWN_QUOTA_MAX_STORAGE_BYTES must be a non-negative safe integer.');
+    }
+    if (hasFiniteGlobalQuota && this.#hasExternalDwn) {
+      throw new Error('DwnServer: finite tenant quotas are unavailable with a prebuilt DWN.');
+    }
+    if (!this.config.localNodeProfileEnabled) {
+      const hasRegistrationStore = this.#hasExternalDwn
+        ? this.#externalRegistrationManager?.getRegistrationStore() !== undefined
+        : Boolean(this.config.registrationStoreUrl);
+      if (!hasRegistrationStore && !this.config.allowOpenTenants) {
+        throw new Error(
+          'DwnServer: remote servers require a tenant registration store. ' +
+          'Configure DWN_REGISTRATION_STORE_URL (or DWN_STORAGE), or explicitly set DWN_ALLOW_OPEN_TENANTS=true.',
+        );
+      }
+
+      if ((quotaMaxMessages === 0 || quotaMaxStorageBytes === 0) && !this.config.allowUnboundedTenantUsage) {
+        throw new Error(
+          'DwnServer: remote servers require positive DWN_QUOTA_MAX_MESSAGES and DWN_QUOTA_MAX_STORAGE_BYTES, ' +
+          'or an explicit DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true acknowledgement.',
+        );
+      }
+    }
+
+    if (hasFiniteGlobalQuota && !AdminStore.supportsUsageQueries(this.config.messageStore)) {
+      throw new Error(
+        'DwnServer: finite tenant quotas require DWN_STORAGE_MESSAGES to use a SQL backend that supplies usage totals.',
+      );
+    }
+  }
+
+  /** Creates usage accounting whenever admin inspection or quota enforcement needs it. */
+  async #createAdminStore(registrationStore: RegistrationStore | undefined): Promise<AdminStore | undefined> {
+    const quotaEnforcementEnabled = this.config.quotaMaxMessages > 0
+      || this.config.quotaMaxStorageBytes > 0
+      || (await registrationStore?.hasFiniteQuota()) === true;
+    if (this.#hasExternalDwn) {
+      if (quotaEnforcementEnabled) {
+        throw new Error('DwnServer: finite tenant quotas are unavailable with a prebuilt DWN.');
+      }
+      return undefined;
+    }
+    if (!this.config.adminToken && !quotaEnforcementEnabled) {
+      return undefined;
+    }
+
+    const adminStore = AdminStore.create(this.config.messageStore);
+    if (!quotaEnforcementEnabled) {
+      return adminStore;
+    }
+
+    if (adminStore === undefined) {
+      throw new Error(
+        'DwnServer: finite tenant quotas require DWN_STORAGE_MESSAGES to use a SQL backend that supplies usage totals.',
+      );
+    }
+
+    if (!await adminStore.isAvailable()) {
+      await adminStore.close();
+      throw new Error(
+        'DwnServer: finite tenant quotas require DWN_STORAGE_MESSAGES to use the migrated DWN message database.',
+      );
+    }
+
+    return adminStore;
   }
 
   /**
@@ -559,6 +644,11 @@ export class DwnServer {
     }
 
     await this.dwn.close();
+
+    if (this.#adminStore) {
+      await this.#adminStore.close();
+      this.#adminStore = undefined;
+    }
 
     if (this.#eventBus !== undefined) {
       await this.#eventBus.close();

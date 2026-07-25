@@ -496,10 +496,11 @@ export class HttpApi {
     return null;
   }
 
-  /** Serves Prometheus metrics, gated by admin authentication when an admin token is configured. */
+  /** Serves Prometheus metrics through the server's configured authentication boundary. */
   async #handleMetrics(req: Request): Promise<Response> {
-    // Metrics require admin authentication when an admin token is configured.
-    if (this.#config.adminToken) {
+    // Local-node routes are already pairing-authenticated before routing.
+    // Remote metrics reuse admin authentication unless explicitly public.
+    if (!this.#config.localNodeProfileEnabled && !this.#config.publicMetricsEnabled) {
       const authResult = validateAdminAuth(req, this.#config, this.#sessionManager);
       if (authResult.error) {
         return authResult.error;

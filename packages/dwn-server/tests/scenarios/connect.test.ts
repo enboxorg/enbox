@@ -13,7 +13,12 @@ describe('Connect scenarios', () => {
 
   let clock: sinon.SinonFakeTimers;
   let dwnServer: DwnServer;
-  const dwnServerConfig = { ...config, port: 0 }; // not touching the original config
+  const dwnServerConfig = {
+    ...config,
+    allowOpenTenants          : true,
+    allowUnboundedTenantUsage : true,
+    port                      : 0,
+  }; // not touching the original config
 
   beforeAll(async () => {
     // NOTE: using SQL to workaround an issue where multiple instances of DwnServer cannot be started using LevelDB in the same test run,

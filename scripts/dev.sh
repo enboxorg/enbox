@@ -173,11 +173,14 @@ start_server() {
   (
     cd "$SERVER_DIR"
     DS_PORT="$DWN_PORT" \
+    DS_HOST=127.0.0.1 \
     DWN_BASE_URL="$(dwn_url)" \
     DWN_STORAGE_MESSAGES="level://$DATA_DIR" \
     DWN_STORAGE_DATA="level://$DATA_DIR" \
     DWN_STORAGE_RESUMABLE_TASKS="level://$DATA_DIR" \
     DWN_TTL_CACHE_URL="sqlite://" \
+    DWN_ALLOW_OPEN_TENANTS=true \
+    DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true \
     DWN_SERVER_PACKAGE_JSON="$SERVER_DIR/package.json" \
     DID_DHT_GATEWAY_URI="$GATEWAY_URI" \
     DID_DHT_ALLOW_PRIVATE_GATEWAY=1 \

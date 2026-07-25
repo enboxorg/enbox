@@ -2,9 +2,10 @@ import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { JsonRpcId } from '@enbox/dwn-clients';
 import type { HandlerResponse, JsonRpcHandler } from '../../lib/json-rpc-router.js';
 
-import { DwnServerErrorCode } from '../../dwn-error.js';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Records } from '@enbox/dwn-sdk-js';
+import { DwnServerError, DwnServerErrorCode } from '../../dwn-error.js';
+import { requiresTenantQuotaEnforcement, resolveTenantQuota } from '../../tenant-quota.js';
 
 type InboundDwnMessageParams = {
   context: Parameters<JsonRpcHandler>[1];
@@ -65,12 +66,8 @@ export async function enforceInboundDwnMessageLimits(params: InboundDwnMessagePa
     }
   }
 
-  if (
-    context.config &&
-    context.adminStore &&
-    isRecordsWrite
-  ) {
-    return enforceQuota(target, message, context);
+  if (context.config !== undefined && requiresTenantQuotaEnforcement(message)) {
+    return enforceQuota(target, message, requestId, context);
   }
 }
 
@@ -174,32 +171,29 @@ export function enforceTenantRateLimit(params: InboundDwnMessageParams): Handler
 export async function enforceQuota(
   target: string,
   message: GenericMessage,
+  requestId: JsonRpcId,
   context: Parameters<JsonRpcHandler>[1],
   options: QuotaOptions = {},
 ): Promise<HandlerResponse | undefined> {
   const { config, adminStore, registrationStore } = context;
-  const requestId = (message as { recordId?: string }).recordId ?? crypto.randomUUID();
 
-  // Resolve effective quota: per-tenant override > global config > unlimited.
-  let maxMessages = config!.quotaMaxMessages ?? 0;
-  let maxStorageBytes = config!.quotaMaxStorageBytes ?? 0;
-
-  if (registrationStore) {
-    const tenantQuota = await registrationStore.getQuota(target);
-    if (tenantQuota !== undefined) {
-      maxMessages = tenantQuota.maxMessages ?? maxMessages;
-      maxStorageBytes = tenantQuota.maxStorageBytes ?? maxStorageBytes;
-    }
-  }
+  const tenantQuota = await registrationStore?.getQuota(target);
+  const { maxMessages, maxStorageBytes } = resolveTenantQuota(config!, tenantQuota);
 
   // 0 means unlimited — skip enforcement.
   if (maxMessages === 0 && maxStorageBytes === 0) {
     return undefined;
   }
+  if (adminStore === undefined) {
+    throw new DwnServerError(
+      DwnServerErrorCode.TenantQuotaUsageStoreUnavailable,
+      'tenant quota enforcement requires SQL usage accounting',
+    );
+  }
 
   // Check message count quota.
   if (maxMessages > 0) {
-    const currentMessages = await adminStore!.getTenantMessageCount(target);
+    const currentMessages = await adminStore.getTenantMessageCount(target);
     if (currentMessages >= maxMessages) {
       return {
         jsonRpcResponse: createJsonRpcErrorResponse(
@@ -213,9 +207,9 @@ export async function enforceQuota(
   }
 
   // Check storage size quota.
-  if (maxStorageBytes > 0) {
+  if (maxStorageBytes > 0 && Records.isRecordsWrite(message)) {
     const dataSize = options.storageBytesToAdd ?? (message.descriptor as { dataSize?: number }).dataSize ?? 0;
-    const currentStorage = await adminStore!.getTenantStorageSize(target);
+    const currentStorage = await adminStore.getTenantStorageSize(target);
     if (currentStorage + dataSize > maxStorageBytes) {
       return {
         jsonRpcResponse: createJsonRpcErrorResponse(

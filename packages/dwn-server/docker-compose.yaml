@@ -10,10 +10,14 @@ services:
       context: ../..
       dockerfile: packages/dwn-server/Dockerfile
     ports:
-      - ${DWN_SERVER_PORT:-3000}:3000
+      - 127.0.0.1:${DWN_SERVER_PORT:-3000}:3000
     volumes:
       # The default level://data store lives under the server's working directory.
       - ./dwn-server:/app/packages/dwn-server/data
     environment:
+      # Development sample: set both DWN_ALLOW_* values to true in .env.
+      # Their false defaults intentionally make an unreviewed deployment fail closed.
       - DWN_REGISTRATION_STORE_URL=
       - DWN_STORAGE=
+      - DWN_ALLOW_OPEN_TENANTS=${DWN_ALLOW_OPEN_TENANTS:-false}
+      - DWN_ALLOW_UNBOUNDED_TENANT_USAGE=${DWN_ALLOW_UNBOUNDED_TENANT_USAGE:-false}

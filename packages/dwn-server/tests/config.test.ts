@@ -46,6 +46,24 @@ describe('config', () => {
     });
   });
 
+  describe('parseNonNegativeInteger()', () => {
+    it('should parse zero and positive safe integers', async () => {
+      const { parseNonNegativeInteger } = await import('../src/config.js');
+
+      expect(parseNonNegativeInteger('0', 'TEST_LIMIT')).toBe(0);
+      expect(parseNonNegativeInteger('1000', 'TEST_LIMIT')).toBe(1000);
+      expect(parseNonNegativeInteger(String(Number.MAX_SAFE_INTEGER), 'TEST_LIMIT')).toBe(Number.MAX_SAFE_INTEGER);
+    });
+
+    it('should reject partial, negative, fractional, and unsafe limits', async () => {
+      const { parseNonNegativeInteger } = await import('../src/config.js');
+
+      for (const value of ['-1', '64x', '1.5', '', String(Number.MAX_SAFE_INTEGER + 1)]) {
+        expect(() => parseNonNegativeInteger(value, 'TEST_LIMIT')).toThrow('TEST_LIMIT must be a non-negative');
+      }
+    });
+  });
+
   // NOTE: The original version of these tests asserted exact default values
   // (e.g. `expect(config.port).toBe(3000)`, `expect(config.maxRecordDataSize).toBe(...)`)
   // which made them snapshot-style assertions that would break any time a default
@@ -70,10 +88,13 @@ describe('config', () => {
       expect(config.eventBusPluginPath === undefined || typeof config.eventBusPluginPath === 'string').toBe(true);
       expect(typeof config.logLevel).toBe('string');
       expect(typeof config.registrationProofOfWorkEnabled).toBe('boolean');
+      expect(typeof config.allowOpenTenants).toBe('boolean');
       expect(typeof config.adminActivityLogCapacity).toBe('number');
       expect(typeof config.adminMetricsUpdateIntervalSeconds).toBe('number');
+      expect(typeof config.publicMetricsEnabled).toBe('boolean');
       expect(typeof config.quotaMaxMessages).toBe('number');
       expect(typeof config.quotaMaxStorageBytes).toBe('number');
+      expect(typeof config.allowUnboundedTenantUsage).toBe('boolean');
       expect(typeof config.rateLimitRequestsPerSecond).toBe('number');
       expect(typeof config.rateLimitBurst).toBe('number');
       expect(typeof config.rateLimitTenantRequestsPerSecond).toBe('number');

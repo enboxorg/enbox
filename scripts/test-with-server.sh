@@ -70,6 +70,8 @@ export DWN_TTL_CACHE_URL="postgres://dwn_user:dwn_password@localhost:5433/dwn"
 export DWN_STORAGE_MESSAGES="postgres://dwn_user:dwn_password@localhost:5433/dwn"
 export DWN_STORAGE_DATA="postgres://dwn_user:dwn_password@localhost:5433/dwn"
 export DWN_STORAGE_RESUMABLE_TASKS="postgres://dwn_user:dwn_password@localhost:5433/dwn"
+export DWN_ALLOW_OPEN_TENANTS=true
+export DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true
 
 cd "$ROOT_DIR/packages/dwn-server"
 node dist/esm/src/main.js &

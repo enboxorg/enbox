@@ -28,7 +28,12 @@ describe('Registration scenarios', () => {
   let registrationManager: RegistrationManager;
   let clock;
   let dwnServer: DwnServer;
-  const dwnServerConfig: DwnServerConfig = { ...config, port: 0 }; // not touching the original config
+  const dwnServerConfig: DwnServerConfig = {
+    ...config,
+    allowUnboundedTenantUsage : true,
+    port                      : 0,
+    registrationStoreUrl      : 'sqlite://',
+  };
 
   beforeAll(async () => {
     clock = useFakeTimers({ shouldAdvanceTime: true });
@@ -557,6 +562,7 @@ describe('Registration scenarios', () => {
     // 2. Alice can write to the DWN without registering as a tenant.
     const configClone = {
       ...dwnServerConfig,
+      allowOpenTenants               : true,
       registrationStoreUrl           : '', // set to empty to disable tenant registration
       port                           : 0,
       registrationProofOfWorkEnabled : false,

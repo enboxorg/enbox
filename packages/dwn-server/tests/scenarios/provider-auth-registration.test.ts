@@ -45,7 +45,11 @@ describe('Provider auth registration scenarios', () => {
   let registrationManager: RegistrationManager;
   let clock: ReturnType<typeof useFakeTimers>;
   let dwnServer: DwnServer;
-  const dwnServerConfig: DwnServerConfig = { ...config, port: 0 };
+  const dwnServerConfig: DwnServerConfig = {
+    ...config,
+    allowUnboundedTenantUsage : true,
+    port                      : 0,
+  };
 
   beforeAll(async () => {
     clock = useFakeTimers({ shouldAdvanceTime: true });
