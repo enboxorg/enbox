@@ -690,6 +690,7 @@ export class AgentDwnApi {
         message,
         data               : dataStream,
         subscriptionHandler,
+        // The configured local DWN already verifies artifacts on admission; this check is for untrusted remote replies.
         verifyResponse     : false,
         resubscribeFactory : subscriptionHandler === undefined
           ? undefined
@@ -919,6 +920,7 @@ export class AgentDwnApi {
         dwnEndpointUrls : [this._localDwnEndpoint!],
         message         : message as DwnMessage[DwnInterface],
         data            : options?.dataStream,
+        // The configured local DWN already verifies artifacts on admission; this check is for untrusted remote replies.
         verifyResponse  : false,
       });
     }
@@ -2544,6 +2546,7 @@ export class AgentDwnApi {
         targetDid       : author,
         dwnEndpointUrls : [this._localDwnEndpoint!],
         message         : messagesRead.message,
+        // The configured local DWN already verifies artifacts on admission; this check is for untrusted remote replies.
         verifyResponse  : false,
       });
     }
