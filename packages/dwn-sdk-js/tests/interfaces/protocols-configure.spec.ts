@@ -148,6 +148,36 @@ describe('ProtocolsConfigure', () => {
       const parsePromise = ProtocolsConfigure.parse(message);
       await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath);
     });
+
+    it('should reject a received definition that lets anyone create role assignments', async () => {
+      const definition: ProtocolDefinition = {
+        published : true,
+        protocol  : 'http://example.com',
+        types     : {
+          member: {},
+        },
+        structure: {
+          member: {
+            $role    : true,
+            $actions : [{ who: 'anyone', can: [ProtocolAction.Create] }],
+          },
+        },
+      };
+      const descriptor: ProtocolsConfigureDescriptor = {
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        definition,
+      };
+      const alice = await TestDataGenerator.generatePersona();
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer: Jws.createSigner(alice),
+      });
+
+      await expect(ProtocolsConfigure.parse({ descriptor, authorization }))
+        .rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRoleIssuance);
+    });
   });
 
   describe('create()', () => {
@@ -434,6 +464,110 @@ describe('ProtocolsConfigure', () => {
         const protocolsConfigure = await ProtocolsConfigure.create({
           signer: Jws.createSigner(alice),
           definition
+        });
+
+        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
+      });
+
+      for (const initialWriteAction of [ProtocolAction.Create, ProtocolAction.Squash]) {
+        it(`should reject a role path that allows anyone to ${initialWriteAction} an initial role record`, async () => {
+          const definition: ProtocolDefinition = {
+            published : true,
+            protocol  : 'http://example.com',
+            types     : {
+              member: {},
+            },
+            structure: {
+              member: {
+                $role    : true,
+                $actions : [{ who: 'anyone', can: [initialWriteAction] }],
+                ...(initialWriteAction === ProtocolAction.Squash && { $squash: true }),
+              },
+            },
+          };
+
+          const alice = await TestDataGenerator.generatePersona();
+
+          await expect(ProtocolsConfigure.create({
+            signer: Jws.createSigner(alice),
+            definition,
+          })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRoleIssuance);
+        });
+      }
+
+      it('should reject unsafe role issuance at a nested protocol path', async () => {
+        const definition: ProtocolDefinition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            member : {},
+            thread : {},
+          },
+          structure: {
+            thread: {
+              member: {
+                $role    : true,
+                $actions : [{ who: 'anyone', can: [ProtocolAction.Create] }],
+              },
+            },
+          },
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        await expect(ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition,
+        })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRoleIssuance);
+      });
+
+      it('should allow anyone to read a role record assigned by an authorized issuer', async () => {
+        const definition: ProtocolDefinition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            member: {},
+          },
+          structure: {
+            member: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: [ProtocolAction.Read] }],
+            },
+          },
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+        const protocolsConfigure = await ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition,
+        });
+
+        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
+      });
+
+      it('should allow a parent author to assign a contextual role', async () => {
+        const definition: ProtocolDefinition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            member : {},
+            thread : {},
+          },
+          structure: {
+            thread: {
+              $actions : [{ who: 'anyone', can: [ProtocolAction.Create] }],
+              member   : {
+                $role    : true,
+                $actions : [{ who: 'author', of: 'thread', can: [ProtocolAction.Create] }],
+              },
+            },
+          },
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+        const protocolsConfigure = await ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition,
         });
 
         expect(protocolsConfigure.message.descriptor.definition).toBeDefined();

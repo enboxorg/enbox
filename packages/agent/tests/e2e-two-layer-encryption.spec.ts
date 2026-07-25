@@ -50,7 +50,7 @@ describe('e2e: two-layer encryption recovery', () => {
       note  : { dataFormats: ['text/plain'], encryptionRequired: true },
     },
     structure: {
-      admin : { $role: true, $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
+      admin : { $role: true },
       note  : { $actions: [{ role: 'admin', can: ['read'] }] },
     },
   };

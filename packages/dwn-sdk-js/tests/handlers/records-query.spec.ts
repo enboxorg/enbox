@@ -32,7 +32,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { CoreProtocolRegistry, Dwn, ProtocolsConfigure, RecordsWrite, Time } from '../../src/index.js';
-import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, grantProtocolPathWriteAccess, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DataStoreLevel, MessageStoreLevel } from '../../src/store/level.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -98,8 +98,7 @@ export function testRecordsQueryHandler(): void {
           },
           structure: {
             member: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: ['create'] }],
+              $role: true,
             },
           },
         };
@@ -115,6 +114,7 @@ export function testRecordsQueryHandler(): void {
         author: Persona;
         dateCreated?: string;
         delegatedGrant?: DataEncodedRecordsWriteMessage;
+        permissionGrantId?: string;
         protocol: string;
         roleRuleSet: ProtocolRuleSet;
         signer?: Persona;
@@ -124,15 +124,16 @@ export function testRecordsQueryHandler(): void {
         const keyId = await Encryption.getKeyId(publicKeyJwk);
 
         return createAudienceControlWrite({
-          author           : input.author,
-          dateCreated      : input.dateCreated,
-          delegatedGrant   : input.delegatedGrant,
-          payloadOverrides : { keyId, publicKeyJwk },
-          protocol         : input.protocol,
-          rolePath         : 'member',
-          roleRuleSet      : input.roleRuleSet,
-          signer           : input.signer,
-          tags             : { keyId },
+          author            : input.author,
+          dateCreated       : input.dateCreated,
+          delegatedGrant    : input.delegatedGrant,
+          permissionGrantId : input.permissionGrantId,
+          payloadOverrides  : { keyId, publicKeyJwk },
+          protocol          : input.protocol,
+          rolePath          : 'member',
+          roleRuleSet       : input.roleRuleSet,
+          signer            : input.signer,
+          tags              : { keyId },
         });
       }
 
@@ -411,12 +412,14 @@ export function testRecordsQueryHandler(): void {
           dateCreated,
           protocol : protocolDefinition.protocol,
           roleRuleSet,
+          signer   : alice,
         });
         const secondAudience = await createAudienceControlWriteWithFreshKey({
           author   : carol,
           dateCreated,
           protocol : protocolDefinition.protocol,
           roleRuleSet,
+          signer   : alice,
         });
         const expectedRecordId = [firstAudience.recordsWrite.message.recordId, secondAudience.recordsWrite.message.recordId].sort()[0];
 
@@ -435,8 +438,7 @@ export function testRecordsQueryHandler(): void {
           ...protocolDefinition,
           structure: {
             member: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: ['create'] }],
+              $role: true,
             },
           },
         });
@@ -462,9 +464,16 @@ export function testRecordsQueryHandler(): void {
         );
 
         const nonTenantAudience = await createAudienceControlWriteWithFreshKey({
-          author      : bob,
-          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
-          protocol    : protocolDefinition.protocol,
+          author            : bob,
+          dateCreated       : Time.createOffsetTimestamp({ seconds: 1 }),
+          permissionGrantId : await grantProtocolPathWriteAccess({
+            dwn,
+            grantee      : bob,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'member',
+            tenant       : alice,
+          }),
+          protocol: protocolDefinition.protocol,
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, nonTenantAudience);
@@ -538,9 +547,16 @@ export function testRecordsQueryHandler(): void {
         );
         const oldestAuthor = await TestDataGenerator.generateDidKeyPersona();
         const oldestAudience = await createAudienceControlWriteWithFreshKey({
-          author      : oldestAuthor,
-          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
-          protocol    : protocolDefinition.protocol,
+          author            : oldestAuthor,
+          dateCreated       : Time.createOffsetTimestamp({ seconds: 1 }),
+          permissionGrantId : await grantProtocolPathWriteAccess({
+            dwn,
+            grantee      : oldestAuthor,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'member',
+            tenant       : alice,
+          }),
+          protocol: protocolDefinition.protocol,
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, oldestAudience);
@@ -548,9 +564,16 @@ export function testRecordsQueryHandler(): void {
         for (let i = 0; i < 8; i++) {
           const floodAuthor = await TestDataGenerator.generateDidKeyPersona();
           const floodAudience = await createAudienceControlWriteWithFreshKey({
-            author      : floodAuthor,
-            dateCreated : Time.createOffsetTimestamp({ seconds: i + 2 }),
-            protocol    : protocolDefinition.protocol,
+            author            : floodAuthor,
+            dateCreated       : Time.createOffsetTimestamp({ seconds: i + 2 }),
+            permissionGrantId : await grantProtocolPathWriteAccess({
+              dwn,
+              grantee      : floodAuthor,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'member',
+              tenant       : alice,
+            }),
+            protocol: protocolDefinition.protocol,
             roleRuleSet,
           });
           await processControlWrite(dwn, alice.did, floodAudience);
@@ -571,9 +594,16 @@ export function testRecordsQueryHandler(): void {
           'http://encryption-control-query-current-exact-bypass.xyz',
         );
         const loserAudience = await createAudienceControlWriteWithFreshKey({
-          author      : bob,
-          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
-          protocol    : protocolDefinition.protocol,
+          author            : bob,
+          dateCreated       : Time.createOffsetTimestamp({ seconds: 1 }),
+          permissionGrantId : await grantProtocolPathWriteAccess({
+            dwn,
+            grantee      : bob,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'member',
+            tenant       : alice,
+          }),
+          protocol: protocolDefinition.protocol,
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, loserAudience);
@@ -620,9 +650,16 @@ export function testRecordsQueryHandler(): void {
         await processControlWrite(dwn, alice.did, currentAudience);
 
         const loserAudience = await createAudienceControlWriteWithFreshKey({
-          author      : bob,
-          dateCreated : loserDateCreated,
-          protocol    : protocolDefinition.protocol,
+          author            : bob,
+          dateCreated       : loserDateCreated,
+          permissionGrantId : await grantProtocolPathWriteAccess({
+            dwn,
+            grantee      : bob,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'member',
+            tenant       : alice,
+          }),
+          protocol: protocolDefinition.protocol,
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, loserAudience);

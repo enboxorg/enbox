@@ -337,6 +337,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
     // validate each action rule
     const actionRules = ruleSet.$actions ?? [];
+    ProtocolsConfigure.validateRoleRecordIssuance(ruleSet, ruleSetProtocolPath);
+
     for (let i = 0; i < actionRules.length; i++) {
       const actionRule = actionRules[i];
 
@@ -570,6 +572,28 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         rootStructure,
       });
     }
+  }
+
+  /** Rejects role paths that let any unrestricted caller issue a role. */
+  private static validateRoleRecordIssuance(ruleSet: ProtocolRuleSet, protocolPath: string): void {
+    if (ruleSet.$role !== true) {
+      return;
+    }
+
+    const anyoneCanIssueRole = ruleSet.$actions?.some(
+      (actionRule: ProtocolActionRule): boolean =>
+        actionRule.who === ProtocolActor.Anyone &&
+        (actionRule.can.includes(ProtocolAction.Create) || actionRule.can.includes(ProtocolAction.Squash))
+    ) ?? false;
+    if (!anyoneCanIssueRole) {
+      return;
+    }
+
+    throw new DwnError(
+      DwnErrorCode.ProtocolsConfigureInvalidRoleIssuance,
+      `role assignments at protocol path '${protocolPath}' require an authorized issuer; ` +
+      `'anyone' cannot create or squash an initial role record.`
+    );
   }
 
   /**

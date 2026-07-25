@@ -116,7 +116,7 @@
       }
     },
     "$role": {
-      "$comment": "When `true`, this turns a record into `role` that may be used within a context/sub-context",
+      "$comment": "When `true`, this turns a record into a role that may be used within a context/sub-context. Role action rules cannot allow `anyone` to create or squash an initial role record.",
       "type": "boolean"
     },
     "$ref": {

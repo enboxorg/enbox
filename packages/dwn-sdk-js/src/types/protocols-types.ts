@@ -236,6 +236,7 @@ export type ProtocolRuleSet = {
   /**
    * If true, this marks a record as a `role` that may used within a context.
    * The recipient of a $role record may invoke their role by setting `protocolRole` property to the protocol path of the $role record.
+   * Role assignments must be issued by an authorized actor; their action rules cannot grant `create` or `squash` to `anyone`.
    */
   $role?: boolean;
 

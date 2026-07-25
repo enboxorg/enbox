@@ -1273,8 +1273,7 @@ export function testProtocolsConfigureHandler(): void {
           },
           structure: {
             member: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: [ProtocolAction.Create] }],
+              $role: true,
             },
           },
         };
@@ -1306,6 +1305,7 @@ export function testProtocolsConfigureHandler(): void {
           protocol,
           rolePath         : 'member',
           roleRuleSet      : encryptedRoleDefinition.structure.member as ProtocolRuleSet,
+          signer           : alice,
         });
 
         for (const config of [config1, config4]) {
@@ -1338,18 +1338,23 @@ export function testProtocolsConfigureHandler(): void {
           protocol,
           published : true,
           types     : {
-            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            admin  : { schema: 'http://admin-schema', dataFormats: ['application/json'] },
+            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
           },
           structure: {
-            member: {
+            admin  : { $role: true },
+            member : {
               $role    : true,
-              $actions : [{ who: 'anyone', can: [ProtocolAction.Create] }],
+              $actions : [{ role: 'admin', can: [ProtocolAction.Create] }],
             },
           },
         };
         const closedDefinition: ProtocolDefinition = {
           ...openDefinition,
-          structure: { member: { $role: true } },
+          structure: {
+            admin  : { $role: true },
+            member : { $role: true },
+          },
         };
         const keyDeriver = TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk);
         const encryptedOpenDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(openDefinition, keyDeriver);
@@ -1367,11 +1372,29 @@ export function testProtocolsConfigureHandler(): void {
           expect((await dwn.processMessage(alice.did, config.message)).status.code).toBe(202);
         }
 
+        const adminRole = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          data             : Encoder.stringToBytes('bob is an admin'),
+          dataFormat       : 'application/json',
+          dateCreated      : '2025-02-01T12:00:00.000000Z',
+          messageTimestamp : '2025-02-01T12:00:00.000000Z',
+          protocol,
+          protocolPath     : 'admin',
+          recipient        : bob.did,
+          schema           : 'http://admin-schema',
+        });
+        expect((await dwn.processMessage(
+          alice.did,
+          adminRole.message,
+          { dataStream: adminRole.dataStream }
+        )).status.code).toBe(202);
+
         const audience = await createAudienceControlWrite({
           author           : bob,
           dateCreated      : '2025-02-03T00:00:00.000000Z',
           messageTimestamp : '2025-02-03T00:00:00.000000Z',
           protocol,
+          protocolRole     : 'admin',
           rolePath         : 'member',
           roleRuleSet      : encryptedOpenDefinition.structure.member as ProtocolRuleSet,
         });

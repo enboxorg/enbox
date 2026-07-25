@@ -28,7 +28,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
-import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, grantProtocolPathWriteAccess, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DateSort, DurableEventLog, Dwn, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, PermissionGrant, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
@@ -449,18 +449,32 @@ export function testRecordsSubscribeHandler(): void {
           },
           structure: {
             member: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: ['create'] }],
+              $role: true,
             },
           },
         };
         const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
         const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const bobGrantId = await grantProtocolPathWriteAccess({
+          dwn,
+          grantee      : bob,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          tenant       : alice,
+        });
+        const carolGrantId = await grantProtocolPathWriteAccess({
+          dwn,
+          grantee      : carol,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          tenant       : alice,
+        });
         const initialAudience = await createAudienceControlWrite({
-          author      : bob,
-          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
-          protocol    : protocolDefinition.protocol,
-          rolePath    : 'member',
+          author            : bob,
+          dateCreated       : Time.createOffsetTimestamp({ seconds: 1 }),
+          permissionGrantId : bobGrantId,
+          protocol          : protocolDefinition.protocol,
+          rolePath          : 'member',
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, initialAudience);
@@ -488,10 +502,11 @@ export function testRecordsSubscribeHandler(): void {
         expect(subReply.entries?.map(entry => entry.recordId)).toEqual([initialAudience.recordsWrite.message.recordId]);
 
         const nonCurrentLiveAudience = await createAudienceControlWrite({
-          author      : carol,
-          dateCreated : Time.createOffsetTimestamp({ seconds: 2 }),
-          protocol    : protocolDefinition.protocol,
-          rolePath    : 'member',
+          author            : carol,
+          dateCreated       : Time.createOffsetTimestamp({ seconds: 2 }),
+          permissionGrantId : carolGrantId,
+          protocol          : protocolDefinition.protocol,
+          rolePath          : 'member',
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, nonCurrentLiveAudience);
@@ -525,13 +540,19 @@ export function testRecordsSubscribeHandler(): void {
           },
           structure: {
             member: {
-              $role    : true,
-              $actions : [{ who: 'anyone', can: ['create'] }],
+              $role: true,
             },
           },
         };
         const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
         const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const carolGrantId = await grantProtocolPathWriteAccess({
+          dwn,
+          grantee      : carol,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          tenant       : alice,
+        });
         const currentAudience = await createAudienceControlWrite({
           author      : alice,
           dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
@@ -542,10 +563,11 @@ export function testRecordsSubscribeHandler(): void {
         await processControlWrite(dwn, alice.did, currentAudience);
 
         const nonCurrentLiveAudience = await createAudienceControlWrite({
-          author      : carol,
-          dateCreated : Time.createOffsetTimestamp({ seconds: 2 }),
-          protocol    : protocolDefinition.protocol,
-          rolePath    : 'member',
+          author            : carol,
+          dateCreated       : Time.createOffsetTimestamp({ seconds: 2 }),
+          permissionGrantId : carolGrantId,
+          protocol          : protocolDefinition.protocol,
+          rolePath          : 'member',
           roleRuleSet,
         });
 

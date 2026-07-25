@@ -35,7 +35,7 @@ function definition(): ProtocolDefinition {
       note  : { dataFormats: ['text/plain'], encryptionRequired: true },
     },
     structure: {
-      admin : { $role: true, $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
+      admin : { $role: true },
       note  : { $actions: [{ role: 'admin', can: ['read'] }] },
     },
   };
@@ -52,7 +52,7 @@ function nestedRootDefinition(): ProtocolDefinition {
     structure: {
       chat: {
         $actions : [{ role: 'chat/member', can: ['read'] }],
-        member   : { $role: true, $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
+        member   : { $role: true },
       },
     },
   };
@@ -72,7 +72,7 @@ function selfAnchoredNestedDefinition(): ProtocolDefinition {
         $actions : [{ who: 'anyone', can: ['create', 'read'] }],
         thread   : {
           $actions : [{ role: 'chat/thread/mod', can: ['read'] }],
-          mod      : { $role: true, $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
+          mod      : { $role: true },
         },
       },
     },
