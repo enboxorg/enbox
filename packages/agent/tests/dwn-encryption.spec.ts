@@ -1071,8 +1071,69 @@ describe('dwn-encryption', () => {
       expect(sendDwnRequest.callCount).toBe(2);
       expect(sendDwnRequest.secondCall.args[0].messageParams.pagination).toEqual({
         cursor,
-        limit: DwnConstant.maxQueryPageSize,
+        limit: DwnConstant.defaultQueryPageSize,
       });
+    });
+
+    it('rejects a remote delivery cursor storm without returning partial messages', async () => {
+      const firstMessage = { recordId: 'remote-first', descriptor: {} } as unknown as RecordsWriteMessage;
+      const processDwnRequest = sinon.stub().resolves({
+        reply: { entries: [], status: { code: 200, detail: 'OK' } },
+      });
+      let page = 0;
+      const sendDwnRequest = sinon.stub().callsFake(async () => {
+        page += 1;
+        return {
+          reply: {
+            cursor  : { messageCid: `message-${page}`, value: `value-${page}` },
+            entries : page === 1 ? [firstMessage] : [],
+            status  : { code: 200, detail: 'OK' },
+          },
+        };
+      });
+
+      await expect(queryAudienceDeliveryMessagesDetailed({
+        agent        : { processDwnRequest, sendDwnRequest } as any,
+        contextId    : 'chat-root',
+        keyId        : 'audience-key',
+        protocol     : 'https://example.com/chat',
+        recipientDid : 'did:example:bob',
+        rolePath     : 'chat/member',
+        sourceDid    : 'did:example:alice',
+      }, { authorDid: 'did:example:bob' }))
+        .rejects.toThrow('RecordsQuery: exceeded the maximum page count of 10.');
+      expect(sendDwnRequest.callCount).toBe(10);
+    });
+
+    it('does not apply the remote collection limit to a locally selected source', async () => {
+      let page = 0;
+      const processDwnRequest = sinon.stub().callsFake(async () => {
+        page += 1;
+        return {
+          reply: {
+            ...(page < 11 ? { cursor: { messageCid: `message-${page}`, value: `value-${page}` } } : {}),
+            entries : [{ recordId: `local-${page}`, descriptor: {} }],
+            status  : { code: 200, detail: 'OK' },
+          },
+        };
+      });
+      const sendDwnRequest = sinon.stub();
+
+      const result = await queryAudienceDeliveryMessagesDetailed({
+        agent        : { processDwnRequest, sendDwnRequest } as any,
+        contextId    : 'chat-root',
+        keyId        : 'audience-key',
+        protocol     : 'https://example.com/chat',
+        recipientDid : 'did:example:bob',
+        rolePath     : 'chat/member',
+        sourceDid    : 'did:example:alice',
+      }, { authorDid: 'did:example:bob' });
+
+      expect(result.messages).toHaveLength(11);
+      expect(processDwnRequest.callCount).toBe(11);
+      expect(sendDwnRequest.notCalled).toBe(true);
+      expect(processDwnRequest.secondCall.args[0].messageParams.pagination.limit)
+        .toBe(DwnConstant.maxQueryPageSize);
     });
   });
 

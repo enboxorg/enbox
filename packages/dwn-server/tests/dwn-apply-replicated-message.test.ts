@@ -566,7 +566,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     }
   });
 
-  it('should skip quota for a fully stored replicated duplicate echo', async () => {
+  it('should skip admission limits for a fully stored replicated duplicate echo', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([5, 6, 7, 8]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
@@ -598,9 +598,39 @@ describe('handleDwnApplyReplicatedMessage', () => {
           getTenantStorageSize  : async (): Promise<number> => 1_000,
         } as any,
         config: {
+          maxRecordDataSize    : data.length - 1,
           quotaMaxMessages     : 1,
           quotaMaxStorageBytes : 1,
         } as any,
+      },
+    );
+
+    expect(duplicateApply.jsonRpcResponse.error).toBeUndefined();
+    expect((duplicateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Duplicate');
+    await dwn.close();
+  });
+
+  it('should acknowledge an encoded fully stored duplicate after the data limit is lowered', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([5, 6, 7, 8]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      encodedData : Encoder.bytesToBase64Url(data),
+      message     : recordsWrite.toJSON(),
+      target      : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const firstApply = await handleDwnApplyReplicatedMessage(dwnRequest, { dwn, transport: 'ws' });
+    expect(firstApply.jsonRpcResponse.error).toBeUndefined();
+
+    const duplicateApply = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      {
+        dwn,
+        transport : 'ws',
+        config    : { maxRecordDataSize: data.length - 1 } as any,
       },
     );
 
