@@ -111,6 +111,18 @@ describe('verifyRemoteDwnResponse', () => {
       await expect(verifyResponse(query.message, reply)).rejects.toThrow('multiple configurations');
     });
 
+    it('rejects entries attached to an unsuccessful response', async () => {
+      const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
+      const configure = await ProtocolsConfigure.create({
+        definition : protocolDefinition(protocolUri),
+        signer     : targetSigner,
+      });
+      const reply = protocolReply(configure.message);
+      reply.status = { code: 500, detail: 'Internal Server Error' };
+
+      await expect(verifyResponse(query.message, reply)).rejects.toThrow('status 500 with entries');
+    });
+
     it('rejects an unpublished configuration returned to an anonymous query', async () => {
       const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
       const configure = await ProtocolsConfigure.create({
@@ -169,6 +181,16 @@ describe('verifyRemoteDwnResponse', () => {
         query.message,
         recordsQueryReply(recordsWrite.message, textEncoder.encode('tampered bytes')),
       )).rejects.toThrow();
+    });
+
+    it('rejects entries attached to an unsuccessful response', async () => {
+      const data = textEncoder.encode('injected error entry');
+      const recordsWrite = await createRecordsWrite(data, targetSigner);
+      const query = await RecordsQuery.create({ filter: { recordId: recordsWrite.message.recordId }, signer: targetSigner });
+      const reply = recordsQueryReply(recordsWrite.message, data);
+      reply.status = { code: 500, detail: 'Internal Server Error' };
+
+      await expect(verifyResponse(query.message, reply)).rejects.toThrow('status 500 with entries');
     });
 
     it('requires anonymous results to be both published and matched by the original filter', async () => {
@@ -240,7 +262,7 @@ describe('verifyRemoteDwnResponse', () => {
       expect(await DataStream.toBytes(reply.entry!.data!)).toEqual(data);
     });
 
-    it('fails the returned stream when bytes are tampered with or exceed the signed size', async () => {
+    it('fails the returned stream when bytes are tampered with or differ from the signed size', async () => {
       const data = textEncoder.encode('expected stream');
       const recordsWrite = await createRecordsWrite(data, targetSigner);
       const read = await RecordsRead.create({ filter: { recordId: recordsWrite.message.recordId }, signer: targetSigner });

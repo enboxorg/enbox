@@ -50,11 +50,6 @@ export async function verifyRemoteDwnResponse({
   targetDid: string;
 }): Promise<void> {
   const { interface: messageInterface, method } = message.descriptor;
-  const isRecordsRead = messageInterface === DwnInterfaceName.Records && method === DwnMethodName.Read;
-  const recordsReadHasEntry = isRecordsRead && (reply as RecordsReadReply).entry !== undefined;
-  if (reply.status.code !== 200 && !recordsReadHasEntry) {
-    return;
-  }
 
   if (messageInterface === DwnInterfaceName.Protocols && method === DwnMethodName.Query) {
     await verifyProtocolsQueryReply({
@@ -91,6 +86,10 @@ async function verifyProtocolsQueryReply({
   targetDid: string;
 }): Promise<void> {
   const entries = reply.entries ?? [];
+  if (reply.status.code !== 200 && entries.length > 0) {
+    throw verificationError(`ProtocolsQuery response used status ${reply.status.code} with entries`);
+  }
+
   const requestedProtocol = message.descriptor.filter?.protocol;
   if (requestedProtocol !== undefined && entries.length > 1) {
     throw verificationError(`remote returned multiple configurations for protocol '${requestedProtocol}'`);
@@ -125,7 +124,12 @@ async function verifyRecordsQueryReply({
   message: RecordsQueryMessage;
   reply: RecordsQueryReply;
 }): Promise<void> {
-  for (const entry of reply.entries ?? []) {
+  const entries = reply.entries ?? [];
+  if (reply.status.code !== 200 && entries.length > 0) {
+    throw verificationError(`RecordsQuery response used status ${reply.status.code} with entries`);
+  }
+
+  for (const entry of entries) {
     await verifyRecordsWriteEntry({
       didResolver,
       entry,
@@ -147,7 +151,10 @@ async function verifyRecordsReadReply({
 }): Promise<void> {
   const entry = reply.entry;
   if (entry === undefined) {
-    throw verificationError('successful RecordsRead response did not contain an entry');
+    if (reply.status.code === 200) {
+      throw verificationError('successful RecordsRead response did not contain an entry');
+    }
+    return;
   }
 
   if (entry.recordsWrite !== undefined && entry.recordsDelete === undefined) {
