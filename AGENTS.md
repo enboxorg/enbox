@@ -183,6 +183,8 @@ Most packages expose a `build:browser` script, but it means different things:
 
 Browser storage rule: do not replace the browser Level stack with SQLite or in-memory stores. In browsers, `level` resolves to `browser-level` over IndexedDB, which is required for concurrent writes from tabs, workers, and service workers on the same origin.
 
+Browser service-worker rule: **every Enbox browser dapp MUST register a service worker that calls `activatePolyfills()`** (from `@enbox/browser`). It is the DWeb network stack — DRLs (DWN-addressed URLs: avatars, attachments, `dweb` links) do not resolve without it, and the failure is silent: no build, type-check, test, or happy-path demo catches the omission; DRL fetches just die as ordinary network errors. It is not optional PWA tooling, despite the API name and the usual delivery vehicle (`vite-plugin-pwa`). Wiring patterns, build traps (worker format, precache cap, `process` shim), header pitfalls (COOP silently breaks the wallet popup ceremony), and the scaffold checklist live in [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md).
+
 ### Key directories
 
 | Path | Purpose |
@@ -656,6 +658,10 @@ Subclasses override: `name`, `_recordProtocolDefinition`, `_recordProperties`, `
 ### Agent DID vs tenant DID
 
 The **agent DID** (`agent.agentDid`) is the agent's own identity. The **tenant DID** is the context for store operations. Multi-tenancy is resolved via `getDataStoreTenant()` with priority: explicit tenant > agent DID > DID URI parameter. Store keys use `TENANT_SEPARATOR` (`^`).
+
+## Browser dapp architecture
+
+What a browser app on `@enbox/browser` must ship — the **required** service worker (`activatePolyfills()` / DRL resolution) and how to verify it actually runs, the bundler shims, the IndexedDB storage rule, and the two hosting headers that silently break Enbox flows — lives in [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md). Read it before scaffolding a new browser dapp or reviewing one; the checklist at the end is the scaffold gate. The most common failure it exists to prevent: shipping without the service worker because it was miscategorized as optional PWA tooling.
 
 ## Sync engine vocabulary
 
