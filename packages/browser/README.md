@@ -70,11 +70,35 @@ and service workers on the same origin can safely write concurrently. SQLite
 over OPFS is not a drop-in browser replacement for this usage because it does
 not provide the same cross-context write behavior.
 
-### Activate Polyfills
+### Activate Polyfills (required for any app that renders DWN-addressed content)
 
-This enables a service worker that can handle Enbox features in the browser such as resolving DRLs that look like: `http://dweb/did:dht:abc123/protocols/read/aHR0cHM6Ly9hcmV3ZXdlYjV5ZXQuY29tL3NjaGVtYXMvcHJvdG9jb2xz/avatar`
+`activatePolyfills()` installs the **DWeb network stack**: a service worker
+fetch handler that resolves DRLs — DWN-addressed URLs such as
+`http://dweb/did:dht:abc123/protocols/read/aHR0cHM6Ly9hcmV3ZXdlYjV5ZXQuY29tL3NjaGVtYXMvcHJvdG9jb2xz/avatar`
+— by resolving the DID to its DWN endpoints and returning the record as an
+ordinary `Response` (with an optional TTL cache via `onCacheCheck`). This is
+what lets a plain `<img src>` or `fetch()` address a record on any DWN.
 
-To enable this functionality import and run `activatePolyfills()` at the entrypoint of your project, or within an existing service worker.
+Despite the name, this is not an optional compatibility shim. **Without it,
+every DRL in your app fails as an ordinary network error** — no exception at
+the SDK boundary, nothing in the console pointing at a missing subsystem, and
+everything else (connect, records, sync) keeps working. Treat it like the
+bundler configuration above: required scaffolding for a browser dapp.
+
+Two ways to wire it:
+
+- **Zero-config:** import and run `activatePolyfills()` at your page
+  entrypoint; in a page context it registers itself as a root service worker
+  (pass `path` explicitly under a strict CSP).
+- **Own service worker (recommended for production):** call
+  `activatePolyfills()` inside your `sw.ts` and let your build tool (e.g.
+  `vite-plugin-pwa` with `injectManifest`) register it alongside precaching.
+
+Verify it behaviorally, not just at build time: the worker must be registered,
+reach `activated`, and control the page (`navigator.serviceWorker.controller`
+non-null after a reload). A served-but-never-evaluated worker passes every
+build. Full wiring guidance, build traps, and hosting-header pitfalls:
+[`docs/architecture/browser-dapps.md`][browser-dapps-link].
 
 ## Project Resources
 
@@ -97,5 +121,6 @@ To enable this functionality import and run `activatePolyfills()` at the entrypo
 [browser-jsdelivr-browser]: https://cdn.jsdelivr.net/npm/@enbox/browser/dist/browser.mjs
 [browser-unpkg-link]: https://unpkg.com/@enbox/browser
 [browser-unpkg-browser]: https://unpkg.com/@enbox/browser/dist/browser.mjs
+[browser-dapps-link]: https://github.com/enboxorg/enbox/blob/main/docs/architecture/browser-dapps.md
 [agents-link]: https://github.com/enboxorg/enbox/blob/main/AGENTS.md
 [license-link]: https://github.com/enboxorg/enbox/blob/main/LICENSE

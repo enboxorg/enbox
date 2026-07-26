@@ -34,6 +34,10 @@ Sync is centered on DWN records and protocol scopes:
 - Large record data is stored through the DWN data store and must remain
   readable through both live and durable replication paths.
 
+For what a browser dapp must ship — the required service worker
+(`activatePolyfills()` / DRL resolution), bundler shims, storage, and hosting
+headers — see [Browser dapps](browser-dapps.md).
+
 For local test infrastructure, see [Testing](../TESTING.md). For public server
 hosting options and environment variables, see [Hosting](../HOSTING.md) and the
 [`@enbox/dwn-server` README](../../packages/dwn-server/README.md).
