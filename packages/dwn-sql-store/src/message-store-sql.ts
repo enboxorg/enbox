@@ -12,6 +12,8 @@ import type {
   MessageStoreOptions,
   MessageStorePutResult,
   MessageStoreQueryOptions,
+  MessageStoreQuota,
+  MessageStoreQuotaResolver,
   Pagination,
   PaginationCursor,
   ProgressGapInfo,
@@ -62,6 +64,10 @@ type PositionTextColumns = {
   seqText: string | null;
 };
 type LogRow = MessageStoreRow & PositionTextColumns;
+type TenantQuotaUsage = {
+  messages: number;
+  storageBytes: number;
+};
 
 const EPOCH_KEY = 'epoch';
 
@@ -116,13 +122,19 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
   readonly #tags: TagTables;
   #db: Kysely<DwnDatabaseType> | null = null;
   #epochPromise?: Promise<string>;
+  readonly #quotaResolver?: MessageStoreQuotaResolver;
   readonly #streamIdPromises = new Map<string, Promise<string>>();
   #wakePublisher?: WakePublisher;
 
-  public constructor(dialect: Dialect, wakePublisher?: WakePublisher) {
+  public constructor(
+    dialect: Dialect,
+    wakePublisher?: WakePublisher,
+    quotaResolver?: MessageStoreQuotaResolver,
+  ) {
     this.#dialect = dialect;
     this.#tags = new TagTables(dialect);
     this.#wakePublisher = wakePublisher;
+    this.#quotaResolver = quotaResolver;
   }
 
   public setWakePublisher(wakePublisher: WakePublisher | undefined): void {
@@ -165,11 +177,18 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
 
     const messageCid = encodedMessageBlock.cid.toString();
     const encodedMessageBytes = Buffer.from(encodedMessageBlock.bytes);
+    const quota = await this.#quotaResolver?.(tenant, message);
 
     try {
       const position = await executeWithTransaction(db, async (tx) => {
         await this.#dialect.lockReplicationCounter(tx, tenant);
-        return this.insertMessageInTx(tx, { tenant, message, messageCid, encodedMessageBytes, encodedData, indexes });
+        const usageBefore = quota === undefined ? undefined : await this.getTenantQuotaUsageInTx(tx, tenant);
+        const seq = await this.insertMessageInTx(tx, { tenant, message, messageCid, encodedMessageBytes, encodedData, indexes });
+        if (quota !== undefined && usageBefore !== undefined) {
+          const usageAfter = await this.getTenantQuotaUsageInTx(tx, tenant);
+          MessageStoreSql.assertQuotaAllowsGrowth(usageBefore, usageAfter, quota);
+        }
+        return seq;
       });
 
       if (position === undefined) {
@@ -204,6 +223,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     );
     const messageCid = encodedMessageBlock.cid.toString();
     const encodedMessageBytes = Buffer.from(encodedMessageBlock.bytes);
+    const quota = await this.#quotaResolver?.(tenant, transition.put.message);
 
     // Validate and encode the retained replacements before entering the transaction.
     const retains: Array<{
@@ -239,6 +259,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     try {
       const position = await executeWithTransaction(db, async (tx) => {
         await this.#dialect.lockReplicationCounter(tx, tenant);
+        const usageBefore = quota === undefined ? undefined : await this.getTenantQuotaUsageInTx(tx, tenant);
 
         // A duplicate inserts nothing but still applies the retains and deletes below, so
         // replaying a transition heals one that previously stopped mid-plan.
@@ -267,6 +288,10 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
           await this.deleteRowInTx(tx, tenant, deleteCid);
         }
 
+        if (quota !== undefined && usageBefore !== undefined) {
+          const usageAfter = await this.getTenantQuotaUsageInTx(tx, tenant);
+          MessageStoreSql.assertQuotaAllowsGrowth(usageBefore, usageAfter, quota);
+        }
         return seq;
       });
 
@@ -284,6 +309,61 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
         return { status: 'duplicate' };
       }
       throw error;
+    }
+  }
+
+  /** Reads the usage dimensions governed by message-store quota admission. */
+  private async getTenantQuotaUsageInTx(
+    tx: Transaction<DwnDatabaseType>,
+    tenant: string,
+  ): Promise<TenantQuotaUsage> {
+    const messageResult = await tx
+      .selectFrom('messageStoreMessages')
+      .select(tx.fn.countAll<number>().as('count'))
+      .where('tenant', '=', tenant)
+      .executeTakeFirstOrThrow();
+    const storageResult = await tx
+      .selectFrom('messageStoreMessages')
+      .select(tx.fn.sum<number>('dataSize').as('totalBytes'))
+      .where('tenant', '=', tenant)
+      .where('isLatestBaseState', '=', true)
+      .executeTakeFirstOrThrow();
+
+    return {
+      messages     : Number(messageResult.count),
+      storageBytes : Number(storageResult.totalBytes) || 0,
+    };
+  }
+
+  /** Allows no-growth and usage-reducing mutations even after a configured limit is lowered. */
+  private static assertQuotaAllowsGrowth(
+    current: TenantQuotaUsage,
+    projected: TenantQuotaUsage,
+    quota: MessageStoreQuota,
+  ): void {
+    if (
+      quota.maxMessages > 0 &&
+      projected.messages > quota.maxMessages &&
+      projected.messages > current.messages
+    ) {
+      throw new DwnError(
+        DwnErrorCode.MessageStoreQuotaMessagesExceeded,
+        `message mutation would increase tenant usage from ${current.messages} to ${projected.messages}, exceeding limit ${quota.maxMessages}`,
+        { info: { current: current.messages, projected: projected.messages, limit: quota.maxMessages } },
+      );
+    }
+
+    if (
+      quota.maxStorageBytes > 0 &&
+      projected.storageBytes > quota.maxStorageBytes &&
+      projected.storageBytes > current.storageBytes
+    ) {
+      throw new DwnError(
+        DwnErrorCode.MessageStoreQuotaStorageExceeded,
+        `message mutation would increase tenant data usage from ${current.storageBytes} to ${projected.storageBytes} bytes, ` +
+        `exceeding limit ${quota.maxStorageBytes}`,
+        { info: { current: current.storageBytes, projected: projected.storageBytes, limit: quota.maxStorageBytes } },
+      );
     }
   }
 

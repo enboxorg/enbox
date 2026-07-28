@@ -1,10 +1,8 @@
 import type { ActivityLog } from '../admin/activity-log.js';
 import type { AdminConnectionSnapshot } from '../admin/types.js';
-import type { AdminStore } from '../admin/admin-store.js';
 import type { DwnServerConfig } from '../config.js';
 import type { MessageProcessedHook } from '../message-processed-hook.js';
 import type { RateLimiter } from '../rate-limiter.js';
-import type { RegistrationStore } from '../registration/registration-store.js';
 import type { RequestContext } from '../lib/json-rpc-router.js';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../http-api.js';
@@ -27,25 +25,19 @@ type SubscriptionSlot = {
   close?: () => Promise<void>;
   closePromise?: Promise<void>;
   flowController: FlowController;
-  state: 'active' | 'closing' | 'opening';
-};
-
-type SubscriptionOpening = {
   id: JsonRpcId;
   listener: (message: SubscriptionMessage) => void;
-  slot: SubscriptionSlot;
+  state: 'active' | 'closing' | 'opening';
 };
 
 export type SocketConnectionOptions = {
   activityLog? : ActivityLog;
-  adminStore? : AdminStore;
   ipRateLimiter? : RateLimiter;
   maxInFlight? : number;
   maxSubscriptions? : number;
   messageProcessedHooks? : MessageProcessedHook[];
   onClose? : () => void;
   peerIp? : string;
-  registrationStore? : RegistrationStore;
   serverConfig? : DwnServerConfig;
   tenantRateLimiter? : RateLimiter;
 };
@@ -131,7 +123,7 @@ export class SocketConnection {
     }
 
     await this.closeSubscriptionHandle(slot);
-    this.removeSubscriptionSlot(id, slot);
+    this.removeSubscriptionSlot(slot);
   }
 
   /**
@@ -192,7 +184,7 @@ export class SocketConnection {
       return this.send(rateLimitResponse);
     }
 
-    let subscriptionOpening: SubscriptionOpening | undefined;
+    let subscriptionOpening: SubscriptionSlot | undefined;
     try {
       const contextResult = this.buildRequestContext(jsonRequest);
       subscriptionOpening = contextResult.subscriptionOpening;
@@ -262,7 +254,7 @@ export class SocketConnection {
    * to the EventLog, and stores the `FlowController` for later `rpc.ack`
    * processing.
    */
-  private reserveSubscription(id: JsonRpcId): SubscriptionOpening {
+  private reserveSubscription(id: JsonRpcId): SubscriptionSlot {
     if (this.subscriptionSlots.has(id)) {
       websocketSubscriptionRejections.inc({ reason: 'duplicate-id' });
       throw new DwnServerError(
@@ -293,23 +285,21 @@ export class SocketConnection {
       },
     );
 
-    const slot: SubscriptionSlot = { flowController: fc, state: 'opening' };
-    const opening: SubscriptionOpening = {
+    const slot: SubscriptionSlot = {
+      flowController : fc,
       id,
-      slot,
-      listener: (message): void => {
-        fc.push(message);
-      },
+      listener       : (message): void => fc.push(message),
+      state          : 'opening',
     };
     this.subscriptionSlots.set(id, slot);
-    return opening;
+    return slot;
   }
 
   /**
    * Builds a `RequestContext` object to use with the `JSON RPC API`.
    */
   private buildRequestContext(request: JsonRpcRequest): {
-    subscriptionOpening?: SubscriptionOpening;
+    subscriptionOpening?: SubscriptionSlot;
     requestContext: RequestContext;
   } {
     const { params, method, subscription } = request;
@@ -319,24 +309,22 @@ export class SocketConnection {
       dwn                   : this.dwn,
       socketConnection      : this,
       activityLog           : this.options.activityLog,
-      adminStore            : this.options.adminStore,
-      registrationStore     : this.options.registrationStore,
       config                : this.options.serverConfig,
       tenantRateLimiter     : this.options.tenantRateLimiter,
       messageProcessedHooks : this.options.messageProcessedHooks,
     };
 
     // methods that expect a long-running subscription begin with `rpc.subscribe.`
-    let subscriptionOpening: SubscriptionOpening | undefined;
+    let subscriptionOpening: SubscriptionSlot | undefined;
     if (method === 'rpc.subscribe.dwn.processMessage' && subscription !== undefined) {
       const { message } = params as { message?: GenericMessage };
       if (message?.descriptor.method === DwnMethodName.Subscribe && SocketConnection.isJsonRpcId(subscription.id)) {
-        const opening = this.reserveSubscription(subscription.id);
-        subscriptionOpening = opening;
+        const slot = this.reserveSubscription(subscription.id);
+        subscriptionOpening = slot;
         requestContext.subscriptionRequest = {
           id                  : subscription.id,
-          activate            : async (close): Promise<void> => this.activateSubscription(opening, close),
-          subscriptionHandler : opening.listener,
+          activate            : async (close): Promise<void> => this.activateSubscription(slot, close),
+          subscriptionHandler : slot.listener,
         };
       }
     }
@@ -355,32 +343,31 @@ export class SocketConnection {
   }
 
   /** Promotes the exact opening that produced a DWN subscription close handle. */
-  private async activateSubscription(opening: SubscriptionOpening, close: () => Promise<void>): Promise<void> {
-    const currentSlot = this.subscriptionSlots.get(opening.id);
-    if (this.isClosed || currentSlot !== opening.slot) {
+  private async activateSubscription(slot: SubscriptionSlot, close: () => Promise<void>): Promise<void> {
+    const currentSlot = this.subscriptionSlots.get(slot.id);
+    if (this.isClosed || currentSlot !== slot) {
       await close();
-      throw this.subscriptionOpeningNotFound(opening.id);
+      throw this.subscriptionOpeningNotFound(slot.id);
     }
 
-    opening.slot.close = close;
-    if (opening.slot.state === 'closing') {
-      await this.closeSubscriptionHandle(opening.slot);
-      this.removeSubscriptionSlot(opening.id, opening.slot);
-      throw this.subscriptionOpeningNotFound(opening.id);
+    slot.close = close;
+    if (slot.state === 'closing') {
+      await this.closeSubscriptionHandle(slot);
+      this.removeSubscriptionSlot(slot);
+      throw this.subscriptionOpeningNotFound(slot.id);
     }
 
-    opening.slot.state = 'active';
+    slot.state = 'active';
     websocketSubscriptions.inc();
   }
 
   /** Releases an opening only if it still owns the slot for this request. */
-  private finishSubscriptionOpening(opening: SubscriptionOpening): void {
-    const slot = this.subscriptionSlots.get(opening.id);
-    if (slot !== opening.slot || slot.state === 'active' || slot.close !== undefined) {
+  private finishSubscriptionOpening(slot: SubscriptionSlot): void {
+    if (this.subscriptionSlots.get(slot.id) !== slot || slot.state === 'active' || slot.close !== undefined) {
       return;
     }
 
-    this.removeSubscriptionSlot(opening.id, slot);
+    this.removeSubscriptionSlot(slot);
   }
 
   /** Marks a slot inactive immediately while retaining its capacity until cleanup settles. */
@@ -407,15 +394,13 @@ export class SocketConnection {
   }
 
   /** Removes and disposes a slot only when its exact reservation still owns the ID. */
-  private removeSubscriptionSlot(id: JsonRpcId, expectedSlot?: SubscriptionSlot): SubscriptionSlot | undefined {
-    const slot = this.subscriptionSlots.get(id);
-    if (slot === undefined || (expectedSlot !== undefined && slot !== expectedSlot)) {
-      return undefined;
+  private removeSubscriptionSlot(slot: SubscriptionSlot): void {
+    if (this.subscriptionSlots.get(slot.id) !== slot) {
+      return;
     }
 
-    this.subscriptionSlots.delete(id);
+    this.subscriptionSlots.delete(slot.id);
     this.deactivateSubscriptionSlot(slot);
-    return slot;
   }
 
   /** Creates the typed error for a subscription result whose opening is no longer live. */
@@ -432,8 +417,8 @@ export class SocketConnection {
     clearInterval(this.heartbeatInterval);
 
     const closePromises: Promise<void>[] = [];
-    for (const id of [...this.subscriptionSlots.keys()]) {
-      const slot = this.removeSubscriptionSlot(id)!;
+    for (const slot of this.subscriptionSlots.values()) {
+      this.removeSubscriptionSlot(slot);
       if (slot.close !== undefined) {
         closePromises.push(this.closeSubscriptionHandle(slot));
       }

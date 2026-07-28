@@ -35,8 +35,8 @@ describe('WebSocketConnectionLimiter', () => {
     expect(limiter.count).toBe(1);
     expect(limiter.reserve('192.0.2.1').status).toBe('rejected');
 
-    result.reservation.release();
-    result.reservation.release();
+    result.release();
+    result.release();
     expect(limiter.count).toBe(0);
 
     expect(limiter.reserve('192.0.2.1').status).toBe('accepted');

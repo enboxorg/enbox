@@ -7,6 +7,21 @@ export interface MessageStoreOptions {
 }
 
 /**
+ * Tenant usage ceilings evaluated by a message store under its mutation lock.
+ * A zero value leaves that dimension unlimited.
+ */
+export type MessageStoreQuota = {
+  maxMessages: number;
+  maxStorageBytes: number;
+};
+
+/** Resolves the quota, if any, that applies to one message-store mutation. */
+export type MessageStoreQuotaResolver = (
+  tenant: string,
+  message: GenericMessage,
+) => Promise<MessageStoreQuota | undefined>;
+
+/**
  * Read-time `$recordLimit` occupancy policy for one concrete protocol path.
  *
  * Stores partition matching latest RecordsWrites by `parentId`, rank each

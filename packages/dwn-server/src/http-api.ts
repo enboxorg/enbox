@@ -6,7 +6,6 @@ import type { Dialect } from '@enbox/dwn-sql-store';
 import type { ActivityLog } from './admin/activity-log.js';
 import type { AdminApi } from './admin/admin-api.js';
 import type { AdminSessionManager } from './admin/admin-session.js';
-import type { AdminStore } from './admin/admin-store.js';
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
 import type { LocalNodePairingManager } from './local-node-pairing.js';
@@ -14,7 +13,6 @@ import type { MessageProcessedHook } from './message-processed-hook.js';
 import type { OpenAuthHandler } from './registration/open-auth-handler.js';
 import type { RateLimiter } from './rate-limiter.js';
 import type { RegistrationManager } from './registration/registration-manager.js';
-import type { RegistrationStore } from './registration/registration-store.js';
 import type { RequestContext } from './lib/json-rpc-router.js';
 import type { SocketConnection } from './connection/socket-connection.js';
 
@@ -91,8 +89,6 @@ export class HttpApi {
   #server!: Server<WsData>;
   #adminApi: AdminApi | undefined;
   #activityLog: ActivityLog | undefined;
-  #adminStore: AdminStore | undefined;
-  #registrationStore: RegistrationStore | undefined;
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
   #messageProcessedHooks: MessageProcessedHook[];
@@ -113,8 +109,6 @@ export class HttpApi {
     config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager,
     adminApi?: AdminApi, activityLog?: ActivityLog,
     options?: {
-      adminStore? : AdminStore;
-      registrationStore? : RegistrationStore;
       ipRateLimiter? : RateLimiter;
       tenantRateLimiter? : RateLimiter;
       messageProcessedHooks? : MessageProcessedHook[];
@@ -153,8 +147,6 @@ export class HttpApi {
     httpApi.dwn = dwn;
     httpApi.#adminApi = adminApi;
     httpApi.#activityLog = activityLog;
-    httpApi.#adminStore = options?.adminStore;
-    httpApi.#registrationStore = options?.registrationStore;
     httpApi.#ipRateLimiter = options?.ipRateLimiter;
     httpApi.#tenantRateLimiter = options?.tenantRateLimiter;
     httpApi.#messageProcessedHooks = options?.messageProcessedHooks ?? [];
@@ -183,10 +175,6 @@ export class HttpApi {
     return this.#server;
   }
 
-  get adminStore(): AdminStore | undefined {
-    return this.#adminStore;
-  }
-
   get config(): DwnServerConfig {
     return this.#config;
   }
@@ -201,10 +189,6 @@ export class HttpApi {
 
   get messageProcessedHooks(): MessageProcessedHook[] {
     return this.#messageProcessedHooks;
-  }
-
-  get registrationStore(): RegistrationStore | undefined {
-    return this.#registrationStore;
   }
 
   get localNodePairingManager(): LocalNodePairingManager {
@@ -233,87 +217,8 @@ export class HttpApi {
       maxRequestBodySize : maxHttpDwnRpcRequestBodyBytes(this.#config.maxRecordDataSize),
       port,
 
-      fetch: async (req: Request, server): Promise<Response | undefined> => {
-        const startTime = performance.now();
-        const url = new URL(req.url);
-        const path = url.pathname;
-        const method = req.method;
-
-        if (this.#config.localNodeProfileEnabled && !isLocalNodeHostHeaderAllowed(req.headers.get('host'))) {
-          return new Response('Forbidden', { status: 403 });
-        }
-
-        const isWebSocketUpgrade = method === 'GET' && req.headers.get('upgrade')?.toLowerCase() === 'websocket';
-        const webSocketPeerIp = isWebSocketUpgrade ? server.requestIP(req)?.address ?? 'unknown' : undefined;
-        if (webSocketPeerIp !== undefined && this.#ipRateLimiter !== undefined) {
-          const rateLimitResult = this.#ipRateLimiter.consume(webSocketPeerIp);
-          if (rateLimitResult.allowed === false) {
-            websocketConnectionRejections.inc({ reason: 'rate-limit' });
-            const response = HttpApi.#rateLimitResponse(rateLimitResult.retryAfterMs);
-            this.#applyCorsHeaders(req, response, path);
-            return response;
-          }
-        }
-
-        let localNodeSession: LocalNodeWebSocketSession | undefined;
-
-        if (this.#config.localNodeProfileEnabled) {
-          const authorizationResult = this.#authorizeLocalNodeRequest(req, url, path, method, isWebSocketUpgrade);
-          if (authorizationResult.status === 'unauthorized') {
-            this.#applyCorsHeaders(req, authorizationResult.response, path);
-            return authorizationResult.response;
-          }
-
-          localNodeSession = authorizationResult.session;
-        }
-
-        // --- WebSocket upgrade ---
-        if (isWebSocketUpgrade) {
-          return this.#handleWebSocketUpgrade(
-            req,
-            server,
-            webSocketConnectionLimiter,
-            webSocketPeerIp ?? 'unknown',
-            localNodeSession,
-          );
-        }
-
-        // --- Per-IP rate limiting ---
-        if (this.#ipRateLimiter) {
-          const ip = server.requestIP(req)?.address ?? 'unknown';
-          const result = this.#ipRateLimiter.consume(ip);
-          if (result.allowed === false) {
-            const response = HttpApi.#rateLimitResponse(result.retryAfterMs);
-            this.#applyCorsHeaders(req, response, path);
-            return response;
-          }
-        }
-
-        // --- Route matching ---
-        let response: Response;
-        try {
-          response = await this.#route(req, url, path, method);
-        } catch (error) {
-          log.error(`Unhandled error on ${method} ${path}:`, error);
-          response = new Response('Internal Server Error', { status: 500 });
-        }
-
-        // --- CORS headers ---
-        // Admin API and metrics endpoints do not receive wildcard CORS headers
-        // to limit cross-origin access when the admin token is configured.
-        this.#applyCorsHeaders(req, response, path);
-
-        // --- Response-time metrics ---
-        const elapsed = performance.now() - startTime;
-        const routeLabel = (method + (path === '/' ? '/jsonrpc' : path))
-          .toLowerCase()
-          .replace(/[:.]/g, '')
-          .replaceAll('/', '_');
-        responseHistogram.labels(routeLabel, String(response.status)).observe(elapsed);
-        log.info(method, decodeURI(path), response.status);
-
-        return response;
-      },
+      fetch: (req, server): Promise<Response | undefined> =>
+        this.#handleFetchRequest(req, server, webSocketConnectionLimiter),
 
       websocket: {
         maxPayloadLength : maxWsJsonRpcPayloadBytes(this.#config.maxRecordDataSize),
@@ -355,6 +260,106 @@ export class HttpApi {
         },
       },
     });
+  }
+
+  async #handleFetchRequest(
+    req: Request,
+    server: Server<WsData>,
+    webSocketConnectionLimiter: WebSocketConnectionLimiter,
+  ): Promise<Response | undefined> {
+    const startTime = performance.now();
+    const url = new URL(req.url);
+    const path = url.pathname;
+    const method = req.method;
+
+    if (this.#config.localNodeProfileEnabled && !isLocalNodeHostHeaderAllowed(req.headers.get('host'))) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    const isWebSocketUpgrade = method === 'GET' && req.headers.get('upgrade')?.toLowerCase() === 'websocket';
+    let localNodeSession: LocalNodeWebSocketSession | undefined;
+    if (this.#config.localNodeProfileEnabled) {
+      const authorizationResult = this.#authorizeLocalNodeRequest(req, url, path, method, isWebSocketUpgrade);
+      if (authorizationResult.status === 'unauthorized') {
+        this.#applyCorsHeaders(req, authorizationResult.response, path);
+        return authorizationResult.response;
+      }
+      localNodeSession = authorizationResult.session;
+    }
+
+    if (isWebSocketUpgrade) {
+      return this.#handleAuthorizedWebSocketUpgrade(
+        req,
+        server,
+        path,
+        webSocketConnectionLimiter,
+        localNodeSession,
+      );
+    }
+
+    return this.#handleHttpRequest(req, server, url, path, method, startTime);
+  }
+
+  /** Rate-limits an authorized upgrade, then transfers connection admission to the socket. */
+  #handleAuthorizedWebSocketUpgrade(
+    req: Request,
+    server: Server<WsData>,
+    path: string,
+    limiter: WebSocketConnectionLimiter,
+    localNodeSession?: LocalNodeWebSocketSession,
+  ): Response | undefined {
+    const peerIp = server.requestIP(req)?.address ?? 'unknown';
+    if (this.#ipRateLimiter !== undefined) {
+      const rateLimitResult = this.#ipRateLimiter.consume(peerIp);
+      if (rateLimitResult.allowed === false) {
+        websocketConnectionRejections.inc({ reason: 'rate-limit' });
+        const response = HttpApi.#rateLimitResponse(rateLimitResult.retryAfterMs);
+        this.#applyCorsHeaders(req, response, path);
+        return response;
+      }
+    }
+
+    return this.#handleWebSocketUpgrade(req, server, limiter, peerIp, localNodeSession);
+  }
+
+  async #handleHttpRequest(
+    req: Request,
+    server: Server<WsData>,
+    url: URL,
+    path: string,
+    method: string,
+    startTime: number,
+  ): Promise<Response> {
+    if (this.#ipRateLimiter !== undefined) {
+      const ip = server.requestIP(req)?.address ?? 'unknown';
+      const rateLimitResult = this.#ipRateLimiter.consume(ip);
+      if (rateLimitResult.allowed === false) {
+        const response = HttpApi.#rateLimitResponse(rateLimitResult.retryAfterMs);
+        this.#applyCorsHeaders(req, response, path);
+        return response;
+      }
+    }
+
+    let response: Response;
+    try {
+      response = await this.#route(req, url, path, method);
+    } catch (error) {
+      log.error(`Unhandled error on ${method} ${path}:`, error);
+      response = new Response('Internal Server Error', { status: 500 });
+    }
+
+    // Admin API and metrics endpoints do not receive wildcard CORS headers
+    // to limit cross-origin access when the admin token is configured.
+    this.#applyCorsHeaders(req, response, path);
+
+    const elapsed = performance.now() - startTime;
+    const routeLabel = (method + (path === '/' ? '/jsonrpc' : path))
+      .toLowerCase()
+      .replace(/[:.]/g, '')
+      .replaceAll('/', '_');
+    responseHistogram.labels(routeLabel, String(response.status)).observe(elapsed);
+    log.info(method, decodeURI(path), response.status);
+    return response;
   }
 
   async close(): Promise<void> {
@@ -693,6 +698,7 @@ export class HttpApi {
     }
 
     const serverInfo: ServerInfo = {
+      duplicateMessageProbe    : true,
       httpRpcFraming           : [HTTP_DWN_RPC_BODY_V1],
       maxFileSize              : this.#config.maxRecordDataSize,
       maxInFlight              : this.#config.maxInFlight,
@@ -890,7 +896,7 @@ export class HttpApi {
           connection                   : null,
           localNodeSession,
           peerIp,
-          releaseConnectionReservation : admission.reservation.release,
+          releaseConnectionReservation : admission.release,
         },
       })) {
         return undefined;
@@ -899,7 +905,7 @@ export class HttpApi {
       log.error('WebSocket upgrade failed', error);
     }
 
-    admission.reservation.release();
+    admission.release();
     websocketConnectionRejections.inc({ reason: 'upgrade-failed' });
     return new Response('WebSocket upgrade failed', { status: 400 });
   }
@@ -1035,8 +1041,6 @@ export class HttpApi {
       transport             : 'http',
       dataStream            : requestDataStream,
       activityLog           : this.#activityLog,
-      adminStore            : this.#adminStore,
-      registrationStore     : this.#registrationStore,
       config                : this.#config,
       tenantRateLimiter     : this.#tenantRateLimiter,
       messageProcessedHooks : this.#messageProcessedHooks,

@@ -10,6 +10,7 @@ import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
 import { normalizeReadableStream } from './readable-stream.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
+import { Records } from '@enbox/dwn-sdk-js';
 import { sleep } from '@enbox/common';
 import {
   createHttpDwnRpcRequestBody,
@@ -37,7 +38,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 /** Larger per-attempt timeout for data-bearing replicated apply uploads. */
 const DEFAULT_LARGE_REPLICATED_APPLY_TIMEOUT_MS = 300_000;
 
-/** Short caller wait budget for optional HTTP framing capability discovery. */
+/** Short caller wait budget for optional server capability discovery. */
 const DEFAULT_CAPABILITY_DISCOVERY_TIMEOUT_MS = 2_000;
 
 /** Backoff after optional capability discovery fails. */
@@ -206,14 +207,16 @@ export class HttpDwnRpcClient implements DwnRpc {
   get transportProtocols(): string[] { return ['http:', 'https:']; }
 
   async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
+    const duplicateOnly = await this.shouldUseDuplicateMessageProbe(request);
     const requestId = CryptoUtils.randomUuid();
     const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       target  : request.targetDid,
-      message : request.message
+      message : request.message,
+      ...(duplicateOnly ? { duplicateOnly: true } : {}),
     });
 
     const { fetchOpts, isRequestBodyReplayable } = await this.createDwnRequestInit({
-      data   : request.data as BodyInit | undefined,
+      data   : duplicateOnly ? undefined : request.data as BodyInit | undefined,
       dwnUrl : request.dwnUrl,
       jsonRpcRequest,
       signal : request.signal,
@@ -264,14 +267,16 @@ export class HttpDwnRpcClient implements DwnRpc {
   }
 
   async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
+    const duplicateOnly = await this.shouldUseDuplicateMessageProbe(request);
     const requestId = CryptoUtils.randomUuid();
     const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       target  : request.targetDid,
-      message : request.message
+      message : request.message,
+      ...(duplicateOnly ? { duplicateOnly: true } : {}),
     });
 
     const { fetchOpts, isRequestBodyReplayable } = await this.createDwnRequestInit({
-      data   : request.data as BodyInit | undefined,
+      data   : duplicateOnly ? undefined : request.data as BodyInit | undefined,
       dwnUrl : request.dwnUrl,
       jsonRpcRequest,
       signal : request.signal,
@@ -302,6 +307,22 @@ export class HttpDwnRpcClient implements DwnRpc {
     }
 
     return parseReplicationApplyResult(jsonRpcResponse.result.result);
+  }
+
+  /**
+   * Uses the advertised data-free probe only when a retry body exceeds the server's current
+   * limit. Capability discovery is optional so legacy servers retain their existing behavior.
+   */
+  private async shouldUseDuplicateMessageProbe(
+    request: Pick<DwnRpcRequest, 'data' | 'dwnUrl' | 'message' | 'signal'>,
+  ): Promise<boolean> {
+    const dataSize = recordsWriteDataSize(request.message);
+    if (request.data === undefined || dataSize === undefined) {
+      return false;
+    }
+
+    const serverInfo = await this.discoverServerInfo(request.dwnUrl, request.signal);
+    return serverInfo?.duplicateMessageProbe === true && dataSize > serverInfo.maxFileSize;
   }
 
   async getServerInfo(dwnUrl: string): Promise<ServerInfo> {
@@ -388,19 +409,25 @@ export class HttpDwnRpcClient implements DwnRpc {
   }
 
   private async supportsHttpRpcBodyV1(dwnUrl: string, signal?: AbortSignal): Promise<boolean> {
+    const serverInfo = await this.discoverServerInfo(dwnUrl, signal);
+    return serverInfo !== undefined && advertisesHttpRpcBodyV1(serverInfo);
+  }
+
+  /** Discovers optional server capabilities without making ordinary requests depend on `/info`. */
+  private async discoverServerInfo(dwnUrl: string, signal?: AbortSignal): Promise<ServerInfo | undefined> {
     signal?.throwIfAborted();
 
     // Fast path: a cached `/info` answers the capability question with no I/O, so
     // skip building the discovery timeout and its listeners on every request.
     const cached = await this.serverInfoCache.get(dwnUrl);
     if (cached !== undefined) {
-      return advertisesHttpRpcBodyV1(cached);
+      return cached;
     }
 
     const retryAfter = this.serverInfoDiscoveryRetryAfter.get(dwnUrl);
     if (retryAfter !== undefined) {
       if (retryAfter > Date.now()) {
-        return false;
+        return undefined;
       }
       this.serverInfoDiscoveryRetryAfter.delete(dwnUrl);
     }
@@ -410,14 +437,14 @@ export class HttpDwnRpcClient implements DwnRpc {
       const discoverySignal = signal === undefined
         ? discoveryTimeout
         : AbortSignal.any([signal, discoveryTimeout]);
-      return advertisesHttpRpcBodyV1(await waitForPromiseWithSignal(this.getServerInfo(dwnUrl), discoverySignal));
+      return await waitForPromiseWithSignal(this.getServerInfo(dwnUrl), discoverySignal);
     } catch (error) {
       if (signal?.aborted === true) {
         throw error;
       }
       // Capability discovery must not break requests to legacy DWN servers.
       this.serverInfoDiscoveryRetryAfter.set(dwnUrl, Date.now() + CAPABILITY_DISCOVERY_FAILURE_BACKOFF_MS);
-      return false;
+      return undefined;
     }
   }
 
@@ -441,6 +468,7 @@ export class HttpDwnRpcClient implements DwnRpc {
         const results = await response.json() as ServerInfo;
 
         const serverInfo: ServerInfo = {
+          duplicateMessageProbe    : results.duplicateMessageProbe,
           httpRpcFraming           : results.httpRpcFraming,
           localNode                : results.localNode,
           localPairing             : results.localPairing,
@@ -523,4 +551,8 @@ function defaultReplicationApplyTimeoutMs(message: DwnReplicationApplyRequest['m
   return typeof dataSize === 'number' && dataSize > 1_048_576
     ? DEFAULT_LARGE_REPLICATED_APPLY_TIMEOUT_MS
     : undefined;
+}
+
+function recordsWriteDataSize(message: DwnRpcRequest['message']): number | undefined {
+  return Records.isRecordsWrite(message) ? message.descriptor.dataSize : undefined;
 }

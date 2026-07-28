@@ -17,6 +17,7 @@ import { AdminSessionManager } from './admin/admin-session.js';
 import { AdminStore } from './admin/admin-store.js';
 import { assertLocalNodeBindHostname } from './local-node-profile.js';
 import { AuditLog } from './admin/audit-log.js';
+import { createMessageStoreQuotaResolver } from './tenant-quota.js';
 import { config as defaultConfig } from './config.js';
 import { DeliveryService } from './delivery-service.js';
 import { Dwn } from '@enbox/dwn-sdk-js';
@@ -96,7 +97,6 @@ export type DwnServerOptions = {
  * bootstrap logic can be isolated into its own method.
  */
 type AdminApiSetupParams = {
-  adminStore: AdminStore | undefined;
   serverDialect: Dialect | undefined;
   registrationManager: RegistrationManager | undefined;
   registrationStore: RegistrationStore | undefined;
@@ -111,6 +111,7 @@ type AdminApiSetupParams = {
 type AdminApiSetupResult = {
   adminApi: AdminApi | undefined;
   activityLog: ActivityLog | undefined;
+  adminStore: AdminStore | undefined;
   auditLog: AuditLog | undefined;
   passkeyStore: AdminPasskeyStore | undefined;
   sessionManager: AdminSessionManager | undefined;
@@ -206,7 +207,7 @@ export class DwnServer {
     const registrationManager = await this.#createDwnAndRegistrationManager();
 
     const registrationStore = registrationManager?.getRegistrationStore();
-    const adminStore = await this.#createAdminStore(registrationStore);
+    await this.#assertPersistedQuotaPolicy(registrationStore);
 
     // Assemble message-processed hooks.
     const messageProcessedHooks = this.#buildMessageProcessedHooks();
@@ -216,8 +217,8 @@ export class DwnServer {
 
     // Initialize admin API if an admin token is configured.
     const {
-      adminApi, activityLog, auditLog, passkeyStore, sessionManager,
-    } = await this.#setupAdminApi({ adminStore, serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter });
+      adminApi, activityLog, adminStore, auditLog, passkeyStore, sessionManager,
+    } = await this.#setupAdminApi({ serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter });
 
     // Store references for cleanup in stop().
     this.#adminApi = adminApi;
@@ -233,7 +234,7 @@ export class DwnServer {
     this.#httpApi = await HttpApi.create(
       this.config, this.dwn, registrationManager, adminApi, activityLog,
       {
-        adminStore, registrationStore, ipRateLimiter, tenantRateLimiter,
+        ipRateLimiter, tenantRateLimiter,
         messageProcessedHooks, openAuthHandler, sessionManager,
         localNodePairingManager : this.#localNodePairingManager,
         ttlCacheDialect         : serverDialect,
@@ -290,9 +291,13 @@ export class DwnServer {
 
         const dwnConfig = await getDwnConfig(this.config, {
           didResolver,
-          tenantGate     : registrationManager,
+          tenantGate                : registrationManager,
           eventBus,
-          enableEventLog : this.config.webSocketSupport,
+          enableEventLog            : this.config.webSocketSupport,
+          messageStoreQuotaResolver : createMessageStoreQuotaResolver(
+            this.config,
+            registrationManager?.getRegistrationStore(),
+          ),
         });
         this.dwn = await Dwn.create(dwnConfig);
       } catch (error) {
@@ -372,16 +377,18 @@ export class DwnServer {
    * sequence readable.
    */
   async #setupAdminApi(params: AdminApiSetupParams): Promise<AdminApiSetupResult> {
-    const { adminStore, serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter } = params;
+    const { serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter } = params;
 
     let adminApi: AdminApi | undefined;
     let activityLog: ActivityLog | undefined;
+    let adminStore: AdminStore | undefined;
     let auditLog: AuditLog | undefined;
     let webhookManager: WebhookManager | undefined;
     let passkeyStore: AdminPasskeyStore | undefined;
     let sessionManager: AdminSessionManager | undefined;
 
     if (this.config.adminToken) {
+      adminStore = this.#hasExternalDwn ? undefined : AdminStore.create(this.config.messageStore);
       activityLog = new ActivityLog(this.config.adminActivityLogCapacity);
 
       // Reuse the dialect returned by server migrations when available — this
@@ -440,7 +447,7 @@ export class DwnServer {
       log.info('Admin API enabled');
     }
 
-    return { adminApi, activityLog, auditLog, passkeyStore, sessionManager };
+    return { adminApi, activityLog, adminStore, auditLog, passkeyStore, sessionManager };
   }
 
   /** Rejects invalid or implicit exposure choices before allocating server resources. */
@@ -480,47 +487,21 @@ export class DwnServer {
     }
   }
 
-  /** Creates usage accounting whenever admin inspection or quota enforcement needs it. */
-  async #createAdminStore(registrationStore: RegistrationStore | undefined): Promise<AdminStore | undefined> {
-    const hasFiniteGlobalQuota = this.config.quotaMaxMessages > 0 || this.config.quotaMaxStorageBytes > 0;
-    // Unlike the pre-allocation exposure check, this phase can inspect persisted
-    // per-tenant overrides from the registration store.
+  /** Rejects persisted quota policy that cannot be installed into an owned SQL store. */
+  async #assertPersistedQuotaPolicy(registrationStore: RegistrationStore | undefined): Promise<void> {
     const hasPersistedTenantQuota = (await registrationStore?.hasFiniteQuota()) === true;
-    const quotaEnforcementEnabled = hasFiniteGlobalQuota || hasPersistedTenantQuota;
+    if (!hasPersistedTenantQuota) {
+      return;
+    }
     if (this.#hasExternalDwn) {
-      if (hasPersistedTenantQuota) {
-        throw new Error(
-          'DwnServer: persisted per-tenant quotas cannot be enforced with options.dwn and an external registration store. ' +
-          'Let DwnServer own both stores, or remove the finite tenant overrides.',
-        );
-      }
-      if (hasFiniteGlobalQuota) {
-        throw new Error(externalDwnGlobalQuotaError);
-      }
-      return undefined;
-    }
-    if (!this.config.adminToken && !quotaEnforcementEnabled) {
-      return undefined;
-    }
-
-    const adminStore = AdminStore.create(this.config.messageStore);
-    if (!quotaEnforcementEnabled) {
-      return adminStore;
-    }
-
-    if (adminStore === undefined) {
-      throw new Error(finiteQuotaSqlBackendError);
-    }
-
-    if (!await adminStore.isAvailable()) {
-      await adminStore.close();
       throw new Error(
-        'DwnServer: finite tenant quotas require DWN_STORAGE_MESSAGES to use the migrated DWN message database. ' +
-        'Run the DWN store migrations against that database before starting the server.',
+        'DwnServer: persisted per-tenant quotas cannot be enforced with options.dwn and an external registration store. ' +
+        'Let DwnServer own both stores, or remove the finite tenant overrides.',
       );
     }
-
-    return adminStore;
+    if (!AdminStore.supportsUsageQueries(this.config.messageStore)) {
+      throw new Error(finiteQuotaSqlBackendError);
+    }
   }
 
   /**

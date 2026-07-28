@@ -281,7 +281,27 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
     WebSocketDwnRpcClient.assertReplicatedApplyDataIsPresent(request);
-    const maxPayloadBytes = await this.maxPayloadBytesForReplicatedApply(request);
+    const dataSize = recordsWriteDataSize(request.message);
+    const serverInfo = dataSize === undefined ? undefined : await this.getServerInfo(request.dwnUrl);
+    const maxPayloadBytes = serverInfo === undefined
+      ? DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES
+      : maxWsJsonRpcPayloadBytes(serverInfo.maxFileSize);
+    if (
+      dataSize !== undefined &&
+      maxWsJsonRpcPayloadBytes(dataSize) > maxPayloadBytes &&
+      serverInfo?.duplicateMessageProbe === true
+    ) {
+      const connection = await this.getConnection(request.dwnUrl);
+      return WebSocketDwnRpcClient.applyReplicatedMessage(
+        connection,
+        request.targetDid,
+        request.message,
+        undefined,
+        maxPayloadBytes,
+        true,
+      );
+    }
+
     WebSocketDwnRpcClient.assertReplicatedApplyDataSizeIsSupported(request, maxPayloadBytes);
     const connection = await this.getConnection(request.dwnUrl);
     const encodedData = request.data === undefined ? undefined : await dataToBase64Url(request.data);
@@ -290,16 +310,6 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   async getServerInfo(dwnUrl: string): Promise<ServerInfo> {
     return this.serverInfoRpc.getServerInfo(httpUrlForWsDwnUrl(dwnUrl));
-  }
-
-  private async maxPayloadBytesForReplicatedApply(request: DwnReplicationApplyRequest): Promise<number> {
-    const dataSize = recordsWriteDataSize(request.message);
-    if (dataSize === undefined) {
-      return DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES;
-    }
-
-    const serverInfo = await this.getServerInfo(request.dwnUrl);
-    return maxWsJsonRpcPayloadBytes(serverInfo.maxFileSize);
   }
 
   private async getConnection(dwnUrl: string): Promise<SocketConnection> {
@@ -461,11 +471,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     message: DwnReplicationApplyRequest['message'],
     encodedData?: string,
     maxPayloadBytes: number = DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES,
+    duplicateOnly = false,
   ): Promise<ReplicationApplyResult> {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       target,
       message,
+      ...(duplicateOnly ? { duplicateOnly: true } : {}),
       ...(encodedData === undefined ? {} : { encodedData }),
     });
     WebSocketDwnRpcClient.assertPayloadFitsFrame(request, encodedData, maxPayloadBytes);

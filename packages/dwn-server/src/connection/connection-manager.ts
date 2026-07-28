@@ -3,11 +3,9 @@ import type { ServerWebSocket } from 'bun';
 
 import type { ActivityLog } from '../admin/activity-log.js';
 import type { AdminConnectionSnapshot } from '../admin/types.js';
-import type { AdminStore } from '../admin/admin-store.js';
 import type { DwnServerConfig } from '../config.js';
 import type { MessageProcessedHook } from '../message-processed-hook.js';
 import type { RateLimiter } from '../rate-limiter.js';
-import type { RegistrationStore } from '../registration/registration-store.js';
 import type { WsData } from '../http-api.js';
 
 import { SocketConnection } from './socket-connection.js';
@@ -15,13 +13,11 @@ import { websocketConnections } from '../metrics.js';
 
 export type InMemoryConnectionManagerOptions = {
   activityLog? : ActivityLog;
-  adminStore? : AdminStore;
   connections? : Map<ServerWebSocket<WsData>, SocketConnection>;
   ipRateLimiter? : RateLimiter;
   maxInFlight? : number;
   maxSubscriptions? : number;
   messageProcessedHooks? : MessageProcessedHook[];
-  registrationStore? : RegistrationStore;
   serverConfig? : DwnServerConfig;
   tenantRateLimiter? : RateLimiter;
 };
@@ -61,7 +57,6 @@ export class InMemoryConnectionManager implements ConnectionManager {
   connect(socket: ServerWebSocket<WsData>): void {
     const connection = new SocketConnection(socket, this.dwn, {
       activityLog           : this.options.activityLog,
-      adminStore            : this.options.adminStore,
       ipRateLimiter         : this.options.ipRateLimiter,
       maxInFlight           : this.options.maxInFlight,
       maxSubscriptions      : this.options.maxSubscriptions,
@@ -74,7 +69,6 @@ export class InMemoryConnectionManager implements ConnectionManager {
         socket.data.releaseConnectionReservation();
       },
       peerIp            : socket.data.peerIp,
-      registrationStore : this.options.registrationStore,
       serverConfig      : this.options.serverConfig,
       tenantRateLimiter : this.options.tenantRateLimiter,
     });

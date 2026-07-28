@@ -2,10 +2,9 @@ import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { JsonRpcId } from '@enbox/dwn-clients';
 import type { HandlerResponse, JsonRpcHandler } from '../../lib/json-rpc-router.js';
 
+import { DwnServerErrorCode } from '../../dwn-error.js';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Records } from '@enbox/dwn-sdk-js';
-import { DwnServerError, DwnServerErrorCode } from '../../dwn-error.js';
-import { requiresTenantQuotaEnforcement, resolveTenantQuota } from '../../tenant-quota.js';
+import { DwnError, DwnErrorCode, Records } from '@enbox/dwn-sdk-js';
 
 type InboundDwnMessageParams = {
   context: Parameters<JsonRpcHandler>[1];
@@ -14,27 +13,25 @@ type InboundDwnMessageParams = {
   message: GenericMessage;
   requestId: JsonRpcId;
   target: string;
+  allowDatalessRecordsWriteOverNonHttp?: boolean;
   allowRecordsWriteOverNonHttp?: boolean;
 };
 
-type QuotaOptions = {
-  storageBytesToAdd?: number;
-};
-
 export function validateInboundDwnMessageTransport(params: InboundDwnMessageParams): HandlerResponse | undefined {
-  const { allowRecordsWriteOverNonHttp, context, hasEncodedData, message, requestId } = params;
+  const { allowDatalessRecordsWriteOverNonHttp, allowRecordsWriteOverNonHttp, context, hasEncodedData, message, requestId } = params;
 
   // Normal RecordsWrite is HTTP-only because its data stream lives in the
   // request body. Replicated apply may opt in to non-HTTP when it carries the
   // record data in JSON-RPC params.
   if (
     context.transport !== 'http' &&
-    message.descriptor.interface === DwnInterfaceName.Records &&
-    message.descriptor.method === DwnMethodName.Write
+    Records.isRecordsWrite(message)
   ) {
-    const dataSize = (message.descriptor as { dataSize?: unknown }).dataSize;
-    const needsData = typeof dataSize === 'number' && dataSize > 0;
-    if (allowRecordsWriteOverNonHttp === true && (!needsData || hasEncodedData === true)) {
+    const needsData = message.descriptor.dataSize > 0;
+    if (
+      allowRecordsWriteOverNonHttp === true &&
+      (!needsData || hasEncodedData === true || allowDatalessRecordsWriteOverNonHttp === true)
+    ) {
       return undefined;
     }
 
@@ -44,24 +41,6 @@ export function validateInboundDwnMessageTransport(params: InboundDwnMessagePara
       `RecordsWrite is not supported via ${context.transport}`
     );
     return { jsonRpcResponse };
-  }
-}
-
-export async function enforceInboundDwnMessageLimits(params: InboundDwnMessageParams): Promise<HandlerResponse | undefined> {
-  const { context, hasInboundData, message, requestId, target } = params;
-
-  const rateLimitResult = enforceTenantRateLimit(params);
-  if (rateLimitResult !== undefined) {
-    return rateLimitResult;
-  }
-
-  const dataSizeResult = enforceRecordsWriteDataSizeLimit({ context, hasInboundData, message, requestId });
-  if (dataSizeResult !== undefined) {
-    return dataSizeResult;
-  }
-
-  if (context.config !== undefined && requiresTenantQuotaEnforcement(message)) {
-    return enforceQuota(target, message, requestId, context);
   }
 }
 
@@ -108,6 +87,26 @@ export function enforceRecordDataSizeLimit({
       JsonRpcErrorCodes.InvalidParams,
       `${DwnServerErrorCode.RecordDataSizeLimitExceeded}: record data size ${dataSize} exceeds the configured limit ${maxRecordDataSize}`,
       { code: DwnServerErrorCode.RecordDataSizeLimitExceeded },
+    ),
+  };
+}
+
+/** Preserves the configured size error when a data-free duplicate probe misses. */
+export function duplicateProbeMissResponse({
+  context,
+  message,
+  requestId,
+}: {
+  context: Parameters<JsonRpcHandler>[1];
+  message: GenericMessage;
+  requestId: JsonRpcId;
+}): HandlerResponse {
+  const dataSize = Records.isRecordsWrite(message) ? message.descriptor.dataSize : 0;
+  return enforceRecordDataSizeLimit({ context, dataSize, requestId }) ?? {
+    jsonRpcResponse: createJsonRpcErrorResponse(
+      requestId,
+      JsonRpcErrorCodes.InvalidParams,
+      'message is not a fully stored duplicate',
     ),
   };
 }
@@ -180,63 +179,30 @@ export function enforceTenantRateLimit(params: InboundDwnMessageParams): Handler
   return { jsonRpcResponse };
 }
 
-/**
- * Checks whether the tenant has exceeded their message count or storage quota.
- * Returns a JSON-RPC error response if the quota is exceeded, or `undefined` to proceed.
- */
-export async function enforceQuota(
-  target: string,
-  message: GenericMessage,
+/** Maps an atomic message-store quota rejection to the server's public JSON-RPC error contract. */
+export function messageStoreQuotaErrorResponse(
+  error: unknown,
   requestId: JsonRpcId,
-  context: Parameters<JsonRpcHandler>[1],
-  options: QuotaOptions = {},
-): Promise<HandlerResponse | undefined> {
-  const { config, adminStore, registrationStore } = context;
-
-  const tenantQuota = await registrationStore?.getQuota(target);
-  const { maxMessages, maxStorageBytes } = resolveTenantQuota(config!, tenantQuota);
-
-  // 0 means unlimited — skip enforcement.
-  if (maxMessages === 0 && maxStorageBytes === 0) {
+): HandlerResponse | undefined {
+  if (!(error instanceof DwnError)) {
     return undefined;
   }
-  if (adminStore === undefined) {
-    throw new DwnServerError(
-      DwnServerErrorCode.TenantQuotaUsageStoreUnavailable,
-      'tenant quota enforcement requires SQL usage accounting',
-    );
+
+  const serverErrorCode = error.code === DwnErrorCode.MessageStoreQuotaMessagesExceeded
+    ? DwnServerErrorCode.TenantMessageQuotaExceeded
+    : error.code === DwnErrorCode.MessageStoreQuotaStorageExceeded
+      ? DwnServerErrorCode.TenantStorageQuotaExceeded
+      : undefined;
+  if (serverErrorCode === undefined) {
+    return undefined;
   }
 
-  // Check message count quota.
-  if (maxMessages > 0) {
-    const currentMessages = await adminStore.getTenantMessageCount(target);
-    if (currentMessages >= maxMessages) {
-      return {
-        jsonRpcResponse: createJsonRpcErrorResponse(
-          requestId,
-          JsonRpcErrorCodes.InvalidRequest,
-          `${DwnServerErrorCode.TenantMessageQuotaExceeded}: tenant has reached the message limit of ${maxMessages}`,
-          { code: DwnServerErrorCode.TenantMessageQuotaExceeded },
-        ),
-      };
-    }
-  }
-
-  // Check storage size quota.
-  if (maxStorageBytes > 0 && Records.isRecordsWrite(message)) {
-    const dataSize = options.storageBytesToAdd ?? (message.descriptor as { dataSize?: number }).dataSize ?? 0;
-    const currentStorage = await adminStore.getTenantStorageSize(target);
-    if (currentStorage + dataSize > maxStorageBytes) {
-      return {
-        jsonRpcResponse: createJsonRpcErrorResponse(
-          requestId,
-          JsonRpcErrorCodes.InvalidRequest,
-          `${DwnServerErrorCode.TenantStorageQuotaExceeded}: tenant would exceed storage limit of ${maxStorageBytes} bytes`,
-          { code: DwnServerErrorCode.TenantStorageQuotaExceeded },
-        ),
-      };
-    }
-  }
-
-  return undefined;
+  return {
+    jsonRpcResponse: createJsonRpcErrorResponse(
+      requestId,
+      JsonRpcErrorCodes.InvalidRequest,
+      `${serverErrorCode}: ${error.message}`,
+      { code: serverErrorCode },
+    ),
+  };
 }

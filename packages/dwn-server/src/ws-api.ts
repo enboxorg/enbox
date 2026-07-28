@@ -19,12 +19,10 @@ export class WsApi {
 
     this.#connectionManager = new InMemoryConnectionManager(dwn, {
       activityLog           : options.activityLog,
-      adminStore            : httpApi.adminStore,
       ipRateLimiter         : httpApi.ipRateLimiter,
       maxInFlight           : config.maxInFlight,
       maxSubscriptions      : config.webSocketMaxSubscriptionsPerConnection,
       messageProcessedHooks : httpApi.messageProcessedHooks,
-      registrationStore     : httpApi.registrationStore,
       serverConfig          : config,
       tenantRateLimiter     : httpApi.tenantRateLimiter,
     });

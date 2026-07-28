@@ -1,5 +1,6 @@
-import type { GenericMessage } from '@enbox/dwn-sdk-js';
+import type { RegistrationStore } from './registration/registration-store.js';
 import type { TenantQuota } from './admin/types.js';
+import type { GenericMessage, MessageStoreQuotaResolver } from '@enbox/dwn-sdk-js';
 
 import { DwnInterfaceName, DwnMethodName, Records } from '@enbox/dwn-sdk-js';
 
@@ -58,4 +59,21 @@ export function requiresTenantQuotaEnforcement(message: GenericMessage): boolean
   return Records.isRecordsWrite(message)
     || (message.descriptor.interface === DwnInterfaceName.Protocols
       && message.descriptor.method === DwnMethodName.Configure);
+}
+
+/** Builds the single quota-policy hook used by the SQL message store. */
+export function createMessageStoreQuotaResolver(
+  defaults: TenantQuotaDefaults,
+  registrationStore?: RegistrationStore,
+): MessageStoreQuotaResolver {
+  return async (tenant, message) => {
+    if (!requiresTenantQuotaEnforcement(message)) {
+      return undefined;
+    }
+
+    const quota = resolveTenantQuota(defaults, await registrationStore?.getQuota(tenant));
+    return quota.maxMessages === 0 && quota.maxStorageBytes === 0
+      ? undefined
+      : { maxMessages: quota.maxMessages, maxStorageBytes: quota.maxStorageBytes };
+  };
 }

@@ -538,6 +538,44 @@ describe('WebSocketDwnRpcClient', () => {
         }
       });
 
+      it('uses a data-free duplicate probe when replicated retry data exceeds the advertised limit', async () => {
+        (client.getServerInfo as sinon.SinonStub).resolves({
+          ...testServerInfo(2),
+          duplicateMessageProbe: true,
+        });
+        const data = new Uint8Array([1, 2, 3, 4, 5]);
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
+        const requests: any[] = [];
+        const socket = {
+          request: async (request: any): Promise<any> => {
+            requests.push(request);
+            return {
+              jsonrpc : '2.0',
+              id      : request.id,
+              result  : { result: { kind: 'Duplicate' } },
+            };
+          },
+        };
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
+        (WebSocketDwnRpcClient as any)['connections'].set(connectionKey, {
+          socket,
+          subscriptions : new Map(),
+          url           : socketDwnUrl,
+        });
+
+        const result = await client.applyReplicatedMessage({
+          data,
+          dwnUrl    : socketDwnUrl,
+          message,
+          targetDid : alice.did,
+        });
+
+        expect(result).toEqual({ kind: 'Duplicate' });
+        expect(requests).toHaveLength(1);
+        expect(requests[0].params.duplicateOnly).toBe(true);
+        expect(requests[0].params.encodedData).toBeUndefined();
+      });
+
       it('rejects replicated apply data above the WebSocket raw record budget', async () => {
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const oversizedMessage = {

@@ -3,26 +3,32 @@ import type { GenericMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import log from 'loglevel';
 
+import { getStoredMessageState } from './stored-message.js';
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
-import { requiresTenantQuotaEnforcement } from '../../tenant-quota.js';
 import {
   capDataStreamAtDescriptorSize,
-  enforceQuota,
+  duplicateProbeMissResponse,
   enforceRecordDataSizeLimit,
   enforceRecordsWriteDataSizeLimit,
   enforceTenantRateLimit,
+  messageStoreQuotaErrorResponse,
   validateInboundDwnMessageTransport,
 } from './inbound-message.js';
-import { Cid, DataStream, DwnInterfaceName, DwnMethodName, Encoder, Records } from '@enbox/dwn-sdk-js';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { DataStream, DwnInterfaceName, DwnMethodName, Encoder } from '@enbox/dwn-sdk-js';
 
 export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   dwnRequest,
   context,
 ) => {
   const { dwn, dataStream } = context;
-  const { encodedData, target, message } = dwnRequest.params as { encodedData?: string, target: string, message: GenericMessage };
+  const { duplicateOnly, encodedData, target, message } = dwnRequest.params as {
+    duplicateOnly?: boolean;
+    encodedData?: string;
+    target: string;
+    message: GenericMessage;
+  };
   const requestId = dwnRequest.id ?? crypto.randomUUID();
   if ((message as { encodedData?: unknown }).encodedData !== undefined) {
     return {
@@ -37,15 +43,54 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
 
   try {
     const transportResult = validateInboundDwnMessageTransport({
-      allowRecordsWriteOverNonHttp : true,
+      allowDatalessRecordsWriteOverNonHttp : duplicateOnly === true,
+      allowRecordsWriteOverNonHttp         : true,
       context,
-      hasEncodedData               : encodedData !== undefined,
+      hasEncodedData                       : encodedData !== undefined,
       message,
       requestId,
       target,
     });
     if (transportResult !== undefined) {
       return transportResult;
+    }
+
+    const rateLimitResult = enforceTenantRateLimit({ context, message, requestId, target });
+    if (rateLimitResult !== undefined) {
+      return rateLimitResult;
+    }
+
+    // Match the DWN replication lifecycle contract before any server-side duplicate shortcut.
+    // Inactive tenants must remain Deferred even when the exact message is already stored.
+    if (await dwn.validateTenant(target) !== undefined) {
+      const result = { kind: 'Deferred', reason: 'tenant-inactive' } satisfies ReplicationApplyResult;
+      recordApplyActivity(target, message, result, context);
+      return {
+        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
+      };
+    }
+
+    if (duplicateOnly === true) {
+      if (hasInboundData) {
+        return {
+          jsonRpcResponse: createJsonRpcErrorResponse(
+            requestId,
+            JsonRpcErrorCodes.InvalidParams,
+            'duplicate-only probes must not include record data',
+          ),
+        };
+      }
+
+      const integrityError = await dwn.validateMessageIntegrity(message);
+      if (integrityError === undefined && await getStoredMessageState(dwn, target, message) === 'complete') {
+        const result = { kind: 'Duplicate' } satisfies ReplicationApplyResult;
+        recordApplyActivity(target, message, result, context);
+        return {
+          jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
+        };
+      }
+
+      return duplicateProbeMissResponse({ context, message, requestId });
     }
 
     const limitsResult = await enforceApplyReplicatedMessageLimits({
@@ -64,7 +109,7 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return encodedDataResult;
     }
 
-    if (hasInboundData && await isStoredRecordsWriteMissingData(context, target, message)) {
+    if (hasInboundData && await getStoredMessageState(dwn, target, message) === 'missing-data') {
       await dataStream?.cancel().catch((): void => {
         // The fetch-first replication contract does not support same-CID
         // hydration; cancellation is best-effort before deferring the replay.
@@ -79,9 +124,7 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     const dataStreamForApply = getDataStreamForApply({ dataStream, encodedData, message });
     let result: ReplicationApplyResult;
     try {
-      result = await dwn.applyReplicatedMessage(target, message, {
-        dataStream: dataStreamForApply,
-      });
+      result = await dwn.applyReplicatedMessage(target, message, { dataStream: dataStreamForApply });
     } finally {
       await dataStreamForApply?.cancel().catch((): void => {
         // Rejected and duplicate messages may leave their request body unread; cancellation is best-effort.
@@ -96,6 +139,11 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
     };
   } catch (error) {
+    const quotaResponse = messageStoreQuotaErrorResponse(error, requestId);
+    if (quotaResponse !== undefined) {
+      return quotaResponse;
+    }
+
     log.error('handleDwnApplyReplicatedMessage error', error);
 
     return {
@@ -141,20 +189,11 @@ async function enforceApplyReplicatedMessageLimits({
   requestId: Parameters<typeof createJsonRpcErrorResponse>[0];
   target: string;
 }): Promise<ReturnType<typeof validateInboundDwnMessageTransport>> {
-  const rateLimitResult = enforceTenantRateLimit({ context, message, requestId, target });
-  if (rateLimitResult !== undefined) {
-    return rateLimitResult;
+  const admissionResult = enforceRecordsWriteDataSizeLimit({ context, hasInboundData, message, requestId });
+  if (admissionResult === undefined) {
+    return undefined;
   }
-
-  let admissionResult = enforceRecordsWriteDataSizeLimit({ context, hasInboundData, message, requestId });
-  if (admissionResult === undefined && context.config !== undefined && requiresTenantQuotaEnforcement(message)) {
-    const storageBytesToAdd = hasInboundData && Records.isRecordsWrite(message)
-      ? (message.descriptor as { dataSize?: number }).dataSize ?? 0
-      : 0;
-    admissionResult = await enforceQuota(target, message, requestId, context, { storageBytesToAdd });
-  }
-
-  if (admissionResult === undefined || !await isFullyStoredDuplicate({ context, hasInboundData, message, target })) {
+  if (await getStoredMessageState(context.dwn, target, message) !== 'complete') {
     return admissionResult;
   }
 
@@ -166,77 +205,6 @@ async function enforceApplyReplicatedMessageLimits({
   return {
     jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
   };
-}
-
-async function isFullyStoredDuplicate({
-  context,
-  hasInboundData,
-  message,
-  target,
-}: {
-  context: Parameters<JsonRpcHandler>[1];
-  hasInboundData: boolean;
-  message: GenericMessage;
-  target: string;
-}): Promise<boolean> {
-  const messageCid = await Cid.computeCid(message);
-  const existingMessage = await context.dwn.storage.messageStore.get(target, messageCid);
-  if (existingMessage === undefined) {
-    return false;
-  }
-
-  if (!hasInboundData) {
-    return true;
-  }
-
-  return await storedRecordsWriteHasData(context, target, existingMessage);
-}
-
-async function storedRecordsWriteHasData(
-  context: Parameters<JsonRpcHandler>[1],
-  tenant: string,
-  message: GenericMessage,
-): Promise<boolean> {
-  const descriptor = message.descriptor as {
-    dataCid?: unknown;
-    dataSize?: unknown;
-    interface?: unknown;
-    method?: unknown;
-  };
-  if (
-    descriptor.interface !== DwnInterfaceName.Records ||
-    descriptor.method !== DwnMethodName.Write ||
-    typeof descriptor.dataSize !== 'number' ||
-    descriptor.dataSize <= 0
-  ) {
-    return true;
-  }
-
-  if (typeof (message as { encodedData?: unknown }).encodedData === 'string') {
-    return true;
-  }
-
-  const recordId = (message as { recordId?: unknown }).recordId;
-  if (typeof recordId !== 'string' || typeof descriptor.dataCid !== 'string') {
-    return false;
-  }
-
-  const storedData = await context.dwn.storage.dataStore.get(tenant, recordId, descriptor.dataCid);
-  await storedData?.dataStream.cancel().catch((): void => {
-    // The existence probe is enough; cancellation is best-effort.
-  });
-  return storedData !== undefined;
-}
-
-async function isStoredRecordsWriteMissingData(
-  context: Parameters<JsonRpcHandler>[1],
-  tenant: string,
-  message: GenericMessage,
-): Promise<boolean> {
-  const messageCid = await Cid.computeCid(message);
-  const existingMessage = await context.dwn.storage.messageStore.get(tenant, messageCid);
-  return existingMessage !== undefined &&
-    !await storedRecordsWriteHasData(context, tenant, existingMessage);
 }
 
 function recordApplyActivity(

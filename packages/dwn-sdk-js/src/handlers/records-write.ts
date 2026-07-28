@@ -18,11 +18,22 @@ import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { ResumableTaskName } from '../core/resumable-task-manager.js';
+import { runWithCrossContextLock } from '@enbox/common';
 import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: ReadableStream<Uint8Array> };
+type CommitRecordsWriteInput = {
+  coreProtocol: CoreProtocol | undefined;
+  dataStream?: ReadableStream<Uint8Array>;
+  existingMessages: GenericMessage[];
+  message: RecordsWriteMessage;
+  newestExistingMessage: GenericMessage | undefined;
+  newMessageIsInitialWrite: boolean;
+  recordsWrite: RecordsWrite;
+  tenant: string;
+};
 
 export class RecordsWriteHandler implements MethodHandler {
 
@@ -221,17 +232,46 @@ export class RecordsWriteHandler implements MethodHandler {
    * Runs the pre-processing hooks, resolves whether the write is queryable (`isLatestBaseState`),
    * and commits the new message and its indexes as the latest state transition for the record.
    */
-  private async commitRecordsWrite(input: {
-    coreProtocol: CoreProtocol | undefined;
-    dataStream?: ReadableStream<Uint8Array>;
-    existingMessages: GenericMessage[];
-    message: RecordsWriteMessage;
-    newestExistingMessage: GenericMessage | undefined;
-    newMessageIsInitialWrite: boolean;
-    recordsWrite: RecordsWrite;
-    tenant: string;
-  }): Promise<{ position?: ProgressToken }> {
-    const { coreProtocol, dataStream, existingMessages, message, newestExistingMessage, newMessageIsInitialWrite, recordsWrite, tenant } = input;
+  private async commitRecordsWrite(input: CommitRecordsWriteInput): Promise<{ position?: ProgressToken }> {
+    const { dataStream, message, tenant } = input;
+    if (dataStream === undefined || message.descriptor.dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
+      return this.commitRecordsWriteOnce(input);
+    }
+
+    const lockName = `enbox:dwn-record-data:${JSON.stringify([
+      tenant,
+      message.recordId,
+      message.descriptor.dataCid,
+    ])}`;
+    return runWithCrossContextLock(lockName, async () => {
+      const existingData = await this.deps.dataStore!.get(tenant, message.recordId, message.descriptor.dataCid);
+      await existingData?.dataStream.cancel().catch((): void => {
+        // Presence is enough; closing the unused read is best-effort.
+      });
+
+      try {
+        return await this.commitRecordsWriteOnce(input);
+      } catch (error) {
+        if (existingData === undefined && !await this.isMessageStored(tenant, message)) {
+          await this.deps.dataStore!.delete(tenant, message.recordId, message.descriptor.dataCid);
+        }
+        throw error;
+      }
+    });
+  }
+
+  /** Commits a write after any external-data lock has been acquired. */
+  private async commitRecordsWriteOnce(input: CommitRecordsWriteInput): Promise<{ position?: ProgressToken }> {
+    const {
+      coreProtocol,
+      dataStream,
+      existingMessages,
+      message,
+      newestExistingMessage,
+      newMessageIsInitialWrite,
+      recordsWrite,
+      tenant,
+    } = input;
 
     if (newestExistingMessage?.descriptor.method === DwnMethodName.Delete) {
       throw new DwnError(
@@ -265,13 +305,10 @@ export class RecordsWriteHandler implements MethodHandler {
     let messageWithOptionalEncodedData = message as RecordsQueryReplyEntry;
 
     if (dataStream === undefined) {
-      // data stream is NOT provided
-
-      // if the incoming message is not an initial write, and no dataStream is provided, we would allow it provided it passes validation
-      // processMessageWithoutDataStream() abstracts that logic
+      // An update without a stream may reuse the newest write's existing data.
       if (!newMessageIsInitialWrite) {
         const newestExistingWrite = newestExistingMessage as RecordsQueryReplyEntry;
-        messageWithOptionalEncodedData = await this.processMessageWithoutDataStream(tenant, message, newestExistingWrite );
+        messageWithOptionalEncodedData = await this.processMessageWithoutDataStream(tenant, message, newestExistingWrite);
         isLatestBaseState = true;
       }
     } else {
@@ -280,10 +317,6 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
-
-    // store the new message and displace every other message for this record in one atomic
-    // commit, retaining only the initial write as non-latest state — readers can never observe
-    // two latest-state rows for the record
     const putResult = await StorageController.commitLatestStateTransition(
       tenant,
       existingMessages,
@@ -331,7 +364,7 @@ export class RecordsWriteHandler implements MethodHandler {
     tenant: string,
     message: RecordsWriteMessage,
     dataStream: ReadableStream<Uint8Array>,
-  ):Promise<RecordsQueryReplyEntry> {
+  ): Promise<RecordsQueryReplyEntry> {
     let messageWithOptionalEncodedData: RecordsQueryReplyEntry = message;
 
     // if data is below the threshold, we store it within MessageStore
@@ -353,27 +386,32 @@ export class RecordsWriteHandler implements MethodHandler {
       }
 
       messageWithOptionalEncodedData = await this.cloneAndAddEncodedData(message, dataBytes);
-    } else {
-      // split the dataStream into two: one for CID computation and one for storage
-      const [dataStreamCopy1, dataStreamCopy2] = DataStream.duplicateDataStream(dataStream, 2);
-
-      try {
-        // perform storage and CID computation in parallel
-        const [dataCid, DataStorePutResult] = await Promise.all([
-          Cid.computeDagPbCidFromStream(dataStreamCopy1),
-          this.deps.dataStore!.put(tenant, message.recordId, message.descriptor.dataCid, dataStreamCopy2)
-        ]);
-
-        RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, DataStorePutResult.dataSize);
-      } catch (error) {
-        // unwind/delete data if we have issue with storage or the data failed integrity validation
-        await this.deps.dataStore!.delete(tenant, message.recordId, message.descriptor.dataCid);
-
-        throw error;
-      }
+      return messageWithOptionalEncodedData;
     }
 
+    // Split the stream so CID computation and storage happen in parallel.
+    const [cidStream, storeStream] = DataStream.duplicateDataStream(dataStream, 2);
+    const [dataCid, putResult] = await Promise.all([
+      Cid.computeDagPbCidFromStream(cidStream),
+      this.deps.dataStore!.put(tenant, message.recordId, message.descriptor.dataCid, storeStream),
+    ]);
+    RecordsWrite.validateDataIntegrity(
+      message.descriptor.dataCid,
+      message.descriptor.dataSize,
+      dataCid,
+      putResult.dataSize,
+    );
     return messageWithOptionalEncodedData;
+  }
+
+  /** Treats an unreadable store as committed so rollback never deletes possibly-live data. */
+  private async isMessageStored(tenant: string, message: RecordsWriteMessage): Promise<boolean> {
+    try {
+      const messageCid = await Message.getCid(message);
+      return await this.deps.messageStore.get(tenant, messageCid) !== undefined;
+    } catch {
+      return true;
+    }
   }
 
   private async getInitialWrite(

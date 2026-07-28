@@ -22,6 +22,7 @@ import { config } from '../src/config.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
 import { LocalNodePairingManager } from '../src/local-node-pairing.js';
+import { RateLimiter } from '../src/rate-limiter.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
 import { requestCounter } from '../src/metrics.js';
 import { runServerMigrationsIfNeeded } from '../src/storage.js';
@@ -31,6 +32,7 @@ import {
   HTTP_DWN_RPC_BODY_V1,
   HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
   HTTP_DWN_RPC_MEDIA_TYPE,
+  HttpDwnRpcClient,
   JsonRpcErrorCodes,
   maxHttpDwnRpcRequestBodyBytes,
 } from '@enbox/dwn-clients';
@@ -311,6 +313,37 @@ describe('http api', function () {
 
       expect(response.status).toBe(413);
       expect(applyStub.callCount).toBe(0);
+    });
+
+    it('probes oversized ordinary and replicated retries without sending their data bodies', async function () {
+      const data = new Uint8Array([1, 2, 3, 4]);
+      const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+      const stored = await dwn.processMessage(alice.did, recordsWrite.toJSON(), {
+        dataStream: DataStream.fromBytes(data),
+      });
+      expect(stored.status.code).toBe(202);
+
+      await httpApi.close();
+      ({ api: httpApi, url: baseUrl } = await createStartedHttpApiWithConfig({
+        maxRecordDataSize: data.byteLength - 1,
+      }));
+      const client = new HttpDwnRpcClient(undefined, { maxRetries: 0 });
+
+      const ordinaryRetry = await client.sendDwnRequest({
+        data,
+        dwnUrl    : baseUrl,
+        message   : recordsWrite.toJSON(),
+        targetDid : alice.did,
+      });
+      expect(ordinaryRetry.status.code).toBe(409);
+
+      const replicatedRetry = await client.applyReplicatedMessage({
+        data,
+        dwnUrl    : baseUrl,
+        message   : recordsWrite.toJSON(),
+        targetDid : alice.did,
+      });
+      expect(replicatedRetry).toEqual({ kind: 'Duplicate' });
     });
 
     it('responds with a 2XX HTTP status if JSON RPC handler returns 4XX/5XX DWN status code', async function () {
@@ -1272,6 +1305,7 @@ describe('http api', function () {
       expect(info['sdkVersion']).toBeDefined();
       expect(info['version']).toBeDefined();
       expect(info['httpRpcFraming']).toEqual([HTTP_DWN_RPC_BODY_V1]);
+      expect(info['duplicateMessageProbe']).toBe(true);
 
       // restore server name config
       config.serverName = serverName;
@@ -1816,6 +1850,35 @@ describe('http api', function () {
         await expect(requestWebSocketUpgradeStatus(`${wsUrl}?localNodeToken=${token}`, 'https://paired.example')).resolves.toBe(101);
       } finally {
         await api.close();
+      }
+    });
+
+    it('should not charge unauthorized local-node upgrades to the paired-client rate limit', async () => {
+      const localNodePairingManager = new LocalNodePairingManager();
+      const token = localNodePairingManager.createSession('https://paired.example');
+      const ipRateLimiter = new RateLimiter({ maxTokens: 1, refillRate: 0.001 });
+      const testConfig: DwnServerConfig = {
+        ...config,
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      };
+      const api = await HttpApi.create(testConfig, dwn, registrationManager, undefined, undefined, {
+        ipRateLimiter,
+        localNodePairingManager,
+        ttlCacheDialect: dialect,
+      });
+      await api.start(0);
+      const wsUrl = `ws://127.0.0.1:${api.server.port}`;
+
+      try {
+        await expect(requestWebSocketUpgradeStatus(wsUrl, 'https://unpaired.example')).resolves.toBe(401);
+        await expect(requestWebSocketUpgradeStatus(
+          `${wsUrl}?localNodeToken=${token}`,
+          'https://paired.example',
+        )).resolves.toBe(101);
+      } finally {
+        await api.close();
+        ipRateLimiter.destroy();
       }
     });
 

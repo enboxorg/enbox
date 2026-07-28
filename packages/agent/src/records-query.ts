@@ -33,7 +33,7 @@ export async function collectRecordsQueryEntries(
   let pagesRead = 0;
 
   for (;;) {
-    const requestLimits = typeof limitsInput === 'function' ? limitsInput() : limitsInput;
+    const requestLimits = getLimits(limitsInput);
     if (requestLimits !== undefined && pagesRead >= requestLimits.maxPages) {
       throw new Error(`RecordsQuery: exceeded the maximum page count of ${requestLimits.maxPages}.`);
     }
@@ -45,7 +45,7 @@ export async function collectRecordsQueryEntries(
 
     // A source-selection callback may learn during the fetch that this page
     // came from a trusted local store rather than an untrusted remote DWN.
-    const responseLimits = typeof limitsInput === 'function' ? limitsInput() : limitsInput;
+    const responseLimits = getLimits(limitsInput);
     const pageEntries = page.entries ?? [];
     if (responseLimits !== undefined && pageEntries.length > responseLimits.maxEntries - entries.length) {
       throw new Error(`RecordsQuery: exceeded the maximum entry count of ${responseLimits.maxEntries}.`);
@@ -57,7 +57,6 @@ export async function collectRecordsQueryEntries(
     if (responseLimits !== undefined && entries.length >= responseLimits.maxEntries) {
       throw new Error(`RecordsQuery: exceeded the maximum entry count of ${responseLimits.maxEntries}.`);
     }
-
     const cursorKey = `${page.cursor.messageCid}\u0000${page.cursor.value}`;
     if (seenCursors.has(cursorKey)) {
       throw new Error('RecordsQuery: server repeated a pagination cursor.');
@@ -65,4 +64,8 @@ export async function collectRecordsQueryEntries(
     seenCursors.add(cursorKey);
     cursor = page.cursor;
   }
+}
+
+function getLimits(input: RecordsQueryCollectionLimitsInput | undefined): RecordsQueryCollectionLimits | undefined {
+  return typeof input === 'function' ? input() : input;
 }

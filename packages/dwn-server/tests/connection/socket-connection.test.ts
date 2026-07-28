@@ -166,7 +166,7 @@ describe('SocketConnection', () => {
     const secondOpening = (connection as any).reserveSubscription('shared');
     (connection as any).finishSubscriptionOpening(firstOpening);
 
-    expect((connection as any).subscriptionSlots.get('shared')).toBe(secondOpening.slot);
+    expect((connection as any).subscriptionSlots.get('shared')).toBe(secondOpening);
     await connection.close();
   });
 
@@ -430,13 +430,13 @@ describe('SocketConnection', () => {
       const opening = (connection as any).reserveSubscription('opening');
       const cursor = { streamId: 's', epoch: 'e', position: '1' };
       opening.listener({ type: 'eose', cursor });
-      expect(opening.slot.flowController.inFlightCount).toBe(1);
+      expect(opening.flowController.inFlightCount).toBe(1);
       (socket.send as sinon.SinonStub).resetHistory();
 
       await connection.message(Buffer.from(JSON.stringify(createJsonRpcRequest('ping', 'rpc.ping'))));
       await connection.message(Buffer.from(JSON.stringify(createJsonRpcAck('opening', cursor))));
 
-      expect(opening.slot.flowController.inFlightCount).toBe(0);
+      expect(opening.flowController.inFlightCount).toBe(0);
       const responses = (socket.send as sinon.SinonStub).args.map(([response]) => JSON.parse(response));
       expect(responses.every((response) => response.error === undefined)).toBe(true);
 

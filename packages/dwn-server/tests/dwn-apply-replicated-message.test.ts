@@ -3,13 +3,13 @@ import type { RequestContext } from '../src/lib/json-rpc-router.js';
 
 import { AdminStore } from '../src/admin/admin-store.js';
 import { DwnServerErrorCode } from '../src/dwn-error.js';
-import { getTestDwn } from './test-dwn.js';
 import { handleDwnApplyReplicatedMessage } from '../src/json-rpc-handlers/dwn/apply-replicated-message.js';
 import { RateLimiter } from '../src/rate-limiter.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage, expectAppliedResultWithPosition } from './utils.js';
 import {
   DataStream,
+  DwnError,
   DwnErrorCode,
   Encoder,
   Jws,
@@ -21,6 +21,7 @@ import {
   Time,
 } from '@enbox/dwn-sdk-js';
 import { describe, expect, it, spyOn } from 'bun:test';
+import { getQuotaTestDwn, getTestDwn } from './test-dwn.js';
 
 describe('handleDwnApplyReplicatedMessage', () => {
   it('returns a structured replication result from the DWN apply path', async () => {
@@ -95,7 +96,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const context: RequestContext = {
       dwn,
       transport : 'ws',
-      config    : { maxRecordDataSize: dataBytes.byteLength, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
+      config    : { maxRecordDataSize: dataBytes.byteLength } as any,
     };
 
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
@@ -212,7 +213,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const context: RequestContext = {
       dwn,
       transport : 'ws',
-      config    : { maxRecordDataSize: 3, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
+      config    : { maxRecordDataSize: 3 } as any,
     };
 
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
@@ -242,7 +243,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
       dwn,
       transport : 'http',
-      config    : { maxRecordDataSize: data.byteLength - 1, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
+      config    : { maxRecordDataSize: data.byteLength - 1 } as any,
       dataStream,
     });
 
@@ -354,7 +355,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     }
   });
 
-  it('should enforce quota for a new replicated RecordsWrite before applying it', async () => {
+  it('should map an atomic quota rejection for a new replicated RecordsWrite', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([1, 2, 3, 4]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
@@ -364,19 +365,13 @@ describe('handleDwnApplyReplicatedMessage', () => {
       target  : alice.did,
     });
     const { dwn } = await getTestDwn();
-    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => {
+      throw new DwnError(DwnErrorCode.MessageStoreQuotaMessagesExceeded, 'atomic quota rejection');
+    });
     const context: RequestContext = {
       dwn,
       transport  : 'http',
       dataStream : DataStream.fromBytes(data),
-      adminStore : {
-        getTenantMessageCount : async (): Promise<number> => 1,
-        getTenantStorageSize  : async (): Promise<number> => 0,
-      } as any,
-      config: {
-        quotaMaxMessages     : 1,
-        quotaMaxStorageBytes : 0,
-      } as any,
     };
 
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
@@ -386,73 +381,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
 
     expect(jsonRpcResponse.error).toBeDefined();
     expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
-    expect(applySpy).toHaveBeenCalledTimes(0);
-    await dwn.close();
-  });
-
-  it('should continue enforcing message-count quota for a dataless replicated RecordsWrite', async () => {
-    const alice = await TestDataGenerator.generateDidKeyPersona();
-    const { recordsWrite } = await createRecordsWriteMessage(alice);
-    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
-      message : recordsWrite.toJSON(),
-      target  : alice.did,
-    });
-    const { dwn } = await getTestDwn();
-    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
-
-    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
-      dwnRequest,
-      {
-        dwn,
-        transport  : 'http',
-        adminStore : {
-          getTenantMessageCount : async (): Promise<number> => 1,
-          getTenantStorageSize  : async (): Promise<number> => 0,
-        } as any,
-        config: {
-          quotaMaxMessages     : 1,
-          quotaMaxStorageBytes : 1,
-        } as any,
-      },
-    );
-
-    expect(jsonRpcResponse.error).toBeDefined();
-    expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
-    expect(applySpy).toHaveBeenCalledTimes(0);
-    await dwn.close();
-  });
-
-  it('should enforce message-count quota for a replicated ProtocolsConfigure', async () => {
-    const message = {
-      descriptor: {
-        interface        : 'Protocols',
-        method           : 'Configure',
-        messageTimestamp : new Date().toISOString(),
-      },
-    };
-    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
-      message,
-      target: 'did:key:quota-test',
-    });
-    const { dwn } = await getTestDwn();
-    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
-
-    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
-      dwn,
-      transport  : 'http',
-      adminStore : {
-        getTenantMessageCount : async (): Promise<number> => 1,
-        getTenantStorageSize  : async (): Promise<number> => 0,
-      } as any,
-      config: {
-        quotaMaxMessages     : 1,
-        quotaMaxStorageBytes : 0,
-      } as any,
-    });
-
-    expect(jsonRpcResponse.id).toBe(dwnRequest.id);
-    expect(jsonRpcResponse.error?.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
-    expect(applySpy).toHaveBeenCalledTimes(0);
+    expect(applySpy).toHaveBeenCalledTimes(1);
     await dwn.close();
   });
 
@@ -471,22 +400,15 @@ describe('handleDwnApplyReplicatedMessage', () => {
       message : protocolsConfigure.toJSON(),
       target  : alice.did,
     });
-    const { dwn } = await getTestDwn();
+    const { dwn, setQuota } = await getQuotaTestDwn();
 
     const firstApply = await handleDwnApplyReplicatedMessage(dwnRequest, { dwn, transport: 'http' });
     expect(firstApply.jsonRpcResponse.error).toBeUndefined();
+    setQuota({ maxMessages: 1, maxStorageBytes: 0 });
 
     const duplicateApply = await handleDwnApplyReplicatedMessage(dwnRequest, {
       dwn,
-      transport  : 'http',
-      adminStore : {
-        getTenantMessageCount : async (): Promise<number> => 1,
-        getTenantStorageSize  : async (): Promise<number> => 0,
-      } as any,
-      config: {
-        quotaMaxMessages     : 1,
-        quotaMaxStorageBytes : 0,
-      } as any,
+      transport: 'http',
     });
 
     expect(duplicateApply.jsonRpcResponse.error).toBeUndefined();
@@ -513,15 +435,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       dwnRequest,
       {
         dwn,
-        transport  : 'http',
-        adminStore : {
-          getTenantMessageCount : async (): Promise<number> => 0,
-          getTenantStorageSize  : async (): Promise<number> => 0,
-        } as any,
-        config: {
-          quotaMaxMessages     : 0,
-          quotaMaxStorageBytes : data.length + 1,
-        } as any,
+        transport: 'http',
       },
     );
 
@@ -536,20 +450,13 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
-    const { dwn, dialect } = await getTestDwn();
+    const { dwn, dialect, setQuota } = await getQuotaTestDwn();
     const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-      const quotaContext = {
-        dwn,
-        transport : 'http' as const,
-        adminStore,
-        config    : {
-          quotaMaxMessages     : 100,
-          quotaMaxStorageBytes : data.length - 1,
-        } as any,
-      };
+      setQuota({ maxMessages: 100, maxStorageBytes: data.length - 1 });
+      const quotaContext = { dwn, transport: 'http' as const };
       const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -593,20 +500,13 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const initialData = TestDataGenerator.randomBytes(32);
     const updateData = new Uint8Array([9, 10, 11, 12]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data: initialData });
-    const { dwn, dialect } = await getTestDwn();
+    const { dwn, dialect, setQuota } = await getQuotaTestDwn();
     const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-      const quotaContext = {
-        dwn,
-        transport : 'http' as const,
-        adminStore,
-        config    : {
-          quotaMaxMessages     : 100,
-          quotaMaxStorageBytes : updateData.length,
-        } as any,
-      };
+      setQuota({ maxMessages: 100, maxStorageBytes: updateData.length });
+      const quotaContext = { dwn, transport: 'http' as const };
       const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -657,7 +557,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       message : recordsWrite.toJSON(),
       target  : alice.did,
     });
-    const { dwn } = await getTestDwn();
+    const { dwn, setQuota } = await getQuotaTestDwn();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
     const firstApply = await handleDwnApplyReplicatedMessage(
@@ -669,6 +569,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       },
     );
     expect(firstApply.jsonRpcResponse.error).toBeUndefined();
+    setQuota({ maxMessages: 0, maxStorageBytes: data.length });
 
     const duplicateApply = await handleDwnApplyReplicatedMessage(
       dwnRequest,
@@ -676,21 +577,119 @@ describe('handleDwnApplyReplicatedMessage', () => {
         dwn,
         transport  : 'http',
         dataStream : DataStream.fromBytes(data),
-        adminStore : {
-          getTenantMessageCount : async (): Promise<number> => 0,
-          getTenantStorageSize  : async (): Promise<number> => data.length,
-        } as any,
-        config: {
-          maxRecordDataSize    : data.length,
-          quotaMaxMessages     : 0,
-          quotaMaxStorageBytes : data.length,
-        } as any,
+        config     : { maxRecordDataSize: data.length } as any,
       },
     );
 
     expect(duplicateApply.jsonRpcResponse.error).toBeUndefined();
     expect((duplicateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Duplicate');
     await dwn.close();
+  });
+
+  it('should allow a no-growth superseded write at the message and storage limits', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const { dwn, dialect, setQuota } = await getQuotaTestDwn();
+    const adminStore = AdminStore.createFromDialect(dialect, 0);
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      expect((await dwn.applyReplicatedMessage(alice.did, recordsWrite.message, {
+        dataStream: DataStream.fromBytes(data),
+      })).kind).toBe('Applied');
+
+      await Time.minimalSleep();
+      const olderUpdate = await RecordsWrite.createFrom({
+        recordsWriteMessage : recordsWrite.message,
+        signer              : Jws.createSigner(alice),
+        tags                : { revision: 1 },
+      });
+      await Time.minimalSleep();
+      const newestUpdate = await RecordsWrite.createFrom({
+        recordsWriteMessage : recordsWrite.message,
+        signer              : Jws.createSigner(alice),
+        tags                : { revision: 2 },
+      });
+      expect((await dwn.applyReplicatedMessage(alice.did, newestUpdate.message)).kind).toBe('Applied');
+
+      const messageCount = await adminStore.getTenantMessageCount(alice.did);
+      const storageSize = await adminStore.getTenantStorageSize(alice.did);
+      setQuota({ maxMessages: messageCount, maxStorageBytes: storageSize });
+      const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+        message : olderUpdate.toJSON(),
+        target  : alice.did,
+      });
+      const replay = await handleDwnApplyReplicatedMessage(request, {
+        dwn,
+        transport: 'http',
+      });
+
+      expect(replay.jsonRpcResponse.error).toBeUndefined();
+      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Superseded' });
+      expect(await adminStore.getTenantMessageCount(alice.did)).toBe(messageCount);
+      expect(await adminStore.getTenantStorageSize(alice.did)).toBe(storageSize);
+    } finally {
+      await dwn.close();
+      await adminStore.close();
+    }
+  });
+
+  it('should charge the message row retained by a write superseded by a tombstone', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const { dwn, dialect, setQuota } = await getQuotaTestDwn();
+    const adminStore = AdminStore.createFromDialect(dialect, 0);
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      expect((await dwn.applyReplicatedMessage(alice.did, recordsWrite.message, {
+        dataStream: DataStream.fromBytes(data),
+      })).kind).toBe('Applied');
+      await Time.minimalSleep();
+      const recordsDelete = await RecordsDelete.create({
+        recordId : recordsWrite.message.recordId,
+        signer   : Jws.createSigner(alice),
+      });
+      expect((await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).kind).toBe('Applied');
+
+      await Time.minimalSleep();
+      const lateWrite = await RecordsWrite.createFrom({
+        recordsWriteMessage : recordsWrite.message,
+        signer              : Jws.createSigner(alice),
+        tags                : { revision: 1 },
+      });
+      const messageCount = await adminStore.getTenantMessageCount(alice.did);
+      const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+        message : lateWrite.toJSON(),
+        target  : alice.did,
+      });
+      setQuota({ maxMessages: messageCount, maxStorageBytes: 1 });
+      const atLimitContext = {
+        dwn,
+        transport : 'http' as const,
+        config    : { maxRecordDataSize: data.byteLength } as any,
+      };
+      const rejected = await handleDwnApplyReplicatedMessage(request, {
+        ...atLimitContext,
+        dataStream: DataStream.fromBytes(data),
+      });
+      expect(rejected.jsonRpcResponse.error?.data?.code).toBe(DwnServerErrorCode.TenantMessageQuotaExceeded);
+      expect(await adminStore.getTenantMessageCount(alice.did)).toBe(messageCount);
+
+      setQuota({ maxMessages: messageCount + 1, maxStorageBytes: 1 });
+      const admitted = await handleDwnApplyReplicatedMessage(request, {
+        ...atLimitContext,
+        dataStream: DataStream.fromBytes(data),
+      });
+      expect(admitted.jsonRpcResponse.error).toBeUndefined();
+      expect(admitted.jsonRpcResponse.result.result).toEqual({ kind: 'Superseded' });
+      expect(await adminStore.getTenantMessageCount(alice.did)).toBe(messageCount + 1);
+    } finally {
+      await dwn.close();
+      await adminStore.close();
+    }
   });
 
   it('should acknowledge an encoded fully stored duplicate after the data limit is lowered', async () => {
@@ -719,6 +718,38 @@ describe('handleDwnApplyReplicatedMessage', () => {
 
     expect(duplicateApply.jsonRpcResponse.error).toBeUndefined();
     expect((duplicateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Duplicate');
+    await dwn.close();
+  });
+
+  it('should defer a stored duplicate while the tenant is inactive', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([5, 6, 7, 8]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      encodedData : Encoder.bytesToBase64Url(data),
+      message     : recordsWrite.toJSON(),
+      target      : alice.did,
+    });
+    let tenantActive = true;
+    const { dwn } = await getTestDwn({
+      tenantGate: {
+        isActiveTenant: async (): Promise<{ isActiveTenant: boolean }> => ({ isActiveTenant: tenantActive }),
+      },
+    });
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const firstApply = await handleDwnApplyReplicatedMessage(dwnRequest, { dwn, transport: 'ws' });
+    expect(firstApply.jsonRpcResponse.error).toBeUndefined();
+
+    tenantActive = false;
+    const replay = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport : 'ws',
+      config    : { maxRecordDataSize: data.length - 1 } as any,
+    });
+
+    expect(replay.jsonRpcResponse.error).toBeUndefined();
+    expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Deferred', reason: 'tenant-inactive' });
     await dwn.close();
   });
 
@@ -820,7 +851,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
-  it('should enforce quota before a data-bearing replay of a dataless stored write', async () => {
+  it('should defer a data-bearing replay of a dataless stored write without charging quota', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([9, 10, 11, 12]);
     const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
@@ -828,7 +859,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       message : recordsWrite.toJSON(),
       target  : alice.did,
     });
-    const { dwn } = await getTestDwn();
+    const { dwn, setQuota } = await getQuotaTestDwn();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
     const datalessApply = await handleDwnApplyReplicatedMessage(
@@ -840,26 +871,22 @@ describe('handleDwnApplyReplicatedMessage', () => {
     );
     expect(datalessApply.jsonRpcResponse.error).toBeUndefined();
     expect((datalessApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
+    setQuota({ maxMessages: 1, maxStorageBytes: 0 });
 
     const completingApply = await handleDwnApplyReplicatedMessage(
       dwnRequest,
       {
         dwn,
-        transport  : 'http',
+        transport: 'http',
         dataStream,
-        adminStore : {
-          getTenantMessageCount : async (): Promise<number> => 1,
-          getTenantStorageSize  : async (): Promise<number> => 0,
-        } as any,
-        config: {
-          quotaMaxMessages     : 1,
-          quotaMaxStorageBytes : 0,
-        } as any,
       },
     );
 
-    expect(completingApply.jsonRpcResponse.error).toBeDefined();
-    expect(completingApply.jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+    expect(completingApply.jsonRpcResponse.error).toBeUndefined();
+    expect((completingApply.jsonRpcResponse.result.result as ReplicationApplyResult)).toEqual({
+      kind   : 'Deferred',
+      reason : 'storage',
+    });
     await dwn.close();
   });
 
@@ -871,7 +898,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       message : recordsWrite.toJSON(),
       target  : alice.did,
     });
-    const { dwn, dialect } = await getTestDwn();
+    const { dwn, dialect, setQuota } = await getQuotaTestDwn();
     const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
@@ -885,16 +912,12 @@ describe('handleDwnApplyReplicatedMessage', () => {
         kind         : 'Applied',
         ancestryOnly : true,
       }));
+      setQuota({ maxMessages: 100, maxStorageBytes: data.length });
 
       const replay = await handleDwnApplyReplicatedMessage(dwnRequest, {
         dwn,
         transport  : 'http',
         dataStream : DataStream.fromBytes(data),
-        adminStore,
-        config     : {
-          quotaMaxMessages     : 100,
-          quotaMaxStorageBytes : data.length,
-        } as any,
       });
 
       expect(replay.jsonRpcResponse.error).toBeUndefined();

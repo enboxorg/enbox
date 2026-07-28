@@ -212,26 +212,36 @@ function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: Date
   if (filter !== undefined && (Object.hasOwn(filter, 'contextId') || Object.hasOwn(filter, 'parentId'))) {
     throw new TypeError('RecordFilter: use the top-level within selector instead of contextId or parentId.');
   }
-  if (Array.isArray(filter?.author) && filter.author.length === 0) {
-    throw new TypeError('RecordFilter: author must not be an empty array.');
-  }
-  if (Array.isArray(filter?.author) && filter.author.length > DwnConstant.maxFilterValues) {
-    throw new TypeError(`RecordFilter: author must contain at most ${DwnConstant.maxFilterValues} values.`);
-  }
-  if (Array.isArray(filter?.recipient) && filter.recipient.length === 0) {
-    throw new TypeError('RecordFilter: recipient must not be an empty array.');
-  }
-  if (Array.isArray(filter?.recipient) && filter.recipient.length > DwnConstant.maxFilterValues) {
-    throw new TypeError(`RecordFilter: recipient must contain at most ${DwnConstant.maxFilterValues} values.`);
-  }
-  if (filter?.tags !== undefined && Object.keys(filter.tags).length === 0) {
-    throw new TypeError('RecordFilter: tags must contain at least one tag filter.');
-  }
-  if (filter?.tags !== undefined && Object.keys(filter.tags).length > DwnConstant.maxFilterValues) {
-    throw new TypeError(`RecordFilter: tags must contain at most ${DwnConstant.maxFilterValues} tag filters.`);
-  }
+  assertValidStringSelection('author', filter?.author);
+  assertValidStringSelection('recipient', filter?.recipient);
+  assertValidTagSelection(filter?.tags);
   if (filter?.published === false && selectsPublishedRecords(filter, dateSort)) {
     throw new TypeError('RecordFilter: published-date filters and sorting cannot be combined with published: false.');
+  }
+}
+
+function assertValidStringSelection(name: 'author' | 'recipient', selection: StringSelection | undefined): void {
+  if (!Array.isArray(selection)) {
+    return;
+  }
+  if (selection.length === 0) {
+    throw new TypeError(`RecordFilter: ${name} must not be an empty array.`);
+  }
+  if (selection.length > DwnConstant.maxFilterValues) {
+    throw new TypeError(`RecordFilter: ${name} must contain at most ${DwnConstant.maxFilterValues} values.`);
+  }
+}
+
+function assertValidTagSelection(tags: RecordsFilter['tags'] | undefined): void {
+  if (tags === undefined) {
+    return;
+  }
+  const tagCount = Object.keys(tags).length;
+  if (tagCount === 0) {
+    throw new TypeError('RecordFilter: tags must contain at least one tag filter.');
+  }
+  if (tagCount > DwnConstant.maxFilterValues) {
+    throw new TypeError(`RecordFilter: tags must contain at most ${DwnConstant.maxFilterValues} tag filters.`);
   }
 }
 

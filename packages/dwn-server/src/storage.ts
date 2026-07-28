@@ -10,6 +10,7 @@ import type {
   DwnConfig,
   EventLog,
   MessageStore,
+  MessageStoreQuotaResolver,
   ReplicationFeedReader,
   ResumableTaskStore,
   TenantGate,
@@ -63,6 +64,7 @@ type GetDwnConfigOptions = {
   eventLog? : EventLog;
   eventBus? : EventBus;
   enableEventLog? : boolean;
+  messageStoreQuotaResolver? : MessageStoreQuotaResolver;
 };
 
 type DurableMessageStore = MessageStore & ReplicationFeedReader;
@@ -169,7 +171,13 @@ export async function getDwnConfig(
   await runSqlMigrationsIfNeeded(config);
 
   const dataStore: DataStore = await getStore(config, config.dataStore, StoreType.DataStore);
-  const messageStore: MessageStore = await getStore(config, config.messageStore, StoreType.MessageStore, options.eventBus);
+  const messageStore: MessageStore = await getStore(
+    config,
+    config.messageStore,
+    StoreType.MessageStore,
+    options.eventBus,
+    options.messageStoreQuotaResolver,
+  );
   const resumableTaskStore: ResumableTaskStore = await getStore(config, config.resumableTaskStore, StoreType.ResumableTaskStore);
   const eventLog = options.eventLog ?? createDurableEventLog(messageStore, options);
 
@@ -361,6 +369,7 @@ function getSqlStore(
   connectionUrl: URL,
   storeType: StoreType,
   wakePublisher?: WakePublisher,
+  quotaResolver?: MessageStoreQuotaResolver,
 ): DwnStore {
   const dialect = getOrCreateDialect(connectionUrl, config);
 
@@ -368,7 +377,7 @@ function getSqlStore(
     case StoreType.DataStore:
       return new DataStoreSql(dialect);
     case StoreType.MessageStore:
-      return new MessageStoreSql(dialect, wakePublisher);
+      return new MessageStoreSql(dialect, wakePublisher, quotaResolver);
     case StoreType.ResumableTaskStore:
       return new ResumableTaskStoreSql(dialect);
     default:
@@ -390,6 +399,7 @@ async function getStore(
   storeString: string,
   storeType: StoreType.MessageStore,
   wakePublisher?: WakePublisher,
+  quotaResolver?: MessageStoreQuotaResolver,
 ): Promise<MessageStore>;
 async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.ResumableTaskStore): Promise<ResumableTaskStore>;
 async function getStore(
@@ -397,6 +407,7 @@ async function getStore(
   storeConfigString: string,
   storeType: StoreType,
   wakePublisher?: WakePublisher,
+  quotaResolver?: MessageStoreQuotaResolver,
 ): Promise<DwnStore> {
   if (isFilePath(storeConfigString)) {
     return await loadStoreFromFilePath(storeConfigString, storeType, wakePublisher);
@@ -412,7 +423,7 @@ async function getStore(
     case BackendTypes.SQLITE:
     case BackendTypes.MYSQL:
     case BackendTypes.POSTGRES:
-      return getSqlStore(config, storeURI, storeType, wakePublisher);
+      return getSqlStore(config, storeURI, storeType, wakePublisher, quotaResolver);
 
     default:
       throw invalidStorageSchemeMessage(storeURI.protocol);

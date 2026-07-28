@@ -1,5 +1,5 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
-import type { TenantGate } from '@enbox/dwn-sdk-js';
+import type { MessageStoreQuota, MessageStoreQuotaResolver, TenantGate } from '@enbox/dwn-sdk-js';
 
 import { Kysely } from 'kysely';
 import {
@@ -26,10 +26,11 @@ export type TestDwnResult = {
 };
 
 export async function getTestDwn(options: {
+  messageStoreQuotaResolver?: MessageStoreQuotaResolver,
   tenantGate?: TenantGate,
   withEvents?: boolean,
 } = {}): Promise<TestDwnResult> {
-  const { tenantGate, withEvents = false } = options;
+  const { messageStoreQuotaResolver, tenantGate, withEvents = false } = options;
 
   // Share a single in-memory SQLite database across all stores and migrations.
   // Using `async () => sharedDb` ensures every Kysely instance points at the
@@ -45,7 +46,7 @@ export async function getTestDwn(options: {
 
   const dataStore = new DataStoreSql(dialect);
   const wakePublisher = new EventEmitterWakePublisher();
-  const messageStore = new MessageStoreSql(dialect);
+  const messageStore = new MessageStoreSql(dialect, undefined, messageStoreQuotaResolver);
   messageStore.setWakePublisher(wakePublisher);
   const resumableTaskStore = new ResumableTaskStoreSql(dialect);
   const eventLog = withEvents ? new DurableEventLog(messageStore, wakePublisher) : undefined;
@@ -65,4 +66,18 @@ export async function getTestDwn(options: {
   });
 
   return { dwn, dialect };
+}
+
+/** Creates a test DWN whose store quota can be changed between mutations. */
+export async function getQuotaTestDwn(): Promise<TestDwnResult & {
+  setQuota: (quota: MessageStoreQuota | undefined) => void;
+}> {
+  let quota: MessageStoreQuota | undefined;
+  const result = await getTestDwn({ messageStoreQuotaResolver: async () => quota });
+  return {
+    ...result,
+    setQuota: (value): void => {
+      quota = value;
+    },
+  };
 }

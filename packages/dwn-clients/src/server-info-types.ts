@@ -28,6 +28,8 @@ export type LocalNodePairingInfo = {
 };
 
 export type ServerInfo = {
+  /** Whether oversized retries can use the data-free `duplicateOnly` RPC probe. */
+  duplicateMessageProbe?: boolean,
   /** HTTP request-body framing capabilities accepted by this server. */
   httpRpcFraming?: string[],
   /**

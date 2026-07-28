@@ -8,9 +8,17 @@ import type {
 import log from 'loglevel';
 
 import { DwnMethodName } from '@enbox/dwn-sdk-js';
+import { getStoredMessageState } from './stored-message.js';
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
-import { capDataStreamAtDescriptorSize, enforceInboundDwnMessageLimits, validateInboundDwnMessageTransport } from './inbound-message.js';
+import {
+  capDataStreamAtDescriptorSize,
+  duplicateProbeMissResponse,
+  enforceRecordsWriteDataSizeLimit,
+  enforceTenantRateLimit,
+  messageStoreQuotaErrorResponse,
+  validateInboundDwnMessageTransport,
+} from './inbound-message.js';
 import {
   createJsonRpcErrorResponse,
   createJsonRpcSuccessResponse,
@@ -91,11 +99,22 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
   context,
 ) => {
   const { dwn, dataStream, subscriptionRequest, transport } = context;
-  const { target, message } = dwnRequest.params as { target: string, message: GenericMessage };
+  const { duplicateOnly, target, message } = dwnRequest.params as {
+    duplicateOnly?: boolean;
+    target: string;
+    message: GenericMessage;
+  };
   const requestId = dwnRequest.id ?? crypto.randomUUID();
 
   try {
-    const transportResult = validateInboundDwnMessageTransport({ context, message, requestId, target });
+    const transportResult = validateInboundDwnMessageTransport({
+      allowDatalessRecordsWriteOverNonHttp : duplicateOnly === true,
+      allowRecordsWriteOverNonHttp         : duplicateOnly === true,
+      context,
+      message,
+      requestId,
+      target,
+    });
     if (transportResult !== undefined) {
       return transportResult;
     }
@@ -105,15 +124,49 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
       return subscriptionResult;
     }
 
-    const limitsResult = await enforceInboundDwnMessageLimits({
+    const rateLimitResult = enforceTenantRateLimit({ context, message, requestId, target });
+    if (rateLimitResult !== undefined) {
+      return rateLimitResult;
+    }
+
+    const tenantReply = await dwn.validateTenant(target);
+    if (tenantReply !== undefined) {
+      return processReply(context, target, message, tenantReply, transport, requestId);
+    }
+
+    if (duplicateOnly === true) {
+      if (dataStream !== undefined) {
+        return {
+          jsonRpcResponse: createJsonRpcErrorResponse(
+            requestId,
+            JsonRpcErrorCodes.InvalidParams,
+            'duplicate-only probes must not include record data',
+          ),
+        };
+      }
+
+      const integrityError = await dwn.validateMessageIntegrity(message);
+      if (integrityError === undefined && await getStoredMessageState(dwn, target, message) === 'complete') {
+        return processReply(context, target, message, duplicateReply(), transport, requestId);
+      }
+
+      return duplicateProbeMissResponse({ context, message, requestId });
+    }
+
+    const dataSizeResult = enforceRecordsWriteDataSizeLimit({
       context,
       hasInboundData: dataStream !== undefined,
       message,
       requestId,
-      target,
     });
-    if (limitsResult !== undefined) {
-      return limitsResult;
+    if (dataSizeResult !== undefined) {
+      if (await getStoredMessageState(dwn, target, message) === 'complete') {
+        await dataStream!.cancel().catch((): void => {
+          // The exact write and its data are already stored; the retry body is unnecessary.
+        });
+        return processReply(context, target, message, duplicateReply(), transport, requestId);
+      }
+      return dataSizeResult;
     }
 
     const dataStreamForProcessing = dataStream === undefined
@@ -132,31 +185,13 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
       });
     }
 
-    const { entry } = reply;
-    // RecordsRead or MessagesRead messages optionally return data as a stream to accommodate large amounts of data
-    // we remove the data stream from the reply that will be serialized and return it as a separate property in the response payload.
-    let recordDataStream: ReadableStream<Uint8Array>;
-    if (entry !== undefined && entry.data !== undefined) {
-      recordDataStream = entry.data;
-      delete reply.entry.data; // not serializable via JSON
-    }
-
-    if (subscriptionRequest && reply.subscription) {
-      const { close } = reply.subscription;
-      await subscriptionRequest.activate(close);
-      delete reply.subscription.close; // delete the close method from the reply as it's not JSON serializable and has a held reference.
-    }
-
-    const jsonRpcResponse = createJsonRpcSuccessResponse(requestId, { reply });
-    const responsePayload: HandlerResponse = { jsonRpcResponse };
-    if (recordDataStream) {
-      responsePayload.dataStream = recordDataStream;
-    }
-
-    recordProcessedMessageMetrics(context, target, message, reply, transport);
-
-    return responsePayload;
+    return processReply(context, target, message, reply, transport, requestId, subscriptionRequest);
   } catch (error) {
+    const quotaResponse = messageStoreQuotaErrorResponse(error, requestId);
+    if (quotaResponse !== undefined) {
+      return quotaResponse;
+    }
+
     // Log the full error internally but return a generic message to the client
     // to avoid leaking implementation details (SQL errors, file paths, etc.).
     log.error('handleDwnProcessMessage error', error);
@@ -170,3 +205,42 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
     return { jsonRpcResponse } as HandlerResponse;
   }
 };
+
+async function processReply(
+  context: Parameters<JsonRpcHandler>[1],
+  target: string,
+  message: GenericMessage,
+  reply: UnionMessageReply,
+  transport: 'http' | 'ws',
+  requestId: JsonRpcId,
+  subscriptionRequest?: Parameters<JsonRpcHandler>[1]['subscriptionRequest'],
+): Promise<HandlerResponse> {
+  const { entry } = reply;
+  // RecordsRead or MessagesRead messages optionally return data as a stream to accommodate large amounts of data
+  // we remove the data stream from the reply that will be serialized and return it as a separate property in the response payload.
+  let recordDataStream: ReadableStream<Uint8Array>;
+  if (entry !== undefined && entry.data !== undefined) {
+    recordDataStream = entry.data;
+    delete reply.entry.data; // not serializable via JSON
+  }
+
+  if (subscriptionRequest && reply.subscription) {
+    const { close } = reply.subscription;
+    await subscriptionRequest.activate(close);
+    delete reply.subscription.close; // delete the close method from the reply as it's not JSON serializable and has a held reference.
+  }
+
+  const jsonRpcResponse = createJsonRpcSuccessResponse(requestId, { reply });
+  const responsePayload: HandlerResponse = { jsonRpcResponse };
+  if (recordDataStream) {
+    responsePayload.dataStream = recordDataStream;
+  }
+
+  recordProcessedMessageMetrics(context, target, message, reply, transport);
+
+  return responsePayload;
+}
+
+function duplicateReply(): UnionMessageReply {
+  return { status: { code: 409, detail: 'Conflict' } };
+}
