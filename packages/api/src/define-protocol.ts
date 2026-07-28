@@ -45,10 +45,95 @@ export function defineProtocol<
   definition : D,
   codecs : ExactProtocolCodecs<D, C>,
 ): TypedProtocol<D, C> {
+  assertTypedProtocolComponents(definition, codecs);
+
+  return { definition, codecs };
+}
+
+/** @internal Whether a runtime value satisfies the protocol shape required by typed APIs. */
+export function isTypedProtocol(value: unknown): value is TypedProtocol {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  try {
+    assertTypedProtocolComponents(value.definition, value.codecs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Validate the definition shape and exact runtime codec map shared by both public entry points. */
+function assertTypedProtocolComponents(definition: unknown, codecs: unknown): void {
+  if (!isObjectRecord(definition)
+    || typeof definition.protocol !== 'string'
+    || definition.protocol === ''
+    || typeof definition.published !== 'boolean'
+    || !isObjectRecord(definition.types)
+    || !isObjectRecord(definition.structure)) {
+    throw new TypeError(
+      'defineProtocol: definition must include a non-empty protocol URI, boolean published flag, ' +
+      'and object-valued types and structure.',
+    );
+  }
+
+  if (!isObjectRecord(codecs)) {
+    throw new TypeError('defineProtocol: codecs must be an object.');
+  }
+
+  assertProtocolTypes(definition.types);
+  assertProtocolStructureNodes(definition.structure);
+  assertProtocolCodecs(definition as ProtocolDefinition, codecs as RecordCodecMap);
+}
+
+/** Validate the runtime fields consumed from every protocol type declaration. */
+function assertProtocolTypes(types: globalThis.Record<string, unknown>): void {
+  for (const [typeName, type] of Object.entries(types)) {
+    if (!isObjectRecord(type)
+      || (type.schema !== undefined && typeof type.schema !== 'string')
+      || (type.dataFormats !== undefined
+        && (!Array.isArray(type.dataFormats) || type.dataFormats.some((format) => typeof format !== 'string')))
+      || (type.encryptionRequired !== undefined && typeof type.encryptionRequired !== 'boolean')) {
+      throw new TypeError(`defineProtocol: definition.types['${typeName}'] must be a valid protocol type object.`);
+    }
+  }
+}
+
+/** Every non-directive structure entry represents a record path and must be an object node. */
+function assertProtocolStructureNodes(
+  structure: globalThis.Record<string, unknown>,
+  prefix: string = '',
+): void {
+  for (const [key, child] of Object.entries(structure)) {
+    if (key.startsWith('$')) {
+      continue;
+    }
+
+    const path = prefix === '' ? key : `${prefix}/${key}`;
+    if (!isObjectRecord(child)) {
+      throw new TypeError(`defineProtocol: definition.structure['${path}'] must be an object rule-set node.`);
+    }
+    assertProtocolStructureNodes(child, path);
+  }
+}
+
+/** Enforce one valid codec for every reachable protocol type and no others. */
+function assertProtocolCodecs(definition: ProtocolDefinition, codecs: RecordCodecMap): void {
   assertTypedProtocolStructureSupported(definition.structure);
   const requiredTypeNames = new Set(
     [...collectProtocolPaths(definition.structure)].map((path) => getTypeName(path)),
   );
+  const missingTypeDefinitions = [...requiredTypeNames]
+    .filter((typeName) => !Object.hasOwn(definition.types, typeName))
+    .sort((a, b) => a.localeCompare(b));
+  if (missingTypeDefinitions.length > 0) {
+    throw new TypeError(
+      `defineProtocol: definition.types must define every reachable protocol type ` +
+      `(missing: ${missingTypeDefinitions.join(', ')}).`,
+    );
+  }
+
   const suppliedTypeNames = Object.keys(codecs);
   const missing = [...requiredTypeNames].filter((typeName) => !Object.hasOwn(codecs, typeName));
   const extra = suppliedTypeNames.filter((typeName) => !requiredTypeNames.has(typeName));
@@ -65,8 +150,6 @@ export function defineProtocol<
     ];
     throw new TypeError(`defineProtocol: codecs must exactly match reachable protocol types (${details.join('; ')}).`);
   }
-
-  return { definition, codecs };
 }
 
 function isRecordCodec(value: unknown): value is RecordCodec<unknown> {
@@ -75,4 +158,8 @@ function isRecordCodec(value: unknown): value is RecordCodec<unknown> {
   }
   const candidate = value as Partial<RecordCodec<unknown>>;
   return typeof candidate.encode === 'function' && typeof candidate.decode === 'function';
+}
+
+function isObjectRecord(value: unknown): value is globalThis.Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

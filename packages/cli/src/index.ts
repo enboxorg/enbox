@@ -8,12 +8,18 @@
  */
 
 export {
+  defineApplicationManifest,
   Enbox,
   defineProtocol,
+  getApplicationProtocolRequests,
   recordCodecs,
 } from '@enbox/api';
 
 export type {
+  ApplicationManifest,
+  ApplicationManifestProtocol,
+  ApplicationManifestProtocolInput,
+  DefineApplicationManifestOptions,
   EnboxAnonymousOptions,
   EnboxConnectOptions,
   EnboxConnectResult,
@@ -44,6 +50,8 @@ export type {
   ImportFromPortableOptions,
   Permission,
   PortableIdentity,
+  ProtocolDefinitionCarrier,
+  ProtocolPermissionRequest,
   ProtocolRequest,
   RegistrationOptions,
   StorageAdapter,

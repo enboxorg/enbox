@@ -22,8 +22,9 @@
  * @packageDocumentation
  */
 
+export * from './application-manifest.js';
 export * from './connection-store.js';
-export * from './define-protocol.js';
+export { defineProtocol } from './define-protocol.js';
 export * from './did-api.js';
 export { DwnResponseError } from './dwn-response-error.js';
 export * from './dwn-reader-api.js';
