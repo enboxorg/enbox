@@ -87,6 +87,34 @@ const data = await record.value(); // { title: string; body: string }
 record methods infer paths and application values while using the same codec
 for writes and reads.
 
+Register all of an application's typed protocols and delegated permission
+policies once with `defineApplicationManifest()`:
+
+```ts
+import {
+  defineApplicationManifest,
+  getApplicationProtocolRequests,
+} from '@enbox/api';
+
+const application = defineApplicationManifest({
+  protocols: [
+    NotesProtocol, // default: read, write, delete
+    { protocol: PhotosProtocol, permissions: ['read'] },
+  ],
+} as const);
+
+// Only delegated handler flows need auth permission requests.
+const protocols = getApplicationProtocolRequests(application);
+const { enbox } = await Enbox.connect({ connectHandler, protocols });
+```
+
+The manifest retains each `TypedProtocol` for application-side use, while the
+auth projection contains only raw definitions and permission names — runtime
+codecs are never transmitted. The manifest itself is not a connect-options
+object. Owner/vault connections remain explicit `connectVault()` or
+`Enbox.connect({ createIdentity: true, ... })` calls without the projected
+protocol requests.
+
 Typed protocol composition through `$ref` is not inferred from incomplete
 local metadata. `defineProtocol()` rejects it for now; use the raw `enbox.dwn`
 API until the explicit composition contract tracked in #1462 is available.

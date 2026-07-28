@@ -477,21 +477,48 @@ export interface RestoreFromPhraseOptions extends Omit<VaultConnectOptions, 'pas
 
 // ─── DWeb Connect ────────────────────────────────────────────────
 
-/**
- * A protocol permission request in simplified form.
- *
- * Dapp developers can pass just a protocol definition (default permissions:
- * `['read', 'write', 'delete']`), or an object with explicit permissions.
- */
-export type ProtocolRequest =
-  | DwnProtocolDefinition
-  | { definition: DwnProtocolDefinition; permissions: Permission[] };
-
 /** Shorthand permission names for DWN protocol scopes. */
 export type Permission = 'write' | 'read' | 'delete';
 
 /** Default permissions granted when only a protocol definition is provided. */
 export const DEFAULT_PERMISSIONS: Permission[] = ['read', 'write', 'delete'];
+
+/**
+ * Dependency-neutral structural shape for an object that carries a protocol
+ * definition.
+ *
+ * Higher-level packages can add their own fields (for example runtime codecs)
+ * without `@enbox/auth` depending on those packages. Only `definition` crosses
+ * the auth/connect boundary.
+ */
+export type ProtocolDefinitionCarrier = {
+  readonly definition: DwnProtocolDefinition;
+};
+
+/** A protocol request with an explicit permission policy. */
+export type ProtocolPermissionRequest =
+  | {
+    /** A raw definition, preserving the original explicit request shape. */
+    readonly definition: DwnProtocolDefinition | ProtocolDefinitionCarrier;
+    readonly permissions: readonly Permission[];
+  }
+  | {
+    /** A raw definition or higher-level definition carrier. */
+    readonly protocol: DwnProtocolDefinition | ProtocolDefinitionCarrier;
+    readonly permissions: readonly Permission[];
+  };
+
+/**
+ * A protocol permission request in simplified form.
+ *
+ * Dapp developers can pass a raw definition or any structural
+ * {@link ProtocolDefinitionCarrier} with default permissions, or pair either
+ * form with an explicit permission policy.
+ */
+export type ProtocolRequest =
+  | DwnProtocolDefinition
+  | ProtocolDefinitionCarrier
+  | ProtocolPermissionRequest;
 
 /**
  * Options for a handler-based (delegated) connect flow.
@@ -504,22 +531,22 @@ export interface HandlerConnectOptions {
   /**
    * Protocols to request access to.
    *
-   * Each entry can be either a protocol definition (uses default permissions)
-   * or an object with `{ definition, permissions }` for explicit control.
+   * Each entry can be a raw definition or a structural definition carrier
+   * (uses default permissions), or an object with explicit permissions.
    *
    * @example
    * ```ts
    * // Default permissions (read, write, delete)
-   * protocols: [NotesProtocol]
+   * protocols: [NotesDefinition, NotesProtocol]
    *
    * // Explicit permissions
    * protocols: [
-   *   { definition: NotesProtocol, permissions: ['read', 'write'] },
-   *   { definition: PhotosProtocol, permissions: ['read'] },
+   *   { definition: NotesDefinition, permissions: ['read', 'write'] },
+   *   { protocol: PhotosProtocol, permissions: ['read'] },
    * ]
    * ```
    */
-  protocols?: ProtocolRequest[];
+  protocols?: readonly ProtocolRequest[];
 
   /**
    * Connect handler for this call. Overrides the default handler set
@@ -588,7 +615,7 @@ export type GetConnectionStatusOptions = Omit<ComputeConnectionStatusOptions, 'n
 /** Options for adding fresh grants to an existing delegated session. */
 export type RefreshOptions = {
   /** Non-empty protocol list. Pass the same protocol requests used for the initial connect. */
-  protocols: ProtocolRequest[];
+  protocols: readonly ProtocolRequest[];
   /** Per-call handler override. Defaults to the manager's configured handler. */
   connectHandler?: ConnectHandler;
 };

@@ -90,6 +90,8 @@ export type {
   LocalDwnStrategy,
   Permission,
   PortableIdentity,
+  ProtocolDefinitionCarrier,
+  ProtocolPermissionRequest,
   ProtocolRequest,
   ProviderAuthParams,
   ProviderAuthResult,
