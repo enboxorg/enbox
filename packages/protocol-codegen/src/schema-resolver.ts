@@ -1,22 +1,20 @@
 /**
  * Schema resolution for protocol type definitions.
  *
- * Resolves schema URIs to JSON Schema objects using a convention-based
+ * Resolves schema URIs to local JSON Schema objects using a convention-based
  * lookup strategy:
  *
  * 1. **Local file (by type name)**: `<schemasDir>/<typeName>.json`
  * 2. **Local file (by URI path)**: `<schemasDir>/<last-two-segments>.json`
- * 3. **HTTP fetch**: fetch the URI directly
  *
- * If none of these resolve, the schema is considered unresolvable and
- * the type will be emitted as `unknown`.
+ * Network resolution is intentionally unsupported so identical repository
+ * inputs always produce identical output.
  *
  * @module
  */
 
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { readFile, realpath } from 'node:fs/promises';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,7 +32,7 @@ export type SchemaResolution = {
   /** The resolved JSON Schema, or `undefined` if unresolvable. */
   schema?: JsonSchema;
   /** How the schema was resolved. */
-  source: 'local-type-name' | 'local-uri-path' | 'http' | 'unresolved';
+  source: 'local-type-name' | 'local-uri-path' | 'unresolved';
 };
 
 // ---------------------------------------------------------------------------
@@ -54,33 +52,22 @@ export async function resolveSchema(
   schemaUri: string,
   schemasDir: string,
 ): Promise<SchemaResolution> {
+  const schemasRoot = await realpath(schemasDir);
+
   // Strategy 1: local file by type name
-  const byTypeName = join(schemasDir, `${typeName}.json`);
-  if (existsSync(byTypeName)) {
-    const schema = await readJsonFile(byTypeName);
+  const byTypeName = await readLocalSchema(schemasRoot, `${typeName}.json`);
+  if (byTypeName !== undefined) {
+    const schema = byTypeName;
     return { typeName, schemaUri, schema, source: 'local-type-name' };
   }
 
   // Strategy 2: local file by URI path (last two segments)
   const uriPath = extractUriPath(schemaUri);
   if (uriPath !== undefined) {
-    const byUriPath = join(schemasDir, `${uriPath}.json`);
-    if (existsSync(byUriPath)) {
-      const schema = await readJsonFile(byUriPath);
+    const byUriPath = await readLocalSchema(schemasRoot, `${uriPath}.json`);
+    if (byUriPath !== undefined) {
+      const schema = byUriPath;
       return { typeName, schemaUri, schema, source: 'local-uri-path' };
-    }
-  }
-
-  // Strategy 3: HTTP fetch
-  if (schemaUri.startsWith('http://') || schemaUri.startsWith('https://')) {
-    try {
-      const response = await fetch(schemaUri);
-      if (response.ok) {
-        const schema = await response.json() as JsonSchema;
-        return { typeName, schemaUri, schema, source: 'http' };
-      }
-    } catch {
-      // Fetch failed — fall through to unresolved.
     }
   }
 
@@ -124,9 +111,54 @@ export async function resolveAllSchemas(
 /**
  * Read and parse a JSON file.
  */
-async function readJsonFile(filePath: string): Promise<JsonSchema> {
-  const content = await readFile(filePath, 'utf-8');
-  return JSON.parse(content) as JsonSchema;
+async function readLocalSchema(schemasRoot: string, relativePath: string): Promise<JsonSchema | undefined> {
+  const candidatePath = resolve(schemasRoot, relativePath);
+  assertPathWithinSchemasRoot(candidatePath, schemasRoot);
+
+  let schemaPath: string;
+  try {
+    schemaPath = await realpath(candidatePath);
+  } catch (error: unknown) {
+    if (isFileNotFoundError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+
+  assertPathWithinSchemasRoot(schemaPath, schemasRoot);
+  const content = await readFile(schemaPath, 'utf-8');
+  const parsed = JSON.parse(content) as unknown;
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new TypeError(
+      `JSON Schema file '${schemaPath}' must contain a non-null object (found ${describeJsonValue(parsed)}).`,
+    );
+  }
+
+  return parsed as JsonSchema;
+}
+
+function describeJsonValue(value: unknown): string {
+  if (value === null) {
+    return 'null';
+  }
+  if (Array.isArray(value)) {
+    return 'array';
+  }
+  return typeof value;
+}
+
+function assertPathWithinSchemasRoot(path: string, schemasRoot: string): void {
+  const relativePath = relative(schemasRoot, path);
+  const escapesRoot = relativePath === '..' || relativePath.startsWith(`..${sep}`);
+  if (!escapesRoot && !isAbsolute(relativePath)) {
+    return;
+  }
+
+  throw new TypeError(`Schema path must be within the schemas directory: ${path}`);
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
 /**

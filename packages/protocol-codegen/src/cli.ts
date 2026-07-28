@@ -12,10 +12,13 @@
  * @module
  */
 
+import type { CodegenResult, ProtocolDefinitionInput } from './codegen.js';
+
+import { constants } from 'node:fs';
 import { generateProtocolModule } from './codegen.js';
 import { parseArgs } from 'node:util';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
-import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { lstat, open, readFile, realpath, stat } from 'node:fs/promises';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -27,6 +30,7 @@ const usage = `protocol-codegen <command> [options]
 
 Commands:
   generate  Generate a typed module from a protocol definition and JSON Schemas.
+  check     Verify a generated module is present and up to date without writing.
 
 Options:
   -h, --help     Show help
@@ -40,6 +44,18 @@ Options:
   -s, --schemas     Directory containing .json schema files.              [required]
   -n, --name        PascalCase name for the protocol (e.g. Inventory).  [required]
   -o, --output      Output file path. If omitted, prints to stdout.
+      --allow-unresolved  Permit reachable JSON types without local schemas.
+  -h, --help        Show help
+`;
+
+const checkUsage = `protocol-codegen check [options]
+
+Options:
+  -d, --definition  Path to a JSON file containing the protocol definition.  [required]
+  -s, --schemas     Directory containing .json schema files.              [required]
+  -n, --name        PascalCase name for the protocol (e.g. Inventory).  [required]
+  -o, --output      Generated output file to verify.                    [required]
+      --allow-unresolved  Permit reachable JSON types without local schemas.
   -h, --help        Show help
 `;
 
@@ -50,11 +66,14 @@ export type CliIo = {
 };
 
 export type GenerateArgs = {
+  allowUnresolvedJsonSchemas? : boolean;
   definition : string;
   name : string;
   output? : string;
   schemas : string;
 };
+
+export type CheckArgs = GenerateArgs & { output: string };
 
 type ParsedOptionValues = Record<string, string | boolean | (string | boolean)[] | undefined>;
 
@@ -62,6 +81,13 @@ export class CliUsageError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = 'CliUsageError';
+  }
+}
+
+export class CliCheckError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'CliCheckError';
   }
 }
 
@@ -84,18 +110,19 @@ function readRequiredOption(values: ParsedOptionValues, key: string): string {
   return value;
 }
 
-export function parseGenerateArgs(args: string[], io: CliIo = defaultIo): GenerateArgs | undefined {
+function parseCodegenArgs(args: string[], helpText: string, io: CliIo): GenerateArgs | undefined {
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs({
       args,
       allowPositionals : false,
       options          : {
-        definition : { type: 'string', short: 'd' },
-        help       : { type: 'boolean', short: 'h' },
-        name       : { type: 'string', short: 'n' },
-        output     : { type: 'string', short: 'o' },
-        schemas    : { type: 'string', short: 's' },
+        'allow-unresolved' : { type: 'boolean' },
+        definition         : { type: 'string', short: 'd' },
+        help               : { type: 'boolean', short: 'h' },
+        name               : { type: 'string', short: 'n' },
+        output             : { type: 'string', short: 'o' },
+        schemas            : { type: 'string', short: 's' },
       },
       strict: true,
     });
@@ -105,11 +132,12 @@ export function parseGenerateArgs(args: string[], io: CliIo = defaultIo): Genera
   }
 
   if (parsed.values.help === true) {
-    io.stdout.write(generateUsage);
+    io.stdout.write(helpText);
     return undefined;
   }
 
   return {
+    ...(parsed.values['allow-unresolved'] === true ? { allowUnresolvedJsonSchemas: true } : {}),
     definition : readRequiredOption(parsed.values, 'definition'),
     name       : readRequiredOption(parsed.values, 'name'),
     output     : typeof parsed.values.output === 'string' ? parsed.values.output : undefined,
@@ -117,9 +145,27 @@ export function parseGenerateArgs(args: string[], io: CliIo = defaultIo): Genera
   };
 }
 
+export function parseGenerateArgs(args: string[], io: CliIo = defaultIo): GenerateArgs | undefined {
+  return parseCodegenArgs(args, generateUsage, io);
+}
+
+export function parseCheckArgs(args: string[], io: CliIo = defaultIo): CheckArgs | undefined {
+  const parsed = parseCodegenArgs(args, checkUsage, io);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  if (parsed.output === undefined) {
+    fail('Missing required argument: output');
+  }
+
+  return { ...parsed, output: parsed.output };
+}
+
 function assertPathWithinCwd(path: string, cwd: string, label: string): void {
   const relativePath = relative(cwd, path);
-  if (relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))) {
+  const escapesCwd = relativePath === '..' || relativePath.startsWith(`..${sep}`);
+  if (!escapesCwd && !isAbsolute(relativePath)) {
     return;
   }
 
@@ -197,6 +243,18 @@ async function resolveOutputFilePath(inputPath: string, cwd: string): Promise<st
 
     const outputPath = resolve(parentPath, basename(candidatePath));
     assertPathWithinCwd(outputPath, cwd, 'output');
+
+    try {
+      const outputStats = await lstat(outputPath);
+      if (outputStats.isSymbolicLink()) {
+        fail(`output path must not be a symbolic link: ${outputPath}`);
+      }
+    } catch (error: unknown) {
+      if (!isFileNotFoundError(error)) {
+        throw error;
+      }
+    }
+
     return outputPath;
   } catch (error: unknown) {
     if (error instanceof CliUsageError) {
@@ -207,34 +265,115 @@ async function resolveOutputFilePath(inputPath: string, cwd: string): Promise<st
   }
 }
 
-export async function runGenerate(args: GenerateArgs, io: CliIo = defaultIo): Promise<void> {
+type PreparedGeneration = CodegenResult & { cwd: string };
+
+async function prepareGeneration(args: GenerateArgs, io: CliIo): Promise<PreparedGeneration> {
   const cwd = await resolveCwd(io.cwd);
   const definitionPath = await resolveExistingFilePath(args.definition, cwd, 'definition');
   const schemasDir = await resolveExistingDirectoryPath(args.schemas, cwd, 'schemas');
 
   // Read the protocol definition JSON.
   const definitionJson = await readFile(definitionPath, 'utf-8');
-  const definition = JSON.parse(definitionJson);
+  const definition = JSON.parse(definitionJson) as ProtocolDefinitionInput;
 
-  const { code, resolutions } = await generateProtocolModule(definition, {
+  const result = await generateProtocolModule(definition, {
+    allowUnresolvedJsonSchemas : args.allowUnresolvedJsonSchemas,
     schemasDir,
-    protocolName: args.name,
+    protocolName               : args.name,
   });
 
-  // Report resolution results to stderr.
-  for (const [typeName, resolution] of resolutions) {
+  return { ...result, cwd };
+}
+
+function reportResolutions(result: CodegenResult, io: CliIo): void {
+  for (const [typeName, resolution] of result.resolutions) {
     const icon = resolution.source === 'unresolved' ? '?' : '+';
     io.stderr.write(`  ${icon} ${typeName}: ${resolution.source}\n`);
   }
+}
+
+export async function runGenerate(args: GenerateArgs, io: CliIo = defaultIo): Promise<void> {
+  const result = await prepareGeneration(args, io);
+  reportResolutions(result, io);
 
   // Write or print.
   if (args.output === undefined) {
-    io.stdout.write(code);
+    io.stdout.write(result.code);
   } else {
-    const outputPath = await resolveOutputFilePath(args.output, cwd);
-    await writeFile(outputPath, code, 'utf-8');
+    const outputPath = await resolveOutputFilePath(args.output, result.cwd);
+    await writeOutputFile(outputPath, result.code);
     io.stderr.write(`\nWrote ${outputPath}\n`);
   }
+}
+
+export async function runCheck(args: CheckArgs, io: CliIo = defaultIo): Promise<void> {
+  const result = await prepareGeneration(args, io);
+  const outputPath = await resolveOutputFilePath(args.output, result.cwd);
+  reportResolutions(result, io);
+
+  let existingCode: string;
+  try {
+    existingCode = await readOutputFile(outputPath);
+  } catch (error: unknown) {
+    if (isFileNotFoundError(error)) {
+      throw new CliCheckError(`Generated output is missing: ${outputPath}`);
+    }
+    throw error;
+  }
+
+  if (existingCode !== result.code) {
+    throw new CliCheckError(`Generated output is stale: ${outputPath}`);
+  }
+
+  io.stderr.write(`\nUp to date: ${outputPath}\n`);
+}
+
+async function writeOutputFile(outputPath: string, code: string): Promise<void> {
+  let output;
+  try {
+    output = await open(
+      outputPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+      0o666,
+    );
+  } catch (error: unknown) {
+    if (isSymbolicLinkAccessError(error)) {
+      fail(`output path must not be a symbolic link: ${outputPath}`);
+    }
+    throw error;
+  }
+
+  try {
+    await output.writeFile(code, { encoding: 'utf-8' });
+  } finally {
+    await output.close();
+  }
+}
+
+async function readOutputFile(outputPath: string): Promise<string> {
+  let output;
+  try {
+    output = await open(outputPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error: unknown) {
+    if (isSymbolicLinkAccessError(error)) {
+      fail(`output path must not be a symbolic link: ${outputPath}`);
+    }
+    throw error;
+  }
+
+  try {
+    return await output.readFile({ encoding: 'utf-8' });
+  } finally {
+    await output.close();
+  }
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+function isSymbolicLinkAccessError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ELOOP';
 }
 
 export async function main(argv: string[], io: CliIo = defaultIo): Promise<void> {
@@ -254,25 +393,31 @@ export async function main(argv: string[], io: CliIo = defaultIo): Promise<void>
     fail('You must specify a command.');
   }
 
-  if (command !== 'generate') {
-    fail(`Unknown command: ${command}`);
+  if (command === 'generate') {
+    const generateArgs = parseGenerateArgs(args, io);
+    if (generateArgs !== undefined) {
+      await runGenerate(generateArgs, io);
+    }
+    return;
   }
 
-  const generateArgs = parseGenerateArgs(args, io);
-  if (generateArgs !== undefined) {
-    await runGenerate(generateArgs, io);
+  if (command === 'check') {
+    const checkArgs = parseCheckArgs(args, io);
+    if (checkArgs !== undefined) {
+      await runCheck(checkArgs, io);
+    }
+    return;
   }
+
+  fail(`Unknown command: ${command}`);
 }
 
 if (import.meta.main) {
   try {
     await main(process.argv.slice(2));
   } catch (error: unknown) {
-    if (error instanceof CliUsageError) {
-      process.stderr.write(`Error: ${error.message}\n`);
-      process.exit(1);
-    }
-
-    throw error;
+    const message = error instanceof Error ? error.message : 'Unknown error.';
+    process.stderr.write(`Error: ${message}\n`);
+    process.exit(1);
   }
 }
