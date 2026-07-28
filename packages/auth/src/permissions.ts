@@ -34,7 +34,7 @@ export function normalizeProtocolRequests(
   const normalized = protocols.map((entry, index) => {
     const explicit = isProtocolPermissionRequest(entry);
     const source = explicit
-      ? ('protocol' in entry ? entry.protocol : entry.definition)
+      ? getExplicitProtocolSource(entry)
       : entry;
     const definition = getProtocolDefinition(source, index);
     const permissions = explicit
@@ -115,18 +115,28 @@ function isProtocolPermissionRequest(entry: ProtocolRequest): entry is ProtocolP
   return isObjectRecord(entry) && Object.hasOwn(entry, 'permissions');
 }
 
+/** Select the definition source from either supported explicit request shape. */
+function getExplicitProtocolSource(
+  entry: ProtocolPermissionRequest,
+): DwnProtocolDefinition | ProtocolDefinitionCarrier {
+  return 'protocol' in entry ? entry.protocol : entry.definition;
+}
+
 /** Unwrap a raw definition from a dependency-neutral structural carrier. */
 function getProtocolDefinition(
   source: DwnProtocolDefinition | ProtocolDefinitionCarrier,
   protocolIndex: number,
 ): DwnProtocolDefinition {
   const candidate: unknown = source;
-  const definition = isObjectRecord(candidate)
+  let definition: unknown;
+  if (isObjectRecord(candidate)
     && typeof candidate.protocol === 'string'
     && Object.hasOwn(candidate, 'types')
-    && Object.hasOwn(candidate, 'structure')
-    ? candidate
-    : isObjectRecord(candidate) ? candidate.definition : undefined;
+    && Object.hasOwn(candidate, 'structure')) {
+    definition = candidate;
+  } else if (isObjectRecord(candidate)) {
+    definition = candidate.definition;
+  }
 
   if (!isObjectRecord(definition)
     || typeof definition.protocol !== 'string'
