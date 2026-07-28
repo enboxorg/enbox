@@ -10,7 +10,6 @@ import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
 import { normalizeReadableStream } from './readable-stream.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
-import { Records } from '@enbox/dwn-sdk-js';
 import { sleep } from '@enbox/common';
 import {
   createHttpDwnRpcRequestBody,
@@ -554,5 +553,10 @@ function defaultReplicationApplyTimeoutMs(message: DwnReplicationApplyRequest['m
 }
 
 function recordsWriteDataSize(message: DwnRpcRequest['message']): number | undefined {
-  return Records.isRecordsWrite(message) ? message.descriptor.dataSize : undefined;
+  const descriptor = (message as { descriptor?: { interface?: unknown; method?: unknown; dataSize?: unknown } }).descriptor;
+  return descriptor?.interface === 'Records' &&
+    descriptor.method === 'Write' &&
+    typeof descriptor.dataSize === 'number'
+    ? descriptor.dataSize
+    : undefined;
 }
