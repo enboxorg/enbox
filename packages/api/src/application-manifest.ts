@@ -157,29 +157,32 @@ function copyPermissionPolicy(value: unknown, protocolIndex: number): Permission
     throw new TypeError(`defineApplicationManifest: ${path} must be an array.`);
   }
 
-  const permissions: Permission[] = [];
-  const firstIndexes = new Map<Permission, number>();
-  for (const [permissionIndex, permission] of value.entries()) {
-    if (!isPermission(permission)) {
-      throw new TypeError(
-        `defineApplicationManifest: ${path}[${permissionIndex}] has unsupported permission ` +
-        `'${String(permission)}'. Supported permissions: read, write, delete.`,
-      );
-    }
-
-    const firstIndex = firstIndexes.get(permission);
-    if (firstIndex !== undefined) {
-      throw new TypeError(
-        `defineApplicationManifest: ${path} contains duplicate permission '${permission}' ` +
-        `at indexes ${firstIndex} and ${permissionIndex}.`,
-      );
-    }
-
-    firstIndexes.set(permission, permissionIndex);
-    permissions.push(permission);
+  const permissions = value.map((permission, permissionIndex): Permission => (
+    parsePermission(permission, path, permissionIndex)
+  ));
+  const duplicateIndex = permissions.findIndex((permission, index): boolean => (
+    permissions.indexOf(permission) !== index
+  ));
+  if (duplicateIndex >= 0) {
+    const permission = permissions[duplicateIndex];
+    throw new TypeError(
+      `defineApplicationManifest: ${path} contains duplicate permission '${permission}' ` +
+      `at indexes ${permissions.indexOf(permission)} and ${duplicateIndex}.`,
+    );
   }
 
   return permissions;
+}
+
+function parsePermission(value: unknown, path: string, index: number): Permission {
+  if (isPermission(value)) {
+    return value;
+  }
+
+  throw new TypeError(
+    `defineApplicationManifest: ${path}[${index}] has unsupported permission ` +
+    `'${String(value)}'. Supported permissions: read, write, delete.`,
+  );
 }
 
 function isPermission(value: unknown): value is Permission {
