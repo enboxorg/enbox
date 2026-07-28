@@ -559,6 +559,8 @@ jobs:
           export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_ALLOW_OPEN_TENANTS=true
+          export DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true
           export DID_DHT_GATEWAY_URI=http://localhost:7527
           # The DWN server itself talks to the local Pkarr relay; opt in to private gateways for
           # this dev/CI process. Production deployments leave this unset.
@@ -699,6 +701,8 @@ jobs:
           export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_ALLOW_OPEN_TENANTS=true
+          export DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true
           export DID_DHT_GATEWAY_URI=http://localhost:7527
           # The DWN server itself talks to the local Pkarr relay; opt in to private gateways for
           # this dev/CI process. Production deployments leave this unset.
@@ -827,6 +831,8 @@ jobs:
           export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_ALLOW_OPEN_TENANTS=true
+          export DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true
           export DID_DHT_GATEWAY_URI=http://localhost:7527
           export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
           export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0

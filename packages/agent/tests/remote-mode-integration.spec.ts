@@ -306,8 +306,7 @@ async function startTestServer(name: string): Promise<TestDwnRpcServer> {
   const httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect });
 
   await httpApi.start(0);
-  const wsApi = new WsApi(httpApi, dwn, { config });
-  wsApi.start();
+  const wsApi = new WsApi(httpApi, dwn);
 
   return {
     dwn,

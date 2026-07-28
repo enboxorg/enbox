@@ -298,6 +298,21 @@ export class RegistrationStore {
     };
   }
 
+  /** Returns whether any tenant has a finite quota override. */
+  public async hasFiniteQuota(): Promise<boolean> {
+    const result = await this.db
+      .selectFrom(RegistrationStore.tenantQuotasTableName)
+      .select('did')
+      .where((expressionBuilder) => expressionBuilder.or([
+        expressionBuilder('maxMessages', '>', 0),
+        expressionBuilder('maxStorageBytes', '>', 0),
+      ]))
+      .limit(1)
+      .executeTakeFirst();
+
+    return result !== undefined;
+  }
+
   /**
    * Sets (inserts or updates) the quota for a tenant.
    */

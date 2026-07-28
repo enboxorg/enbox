@@ -23,6 +23,7 @@ import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
 import { LocalNodePairingManager } from '../src/local-node-pairing.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
+import { requestCounter } from '../src/metrics.js';
 import { runServerMigrationsIfNeeded } from '../src/storage.js';
 import {
   createHttpDwnRpcRequestBody,
@@ -142,6 +143,20 @@ describe('http api', function () {
       const body = (await response.json()) as JsonRpcErrorResponse;
       expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
       expect(body.error.message).toContain('JSON');
+    });
+
+    it('collapses unregistered JSON-RPC methods into one metric label', async function () {
+      const attackerMethod = `unknown-${crypto.randomUUID()}`;
+      const request = createJsonRpcRequest(crypto.randomUUID(), attackerMethod);
+
+      await fetch(baseUrl, {
+        method  : 'POST',
+        headers : { 'dwn-request': JSON.stringify(request) },
+      });
+
+      const metric = await requestCounter.get();
+      expect(metric.values.some((value) => value.labels.method === attackerMethod)).toBe(false);
+      expect(metric.values.some((value) => value.labels.method === 'unknown')).toBe(true);
     });
 
     it('responds with a structured 400 for malformed body-v1 framing', async function () {
@@ -1283,6 +1298,79 @@ describe('http api', function () {
         });
         expect(resp.headers.get('access-control-allow-origin')).toBe('https://app.example');
         expect(resp.headers.get('vary')).toBe('Origin');
+      } finally {
+        await api.close();
+      }
+    });
+  });
+
+  describe('/metrics', () => {
+    it('should be unavailable on a remote server without admin authentication', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        adminToken              : undefined,
+        localNodeProfileEnabled : false,
+        publicMetricsEnabled    : false,
+      });
+
+      try {
+        expect((await fetch(`${url}/metrics`)).status).toBe(404);
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should require the configured admin token on a remote server', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        adminToken              : 'metrics-secret',
+        localNodeProfileEnabled : false,
+        publicMetricsEnabled    : false,
+      });
+
+      try {
+        expect((await fetch(`${url}/metrics`)).status).toBe(401);
+        expect((await fetch(`${url}/metrics`, {
+          headers: { authorization: 'Bearer wrong-secret' },
+        })).status).toBe(401);
+        expect((await fetch(`${url}/metrics`, {
+          headers: { authorization: 'Bearer metrics-secret' },
+        })).status).toBe(200);
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should allow an explicit public metrics policy', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        adminToken              : 'metrics-secret',
+        localNodeProfileEnabled : false,
+        publicMetricsEnabled    : true,
+      });
+
+      try {
+        expect((await fetch(`${url}/metrics`)).status).toBe(200);
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should rely on local-node pairing authentication', async () => {
+      const localNodePairingManager = new LocalNodePairingManager();
+      const token = localNodePairingManager.createSession('https://paired.example');
+      const { api, url } = await createStartedHttpApiWithConfig({
+        adminToken              : undefined,
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+        publicMetricsEnabled    : false,
+      }, { localNodePairingManager });
+
+      try {
+        expect((await fetch(`${url}/metrics`)).status).toBe(401);
+        expect((await fetch(`${url}/metrics`, {
+          headers: {
+            authorization : `Bearer ${token}`,
+            origin        : 'https://paired.example',
+          },
+        })).status).toBe(200);
       } finally {
         await api.close();
       }

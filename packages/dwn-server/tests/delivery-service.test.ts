@@ -17,6 +17,11 @@ import { handleDwnApplyReplicatedMessage } from '../src/json-rpc-handlers/dwn/ap
 import { handleDwnProcessMessage } from '../src/json-rpc-handlers/dwn/process-message.js';
 import { createRecordsWriteMessage, randomBytes } from './utils.js';
 
+const openTestServerPolicy = {
+  allowOpenTenants          : true,
+  allowUnboundedTenantUsage : true,
+};
+
 /** Creates a fake DidResolver that resolves any DID to the given DWN endpoints. */
 function endpointResolver(did: string, endpoints: string[]): DidResolver {
   return {
@@ -439,6 +444,7 @@ describe('DeliveryService', () => {
       // Receiver: a live DwnServer on an ephemeral port.
       const receiverConfig: DwnServerConfig = {
         ...config,
+        ...openTestServerPolicy,
         port               : 0,
         forwardingEnabled  : false,
         deliveryEnabled    : false,
@@ -553,6 +559,7 @@ describe('DeliveryService', () => {
     it('should create delivery service when forwarding is enabled', async () => {
       const testConfig: DwnServerConfig = {
         ...config,
+        ...openTestServerPolicy,
         port               : 0,
         forwardingEnabled  : true,
         deliveryEnabled    : false,
@@ -577,6 +584,7 @@ describe('DeliveryService', () => {
     it('should create delivery service when delivery is enabled', async () => {
       const testConfig: DwnServerConfig = {
         ...config,
+        ...openTestServerPolicy,
         port               : 0,
         forwardingEnabled  : false,
         deliveryEnabled    : true,
@@ -599,6 +607,7 @@ describe('DeliveryService', () => {
     it('should not create delivery service when both forwarding and delivery are disabled', async () => {
       const testConfig: DwnServerConfig = {
         ...config,
+        ...openTestServerPolicy,
         port               : 0,
         forwardingEnabled  : false,
         deliveryEnabled    : false,

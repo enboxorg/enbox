@@ -28,6 +28,26 @@ describe('config', () => {
     });
   });
 
+  describe('parseSafeInteger()', () => {
+    it('should parse positive and non-negative safe integers', async () => {
+      const { parseSafeInteger } = await import('../src/config.js');
+
+      expect(parseSafeInteger('0', 'TEST_LIMIT', 0)).toBe(0);
+      expect(parseSafeInteger('1', 'TEST_LIMIT', 1)).toBe(1);
+      expect(parseSafeInteger('1000', 'TEST_LIMIT', 1)).toBe(1000);
+      expect(parseSafeInteger(String(Number.MAX_SAFE_INTEGER), 'TEST_LIMIT', 0)).toBe(Number.MAX_SAFE_INTEGER);
+    });
+
+    it('should enforce the configured minimum and safe-integer syntax', async () => {
+      const { parseSafeInteger } = await import('../src/config.js');
+
+      expect(() => parseSafeInteger('0', 'TEST_LIMIT', 1)).toThrow('TEST_LIMIT must be a positive');
+      for (const value of ['-1', '64x', '1.5', '', String(Number.MAX_SAFE_INTEGER + 1)]) {
+        expect(() => parseSafeInteger(value, 'TEST_LIMIT', 0)).toThrow('TEST_LIMIT must be a non-negative');
+      }
+    });
+  });
+
   // NOTE: The original version of these tests asserted exact default values
   // (e.g. `expect(config.port).toBe(3000)`, `expect(config.maxRecordDataSize).toBe(...)`)
   // which made them snapshot-style assertions that would break any time a default
@@ -45,14 +65,20 @@ describe('config', () => {
       expect(typeof config.maxRecordDataSize).toBe('number');
       expect(config.maxRecordDataSize).toBeGreaterThan(0);
       expect(typeof config.maxInFlight).toBe('number');
+      expect(config.webSocketMaxConnections).toBeGreaterThan(0);
+      expect(config.webSocketMaxConnectionsPerIp).toBeGreaterThan(0);
+      expect(config.webSocketMaxSubscriptionsPerConnection).toBeGreaterThan(0);
       expect(typeof config.webSocketSupport).toBe('boolean');
       expect(config.eventBusPluginPath === undefined || typeof config.eventBusPluginPath === 'string').toBe(true);
       expect(typeof config.logLevel).toBe('string');
       expect(typeof config.registrationProofOfWorkEnabled).toBe('boolean');
+      expect(typeof config.allowOpenTenants).toBe('boolean');
       expect(typeof config.adminActivityLogCapacity).toBe('number');
       expect(typeof config.adminMetricsUpdateIntervalSeconds).toBe('number');
+      expect(typeof config.publicMetricsEnabled).toBe('boolean');
       expect(typeof config.quotaMaxMessages).toBe('number');
       expect(typeof config.quotaMaxStorageBytes).toBe('number');
+      expect(typeof config.allowUnboundedTenantUsage).toBe('boolean');
       expect(typeof config.rateLimitRequestsPerSecond).toBe('number');
       expect(typeof config.rateLimitBurst).toBe('number');
       expect(typeof config.rateLimitTenantRequestsPerSecond).toBe('number');

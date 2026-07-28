@@ -1,9 +1,9 @@
+import type { JsonRpcId } from '@enbox/dwn-clients';
 import type { GenericMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
 import type {
   HandlerResponse,
   JsonRpcHandler,
 } from '../../lib/json-rpc-router.js';
-import type { JsonRpcId, JsonRpcSubscription } from '@enbox/dwn-clients';
 
 import log from 'loglevel';
 
@@ -19,10 +19,9 @@ import {
 
 /**
  * Validates subscription-specific preconditions for a `RecordsSubscribe` /
- * `MessagesSubscribe` request: the request must carry a subscription context,
- * subscriptions are only supported over WebSockets, and the subscription id
- * must not already be in use on this connection. Returns an error response
- * to short-circuit the caller, or `undefined` when all checks pass.
+ * `MessagesSubscribe` request: the request must carry a subscription context
+ * and subscriptions are only supported over WebSockets. Subscription IDs and
+ * capacity are reserved atomically by the owning socket before this handler.
  */
 function checkSubscriptionRequestPreconditions(
   context: Parameters<JsonRpcHandler>[1],
@@ -45,18 +44,6 @@ function checkSubscriptionRequestPreconditions(
       requestId,
       JsonRpcErrorCodes.InvalidParams,
       `subscriptions are not supported via ${context.transport}`
-    );
-    return { jsonRpcResponse };
-  }
-
-  // if this is a subscription request, we first check if the connection has a subscription with this Id
-  // we do this ahead of time to prevent opening a subscription on the dwn only to close it after attempting to add it to the subscription manager
-  // otherwise the subscription manager would throw an error that the Id is already in use and we would close the open subscription on the DWN.
-  if (context.subscriptionRequest !== undefined && context.socketConnection?.hasSubscription(context.subscriptionRequest.id)) {
-    const jsonRpcResponse = createJsonRpcErrorResponse(
-      requestId,
-      JsonRpcErrorCodes.InvalidParams,
-      `the subscribe id: ${context.subscriptionRequest.id} is in use by an active subscription`
     );
     return { jsonRpcResponse };
   }
@@ -103,7 +90,7 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
   dwnRequest,
   context,
 ) => {
-  const { dwn, dataStream, subscriptionRequest, socketConnection, transport } = context;
+  const { dwn, dataStream, subscriptionRequest, transport } = context;
   const { target, message } = dwnRequest.params as { target: string, message: GenericMessage };
   const requestId = dwnRequest.id ?? crypto.randomUUID();
 
@@ -156,14 +143,7 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
 
     if (subscriptionRequest && reply.subscription) {
       const { close } = reply.subscription;
-      // Subscribe messages return a close function to facilitate closing the subscription
-      // we add a reference to the close function for this subscription request to the socket connection.
-      // this will facilitate closing the subscription later.
-      const subscriptionReply: JsonRpcSubscription = {
-        id: subscriptionRequest.id,
-        close,
-      };
-      await socketConnection.addSubscription(subscriptionReply);
+      await subscriptionRequest.activate(close);
       delete reply.subscription.close; // delete the close method from the reply as it's not JSON serializable and has a held reference.
     }
 

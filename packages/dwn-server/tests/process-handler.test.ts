@@ -7,6 +7,13 @@ import { config } from '../src/config.js';
 import { DwnServer } from '../src/dwn-server.js';
 import { getTestDwn } from './test-dwn.js';
 
+const testServerConfig = {
+  ...config,
+  allowOpenTenants          : true,
+  allowUnboundedTenantUsage : true,
+  port                      : 0,
+};
+
 describe('Process Handlers', () => {
   let dwn: Dwn;
   let dwnServer: DwnServer;
@@ -14,7 +21,7 @@ describe('Process Handlers', () => {
 
   beforeEach(async () => {
     ({ dwn } = await getTestDwn());
-    dwnServer = new DwnServer({ dwn, config: { ...config, port: 0 } });
+    dwnServer = new DwnServer({ dwn, config: testServerConfig });
     await dwnServer.start();
     processExitStub = spyOn(process, 'exit').mockImplementation(() => {});
   });
@@ -70,7 +77,7 @@ describe('Process Handlers', () => {
     const existingUncaughtExceptionListeners = [...process.listeners('uncaughtException')];
     process.removeAllListeners('uncaughtException');
 
-    dwnServer = new DwnServer({ dwn, config: { ...config, port: 0 } });
+    dwnServer = new DwnServer({ dwn, config: testServerConfig });
     await dwnServer.start();
 
     const consoleErrorStub = spyOn(console, 'error').mockImplementation(() => {}); // Stub console.error

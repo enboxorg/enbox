@@ -139,6 +139,21 @@ describe('RegistrationStore', () => {
     });
   });
 
+  describe('hasFiniteQuota()', () => {
+    it('should distinguish inherited limits from finite tenant overrides', async () => {
+      expect(await store.hasFiniteQuota()).toBe(false);
+
+      await store.setQuota({ did: 'did:key:inherited', maxMessages: 0, maxStorageBytes: 0 });
+      expect(await store.hasFiniteQuota()).toBe(false);
+
+      await store.setQuota({ did: 'did:key:limited', maxMessages: 1, maxStorageBytes: 0 });
+      expect(await store.hasFiniteQuota()).toBe(true);
+
+      await store.deleteQuota('did:key:inherited');
+      await store.deleteQuota('did:key:limited');
+    });
+  });
+
   describe('listTenants() — with provider-auth columns', () => {
     it('should include provider-auth columns in listed results', async () => {
       await store.insertOrUpdateTenantRegistration({

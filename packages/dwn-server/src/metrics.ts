@@ -18,7 +18,7 @@ export const responseHistogram = new Histogram({
 });
 
 // ---------------------------------------------------------------------------
-// Enhanced gauges — updated periodically by AdminApi.startMetricsUpdater()
+// Store gauges — updated periodically by AdminApi.startMetricsUpdater()
 // ---------------------------------------------------------------------------
 
 /** Number of active (registered) tenants. */
@@ -39,6 +39,10 @@ export const totalDataBytes = new Gauge({
   help : 'total data storage bytes across all tenants',
 });
 
+// ---------------------------------------------------------------------------
+// WebSocket gauges — updated by connection and subscription lifecycle owners
+// ---------------------------------------------------------------------------
+
 /** Number of active WebSocket connections. */
 export const websocketConnections = new Gauge({
   name : 'dwn_websocket_connections',
@@ -54,6 +58,20 @@ export const websocketSubscriptions = new Gauge({
 // ---------------------------------------------------------------------------
 // Enhanced counters — incremented per-request
 // ---------------------------------------------------------------------------
+
+/** WebSocket connection attempts rejected before or during upgrade. */
+export const websocketConnectionRejections = new Counter({
+  name       : 'dwn_websocket_connection_rejections_total',
+  help       : 'websocket connection attempts rejected by admission controls',
+  labelNames : ['reason'],
+});
+
+/** WebSocket subscription opens rejected by per-connection admission controls. */
+export const websocketSubscriptionRejections = new Counter({
+  name       : 'dwn_websocket_subscription_rejections_total',
+  help       : 'websocket subscription opens rejected by admission controls',
+  labelNames : ['reason'],
+});
 
 /** Total data bytes written via RecordsWrite, labeled by interface + method. */
 export const requestDataBytesTotal = new Counter({

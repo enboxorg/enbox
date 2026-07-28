@@ -4,8 +4,6 @@ import { api } from '../lib/api';
 type ConfigFields = {
   logLevel                       : string;
   maxInFlight                    : number;
-  quotaMaxMessages               : number;
-  quotaMaxStorageBytes           : number;
   rateLimitRequestsPerSecond     : number;
   rateLimitBurst                 : number;
   rateLimitTenantRequestsPerSecond : number;
@@ -15,8 +13,6 @@ type ConfigFields = {
 const emptyConfig: ConfigFields = {
   logLevel                         : '',
   maxInFlight                      : 0,
-  quotaMaxMessages                 : 0,
-  quotaMaxStorageBytes             : 0,
   rateLimitRequestsPerSecond       : 0,
   rateLimitBurst                   : 0,
   rateLimitTenantRequestsPerSecond : 0,
@@ -40,13 +36,6 @@ const fieldGroups: FieldGroup[] = [
     fields : [
       { key: 'logLevel',    label: 'Log Level',     type: 'text' },
       { key: 'maxInFlight', label: 'Max In-Flight', type: 'number' },
-    ],
-  },
-  {
-    title  : 'Quotas',
-    fields : [
-      { key: 'quotaMaxMessages',     label: 'Max Messages',      type: 'number' },
-      { key: 'quotaMaxStorageBytes', label: 'Max Storage Bytes',  type: 'number' },
     ],
   },
   {
