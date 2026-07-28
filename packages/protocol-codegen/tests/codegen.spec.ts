@@ -3,8 +3,8 @@ import type { CliIo } from '../src/cli.js';
 import { generateProtocolModule } from '../src/codegen.js';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { CliUsageError, main, parseGenerateArgs, runGenerate } from '../src/cli.js';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { CliCheckError, CliUsageError, main, parseCheckArgs, parseGenerateArgs, runCheck, runGenerate } from '../src/cli.js';
+import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { resolveAllSchemas, resolveSchema } from '../src/schema-resolver.js';
 
 // ---------------------------------------------------------------------------
@@ -110,6 +110,39 @@ describe('protocol-codegen CLI', () => {
     });
   });
 
+  it('should parse check arguments and require an output path', () => {
+    const memory = createMemoryIo();
+    const result = parseCheckArgs([
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+      '--output', join(TMP_DIR, 'todo.generated.ts'),
+      '--allow-unresolved',
+    ], memory.io);
+
+    expect(result).toEqual({
+      allowUnresolvedJsonSchemas : true,
+      definition                 : join(FIXTURES_DIR, 'todo-definition.json'),
+      name                       : 'Todo',
+      output                     : join(TMP_DIR, 'todo.generated.ts'),
+      schemas                    : SCHEMAS_DIR,
+    });
+    expect(() => parseCheckArgs([
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+    ], memory.io)).toThrow('Missing required argument: output');
+  });
+
+  it('should parse check help without requiring an output path', () => {
+    const memory = createMemoryIo();
+
+    const result = parseCheckArgs(['--help'], memory.io);
+
+    expect(result).toBeUndefined();
+    expect(memory.stdout()).toContain('protocol-codegen check [options]');
+  });
+
   it('should throw on invalid generate options', () => {
     const memory = createMemoryIo();
 
@@ -198,6 +231,55 @@ describe('protocol-codegen CLI', () => {
     }, memory.io)).rejects.toThrow('output directory not found');
   });
 
+  it('should allow paths whose safe in-root segments begin with two dots', async () => {
+    const nestedDir = join(TMP_DIR, '..metadata');
+    const schemasDir = join(nestedDir, 'schemas');
+    const definition = join(nestedDir, 'definition.json');
+    const output = join(nestedDir, 'generated.ts');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(definition, JSON.stringify({
+      protocol  : 'https://example.com/protocols/empty',
+      published : true,
+      types     : {},
+      structure : {},
+    }), 'utf-8');
+
+    await runGenerate({
+      definition : '..metadata/definition.json',
+      name       : 'Empty',
+      output     : '..metadata/generated.ts',
+      schemas    : '..metadata/schemas',
+    }, createMemoryIo(TMP_DIR).io);
+
+    expect(await readFile(output, 'utf-8')).toContain('export const EmptyDefinition');
+  });
+
+  it('should reject final-component output symlinks for generate and check', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    const outsideOutput = join(PACKAGE_DIR, '..', '.tmp-codegen-outside.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await writeFile(outsideOutput, 'preserve me\n', 'utf-8');
+    await symlink(outsideOutput, output);
+
+    try {
+      await expect(runGenerate({
+        definition : join(FIXTURES_DIR, 'todo-definition.json'),
+        name       : 'Todo',
+        output,
+        schemas    : SCHEMAS_DIR,
+      }, createMemoryIo().io)).rejects.toThrow('output path must not be a symbolic link');
+      await expect(runCheck({
+        definition : join(FIXTURES_DIR, 'todo-definition.json'),
+        name       : 'Todo',
+        output,
+        schemas    : SCHEMAS_DIR,
+      }, createMemoryIo().io)).rejects.toThrow('output path must not be a symbolic link');
+      expect(await readFile(outsideOutput, 'utf-8')).toBe('preserve me\n');
+    } finally {
+      await rm(outsideOutput, { force: true });
+    }
+  });
+
   it('should generate TypeScript in process to stdout', async () => {
     const memory = createMemoryIo();
 
@@ -226,6 +308,90 @@ describe('protocol-codegen CLI', () => {
     const generated = await readFile(output, 'utf-8');
     expect(generated).toContain('export interface ListData');
     expect(memory.stderr()).toContain(`Wrote ${output}`);
+  });
+
+  it('should check fresh output without writing or printing generated source', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, createMemoryIo().io);
+    const beforeContent = await readFile(output, 'utf-8');
+    const beforeStats = await stat(output);
+    const memory = createMemoryIo();
+
+    await runCheck({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, memory.io);
+
+    const afterStats = await stat(output);
+    expect(memory.stdout()).toBe('');
+    expect(memory.stderr()).toContain(`Up to date: ${output}`);
+    expect(await readFile(output, 'utf-8')).toBe(beforeContent);
+    expect(afterStats.mtimeMs).toBe(beforeStats.mtimeMs);
+  });
+
+  it('should reject stale output without modifying it', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await writeFile(output, 'stale output\n', 'utf-8');
+    const beforeStats = await stat(output);
+
+    await expect(runCheck({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, createMemoryIo().io)).rejects.toThrow(CliCheckError);
+
+    const afterStats = await stat(output);
+    expect(await readFile(output, 'utf-8')).toBe('stale output\n');
+    expect(afterStats.mtimeMs).toBe(beforeStats.mtimeMs);
+  });
+
+  it('should reject missing output without creating it', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+
+    await expect(runCheck({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, createMemoryIo().io)).rejects.toThrow(`Generated output is missing: ${output}`);
+    await expect(stat(output)).rejects.toThrow();
+  });
+
+  it('should leave existing output untouched when strict generation fails', async () => {
+    const definition = join(TMP_DIR, 'definition.json');
+    const schemas = join(TMP_DIR, 'schemas');
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(schemas, { recursive: true });
+    await writeFile(definition, JSON.stringify({
+      protocol  : 'https://example.com/protocols/strict',
+      published : true,
+      types     : { note: { dataFormats: ['application/json'] } },
+      structure : { note: {} },
+    }), 'utf-8');
+    await writeFile(output, 'preserve me\n', 'utf-8');
+    const beforeStats = await stat(output);
+
+    await expect(runCheck({
+      definition,
+      name: 'Strict',
+      output,
+      schemas,
+    }, createMemoryIo().io)).rejects.toThrow('type \'note\' must declare a schema URI');
+
+    const afterStats = await stat(output);
+    expect(await readFile(output, 'utf-8')).toBe('preserve me\n');
+    expect(afterStats.mtimeMs).toBe(beforeStats.mtimeMs);
   });
 
   it('should route generate help through main', async () => {
@@ -270,6 +436,30 @@ describe('protocol-codegen CLI', () => {
     expect(result.stdout).toContain('export interface ListData');
     expect(result.stderr).toContain('+ list: local-type-name');
   });
+
+  it('should report check success and failure through process exit codes', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    const commonArgs = [
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+      '--output', output,
+    ];
+    const generated = await runCli(['generate', ...commonArgs]);
+    expect(generated.exitCode).toBe(0);
+
+    const fresh = await runCli(['check', ...commonArgs]);
+    expect(fresh.exitCode).toBe(0);
+    expect(fresh.stdout).toBe('');
+    expect(fresh.stderr).toContain('Up to date:');
+
+    await writeFile(output, 'stale\n', 'utf-8');
+    const stale = await runCli(['check', ...commonArgs]);
+    expect(stale.exitCode).toBe(1);
+    expect(stale.stderr).toContain('Generated output is stale:');
+    expect(await readFile(output, 'utf-8')).toBe('stale\n');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -294,27 +484,19 @@ describe('resolveSchema()', () => {
     expect(result.schema!.title).toBe('ListData');
   });
 
-  it('should resolve via HTTP fetch (strategy 3) when local files are missing', async () => {
-    // Serve a JSON Schema from a local HTTP server.
-    const httpSchema = JSON.stringify({
-      $schema    : 'http://json-schema.org/draft-07/schema#',
-      type       : 'object',
-      properties : { label: { type: 'string' } },
-      required   : ['label'],
-    });
-
+  it('should not fetch schema URIs when local files are missing', async () => {
+    let requestCount = 0;
     const server = Bun.serve({
       port  : 0,
-      fetch : () => new Response(httpSchema, {
-        headers: { 'content-type': 'application/json' },
-      }),
+      fetch : (): Response => {
+        requestCount++;
+        return Response.json({ type: 'object' });
+      },
     });
 
     try {
-      // Use a schemas dir with no matching files so local strategies fail.
-      const emptyDir = join(FIXTURES_DIR, 'schemas-empty');
-      const { mkdirSync, existsSync: dirExists } = await import('node:fs');
-      if (!dirExists(emptyDir)) { mkdirSync(emptyDir, { recursive: true }); }
+      const emptyDir = join(TMP_DIR, 'schemas');
+      await mkdir(emptyDir, { recursive: true });
 
       const result = await resolveSchema(
         'notfound',
@@ -322,13 +504,47 @@ describe('resolveSchema()', () => {
         emptyDir,
       );
 
-      expect(result.source).toBe('http');
-      expect(result.schema).toBeDefined();
-      expect(result.schema!.type).toBe('object');
-      expect(result.schema!.required).toEqual(['label']);
+      expect(result.source).toBe('unresolved');
+      expect(result.schema).toBeUndefined();
+      expect(requestCount).toBe(0);
     } finally {
       server.stop();
+      await rm(TMP_DIR, { force: true, recursive: true });
     }
+  });
+
+  it('should reject local schema paths outside the canonical schemas directory', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    const nestedDir = join(schemasDir, 'todo');
+    const outsideSchema = join(TMP_DIR, 'outside.json');
+    await mkdir(nestedDir, { recursive: true });
+    await writeFile(outsideSchema, '{}', 'utf-8');
+    await symlink(outsideSchema, join(nestedDir, 'list.json'));
+
+    try {
+      await expect(resolveSchema(
+        'missing',
+        'https://example.com/schemas/todo/list',
+        schemasDir,
+      )).rejects.toThrow('Schema path must be within the schemas directory');
+    } finally {
+      await rm(TMP_DIR, { force: true, recursive: true });
+    }
+  });
+
+  it('should allow safe schema filenames beginning with two dots', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, '..metadata.json'), JSON.stringify({ type: 'object' }), 'utf-8');
+
+    const result = await resolveSchema(
+      '..metadata',
+      'https://example.com/schemas/metadata',
+      schemasDir,
+    );
+
+    expect(result.source).toBe('local-type-name');
+    expect(result.schema).toEqual({ type: 'object' });
   });
 
   it('should return unresolved when no schema file exists and URI is not fetchable', async () => {
@@ -340,6 +556,29 @@ describe('resolveSchema()', () => {
 
     expect(result.source).toBe('unresolved');
     expect(result.schema).toBeUndefined();
+  });
+
+  it('should reject schema files whose JSON root is not an object', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    const cases = [
+      { expected: 'found null', value: null },
+      { expected: 'found array', value: [] },
+      { expected: 'found number', value: 42 },
+    ];
+
+    try {
+      for (const { expected, value } of cases) {
+        await writeFile(join(schemasDir, 'invalid.json'), JSON.stringify(value), 'utf-8');
+        await expect(resolveSchema(
+          'invalid',
+          'https://example.com/schemas/invalid',
+          schemasDir,
+        )).rejects.toThrow(`must contain a non-null object (${expected})`);
+      }
+    } finally {
+      await rm(TMP_DIR, { force: true, recursive: true });
+    }
   });
 });
 
@@ -435,7 +674,352 @@ describe('generateProtocolModule()', () => {
     expect(code).toContain('dueDate?: string');
   });
 
-  it('should emit unknown for unresolved schema types', async () => {
+  it('should require the local schema $id to match even when unresolved schemas are allowed', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id                  : 'https://example.com/schemas/wrong',
+      type                 : 'object',
+      additionalProperties : false,
+    }), 'utf-8');
+
+    const definition = {
+      protocol  : 'https://example.com/protocols/schema-id',
+      published : true,
+      types     : {
+        note: {
+          schema      : 'https://example.com/schemas/note',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: { note: {} },
+    };
+
+    await expect(generateProtocolModule(definition, {
+      allowUnresolvedJsonSchemas : true,
+      schemasDir,
+      protocolName               : 'SchemaId',
+    })).rejects.toThrow(
+      'type \'note\' schema $id must equal \'https://example.com/schemas/note\' ' +
+      '(found "https://example.com/schemas/wrong")',
+    );
+  });
+
+  it('should reject a reachable local schema without an $id', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({ type: 'object' }), 'utf-8');
+
+    const definition = {
+      protocol  : 'https://example.com/protocols/schema-id',
+      published : true,
+      types     : {
+        note: {
+          schema      : 'https://example.com/schemas/note',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: { note: {} },
+    };
+
+    await expect(generateProtocolModule(definition, {
+      schemasDir,
+      protocolName: 'SchemaId',
+    })).rejects.toThrow('(found undefined)');
+  });
+
+  it('should reject a reachable local schema with a non-string $id', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id  : 42,
+      type : 'object',
+    }), 'utf-8');
+
+    const definition = {
+      protocol  : 'https://example.com/protocols/schema-id',
+      published : true,
+      types     : {
+        note: {
+          schema      : 'https://example.com/schemas/note',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: { note: {} },
+    };
+
+    await expect(generateProtocolModule(definition, {
+      schemasDir,
+      protocolName: 'SchemaId',
+    })).rejects.toThrow(
+      'type \'note\' schema must declare a string $id equal to \'https://example.com/schemas/note\' (found 42)',
+    );
+  });
+
+  it('should normalize a schema title without mutating the resolved schema', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    const schemaUri = 'https://example.com/schemas/note';
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id                  : schemaUri,
+      title                : 'WrongName',
+      type                 : 'object',
+      properties           : { body: { type: 'string' } },
+      additionalProperties : false,
+    }), 'utf-8');
+
+    const { code, resolutions } = await generateProtocolModule({
+      protocol  : 'https://example.com/protocols/title',
+      published : true,
+      types     : {
+        note: { schema: schemaUri, dataFormats: ['application/json'] },
+      },
+      structure: { note: {} },
+    }, {
+      schemasDir,
+      protocolName: 'Title',
+    });
+
+    expect(code).toContain('export interface NoteData');
+    expect(code).not.toContain('export interface WrongName');
+    expect(resolutions.get('note')!.schema!.title).toBe('WrongName');
+  });
+
+  it('should reject nested remote schema refs without fetching them', async () => {
+    let requestCount = 0;
+    const server = Bun.serve({
+      port  : 0,
+      fetch : (): Response => {
+        requestCount++;
+        return Response.json({ type: 'string' });
+      },
+    });
+
+    try {
+      const schemasDir = join(TMP_DIR, 'schemas');
+      const schemaUri = 'https://example.com/schemas/note';
+      const remoteRef = `http://localhost:${server.port}/external.json#/definitions/value`;
+      await mkdir(schemasDir, { recursive: true });
+      await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+        $id        : schemaUri,
+        type       : 'object',
+        properties : {
+          nested: {
+            type       : 'object',
+            properties : { value: { $ref: remoteRef } },
+          },
+        },
+      }), 'utf-8');
+
+      await expect(generateProtocolModule({
+        protocol  : 'https://example.com/protocols/refs',
+        published : true,
+        types     : {
+          note: { schema: schemaUri, dataFormats: ['application/json'] },
+        },
+        structure: { note: {} },
+      }, {
+        schemasDir,
+        protocolName: 'Refs',
+      })).rejects.toThrow(
+        `schema $ref at '#/properties/nested/properties/value/$ref' must be a local fragment beginning with '#' ` +
+        `(found ${JSON.stringify(remoteRef)})`,
+      );
+      expect(requestCount).toBe(0);
+    } finally {
+      server.stop();
+    }
+  });
+
+  it('should reject file-system schema refs but allow local fragments', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    const schemaUri = 'https://example.com/schemas/note';
+    await mkdir(schemasDir, { recursive: true });
+    const definition = {
+      protocol  : 'https://example.com/protocols/refs',
+      published : true,
+      types     : {
+        note: { schema: schemaUri, dataFormats: ['application/json'] },
+      },
+      structure: { note: {} },
+    };
+
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id  : schemaUri,
+      $ref : './external.json#/$defs/value',
+    }), 'utf-8');
+    await expect(generateProtocolModule(definition, {
+      schemasDir,
+      protocolName: 'Refs',
+    })).rejects.toThrow('must be a local fragment beginning with \'#\' (found "./external.json#/$defs/value")');
+
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id   : schemaUri,
+      $defs : {
+        value: {
+          type       : 'object',
+          properties : { body: { type: 'string' } },
+        },
+      },
+      $ref: '#/$defs/value',
+    }), 'utf-8');
+    const { code } = await generateProtocolModule(definition, {
+      schemasDir,
+      protocolName: 'Refs',
+    });
+    expect(code).toContain('export interface NoteData');
+    expect(code).toContain('body?: string');
+  });
+
+  it('should allow literal $ref property and definition names without external resolution', async () => {
+    let requestCount = 0;
+    const server = Bun.serve({
+      port  : 0,
+      fetch : (): Response => {
+        requestCount++;
+        return Response.json({ type: 'string' });
+      },
+    });
+
+    try {
+      const schemasDir = join(TMP_DIR, 'schemas');
+      const schemaUri = 'https://example.com/schemas/literal-ref';
+      await mkdir(schemasDir, { recursive: true });
+      await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+        $id     : schemaUri,
+        $defs   : { $ref: { type: 'number' } },
+        type    : 'object',
+        default : {
+          $ref: `http://localhost:${server.port}/literal-value`,
+        },
+        properties: {
+          $ref: { type: 'string' },
+        },
+      }), 'utf-8');
+
+      const { code } = await generateProtocolModule({
+        protocol  : 'https://example.com/protocols/literal-ref',
+        published : true,
+        types     : {
+          note: { schema: schemaUri, dataFormats: ['application/json'] },
+        },
+        structure: { note: {} },
+      }, {
+        schemasDir,
+        protocolName: 'LiteralRef',
+      });
+
+      expect(code).toContain('$ref?: string');
+      expect(requestCount).toBe(0);
+    } finally {
+      server.stop();
+    }
+  });
+
+  it('should preserve local fragment-shaped literal data while dereferencing schema refs', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    const schemaUri = 'https://example.com/schemas/literal-local-ref';
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id        : schemaUri,
+      $defs      : { value: { type: 'string' } },
+      type       : 'object',
+      properties : {
+        actual  : { $ref: '#/$defs/value' },
+        literal : {
+          const    : { $ref: '#/$defs/value' },
+          default  : { $ref: '#/missing-default' },
+          examples : [{ $ref: '#/missing-example' }],
+        },
+      },
+    }), 'utf-8');
+
+    const { code } = await generateProtocolModule({
+      protocol  : 'https://example.com/protocols/literal-local-ref',
+      published : true,
+      types     : {
+        note: { schema: schemaUri, dataFormats: ['application/json'] },
+      },
+      structure: { note: {} },
+    }, {
+      schemasDir,
+      protocolName: 'LiteralLocalRef',
+    });
+
+    expect(code).toContain('export type Value = string');
+    expect(code).toContain('actual?: Value');
+    expect(code).toContain('literal?: {"$ref":"#/$defs/value"}');
+    expect(code).not.toContain('literal?: {"type":"string"}');
+  });
+
+  it('should reject invalid and colliding generated identifiers', async () => {
+    const emptyDefinition = {
+      protocol  : 'https://example.com/protocols/names',
+      published : true,
+      types     : {},
+      structure : {},
+    };
+    await expect(generateProtocolModule(emptyDefinition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'invalid-name',
+    })).rejects.toThrow('Protocol name \'invalid-name\' must be a PascalCase TypeScript identifier');
+
+    await expect(generateProtocolModule({
+      ...emptyDefinition,
+      types: {
+        'foo-bar' : { dataFormats: ['text/plain'] },
+        foo_bar   : { dataFormats: ['text/plain'] },
+      },
+      structure: { 'foo-bar': {}, foo_bar: {} },
+    }, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'Names',
+    })).rejects.toThrow('\'foo-bar\', \'foo_bar\' all generate the identifier \'FooBarData\'');
+
+    await expect(generateProtocolModule({
+      ...emptyDefinition,
+      types     : { '123-note': { dataFormats: ['text/plain'] } },
+      structure : { '123-note': {} },
+    }, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'Names',
+    })).rejects.toThrow('Protocol type \'123-note\' cannot be converted to a valid TypeScript identifier');
+  });
+
+  it('should generate byte-identical output for identical inputs', async () => {
+    const definition = await loadDefinition();
+    const options = { schemasDir: SCHEMAS_DIR, protocolName: 'Todo' };
+
+    const first = await generateProtocolModule(definition as any, options);
+    const second = await generateProtocolModule(definition as any, options);
+
+    expect(second.code).toBe(first.code);
+  });
+
+  it('should reject a reachable JSON type with an unresolved local schema', async () => {
+    const definition = {
+      protocol  : 'https://example.com/protocols/test',
+      published : true,
+      types     : {
+        unknown_type: {
+          schema      : 'https://example.com/schemas/nonexistent',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: {
+        unknown_type: {},
+      },
+    };
+
+    await expect(generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'Test',
+    })).rejects.toThrow(
+      'type \'unknown_type\' has no local schema for \'https://example.com/schemas/nonexistent\'',
+    );
+  });
+
+  it('should emit unknown for an unresolved schema only when explicitly allowed', async () => {
     const definition = {
       protocol  : 'https://example.com/protocols/test',
       published : true,
@@ -451,12 +1035,70 @@ describe('generateProtocolModule()', () => {
     };
 
     const { code } = await generateProtocolModule(definition, {
-      schemasDir   : SCHEMAS_DIR,
-      protocolName : 'Test',
+      allowUnresolvedJsonSchemas : true,
+      schemasDir                 : SCHEMAS_DIR,
+      protocolName               : 'Test',
     });
 
     expect(code).toContain('export type UnknownTypeData = unknown;');
     expect(code).toContain('unknown_type: recordCodecs.json<UnknownTypeData>(),');
+  });
+
+  it('should reject a reachable JSON type without a schema URI', async () => {
+    const definition = {
+      protocol  : 'https://example.com/protocols/missing-schema-uri',
+      published : true,
+      types     : {
+        note: { dataFormats: ['application/json'] },
+      },
+      structure: { note: {} },
+    };
+
+    await expect(generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'MissingSchemaUri',
+    })).rejects.toThrow('type \'note\' must declare a schema URI');
+  });
+
+  it('should recognize only application/json and valid application structured JSON suffixes', async () => {
+    const validJsonFormats = [
+      'application/json',
+      'Application/JSON; charset=UTF-8',
+      'application/problem+json',
+      'APPLICATION/VND.EXAMPLE+JSON ; charset=utf-8',
+    ];
+    for (const dataFormat of validJsonFormats) {
+      await expect(generateProtocolModule({
+        protocol  : 'https://example.com/protocols/json-media-type',
+        published : true,
+        types     : { note: { dataFormats: [dataFormat] } },
+        structure : { note: {} },
+      }, {
+        schemasDir   : SCHEMAS_DIR,
+        protocolName : 'JsonMediaType',
+      })).rejects.toThrow('type \'note\' must declare a schema URI');
+    }
+
+    const nonJsonFormats = [
+      'text/json',
+      'text/problem+json',
+      'foo/application/json',
+      'application/+json',
+      'application/json-seq',
+    ];
+    for (const dataFormat of nonJsonFormats) {
+      const { code, resolutions } = await generateProtocolModule({
+        protocol  : 'https://example.com/protocols/non-json-media-type',
+        published : true,
+        types     : { note: { dataFormats: [dataFormat] } },
+        structure : { note: {} },
+      }, {
+        schemasDir   : SCHEMAS_DIR,
+        protocolName : 'NonJsonMediaType',
+      });
+      expect(code).not.toContain('recordCodecs.json');
+      expect(resolutions.size).toBe(0);
+    }
   });
 
   it('should emit Blob for variable binary formats', async () => {
@@ -521,8 +1163,9 @@ describe('generateProtocolModule()', () => {
     };
 
     const { code } = await generateProtocolModule(definition, {
-      schemasDir   : SCHEMAS_DIR,
-      protocolName : 'Formats',
+      allowUnresolvedJsonSchemas : true,
+      schemasDir                 : SCHEMAS_DIR,
+      protocolName               : 'Formats',
     });
 
     expect(code).toContain('export type JsonValueData = unknown;');
@@ -566,7 +1209,7 @@ describe('generateProtocolModule()', () => {
       },
     };
 
-    const { code } = await generateProtocolModule(definition, {
+    const { code, resolutions } = await generateProtocolModule(definition, {
       schemasDir   : SCHEMAS_DIR,
       protocolName : 'SchemaFormats',
     });
@@ -577,6 +1220,7 @@ describe('generateProtocolModule()', () => {
     expect(code).toContain('label  : recordCodecs.text(),');
     expect(code).toContain('binary : recordCodecs.bytes("application/cbor"),');
     expect(code).toContain('mixed  : recordCodecs.blob(),');
+    expect(resolutions.size).toBe(0);
   });
 
   it('should reject $ref paths until referenced protocol metadata can be supplied', async () => {
@@ -608,7 +1252,7 @@ describe('generateProtocolModule()', () => {
       uses      : { social: 'https://example.com/protocols/social' },
       types     : {
         note: {
-          dataFormats        : ['application/json'],
+          dataFormats        : ['text/plain'],
           encryptionRequired : true,
         },
       },
@@ -678,24 +1322,32 @@ describe('generateProtocolModule()', () => {
   });
 
   it('should emit codecs only for types reachable through the structure', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'unused.json'), 'not valid JSON', 'utf-8');
+
     const definition = {
       protocol  : 'https://example.com/protocols/reachable',
       published : true,
       types     : {
-        note   : { dataFormats: ['application/json'] },
-        unused : {},
+        note   : { dataFormats: ['text/plain'] },
+        unused : {
+          schema      : 'https://example.com/schemas/nonexistent',
+          dataFormats : ['application/json'],
+        },
       },
       structure: { note: {} },
     };
 
-    const { code } = await generateProtocolModule(definition, {
-      schemasDir   : SCHEMAS_DIR,
-      protocolName : 'Reachable',
+    const { code, resolutions } = await generateProtocolModule(definition, {
+      schemasDir,
+      protocolName: 'Reachable',
     });
 
     expect(code).toContain('export type UnusedData = unknown;');
-    expect(code).toContain('export const ReachableCodecs = {\n  note: recordCodecs.json<NoteData>(),\n} as const;');
+    expect(code).toContain('export const ReachableCodecs = {\n  note: recordCodecs.text(),\n} as const;');
     expect(code).not.toContain('unused: recordCodecs.');
+    expect(resolutions.has('unused')).toBe(false);
   });
 
   it('should support custom banner comment', async () => {
@@ -749,8 +1401,9 @@ describe('generateProtocolModule()', () => {
     };
 
     const { code, resolutions } = await generateProtocolModule(definition, {
-      schemasDir   : SCHEMAS_DIR,
-      protocolName : 'Mixed',
+      allowUnresolvedJsonSchemas : true,
+      schemasDir                 : SCHEMAS_DIR,
+      protocolName               : 'Mixed',
     });
 
     // list — resolved from schema
@@ -766,28 +1419,19 @@ describe('generateProtocolModule()', () => {
     expect(code).toContain('photo   : recordCodecs.bytes("image/png"),');
   });
 
-  it('should generate types from HTTP-resolved schemas', async () => {
-    // Serve a schema without a `title` field so json-schema-to-typescript
-    // uses the type name we provide (WidgetData).
-    const httpSchema = JSON.stringify({
-      $schema              : 'http://json-schema.org/draft-07/schema#',
-      type                 : 'object',
-      properties           : { label: { type: 'string' }, count: { type: 'number' } },
-      required             : ['label'],
-      additionalProperties : false,
-    });
-
+  it('should not fetch remote schemas during generation', async () => {
+    let requestCount = 0;
     const server = Bun.serve({
       port  : 0,
-      fetch : () => new Response(httpSchema, {
-        headers: { 'content-type': 'application/json' },
-      }),
+      fetch : (): Response => {
+        requestCount++;
+        return Response.json({ type: 'object' });
+      },
     });
 
     try {
-      const emptyDir = join(FIXTURES_DIR, 'schemas-empty');
-      const { mkdirSync, existsSync: dirExists } = await import('node:fs');
-      if (!dirExists(emptyDir)) { mkdirSync(emptyDir, { recursive: true }); }
+      const emptyDir = join(TMP_DIR, 'schemas');
+      await mkdir(emptyDir, { recursive: true });
 
       const definition = {
         protocol  : 'https://example.com/protocols/http-test',
@@ -804,21 +1448,18 @@ describe('generateProtocolModule()', () => {
       };
 
       const { code, resolutions } = await generateProtocolModule(definition, {
-        schemasDir   : emptyDir,
-        protocolName : 'HttpTest',
+        allowUnresolvedJsonSchemas : true,
+        schemasDir                 : emptyDir,
+        protocolName               : 'HttpTest',
       });
 
-      // Schema should have been resolved via HTTP.
-      expect(resolutions.get('widget')!.source).toBe('http');
-
-      // Generated code should contain the interface from the HTTP schema.
-      expect(code).toContain('export interface WidgetData');
-      expect(code).toContain('label: string');
-      expect(code).toContain('count?: number');
+      expect(resolutions.get('widget')!.source).toBe('unresolved');
+      expect(code).toContain('export type WidgetData = unknown;');
       expect(code).toContain('widget: recordCodecs.json<WidgetData>(),');
-      expect(code).toContain('export const HttpTestProtocol = defineProtocol(HttpTestDefinition, HttpTestCodecs);');
+      expect(requestCount).toBe(0);
     } finally {
       server.stop();
+      await rm(TMP_DIR, { force: true, recursive: true });
     }
   });
 
@@ -828,8 +1469,7 @@ describe('generateProtocolModule()', () => {
       published : true,
       types     : {
         'private-note': {
-          schema      : 'https://example.com/schemas/nonexistent',
-          dataFormats : ['application/json'],
+          dataFormats: ['text/plain'],
         },
         hero_image: {
           dataFormats: ['image/png'],
@@ -848,7 +1488,7 @@ describe('generateProtocolModule()', () => {
 
     expect(code).toContain('PrivateNoteData');
     expect(code).toContain('HeroImageData');
-    expect(code).toContain('"private-note" : recordCodecs.json<PrivateNoteData>(),');
+    expect(code).toContain('"private-note" : recordCodecs.text(),');
     expect(code).toContain('hero_image     : recordCodecs.bytes("image/png"),');
   });
 });

@@ -9,7 +9,8 @@ Given a protocol definition JSON file and a directory of JSON Schema files, it g
 - TypeScript interfaces for each protocol type (via [`json-schema-to-typescript`](https://github.com/bcherny/json-schema-to-typescript))
 - Runtime codecs for JSON, text, bytes, and variable-MIME `Blob` data
 - The complete protocol definition and a ready-to-use `defineProtocol()` result
-- Unresolved schemas emitted as `unknown` with a doc comment
+- Strict, local JSON Schema resolution for every reachable JSON payload type
+- Deterministic generated-output checks for CI
 
 ## Installation
 
@@ -32,6 +33,35 @@ bunx @enbox/protocol-codegen generate \
   --output ./my-protocol.generated.ts
 ```
 
+Generation is strict by default. Every protocol type reachable through the
+protocol structure that declares exactly one `application/json` or
+`application/*+json` MIME format must declare a schema URI and have a matching
+local JSON Schema. The schema document must be a JSON object, its `$id` must be
+a string that exactly equals the URI in the protocol definition, and every
+`$ref` must be an in-document fragment beginning with `#`.
+
+Use `check` in CI to verify committed output without modifying it:
+
+```bash
+bunx @enbox/protocol-codegen check \
+  --definition ./my-protocol.json \
+  --schemas ./schemas/ \
+  --name MyProtocol \
+  --output ./my-protocol.generated.ts
+```
+
+For example, package scripts can keep generation explicit and make freshness
+part of the normal test workflow:
+
+```json
+{
+  "scripts": {
+    "generate:protocol": "protocol-codegen generate -d protocol.json -s schemas -n MyProtocol -o src/protocol.generated.ts",
+    "check:protocol": "protocol-codegen check -d protocol.json -s schemas -n MyProtocol -o src/protocol.generated.ts"
+  }
+}
+```
+
 ### Options
 
 | Flag | Alias | Required | Description |
@@ -40,6 +70,13 @@ bunx @enbox/protocol-codegen generate \
 | `--schemas` | `-s` | yes | Directory containing `.json` schema files |
 | `--name` | `-n` | yes | PascalCase name for the protocol (e.g. `Inventory`) |
 | `--output` | `-o` | no | Output file path. If omitted, prints to stdout |
+| `--allow-unresolved` | | no | Explicitly emit `unknown` for reachable JSON types whose local schema is missing |
+
+The `check` command accepts the same options but requires `--output`. It
+generates in memory, compares the exact UTF-8 output, and exits nonzero when
+the file is missing or stale. It never creates or updates the output. Both
+commands reject an output path whose final component is a symbolic link and
+open output files with no-follow semantics.
 
 ### Output
 
@@ -52,11 +89,17 @@ The CLI reports resolution results to stderr and writes generated code to the ou
 Wrote ./inventory.generated.ts
 ```
 
-`+` means the schema was successfully resolved; `?` means it was unresolved (the type will be `unknown`).
+`+` means the schema was successfully resolved. `?` is only possible with
+`--allow-unresolved` and means the JSON data type was emitted as `unknown`.
 
 ## Schema Resolution
 
-The resolver uses a 3-strategy cascade to find JSON Schema files for each protocol type:
+The resolver uses two local strategies to find JSON Schema files for reachable
+types with exactly one `application/json` or valid `application/*+json` MIME
+format. Matching is case-insensitive and ignores MIME parameters. Text,
+binary, mixed-format, and unreachable types are not resolved as JSON Schema
+inputs; in particular, an invalid or missing schema for an unreachable
+declaration does not affect generation.
 
 ### Strategy 1: Local file by type name
 
@@ -79,10 +122,6 @@ schemas/inventory/product.json
 
 This is how `@enbox/protocols` organizes its schemas -- matching the URI structure exactly.
 
-### Strategy 3: HTTP fetch
-
-If neither local strategy resolves, the tool fetches the schema URI directly via HTTP. This supports protocols whose schemas are hosted at their declared URIs.
-
 ### Resolution result
 
 Each type is reported with its resolution source:
@@ -91,8 +130,14 @@ Each type is reported with its resolution source:
 |--------|-------------|
 | `local-type-name` | Found at `<schemasDir>/<typeName>.json` |
 | `local-uri-path` | Found at `<schemasDir>/<uri-path>.json` |
-| `http` | Fetched from the schema URI via HTTP |
-| `unresolved` | No schema found -- type emitted as `unknown` |
+| `unresolved` | No local schema found; strict generation fails unless explicitly allowed |
+
+Network resolution is deliberately unavailable: an unlocked remote response
+would make generation depend on mutable external state. Vendor schemas in the
+repository and bind each one to its definition URI with a string `$id`. Schema
+documents must be JSON objects. External URI and file-system `$ref` values are
+also rejected before compilation; compose a vendored schema with local
+fragment references such as `#/$defs/item` instead.
 
 ## Example
 
@@ -130,8 +175,8 @@ And these schema files:
 ```
 schemas/
   todo/
-    list.json     # { "type": "object", "properties": { "name": { "type": "string" } }, ... }
-    item.json     # { "type": "object", "properties": { "title": { "type": "string" }, "done": { "type": "boolean" } }, ... }
+    list.json     # { "$id": "https://example.com/schemas/todo/list", "type": "object", ... }
+    item.json     # { "$id": "https://example.com/schemas/todo/item", "type": "object", ... }
 ```
 
 Running:
@@ -261,12 +306,15 @@ const { code, resolutions } = await generateProtocolModule(definition, {
 | `options.schemasDir` | `string` | Directory containing `.json` schema files |
 | `options.protocolName` | `string` | PascalCase name for the generated definition, codecs, and typed protocol exports |
 | `options.bannerComment` | `string?` | Custom banner comment at the top of the file (default: auto-generated notice) |
+| `options.allowUnresolvedJsonSchemas` | `boolean?` | Explicitly allow missing local schemas for reachable JSON types (default: `false`) |
 
 **Returns** `{ code: string; resolutions: Map<string, SchemaResolution> }`
 
 ### `resolveSchema(typeName, schemaUri, schemasDir)`
 
-Resolve a single schema URI. Returns a `SchemaResolution` with the parsed schema and its source.
+Resolve a single schema URI from the local schemas directory. Returns a
+`SchemaResolution` with the parsed schema and its source. This API never
+performs network requests.
 
 ### `resolveAllSchemas(types, schemasDir)`
 

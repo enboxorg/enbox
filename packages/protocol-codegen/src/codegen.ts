@@ -2,7 +2,7 @@
  * Core code generation engine.
  *
  * Takes a protocol definition (as a plain object) and a schemas directory,
- * resolves JSON Schemas for each type, generates TypeScript interfaces
+ * resolves local JSON Schemas for reachable JSON payload types, generates TypeScript interfaces
  * via `json-schema-to-typescript`, and emits a complete module with:
  *
  * - Individual data-shape types for each protocol type
@@ -42,6 +42,9 @@ export type ProtocolTypeInput = {
 
 /** Options for the code generation. */
 export type CodegenOptions = {
+  /** Permit reachable JSON types without a local schema to fall back to `unknown`. */
+  allowUnresolvedJsonSchemas?: boolean;
+
   /** Directory containing `.json` schema files. */
   schemasDir: string;
 
@@ -76,11 +79,9 @@ export async function generateProtocolModule(
   definition: ProtocolDefinitionInput,
   options: CodegenOptions,
 ): Promise<CodegenResult> {
-  const { schemasDir, protocolName } = options;
+  const { allowUnresolvedJsonSchemas = false, schemasDir, protocolName } = options;
   const banner = options.bannerComment ?? DEFAULT_BANNER;
 
-  // Resolve schemas for all typed entries
-  const resolutions = await resolveAllSchemas(definition.types, schemasDir);
   const reachableTypeNames = collectReachableTypeNames(definition.structure);
   const unknownTypeNames = [...reachableTypeNames]
     .filter((typeName: string): boolean => definition.types[typeName] === undefined);
@@ -91,6 +92,25 @@ export async function generateProtocolModule(
       `${unknownTypeNames.join(', ')}`,
     );
   }
+
+  assertValidGeneratedNames(definition.types, protocolName);
+
+  // Only JSON payload schemas participate in code generation. A schema URI on
+  // a binary or mixed-format type is an opaque DWN descriptor constraint, not
+  // necessarily a JSON Schema document.
+  const jsonSchemaTypes = Object.fromEntries(
+    Object.entries(definition.types)
+      .filter(([typeName]): boolean => reachableTypeNames.has(typeName))
+      .filter(([, type]): boolean => isSingleJsonType(type))
+      .filter(([, type]): boolean => type.schema !== undefined),
+  );
+  const resolutions = await resolveAllSchemas(jsonSchemaTypes, schemasDir);
+  assertReachableJsonSchemas({
+    allowUnresolvedJsonSchemas,
+    definition,
+    reachableTypeNames,
+    resolutions,
+  });
 
   // Generate TypeScript interfaces from resolved schemas
   const typeBlocks: string[] = [];
@@ -159,7 +179,15 @@ const DEFAULT_BANNER = [
  * Compile a JSON Schema to a TypeScript interface string.
  */
 async function compileSchema(schema: JsonSchema, typeName: string): Promise<string> {
-  const tsCode = await compile(schema as JSONSchema4, typeName, {
+  // json-schema-to-typescript gives a schema title precedence over the
+  // requested root name. Pin it to the generated identifier so a schema title
+  // cannot silently make the emitted codec refer to a missing type.
+  const normalizedSchema = { ...schema, title: typeName };
+  const tsCode = await compile(normalizedSchema as JSONSchema4, typeName, {
+    $refOptions: {
+      dereference : { excludedPathMatcher: shouldExcludeSchemaDereference },
+      resolve     : { external: false, file: false, http: false },
+    },
     bannerComment         : '',
     additionalProperties  : false,
     format                : false,
@@ -236,13 +264,324 @@ function uniqueDataFormats(type: ProtocolTypeInput): string[] {
   return [...new Set(type.dataFormats ?? [])];
 }
 
+function isSingleJsonType(type: ProtocolTypeInput): boolean {
+  const formats = uniqueDataFormats(type);
+  return formats.length === 1 && isJsonFormat(formats[0]);
+}
+
 function isJsonFormat(dataFormat: string): boolean {
   const essence = dataFormat.split(';', 1)[0].trim().toLowerCase();
-  return essence.endsWith('/json') || essence.endsWith('+json');
+  return essence === 'application/json'
+    || /^application\/[a-z0-9][a-z0-9!#$&^_.+-]*\+json$/.test(essence);
 }
 
 function isTextFormat(dataFormat: string): boolean {
   return dataFormat.split(';', 1)[0].trim().toLowerCase().startsWith('text/');
+}
+
+type ReachableJsonSchemaValidation = {
+  allowUnresolvedJsonSchemas: boolean;
+  definition: ProtocolDefinitionInput;
+  reachableTypeNames: ReadonlySet<string>;
+  resolutions: ReadonlyMap<string, SchemaResolution>;
+};
+
+/** Enforces the fail-closed contract only for JSON types used by the structure. */
+function assertReachableJsonSchemas(options: ReachableJsonSchemaValidation): void {
+  const failures: string[] = [];
+  const reachableTypeNames = [...options.reachableTypeNames].sort((a, b): number => a.localeCompare(b));
+
+  for (const typeName of reachableTypeNames) {
+    const type = options.definition.types[typeName];
+    if (!isSingleJsonType(type)) {
+      continue;
+    }
+
+    const schemaUri = type.schema;
+    if (schemaUri === undefined || schemaUri.trim() === '') {
+      if (!options.allowUnresolvedJsonSchemas) {
+        failures.push(`type '${typeName}' must declare a schema URI`);
+      }
+      continue;
+    }
+
+    const resolution = options.resolutions.get(typeName);
+    if (resolution?.schema === undefined) {
+      if (!options.allowUnresolvedJsonSchemas) {
+        failures.push(`type '${typeName}' has no local schema for '${schemaUri}'`);
+      }
+      continue;
+    }
+
+    const schemaId = resolution.schema.$id;
+    if (typeof schemaId !== 'string') {
+      failures.push(
+        `type '${typeName}' schema must declare a string $id equal to '${schemaUri}' ` +
+        `(found ${formatSchemaValue(schemaId)})`,
+      );
+      continue;
+    }
+
+    if (schemaId !== schemaUri) {
+      failures.push(`type '${typeName}' schema $id must equal '${schemaUri}' (found ${JSON.stringify(schemaId)})`);
+      continue;
+    }
+
+    for (const schemaRef of collectUnsupportedSchemaRefs(resolution.schema)) {
+      failures.push(
+        `type '${typeName}' schema $ref at '${schemaRef.path}' must be a local fragment beginning with '#' ` +
+        `(found ${formatSchemaValue(schemaRef.value)})`,
+      );
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new TypeError(`Protocol code generation failed:\n- ${failures.join('\n- ')}`);
+  }
+}
+
+function formatSchemaValue(value: unknown): string {
+  return value === undefined ? 'undefined' : JSON.stringify(value);
+}
+
+type UnsupportedSchemaRef = { path: string; value: unknown };
+
+const SINGLE_SUBSCHEMA_KEYWORDS: readonly string[] = [
+  'additionalItems',
+  'additionalProperties',
+  'contains',
+  'contentSchema',
+  'else',
+  'if',
+  'not',
+  'propertyNames',
+  'then',
+  'unevaluatedItems',
+  'unevaluatedProperties',
+] as const;
+
+const SUBSCHEMA_ARRAY_KEYWORDS: readonly string[] = ['allOf', 'anyOf', 'oneOf', 'prefixItems'];
+const SUBSCHEMA_MAP_KEYWORDS: readonly string[] = [
+  '$defs',
+  'definitions',
+  'dependentSchemas',
+  'patternProperties',
+  'properties',
+] as const;
+
+type SchemaTraversalState =
+  | 'dependencies-map'
+  | 'dependency-entry'
+  | 'items'
+  | 'schema'
+  | 'schema-array'
+  | 'schema-map';
+
+/**
+ * Ref Parser follows every object-shaped `$ref`, including literal values in
+ * `const`, `default`, `enum`, and `examples`. Limit its crawl to paths that can
+ * contain JSON Schemas while retaining real local-fragment dereferencing.
+ */
+function shouldExcludeSchemaDereference(path: string): boolean {
+  const tokens = parseRefParserPath(path);
+  if (tokens === undefined) {
+    return true;
+  }
+
+  let state: SchemaTraversalState = 'schema';
+  let index = 0;
+  while (index < tokens.length) {
+    const token = tokens[index];
+
+    if (state === 'schema') {
+      if (SINGLE_SUBSCHEMA_KEYWORDS.includes(token)) {
+        index++;
+        continue;
+      }
+      if (SUBSCHEMA_ARRAY_KEYWORDS.includes(token)) {
+        state = 'schema-array';
+        index++;
+        continue;
+      }
+      if (SUBSCHEMA_MAP_KEYWORDS.includes(token)) {
+        state = 'schema-map';
+        index++;
+        continue;
+      }
+      if (token === 'items') {
+        state = 'items';
+        index++;
+        continue;
+      }
+      if (token === 'dependencies') {
+        state = 'dependencies-map';
+        index++;
+        continue;
+      }
+      return true;
+    }
+
+    if (state === 'schema-map') {
+      state = 'schema';
+      index++;
+      continue;
+    }
+
+    if (state === 'schema-array') {
+      if (!isArrayIndex(token)) {
+        return true;
+      }
+      state = 'schema';
+      index++;
+      continue;
+    }
+
+    if (state === 'items') {
+      if (isArrayIndex(token)) {
+        state = 'schema';
+        index++;
+      } else {
+        // `items` can itself be a schema, so process this token again as a
+        // keyword within that schema.
+        state = 'schema';
+      }
+      continue;
+    }
+
+    if (state === 'dependencies-map') {
+      state = 'dependency-entry';
+      index++;
+      continue;
+    }
+
+    // A legacy `dependencies` entry is either a schema or an array of literal
+    // property names. Re-process a child token as a schema keyword; array
+    // indices will consequently be excluded.
+    state = 'schema';
+  }
+
+  return false;
+}
+
+function parseRefParserPath(path: string): string[] | undefined {
+  if (path === '#') {
+    return [];
+  }
+  if (!path.startsWith('#/')) {
+    return undefined;
+  }
+
+  try {
+    return path.slice(2).split('/').map((token: string): string => (
+      decodeURIComponent(token).replaceAll('~1', '/').replaceAll('~0', '~')
+    ));
+  } catch {
+    return undefined;
+  }
+}
+
+function isArrayIndex(token: string): boolean {
+  return /^(?:0|[1-9]\d*)$/.test(token);
+}
+
+/** Finds external refs only where `$ref` is a JSON Schema keyword, not literal instance data or map keys. */
+function collectUnsupportedSchemaRefs(value: unknown, path = '#'): UnsupportedSchemaRef[] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return [];
+  }
+
+  const schema = value as Record<string, unknown>;
+  const failures: UnsupportedSchemaRef[] = [];
+  if (Object.hasOwn(schema, '$ref')
+    && (typeof schema.$ref !== 'string' || !schema.$ref.startsWith('#'))) {
+    failures.push({ path: `${path}/$ref`, value: schema.$ref });
+  }
+
+  for (const keyword of SINGLE_SUBSCHEMA_KEYWORDS) {
+    if (Object.hasOwn(schema, keyword)) {
+      failures.push(...collectUnsupportedSchemaRefs(schema[keyword], `${path}/${keyword}`));
+    }
+  }
+
+  const items = schema.items;
+  if (Array.isArray(items)) {
+    for (const [index, child] of items.entries()) {
+      failures.push(...collectUnsupportedSchemaRefs(child, `${path}/items/${index}`));
+    }
+  } else if (items !== undefined) {
+    failures.push(...collectUnsupportedSchemaRefs(items, `${path}/items`));
+  }
+
+  for (const keyword of SUBSCHEMA_ARRAY_KEYWORDS) {
+    const children = schema[keyword];
+    if (!Array.isArray(children)) {
+      continue;
+    }
+    for (const [index, child] of children.entries()) {
+      failures.push(...collectUnsupportedSchemaRefs(child, `${path}/${keyword}/${index}`));
+    }
+  }
+
+  for (const keyword of SUBSCHEMA_MAP_KEYWORDS) {
+    const children = schema[keyword];
+    if (children === null || typeof children !== 'object' || Array.isArray(children)) {
+      continue;
+    }
+    for (const [key, child] of Object.entries(children)) {
+      failures.push(...collectUnsupportedSchemaRefs(
+        child,
+        `${path}/${keyword}/${escapeJsonPointerSegment(key)}`,
+      ));
+    }
+  }
+
+  const dependencies = schema.dependencies;
+  if (dependencies !== null && typeof dependencies === 'object' && !Array.isArray(dependencies)) {
+    for (const [key, child] of Object.entries(dependencies)) {
+      if (!Array.isArray(child)) {
+        failures.push(...collectUnsupportedSchemaRefs(
+          child,
+          `${path}/dependencies/${escapeJsonPointerSegment(key)}`,
+        ));
+      }
+    }
+  }
+
+  return failures;
+}
+
+function escapeJsonPointerSegment(segment: string): string {
+  return segment.replaceAll('~', '~0').replaceAll('/', '~1');
+}
+
+/** Ensures every symbol emitted by the generator is a stable TypeScript identifier. */
+function assertValidGeneratedNames(types: Record<string, ProtocolTypeInput>, protocolName: string): void {
+  if (!/^[A-Z][A-Za-z0-9]*$/.test(protocolName)) {
+    throw new TypeError(
+      `Protocol name '${protocolName}' must be a PascalCase TypeScript identifier containing only letters and numbers.`,
+    );
+  }
+
+  const typeNamesByIdentifier = new Map<string, string[]>();
+  for (const typeName of Object.keys(types)) {
+    const identifier = `${pascalCase(typeName)}Data`;
+    if (!/^[$A-Z_a-z][$\w]*$/.test(identifier)) {
+      throw new TypeError(`Protocol type '${typeName}' cannot be converted to a valid TypeScript identifier.`);
+    }
+
+    const collidingTypeNames = typeNamesByIdentifier.get(identifier) ?? [];
+    collidingTypeNames.push(typeName);
+    typeNamesByIdentifier.set(identifier, collidingTypeNames);
+  }
+
+  for (const [identifier, typeNames] of typeNamesByIdentifier) {
+    if (typeNames.length > 1) {
+      throw new TypeError(
+        `Protocol types ${typeNames.map((typeName: string): string => `'${typeName}'`).join(', ')} ` +
+        `all generate the identifier '${identifier}'.`,
+      );
+    }
+  }
 }
 
 /** Collects the local type names reachable through the protocol structure. */
