@@ -38,6 +38,7 @@
         },
         "filters": {
           "type": "array",
+          "maxItems": 100,
           "items": {
             "$ref": "https://identity.foundation/dwn/json-schemas/messages-filter.json"
           }
@@ -48,6 +49,7 @@
             "type": "string"
           },
           "minItems": 1,
+          "maxItems": 100,
           "uniqueItems": true
         },
         "cursor": {

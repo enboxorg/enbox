@@ -1,15 +1,14 @@
 import type { BearerDid } from '@enbox/dids';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import type { DwnPermissionScope, EnboxPlatformAgent } from '../src/index.js';
+import type { DwnPermissionScope, EnboxPlatformAgent, PermissionGrantEntry } from '../src/index.js';
 
 import { Convert } from '@enbox/common';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { AgentPermissionsApi, PermissionGrantNotFoundError } from '../src/permissions-api.js';
-import { DwnInterface, DwnPermissionGrant, type PermissionGrantEntry } from '../src/index.js';
-import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
-
+import { DwnConstant, DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterface, DwnPermissionGrant } from '../src/index.js';
 
 describe('AgentPermissionsApi', () => {
   let testHarness: PlatformAgentTestHarness;
@@ -391,6 +390,92 @@ describe('AgentPermissionsApi', () => {
 
       // expect the sendDwnRequest method to have been called
       expect(sendDwnRequestStub).toHaveBeenCalled();
+    });
+
+    it('follows pagination cursors when fetching a complete grant catalog', async () => {
+      const firstGrant = await testHarness.agent.permissions.createGrant({
+        author      : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        grantedTo   : bobDid.uri,
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol  : 'http://example.com/paginated-grants',
+        },
+        store: false,
+      });
+      const secondGrant = await testHarness.agent.permissions.createGrant({
+        author      : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        grantedTo   : bobDid.uri,
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : 'http://example.com/paginated-grants',
+        },
+        store: false,
+      });
+      const cursor = { messageCid: firstGrant.message.recordId, value: firstGrant.message.recordId };
+      const sendDwnRequestStub = spyOn(testHarness.agent, 'sendDwnRequest').mockImplementation(async (request) => {
+        const pagination = 'messageParams' in request ? request.messageParams.pagination : undefined;
+        return pagination?.cursor === undefined
+          ? {
+            messageCid : '',
+            reply      : {
+              cursor,
+              entries : [firstGrant.message],
+              status  : { code: 200, detail: 'OK' },
+            },
+          }
+          : {
+            messageCid : '',
+            reply      : {
+              entries : [secondGrant.message],
+              status  : { code: 200, detail: 'OK' },
+            },
+          };
+      });
+
+      const grants = await testHarness.agent.permissions.fetchGrants({
+        author : aliceDid.uri,
+        remote : true,
+        target : aliceDid.uri,
+      });
+
+      expect(grants.map(({ message }) => message.recordId)).toEqual([
+        firstGrant.message.recordId,
+        secondGrant.message.recordId,
+      ]);
+      expect(sendDwnRequestStub).toHaveBeenCalledTimes(2);
+      expect(sendDwnRequestStub.mock.calls[0][0].messageParams.pagination).toEqual({
+        limit: DwnConstant.defaultQueryPageSize,
+      });
+      expect(sendDwnRequestStub.mock.calls[1][0].messageParams.pagination).toEqual({
+        cursor,
+        limit: DwnConstant.defaultQueryPageSize,
+      });
+    });
+
+    it('rejects a remote grant cursor storm without returning a partial catalog', async () => {
+      let page = 0;
+      const sendDwnRequestStub = spyOn(testHarness.agent, 'sendDwnRequest').mockImplementation(async () => {
+        page += 1;
+        return {
+          messageCid : '',
+          reply      : {
+            cursor  : { messageCid: `message-${page}`, value: `value-${page}` },
+            entries : [],
+            status  : { code: 200, detail: 'OK' },
+          },
+        };
+      });
+
+      await expect(testHarness.agent.permissions.fetchGrants({
+        author : aliceDid.uri,
+        remote : true,
+        target : aliceDid.uri,
+      })).rejects.toThrow('RecordsQuery: exceeded the maximum page count of 10.');
+      expect(sendDwnRequestStub).toHaveBeenCalledTimes(10);
     });
 
     it('should fall back to single-grant remote revocation reads when checking remote grants', async () => {

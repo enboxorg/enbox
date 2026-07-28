@@ -2,12 +2,15 @@
 
 This guide covers running a remote DWN server for production or development use.
 
-## Docker Compose
+## Local Docker Compose
 
-The easiest way to run a remote DWN server. The compose file sets up both the DWN server and PostgreSQL.
+The package Compose file runs a LevelDB-backed development node. It deliberately
+requires you to acknowledge its open, unbounded posture before it will start.
 
 ```bash
-# From the packages/dwn-server directory
+cp docker.env.example packages/dwn-server/.env
+# In packages/dwn-server/.env, set both DWN_ALLOW_* values to true for local development.
+cd packages/dwn-server
 docker compose up -d
 
 # View logs
@@ -23,10 +26,10 @@ See [`packages/dwn-server/docker-compose.yaml`](../packages/dwn-server/docker-co
 
 ## Configuration
 
-Copy `docker.env.example` to `.env` and customize:
+Copy the repository example into the package directory and customize it:
 
 ```bash
-cp docker.env.example .env
+cp docker.env.example packages/dwn-server/.env
 ```
 
 Key settings:
@@ -39,6 +42,12 @@ Key settings:
 | `POSTGRES_USER` | `dwn_user` | Database user |
 | `POSTGRES_PASSWORD` | `dwn_password` | Database password (change in production) |
 | `MAX_RECORD_DATA_SIZE` | `100mb` | Startup-only maximum record data size |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS` | `1000` | Startup-only process-wide WebSocket connection limit |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP` | `100` | Startup-only connection limit per peer IP |
+| `DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION` | `64` | Startup-only outstanding subscription-slot limit per connection |
+| `DWN_ALLOW_OPEN_TENANTS` | `false` | Explicitly allow a remote server without a tenant gate |
+| `DWN_ALLOW_UNBOUNDED_TENANT_USAGE` | `false` | Explicitly allow either quota dimension to be unlimited |
+| `DWN_PUBLIC_METRICS_ENABLED` | `false` | Expose `/metrics` without admin authentication |
 | `LOG_LEVEL` | -- | Set to `debug` for verbose logging |
 
 See the [`@enbox/dwn-server` README](../packages/dwn-server/README.md) for the full list of configuration options, storage backends, plugin system, and JSON-RPC API documentation.
@@ -54,7 +63,13 @@ deployments must include `pg` and `pg-cursor`, MySQL deployments must include
 3. **Set up SSL/TLS termination** via a reverse proxy (nginx, Caddy, etc.)
 4. **Configure backup strategies** for PostgreSQL data
 5. **Set resource limits** for containers
-6. **Enable registration** -- configure proof-of-work or terms-of-service tenant registration
+6. **Enable registration** -- configure proof-of-work/provider auth or pre-register tenants
+7. **Set both finite quota defaults** -- SQL message storage is required for usage accounting
+8. **Keep metrics private** -- configure `DWN_ADMIN_TOKEN` for authenticated scraping
+
+Enbox keys peer-IP limits from the direct TCP peer and does not trust forwarded
+headers. When a reverse proxy terminates client connections, enforce client-IP
+admission there and size Enbox's per-peer limit for the proxy's aggregate traffic.
 
 ## Self-Hosting Anywhere
 

@@ -269,7 +269,7 @@ describe('RecordView', () => {
     })).rejects.toThrow('remote queries are not supported');
     await expect(observe('note', {
       pagination: { limit: 0 },
-    })).rejects.toThrow('pagination.limit must be a finite number greater than or equal to 1');
+    })).rejects.toThrow('pagination.limit must be an integer from 1 to 1000');
     await expect(query('note', { materialize: true }))
       .rejects.toThrow('pagination.limit is required to bound decoded values');
     await expect(observe('note', {
@@ -365,12 +365,47 @@ describe('RecordView', () => {
     expect(page.records[0]?.children.label?.value).toBe('important');
     expect(harness.queryRequests[1]).toMatchObject({
       from         : 'did:example:remote',
+      pagination   : { limit: 1 },
       protocolRole : 'member',
       filter       : {
         parentId     : [parent.id],
         protocolPath : 'note/label',
       },
     });
+  });
+
+  it('splits child materialization across bounded parent-ID filters', async () => {
+    const parents = Array.from(
+      { length: 101 },
+      (_, index) => decodedRecord(`note-${index}`, { title: `Note ${index}` }),
+    );
+    const harness = createHarness(async (_request, call) => ok(call === 1 ? parents : []));
+    const typed = createTyped(harness);
+
+    const page = await typed.records.query('note', {
+      materialize : { children: ['note/label'] as const },
+      pagination  : { limit: 101 },
+    });
+
+    expect(page.records).toHaveLength(101);
+    expect(harness.queryRequests).toHaveLength(3);
+    expect(harness.queryRequests[1].filter.parentId).toHaveLength(100);
+    expect(harness.queryRequests[1].pagination).toEqual({ limit: 100 });
+    expect(harness.queryRequests[2].filter.parentId).toEqual(['note-100']);
+    expect(harness.queryRequests[2].pagination).toEqual({ limit: 1 });
+  });
+
+  it('rejects a child-materialization cursor that violates singleton batching', async () => {
+    const parent = decodedRecord('note-1', { title: 'First' });
+    const child = decodedRecord('label-1', 'important', parent.id);
+    const cursor = { messageCid: child.id, value: child.id };
+    const harness = createHarness(async (_request, call) => ok(call === 1 ? [parent] : [child], call === 2 ? cursor : undefined));
+    const typed = createTyped(harness);
+
+    await expect(typed.records.query('note', {
+      materialize : { children: ['note/label'] as const },
+      pagination  : { limit: 1 },
+    })).rejects.toThrow('singleton child \'note/label\' returned more records than its selected parents');
   });
 
   it('rejects an already-aborted session without acquiring view resources', async () => {

@@ -55,7 +55,7 @@ import { requireDwnSuccess } from './dwn-response-error.js';
 import { assertTypedProtocolStructureSupported, collectProtocolPaths } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
-import { getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
+import { DwnConstant, getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -1053,48 +1053,57 @@ export class TypedEnbox<
       const childName = getTypeName(childPath);
 
       const childType = this._definition.types[childName];
-      const filter = compileRecordFilter(
-        this._definition,
-        childPath,
-        undefined,
-        undefined,
-        source.within,
-      );
-      filter.parentId = parentIds;
-      const result = await this._dwn.records.query({
-        from         : source.from,
-        filter,
-        protocolRole : source.protocolRole,
-      });
-      requireDwnSuccess('TypedEnbox.records.query child materialization', result);
-
       const occupiedParentIds = new Set<string>();
-      await Promise.all(result.records.map(async (record): Promise<void> => {
-        const parentId = record.parentId;
-        const parentEntry = parentId === undefined ? undefined : parentById.get(parentId);
-        if (parentEntry === undefined) {
-          throw new Error(
-            `TypedEnbox.records.query: child '${childPath}' did not reference a selected parent.`,
-          );
-        }
-        if (occupiedParentIds.has(parentId)) {
-          throw new Error(
-            `TypedEnbox.records.query: singleton child '${childPath}' returned multiple visible records ` +
-            `for parent '${parentEntry.parent.record.id}'.`,
-          );
-        }
-        occupiedParentIds.add(parentId);
-
-        const childRecord = bindRecordCodec(
-          record,
-          this.resolveCodec(childPath),
-          childType?.dataFormats,
+      for (let offset = 0; offset < parentIds.length; offset += DwnConstant.maxFilterValues) {
+        const parentIdBatch = parentIds.slice(offset, offset + DwnConstant.maxFilterValues);
+        const filter = compileRecordFilter(
+          this._definition,
+          childPath,
+          undefined,
+          undefined,
+          source.within,
         );
-        parentEntry.children.set(childName, Object.freeze({
-          record : childRecord,
-          value  : await childRecord.value(),
+        filter.parentId = parentIdBatch;
+        const result = await this._dwn.records.query({
+          from         : source.from,
+          filter,
+          pagination   : { limit: parentIdBatch.length },
+          protocolRole : source.protocolRole,
+        });
+        requireDwnSuccess('TypedEnbox.records.query child materialization', result);
+        if (result.cursor !== undefined) {
+          throw new Error(
+            `TypedEnbox.records.query: singleton child '${childPath}' returned more records than its selected parents.`,
+          );
+        }
+
+        await Promise.all(result.records.map(async (record): Promise<void> => {
+          const parentId = record.parentId;
+          const parentEntry = parentId === undefined ? undefined : parentById.get(parentId);
+          if (parentEntry === undefined) {
+            throw new Error(
+              `TypedEnbox.records.query: child '${childPath}' did not reference a selected parent.`,
+            );
+          }
+          if (occupiedParentIds.has(parentId)) {
+            throw new Error(
+              `TypedEnbox.records.query: singleton child '${childPath}' returned multiple visible records ` +
+              `for parent '${parentEntry.parent.record.id}'.`,
+            );
+          }
+          occupiedParentIds.add(parentId);
+
+          const childRecord = bindRecordCodec(
+            record,
+            this.resolveCodec(childPath),
+            childType?.dataFormats,
+          );
+          parentEntry.children.set(childName, Object.freeze({
+            record : childRecord,
+            value  : await childRecord.value(),
+          }));
         }));
-      }));
+      }
     }));
 
     return [...parentById.values()].map(({ children, parent }) => Object.freeze({
@@ -1392,22 +1401,22 @@ export class TypedEnbox<
       /**
        * Query records at the given protocol path.
        *
-       * Returns all matching records as an array of typed records, with
-       * an optional pagination cursor for fetching additional pages. Set
+       * Returns one page of matching typed records, with an optional pagination
+       * cursor for fetching additional pages. Set
        * `materialize` to eagerly decode one explicitly bounded page while
        * retaining each canonical record handle. Selected direct children must
-       * declare `$recordLimit.max: 1` and are fetched once per child path.
+       * declare `$recordLimit.max: 1` and are fetched in bounded batches per child path.
        *
        * @param path - The protocol path to query (e.g. `'notebook'`,
        *   `'notebook/page'`).
        * @param request - Optional filter, sort, and pagination options.
-       *   Omit entirely to return all records at the path.
+       *   Omitted limits use the DWN's finite default page size.
        * @returns A page containing typed {@link Record} instances and an
        *   optional `cursor` for pagination.
        *
        * @example
        * ```ts
-       * // Query all notebooks
+       * // Query the first page of notebooks
        * const { records } = await proto.records.query('notebook');
        *
        * // Query pages under a specific notebook

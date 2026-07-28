@@ -18,7 +18,9 @@
         "type": "array",
         "items": {
           "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
-        }
+        },
+        "minItems": 1,
+        "maxItems": 100
       }]
     },
     "attester": {
@@ -31,7 +33,9 @@
         "type": "array",
         "items": {
           "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
-        }
+        },
+        "minItems": 1,
+        "maxItems": 100
       }]
     },
     "contextId": {
@@ -43,6 +47,7 @@
     "tags": {
       "type": "object",
       "minProperties": 1,
+      "maxProperties": 100,
       "additionalProperties": {
         "oneOf": [
           {
@@ -86,6 +91,7 @@
           "minLength": 1
         },
         "minItems": 1,
+        "maxItems": 100,
         "uniqueItems": true
       }]
     },

@@ -35,9 +35,8 @@ import {
   activeTenants,
   totalDataBytes,
   totalMessages,
-  websocketConnections,
-  websocketSubscriptions,
 } from '../metrics.js';
+import { isValidMessageQuotaLimit, isValidQuotaLimit, resolveTenantQuota } from '../tenant-quota.js';
 
 type WebAuthnServerModule = typeof SimpleWebAuthnServer;
 type WebAuthnServerLoader = () => Promise<WebAuthnServerModule>;
@@ -776,21 +775,8 @@ export class AdminApi {
       }
     }
 
-    // Resolve quota info.
-    let quotaSource: 'tenant' | 'global' | 'unlimited' = 'unlimited';
-    let maxMessages = this.#config.quotaMaxMessages ?? 0;
-    let maxStorageBytes = this.#config.quotaMaxStorageBytes ?? 0;
-    if (maxMessages > 0 || maxStorageBytes > 0) {
-      quotaSource = 'global';
-    }
-    if (this.#registrationStore) {
-      const tenantQuota = await this.#registrationStore.getQuota(did);
-      if (tenantQuota !== undefined) {
-        maxMessages = tenantQuota.maxMessages ?? maxMessages;
-        maxStorageBytes = tenantQuota.maxStorageBytes ?? maxStorageBytes;
-        quotaSource = 'tenant';
-      }
-    }
+    const tenantQuota = await this.#registrationStore?.getQuota(did);
+    const resolvedQuota = resolveTenantQuota(this.#config, tenantQuota);
 
     const detail: AdminTenantDetail = {
       did,
@@ -804,9 +790,9 @@ export class AdminApi {
       },
       protocols : stats.protocols,
       quota     : {
-        maxMessages,
-        maxStorageBytes,
-        source: quotaSource,
+        maxMessages     : resolvedQuota.maxMessages,
+        maxStorageBytes : resolvedQuota.maxStorageBytes,
+        source          : resolvedQuota.source,
       },
     };
 
@@ -878,7 +864,7 @@ export class AdminApi {
   }
 
   /**
-   * Pre-registers a tenant DID via the admin API. Optionally sets a quota.
+   * Pre-registers a tenant DID via the admin API.
    *
    * @see https://github.com/enboxorg/enbox/issues/393
    */
@@ -890,7 +876,7 @@ export class AdminApi {
       );
     }
 
-    let body: { did?: string; maxMessages?: number; maxStorageBytes?: number };
+    let body: { did?: string; maxMessages?: unknown; maxStorageBytes?: unknown };
     try {
       body = await req.json() as typeof body;
     } catch {
@@ -900,25 +886,19 @@ export class AdminApi {
     if (!body.did || typeof body.did !== 'string') {
       return Response.json({ error: 'did is required and must be a string' }, { status: 400 });
     }
+    if (body.maxMessages !== undefined || body.maxStorageBytes !== undefined) {
+      return Response.json(
+        { error: 'Create the tenant first, then set its quota through the tenant quota endpoint.' },
+        { status: 400 },
+      );
+    }
 
     const created = await this.#registrationStore.createTenant(body.did);
     if (!created) {
       return Response.json({ error: 'Tenant already exists' }, { status: 409 });
     }
 
-    // Set quota if provided.
-    if (body.maxMessages !== undefined || body.maxStorageBytes !== undefined) {
-      await this.#registrationStore.setQuota({
-        did             : body.did,
-        maxMessages     : body.maxMessages ?? 0,
-        maxStorageBytes : body.maxStorageBytes ?? 0,
-      });
-    }
-
-    await this.#audit('tenant.create', body.did, JSON.stringify({
-      maxMessages     : body.maxMessages,
-      maxStorageBytes : body.maxStorageBytes,
-    }));
+    await this.#audit('tenant.create', body.did);
 
     return Response.json({ success: true, did: body.did }, { status: 201 });
   }
@@ -968,19 +948,8 @@ export class AdminApi {
       );
     }
 
-    // Resolve effective quota.
-    let maxMessages = this.#config.quotaMaxMessages ?? 0;
-    let maxStorageBytes = this.#config.quotaMaxStorageBytes ?? 0;
-    let source: 'tenant' | 'global' | 'unlimited' = maxMessages > 0 || maxStorageBytes > 0 ? 'global' : 'unlimited';
-
-    if (this.#registrationStore) {
-      const tenantQuota = await this.#registrationStore.getQuota(did);
-      if (tenantQuota !== undefined) {
-        maxMessages = tenantQuota.maxMessages ?? maxMessages;
-        maxStorageBytes = tenantQuota.maxStorageBytes ?? maxStorageBytes;
-        source = 'tenant';
-      }
-    }
+    const tenantQuota = await this.#registrationStore?.getQuota(did);
+    const resolvedQuota = resolveTenantQuota(this.#config, tenantQuota);
 
     const [messageCount, storageBytes] = await Promise.all([
       this.#adminStore.getTenantMessageCount(did),
@@ -989,9 +958,9 @@ export class AdminApi {
 
     const status: TenantQuotaStatus = {
       quota: {
-        maxMessages,
-        maxStorageBytes,
-        source,
+        maxMessages     : resolvedQuota.maxMessages,
+        maxStorageBytes : resolvedQuota.maxStorageBytes,
+        source          : resolvedQuota.source,
       },
       usage: {
         messageCount,
@@ -1006,9 +975,9 @@ export class AdminApi {
    * Sets the per-tenant quota.
    */
   async #handleQuotaSet(did: string, req: Request): Promise<Response> {
-    if (!this.#registrationStore) {
+    if (!this.#registrationStore || !this.#adminStore || !await this.#adminStore.isAvailable()) {
       return Response.json(
-        { error: 'Quotas require registration to be enabled.' },
+        { error: 'Quotas require registration and SQL usage accounting.' },
         { status: 501 },
       );
     }
@@ -1026,6 +995,15 @@ export class AdminApi {
         { status: 400 },
       );
     }
+    if (body.maxMessages !== undefined && !isValidMessageQuotaLimit(body.maxMessages)) {
+      return Response.json({ error: 'maxMessages must be an integer from 0 through 2147483647.' }, { status: 400 });
+    }
+    if (body.maxStorageBytes !== undefined && !isValidQuotaLimit(body.maxStorageBytes)) {
+      return Response.json({ error: 'maxStorageBytes must be a non-negative safe integer.' }, { status: 400 });
+    }
+    if (await this.#registrationStore.getTenantRegistration(did) === undefined) {
+      return Response.json({ error: 'Tenant not found' }, { status: 404 });
+    }
 
     // Merge with existing quota if only one field is provided.
     const existing = await this.#registrationStore.getQuota(did);
@@ -1035,6 +1013,17 @@ export class AdminApi {
       maxMessages     : body.maxMessages ?? existing?.maxMessages ?? 0,
       maxStorageBytes : body.maxStorageBytes ?? existing?.maxStorageBytes ?? 0,
     };
+    const resolvedQuota = resolveTenantQuota(this.#config, newQuota);
+    if ((resolvedQuota.maxMessages === 0 || resolvedQuota.maxStorageBytes === 0)
+      && !this.#config.allowUnboundedTenantUsage) {
+      return Response.json(
+        {
+          error: 'A zero tenant quota inherits its global default; it does not request a tenant-only unlimited quota. ' +
+            'Each effective quota dimension must be finite unless DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true.',
+        },
+        { status: 400 },
+      );
+    }
     await this.#registrationStore.setQuota(newQuota);
 
     await this.#audit('quota.update', did, JSON.stringify({
@@ -1101,8 +1090,6 @@ export class AdminApi {
     const runtimeConfig: RuntimeConfig = {
       logLevel                         : this.#config.logLevel,
       maxInFlight                      : this.#config.maxInFlight,
-      quotaMaxMessages                 : this.#config.quotaMaxMessages,
-      quotaMaxStorageBytes             : this.#config.quotaMaxStorageBytes,
       rateLimitRequestsPerSecond       : this.#config.rateLimitRequestsPerSecond,
       rateLimitBurst                   : this.#config.rateLimitBurst,
       rateLimitTenantRequestsPerSecond : this.#config.rateLimitTenantRequestsPerSecond,
@@ -1159,7 +1146,7 @@ export class AdminApi {
     }
 
     const numericFields: (keyof RuntimeConfigPatch)[] = [
-      'maxInFlight', 'quotaMaxMessages', 'quotaMaxStorageBytes',
+      'maxInFlight',
       'rateLimitRequestsPerSecond', 'rateLimitBurst', 'rateLimitTenantRequestsPerSecond', 'rateLimitTenantBurst',
     ];
     for (const field of numericFields) {
@@ -1188,16 +1175,6 @@ export class AdminApi {
     if (body.maxInFlight !== undefined) {
       this.#config.maxInFlight = body.maxInFlight;
       changes.push('maxInFlight');
-    }
-
-    if (body.quotaMaxMessages !== undefined) {
-      this.#config.quotaMaxMessages = body.quotaMaxMessages;
-      changes.push('quotaMaxMessages');
-    }
-
-    if (body.quotaMaxStorageBytes !== undefined) {
-      this.#config.quotaMaxStorageBytes = body.quotaMaxStorageBytes;
-      changes.push('quotaMaxStorageBytes');
     }
 
     if (body.rateLimitRequestsPerSecond !== undefined) {
@@ -1451,8 +1428,8 @@ export class AdminApi {
   // ---------------------------------------------------------------------------
 
   /**
-   * Starts a periodic timer that updates Prometheus gauge metrics from the
-   * admin store and connection manager. The interval is configured via
+   * Starts a periodic timer that updates Prometheus storage gauges from the
+   * admin store. The interval is configured via
    * `adminMetricsUpdateIntervalSeconds` (default 30s).
    */
   public startMetricsUpdater(): void {
@@ -1480,14 +1457,9 @@ export class AdminApi {
   }
 
   /**
-   * Fetches stats from the admin store and connection manager, and sets
-   * Prometheus gauge values accordingly.
+   * Fetches stats from the admin store and updates Prometheus storage gauges.
    */
   #updateMetrics(): void {
-    // Connection gauges (synchronous).
-    websocketConnections.set(this.#getConnectionCount());
-    websocketSubscriptions.set(this.#getSubscriptionCount());
-
     // Store-based gauges (async — fire and forget).
     if (this.#adminStore) {
       this.#adminStore.getGlobalStats({ refresh: true }).then((stats) => {

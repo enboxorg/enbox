@@ -56,7 +56,7 @@ describe('handleDwnProcessMessage', () => {
     const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, {
       dwn,
       transport : 'http',
-      config    : { maxRecordDataSize: 3 } as any,
+      config    : { maxRecordDataSize: 3, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
       dataStream,
     });
 
@@ -82,7 +82,7 @@ describe('handleDwnProcessMessage', () => {
     const initialResult = await handleDwnProcessMessage(initialRequest, {
       dwn,
       transport : 'http',
-      config    : { maxRecordDataSize: data.byteLength } as any,
+      config    : { maxRecordDataSize: data.byteLength, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
       dataStream,
     });
     expect(initialResult.jsonRpcResponse.result.reply.status.code).toBe(202);
@@ -102,7 +102,7 @@ describe('handleDwnProcessMessage', () => {
     const updateResult = await handleDwnProcessMessage(updateRequest, {
       dwn,
       transport : 'http',
-      config    : { maxRecordDataSize: data.byteLength - 1 } as any,
+      config    : { maxRecordDataSize: data.byteLength - 1, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
     });
     expect(updateResult.jsonRpcResponse.result.reply.status.code).toBe(202);
     await dwn.close();
@@ -134,7 +134,7 @@ describe('handleDwnProcessMessage', () => {
     const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, {
       dwn,
       transport  : 'http',
-      config     : { maxRecordDataSize: data.byteLength } as any,
+      config     : { maxRecordDataSize: data.byteLength, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
       dataStream : overlongStream,
     });
 
@@ -309,7 +309,11 @@ describe('handleDwnProcessMessage', () => {
     });
 
     const { dwn } = await getTestDwn();
-    const context: RequestContext = { dwn, transport: 'http', subscriptionRequest: { id: 'test', subscriptionHandler: () => {} } };
+    const context: RequestContext = {
+      dwn,
+      transport           : 'http',
+      subscriptionRequest : { id: 'test', subscriptionHandler: () => {}, activate: async () => {} },
+    };
 
     const { jsonRpcResponse } = await handleDwnProcessMessage(
       dwnRequest,
@@ -423,6 +427,63 @@ describe('handleDwnProcessMessage', () => {
     await dwn.close();
   });
 
+  it('should fail closed when a finite quota has no usage store', async () => {
+    const { dwn } = await getTestDwn();
+    const context: RequestContext = {
+      dwn,
+      transport : 'http',
+      config    : { quotaMaxMessages: 1, quotaMaxStorageBytes: 0 } as any,
+    };
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+      message: {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          messageTimestamp : new Date().toISOString(),
+          dataSize         : 1,
+          dataCid          : 'cid-test',
+          dataFormat       : 'application/octet-stream',
+        },
+      },
+      target: 'did:key:quota-test',
+    });
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+
+    expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.InternalError);
+    await dwn.close();
+  });
+
+  it('should apply message quotas to ProtocolsConfigure', async () => {
+    const { dwn } = await getTestDwn();
+    const mockAdminStore = {
+      getTenantMessageCount : async (): Promise<number> => 5,
+      getTenantStorageSize  : async (): Promise<number> => 0,
+    } as unknown as AdminStore;
+    const context: RequestContext = {
+      dwn,
+      transport  : 'http',
+      adminStore : mockAdminStore,
+      config     : { quotaMaxMessages: 5, quotaMaxStorageBytes: 0 } as any,
+    };
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+      message: {
+        descriptor: {
+          interface        : 'Protocols',
+          method           : 'Configure',
+          messageTimestamp : new Date().toISOString(),
+        },
+      },
+      target: 'did:key:quota-test',
+    });
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+
+    expect(jsonRpcResponse.id).toBe(dwnRequest.id);
+    expect(jsonRpcResponse.error?.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+    await dwn.close();
+  });
+
   it('should reject RecordsWrite when storage quota is exceeded', async () => {
     const { dwn } = await getTestDwn();
 
@@ -503,6 +564,46 @@ describe('handleDwnProcessMessage', () => {
     // Per-tenant quota is 2, tenant has 3 messages -> should be rejected.
     expect(jsonRpcResponse.error).toBeDefined();
     expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+    await dwn.close();
+  });
+
+  it('should inherit a global dimension when its tenant override is zero', async () => {
+    const { dwn } = await getTestDwn();
+    const mockAdminStore = {
+      getTenantMessageCount : async (): Promise<number> => 3,
+      getTenantStorageSize  : async (): Promise<number> => 0,
+    } as unknown as AdminStore;
+    const mockRegistrationStore = {
+      getQuota: async (): Promise<{ did: string; maxMessages: number; maxStorageBytes: number }> => ({
+        did             : 'did:key:inherit',
+        maxMessages     : 0,
+        maxStorageBytes : 10,
+      }),
+    } as unknown as RegistrationStore;
+    const context: RequestContext = {
+      dwn,
+      transport         : 'http',
+      adminStore        : mockAdminStore,
+      registrationStore : mockRegistrationStore,
+      config            : { quotaMaxMessages: 2, quotaMaxStorageBytes: 100 } as any,
+    };
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+      message: {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          messageTimestamp : new Date().toISOString(),
+          dataSize         : 1,
+          dataCid          : 'cid-inherit',
+          dataFormat       : 'application/octet-stream',
+        },
+      },
+      target: 'did:key:inherit',
+    });
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+
+    expect(jsonRpcResponse.error?.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
     await dwn.close();
   });
 

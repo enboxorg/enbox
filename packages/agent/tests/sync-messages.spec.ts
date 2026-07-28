@@ -1093,7 +1093,7 @@ describe('sync-messages', () => {
 
       expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
-        messageParams : sinon.match({ filter: roleFilter }),
+        messageParams : sinon.match({ filter: roleFilter, pagination: { limit: 1 } }),
         messageType   : DwnInterface.RecordsQuery,
       })).calledOnce).toBe(true);
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>

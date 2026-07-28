@@ -53,18 +53,12 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
     // Clear the index since it will be rebuilt from the query results.
     this._index.clear();
 
-    // Query the DWN for all stored Jwk objects.
-    const { reply: queryReply } = await agent.dwn.processRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { ...this._recordProperties } },
-    });
+    const records = await this.queryAllRecordEntries({ agent, tenantDid });
 
     // Query entries contain raw stored bytes. Open each application's view from
     // the record envelope, reading only payloads too large to be inlined.
     const storedKeys: Jwk[] = [];
-    for (const record of queryReply.entries ?? []) {
+    for (const record of records) {
       let storedData: ReadableStream<Uint8Array>;
       if (record.encodedData !== undefined) {
         storedData = DataStream.fromBytes(Convert.base64Url(record.encodedData).toUint8Array());

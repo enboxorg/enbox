@@ -5,6 +5,7 @@ import type { PermissionGrant, PermissionGrantData, PermissionRequestData, Permi
 
 import { isRecordsType } from './dwn-api.js';
 import { mapConcurrent } from './utils.js';
+import { collectRecordsQueryEntries, remoteRecordsQueryCollectionLimits } from './records-query.js';
 import { Convert, TtlCache } from '@enbox/common';
 import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/dwn.js';
 import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
@@ -188,7 +189,9 @@ export class AgentPermissionsApi implements PermissionsApi {
     // filter by a protocol using tags if provided
     const tags = protocol ? { protocol } : undefined;
 
-    const params: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
+    const params: ProcessDwnRequest<DwnInterface.RecordsQuery> & {
+      messageParams: DwnMessageParams[DwnInterface.RecordsQuery];
+    } = {
       author        : author,
       target        : target,
       messageType   : DwnInterface.RecordsQuery,
@@ -203,12 +206,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       }
     };
 
-    const { reply } = remote ? await this.agent.sendDwnRequest(params) : await this.agent.processDwnRequest(params);
-    if (reply.status.code !== 200) {
-      throw new Error(`PermissionsApi: Failed to fetch grants: ${reply.status.detail}`);
-    }
-
-    const grantMessages = reply.entries! as DwnDataEncodedRecordsWriteMessage[];
+    const grantMessages = await this.queryAllPermissionRecords(params, remote, 'grants');
 
     // Revocation filtering is opt-in and intentionally checks one grant at a
     // time. If this becomes hot, add a dedicated revocation-read path instead
@@ -273,7 +271,9 @@ export class AgentPermissionsApi implements PermissionsApi {
     // filter by a protocol using tags if provided
     const tags = protocol ? { protocol } : undefined;
 
-    const params: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
+    const params: ProcessDwnRequest<DwnInterface.RecordsQuery> & {
+      messageParams: DwnMessageParams[DwnInterface.RecordsQuery];
+    } = {
       author        : author,
       target        : target,
       messageType   : DwnInterface.RecordsQuery,
@@ -286,18 +286,39 @@ export class AgentPermissionsApi implements PermissionsApi {
       }
     };
 
-    const { reply } = remote ? await this.agent.sendDwnRequest(params) : await this.agent.processDwnRequest(params);
-    if (reply.status.code !== 200) {
-      throw new Error(`PermissionsApi: Failed to fetch requests: ${reply.status.detail}`);
-    }
+    const requestMessages = await this.queryAllPermissionRecords(params, remote, 'requests');
 
     const requests: PermissionRequestEntry[] = [];
-    for (const entry of reply.entries! as DwnDataEncodedRecordsWriteMessage[]) {
+    for (const entry of requestMessages) {
       const request = DwnPermissionRequest.parse(entry);
       requests.push({ request, message: entry });
     }
 
     return requests;
+  }
+
+  /** Queries every page of one permission-record collection. */
+  private async queryAllPermissionRecords(
+    params: ProcessDwnRequest<DwnInterface.RecordsQuery> & {
+      messageParams: DwnMessageParams[DwnInterface.RecordsQuery];
+    },
+    remote: boolean,
+    kind: 'grants' | 'requests',
+  ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
+    const entries = await collectRecordsQueryEntries(async (pagination) => {
+      const request: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
+        ...params,
+        messageParams: { ...params.messageParams, pagination },
+      };
+      const { reply } = remote
+        ? await this.agent.sendDwnRequest(request)
+        : await this.agent.processDwnRequest(request);
+      if (reply.status.code !== 200) {
+        throw new Error(`PermissionsApi: Failed to fetch ${kind}: ${reply.status.detail}`);
+      }
+      return reply;
+    }, remote ? remoteRecordsQueryCollectionLimits : undefined);
+    return entries as DwnDataEncodedRecordsWriteMessage[];
   }
 
   async isGrantRevoked({

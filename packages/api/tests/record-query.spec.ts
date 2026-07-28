@@ -2,7 +2,7 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordQuery } from '../src/record-query.js';
 import type { DwnApi, RecordsCountRequest, RecordsQueryRequest } from '../src/dwn-api.js';
 
-import { DateSort } from '@enbox/dwn-sdk-js';
+import { DateSort, DwnConstant } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
 
 import { defineProtocol } from '../src/define-protocol.js';
@@ -188,6 +188,27 @@ describe('RecordQuery', () => {
     })).toThrow('cannot be combined with published: false');
   });
 
+  it('should enforce bounded filter cardinality at the shared compiler boundary', () => {
+    const values = Array.from(
+      { length: DwnConstant.maxFilterValues },
+      (_, index) => `did:example:${index.toString().padStart(3, '0')}`,
+    );
+    const tags = Object.fromEntries(values.map((_, index) => [`tag-${index}`, `value-${index}`]));
+
+    expect(compileRecordFilter(QueryDefinition, 'note', { author: values }).author).toEqual(values);
+    expect(compileRecordFilter(QueryDefinition, 'note', { recipient: values }).recipient).toEqual(values);
+    expect(compileRecordFilter(QueryDefinition, 'note', { tags }).tags).toEqual(tags);
+
+    const tooManyValues = [...values, 'did:example:extra'];
+    const tooManyTags = { ...tags, extra: 'value-extra' };
+    expect(() => compileRecordFilter(QueryDefinition, 'note', { author: tooManyValues }))
+      .toThrow(`RecordFilter: author must contain at most ${DwnConstant.maxFilterValues} values`);
+    expect(() => compileRecordFilter(QueryDefinition, 'note', { recipient: tooManyValues }))
+      .toThrow(`RecordFilter: recipient must contain at most ${DwnConstant.maxFilterValues} values`);
+    expect(() => compileRecordFilter(QueryDefinition, 'note', { tags: tooManyTags }))
+      .toThrow(`RecordFilter: tags must contain at most ${DwnConstant.maxFilterValues} tag filters`);
+  });
+
   it('should reject invalid record queries through both public operations', async () => {
     const { dwn, countRequests, queryRequests } = createCapturingDwn();
     const typed = createTypedEnbox(dwn);
@@ -210,9 +231,15 @@ describe('RecordQuery', () => {
   });
 
   it('should reject malformed runtime pagination at the shared compiler boundary', () => {
+    expect(compileRecordQuery(QueryDefinition, 'note', {
+      pagination: { limit: DwnConstant.maxQueryPageSize },
+    }).pagination?.limit).toBe(DwnConstant.maxQueryPageSize);
+
     const invalidPaginationValues = [
       [],
       { unexpected: true },
+      { limit: 1.5 },
+      { limit: DwnConstant.maxQueryPageSize + 1 },
       { limit: Number.POSITIVE_INFINITY },
       { cursor: null },
       { cursor: { messageCid: 7, value: '2026-01-01T00:00:00Z' } },

@@ -21,6 +21,7 @@ import type { PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
   DecryptRecordDataParams,
+  DwnMessageParams,
   DwnMessageReply,
   DwnResponse,
   ProcessDwnRequest,
@@ -62,6 +63,7 @@ import { Ed25519, X25519 } from '@enbox/crypto';
 import type { RemoteReadOutcome } from './dwn-read-through.js';
 
 import { DwnInterface } from './types/dwn.js';
+import { collectRecordsQueryEntries, remoteRecordsQueryCollectionLimits } from './records-query.js';
 import {
   processDwnRequestWithRemoteFallback as processDwnReadThrough,
   processDwnRequestWithRemoteFallbackDetailed as processDwnReadThroughDetailed,
@@ -1810,10 +1812,7 @@ export async function queryAudienceDeliveryMessagesDetailed(
   params: QueryAudienceDeliveryMessagesParams,
   deliveryReadActor: AudienceDeliveryReadActor,
 ): Promise<{ messages: EncodedRecordsWriteMessage[]; remote: RemoteReadOutcome; replyStatusCode: number }> {
-  const { response, remote } = await processDwnReadThroughDetailed({
-    process : params.agent.processDwnRequest.bind(params.agent),
-    send    : params.agent.sendDwnRequest.bind(params.agent),
-  }, {
+  return queryAllRecordsWithRemoteFallback(params.agent, {
     author        : deliveryReadActor.authorDid,
     granteeDid    : deliveryReadActor.granteeDid,
     target        : params.sourceDid,
@@ -1832,13 +1831,7 @@ export async function queryAudienceDeliveryMessagesDetailed(
         },
       },
     },
-  }, hasRecordsQueryEntries);
-
-  const reply = response.reply;
-  if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
-    return { messages: [], remote, replyStatusCode: reply.status.code };
-  }
-  return { messages: reply.entries as EncodedRecordsWriteMessage[], remote, replyStatusCode: reply.status.code };
+  });
 }
 
 /**
@@ -2171,10 +2164,7 @@ async function fetchAudienceRecord(params: {
   contextId: string;
   keyId: string;
 }): Promise<{ record?: AudienceRecordCandidate; remote: RemoteReadOutcome; replyStatusCode: number }> {
-  const { response, remote } = await processDwnReadThroughDetailed({
-    process : params.agent.processDwnRequest.bind(params.agent),
-    send    : params.agent.sendDwnRequest.bind(params.agent),
-  }, {
+  const { messages, remote, replyStatusCode } = await queryAllRecordsWithRemoteFallback(params.agent, {
     author        : params.authorDid,
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsQuery,
@@ -2190,16 +2180,13 @@ async function fetchAudienceRecord(params: {
         },
       },
     },
-  }, hasRecordsQueryEntries);
+  });
 
-  const reply = response.reply;
-  const replyStatusCode = reply.status.code;
-  if (replyStatusCode !== 200 || reply.entries === undefined || reply.entries.length === 0) {
+  if (replyStatusCode !== 200 || messages.length === 0) {
     return { remote, replyStatusCode };
   }
 
-  for (const entry of reply.entries) {
-    const audienceMessage = entry as EncodedRecordsWriteMessage;
+  for (const audienceMessage of messages) {
     const dataBytes = await getAudienceRecordData(
       params.agent,
       params.authorDid,
@@ -2375,6 +2362,9 @@ async function verifyAudienceKeyRoleAssignment(params: {
           protocol     : params.protocol,
           protocolPath : params.rolePath,
         },
+        // Role possession is existential: the server-side filter already
+        // selects only matching assignments, so one result is sufficient.
+        pagination: { limit: 1 },
       },
     }, hasRecordsQueryEntries);
   } catch (error: unknown) {
@@ -2449,6 +2439,63 @@ async function processDwnRequestWithRemoteFallback<T extends DwnInterface>(
 
 function hasRecordsQueryEntries(reply: DwnMessageReply[DwnInterface.RecordsQuery]): boolean {
   return reply.status.code === 200 && reply.entries !== undefined && reply.entries.length > 0;
+}
+
+async function queryAllRecordsWithRemoteFallback(
+  agent: EnboxPlatformAgent,
+  request: ProcessDwnRequest<DwnInterface.RecordsQuery> & {
+    messageParams: DwnMessageParams[DwnInterface.RecordsQuery];
+  },
+): Promise<{ messages: EncodedRecordsWriteMessage[]; remote: RemoteReadOutcome; replyStatusCode: number }> {
+  let complete = true;
+  let remote: RemoteReadOutcome = 'skipped';
+  let replyStatusCode = 200;
+  let source: 'local' | 'remote' | undefined;
+  const entries = await collectRecordsQueryEntries(async (pagination) => {
+    const paginatedRequest = {
+      ...request,
+      messageParams: { ...request.messageParams, pagination },
+    };
+    let reply: DwnMessageReply[DwnInterface.RecordsQuery];
+
+    if (source === undefined) {
+      const result = await processDwnReadThroughDetailed({
+        process : agent.processDwnRequest.bind(agent),
+        send    : agent.sendDwnRequest.bind(agent),
+      }, paginatedRequest, hasRecordsQueryEntries);
+      remote = result.remote;
+      source = result.remote === 'ok' ? 'remote' : 'local';
+      reply = result.response.reply;
+    } else if (source === 'local') {
+      reply = (await agent.processDwnRequest(paginatedRequest)).reply;
+    } else {
+      try {
+        reply = (await agent.sendDwnRequest(paginatedRequest)).reply;
+        if (reply.status.code !== 200) {
+          remote = 'failed';
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        logger.log(`AgentDwnApi: paginated remote query to '${request.target}' failed: ${detail}`);
+        complete = false;
+        remote = 'failed';
+        return {};
+      }
+    }
+
+    replyStatusCode = reply.status.code;
+    if (replyStatusCode !== 200) {
+      complete = false;
+    }
+    return replyStatusCode === 200 ? reply : {};
+  }, (): typeof remoteRecordsQueryCollectionLimits | undefined =>
+    source === 'local' ? undefined : remoteRecordsQueryCollectionLimits);
+
+  return {
+    messages: complete ? entries as EncodedRecordsWriteMessage[] : [],
+    remote,
+    replyStatusCode,
+  };
 }
 
 function hasRecordsReadData(reply: DwnMessageReply[DwnInterface.RecordsRead]): boolean {
@@ -2746,7 +2793,7 @@ type ResolveGrantKeyRecordParams = ResolveGrantKeyRecordsParams & {
 };
 
 async function resolveGrantKeyRecords(params: ResolveGrantKeyRecordsParams): Promise<DelegateDecryptionKeyEntry[]> {
-  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
+  const { messages, replyStatusCode } = await queryAllRecordsWithRemoteFallback(params.agent, {
     author        : params.granteeDid,
     target        : params.grantorDid,
     messageType   : DwnInterface.RecordsQuery,
@@ -2757,9 +2804,9 @@ async function resolveGrantKeyRecords(params: ResolveGrantKeyRecordsParams): Pro
         tags      : { protocol: params.protocol },
       },
     },
-  }, hasRecordsQueryEntries);
+  });
 
-  if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
+  if (replyStatusCode !== 200 || messages.length === 0) {
     return [];
   }
 
@@ -2777,8 +2824,7 @@ async function resolveGrantKeyRecords(params: ResolveGrantKeyRecordsParams): Pro
   const resolvedKeys: DelegateDecryptionKeyEntry[] = [];
   const targetMismatches: WrappedGrantKeyTargetMismatchError[] = [];
 
-  for (const entry of reply.entries) {
-    const grantKeyMessage = entry as RecordsWriteMessage & { encodedData?: string };
+  for (const grantKeyMessage of messages) {
     try {
       const resolvedKey = await resolveGrantKeyRecord({
         ...params,

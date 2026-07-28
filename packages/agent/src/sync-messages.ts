@@ -1007,6 +1007,7 @@ class RemoteApplyPushContext {
           recipient    : ref.recipient,
           ...(ref.contextPrefix === undefined ? {} : { contextId: ref.contextPrefix }),
         },
+        pagination: { limit: 1 },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.RecordsQuery,

@@ -24,6 +24,7 @@
         "type": "string"
       },
       "minItems": 1,
+      "maxItems": 100,
       "uniqueItems": true
     },
     "protocolRole": {

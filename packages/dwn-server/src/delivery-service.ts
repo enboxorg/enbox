@@ -1,7 +1,7 @@
 import type { DwnServerConfig } from './config.js';
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { DidDocument, DidResolver, DidService, DidServiceEndpoint } from '@enbox/dids';
-import type { Dwn, GenericMessage, ProtocolDefinition, ProtocolRuleSet, RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, PaginationCursor, ProtocolDefinition, ProtocolRuleSet, RecordsQueryReply, RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
 
 import log from 'loglevel';
@@ -417,31 +417,34 @@ export class DeliveryService implements MessageProcessedHook {
         }
       }
 
-      // Use the DWN's processMessage to query for role records.
-      const queryMessage = {
-        descriptor: {
-          interface        : DwnInterfaceName.Records,
-          method           : DwnMethodName.Query,
-          messageTimestamp : new Date().toISOString(),
-          filter,
-        },
-      };
-
-      const reply = await this.#dwn.processMessage(tenant, queryMessage as GenericMessage);
-
-      if (reply.status.code !== 200 || !reply.entries) {
-        return [];
-      }
-
-      // Extract unique recipient DIDs from the role records.
       const dids = new Set<string>();
-      for (const entry of reply.entries) {
-        const recipient = (entry as { descriptor?: { recipient?: string } }).descriptor?.recipient
-          ?? (entry as { recipient?: string }).recipient;
-        if (recipient) {
-          dids.add(recipient);
+      let cursor: PaginationCursor | undefined;
+      do {
+        const queryMessage = {
+          descriptor: {
+            interface        : DwnInterfaceName.Records,
+            method           : DwnMethodName.Query,
+            messageTimestamp : new Date().toISOString(),
+            filter,
+            pagination       : {
+              ...(cursor === undefined ? {} : { cursor }),
+              limit: DwnConstant.maxQueryPageSize,
+            },
+          },
+        };
+        const reply = await this.#dwn.processMessage(tenant, queryMessage as GenericMessage) as RecordsQueryReply;
+        if (reply.status.code !== 200 || reply.entries === undefined) {
+          return [];
         }
-      }
+
+        for (const entry of reply.entries) {
+          const recipient = entry.descriptor.recipient;
+          if (recipient !== undefined) {
+            dids.add(recipient);
+          }
+        }
+        cursor = reply.cursor;
+      } while (cursor !== undefined);
 
       return Array.from(dids);
     } catch (err) {

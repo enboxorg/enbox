@@ -1,4 +1,13 @@
 export class DwnConstant {
+  /** Default number of entries returned by one query page when the caller omits a limit. */
+  public static readonly defaultQueryPageSize = 100;
+
+  /** Maximum number of entries a caller may request in one query page. */
+  public static readonly maxQueryPageSize = 1000;
+
+  /** Maximum number of values accepted by one query filter collection. */
+  public static readonly maxFilterValues = 100;
+
   /**
    * The maximum size of raw data that will be returned as `encodedData`.
    *

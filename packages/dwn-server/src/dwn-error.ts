@@ -28,6 +28,8 @@ export class DwnServerError extends Error {
 export enum DwnServerErrorCode {
   ConnectionSubscriptionJsonRpcIdExists = 'ConnectionSubscriptionJsonRpcIdExists',
   ConnectionSubscriptionJsonRpcIdNotFound = 'ConnectionSubscriptionJsonRpcIdNotFound',
+  ConnectionSubscriptionLimitExceeded = 'ConnectionSubscriptionLimitExceeded',
+  ConnectionSubscriptionOpeningNotFound = 'ConnectionSubscriptionOpeningNotFound',
   ProofOfWorkInsufficientSolutionNonce = 'ProofOfWorkInsufficientSolutionNonce',
   ProofOfWorkInvalidOrExpiredChallenge = 'ProofOfWorkInvalidOrExpiredChallenge',
   ProofOfWorkManagerInvalidChallengeNonce = 'ProofOfWorkManagerInvalidChallengeNonce',
@@ -42,6 +44,7 @@ export enum DwnServerErrorCode {
   RegistrationManagerInvalidOrOutdatedTermsOfServiceHash = 'RegistrationManagerInvalidOrOutdatedTermsOfServiceHash',
   RegistrationRequestMissingCredentials = 'RegistrationRequestMissingCredentials',
   TenantMessageQuotaExceeded = 'TenantMessageQuotaExceeded',
+  TenantQuotaUsageStoreUnavailable = 'TenantQuotaUsageStoreUnavailable',
   TenantRegistrationOutdatedTermsOfService = 'TenantRegistrationOutdatedTermsOfService',
   TenantStorageQuotaExceeded = 'TenantStorageQuotaExceeded',
   TenantSuspended = 'TenantSuspended',

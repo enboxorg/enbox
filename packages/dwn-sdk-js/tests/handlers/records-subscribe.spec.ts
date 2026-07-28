@@ -142,6 +142,23 @@ export function testRecordsSubscribeHandler(): void {
         expect(reply.entries!).toHaveLength(0); // no matching records exist yet
       });
 
+      it('should apply a snapshot limit of 100 when pagination is omitted', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { schema: 'http://default-subscribe-page-size' },
+        });
+        const querySpy = sinon.spy(messageStore, 'query');
+
+        const reply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
+        await reply.subscription?.close();
+
+        expect(reply.status.code).toBe(200);
+        expect(recordsSubscribe.message.descriptor.pagination).toBeUndefined();
+        expect(querySpy.calledOnce).toBe(true);
+        expect(querySpy.firstCall.args[3]?.limit).toBe(100);
+      });
+
       it('should return initial entries matching the filter', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);

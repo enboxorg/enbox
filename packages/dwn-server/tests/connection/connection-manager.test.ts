@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { config } from '../../src/config.js';
 import { getTestDwn } from '../test-dwn.js';
 import { HttpApi } from '../../src/http-api.js';
-import { InMemoryConnectionManager } from '../../src/connection/connection-manager.js';
+import type { InMemoryConnectionManager } from '../../src/connection/connection-manager.js';
 import { JsonRpcSocket } from '@enbox/dwn-clients';
 import { WsApi } from '../../src/ws-api.js';
 
@@ -20,19 +20,17 @@ describe('InMemoryConnectionManager', () => {
 
   beforeEach(async () => {
     ({ dwn, dialect } = await getTestDwn({ withEvents: true }));
-    connectionManager = new InMemoryConnectionManager(dwn);
     httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
+    wsApi = new WsApi(httpApi, dwn);
+    connectionManager = wsApi.connectionManager as InMemoryConnectionManager;
     await httpApi.start(0);
     wsUrl = `ws://127.0.0.1:${httpApi.server.port}`;
-    wsApi = new WsApi(httpApi, dwn, { connectionManager });
-    wsApi.start();
   });
 
   afterEach(async () => {
-    await connectionManager.closeAll();
+    await wsApi.close();
     await dwn.close();
     await httpApi.close();
-    await wsApi.close();
     mock.restore();
   });
 

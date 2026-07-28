@@ -84,7 +84,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const context: RequestContext = {
       dwn,
       transport : 'ws',
-      config    : { maxRecordDataSize: dataBytes.byteLength } as any,
+      config    : { maxRecordDataSize: dataBytes.byteLength, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
     };
 
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
@@ -201,7 +201,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const context: RequestContext = {
       dwn,
       transport : 'ws',
-      config    : { maxRecordDataSize: 3 } as any,
+      config    : { maxRecordDataSize: 3, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
     };
 
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
@@ -231,7 +231,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
       dwn,
       transport : 'http',
-      config    : { maxRecordDataSize: data.byteLength - 1 } as any,
+      config    : { maxRecordDataSize: data.byteLength - 1, quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
       dataStream,
     });
 
@@ -407,6 +407,40 @@ describe('handleDwnApplyReplicatedMessage', () => {
 
     expect(jsonRpcResponse.error).toBeDefined();
     expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('should enforce message-count quota for a replicated ProtocolsConfigure', async () => {
+    const message = {
+      descriptor: {
+        interface        : 'Protocols',
+        method           : 'Configure',
+        messageTimestamp : new Date().toISOString(),
+      },
+    };
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message,
+      target: 'did:key:quota-test',
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport  : 'http',
+      adminStore : {
+        getTenantMessageCount : async (): Promise<number> => 1,
+        getTenantStorageSize  : async (): Promise<number> => 0,
+      } as any,
+      config: {
+        quotaMaxMessages     : 1,
+        quotaMaxStorageBytes : 0,
+      } as any,
+    });
+
+    expect(jsonRpcResponse.id).toBe(dwnRequest.id);
+    expect(jsonRpcResponse.error?.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
     expect(applySpy).toHaveBeenCalledTimes(0);
     await dwn.close();
   });

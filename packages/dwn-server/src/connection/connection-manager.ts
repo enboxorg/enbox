@@ -11,13 +11,27 @@ import type { RegistrationStore } from '../registration/registration-store.js';
 import type { WsData } from '../http-api.js';
 
 import { SocketConnection } from './socket-connection.js';
+import { websocketConnections } from '../metrics.js';
+
+export type InMemoryConnectionManagerOptions = {
+  activityLog? : ActivityLog;
+  adminStore? : AdminStore;
+  connections? : Map<ServerWebSocket<WsData>, SocketConnection>;
+  ipRateLimiter? : RateLimiter;
+  maxInFlight? : number;
+  maxSubscriptions? : number;
+  messageProcessedHooks? : MessageProcessedHook[];
+  registrationStore? : RegistrationStore;
+  serverConfig? : DwnServerConfig;
+  tenantRateLimiter? : RateLimiter;
+};
 
 /**
  * Interface for managing `WebSocket` connections as they arrive.
  */
 export interface ConnectionManager {
   /** connect handler invoked when a new WebSocket connection is established. */
-  connect(socket: ServerWebSocket<WsData>): Promise<void>;
+  connect(socket: ServerWebSocket<WsData>): void;
   /** closes all of the connections */
   closeAll(): Promise<void>;
   /** Closes local-node connections authenticated with the given pairing token. */
@@ -35,32 +49,41 @@ export interface ConnectionManager {
  * It uses a `Map<ServerWebSocket, SocketConnection>` to manage connections.
  */
 export class InMemoryConnectionManager implements ConnectionManager {
+  private readonly connections: Map<ServerWebSocket<WsData>, SocketConnection>;
+
   constructor(
     private readonly dwn: Dwn,
-    private readonly connections: Map<ServerWebSocket<WsData>, SocketConnection> = new Map(),
-    private readonly maxInFlight?: number,
-    private readonly activityLog?: ActivityLog,
-    private readonly adminStore?: AdminStore,
-    private readonly registrationStore?: RegistrationStore,
-    private readonly serverConfig?: DwnServerConfig,
-    private readonly tenantRateLimiter?: RateLimiter,
-    private readonly messageProcessedHooks?: MessageProcessedHook[],
-  ) {}
+    private readonly options: InMemoryConnectionManagerOptions = {},
+  ) {
+    this.connections = options.connections ?? new Map();
+  }
 
-  async connect(socket: ServerWebSocket<WsData>): Promise<void> {
-    const connection = new SocketConnection(
-      socket, this.dwn, () => {
+  connect(socket: ServerWebSocket<WsData>): void {
+    const connection = new SocketConnection(socket, this.dwn, {
+      activityLog           : this.options.activityLog,
+      adminStore            : this.options.adminStore,
+      ipRateLimiter         : this.options.ipRateLimiter,
+      maxInFlight           : this.options.maxInFlight,
+      maxSubscriptions      : this.options.maxSubscriptions,
+      messageProcessedHooks : this.options.messageProcessedHooks,
+      onClose               : (): void => {
         // this is the onClose handler to clean up any closed connections.
-        this.connections.delete(socket);
+        if (this.connections.delete(socket)) {
+          websocketConnections.dec();
+        }
+        socket.data.releaseConnectionReservation();
       },
-      this.maxInFlight, this.activityLog,
-      this.adminStore, this.registrationStore, this.serverConfig, this.tenantRateLimiter, this.messageProcessedHooks,
-    );
+      peerIp            : socket.data.peerIp,
+      registrationStore : this.options.registrationStore,
+      serverConfig      : this.options.serverConfig,
+      tenantRateLimiter : this.options.tenantRateLimiter,
+    });
 
     // Attach the connection to the ws.data so Bun's websocket handlers can delegate to it.
     socket.data.connection = connection;
 
     this.connections.set(socket, connection);
+    websocketConnections.inc();
   }
 
   async closeAll(): Promise<void> {

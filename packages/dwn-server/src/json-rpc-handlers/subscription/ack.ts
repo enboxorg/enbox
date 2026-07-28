@@ -1,26 +1,11 @@
-import type { ProgressToken } from '@enbox/dwn-sdk-js';
-
 import type { JsonRpcId } from '@enbox/dwn-clients';
 import type {
   HandlerResponse,
   JsonRpcHandler,
 } from '../../lib/json-rpc-router.js';
 
+import { isProgressToken } from '../../connection/flow-controller.js';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-
-/**
- * Validates that a value is a well-formed {@link ProgressToken}.
- */
-function isProgressToken(value: unknown): value is ProgressToken {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-  const obj = value as Record<string, unknown>;
-  return typeof obj.streamId === 'string' && obj.streamId !== '' &&
-    typeof obj.epoch === 'string' && obj.epoch !== '' &&
-    typeof obj.position === 'string' && obj.position !== '' &&
-    (obj.messageCid === undefined || (typeof obj.messageCid === 'string' && obj.messageCid !== ''));
-}
 
 /**
  * Handles `rpc.ack` — acknowledges receipt of subscription events up to the

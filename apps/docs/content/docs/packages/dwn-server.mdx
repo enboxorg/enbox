@@ -12,11 +12,18 @@ description: Self-hostable Decentralized Web Node server with PostgreSQL, MySQL,
 ```bash
 docker run -d \
   --name dwn-server \
-  -p 3000:3000 \
-  -e DWN_STORAGE=level://data \
-  -v dwn-data:/data \
+  -p 127.0.0.1:3000:3000 \
+  -e DWN_STORAGE_MESSAGES=level://data \
+  -e DWN_STORAGE_DATA=level://data \
+  -e DWN_STORAGE_RESUMABLE_TASKS=level://data \
+  -e DWN_ALLOW_OPEN_TENANTS=true \
+  -e DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true \
+  -v dwn-data:/app/packages/dwn-server/data \
   ghcr.io/enboxorg/dwn-server:latest
 ```
+
+Those two acknowledgement flags are appropriate for this local development
+example. A remote deployment should configure a tenant gate and finite quotas.
 
 ### From source
 
@@ -24,7 +31,10 @@ docker run -d \
 git clone https://github.com/enboxorg/enbox.git
 cd enbox
 bun install
-bun --filter @enbox/dwn-server start
+DS_HOST=127.0.0.1 \
+DWN_ALLOW_OPEN_TENANTS=true \
+DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true \
+  bun run --filter @enbox/dwn-server server
 ```
 
 ### Verify
@@ -52,6 +62,9 @@ All configuration is via **environment variables**. There are no CLI flags.
 | `DS_WEBSOCKET_SERVER` | `on` | Enable WebSocket support (`on` / `off`) |
 | `MAX_RECORD_DATA_SIZE` | `100mb` | Startup-only maximum payload size per `RecordsWrite` |
 | `DWN_MAX_IN_FLIGHT` | `32` | Max unacknowledged subscription events per subscription |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS` | `1000` | Startup-only process-wide WebSocket connection limit |
+| `DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP` | `100` | Startup-only WebSocket connection limit per peer IP |
+| `DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION` | `64` | Startup-only outstanding subscription-slot limit per connection |
 
 ### Storage
 
@@ -95,11 +108,14 @@ When multiple stores share the same PostgreSQL connection URL, a single shared p
 
 ### Tenant registration
 
-By default, any DID can use the server (open registration). You can require registration via Proof-of-Work, Provider Auth (OAuth), or both.
+Remote startup requires either a registration store or an explicit open-node
+acknowledgement. A configured registration store can admit tenants through
+Proof-of-Work, Provider Auth (OAuth), or pre-registration.
 
 | Variable | Default | Description |
 |---|---|---|
 | `DWN_REGISTRATION_STORE_URL` | `DWN_STORAGE` | Storage URL for registration data |
+| `DWN_ALLOW_OPEN_TENANTS` | `false` | Explicitly run a remote server without a tenant gate |
 | `DWN_REGISTRATION_PROOF_OF_WORK_ENABLED` | `false` | Enable Proof-of-Work registration |
 | `DWN_REGISTRATION_PROOF_OF_WORK_SEED` | *(none)* | Seed for PoW challenge generation |
 | `DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH` | *(none)* | Initial difficulty ceiling |
@@ -130,24 +146,30 @@ The admin API is **disabled by default**. Set `DWN_ADMIN_TOKEN` to enable it.
 | `DWN_ADMIN_TOKEN_FILE` | *(none)* | Read the admin token from a file (useful for Docker secrets) |
 | `DWN_ADMIN_ACTIVITY_LOG_CAPACITY` | `10000` | Max events in the admin activity ring buffer |
 | `DWN_ADMIN_METRICS_UPDATE_INTERVAL` | `30` | Prometheus gauge update interval (seconds) |
+| `DWN_PUBLIC_METRICS_ENABLED` | `false` | Expose remote `/metrics` without admin authentication |
 | `DWN_ADMIN_WEBAUTHN_RP_ID` | *(from DWN_BASE_URL)* | WebAuthn Relying Party ID for passkey auth |
 | `DWN_ADMIN_WEBAUTHN_RP_NAME` | `DWN Admin` | WebAuthn Relying Party display name |
 | `DWN_ADMIN_SESSION_TTL` | `86400` | Passkey session TTL (seconds, default 24 hours) |
 
 ### Quotas
 
-Per-tenant storage quotas limit resource usage. Defaults are unlimited; per-tenant overrides are managed via the admin API.
+Per-tenant storage quotas limit resource usage. Remote servers must configure
+both global limits or explicitly acknowledge unbounded usage. Finite accounting
+requires a SQL message store. Global defaults are startup-only; per-tenant
+overrides are managed through the admin API, where zero inherits the global limit.
+There is no tenant-only unlimited override for a finite global limit.
 
 | Variable | Default | Description |
 |---|---|---|
 | `DWN_QUOTA_MAX_MESSAGES` | `0` (unlimited) | Default max messages per tenant |
 | `DWN_QUOTA_MAX_STORAGE_BYTES` | `0` (unlimited) | Default max data storage per tenant (bytes) |
+| `DWN_ALLOW_UNBOUNDED_TENANT_USAGE` | `false` | Explicitly allow either quota dimension to remain unlimited |
 
 ### Rate limiting
 
 | Variable | Default | Description |
 |---|---|---|
-| `DWN_RATE_LIMIT_REQUESTS_PER_SECOND` | `30` | Max HTTP requests/sec per IP. `0` disables. |
+| `DWN_RATE_LIMIT_REQUESTS_PER_SECOND` | `30` | Max HTTP, WebSocket-upgrade, and WS requests/sec per IP. `0` disables. |
 | `DWN_RATE_LIMIT_BURST` | `50` | Burst allowance per IP |
 | `DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND` | `20` | Max DWN requests/sec per tenant DID. `0` disables. |
 | `DWN_RATE_LIMIT_TENANT_BURST` | `50` | Burst allowance per tenant |
@@ -186,6 +208,12 @@ When `DS_WEBSOCKET_SERVER=on` (the default), the server accepts WebSocket upgrad
 - Real-time subscription events
 - Flow control via `rpc.ack` messages (controlled by `DWN_MAX_IN_FLIGHT`)
 
+Acknowledgements that advance a subscription event window do not consume the ordinary
+per-IP request bucket, so rate limiting cannot stall an already-open event window.
+Peer-IP limits use the direct TCP peer and do not trust forwarded headers. When
+a reverse proxy terminates connections, enforce client-IP limits there and size
+the Enbox per-peer connection limit for the proxy's aggregate traffic.
+
 ### Registration routes
 
 When Proof-of-Work or Provider Auth is enabled, additional routes are exposed for tenant registration and terms-of-service acceptance.
@@ -201,7 +229,9 @@ docker run -d \
   -e DWN_STORAGE=postgres://dwn:secret@db:5432/dwn \
   -e DWN_BASE_URL=https://dwn.example.com \
   -e DWN_ADMIN_TOKEN=your-secret-token \
+  -e DWN_REGISTRATION_PROOF_OF_WORK_ENABLED=true \
   -e DWN_RATE_LIMIT_REQUESTS_PER_SECOND=30 \
+  -e DWN_QUOTA_MAX_MESSAGES=100000 \
   -e DWN_QUOTA_MAX_STORAGE_BYTES=1073741824 \
   ghcr.io/enboxorg/dwn-server:latest
 ```

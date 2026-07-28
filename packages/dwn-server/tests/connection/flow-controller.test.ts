@@ -253,6 +253,28 @@ describe('FlowController', () => {
     });
   });
 
+  describe('close()', () => {
+    it('should clear pending state and ignore later pushes and acknowledgements', () => {
+      const sent: JsonRpcSuccessResponse[] = [];
+      const fc = createFc(1, sent);
+
+      fc.push(makeEvent(1));
+      fc.push(makeEvent(2));
+
+      expect(fc.inFlightCount).toBe(1);
+      expect(fc.bufferCount).toBe(1);
+
+      fc.close();
+      fc.close();
+      fc.ack(token(1));
+      fc.push(makeEvent(3));
+
+      expect(sent).toHaveLength(1);
+      expect(fc.inFlightCount).toBe(0);
+      expect(fc.bufferCount).toBe(0);
+    });
+  });
+
   describe('JSON-RPC framing', () => {
     it('should wrap messages in JSON-RPC success responses with subscription id', () => {
       const sent: JsonRpcSuccessResponse[] = [];
