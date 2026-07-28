@@ -39,6 +39,7 @@ import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolv
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
+import { ProtocolReadinessApi } from './protocol-readiness.js';
 import { TypedEnbox } from './typed-enbox.js';
 import { VcApi } from './vc-api.js';
 
@@ -118,6 +119,9 @@ export class Enbox {
   /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs. */
   public vc: VcApi;
 
+  /** Application-level owner/delegate protocol readiness lifecycle. */
+  public protocols: ProtocolReadinessApi;
+
   /**
    * The `AuthManager` this instance owns and is responsible for tearing down
    * during {@link Enbox.disconnect}. Set only by the async
@@ -146,6 +150,14 @@ export class Enbox {
     this._dwn = new DwnApi({ agent, connectedDid, delegateDid, permissionsApi: agent.permissions });
     this._connectedDid = connectedDid;
     this._delegateDid = delegateDid;
+    this.protocols = new ProtocolReadinessApi({
+      agent,
+      connectedDid,
+      delegateDid,
+      dwn    : this._dwn,
+      signal : this._lifetimeSignal,
+      using  : this.using.bind(this),
+    });
     this.vc = new VcApi({ agent, connectedDid });
   }
 

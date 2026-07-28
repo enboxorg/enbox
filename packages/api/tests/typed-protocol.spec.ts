@@ -64,6 +64,71 @@ const TodoProtocol = defineProtocol(TodoProtocolDefinition, {
   task       : recordCodecs.json<{ title: string; completed: boolean }>(),
 });
 
+const EncryptedProtocolDefinition = {
+  protocol  : 'https://example.com/protocols/incomplete-encryption',
+  published : true,
+  types     : {
+    note: {
+      schema      : 'https://example.com/schemas/incomplete-encryption-note',
+      dataFormats : ['application/json'],
+    },
+    secret: {
+      schema             : 'https://example.com/schemas/incomplete-encryption-secret',
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+    },
+  },
+  structure: {
+    note   : {},
+    secret : {},
+  },
+} as const satisfies ProtocolDefinition;
+
+const EncryptedProtocol = defineProtocol(EncryptedProtocolDefinition, {
+  note   : recordCodecs.json<unknown>(),
+  secret : recordCodecs.json<unknown>(),
+});
+
+type IncompleteEncryptionFixture = {
+  configure: sinon.SinonStub;
+  recordsQuery: sinon.SinonStub;
+  typed: TypedEnbox<typeof EncryptedProtocolDefinition, typeof EncryptedProtocol.codecs>;
+};
+
+function incompleteEncryptionFixture(): IncompleteEncryptionFixture {
+  const keyAgreement = { publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'partial-key' } };
+  const partialDefinition = {
+    ...EncryptedProtocolDefinition,
+    $keyAgreement : keyAgreement,
+    structure     : {
+      note   : {},
+      secret : { $keyAgreement: keyAgreement },
+    },
+  } as unknown as ProtocolDefinition;
+  const installedProtocol = { definition: partialDefinition };
+  const configure = sinon.stub().resolves({
+    protocol : installedProtocol,
+    status   : { code: 202, detail: 'Accepted' },
+  });
+  const recordsQuery = sinon.stub().resolves({
+    records : [],
+    status  : { code: 200, detail: 'OK' },
+  });
+  const dwn = {
+    isDelegate : false,
+    protocols  : {
+      configure,
+      query: sinon.stub().resolves({
+        protocols : [installedProtocol],
+        status    : { code: 200, detail: 'OK' },
+      }),
+    },
+    records: { query: recordsQuery },
+  } as unknown as DwnApi;
+
+  return { configure, recordsQuery, typed: new TypedEnbox(dwn, EncryptedProtocol) };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -159,6 +224,25 @@ describe('TypedProtocol API', () => {
       const records1 = typed.records;
       const records2 = typed.records;
       expect(records1).toBe(records2);
+    });
+
+    it('should explicitly repair a policy-equal encrypted install with incomplete key coverage', async () => {
+      const { configure, typed } = incompleteEncryptionFixture();
+
+      const result = await typed.configure();
+
+      expect(result.status.code).toBe(202);
+      expect(configure.calledOnceWith({ definition: EncryptedProtocolDefinition })).toBe(true);
+    });
+
+    it('should repair incomplete encryption keys before the first automatic record operation', async () => {
+      const { configure, recordsQuery, typed } = incompleteEncryptionFixture();
+
+      const page = await typed.records.query('note');
+
+      expect(page.records).toEqual([]);
+      expect(configure.calledOnceWith({ definition: EncryptedProtocolDefinition })).toBe(true);
+      expect(recordsQuery.calledOnce).toBe(true);
     });
 
     it('should import the wallet-owned protocol configuration when configuring as a delegate', async () => {

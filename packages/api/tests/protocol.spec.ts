@@ -1,5 +1,6 @@
 import type { BearerDid } from '@enbox/dids';
 
+import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { EnboxUserAgent } from '@enbox/agent';
@@ -35,6 +36,7 @@ describe('Protocol', () => {
   });
 
   beforeEach(async () => {
+    sinon.restore();
     await testHarness.syncStore.clear();
     await testHarness.dwnDataStore.clear();
     await testHarness.dwnMessageStore.clear();
@@ -44,6 +46,7 @@ describe('Protocol', () => {
   });
 
   afterAll(async () => {
+    sinon.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -85,6 +88,29 @@ describe('Protocol', () => {
         ...emailProtocolDefinition,
         protocol: protocolUri
       });
+    });
+
+    it('sends a queried protocol by its exact raw message when no local CID metadata is present', async () => {
+      const protocolUri = `http://example.com/protocol/${TestDataGenerator.randomString(15)}`;
+      const { status } = await dwnAlice.protocols.configure({
+        definition: { ...emailProtocolDefinition, protocol: protocolUri },
+      });
+      expect(status.code).toBe(202);
+
+      const local = await dwnAlice.protocols.query({ filter: { protocol: protocolUri } });
+      expect(local.protocols).toHaveLength(1);
+      const queriedProtocol = local.protocols[0];
+      const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
+
+      const sent = await queriedProtocol.send(aliceDid.uri);
+
+      expect(sent.status.code).toBe(202);
+      expect(sendSpy.calledOnce).toBe(true);
+      expect(sendSpy.firstCall.args[0]).toMatchObject({
+        rawMessage : queriedProtocol.toJSON(),
+        target     : aliceDid.uri,
+      });
+      expect('messageCid' in sendSpy.firstCall.args[0]).toBe(false);
     });
   });
 

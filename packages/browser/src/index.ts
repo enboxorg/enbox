@@ -36,7 +36,10 @@ export {
   Enbox,
   defineProtocol,
   getApplicationProtocolRequests,
+  ProtocolReadinessApi,
+  ProtocolReadinessError,
   recordCodecs,
+  WalletReapprovalRequiredError,
 } from '@enbox/api';
 
 export type {
@@ -56,7 +59,12 @@ export type {
   EnboxParams,
   EnboxSessionParams,
   EncodedRecordData,
+  EnsureProtocolsReadyOptions,
   MaterializedRecord,
+  ProtocolReadinessPublication,
+  ProtocolReadinessEndpointFailure,
+  ProtocolReadinessRecovery,
+  ProtocolReadinessStage,
   ProtocolRolePaths,
   RecordCodec,
   RecordCodecValue,

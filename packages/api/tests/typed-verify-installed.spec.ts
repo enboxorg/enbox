@@ -393,7 +393,9 @@ describe('TypedEnbox.verifyInstalled()', () => {
       });
       const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, plainCodecs));
 
-      await expect(typed.verifyInstalled()).rejects.toThrow('401 grant revoked');
+      await expect(typed.verifyInstalled()).rejects.toMatchObject({
+        status: { code: 401, detail: 'grant revoked' },
+      });
     });
 
     it('should throw (not classify) when the owner protocol query itself fails', async () => {
@@ -405,7 +407,9 @@ describe('TypedEnbox.verifyInstalled()', () => {
       const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, plainCodecs));
 
       // A failed local read must never be classified as "not installed".
-      await expect(typed.verifyInstalled()).rejects.toThrow('500 store unavailable');
+      await expect(typed.verifyInstalled()).rejects.toMatchObject({
+        status: { code: 500, detail: 'store unavailable' },
+      });
     });
   });
 

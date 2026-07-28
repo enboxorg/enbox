@@ -51,10 +51,10 @@ import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createRecordView } from './record-view.js';
 import { removeUndefinedProperties } from '@enbox/common';
-import { requireDwnSuccess } from './dwn-response-error.js';
 import { assertTypedProtocolStructureSupported, collectProtocolPaths } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
+import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
 import { getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
@@ -576,6 +576,12 @@ export type VerifyInstalledResult = {
    */
   missingKeyAgreementPaths: string[];
 
+  /**
+   * The exact installed configuration artifact that was verified, when one
+   * exists. Delegates can import this wallet-signed message without re-querying.
+   */
+  protocol?: Protocol;
+
   /** Human-readable explanation of a non-`'up-to-date'` status. */
   reason?: string;
 
@@ -726,7 +732,9 @@ export class TypedEnbox<
     // If already installed with the same definition, return it as-is.
     if (protocols.length > 0) {
       const existing = protocols[0];
-      if (definitionsEqual(existing.definition, this._definition)) {
+      const encryptionKeysComplete = !this._hasEncryptedTypes
+        || collectMissingKeyAgreementPaths(existing.definition).length === 0;
+      if (definitionsEqual(existing.definition, this._definition) && encryptionKeysComplete) {
         this._configured = true;
         return { status: { code: 200, detail: 'OK' }, protocol: existing };
       }
@@ -798,7 +806,7 @@ export class TypedEnbox<
    * Never changes state: no configure, no import, no cache updates.
    *
    * @returns The structured verification result — see {@link VerifyInstalledResult}.
-   * @throws `Error` when the delegate's remote protocol query itself fails
+   * @throws {@link DwnResponseError} when the protocol query itself fails
    *   (e.g. a revoked or expired session grant surfaces as a 401) — a
    *   transport/authorization failure, not a verification outcome.
    */
@@ -822,13 +830,15 @@ export class TypedEnbox<
       const delegateHint = isDelegate
         ? ' A revoked or expired session grant fails with 401 — reconnect to obtain fresh grants.'
         : '';
-      throw new Error(
+      throw new DwnResponseError(
         `TypedEnbox: verifyInstalled() could not fetch ${source} ` +
-        `for '${this._definition.protocol}': ${status.code} ${status.detail}.${delegateHint}`,
+        `for '${this._definition.protocol}'.${delegateHint}`,
+        status,
       );
     }
 
-    const installedDefinition = protocols.length > 0 ? protocols[0].definition : undefined;
+    const installedProtocol = protocols[0];
+    const installedDefinition = installedProtocol?.definition;
 
     if (installedDefinition === undefined) {
       return this.buildVerifyInstalledResult({
@@ -856,6 +866,7 @@ export class TypedEnbox<
         installed                : true,
         definitionsMatch         : true,
         missingKeyAgreementPaths : [],
+        protocol                 : installedProtocol,
       };
     }
 
@@ -865,10 +876,11 @@ export class TypedEnbox<
 
     return this.buildVerifyInstalledResult({
       isDelegate,
-      installed: true,
+      installed : true,
       definitionsMatch,
       missingKeyAgreementPaths,
       detail,
+      protocol  : installedProtocol,
     });
   }
 
@@ -883,8 +895,9 @@ export class TypedEnbox<
     definitionsMatch: boolean;
     missingKeyAgreementPaths: string[];
     detail: string;
+    protocol?: Protocol;
   }): VerifyInstalledResult {
-    const { isDelegate, installed, definitionsMatch, missingKeyAgreementPaths, detail } = params;
+    const { isDelegate, installed, definitionsMatch, missingKeyAgreementPaths, detail, protocol } = params;
 
     if (isDelegate) {
       const error = new WalletReapprovalRequiredError(this._definition.protocol, detail);
@@ -893,6 +906,7 @@ export class TypedEnbox<
         installed,
         definitionsMatch,
         missingKeyAgreementPaths,
+        protocol,
         reason : error.message,
         error,
       };
@@ -903,6 +917,7 @@ export class TypedEnbox<
       installed,
       definitionsMatch,
       missingKeyAgreementPaths,
+      protocol,
       reason : `TypedEnbox: protocol '${this._definition.protocol}' ${detail} Call configure() to repair it.`,
     };
   }
@@ -1202,18 +1217,23 @@ export class TypedEnbox<
 
     if (protocols.length > 0) {
       const existing = protocols[0];
-      if (definitionsEqual(existing.definition, this._definition)) {
+      const definitionsMatch = definitionsEqual(existing.definition, this._definition);
+      const encryptionKeysComplete = !this._hasEncryptedTypes
+        || collectMissingKeyAgreementPaths(existing.definition).length === 0;
+      if (definitionsMatch && encryptionKeysComplete) {
         this._configured = true;
         return;
       }
 
-      // Installed but definitions differ — allow operations but warn.
-      console.warn(
-        `TypedEnbox: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
-        'Call configure() to update it.',
-      );
-      this._configured = true;
-      return;
+      if (!definitionsMatch) {
+        // Installed but definitions differ — allow operations but warn.
+        console.warn(
+          `TypedEnbox: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
+          'Call configure() to update it.',
+        );
+        this._configured = true;
+        return;
+      }
     }
 
     // Not installed locally — configure it now.

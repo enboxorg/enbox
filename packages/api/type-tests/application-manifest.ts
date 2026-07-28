@@ -1,6 +1,6 @@
-import type { EnboxConnectOptions } from '@enbox/api';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { ProtocolRequest } from '@enbox/auth';
+import type { Enbox, EnboxConnectOptions } from '@enbox/api';
 
 import {
   defineApplicationManifest,
@@ -54,11 +54,27 @@ const directStructuralAuthRequests = [
   { protocol: PhotosProtocol, permissions: ['read', 'write'] },
 ] as const satisfies readonly ProtocolRequest[];
 const ownerOptions: EnboxConnectOptions = { createIdentity: true };
+declare const enbox: Enbox;
+const readiness: Promise<void> = enbox.protocols.ensureReady({
+  application,
+  publication : 'required',
+  targetDid   : 'did:example:hosted-owner',
+});
 void exactProtocol;
 void exactExplicitProtocol;
 void authRequests;
 void directStructuralAuthRequests;
 void ownerOptions;
+void readiness;
+
+// @ts-expect-error readiness requires an explicit publication policy.
+enbox.protocols.ensureReady({ application });
+
+enbox.protocols.ensureReady({
+  application,
+  // @ts-expect-error only required and local-only are valid publication policies.
+  publication: 'when-available',
+});
 
 defineApplicationManifest({
   protocols: [

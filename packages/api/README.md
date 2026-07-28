@@ -119,6 +119,54 @@ Typed protocol composition through `$ref` is not inferred from incomplete
 local metadata. `defineProtocol()` rejects it for now; use the raw `enbox.dwn`
 API until the explicit composition contract tracked in #1462 is available.
 
+### Protocol readiness
+
+After connecting, make the manifest ready before exposing protocol-backed app
+features:
+
+```ts
+import {
+  ProtocolReadinessError,
+  WalletReapprovalRequiredError,
+} from '@enbox/api';
+
+try {
+  await enbox.protocols.ensureReady({
+    application,
+    publication: 'required',
+  });
+} catch (error) {
+  if (error instanceof WalletReapprovalRequiredError) {
+    // A delegated session cannot replace the wallet's stale configuration.
+    // Return the user to wallet approval.
+  } else if (error instanceof ProtocolReadinessError) {
+    console.error(error.protocol, error.stage, error.targetDid, error.status);
+  } else {
+    throw error;
+  }
+}
+```
+
+For an owner session, `'required'` installs or repairs each protocol locally,
+then publishes the local DWN's exact owner-signed, key-injected
+`ProtocolsConfigure` artifact to every reachable remote endpoint and verifies
+that their current message CIDs converge. A repeat call is idempotent. For a
+delegated wallet session, the same API strictly verifies the wallet-owned
+configuration and imports that exact signed artifact locally; the delegate
+never authors or publishes a replacement.
+
+The publication policy is intentionally mandatory. Use `'local-only'` only
+for tests, offline/local applications, or advanced flows that deliberately do
+not accept remote writes. `publication: 'required'` fails with a typed error
+when endpoints cannot be resolved, no endpoint can be reached, a response
+artifact cannot be authenticated, publication is rejected, or the endpoints
+do not converge. `targetDid` can prepare another identity whose signing keys
+are available to the same agent; otherwise it defaults to the connected DID.
+
+Low-level `enbox.using(protocol).configure()` remains local-only and does not
+publish. Connection-store gating is a separate integration step, so callers
+should await `ensureReady()` before treating the current session as app-ready.
+
 ## Records
 
 ```ts

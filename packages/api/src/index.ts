@@ -34,6 +34,7 @@ export * from './grant-revocation.js';
 export * from './permission-grant.js';
 export * from './permission-request.js';
 export * from './protocol.js';
+export * from './protocol-readiness.js';
 export type {
   DataFormatAtPath,
   ProtocolPaths,
