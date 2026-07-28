@@ -294,16 +294,18 @@ describe('DwnServer', () => {
       const storageUrl = `sqlite://${tmpDir}/dwn.db`;
       const serverConfig = {
         ...dwnServerConfig,
-        adminToken                : undefined,
-        allowOpenTenants          : false,
-        allowUnboundedTenantUsage : true,
-        dataStore                 : storageUrl,
-        messageStore              : storageUrl,
-        quotaMaxMessages          : 0,
-        quotaMaxStorageBytes      : 0,
-        registrationStoreUrl      : storageUrl,
-        resumableTaskStore        : storageUrl,
-        ttlCacheUrl               : storageUrl,
+        adminToken                     : undefined,
+        allowOpenTenants               : false,
+        allowUnboundedTenantUsage      : true,
+        dataStore                      : storageUrl,
+        messageStore                   : storageUrl,
+        quotaMaxMessages               : 0,
+        quotaMaxStorageBytes           : 0,
+        registrationProofOfWorkEnabled : false,
+        registrationStoreUrl           : storageUrl,
+        resumableTaskStore             : storageUrl,
+        termsOfServiceFilePath         : undefined,
+        ttlCacheUrl                    : storageUrl,
       };
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const dialect = await runServerMigrationsIfNeeded(serverConfig);

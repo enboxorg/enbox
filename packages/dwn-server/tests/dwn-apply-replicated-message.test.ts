@@ -8,7 +8,18 @@ import { handleDwnApplyReplicatedMessage } from '../src/json-rpc-handlers/dwn/ap
 import { RateLimiter } from '../src/rate-limiter.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage, expectAppliedResultWithPosition } from './utils.js';
-import { DataStream, DwnErrorCode, Encoder, Jws, RecordsDelete, RecordsRead, RecordsWrite, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import {
+  DataStream,
+  DwnErrorCode,
+  Encoder,
+  Jws,
+  ProtocolsConfigure,
+  RecordsDelete,
+  RecordsRead,
+  RecordsWrite,
+  TestDataGenerator,
+  Time,
+} from '@enbox/dwn-sdk-js';
 import { describe, expect, it, spyOn } from 'bun:test';
 
 describe('handleDwnApplyReplicatedMessage', () => {
@@ -445,6 +456,44 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
+  it('should acknowledge a fully stored ProtocolsConfigure duplicate at the message quota', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const protocolsConfigure = await ProtocolsConfigure.create({
+      definition: {
+        protocol  : 'https://example.com/duplicate-protocol',
+        published : true,
+        types     : { note: {} },
+        structure : { note: {} },
+      },
+      signer: Jws.createSigner(alice),
+    });
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : protocolsConfigure.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+
+    const firstApply = await handleDwnApplyReplicatedMessage(dwnRequest, { dwn, transport: 'http' });
+    expect(firstApply.jsonRpcResponse.error).toBeUndefined();
+
+    const duplicateApply = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport  : 'http',
+      adminStore : {
+        getTenantMessageCount : async (): Promise<number> => 1,
+        getTenantStorageSize  : async (): Promise<number> => 0,
+      } as any,
+      config: {
+        quotaMaxMessages     : 1,
+        quotaMaxStorageBytes : 0,
+      } as any,
+    });
+
+    expect(duplicateApply.jsonRpcResponse.error).toBeUndefined();
+    expect((duplicateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Duplicate');
+    await dwn.close();
+  });
+
   it('should reject message-embedded encodedData in favor of the validated transport field', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([1, 2, 3, 4]);
@@ -600,7 +649,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     }
   });
 
-  it('should skip admission limits for a fully stored replicated duplicate echo', async () => {
+  it('should skip quota admission for a fully stored replicated duplicate echo', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([5, 6, 7, 8]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
@@ -628,13 +677,13 @@ describe('handleDwnApplyReplicatedMessage', () => {
         transport  : 'http',
         dataStream : DataStream.fromBytes(data),
         adminStore : {
-          getTenantMessageCount : async (): Promise<number> => 1,
-          getTenantStorageSize  : async (): Promise<number> => 1_000,
+          getTenantMessageCount : async (): Promise<number> => 0,
+          getTenantStorageSize  : async (): Promise<number> => data.length,
         } as any,
         config: {
-          maxRecordDataSize    : data.length - 1,
-          quotaMaxMessages     : 1,
-          quotaMaxStorageBytes : 1,
+          maxRecordDataSize    : data.length,
+          quotaMaxMessages     : 0,
+          quotaMaxStorageBytes : data.length,
         } as any,
       },
     );

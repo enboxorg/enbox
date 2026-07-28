@@ -1370,7 +1370,7 @@ describe('DeliveryService — coverage', () => {
       expect(fetchStub.callCount).toBe(firstCount);
     });
 
-    it('should handle role query returning recipients in top-level field', async () => {
+    it('should handle role query recipient descriptors', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
         new Response(null, { status: 200 }),
       );
@@ -1397,7 +1397,7 @@ describe('DeliveryService — coverage', () => {
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
-        entries : [{ recipient: participant }], // top-level recipient field
+        entries : [{ descriptor: { recipient: participant } }],
       });
 
       const dwn = mockDwn(processStub);
