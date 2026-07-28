@@ -38,15 +38,12 @@ export function parseByteSize(value: string): number {
   return byteSize;
 }
 
-/** Parses a positive safe integer from a startup configuration value. */
-export function parsePositiveInteger(value: string, name: string): number {
-  if (!/^\d+$/.test(value)) {
-    throw new TypeError(`${name} must be a positive integer.`);
-  }
-
+/** Parses a safe integer at or above the requested minimum. */
+export function parseSafeInteger(value: string, name: string, minimum: 0 | 1): number {
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) {
-    throw new TypeError(`${name} must be a positive safe integer.`);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed < minimum) {
+    const range = minimum === 1 ? 'positive' : 'non-negative';
+    throw new TypeError(`${name} must be a ${range} safe integer.`);
   }
 
   return parsed;
@@ -125,18 +122,20 @@ const configValues = {
    * Maximum number of WebSocket connections admitted by one server process.
    * This startup-only limit is intentionally finite and cannot be disabled.
    */
-  webSocketMaxConnections: parsePositiveInteger(
+  webSocketMaxConnections: parseSafeInteger(
     process.env.DWN_WEBSOCKET_MAX_CONNECTIONS || '1000',
     'DWN_WEBSOCKET_MAX_CONNECTIONS',
+    1,
   ),
 
   /**
    * Maximum number of WebSocket connections admitted for one peer IP by one
    * server process. This startup-only limit is intentionally finite.
    */
-  webSocketMaxConnectionsPerIp: parsePositiveInteger(
+  webSocketMaxConnectionsPerIp: parseSafeInteger(
     process.env.DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP || '100',
     'DWN_WEBSOCKET_MAX_CONNECTIONS_PER_IP',
+    1,
   ),
 
   /**
@@ -144,9 +143,10 @@ const configValues = {
    * Opening, active, and closing subscriptions retain capacity until their
    * underlying work settles.
    */
-  webSocketMaxSubscriptionsPerConnection: parsePositiveInteger(
+  webSocketMaxSubscriptionsPerConnection: parseSafeInteger(
     process.env.DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION || '64',
     'DWN_WEBSOCKET_MAX_SUBSCRIPTIONS_PER_CONNECTION',
+    1,
   ),
 
   // whether to enable 'ws:'
@@ -179,6 +179,9 @@ const configValues = {
   registrationProofOfWorkInitialMaxHash : process.env.DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH,
   termsOfServiceFilePath                : process.env.DWN_TERMS_OF_SERVICE_FILE_PATH,
 
+  /** Explicit acknowledgement that a remote server accepts tenants without a registration gate. */
+  allowOpenTenants: process.env.DWN_ALLOW_OPEN_TENANTS === 'true',
+
   // Provider auth configuration for paid DWN registration
   providerAuthEnabled       : process.env.DWN_PROVIDER_AUTH_ENABLED === 'true',
   providerAuthAuthorizeUrl  : process.env.DWN_PROVIDER_AUTH_AUTHORIZE_URL,
@@ -201,6 +204,9 @@ const configValues = {
       ? readAdminTokenFromFile(process.env.DWN_ADMIN_TOKEN_FILE)
       : undefined
   ),
+
+  /** Exposes Prometheus metrics without admin authentication on a remote server. */
+  publicMetricsEnabled: process.env.DWN_PUBLIC_METRICS_ENABLED === 'true',
 
   /**
    * Maximum number of recent DWN activity events retained in the in-memory
@@ -240,16 +246,29 @@ const configValues = {
   // ---------------------------------------------------------------------------
 
   /**
-   * Default maximum number of messages a tenant may store. 0 = unlimited (default).
+   * Default maximum number of messages a tenant may store. 0 = unlimited and
+   * requires an explicit acknowledgement on a remote server.
    * Per-tenant overrides are managed via the admin API.
    */
-  quotaMaxMessages: Number.parseInt(process.env.DWN_QUOTA_MAX_MESSAGES || '0'),
+  quotaMaxMessages: parseSafeInteger(
+    process.env.DWN_QUOTA_MAX_MESSAGES || '0',
+    'DWN_QUOTA_MAX_MESSAGES',
+    0,
+  ),
 
   /**
-   * Default maximum data storage in bytes a tenant may use. 0 = unlimited (default).
+   * Default maximum data storage in bytes a tenant may use. 0 = unlimited and
+   * requires an explicit acknowledgement on a remote server.
    * Per-tenant overrides are managed via the admin API.
    */
-  quotaMaxStorageBytes: Number.parseInt(process.env.DWN_QUOTA_MAX_STORAGE_BYTES || '0'),
+  quotaMaxStorageBytes: parseSafeInteger(
+    process.env.DWN_QUOTA_MAX_STORAGE_BYTES || '0',
+    'DWN_QUOTA_MAX_STORAGE_BYTES',
+    0,
+  ),
+
+  /** Explicit acknowledgement that one or both tenant usage dimensions are unbounded. */
+  allowUnboundedTenantUsage: process.env.DWN_ALLOW_UNBOUNDED_TENANT_USAGE === 'true',
 
   // ---------------------------------------------------------------------------
   // Audit log retention
@@ -339,22 +358,16 @@ const configValues = {
   forwardingDeduplicationTtlSeconds: Number.parseInt(process.env.DWN_FORWARDING_DEDUP_TTL || '60'),
 };
 
-export type DwnServerConfig = Omit<
-  typeof configValues,
+type StartupOnlyConfigKey =
   | 'maxRecordDataSize'
+  | 'quotaMaxMessages'
+  | 'quotaMaxStorageBytes'
   | 'webSocketMaxConnections'
   | 'webSocketMaxConnectionsPerIp'
-  | 'webSocketMaxSubscriptionsPerConnection'
-> & {
-  /** Startup-only because the HTTP and WebSocket transport ceilings capture it when the server starts. */
-  readonly maxRecordDataSize: number;
-  /** Startup-only process-wide WebSocket connection limit. */
-  readonly webSocketMaxConnections: number;
-  /** Startup-only per-peer WebSocket connection limit. */
-  readonly webSocketMaxConnectionsPerIp: number;
-  /** Startup-only per-connection subscription limit. */
-  readonly webSocketMaxSubscriptionsPerConnection: number;
-};
+  | 'webSocketMaxSubscriptionsPerConnection';
+
+export type DwnServerConfig = Omit<typeof configValues, StartupOnlyConfigKey>
+  & Readonly<Pick<typeof configValues, StartupOnlyConfigKey>>;
 
 export const config: DwnServerConfig = configValues;
 

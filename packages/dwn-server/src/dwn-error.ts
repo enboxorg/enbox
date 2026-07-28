@@ -44,6 +44,7 @@ export enum DwnServerErrorCode {
   RegistrationManagerInvalidOrOutdatedTermsOfServiceHash = 'RegistrationManagerInvalidOrOutdatedTermsOfServiceHash',
   RegistrationRequestMissingCredentials = 'RegistrationRequestMissingCredentials',
   TenantMessageQuotaExceeded = 'TenantMessageQuotaExceeded',
+  TenantQuotaUsageStoreUnavailable = 'TenantQuotaUsageStoreUnavailable',
   TenantRegistrationOutdatedTermsOfService = 'TenantRegistrationOutdatedTermsOfService',
   TenantStorageQuotaExceeded = 'TenantStorageQuotaExceeded',
   TenantSuspended = 'TenantSuspended',

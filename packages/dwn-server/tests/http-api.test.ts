@@ -1304,6 +1304,79 @@ describe('http api', function () {
     });
   });
 
+  describe('/metrics', () => {
+    it('should be unavailable on a remote server without admin authentication', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        adminToken              : undefined,
+        localNodeProfileEnabled : false,
+        publicMetricsEnabled    : false,
+      });
+
+      try {
+        expect((await fetch(`${url}/metrics`)).status).toBe(404);
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should require the configured admin token on a remote server', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        adminToken              : 'metrics-secret',
+        localNodeProfileEnabled : false,
+        publicMetricsEnabled    : false,
+      });
+
+      try {
+        expect((await fetch(`${url}/metrics`)).status).toBe(401);
+        expect((await fetch(`${url}/metrics`, {
+          headers: { authorization: 'Bearer wrong-secret' },
+        })).status).toBe(401);
+        expect((await fetch(`${url}/metrics`, {
+          headers: { authorization: 'Bearer metrics-secret' },
+        })).status).toBe(200);
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should allow an explicit public metrics policy', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        adminToken              : 'metrics-secret',
+        localNodeProfileEnabled : false,
+        publicMetricsEnabled    : true,
+      });
+
+      try {
+        expect((await fetch(`${url}/metrics`)).status).toBe(200);
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should rely on local-node pairing authentication', async () => {
+      const localNodePairingManager = new LocalNodePairingManager();
+      const token = localNodePairingManager.createSession('https://paired.example');
+      const { api, url } = await createStartedHttpApiWithConfig({
+        adminToken              : undefined,
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+        publicMetricsEnabled    : false,
+      }, { localNodePairingManager });
+
+      try {
+        expect((await fetch(`${url}/metrics`)).status).toBe(401);
+        expect((await fetch(`${url}/metrics`, {
+          headers: {
+            authorization : `Bearer ${token}`,
+            origin        : 'https://paired.example',
+          },
+        })).status).toBe(200);
+      } finally {
+        await api.close();
+      }
+    });
+  });
+
   describe('CORS headers', () => {
     it('should include all required CORS headers on non-admin responses', async () => {
       const response = await fetch(`${baseUrl}/info`);

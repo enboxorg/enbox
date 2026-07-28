@@ -177,7 +177,8 @@ export type AdminConnectionSnapshot = {
 
 /**
  * Per-tenant storage quota limits.
- * A value of 0 (or `undefined`) means the global default applies.
+ * A stored value of 0 means the global default applies. Per-tenant overrides
+ * have no separate unlimited sentinel.
  */
 export type TenantQuota = {
   /** Tenant DID this quota applies to. */
@@ -190,6 +191,7 @@ export type TenantQuota = {
 
 /**
  * Request body for setting a tenant quota via the admin API.
+ * Omitted dimensions retain their current override; zero inherits the global default.
  */
 export type TenantQuotaInput = {
   maxMessages? : number;
@@ -257,8 +259,6 @@ export type RateLimitStatus = {
 export type RuntimeConfig = {
   logLevel : string;
   maxInFlight : number;
-  quotaMaxMessages : number;
-  quotaMaxStorageBytes : number;
   rateLimitRequestsPerSecond : number;
   rateLimitBurst : number;
   rateLimitTenantRequestsPerSecond : number;

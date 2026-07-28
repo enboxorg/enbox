@@ -49,6 +49,8 @@ docker run -d \
   -v dwn-data:/app/packages/dwn-server/data \
   -e DWN_BASE_URL=https://dwn.example.com \
   -e DS_WEBSOCKET_SERVER=on \
+  -e DWN_ALLOW_OPEN_TENANTS=true \
+  -e DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true \
   dwn-server
 ```
 
@@ -56,14 +58,20 @@ The default `level://data` store lives under the server's working directory
 (`/app/packages/dwn-server/data`), which is why the volume mounts that path. Push
 this image to a registry your platform can pull from for remote deploys.
 
+This LevelDB example explicitly accepts any tenant and does not enforce usage
+quotas. It is suitable only when that posture is intentional. A public hosting
+service should use SQL storage, a registration gate, and both finite quotas.
+
 ### Option B — Docker Compose
 
-The package ships a minimal compose file that builds the image and runs an open
-node with a persistent volume (default LevelDB storage). See
+The package ships a minimal LevelDB development setup. Copy the environment
+template and explicitly enable its open, unbounded posture before starting it. See
 [`docs/HOSTING.md`](./docs/HOSTING.md) and
 [`packages/dwn-server/docker-compose.yaml`](./packages/dwn-server/docker-compose.yaml).
 
 ```bash
+cp docker.env.example packages/dwn-server/.env
+# Uncomment both DWN_ALLOW_* values in packages/dwn-server/.env.
 cd packages/dwn-server
 docker compose up -d
 ```
@@ -75,7 +83,10 @@ git clone https://github.com/enboxorg/enbox.git
 cd enbox
 bun install
 bun run --filter @enbox/dwn-server build
-bun run --filter @enbox/dwn-server server
+DS_HOST=127.0.0.1 \
+DWN_ALLOW_OPEN_TENANTS=true \
+DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true \
+  bun run --filter @enbox/dwn-server server
 ```
 
 The server reads all configuration from environment variables, so you can export
@@ -97,6 +108,10 @@ All configuration is via environment variables. The most common ones:
 | `DWN_SERVER_LOG_LEVEL` | `info`                   | Log level: `trace`, `debug`, `info`, `warn`, `error`.                       |
 | `DWN_STORAGE`          | `level://data`           | Default storage URL for all stores (see [Storage backends](#storage-backends)). |
 | `DWN_TTL_CACHE_URL`    | `sqlite://`              | TTL/session cache. SQL backends only (not LevelDB).                         |
+| `DWN_ALLOW_OPEN_TENANTS` | `false`                | Explicitly allow a remote server without a tenant gate.                     |
+| `DWN_ALLOW_UNBOUNDED_TENANT_USAGE` | `false`       | Explicitly allow either quota dimension to remain unlimited.                |
+| `DWN_QUOTA_MAX_MESSAGES` | `0`                    | Startup-only default tenant message limit.                                  |
+| `DWN_QUOTA_MAX_STORAGE_BYTES` | `0`               | Startup-only default tenant storage-byte limit.                             |
 
 See the [`@enbox/dwn-server` README](./packages/dwn-server/README.md#configuration)
 for the full list (registration, provider-auth, admin, rate limiting, quotas,
@@ -134,6 +149,8 @@ docker run -d \
   -e DWN_BASE_URL=https://dwn.example.com \
   -e DWN_STORAGE=postgres://user:pass@db.internal:5432/dwn \
   -e DWN_TTL_CACHE_URL=postgres://user:pass@db.internal:5432/dwn \
+  -e DWN_QUOTA_MAX_MESSAGES=100000 \
+  -e DWN_QUOTA_MAX_STORAGE_BYTES=1073741824 \
   dwn-server
 ```
 
@@ -145,7 +162,9 @@ docker run -d \
 > store is set, `DWN_TTL_CACHE_URL` must point at the **same** SQL database (shared
 > server-side tables). To keep an **open** node on SQL, set the per-store vars
 > (`DWN_STORAGE_MESSAGES` / `DWN_STORAGE_DATA` / `DWN_STORAGE_RESUMABLE_TASKS`)
-> instead of `DWN_STORAGE`, and leave `DWN_REGISTRATION_STORE_URL` unset.
+> instead of `DWN_STORAGE`, leave `DWN_REGISTRATION_STORE_URL` unset, and set
+> `DWN_ALLOW_OPEN_TENANTS=true`. Remote startup also requires both finite global
+> quota limits, or an explicit `DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true` acknowledgement.
 
 ## 3. Expose it publicly (TLS)
 
@@ -181,8 +200,8 @@ curl https://dwn.example.com/health        # -> { "ok": true }
 # Server info + active registration requirements
 curl https://dwn.example.com/info
 
-# Prometheus metrics (protected if DWN_ADMIN_TOKEN is set)
-curl https://dwn.example.com/metrics
+# Prometheus metrics (admin-authenticated remotely by default)
+curl -H "Authorization: Bearer $DWN_ADMIN_TOKEN" https://dwn.example.com/metrics
 ```
 
 ## 5. Advertise your DWN in your DID document
@@ -246,8 +265,9 @@ const endpoints = await agent.identity.getDwnEndpoints({ didUri: identity.did.ur
 
 ## Registration & tenant gating
 
-By default the server is **open** — any DID can use it. The tenant gate activates
-when a SQL registration store is configured, which resolves from
+Without a configured gate, remote startup requires an explicit
+`DWN_ALLOW_OPEN_TENANTS=true` acknowledgement. The tenant gate activates when a
+SQL registration store is configured, which resolves from
 `DWN_REGISTRATION_STORE_URL` **or** its fallback to `DWN_STORAGE` (not the per-store
 overrides). To gate registration, enable one or more methods:
 
@@ -262,7 +282,8 @@ Every registration request must carry proof-of-work or provider-auth credentials
 Active requirements are advertised at `/info`. If a registration store is configured
 but **no** method is enabled, new tenants cannot register — the server logs a warning
 at startup. For an open node, leave `DWN_REGISTRATION_STORE_URL` and `DWN_STORAGE`
-unset (use the default LevelDB, or set the per-store SQL vars). See the
+unset (use the default LevelDB, or set the per-store SQL vars) and set
+`DWN_ALLOW_OPEN_TENANTS=true`. See the
 [Registration Requirements](./packages/dwn-server/README.md#registration-requirements)
 section of the README for the full client flow.
 
@@ -270,8 +291,9 @@ section of the README for the full client flow.
 
 The admin API and UI are **disabled** unless you provide a token via
 `DWN_ADMIN_TOKEN` (or `DWN_ADMIN_TOKEN_FILE`). When set, admin endpoints under
-`/admin/api/*` require an `Authorization: Bearer <token>` header, and the
-`/metrics` endpoint becomes protected by the same token.
+`/admin/api/*` require an `Authorization: Bearer <token>` header. Remote
+`/metrics` also requires admin authentication by default; without configured
+admin authentication it returns `404` unless `DWN_PUBLIC_METRICS_ENABLED=true`.
 
 ## Production considerations
 

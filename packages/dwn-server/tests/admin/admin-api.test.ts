@@ -38,6 +38,7 @@ function createTestConfig(port: number, dbDir: string): typeof defaultConfig {
     ...defaultConfig,
     port,
     adminToken,
+    allowUnboundedTenantUsage        : true,
     registrationStoreUrl             : sqliteUrl,
     messageStore                     : sqliteUrl,
     dataStore                        : sqliteUrl,
@@ -820,6 +821,16 @@ describe('AdminApi — quota management', () => {
     expect(response.status).toBe(400);
   });
 
+  it('should reject a quota for an unregistered tenant', async () => {
+    const response = await adminFetch({ port }, '/tenants/did:test:missing/quota', {
+      method  : 'PUT',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ maxMessages: 1 }),
+    });
+
+    expect(response.status).toBe(404);
+  });
+
   it('should delete a per-tenant quota', async () => {
     const response = await adminFetch({ port }, '/tenants/did:test:quota-tenant/quota', {
       method: 'DELETE',
@@ -841,11 +852,7 @@ describe('AdminApi — quota management', () => {
 });
 
 describe('AdminApi — quota enforcement', () => {
-  it('should include TenantMessageQuotaExceeded in the error when message quota is exceeded', async () => {
-    // Test quota enforcement by starting a server with a very low message quota,
-    // then setting a per-tenant quota of 0 messages (most restrictive).
-    // Since the quota check runs before dwn.processMessage() and compares
-    // current count >= max, a quota of 0 will always reject RecordsWrite.
+  it('should store and report a finite tenant quota', async () => {
     const port = 9700 + Math.floor(Math.random() * 900);
     const tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-quota-enforce-'));
     const cfg = createTestConfig(port, tmpDir);
@@ -853,28 +860,11 @@ describe('AdminApi — quota enforcement', () => {
     await dwnServer.start();
 
     try {
-      // Register a tenant and set an impossibly low quota via the admin API.
       await dwnServer.registrationManager.recordTenantRegistration({
         did                : 'did:test:quota-enforced',
         termsOfServiceHash : 'hash',
       });
 
-      // Set per-tenant quota of 0 messages — any RecordsWrite should be rejected.
-      // maxMessages = 0 means "use global default" and global default is 0 (unlimited),
-      // so we need maxMessages >= 1. We'll set it to 1 and verify that with 0 stored messages
-      // the first write passes. Instead, let's just verify the quota info endpoint works
-      // and test the enforcement path by setting a very low global quota.
-      // Actually, the cleanest approach: set a global quota low enough, then manually
-      // insert a row to simulate a tenant having messages.
-      // Since that's complex, let's just verify the quota enforcement code path
-      // exists by checking the error code in process-message.ts via a targeted test.
-
-      // We'll set maxMessages=1 as per-tenant quota. Since the tenant has 0 messages,
-      // the first RecordsWrite won't be blocked by quota (0 < 1). But it will fail
-      // for other reasons (invalid DWN message). After the DWN rejects it, nothing
-      // is stored. We can't easily get past this without valid crypto.
-      //
-      // Instead, verify the API endpoints work correctly:
       const setResponse = await adminFetch({ port }, '/tenants/did:test:quota-enforced/quota', {
         method  : 'PUT',
         headers : { 'content-type': 'application/json' },
@@ -898,9 +888,11 @@ describe('AdminApi — quota enforcement', () => {
   it('should apply global quota defaults when no per-tenant quota is set', async () => {
     const port = 9710 + Math.floor(Math.random() * 90);
     const tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-quota-global-'));
-    const cfg = createTestConfig(port, tmpDir);
-    cfg.quotaMaxMessages = 100;
-    cfg.quotaMaxStorageBytes = 5242880;
+    const cfg = {
+      ...createTestConfig(port, tmpDir),
+      quotaMaxMessages     : 100,
+      quotaMaxStorageBytes : 5242880,
+    };
     const dwnServer = new DwnServer({ config: cfg });
     await dwnServer.start();
 
@@ -916,6 +908,33 @@ describe('AdminApi — quota enforcement', () => {
       expect(body.quota.maxMessages).toBe(100);
       expect(body.quota.maxStorageBytes).toBe(5242880);
       expect(body.quota.source).toBe('global');
+
+      const setResponse = await adminFetch({ port }, '/tenants/did:test:global-quota/quota', {
+        method  : 'PUT',
+        headers : { 'content-type': 'application/json' },
+        body    : JSON.stringify({ maxMessages: 0, maxStorageBytes: 1024 }),
+      });
+      expect(setResponse.status).toBe(200);
+
+      const inheritedResponse = await adminFetch({ port }, '/tenants/did:test:global-quota/quota');
+      const inheritedBody = await inheritedResponse.json();
+      expect(inheritedBody.quota.maxMessages).toBe(100);
+      expect(inheritedBody.quota.maxStorageBytes).toBe(1024);
+      expect(inheritedBody.quota.source).toBe('tenant');
+
+      const invalidResponse = await adminFetch({ port }, '/tenants/did:test:global-quota/quota', {
+        method  : 'PUT',
+        headers : { 'content-type': 'application/json' },
+        body    : JSON.stringify({ maxMessages: -1 }),
+      });
+      expect(invalidResponse.status).toBe(400);
+
+      const oversizedResponse = await adminFetch({ port }, '/tenants/did:test:global-quota/quota', {
+        method  : 'PUT',
+        headers : { 'content-type': 'application/json' },
+        body    : JSON.stringify({ maxMessages: 2_147_483_648 }),
+      });
+      expect(oversizedResponse.status).toBe(400);
     } finally {
       await dwnServer.stop();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -1375,8 +1394,6 @@ describe('AdminApi — runtime config endpoints', () => {
       const body = await response.json();
       expect(body.logLevel).toBeDefined();
       expect(typeof body.maxInFlight).toBe('number');
-      expect(typeof body.quotaMaxMessages).toBe('number');
-      expect(typeof body.quotaMaxStorageBytes).toBe('number');
       expect(typeof body.rateLimitRequestsPerSecond).toBe('number');
       expect(typeof body.rateLimitBurst).toBe('number');
       expect(typeof body.rateLimitTenantRequestsPerSecond).toBe('number');
@@ -1407,17 +1424,17 @@ describe('AdminApi — runtime config endpoints', () => {
         method  : 'PATCH',
         headers : { 'content-type': 'application/json' },
         body    : JSON.stringify({
-          quotaMaxMessages     : 500,
-          quotaMaxStorageBytes : 10485760,
+          maxInFlight          : 96,
           rateLimitBurst       : 100,
+          rateLimitTenantBurst : 75,
         }),
       });
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body.updated).toHaveLength(3);
-      expect(body.updated).toContain('quotaMaxMessages');
-      expect(body.updated).toContain('quotaMaxStorageBytes');
+      expect(body.updated).toContain('maxInFlight');
       expect(body.updated).toContain('rateLimitBurst');
+      expect(body.updated).toContain('rateLimitTenantBurst');
     });
 
     it('should update logLevel and apply it', async () => {
@@ -1466,6 +1483,15 @@ describe('AdminApi — runtime config endpoints', () => {
         method  : 'PATCH',
         headers : { 'content-type': 'application/json' },
         body    : JSON.stringify({ maxRecordDataSize: 1 }),
+      });
+      expect(response.status).toBe(400);
+    });
+
+    it('should keep default tenant quotas startup-only', async () => {
+      const response = await adminFetch({ port }, '/config', {
+        method  : 'PATCH',
+        headers : { 'content-type': 'application/json' },
+        body    : JSON.stringify({ quotaMaxMessages: 1 }),
       });
       expect(response.status).toBe(400);
     });
@@ -1766,15 +1792,15 @@ describe('AdminApi — config PATCH validation', () => {
     expect(response.status).toBe(200);
   });
 
-  it('should accept zero as a valid numeric value (means unlimited)', async () => {
+  it('should accept zero for a runtime-changeable rate limit', async () => {
     const response = await adminFetch({ port }, '/config', {
       method  : 'PATCH',
       headers : { 'content-type': 'application/json' },
-      body    : JSON.stringify({ quotaMaxMessages: 0 }),
+      body    : JSON.stringify({ rateLimitRequestsPerSecond: 0 }),
     });
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.updated).toContain('quotaMaxMessages');
+    expect(body.updated).toContain('rateLimitRequestsPerSecond');
   });
 });
 
@@ -2063,7 +2089,7 @@ describe('AdminApi — tenant creation (#393)', () => {
     expect(response.status).toBe(409);
   });
 
-  it('should create a tenant with quota', async () => {
+  it('should require tenant creation and quota assignment to be separate operations', async () => {
     const response = await adminFetch({ port }, '/tenants', {
       method  : 'POST',
       headers : { 'content-type': 'application/json' },
@@ -2073,15 +2099,11 @@ describe('AdminApi — tenant creation (#393)', () => {
         maxStorageBytes : 1048576,
       }),
     });
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain('Create the tenant first');
 
-    // Verify quota was set.
-    const quotaResponse = await adminFetch({ port }, '/tenants/did%3Atest%3Aquota-tenant/quota');
-    expect(quotaResponse.status).toBe(200);
-    const quota = await quotaResponse.json();
-    expect(quota.quota.maxMessages).toBe(5000);
-    expect(quota.quota.maxStorageBytes).toBe(1048576);
-    expect(quota.quota.source).toBe('tenant');
+    const tenantResponse = await adminFetch({ port }, '/tenants/did%3Atest%3Aquota-tenant');
+    expect(tenantResponse.status).toBe(404);
   });
 
   it('should return 400 when did is missing', async () => {

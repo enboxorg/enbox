@@ -3,6 +3,7 @@ import type { DwnServerConfig } from '@enbox/dwn-server';
 import { resolve } from 'node:path';
 import { existsSync, rmSync } from 'node:fs';
 
+import { defaultDwnServerConfig } from '@enbox/dwn-server';
 import {
   buildDwnDiscoveryRedirectUrl,
   DwnDiscoveryFile,
@@ -48,16 +49,14 @@ function resolveDwnServerPackageJsonPath(): string {
 }
 
 /**
- * Build a partial DwnServerConfig for the local desktop server.
- *
- * Only the properties relevant to local operation are set here; the
- * remaining fields (rate-limiting, admin UI, provider-auth, etc.)
- * keep their defaults from the dwn-server `config` module.
+ * Builds the complete configuration for the local desktop server.
  */
-function createDwnServerConfig(port: number): Partial<DwnServerConfig> {
+function createDwnServerConfig(port: number): DwnServerConfig {
   return {
+    ...defaultDwnServerConfig,
     serverName        : process.env['DWN_SERVER_PACKAGE_NAME'] || '@enbox/dwn-server',
     baseUrl           : process.env['DWN_BASE_URL'] || `http://127.0.0.1:${port}`,
+    hostname          : '127.0.0.1',
     port,
     ttlCacheUrl       : process.env['DWN_TTL_CACHE_URL'] || 'sqlite://',
     packageJsonPath   : resolveDwnServerPackageJsonPath(),
@@ -74,6 +73,13 @@ function createDwnServerConfig(port: number): Partial<DwnServerConfig> {
     registrationProofOfWorkEnabled        : process.env['DWN_REGISTRATION_PROOF_OF_WORK_ENABLED'] === 'true',
     registrationProofOfWorkInitialMaxHash : process.env['DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH'],
     termsOfServiceFilePath                : process.env['DWN_TERMS_OF_SERVICE_FILE_PATH'],
+
+    // The desktop shell intentionally preserves its existing open, unbounded
+    // local behavior until it adopts the paired local-node profile.
+    allowOpenTenants          : true,
+    allowUnboundedTenantUsage : true,
+    quotaMaxMessages          : 0,
+    quotaMaxStorageBytes      : 0,
 
     logLevel: process.env['DWN_SERVER_LOG_LEVEL'] || 'INFO',
 
@@ -206,7 +212,7 @@ let selectedPort: number | undefined;
 let dwnServer: InstanceType<typeof DwnServer> | undefined;
 
 for (const port of portCandidates) {
-  const candidateServer = new DwnServer({ config: createDwnServerConfig(port) as DwnServerConfig });
+  const candidateServer = new DwnServer({ config: createDwnServerConfig(port) });
   try {
     await candidateServer.start();
     selectedPort = port;

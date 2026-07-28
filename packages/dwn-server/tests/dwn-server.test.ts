@@ -1,12 +1,20 @@
-import type { Dwn } from '@enbox/dwn-sdk-js';
+import type { Dwn, MessageSigner } from '@enbox/dwn-sdk-js';
 
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { WebSocket } from 'ws';
 import { describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { ProtocolsConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
+import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { DwnServer } from '../src/dwn-server.js';
 import { getTestDwn } from './test-dwn.js';
 import { LocalNodePairingManager } from '../src/local-node-pairing.js';
+import { RegistrationManager } from '../src/registration/registration-manager.js';
+import { RegistrationStore } from '../src/registration/registration-store.js';
+import { runServerMigrationsIfNeeded } from '../src/storage.js';
 
 async function waitForWebSocketOpen(socket: WebSocket): Promise<void> {
   if (socket.readyState === WebSocket.OPEN) {
@@ -62,8 +70,39 @@ async function expectWebSocketRejection(socket: WebSocket): Promise<void> {
   });
 }
 
+async function sendProtocolsConfigure(
+  server: DwnServer,
+  target: string,
+  signer: MessageSigner,
+  protocol: string,
+): Promise<Response> {
+  const configure = await ProtocolsConfigure.create({
+    definition: {
+      protocol,
+      published : true,
+      types     : { note: {} },
+      structure : { note: {} },
+    },
+    signer,
+  });
+  const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+    message: configure.toJSON(),
+    target,
+  });
+
+  return fetch(`http://127.0.0.1:${server.httpServer.port}`, {
+    headers : { 'dwn-request': JSON.stringify(request) },
+    method  : 'POST',
+  });
+}
+
 describe('DwnServer', () => {
-  const dwnServerConfig = { ...config, port: 0 };
+  const dwnServerConfig = {
+    ...config,
+    allowOpenTenants          : true,
+    allowUnboundedTenantUsage : true,
+    port                      : 0,
+  };
   let dwn: Dwn;
 
   it('starts with injected dwn', async () => {
@@ -76,6 +115,261 @@ describe('DwnServer', () => {
     expect(typeof port).toBe('number');
 
     await dwnServer.stop();
+  });
+
+  describe('remote exposure policy', () => {
+    it('should reject invalid programmatic quota limits before allocating resources', async () => {
+      const invalidLimits = [
+        { field: 'quotaMaxMessages', value: -1, expected: 'DWN_QUOTA_MAX_MESSAGES' },
+        { field: 'quotaMaxStorageBytes', value: Number.MAX_SAFE_INTEGER + 1, expected: 'DWN_QUOTA_MAX_STORAGE_BYTES' },
+      ] as const;
+
+      for (const { field, value, expected } of invalidLimits) {
+        const server = new DwnServer({
+          config: { ...dwnServerConfig, [field]: value },
+        });
+        await expect(server.start()).rejects.toThrow(expected);
+      }
+    });
+
+    it('should reject an implicit open tenant gate before listening', async () => {
+      ({ dwn } = await getTestDwn());
+      const server = new DwnServer({
+        dwn,
+        config: {
+          ...dwnServerConfig,
+          allowOpenTenants     : false,
+          registrationStoreUrl : undefined,
+        },
+      });
+
+      try {
+        await expect(server.start()).rejects.toThrow(
+          'Configure DWN_REGISTRATION_STORE_URL (or DWN_STORAGE), or explicitly set DWN_ALLOW_OPEN_TENANTS=true.',
+        );
+      } finally {
+        await dwn.close();
+      }
+    });
+
+    it('should not treat a configured registration store as a gate on a prebuilt DWN', async () => {
+      ({ dwn } = await getTestDwn());
+      const server = new DwnServer({
+        dwn,
+        config: {
+          ...dwnServerConfig,
+          allowOpenTenants     : false,
+          registrationStoreUrl : 'sqlite://',
+        },
+      });
+
+      try {
+        await expect(server.start()).rejects.toThrow('remote servers require a tenant registration store');
+      } finally {
+        await dwn.close();
+      }
+    });
+
+    it('should reject implicit unbounded tenant usage before listening', async () => {
+      const server = new DwnServer({
+        config: {
+          ...dwnServerConfig,
+          allowUnboundedTenantUsage : false,
+          quotaMaxMessages          : 1,
+          quotaMaxStorageBytes      : 0,
+        },
+      });
+
+      await expect(server.start()).rejects.toThrow('DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true');
+    });
+
+    it('should reject finite quotas on a message store without usage totals', async () => {
+      const server = new DwnServer({
+        config: {
+          ...dwnServerConfig,
+          messageStore         : 'level://data',
+          quotaMaxMessages     : 1,
+          quotaMaxStorageBytes : 1,
+        },
+      });
+
+      await expect(server.start()).rejects.toThrow(
+        'require config.messageStore (DWN_STORAGE_MESSAGES or DWN_STORAGE)',
+      );
+    });
+
+    it('should reject finite quotas when the server does not own the DWN stores', async () => {
+      ({ dwn } = await getTestDwn());
+      const server = new DwnServer({
+        dwn,
+        config: {
+          ...dwnServerConfig,
+          messageStore         : 'sqlite://unrelated.db',
+          quotaMaxMessages     : 1,
+          quotaMaxStorageBytes : 1,
+        },
+      });
+
+      try {
+        await expect(server.start()).rejects.toThrow('global tenant quotas cannot be enforced with options.dwn');
+      } finally {
+        await dwn.close();
+      }
+    });
+
+    it('should reject persisted tenant quotas when the server does not own the DWN stores', async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'dwn-external-persisted-quota-'));
+      const registrationStoreUrl = `sqlite://${tmpDir}/registration.db`;
+      const serverConfig = {
+        ...dwnServerConfig,
+        allowOpenTenants     : false,
+        quotaMaxMessages     : 0,
+        quotaMaxStorageBytes : 0,
+        registrationStoreUrl,
+        ttlCacheUrl          : registrationStoreUrl,
+      };
+      const dialect = await runServerMigrationsIfNeeded(serverConfig);
+      if (dialect === undefined) {
+        throw new Error('expected a SQL server dialect');
+      }
+      const registrationManager = await RegistrationManager.create({ registrationStoreUrl });
+      const registrationStore = registrationManager.getRegistrationStore();
+      if (registrationStore === undefined) {
+        throw new Error('expected a registration store');
+      }
+      await registrationManager.recordTenantRegistration({ did: 'did:test:external-quota' });
+      await registrationStore.setQuota({
+        did             : 'did:test:external-quota',
+        maxMessages     : 1,
+        maxStorageBytes : 1,
+      });
+      ({ dwn } = await getTestDwn());
+      const server = new DwnServer({ config: serverConfig, dwn, registrationManager });
+
+      try {
+        await expect(server.start()).rejects.toThrow(
+          'persisted per-tenant quotas cannot be enforced with options.dwn and an external registration store',
+        );
+      } finally {
+        await dwn.close();
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should enforce finite quotas without enabling the admin API', async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'dwn-quota-no-admin-'));
+      const storageUrl = `sqlite://${tmpDir}/dwn.db`;
+      const server = new DwnServer({
+        config: {
+          ...dwnServerConfig,
+          adminToken                : undefined,
+          allowUnboundedTenantUsage : false,
+          dataStore                 : storageUrl,
+          messageStore              : storageUrl,
+          quotaMaxMessages          : 1,
+          quotaMaxStorageBytes      : 1024,
+          registrationStoreUrl      : undefined,
+          resumableTaskStore        : storageUrl,
+          ttlCacheUrl               : storageUrl,
+        },
+      });
+
+      try {
+        await server.start();
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const first = await sendProtocolsConfigure(server, alice.did, alice.signer, 'https://example.com/first');
+        expect((await first.json()).result.reply.status.code).toBe(202);
+
+        const second = await sendProtocolsConfigure(server, alice.did, alice.signer, 'https://example.com/second');
+        const secondBody = await second.json();
+        expect(secondBody.error.message).toContain('TenantMessageQuotaExceeded');
+      } finally {
+        await server.stop();
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should restore persisted tenant quota enforcement without enabling the admin API', async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'dwn-persisted-quota-'));
+      const storageUrl = `sqlite://${tmpDir}/dwn.db`;
+      const serverConfig = {
+        ...dwnServerConfig,
+        adminToken                : undefined,
+        allowOpenTenants          : false,
+        allowUnboundedTenantUsage : true,
+        dataStore                 : storageUrl,
+        messageStore              : storageUrl,
+        quotaMaxMessages          : 0,
+        quotaMaxStorageBytes      : 0,
+        registrationStoreUrl      : storageUrl,
+        resumableTaskStore        : storageUrl,
+        ttlCacheUrl               : storageUrl,
+      };
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const dialect = await runServerMigrationsIfNeeded(serverConfig);
+      if (dialect === undefined) {
+        throw new Error('expected a SQL server dialect');
+      }
+      const registrationStore = await RegistrationStore.create(dialect);
+      await registrationStore.insertOrUpdateTenantRegistration({ did: alice.did });
+      await registrationStore.setQuota({
+        did             : alice.did,
+        maxMessages     : 1,
+        maxStorageBytes : 1024,
+      });
+
+      const server = new DwnServer({ config: serverConfig });
+      try {
+        await server.start();
+
+        const first = await sendProtocolsConfigure(server, alice.did, alice.signer, 'https://example.com/persisted-first');
+        expect((await first.json()).result.reply.status.code).toBe(202);
+
+        const second = await sendProtocolsConfigure(server, alice.did, alice.signer, 'https://example.com/persisted-second');
+        expect((await second.json()).error.message).toContain('TenantMessageQuotaExceeded');
+      } finally {
+        await server.stop();
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should preserve persisted quota checks when startup is retried', async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'dwn-quota-retry-'));
+      const registrationUrl = `sqlite://${tmpDir}/registration.db`;
+      const serverConfig = {
+        ...dwnServerConfig,
+        adminToken                : undefined,
+        allowOpenTenants          : false,
+        allowUnboundedTenantUsage : true,
+        dataStore                 : `level://${tmpDir}/data`,
+        messageStore              : `level://${tmpDir}/messages`,
+        quotaMaxMessages          : 0,
+        quotaMaxStorageBytes      : 0,
+        registrationStoreUrl      : registrationUrl,
+        resumableTaskStore        : `level://${tmpDir}/tasks`,
+        ttlCacheUrl               : registrationUrl,
+      };
+      const dialect = await runServerMigrationsIfNeeded(serverConfig);
+      if (dialect === undefined) {
+        throw new Error('expected a SQL server dialect');
+      }
+      const registrationStore = await RegistrationStore.create(dialect);
+      await registrationStore.insertOrUpdateTenantRegistration({ did: 'did:test:quota-retry' });
+      await registrationStore.setQuota({
+        did             : 'did:test:quota-retry',
+        maxMessages     : 1,
+        maxStorageBytes : 1,
+      });
+
+      const server = new DwnServer({ config: serverConfig });
+      try {
+        await expect(server.start()).rejects.toThrow('require config.messageStore (DWN_STORAGE_MESSAGES or DWN_STORAGE)');
+        await expect(server.start()).rejects.toThrow('require config.messageStore (DWN_STORAGE_MESSAGES or DWN_STORAGE)');
+      } finally {
+        await server.dwn?.close();
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   it('stops accepting WebSocket upgrades as soon as shutdown begins', async () => {
@@ -137,8 +431,10 @@ describe('DwnServer', () => {
         localNodePairingManager,
         config: {
           ...dwnServerConfig,
-          hostname                : '127.0.0.1',
-          localNodeProfileEnabled : true,
+          allowOpenTenants          : false,
+          allowUnboundedTenantUsage : false,
+          hostname                  : '127.0.0.1',
+          localNodeProfileEnabled   : true,
         }
       });
 

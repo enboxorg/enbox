@@ -11,6 +11,15 @@ import ResumableTaskStoreSqlite from '../plugins/resumable-task-store-sqlite.js'
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
+function createOpenTestConfig(): typeof config {
+  return {
+    ...config,
+    allowOpenTenants          : true,
+    allowUnboundedTenantUsage : true,
+    port                      : 0,
+  };
+}
+
 describe('Dynamic DWN plugin loading', () => {
   let dwnServer: DwnServer;
 
@@ -21,7 +30,7 @@ describe('Dynamic DWN plugin loading', () => {
   });
 
   it('should fail dynamically loading a non-existent plugin', async () => {
-    const dwnServerConfigCopy = { ...config, port: 0 }; // not touching the original config
+    const dwnServerConfigCopy = createOpenTestConfig();
     dwnServerConfigCopy.dataStore = './non-existent-plugin.js';
 
     const invalidDwnServer = new DwnServer({ config: dwnServerConfigCopy });
@@ -30,7 +39,7 @@ describe('Dynamic DWN plugin loading', () => {
 
   it('should close the event bus if DWN startup fails after loading it', async () => {
     const customEventBusCloseSpy = sinon.spy(EventBusInMemory, 'spyingTheClose');
-    const dwnServerConfigCopy = { ...config, port: 0 }; // not touching the original config
+    const dwnServerConfigCopy = createOpenTestConfig();
     dwnServerConfigCopy.registrationStoreUrl = undefined;
     dwnServerConfigCopy.messageStore = 'unsupported://messages';
     dwnServerConfigCopy.eventBusPluginPath = '../tests/plugins/event-bus-in-memory.js';
@@ -55,7 +64,7 @@ describe('Dynamic DWN plugin loading', () => {
     const customEventBusConstructorSpy = sinon.spy(EventBusInMemory, 'spyingTheConstructor');
 
     // 1. Configure DWN to load a custom data store plugin.
-    const dwnServerConfigCopy = { ...config, port: 0 }; // not touching the original config
+    const dwnServerConfigCopy = createOpenTestConfig();
 
     // TODO: remove below after https://github.com/enboxorg/enbox/issues/144 is resolved
     // The default config is not reliable because other tests modify it.

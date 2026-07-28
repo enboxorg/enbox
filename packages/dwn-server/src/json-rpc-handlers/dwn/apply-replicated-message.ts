@@ -5,6 +5,7 @@ import log from 'loglevel';
 
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
+import { requiresTenantQuotaEnforcement } from '../../tenant-quota.js';
 import {
   capDataStreamAtDescriptorSize,
   enforceQuota,
@@ -160,15 +161,11 @@ async function enforceApplyReplicatedMessageLimits({
     return dataSizeResult;
   }
 
-  if (
-    context.config !== undefined &&
-    context.adminStore !== undefined &&
-    Records.isRecordsWrite(message)
-  ) {
-    const storageBytesToAdd = hasInboundData
+  if (context.config !== undefined && requiresTenantQuotaEnforcement(message)) {
+    const storageBytesToAdd = hasInboundData && Records.isRecordsWrite(message)
       ? (message.descriptor as { dataSize?: number }).dataSize ?? 0
       : 0;
-    return enforceQuota(target, message, context, { storageBytesToAdd });
+    return enforceQuota(target, message, requestId, context, { storageBytesToAdd });
   }
 
   return undefined;

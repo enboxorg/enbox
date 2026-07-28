@@ -63,10 +63,16 @@ git clone https://github.com/enboxorg/enbox.git
 cd enbox
 bun install
 bun run --filter @enbox/dwn-server build
-bun run --filter @enbox/dwn-server server
+DS_HOST=127.0.0.1 \
+DWN_ALLOW_OPEN_TENANTS=true \
+DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true \
+  bun run --filter @enbox/dwn-server server
 ```
 
-`bun run server` builds and then runs `dist/esm/src/main.js`, which starts a `DwnServer` with defaults. Configure it with the environment variables in [Configuration](#configuration). With no configuration, it listens on port `3000` and stores everything in a local LevelDB directory (`level://data`).
+The two flags above explicitly opt this development node into accepting any tenant
+without resource quotas. A remote server refuses to start until tenant admission
+and usage limits are either configured or explicitly acknowledged. Configure it
+with the environment variables in [Configuration](#configuration).
 
 ### Via Docker
 
@@ -77,11 +83,17 @@ There is no official public image yet, so build one locally. The Dockerfile live
 docker build -f packages/dwn-server/Dockerfile -t dwn-server .
 
 # Run it, persisting data to a named volume
-docker run -p 3000:3000 \
+docker run -p 127.0.0.1:3000:3000 \
   -v dwn-data:/app/packages/dwn-server/data \
   -e DWN_BASE_URL=https://dwn.example.com \
+  -e DWN_ALLOW_OPEN_TENANTS=true \
+  -e DWN_ALLOW_UNBOUNDED_TENANT_USAGE=true \
   dwn-server
 ```
+
+This Docker command intentionally runs an open, unbounded development node.
+For production, use a SQL registration store and set both finite quota limits
+instead of the two acknowledgement flags.
 
 The image exposes `DS_PORT` (default `3000`) and runs the compiled server via `entrypoint.sh`. The build accepts a `DS_PORT` build arg if you need to bake in a different port.
 
@@ -111,7 +123,13 @@ You can override configuration and inject collaborators (a custom config, a preb
 import { DwnServer, defaultDwnServerConfig } from '@enbox/dwn-server';
 
 const server = new DwnServer({
-  config: { ...defaultDwnServerConfig, port: 8080 },
+  config: {
+    ...defaultDwnServerConfig,
+    allowOpenTenants          : true,
+    allowUnboundedTenantUsage : true,
+    hostname                  : '127.0.0.1',
+    port                      : 8080,
+  },
 });
 await server.start();
 ```
@@ -179,11 +197,16 @@ Custom store implementations can be loaded by pointing a storage variable at a *
 
 ### Registration & provider-auth
 
-Registration is **open by default**. The tenant gate activates whenever a **SQL** registration store is configured — via `DWN_REGISTRATION_STORE_URL`, or its fallback to `DWN_STORAGE` (the per-store `DWN_STORAGE_*` overrides do **not** count). So pointing `DWN_STORAGE` at Postgres/MySQL/SQLite activates the gate **even when `DWN_REGISTRATION_STORE_URL` is unset**; you must then enable a method below (or pre-register tenants via the admin API), or new tenants are rejected. See [Registration requirements](#registration-requirements) for the full flow.
+Remote startup requires an explicit tenant-admission policy. Configure a **SQL**
+registration store, or set `DWN_ALLOW_OPEN_TENANTS=true` to intentionally accept
+any tenant. The gate activates whenever a registration store is configured via
+`DWN_REGISTRATION_STORE_URL`, or its fallback to `DWN_STORAGE` (the per-store
+`DWN_STORAGE_*` overrides do **not** count). See [Registration requirements](#registration-requirements).
 
 | Env var                                           | Description                                                                 | Default                |
 | ------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------- |
 | `DWN_REGISTRATION_STORE_URL`                      | SQL store for registered tenants; falls back to `DWN_STORAGE`. A SQL value activates the tenant gate (LevelDB not supported). | value of `DWN_STORAGE` |
+| `DWN_ALLOW_OPEN_TENANTS`                          | Explicitly allow a remote server to run without a tenant registration gate | `false` |
 | `DWN_REGISTRATION_PROOF_OF_WORK_ENABLED`          | Require proof-of-work to register                                            | `false`                |
 | `DWN_REGISTRATION_PROOF_OF_WORK_SEED`             | Seed for challenge nonces (keeps difficulty consistent across a cluster)     | unset                  |
 | `DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH` | Initial difficulty (64-char hex; more leading zeros = harder)               | unset                  |
@@ -209,6 +232,7 @@ The admin API and UI are **disabled** unless an admin token is provided. See [Ad
 | `DWN_ADMIN_TOKEN_FILE`              | Path to a file containing the admin token (e.g. a Docker secret)      | unset       |
 | `DWN_ADMIN_ACTIVITY_LOG_CAPACITY`   | In-memory ring-buffer size for recent activity events                 | `10000`     |
 | `DWN_ADMIN_METRICS_UPDATE_INTERVAL` | Interval (seconds) for refreshing Prometheus gauges from the store    | `30`        |
+| `DWN_PUBLIC_METRICS_ENABLED`         | Expose remote `/metrics` without admin authentication                 | `false`     |
 | `DWN_ADMIN_WEBAUTHN_RP_ID`          | WebAuthn Relying Party ID for passkey login                           | hostname of `DWN_BASE_URL` |
 | `DWN_ADMIN_WEBAUTHN_RP_NAME`        | Human-readable RP name shown during passkey registration             | `DWN Admin` |
 | `DWN_ADMIN_SESSION_TTL`             | Passkey session TTL (seconds)                                         | `86400`     |
@@ -223,10 +247,15 @@ The admin API and UI are **disabled** unless an admin token is provided. See [Ad
 | `DWN_RATE_LIMIT_TENANT_BURST`                | Per-tenant burst allowance                              | `50`           |
 | `DWN_QUOTA_MAX_MESSAGES`                     | Default max messages per tenant (0 = unlimited)         | `0`            |
 | `DWN_QUOTA_MAX_STORAGE_BYTES`               | Default max stored bytes per tenant (0 = unlimited)     | `0`            |
+| `DWN_ALLOW_UNBOUNDED_TENANT_USAGE`           | Explicitly allow either quota dimension to remain unlimited | `false`     |
 | `DWN_AUDIT_LOG_MAX_AGE_DAYS`                | Audit-log retention by age (0 = no age limit)           | `90`           |
 | `DWN_AUDIT_LOG_MAX_ROWS`                    | Audit-log retention by row count (0 = no row limit)     | `100000`       |
 
-Per-tenant quotas and rate limits can be overridden at runtime via the admin API.
+Remote servers must set both global quota limits to positive values or explicitly
+acknowledge unbounded usage. Finite quota accounting requires a SQL message store.
+Global quota defaults are startup-only; per-tenant quotas and rate limits can be
+changed via the admin API. A zero per-tenant quota inherits that global dimension.
+There is no tenant-only unlimited override for a finite global limit.
 WebSocket acknowledgements that advance a subscription event window are exempt from
 the ordinary request bucket so flow-control progress cannot be rate-limited away.
 Peer-IP limits use the direct TCP peer and never trust forwarded headers. When a
@@ -373,7 +402,7 @@ Public endpoints (no auth unless noted). Permissive CORS is applied to the JSON-
 | `GET`  | `/`                                    | Plain-text pointer to use an Enbox client. Upgrades to WebSocket when requested. |
 | `GET`  | `/health`                              | Liveness check — returns `{ "ok": true }`.                                  |
 | `GET`  | `/info`                                | Server capabilities and registration requirements — see [Server info](#server-info). |
-| `GET`  | `/metrics`                             | Prometheus metrics. Token-protected when `DWN_ADMIN_TOKEN` is set.          |
+| `GET`  | `/metrics`                             | Prometheus metrics. Admin-authenticated remotely unless explicitly public.  |
 | `POST` | `/`                                    | Main JSON-RPC endpoint (HTTP transport).                                    |
 | `GET`  | `/registration/proof-of-work`         | Proof-of-work challenge (only if PoW is enabled).                           |
 | `GET`  | `/registration/terms-of-service`      | Terms-of-service text (only if a ToS file is configured).                   |
@@ -413,7 +442,10 @@ Public endpoints (no auth unless noted). Permissive CORS is applied to the JSON-
 
 ## Registration requirements
 
-Registration gates are optional and **all disabled by default**. The gate becomes active when a SQL registration store is configured — via `DWN_REGISTRATION_STORE_URL` or its fallback to `DWN_STORAGE` (LevelDB is not supported). Tenants that have not satisfied the active requirements receive a `401`. The current requirements are advertised at `/info`.
+The gate becomes active when a SQL registration store is configured — via
+`DWN_REGISTRATION_STORE_URL` or its fallback to `DWN_STORAGE` (LevelDB is not
+supported). Tenants that have not satisfied the active requirements receive a
+`401`. Without a gate, remote startup requires `DWN_ALLOW_OPEN_TENANTS=true`.
 
 Every registration request must carry **either** proof-of-work **or** provider-auth credentials; a request with neither is rejected. Terms-of-service is not a standalone gate — it is layered onto those two, and (as noted below) enforced for proof-of-work but only conditionally for provider-auth.
 
@@ -421,7 +453,7 @@ Every registration request must carry **either** proof-of-work **or** provider-a
 - **Provider auth** (`DWN_PROVIDER_AUTH_ENABLED=true` with a JWT secret, JWKS URL, or custom plugin) — advertised as `provider-auth-v0`. Clients obtain a token via the OAuth2 flow (the built-in `/provider-auth/*` endpoints, or your configured provider) and register with it.
 - **Terms of service** (`DWN_TERMS_OF_SERVICE_FILE_PATH=/path/to/tos.txt`) — advertised as `terms-of-service`. A **layered** requirement, not a gate of its own, and it is enforced **asymmetrically**: a **proof-of-work** registration must include a matching `termsOfServiceHash` (from `GET /registration/terms-of-service`), but a **provider-auth** registration validates the hash only if the client supplies one — omitting it still succeeds. If you need ToS to be mandatory for provider-auth tenants, enforce acceptance in your provider/OAuth flow. Editing the file invalidates prior acceptances.
 
-If a registration store is configured but neither proof-of-work nor provider-auth is enabled, the server logs a startup warning — new tenants would be unable to register. The registration store URL resolves from `DWN_REGISTRATION_STORE_URL` **or** `DWN_STORAGE` only (not the per-store `DWN_STORAGE_*` overrides), so to run an **open** node leave both of those unset — you can still use SQL stores by setting `DWN_STORAGE_MESSAGES` / `DWN_STORAGE_DATA` / `DWN_STORAGE_RESUMABLE_TASKS` individually. When the gate is active, enable a method above or pre-register tenants via the admin API.
+If a registration store is configured but neither proof-of-work nor provider-auth is enabled, the server logs a startup warning — new tenants would be unable to register. The registration store URL resolves from `DWN_REGISTRATION_STORE_URL` **or** `DWN_STORAGE` only (not the per-store `DWN_STORAGE_*` overrides), so an intentionally open node leaves both unset, configures per-store storage URLs, and sets `DWN_ALLOW_OPEN_TENANTS=true`. When the gate is active, enable a method above or pre-register tenants via the admin API.
 
 ## Admin API
 
@@ -429,9 +461,10 @@ The admin API (and the bundled admin UI from `@enbox/dwn-server-admin-ui`) are *
 
 - Requests authenticate with `Authorization: Bearer <token>`, or with a passkey-issued session for routes that allow it.
 - The JSON API is served under `/admin/api/*`; the static UI is served under `/admin/*`.
-- `/metrics` becomes token-protected by the same credential.
+- `/metrics` uses the same credential. Without admin authentication it returns
+  `404`, unless `DWN_PUBLIC_METRICS_ENABLED=true` explicitly makes it public.
 
-Capabilities include tenant management (list, inspect, pre-register, suspend/unsuspend, delete/purge), per-tenant quotas, the audit log, recent activity events, active WebSocket connections, webhook registration, runtime config changes (log level, quotas, rate limits), tenant data browsing/export, and passkey (WebAuthn) registration and login. The admin store requires a SQL backend — it is unavailable with LevelDB.
+Capabilities include tenant management (list, inspect, pre-register, suspend/unsuspend, delete/purge), per-tenant quotas, the audit log, recent activity events, active WebSocket connections, webhook registration, runtime config changes (log level and rate limits), tenant data browsing/export, and passkey (WebAuthn) registration and login. The admin store requires a SQL backend — it is unavailable with LevelDB.
 
 ## Hosting your own DWN
 

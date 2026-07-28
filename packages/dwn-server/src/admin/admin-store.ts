@@ -29,9 +29,7 @@ export class AdminStore {
    * @returns An `AdminStore` instance, or `undefined` if the URL uses a non-SQL backend.
    */
   public static create(storageUrl: string, cacheTtlMs = 60_000): AdminStore | undefined {
-    // LevelDB and file-path plugins cannot support cross-tenant queries.
-    const isFilePath = storageUrl.startsWith('/') || storageUrl.startsWith('./') || storageUrl.startsWith('../');
-    if (isFilePath || storageUrl.startsWith('level://')) {
+    if (!AdminStore.supportsUsageQueries(storageUrl)) {
       return undefined;
     }
 
@@ -40,6 +38,21 @@ export class AdminStore {
       return new AdminStore(dialect, cacheTtlMs);
     } catch {
       return undefined;
+    }
+  }
+
+  /** Returns whether a storage URL can supply cross-tenant usage totals. */
+  public static supportsUsageQueries(storageUrl: string): boolean {
+    const isFilePath = storageUrl.startsWith('/') || storageUrl.startsWith('./') || storageUrl.startsWith('../');
+    if (isFilePath || storageUrl.startsWith('level://')) {
+      return false;
+    }
+
+    try {
+      const protocol = new URL(storageUrl).protocol;
+      return protocol === 'sqlite:' || protocol === 'mysql:' || protocol === 'postgres:';
+    } catch {
+      return false;
     }
   }
 
