@@ -15,7 +15,7 @@ function stableStringify(value: unknown): string {
 
   const object = value as Record<string, unknown>;
   const pairs = Object.keys(object)
-    .sort()
+    .sort((left, right) => left.localeCompare(right))
     .map((key) => JSON.stringify(key) + ':' + stableStringify(object[key]));
   return '{' + pairs.join(',') + '}';
 }
