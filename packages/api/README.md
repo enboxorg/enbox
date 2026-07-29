@@ -153,16 +153,26 @@ if (initial.phase === 'disconnected') {
 
 The connection store treats the manifest as the canonical protocol source. It
 projects delegated permission requests into `connect()`, `refresh()`, and an
-opted-in monitor `autoRefresh`, then runs production protocol readiness before
-publishing `phase: 'connected'`. Readiness therefore runs for each session the
-store establishes or restores, including app startup with a saved session.
+opted-in monitor `autoRefresh`; callers cannot supply a competing protocol
+list. A manifest-backed store requires at least one protocol. It then gates
+each session the store establishes or restores on local protocol readiness
+before publishing `phase: 'connected'`: owners install the protocols locally,
+while delegates validate and import the wallet-approved configurations. This
+includes app startup with a saved session.
+
+Hosted publication is not required for a local owner connection. Set
+`publishProtocols: true` only when the app must publish and verify every owner
+configuration at the hosted DWN before becoming connected. The default keeps
+local-only, offline, and endpoint-less owner identities usable; an app can
+also call `enbox.protocols.ensureReady({ application })` later when hosted
+receiving becomes necessary.
+
 Transient readiness failures retain the underlying `store.auth.session` for a
 retry while keeping it out of the public snapshot. A missing or incompatible
-wallet protocol configuration instead ends the unusable delegate session and sets
-`walletReapprovalRequired`, so the next `connect()` requests fresh approval.
-Use `connectVault()` for an explicit owner/vault connection; it receives no
-grant requests, but its resulting session passes through the same readiness
-gate.
+wallet protocol configuration instead ends the unusable delegate session and
+sets `walletReapprovalRequired`, so the next `connect()` requests fresh
+approval. On a manifest-backed store, `connect()` is delegated and a per-call
+`password` unlocks the delegate vault; use `connectVault()` for an owner.
 
 Without the connection store, project and ready the manifest explicitly:
 
@@ -179,11 +189,13 @@ codecs are never transmitted. The manifest itself is not a raw connect-options
 object. Owner/vault connections remain explicit `connectVault()` or
 `Enbox.connect({ createIdentity: true, ... })` calls.
 
-`ensureReady()` publishes only for owner sessions. A delegated session instead
-validates and imports the wallet-owned configurations without authoring or
-publishing replacements. `targetDid` is publish-only: the local install remains
-on the connected identity, and the target must be controlled by the same agent
-so it can sign the configuration. The lower-level
+`ensureReady()` publishes by default only for owner sessions; pass
+`publish: false` for local installation without a hosted-DWN requirement. A
+delegated session validates and imports the wallet-owned configurations without
+authoring or publishing replacements regardless of that option. `targetDid` is
+publish-only: the local install remains on the connected identity, and the
+target must be controlled by the same agent so it can sign the configuration.
+The lower-level
 `enbox.using(protocol).configure()` never publishes to a hosted DWN.
 
 Typed protocol composition through `$ref` is not inferred from incomplete

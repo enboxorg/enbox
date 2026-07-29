@@ -41,6 +41,10 @@ export {
 } from '@enbox/api';
 
 export type {
+  ApplicationConnectionStore,
+  ApplicationConnectionStoreConnectOptions,
+  ApplicationConnectionStoreOptions,
+  ApplicationConnectionStoreRefreshOptions,
   ApplicationManifest,
   ApplicationManifestProtocol,
   ApplicationManifestProtocolInput,
@@ -49,9 +53,7 @@ export type {
   ConnectionSnapshot,
   ConnectionSnapshotListener,
   ConnectionStore,
-  ConnectionStoreMonitorOptions,
   ConnectionStoreOptions,
-  ConnectionStoreRefreshOptions,
   DefineApplicationManifestOptions,
   EnboxAnonymousOptions,
   EnboxConnectOptions,

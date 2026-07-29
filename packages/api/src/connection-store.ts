@@ -46,6 +46,7 @@ import type {
   ConnectOptions,
   DisconnectOptions,
   GetConnectionStatusOptions,
+  HandlerConnectOptions,
   RefreshOptions,
   RestoreSessionOptions,
   VaultConnectOptions,
@@ -169,35 +170,24 @@ export type ConnectionSnapshot = {
 /** A listener invoked with each new {@link ConnectionSnapshot} after a state change. */
 export type ConnectionSnapshotListener = (snapshot: ConnectionSnapshot) => void;
 
-/** Refresh options whose protocol requests may come from the registered application manifest. */
-export type ConnectionStoreRefreshOptions = Omit<RefreshOptions, 'protocols'> & {
-  /** Required only when the store has no {@link ConnectionStoreOptions.application}. */
-  protocols?: RefreshOptions['protocols'];
+/** Delegated-connect options for a manifest-backed store, whose protocols come only from the manifest. */
+export type ApplicationConnectionStoreConnectOptions = Omit<HandlerConnectOptions, 'protocols'> & {
+  [Key in 'protocols' | Exclude<keyof VaultConnectOptions, keyof HandlerConnectOptions>]?: never;
 };
 
-/** Monitor options whose opted-in refresh may use the registered application manifest. */
-export type ConnectionStoreMonitorOptions = Omit<ConnectionMonitorOptions, 'autoRefresh'> & {
-  /** Opt in to automatic refresh. Protocols may come from the registered application manifest. */
-  autoRefresh?: ConnectionStoreRefreshOptions;
+/** Refresh options for a manifest-backed store, whose protocols come only from the manifest. */
+export type ApplicationConnectionStoreRefreshOptions = Omit<RefreshOptions, 'protocols'> & {
+  protocols?: never;
 };
 
 /**
- * Options for {@link createConnectionStore}.
+ * Options shared by plain and manifest-backed connection stores.
  *
  * Extends `AuthManagerOptions` — everything the store does not consume itself
  * (`connectHandler`, `sync`, `storage`, `password`, …) is forwarded verbatim
  * to `AuthManager.create()` during the first action.
  */
-export type ConnectionStoreOptions = AuthManagerOptions & {
-  /**
-   * The application's canonical typed protocol registry.
-   *
-   * The store projects its permission requests into delegated connect,
-   * refresh, and opted-in auto-refresh flows, then completes production
-   * protocol readiness before publishing a connected snapshot.
-   */
-  application?: ApplicationManifest;
-
+type ConnectionStoreSharedOptions = AuthManagerOptions & {
   /**
    * A pre-built `AuthManager` to drive instead of creating one.
    *
@@ -210,16 +200,40 @@ export type ConnectionStoreOptions = AuthManagerOptions & {
    */
   auth?: AuthManager;
 
+  /** Options forwarded to `AuthManager.restoreSession()` during {@link ConnectionStore.initialize}. */
+  restore?: RestoreSessionOptions;
+};
+
+/** Options for a connection store without an application manifest. */
+type PlainConnectionStoreOptions = ConnectionStoreSharedOptions & {
+  application?: undefined;
+
   /**
    * Options for the delegated-connection monitor the store starts whenever a
    * wallet-delegated session connects, or `false` to disable monitoring.
    * Defaults to `{}` (the `AuthManager` polling defaults).
    */
-  monitor?: ConnectionStoreMonitorOptions | false;
+  monitor?: ConnectionMonitorOptions | false;
 
-  /** Options forwarded to `AuthManager.restoreSession()` during {@link ConnectionStore.initialize}. */
-  restore?: RestoreSessionOptions;
+  publishProtocols?: never;
 };
+
+/** Options for a connection store backed by one canonical application manifest. */
+export type ApplicationConnectionStoreOptions = ConnectionStoreSharedOptions & {
+  /** One or more typed protocols used for delegated grants and session-local readiness. */
+  application: ApplicationManifest;
+
+  /** Delegated monitor options whose automatic refresh derives protocols from {@link application}. */
+  monitor?: (Omit<ConnectionMonitorOptions, 'autoRefresh'> & {
+    autoRefresh?: ApplicationConnectionStoreRefreshOptions;
+  }) | false;
+
+  /** Require owner protocols to be published and verified at the hosted DWN before connecting. Defaults to `false`. */
+  publishProtocols?: boolean;
+};
+
+/** Options for {@link createConnectionStore}. */
+export type ConnectionStoreOptions = PlainConnectionStoreOptions | ApplicationConnectionStoreOptions;
 
 /**
  * A framework-agnostic observable store over the Enbox connection lifecycle.
@@ -282,14 +296,12 @@ export interface ConnectionStore {
 
   /**
    * Runs `AuthManager.refresh()` to re-grant the current delegated session.
-   * A registered application supplies the protocol requests, so options are
-   * optional in the common case.
    * On success the reapproval flag clears and the connection status reseeds.
    * An auth/approval failure before replacement keeps the surviving session
    * `'connected'`; a readiness failure keeps the replacement unpublished.
    * Both outcomes are surfaced via `error`.
    */
-  refresh(options?: ConnectionStoreRefreshOptions): Promise<ConnectionSnapshot>;
+  refresh(options: RefreshOptions): Promise<ConnectionSnapshot>;
 
   /**
    * Signs out: stops the connection monitor, runs `AuthManager.disconnect()`
@@ -311,6 +323,15 @@ export interface ConnectionStore {
    */
   dispose(): Promise<void>;
 }
+
+/** A manifest-backed store whose delegated operations derive protocols from that manifest. */
+export type ApplicationConnectionStore = Omit<ConnectionStore, 'connect' | 'refresh'> & {
+  /** Connect through the delegated handler. Use `connectVault()` for an owner session. */
+  connect(options?: ApplicationConnectionStoreConnectOptions): Promise<ConnectionSnapshot>;
+
+  /** Refresh delegated grants using the manifest's canonical protocol requests. */
+  refresh(options?: ApplicationConnectionStoreRefreshOptions): Promise<ConnectionSnapshot>;
+};
 
 /** Snapshot patch that clears every session-derived field. */
 const CLEARED_SESSION_FIELDS = {
@@ -402,7 +423,8 @@ class HeadlessConnectionStore implements ConnectionStore {
   private readonly _application?: ApplicationManifest;
   private readonly _authManagerOptions: AuthManagerOptions;
   private readonly _providedAuth?: AuthManager;
-  private readonly _monitor: ConnectionStoreMonitorOptions | false;
+  private readonly _monitor: Exclude<ConnectionStoreOptions['monitor'], undefined>;
+  private readonly _publishProtocols: boolean;
   private readonly _restore?: RestoreSessionOptions;
   private readonly _listeners = new Set<ConnectionSnapshotListener>();
   private readonly _unsubscribers: (() => void)[] = [];
@@ -419,10 +441,14 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _syncBinding?: SyncStatusBinding;
 
   public constructor(options: ConnectionStoreOptions) {
-    const { application, auth, monitor, restore, ...authManagerOptions } = options;
+    const { application, auth, monitor, publishProtocols, restore, ...authManagerOptions } = options;
+    if (application?.protocols.length === 0) {
+      throw new TypeError('[@enbox/api] createConnectionStore requires at least one application protocol.');
+    }
     this._application = application;
     this._providedAuth = auth;
     this._monitor = monitor ?? {};
+    this._publishProtocols = publishProtocols ?? false;
     this._restore = restore;
     this._authManagerOptions = authManagerOptions;
   }
@@ -468,9 +494,10 @@ class HeadlessConnectionStore implements ConnectionStore {
     return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => auth.connectVault(options));
   }
 
-  public refresh(options: ConnectionStoreRefreshOptions = {}): Promise<ConnectionSnapshot> {
-    const refreshOptions = this._refreshOptions(options);
-    return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => auth.refresh(refreshOptions));
+  public refresh(options: Partial<RefreshOptions> = {}): Promise<ConnectionSnapshot> {
+    return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => (
+      auth.refresh(this._refreshOptions(options))
+    ));
   }
 
   public disconnect(options?: DisconnectOptions): Promise<ConnectionSnapshot> {
@@ -631,8 +658,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     while (!this._isStale(generation)) {
       const activeSession = auth.session;
       if (activeSession === undefined || activeSession.signal.aborted) {
-        this._stopDelegateMonitor();
-        return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
+        return this._publishDisconnected();
       }
       if (this._snapshot.session !== undefined && this._snapshot.session !== activeSession) {
         // Auth aborts the previous lifetime before publishing its replacement.
@@ -651,8 +677,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
       const readySession = auth.session;
       if (readySession === undefined || readySession.signal.aborted) {
-        this._stopDelegateMonitor();
-        return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
+        return this._publishDisconnected();
       }
       if (readySession !== activeSession) {
         continue;
@@ -685,8 +710,7 @@ class HeadlessConnectionStore implements ConnectionStore {
         return this._snapshot;
       }
       if (authoritativeSession === undefined || authoritativeSession.signal.aborted) {
-        this._stopDelegateMonitor();
-        return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
+        return this._publishDisconnected();
       }
     }
 
@@ -699,7 +723,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     application: ApplicationManifest,
   ): Promise<Error | undefined> {
     try {
-      await enbox.protocols.ensureReady({ application });
+      await enbox.protocols.ensureReady({ application, publish: this._publishProtocols });
       return undefined;
     } catch (cause: unknown) {
       return toError(cause);
@@ -870,8 +894,7 @@ class HeadlessConnectionStore implements ConnectionStore {
 
     const session = auth.session;
     if (session === undefined) {
-      this._stopDelegateMonitor();
-      this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
+      this._publishDisconnected();
       return;
     }
     const generation = this._actionGeneration;
@@ -895,23 +918,27 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (this._monitor === false || session.delegateDid === undefined) {
       return;
     }
-    this._stopMonitor = auth.startConnectionMonitor(this._monitorOptions());
-  }
-
-  private _monitorOptions(): ConnectionMonitorOptions {
-    const { autoRefresh, ...options } = this._monitor || {};
-    return autoRefresh === undefined
+    const { autoRefresh, ...options } = this._monitor;
+    this._stopMonitor = auth.startConnectionMonitor(autoRefresh === undefined
       ? options
-      : { ...options, autoRefresh: this._refreshOptions(autoRefresh) };
+      : { ...options, autoRefresh: this._refreshOptions(autoRefresh) });
   }
 
-  private _refreshOptions(options: ConnectionStoreRefreshOptions): RefreshOptions {
-    return {
-      ...options,
-      protocols: this._application === undefined
-        ? options.protocols ?? []
-        : getApplicationProtocolRequests(this._application),
-    };
+  private _refreshOptions(options: Partial<RefreshOptions>): RefreshOptions {
+    const protocols = this._application === undefined
+      ? options.protocols
+      : getApplicationProtocolRequests(this._application);
+    if (protocols === undefined) {
+      throw new TypeError(
+        '[@enbox/api] ConnectionStore.refresh requires protocols when no application manifest is registered.'
+      );
+    }
+    return { ...options, protocols };
+  }
+
+  private _publishDisconnected(): ConnectionSnapshot {
+    this._stopDelegateMonitor();
+    return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
   }
 
   private _stopDelegateMonitor(): void {
@@ -1190,6 +1217,11 @@ function syncStatusesEqual(a: SyncStatusSnapshot | undefined, b: SyncStatusSnaps
  *   {@link ConnectionStoreOptions.restore}).
  * @returns A new {@link ConnectionStore}.
  */
-export function createConnectionStore(options: ConnectionStoreOptions = {}): ConnectionStore {
+export function createConnectionStore(options: ApplicationConnectionStoreOptions): ApplicationConnectionStore;
+export function createConnectionStore(options?: PlainConnectionStoreOptions): ConnectionStore;
+export function createConnectionStore(options: ConnectionStoreOptions): ConnectionStore | ApplicationConnectionStore;
+export function createConnectionStore(
+  options: ConnectionStoreOptions = {},
+): ConnectionStore | ApplicationConnectionStore {
   return new HeadlessConnectionStore(options);
 }

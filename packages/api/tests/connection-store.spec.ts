@@ -627,6 +627,14 @@ describe('createConnectionStore()', () => {
   });
 
   describe('application lifecycle', () => {
+    it('should reject an empty application manifest', () => {
+      const application = defineApplicationManifest({ protocols: [] });
+
+      expect(() => createConnectionStore({ application })).toThrow(
+        'createConnectionStore requires at least one application protocol'
+      );
+    });
+
     it('should project the registered manifest through delegated connect, refresh, and opted-in auto-refresh', async () => {
       const ensureReady = stubProtocolReadiness();
       const fake = createFakeAuth();
@@ -638,16 +646,16 @@ describe('createConnectionStore()', () => {
       const store = createConnectionStore({
         application : APPLICATION,
         auth        : asAuth(fake),
-        monitor     : { autoRefresh: { protocols: PROTOCOLS } },
+        monitor     : { autoRefresh: {} },
       });
 
-      await store.connect({ protocols: PROTOCOLS });
+      await store.connect();
 
       expect(fake.connect.firstCall.args[0]).toEqual({ protocols: APPLICATION_REQUESTS });
       expect(fake.startConnectionMonitor.firstCall.args[0].autoRefresh).toEqual({
         protocols: APPLICATION_REQUESTS,
       });
-      expect(ensureReady.firstCall.args[0]).toEqual({ application: APPLICATION });
+      expect(ensureReady.firstCall.args[0]).toEqual({ application: APPLICATION, publish: false });
 
       const refreshedSession = createSession({ delegateDid: DELEGATE_DID, name: 'Refreshed identity' });
       fake.refresh.callsFake(async (): Promise<AuthSession> => {
@@ -655,10 +663,53 @@ describe('createConnectionStore()', () => {
         return refreshedSession;
       });
 
-      await store.refresh({ protocols: PROTOCOLS });
+      await store.refresh();
 
       expect(fake.refresh.firstCall.args[0]).toEqual({ protocols: APPLICATION_REQUESTS });
       expect(ensureReady.callCount).toBe(2);
+    });
+
+    it('should keep hosted publication opt-in for an owner without a DWN service', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Local owner' },
+        didMethod : 'jwk',
+      });
+      const session = new AuthSession({
+        agent  : testHarness.agent,
+        did    : identity.did.uri,
+        identity,
+        signal : new AbortController().signal,
+      });
+      const localAuth = createFakeAuth();
+      localAuth.connectVault.callsFake(async (): Promise<AuthSession> => {
+        localAuth.session = session;
+        return session;
+      });
+      const localStore = createConnectionStore({ application: APPLICATION, auth: asAuth(localAuth) });
+
+      const connected = await localStore.connectVault();
+
+      expect(connected.phase).toBe('connected');
+      expect((await connected.enbox!.using(ApplicationProtocol).verifyInstalled()).status).toBe('up-to-date');
+      await localStore.dispose();
+
+      const hostedAuth = createFakeAuth();
+      hostedAuth.connectVault.callsFake(async (): Promise<AuthSession> => {
+        hostedAuth.session = session;
+        return session;
+      });
+      const hostedStore = createConnectionStore({
+        application      : APPLICATION,
+        auth             : asAuth(hostedAuth),
+        publishProtocols : true,
+      });
+
+      const failed = await hostedStore.connectVault();
+
+      expect(failed.phase).toBe('error');
+      expect(failed.error).toBeInstanceOf(ProtocolReadinessError);
+      expect(failed.error).toMatchObject({ operation: 'publish' });
+      expect(failed.session).toBeUndefined();
     });
 
     it('should keep a restored session private until application readiness completes', async () => {
@@ -720,7 +771,7 @@ describe('createConnectionStore()', () => {
       const ensureReady = stubProtocolReadiness();
       const readinessError = new ProtocolReadinessError({
         cause     : new Error('hosted DWN unavailable'),
-        operation : 'publish',
+        operation : 'install',
         protocol  : ApplicationDefinition.protocol,
         targetDid : OWNER_DID,
       });
@@ -906,14 +957,13 @@ describe('createConnectionStore()', () => {
     });
 
     it('should keep the connection field unset for non-delegated vault sessions', async () => {
-      const ensureReady = stubProtocolReadiness();
       const fake = createFakeAuth();
       const session = createSession();
       fake.connectVault.callsFake(async (): Promise<AuthSession> => {
         fake.session = session;
         return session;
       });
-      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+      const store = createConnectionStore({ auth: asAuth(fake) });
 
       const snapshot = await store.connectVault({ createIdentity: true });
 
@@ -921,7 +971,6 @@ describe('createConnectionStore()', () => {
       expect(snapshot.connection).toBeUndefined();
       expect(fake.getConnectionStatus.called).toBe(false);
       expect(fake.connectVault.firstCall.args[0]).toEqual({ createIdentity: true });
-      expect(ensureReady.firstCall.args[0]).toEqual({ application: APPLICATION });
     });
 
     it('should resolve a denied connect as disconnected with a typed ConnectDeniedError', async () => {
@@ -992,6 +1041,19 @@ describe('createConnectionStore()', () => {
   });
 
   describe('refresh()', () => {
+    it('should report missing protocols without refreshing a store that has no application', async () => {
+      const fake = createFakeAuth();
+      const store = createConnectionStore({ auth: asAuth(fake) });
+
+      const snapshot = await (store as unknown as {
+        refresh(): Promise<ConnectionSnapshot>;
+      }).refresh();
+
+      expect(snapshot.phase).toBe('error');
+      expect(snapshot.error?.message).toContain('requires protocols when no application manifest is registered');
+      expect(fake.refresh.called).toBe(false);
+    });
+
     async function connectDelegatedStore(fake: FakeAuthManager): Promise<ReturnType<typeof createConnectionStore>> {
       const session = createSession({ delegateDid: DELEGATE_DID });
       fake.connect.callsFake(async (): Promise<AuthSession> => {
@@ -1354,11 +1416,12 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const create = sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
       const store = createConnectionStore({
-        application : APPLICATION,
-        password    : 'pw',
-        sync        : 'off',
-        monitor     : false,
-        restore     : { password: 'restore-pw' },
+        application      : APPLICATION,
+        password         : 'pw',
+        publishProtocols : true,
+        sync             : 'off',
+        monitor          : false,
+        restore          : { password: 'restore-pw' },
       });
 
       expect(create.called).toBe(false);
