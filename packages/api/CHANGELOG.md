@@ -1,5 +1,50 @@
 # @enbox/api
 
+## 0.6.74
+
+### Patch Changes
+
+- [#1476](https://github.com/enboxorg/enbox/pull/1476) [`00dafdf`](https://github.com/enboxorg/enbox/commit/00dafdf88c517df248639680dc89616e9f42616d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Authenticate protocol configurations used for remote encryption-policy resolution and record artifacts returned through app-facing remote query, read, and initial subscription snapshot calls, bind record results to the original request filter, and verify inline or streamed record bytes against their signed CID and size. Remote protocol definitions used for encryption policy must now be signed directly by the target DID. Anonymous subscriptions now use the current transport request shape, and lazy read-only records reject data from a different record version.
+
+  These checks authenticate returned artifacts; they do not prove result completeness or freshness because DWN query replies do not yet carry a tenant-authenticated state commitment. `RecordsCount` replies carry no signed artifacts, so their aggregate values remain assertions by the remote DWN. Initial `RecordsSubscribe` snapshots are verified, but subsequent live events remain outside this response-verification boundary.
+
+  Streamed reads are authenticated at successful end-of-stream, so callers can observe chunks before the final CID check completes. Integrity-sensitive consumers that cannot tolerate an unauthenticated prefix must buffer the stream through successful completion before using its bytes.
+
+- [#1492](https://github.com/enboxorg/enbox/pull/1492) [`fb7ca10`](https://github.com/enboxorg/enbox/commit/fb7ca10fdc7b58a2e97d59658063033805491a9a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add typed application manifests and structural protocol-request normalization. Applications can retain `TypedProtocol` codecs locally while projecting only raw definitions and explicit permission policies into delegated auth requests.
+
+- [#1495](https://github.com/enboxorg/enbox/pull/1495) [`c625d63`](https://github.com/enboxorg/enbox/commit/c625d6398feff887d2051bba6e5d5e306eaa3fdf) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose the connected identity's aggregate sync currentness, connectivity, and
+  latest engine-recorded activity through the existing framework-neutral
+  connection snapshot. Export `ReplicationCurrentness` as the shared currentness
+  vocabulary for sync status and observed record views. Status is driven by local
+  sync state and existing events, uses the agent's canonical connectivity
+  aggregation, and fences session replacement and teardown without notifying
+  listeners during disposal.
+
+- [#1494](https://github.com/enboxorg/enbox/pull/1494) [`d818618`](https://github.com/enboxorg/enbox/commit/d8186183f76b5556c26dd94a3ece5fc3db411a44) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add application protocol readiness. Owner sessions install locally, publish to
+  the identity's hosted DWN, and verify the active remote definition. Delegated
+  sessions validate and import the wallet-owned configuration without publishing.
+
+- [#1496](https://github.com/enboxorg/enbox/pull/1496) [`8d288dd`](https://github.com/enboxorg/enbox/commit/8d288dd80fab6e4bcf0f92f3cde37799a13fcf05) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Let connection stores own a non-empty application manifest. Its protocols are
+  the sole typed source for delegated connect, refresh, and opted-in auto-refresh
+  flows, while plain stores continue to require explicit refresh protocols. Each
+  restored or newly established session completes readiness before the store
+  publishes it as connected. Owner sessions require local installation by default
+  and can set `requireHostedReadiness` to block on hosted publication; delegate
+  failures fail closed, with missing or incompatible wallet configurations
+  surfaced through the existing wallet-reapproval state.
+
+- [#1498](https://github.com/enboxorg/enbox/pull/1498) [`659372d`](https://github.com/enboxorg/enbox/commit/659372de22c2cf7481fa4d28ba2b6380483e93a4) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add an isolated, real local-DWN test context under `@enbox/api/testing` and support network-free identities in the agent test harness.
+
+- [#1482](https://github.com/enboxorg/enbox/pull/1482) [`80dab68`](https://github.com/enboxorg/enbox/commit/80dab686cb24691f6df5fdc46a61552cbeb5faf4) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Keep protocol-role management on the canonical typed Records API: expose exact `$role` paths through `ProtocolRolePaths`, require a recipient when creating a role record, and document create/query/delete as the grant/list/revoke lifecycle. Explicit request annotations now use `TypedCreateRequest<Definition, Codecs, Path>`.
+
+- [#1472](https://github.com/enboxorg/enbox/pull/1472) [`33dba16`](https://github.com/enboxorg/enbox/commit/33dba165f9f5770044ccafb9f1f0572f2f555abf) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: carry protocol roles through typed point reads and deletes, including lazy record data reads
+
+- Updated dependencies [[`00dafdf`](https://github.com/enboxorg/enbox/commit/00dafdf88c517df248639680dc89616e9f42616d), [`fb7ca10`](https://github.com/enboxorg/enbox/commit/fb7ca10fdc7b58a2e97d59658063033805491a9a), [`c625d63`](https://github.com/enboxorg/enbox/commit/c625d6398feff887d2051bba6e5d5e306eaa3fdf), [`d818618`](https://github.com/enboxorg/enbox/commit/d8186183f76b5556c26dd94a3ece5fc3db411a44), [`659372d`](https://github.com/enboxorg/enbox/commit/659372de22c2cf7481fa4d28ba2b6380483e93a4), [`2a4223a`](https://github.com/enboxorg/enbox/commit/2a4223a8255c7c9c6efc1245021fd620f11902ba), [`9511e65`](https://github.com/enboxorg/enbox/commit/9511e6566d92bb7b89e8c35fe3f0602c3a313e4b), [`d257e04`](https://github.com/enboxorg/enbox/commit/d257e04b5001f596d28691c942ca5d0bf25c2c22), [`8b0dc99`](https://github.com/enboxorg/enbox/commit/8b0dc99476d7981a2f2bd97fabbf0ecbe4754d33)]:
+  - @enbox/dwn-sdk-js@0.4.19
+  - @enbox/agent@0.8.35
+  - @enbox/auth@0.6.81
+  - @enbox/dwn-clients@0.4.26
+
 ## 0.6.73
 
 ### Patch Changes

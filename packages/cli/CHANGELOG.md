@@ -1,5 +1,20 @@
 # @enbox/cli
 
+## 0.1.27
+
+### Patch Changes
+
+- [#1492](https://github.com/enboxorg/enbox/pull/1492) [`fb7ca10`](https://github.com/enboxorg/enbox/commit/fb7ca10fdc7b58a2e97d59658063033805491a9a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add typed application manifests and structural protocol-request normalization. Applications can retain `TypedProtocol` codecs locally while projecting only raw definitions and explicit permission policies into delegated auth requests.
+
+- [#1494](https://github.com/enboxorg/enbox/pull/1494) [`d818618`](https://github.com/enboxorg/enbox/commit/d8186183f76b5556c26dd94a3ece5fc3db411a44) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add application protocol readiness. Owner sessions install locally, publish to
+  the identity's hosted DWN, and verify the active remote definition. Delegated
+  sessions validate and import the wallet-owned configuration without publishing.
+- Updated dependencies [[`00dafdf`](https://github.com/enboxorg/enbox/commit/00dafdf88c517df248639680dc89616e9f42616d), [`fb7ca10`](https://github.com/enboxorg/enbox/commit/fb7ca10fdc7b58a2e97d59658063033805491a9a), [`c625d63`](https://github.com/enboxorg/enbox/commit/c625d6398feff887d2051bba6e5d5e306eaa3fdf), [`d818618`](https://github.com/enboxorg/enbox/commit/d8186183f76b5556c26dd94a3ece5fc3db411a44), [`8d288dd`](https://github.com/enboxorg/enbox/commit/8d288dd80fab6e4bcf0f92f3cde37799a13fcf05), [`659372d`](https://github.com/enboxorg/enbox/commit/659372de22c2cf7481fa4d28ba2b6380483e93a4), [`80dab68`](https://github.com/enboxorg/enbox/commit/80dab686cb24691f6df5fdc46a61552cbeb5faf4), [`33dba16`](https://github.com/enboxorg/enbox/commit/33dba165f9f5770044ccafb9f1f0572f2f555abf)]:
+  - @enbox/agent@0.8.35
+  - @enbox/api@0.6.74
+  - @enbox/auth@0.6.81
+  - @enbox/connect@0.1.15
+
 ## 0.1.26
 
 ### Patch Changes

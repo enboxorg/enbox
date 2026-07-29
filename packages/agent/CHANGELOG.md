@@ -1,5 +1,34 @@
 # @enbox/agent
 
+## 0.8.35
+
+### Patch Changes
+
+- [#1476](https://github.com/enboxorg/enbox/pull/1476) [`00dafdf`](https://github.com/enboxorg/enbox/commit/00dafdf88c517df248639680dc89616e9f42616d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Authenticate protocol configurations used for remote encryption-policy resolution and record artifacts returned through app-facing remote query, read, and initial subscription snapshot calls, bind record results to the original request filter, and verify inline or streamed record bytes against their signed CID and size. Remote protocol definitions used for encryption policy must now be signed directly by the target DID. Anonymous subscriptions now use the current transport request shape, and lazy read-only records reject data from a different record version.
+
+  These checks authenticate returned artifacts; they do not prove result completeness or freshness because DWN query replies do not yet carry a tenant-authenticated state commitment. `RecordsCount` replies carry no signed artifacts, so their aggregate values remain assertions by the remote DWN. Initial `RecordsSubscribe` snapshots are verified, but subsequent live events remain outside this response-verification boundary.
+
+  Streamed reads are authenticated at successful end-of-stream, so callers can observe chunks before the final CID check completes. Integrity-sensitive consumers that cannot tolerate an unauthenticated prefix must buffer the stream through successful completion before using its bytes.
+
+- [#1495](https://github.com/enboxorg/enbox/pull/1495) [`c625d63`](https://github.com/enboxorg/enbox/commit/c625d6398feff887d2051bba6e5d5e306eaa3fdf) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose the connected identity's aggregate sync currentness, connectivity, and
+  latest engine-recorded activity through the existing framework-neutral
+  connection snapshot. Export `ReplicationCurrentness` as the shared currentness
+  vocabulary for sync status and observed record views. Status is driven by local
+  sync state and existing events, uses the agent's canonical connectivity
+  aggregation, and fences session replacement and teardown without notifying
+  listeners during disposal.
+
+- [#1494](https://github.com/enboxorg/enbox/pull/1494) [`d818618`](https://github.com/enboxorg/enbox/commit/d8186183f76b5556c26dd94a3ece5fc3db411a44) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add application protocol readiness. Owner sessions install locally, publish to
+  the identity's hosted DWN, and verify the active remote definition. Delegated
+  sessions validate and import the wallet-owned configuration without publishing.
+
+- [#1498](https://github.com/enboxorg/enbox/pull/1498) [`659372d`](https://github.com/enboxorg/enbox/commit/659372de22c2cf7481fa4d28ba2b6380483e93a4) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add an isolated, real local-DWN test context under `@enbox/api/testing` and support network-free identities in the agent test harness.
+
+- Updated dependencies [[`00dafdf`](https://github.com/enboxorg/enbox/commit/00dafdf88c517df248639680dc89616e9f42616d), [`2a4223a`](https://github.com/enboxorg/enbox/commit/2a4223a8255c7c9c6efc1245021fd620f11902ba), [`9511e65`](https://github.com/enboxorg/enbox/commit/9511e6566d92bb7b89e8c35fe3f0602c3a313e4b), [`d257e04`](https://github.com/enboxorg/enbox/commit/d257e04b5001f596d28691c942ca5d0bf25c2c22), [`8b0dc99`](https://github.com/enboxorg/enbox/commit/8b0dc99476d7981a2f2bd97fabbf0ecbe4754d33)]:
+  - @enbox/dwn-sdk-js@0.4.19
+  - @enbox/connect@0.1.15
+  - @enbox/dwn-clients@0.4.26
+
 ## 0.8.34
 
 ### Patch Changes

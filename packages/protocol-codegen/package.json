@@ -1,6 +1,6 @@
 {
   "name": "@enbox/protocol-codegen",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "CLI tool to generate typed modules from DWN protocol definitions and JSON Schemas",
   "type": "module",
   "main": "./dist/esm/index.js",

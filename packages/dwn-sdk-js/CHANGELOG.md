@@ -1,5 +1,32 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.19
+
+### Patch Changes
+
+- [#1476](https://github.com/enboxorg/enbox/pull/1476) [`00dafdf`](https://github.com/enboxorg/enbox/commit/00dafdf88c517df248639680dc89616e9f42616d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Authenticate protocol configurations used for remote encryption-policy resolution and record artifacts returned through app-facing remote query, read, and initial subscription snapshot calls, bind record results to the original request filter, and verify inline or streamed record bytes against their signed CID and size. Remote protocol definitions used for encryption policy must now be signed directly by the target DID. Anonymous subscriptions now use the current transport request shape, and lazy read-only records reject data from a different record version.
+
+  These checks authenticate returned artifacts; they do not prove result completeness or freshness because DWN query replies do not yet carry a tenant-authenticated state commitment. `RecordsCount` replies carry no signed artifacts, so their aggregate values remain assertions by the remote DWN. Initial `RecordsSubscribe` snapshots are verified, but subsequent live events remain outside this response-verification boundary.
+
+  Streamed reads are authenticated at successful end-of-stream, so callers can observe chunks before the final CID check completes. Integrity-sensitive consumers that cannot tolerate an unauthenticated prefix must buffer the stream through successful completion before using its bytes.
+
+- [#1471](https://github.com/enboxorg/enbox/pull/1471) [`2a4223a`](https://github.com/enboxorg/enbox/commit/2a4223a8255c7c9c6efc1245021fd620f11902ba) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Fix `RecordsSubscribe` authorization lifetime. Open subscriptions now re-fetch
+  referenced Records.Read grants and revalidate embedded author-delegate grants and
+  protocol-role membership before each matching event is delivered. A deleted,
+  revoked, or expired referenced grant, or a removed role assignment, closes the subscription with
+  `RecordsSubscribeDeliveryAuthorizationFailed`; a transient non-DWN revalidation
+  failure closes it with the retryable `RecordsSubscribeDeliveryFailed` code.
+
+- [#1480](https://github.com/enboxorg/enbox/pull/1480) [`9511e65`](https://github.com/enboxorg/enbox/commit/9511e6566d92bb7b89e8c35fe3f0602c3a313e4b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Reject protocol definitions that combine `$role` and `$recordLimit` on the same path. Record-limit projection can hide stored records, so allowing those hidden records to remain role capabilities would make visible membership disagree with authorization.
+
+  Previously installed definitions and role records are not rewritten. Retire an affected protocol URI, install the corrected definition under a new protocol URI, and migrate only intended role assignments.
+
+- [#1469](https://github.com/enboxorg/enbox/pull/1469) [`d257e04`](https://github.com/enboxorg/enbox/commit/d257e04b5001f596d28691c942ca5d0bf25c2c22) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: independently enforce target-DWN authorization after validating an author-delegated RecordsRead grant
+
+- [#1479](https://github.com/enboxorg/enbox/pull/1479) [`8b0dc99`](https://github.com/enboxorg/enbox/commit/8b0dc99476d7981a2f2bd97fabbf0ecbe4754d33) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Reject protocol definitions that allow `anyone` to create or squash a `$role` record. Role assignments now require an authorized issuer whose authority is rooted in the tenant, an explicit grant or delegate, an ancestor relationship, or an existing role.
+
+  Previously installed definitions and role records are not rewritten. Applications that installed an open role-assignment path should retire that protocol URI, install a corrected definition under a new URI, migrate authorized assignments, and stop relying on records issued under the unsafe definition.
+
 ## 0.4.18
 
 ### Patch Changes
