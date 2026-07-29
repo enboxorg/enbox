@@ -30,6 +30,7 @@ describe('browser bundle artifacts', () => {
     expectExternalImport(browser, '@enbox/protocols');
 
     expect(api).not.toContain('class EnboxUserAgent');
+    expect(api).not.toContain('createEnboxTestContext');
     expect(browser).not.toContain('class EnboxUserAgent');
   });
 

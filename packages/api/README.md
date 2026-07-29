@@ -202,6 +202,29 @@ Typed protocol composition through `$ref` is not inferred from incomplete
 local metadata. `defineProtocol()` rejects it for now; use the raw `enbox.dwn`
 API until the explicit composition contract tracked in #1462 is available.
 
+## Integration Testing
+
+Node integration tests can use `@enbox/api/testing` for an isolated owner
+session backed by a real in-process DWN. It installs the application's typed
+protocols locally without requiring hosted services:
+
+```ts
+import { createEnboxTestContext } from '@enbox/api/testing';
+
+const context = await createEnboxTestContext({ application });
+try {
+  const notes = context.enbox.using(NotesProtocol);
+  await notes.records.create('note', {
+    data: { title: 'Test', body: 'Stored by a real DWN' },
+  });
+} finally {
+  await context.close();
+}
+```
+
+Each context owns a unique identity and storage directory, so contexts can run
+concurrently. Always call `close()` to end its session and release resources.
+
 ## Records
 
 ```ts
