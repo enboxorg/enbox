@@ -193,9 +193,8 @@ describe('TypedProtocol API', () => {
       expect(result.status.code).toBe(202);
       expect(importProtocolConfiguration.calledOnceWith(protocolsConfigureMessage)).toBe(true);
       expect(query.firstCall.args[0]).toEqual({
-        filter              : { protocol: TodoProtocolDefinition.protocol },
-        from                : aliceDid.uri,
-        remoteEndpointsOnly : true,
+        from   : aliceDid.uri,
+        filter : { protocol: TodoProtocolDefinition.protocol },
       });
       expect(query.secondCall.args[0]).toEqual({ filter: { protocol: TodoProtocolDefinition.protocol } });
     });

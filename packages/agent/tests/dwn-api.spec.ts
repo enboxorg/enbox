@@ -513,7 +513,7 @@ describe('AgentDwnApi', () => {
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
     });
 
-    it('sendRequest can bypass local discovery for hosted publication', async () => {
+    it('sendRequest can target hosted endpoints without overriding local-only routing', async () => {
       const dwnApi = new AgentDwnApi({
         agent: {
           rpc: {
@@ -532,17 +532,25 @@ describe('AgentDwnApi', () => {
       });
       sinon.stub(Message, 'getCid').resolves('bafytestmessagecid');
 
-      await dwnApi.sendRequest({
+      const request = {
         author              : 'did:example:owner',
         messageParams       : { filter: { protocol: 'https://example.com/notes' } },
         messageType         : DwnInterface.ProtocolsQuery,
         remoteEndpointsOnly : true,
         target              : 'did:example:owner',
-      });
+      } as const;
+
+      await dwnApi.sendRequest(request);
 
       expect(remoteEndpoints.calledOnceWithExactly('did:example:owner')).toBe(true);
       expect(localEndpoints.notCalled).toBe(true);
       expect(sendDwnRpcRequest.firstCall.args[0].dwnEndpointUrls).toEqual(['https://hosted.example']);
+
+      dwnApi.setLocalDwnStrategy('only');
+      await expect(dwnApi.sendRequest(request)).rejects.toThrow(
+        `remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'`
+      );
+      expect(remoteEndpoints.calledOnce).toBe(true);
     });
 
     it('sendRequest streams existing message data through RPC when using messageCid', async () => {

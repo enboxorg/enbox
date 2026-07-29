@@ -97,9 +97,6 @@ export type ProtocolsConfigureResponse = DwnResponseStatus & {
 export type ProtocolsQueryRequest = Omit<DwnMessageParams[DwnInterface.ProtocolsQuery], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to be queried. */
   from?: string;
-
-  /** Bypass local DWN discovery when querying a remote target. */
-  remoteEndpointsOnly?: boolean;
 };
 
 /**
@@ -679,7 +676,7 @@ export class DwnApi {
        * Query the available protocols
        */
       query: async (request: ProtocolsQueryRequest): Promise<ProtocolsQueryResponse> => {
-        const { from, remoteEndpointsOnly, ...messageParams } = request;
+        const { from, ...messageParams } = request;
 
         const agentRequest: ProcessDwnRequest<DwnInterface.ProtocolsQuery> = {
           author      : this.connectedDid,
@@ -717,7 +714,7 @@ export class DwnApi {
         let agentResponse: DwnResponse<DwnInterface.ProtocolsQuery>;
 
         if (from) {
-          agentResponse = await this.agent.sendDwnRequest({ ...agentRequest, remoteEndpointsOnly });
+          agentResponse = await this.agent.sendDwnRequest(agentRequest);
         } else {
           agentResponse = await this.agent.processDwnRequest(agentRequest);
         }

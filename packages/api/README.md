@@ -120,8 +120,9 @@ protocol requests.
 
 `ensureReady()` publishes only for owner sessions. A delegated session instead
 validates and imports the wallet-owned configurations without authoring or
-publishing replacements. Pass `targetDid` only when publishing for another
-owner identity controlled by the same agent. The lower-level
+publishing replacements. `targetDid` is publish-only: the local install remains
+on the connected identity, and the target must be controlled by the same agent
+so it can sign the configuration. The lower-level
 `enbox.using(protocol).configure()` never publishes to a hosted DWN.
 
 Typed protocol composition through `$ref` is not inferred from incomplete

@@ -782,8 +782,8 @@ export class TypedEnbox<
    *    {@link WalletReapprovalRequiredError} — never a silent import.
    *
    * For owner sessions the LOCAL installation is verified; for delegate
-   * sessions the WALLET-installed definition is fetched from the owner
-   * tenant's remote DWN (the source auto-configure imports from).
+   * sessions the WALLET-installed definition is fetched from the owner tenant
+   * through the agent's configured routing (the source auto-configure imports from).
    *
    * Never changes state: no configure, no import, no cache updates.
    *
@@ -799,7 +799,7 @@ export class TypedEnbox<
     // wallet-installed definition on the owner tenant — the same source
     // `_autoConfigureDelegateProtocol` imports from.
     const query = await this._dwn.protocols.query({
-      ...(isDelegate ? { from: this._dwn.connectedDid, remoteEndpointsOnly: true } : {}),
+      ...(isDelegate ? { from: this._dwn.connectedDid } : {}),
       filter: { protocol: this._definition.protocol },
     });
     requireDwnSuccess(
@@ -1225,17 +1225,16 @@ export class TypedEnbox<
   }
 
   /**
-   * For delegates: fetch the owner's signed ProtocolsConfigure message from
-   * the remote DWN and import that same wallet-owned message locally.
+   * For delegates: fetch the owner's signed ProtocolsConfigure message through
+   * normal routing and import that same wallet-owned message locally.
    *
    * The wallet definition is validated before import, and the active local
    * definition is checked afterward before this instance is marked configured.
    */
   private async _autoConfigureDelegateProtocol(): Promise<ProtocolsConfigureResponse> {
     const remote = await this._dwn.protocols.query({
-      filter              : { protocol: this._definition.protocol },
-      from                : this._dwn.connectedDid,
-      remoteEndpointsOnly : true,
+      filter : { protocol: this._definition.protocol },
+      from   : this._dwn.connectedDid,
     });
     requireDwnSuccess(
       `TypedEnbox delegate wallet protocol query for '${this._definition.protocol}'; reconnect to refresh delegated grants`,

@@ -18,13 +18,12 @@ export type EnsureProtocolsReadyOptions = {
   /** Typed protocols registered by the application. */
   application: ApplicationManifest;
 
-  /** Owner identity to prepare. Defaults to the connected DID and is ignored for delegates. */
+  /** Agent-managed DID to publish to. The local install stays on the connected DID. Ignored for delegates. */
   targetDid?: string;
 };
 
 /** A failure to install, publish, or verify one application protocol. */
 export class ProtocolReadinessError extends Error {
-  public readonly cause?: unknown;
   public readonly operation: ProtocolReadinessOperation;
   public readonly protocol: string;
   public readonly status?: Readonly<DwnResponseStatus['status']>;
@@ -41,9 +40,9 @@ export class ProtocolReadinessError extends Error {
     super(
       `Protocol readiness failed to ${options.operation} '${options.protocol}' ` +
       `for '${options.targetDid}': ${detail}`,
+      { cause: options.cause },
     );
     this.name = 'ProtocolReadinessError';
-    this.cause = options.cause;
     this.operation = options.operation;
     this.protocol = options.protocol;
     this.status = status === undefined ? undefined : { ...status };
@@ -90,22 +89,21 @@ class DefaultProtocolReadinessApi implements ProtocolReadinessApi {
   public async ensureReady(options: EnsureProtocolsReadyOptions): Promise<void> {
     for (const { protocol } of options.application.protocols) {
       const typed = this.using(protocol);
-      if (this.delegateDid !== undefined) {
-        await typed.configure();
-        continue;
-      }
-
-      const targetDid = options.targetDid ?? this.connectedDid;
       let failureTargetDid = this.connectedDid;
       let operation: ProtocolReadinessOperation = 'install';
 
       try {
         const configured = await typed.configure();
+        if (this.delegateDid !== undefined) {
+          continue;
+        }
+
         requireDwnSuccess(`Configure protocol '${typed.protocol}'`, configured);
         if (configured.protocol === undefined) {
           throw new Error(`Configure protocol '${typed.protocol}' returned no signed message.`);
         }
 
+        const targetDid = options.targetDid ?? this.connectedDid;
         failureTargetDid = targetDid;
         const message = targetDid === this.connectedDid
           ? configured.protocol.toJSON()

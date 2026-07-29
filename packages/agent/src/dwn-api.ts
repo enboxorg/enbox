@@ -971,6 +971,12 @@ export class AgentDwnApi {
       );
     }
 
+    if (request.remoteEndpointsOnly && this._localDwnStrategy === 'only') {
+      throw new Error(
+        `AgentDwnApi: remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'.`
+      );
+    }
+
     // Bypass local discovery when the caller needs the hosted DWN's state.
     const dwnEndpointUrls = request.remoteEndpointsOnly
       ? await this.getRemoteDwnEndpointUrls(request.target)

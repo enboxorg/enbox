@@ -160,8 +160,15 @@ describe('ProtocolReadinessApi', () => {
     expect((failure as ProtocolReadinessError).cause).toBeInstanceOf(DwnResponseError);
   });
 
-  it('should fail when an accepted publication is not active remotely', async () => {
-    const fixture = createFixture({ retainPublishedDefinition: false });
+  it('should fail when a 409 leaves a different definition active remotely', async () => {
+    const fixture = createFixture({
+      publishStatus             : { code: 409, detail: 'Conflict' },
+      retainPublishedDefinition : false,
+    });
+    fixture.hosted.set(hostedKey(OWNER_DID, NotesDefinition.protocol), {
+      ...NotesDefinition,
+      published: false,
+    });
 
     await expect(fixture.api.ensureReady({ application: Application })).rejects.toMatchObject({
       operation : 'publish',
@@ -170,7 +177,7 @@ describe('ProtocolReadinessApi', () => {
     });
   });
 
-  it('should configure delegates without publishing', async () => {
+  it('should configure delegates without publishing and normalize failures', async () => {
     const fixture = createFixture({ delegateDid: DELEGATE_DID });
 
     await fixture.api.ensureReady({ application: Application, targetDid: TARGET_DID });
@@ -178,6 +185,19 @@ describe('ProtocolReadinessApi', () => {
     expect(fixture.configure.calledOnce).toBe(true);
     expect(fixture.processDwnRequest.called).toBe(false);
     expect(fixture.sendDwnRequest.called).toBe(false);
+
+    const cause = new DwnResponseError('Import wallet protocol', { code: 401, detail: 'Unauthorized' });
+    fixture.configure.rejects(cause);
+    const failure = await fixture.api.ensureReady({ application: Application })
+      .catch((error: unknown): unknown => error);
+    expect(failure).toBeInstanceOf(ProtocolReadinessError);
+    expect(failure).toMatchObject({
+      cause,
+      operation : 'install',
+      protocol  : NotesDefinition.protocol,
+      status    : cause.status,
+      targetDid : OWNER_DID,
+    });
   });
 
   it('should keep the local install and avoid storing an override target artifact', async () => {

@@ -252,7 +252,7 @@ export type DecryptRecordDataParams = {
 export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T>
   & (ProcessDwnRequest<T> | { messageCid: string })
   & {
-    /** Resolve only endpoints advertised by the target DID, bypassing local DWN discovery. */
+    /** Resolve only endpoints advertised by the target DID. Incompatible with local-only routing. */
     remoteEndpointsOnly?: boolean;
   };
 
