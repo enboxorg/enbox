@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { AuthState, ConnectionStatus } from '@enbox/auth';
 import type {
   ReplicationLinkSnapshot,
+  SyncConnectivityState,
   SyncEngine,
   SyncEvent,
   SyncEventListener,
@@ -54,6 +55,7 @@ async function waitFor(assertion: () => void): Promise<void> {
 }
 
 type FakeSyncStatusEngine = {
+  connectivityState: SyncConnectivityState;
   emit(event: SyncEvent): void;
   linkReads: number;
   links: ReplicationLinkSnapshot[];
@@ -67,7 +69,8 @@ type FakeSyncStatusEngine = {
 function createSyncStatusEngine(): FakeSyncStatusEngine {
   const listeners = new Set<SyncEventListener>();
   const state: FakeSyncStatusEngine = {
-    emit: (event): void => {
+    connectivityState : 'unknown',
+    emit              : (event): void => {
       for (const listener of listeners) {
         listener(event);
       }
@@ -81,6 +84,7 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
     sync             : undefined as unknown as SyncEngine,
   };
   state.sync = {
+    get connectivityState(): SyncConnectivityState { return state.connectivityState; },
     getIdentityOptions  : async (): Promise<SyncIdentityOptions | undefined> => state.options,
     getReplicationLinks : async (): Promise<ReplicationLinkSnapshot[]> => {
       state.linkReads++;
@@ -283,9 +287,10 @@ describe('createConnectionStore()', () => {
   describe('sync status', () => {
     it('should project the selected identity without exposing link topology', async () => {
       const engine = createSyncStatusEngine();
+      engine.connectivityState = 'offline';
       const { store } = await connectWithSync(engine);
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('loading'); });
-      expect(store.getSnapshot().sync?.connectivity).toBe('unknown');
+      expect(store.getSnapshot().sync?.connectivity).toBe('offline');
       expect(Object.isFrozen(store.getSnapshot().sync)).toBe(true);
 
       engine.links = [
@@ -327,11 +332,14 @@ describe('createConnectionStore()', () => {
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
       expect(store.getSnapshot().sync).toBe(ready);
 
-      engine.links = [syncLink({
-        status         : 'live',
-        connectivity   : 'offline',
-        lastActivityAt : '2026-07-29T11:00:00.000Z',
-      })];
+      engine.links = [
+        syncLink({
+          status         : 'live',
+          connectivity   : 'offline',
+          lastActivityAt : '2026-07-29T11:00:00.000Z',
+        }),
+        syncLink({ remoteEndpoint: 'https://backup.example', status: 'live', connectivity: 'online' }),
+      ];
       engine.emit({
         type           : 'link:connectivity-change',
         tenantDid      : OWNER_DID,
@@ -340,6 +348,18 @@ describe('createConnectionStore()', () => {
         to             : 'offline',
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('stale'); });
+      expect(store.getSnapshot().sync?.connectivity).toBe('online');
+
+      const mixedRead = engine.settledLinkReads;
+      engine.links = [syncLink({ status: 'live', connectivity: 'offline' })];
+      engine.emit({
+        type           : 'link:connectivity-change',
+        tenantDid      : OWNER_DID,
+        remoteEndpoint : 'https://backup.example',
+        from           : 'online',
+        to             : 'offline',
+      });
+      await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(mixedRead); });
       expect(store.getSnapshot().sync?.connectivity).toBe('offline');
 
       engine.links = [syncLink({ status: 'paused', connectivity: 'offline' })];
@@ -455,6 +475,22 @@ describe('createConnectionStore()', () => {
       const lockedSnapshot = store.getSnapshot();
       replacementLifetime.abort();
       expect(store.getSnapshot()).toBe(lockedSnapshot);
+      expect(notifications).toBe(1);
+    });
+
+    it('should unbind when the active session ends', async () => {
+      const engine = createSyncStatusEngine();
+      engine.options = undefined;
+      const lifetime = new AbortController();
+      const { store } = await connectWithSync(engine, { signal: lifetime.signal });
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('ready'); });
+
+      let notifications = 0;
+      store.subscribe(() => { notifications++; });
+      lifetime.abort();
+
+      expect(store.getSnapshot().sync).toBeUndefined();
+      expect(engine.listenerCount()).toBe(0);
       expect(notifications).toBe(1);
     });
   });
@@ -975,10 +1011,13 @@ describe('createConnectionStore()', () => {
       const store = createConnectionStore({ auth: asAuth(fake) });
       await store.connect({ protocols: PROTOCOLS });
       const before = store.getSnapshot();
+      let notifications = 0;
+      store.subscribe(() => { notifications++; });
 
       await store.dispose();
 
       expect(fake.stopMonitorSpy.calledOnce).toBe(true);
+      expect(notifications).toBe(0);
       const disposed = store.getSnapshot();
       expect(disposed.sync).toBeUndefined();
       // Detached: later auth events no longer mutate the snapshot.

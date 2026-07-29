@@ -71,6 +71,12 @@ local-only); `stale` retains a previously reached baseline while a link is no
 longer current; and `error` reports paused replication or an unreadable local
 status projection. `connectivity` is `unknown`, `online`, or `offline`, and
 `lastActivityAt` is the newest activity time recorded by the sync engine.
+`loading` has no timeout: a registered identity with no established links
+remains there until the engine reports new state.
+
+For registered identities, connectivity uses the sync engine's existing
+aggregation rule: any online link makes the identity online; otherwise an
+offline link makes it offline, and no links fall back to the engine-wide state.
 
 The frozen snapshot updates from existing sync events and local state without
 polling or network requests. Its reference stays stable until a field changes,

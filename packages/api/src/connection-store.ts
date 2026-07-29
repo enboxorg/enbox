@@ -54,6 +54,7 @@ import type { ReplicationLinkSnapshot, SyncConnectivityState } from '@enbox/agen
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { isConnectDeniedError } from '@enbox/auth';
 import { omitUndefined } from '@enbox/common';
+import { resolveSyncConnectivityState } from '@enbox/agent';
 
 import { Enbox } from './enbox.js';
 
@@ -440,13 +441,14 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._actionGeneration++;
     this._stopDelegateMonitor();
     this._unbindSyncStatus();
-    this._apply({ sync: undefined });
 
     for (const unsubscribe of this._unsubscribers) {
       unsubscribe();
     }
     this._unsubscribers.length = 0;
     this._listeners.clear();
+    // Clear the stored status without publishing a teardown notification.
+    this._apply({ sync: undefined });
 
     const auth = this._auth;
     this._auth = undefined;
@@ -887,6 +889,7 @@ class HeadlessConnectionStore implements ConnectionStore {
         if (this._syncBinding !== binding || binding.refreshRequested) {
           continue;
         }
+        // A superseded baseline was never published, so it must not make later state stale.
         if (snapshot.state === 'ready') {
           binding.hasBeenReady = true;
         }
@@ -905,7 +908,7 @@ class HeadlessConnectionStore implements ConnectionStore {
         return immutableSyncStatus({ state: 'ready', connectivity: 'unknown' });
       }
       const links = await session.agent.sync.getReplicationLinks(session.did);
-      return projectSyncStatus(links, binding.hasBeenReady);
+      return projectSyncStatus(links, binding.hasBeenReady, session.agent.sync.connectivityState);
     } catch (cause: unknown) {
       const current = this._snapshot.sync;
       return immutableSyncStatus({
@@ -933,6 +936,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _apply(patch: Partial<ConnectionSnapshot>): ConnectionSnapshot {
     const next: ConnectionSnapshot = { ...this._snapshot, ...patch };
     if (next.session !== this._snapshot.session) {
+      // A changed session also guarantees snapshot inequality, so this binding reaches publication.
       next.sync = this._bindSyncStatus(next.session);
     }
     if (snapshotsEqual(this._snapshot, next)) {
@@ -984,8 +988,12 @@ class HeadlessConnectionStore implements ConnectionStore {
 function projectSyncStatus(
   links: readonly ReplicationLinkSnapshot[],
   hasBeenReady: boolean,
+  fallbackConnectivity: SyncConnectivityState,
 ): SyncStatusSnapshot {
-  const connectivity = aggregateConnectivity(links);
+  const connectivity = resolveSyncConnectivityState(
+    links.map((link): SyncConnectivityState => link.connectivity),
+    fallbackConnectivity,
+  );
   const lastActivityAt = latestActivityAt(links);
   if (links.some((link): boolean => link.status === 'paused')) {
     return immutableSyncStatus({
@@ -1009,16 +1017,6 @@ function projectSyncStatus(
     connectivity,
     lastActivityAt,
   });
-}
-
-function aggregateConnectivity(links: readonly ReplicationLinkSnapshot[]): SyncConnectivityState {
-  if (links.some((link): boolean => link.connectivity === 'offline')) {
-    return 'offline';
-  }
-  if (links.some((link): boolean => link.connectivity === 'online')) {
-    return 'online';
-  }
-  return 'unknown';
 }
 
 function latestActivityAt(links: readonly ReplicationLinkSnapshot[]): string | undefined {
