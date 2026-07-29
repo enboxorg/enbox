@@ -1,5 +1,11 @@
 # @enbox/protocol-codegen
 
+## 0.1.4
+
+### Patch Changes
+
+- [#1493](https://github.com/enboxorg/enbox/pull/1493) [`31ac51e`](https://github.com/enboxorg/enbox/commit/31ac51e94662abb02f65c15739407b96418ffd35) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require reachable JSON payload schemas to resolve locally as object documents with matching string `$id` values and fragment-only `$ref` values, add deterministic no-follow generated-output checks, and make permissive unresolved generation explicit.
+
 ## 0.1.3
 
 ### Patch Changes

@@ -1,5 +1,17 @@
 # @enbox/protocols
 
+## 0.2.101
+
+### Patch Changes
+
+- [#1470](https://github.com/enboxorg/enbox/pull/1470) [`8291bcd`](https://github.com/enboxorg/enbox/commit/8291bcd45de6a48b15a49871bcc48df4a5430e18) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Remove `SocialGraphProtocol`, `StatusProtocol`, and `ListsProtocol` from the shipped catalog together with their definitions, data types, codecs, and JSON Schemas. The removed Social Graph definition allowed anyone to create a `friend` role record, while current role invocation accepts a matching role recipient without independently binding the role to a trusted issuer. A caller could therefore self-assign friend authority and reach friend-gated data in protocols composed with that role. Profile no longer composes with Social Graph and no longer exposes `PrivateNoteData` or the friend-gated `privateNote` path.
+
+  This removal does not change engine role verification, uninstall definitions, revoke existing role records, or migrate stored data. Applications that installed these protocols should stop treating their role-gated records as confidential, install a corrected protocol under a new URI, migrate and re-encrypt sensitive records, and retire the old records. No replacement or compatibility aliases are provided.
+
+- Updated dependencies [[`00dafdf`](https://github.com/enboxorg/enbox/commit/00dafdf88c517df248639680dc89616e9f42616d), [`fb7ca10`](https://github.com/enboxorg/enbox/commit/fb7ca10fdc7b58a2e97d59658063033805491a9a), [`c625d63`](https://github.com/enboxorg/enbox/commit/c625d6398feff887d2051bba6e5d5e306eaa3fdf), [`d818618`](https://github.com/enboxorg/enbox/commit/d8186183f76b5556c26dd94a3ece5fc3db411a44), [`8d288dd`](https://github.com/enboxorg/enbox/commit/8d288dd80fab6e4bcf0f92f3cde37799a13fcf05), [`659372d`](https://github.com/enboxorg/enbox/commit/659372de22c2cf7481fa4d28ba2b6380483e93a4), [`2a4223a`](https://github.com/enboxorg/enbox/commit/2a4223a8255c7c9c6efc1245021fd620f11902ba), [`9511e65`](https://github.com/enboxorg/enbox/commit/9511e6566d92bb7b89e8c35fe3f0602c3a313e4b), [`d257e04`](https://github.com/enboxorg/enbox/commit/d257e04b5001f596d28691c942ca5d0bf25c2c22), [`8b0dc99`](https://github.com/enboxorg/enbox/commit/8b0dc99476d7981a2f2bd97fabbf0ecbe4754d33), [`80dab68`](https://github.com/enboxorg/enbox/commit/80dab686cb24691f6df5fdc46a61552cbeb5faf4), [`33dba16`](https://github.com/enboxorg/enbox/commit/33dba165f9f5770044ccafb9f1f0572f2f555abf)]:
+  - @enbox/dwn-sdk-js@0.4.19
+  - @enbox/api@0.6.74
+
 ## 0.2.100
 
 ### Patch Changes

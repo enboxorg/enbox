@@ -1,5 +1,17 @@
 # @enbox/auth
 
+## 0.6.81
+
+### Patch Changes
+
+- [#1492](https://github.com/enboxorg/enbox/pull/1492) [`fb7ca10`](https://github.com/enboxorg/enbox/commit/fb7ca10fdc7b58a2e97d59658063033805491a9a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add typed application manifests and structural protocol-request normalization. Applications can retain `TypedProtocol` codecs locally while projecting only raw definitions and explicit permission policies into delegated auth requests.
+
+- Updated dependencies [[`00dafdf`](https://github.com/enboxorg/enbox/commit/00dafdf88c517df248639680dc89616e9f42616d), [`c625d63`](https://github.com/enboxorg/enbox/commit/c625d6398feff887d2051bba6e5d5e306eaa3fdf), [`d818618`](https://github.com/enboxorg/enbox/commit/d8186183f76b5556c26dd94a3ece5fc3db411a44), [`659372d`](https://github.com/enboxorg/enbox/commit/659372de22c2cf7481fa4d28ba2b6380483e93a4), [`2a4223a`](https://github.com/enboxorg/enbox/commit/2a4223a8255c7c9c6efc1245021fd620f11902ba), [`9511e65`](https://github.com/enboxorg/enbox/commit/9511e6566d92bb7b89e8c35fe3f0602c3a313e4b), [`d257e04`](https://github.com/enboxorg/enbox/commit/d257e04b5001f596d28691c942ca5d0bf25c2c22), [`8b0dc99`](https://github.com/enboxorg/enbox/commit/8b0dc99476d7981a2f2bd97fabbf0ecbe4754d33)]:
+  - @enbox/dwn-sdk-js@0.4.19
+  - @enbox/agent@0.8.35
+  - @enbox/connect@0.1.15
+  - @enbox/dwn-clients@0.4.26
+
 ## 0.6.80
 
 ### Patch Changes
