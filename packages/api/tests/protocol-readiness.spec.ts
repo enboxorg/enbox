@@ -145,6 +145,21 @@ describe('ProtocolReadinessApi', () => {
     }
   });
 
+  it('should support local owner readiness without hosted publication', async () => {
+    const fixture = createFixture();
+
+    await fixture.api.ensureReady({ application: Application, publish: false, targetDid: TARGET_DID });
+
+    expect(fixture.configure.calledOnce).toBe(true);
+    expect(fixture.processDwnRequest.called).toBe(false);
+    expect(fixture.sendDwnRequest.called).toBe(false);
+
+    fixture.configure.resolves({ status: { code: 500, detail: 'Install failed' } });
+    const failure = await fixture.api.ensureReady({ application: Application, publish: false })
+      .catch((error: unknown): unknown => error);
+    expect(failure).toMatchObject({ operation: 'install', targetDid: OWNER_DID });
+  });
+
   it('should expose publication failures with their status and cause', async () => {
     const fixture = createFixture({ publishStatus: { code: 503, detail: 'Unavailable' } });
     const failure = await fixture.api.ensureReady({ application: Application })

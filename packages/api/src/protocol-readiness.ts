@@ -18,6 +18,9 @@ export type EnsureProtocolsReadyOptions = {
   /** Typed protocols registered by the application. */
   application: ApplicationManifest;
 
+  /** Publish and verify owner configurations at the hosted DWN. Defaults to `true`; ignored for delegates. */
+  publish?: boolean;
+
   /** Agent-managed DID to publish to. The local install stays on the connected DID. Ignored for delegates. */
   targetDid?: string;
 };
@@ -50,9 +53,9 @@ export class ProtocolReadinessError extends Error {
   }
 }
 
-/** Hosted protocol readiness exposed as `enbox.protocols`. */
+/** Protocol installation and optional hosted publication exposed as `enbox.protocols`. */
 export interface ProtocolReadinessApi {
-  /** Installs application protocols locally and publishes owner configurations remotely. */
+  /** Makes application protocols ready for the current session. */
   ensureReady(options: EnsureProtocolsReadyOptions): Promise<void>;
 }
 
@@ -99,6 +102,9 @@ class DefaultProtocolReadinessApi implements ProtocolReadinessApi {
         }
 
         requireDwnSuccess(`Configure protocol '${typed.protocol}'`, configured);
+        if (options.publish === false) {
+          continue;
+        }
         if (configured.protocol === undefined) {
           throw new Error(`Configure protocol '${typed.protocol}' returned no signed message.`);
         }

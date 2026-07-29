@@ -36,6 +36,7 @@
  * @module
  */
 
+import type { ApplicationManifest } from './application-manifest.js';
 import type { ReplicationCurrentness } from './replication-currentness.js';
 import type {
   AuthManagerOptions,
@@ -45,6 +46,7 @@ import type {
   ConnectOptions,
   DisconnectOptions,
   GetConnectionStatusOptions,
+  HandlerConnectOptions,
   RefreshOptions,
   RestoreSessionOptions,
   VaultConnectOptions,
@@ -57,7 +59,10 @@ import { omitUndefined } from '@enbox/common';
 import { resolveSyncConnectivityState } from '@enbox/agent';
 
 import { Enbox } from './enbox.js';
+import { getApplicationProtocolRequests } from './application-manifest.js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
+import { ProtocolReadinessError } from './protocol-readiness.js';
+import { WalletReapprovalRequiredError } from './typed-enbox.js';
 
 /**
  * The lifecycle phase of the connection store.
@@ -67,11 +72,12 @@ import { projectReplicationCurrentness } from './replication-currentness.js';
  * - `'disconnected'` — no active session. This is also the resting phase after a
  *   **denied** connect: denial is a user decision, not a failure, so the store
  *   returns here with {@link ConnectionSnapshot.error} set to the `ConnectDeniedError`.
- * - `'connecting'` — a connect, vault-connect, or refresh flow is in flight.
- * - `'connected'` — an active session exists; `session`, `enbox`, and the
- *   identity fields are populated.
+ * - `'connecting'` — a connect, vault-connect, or refresh flow is in flight,
+ *   or a replacement session is completing application readiness.
+ * - `'connected'` — an active, application-ready session exists; `session`,
+ *   `enbox`, and the identity fields are populated.
  * - `'error'` — the last action failed for a reason other than denial and no
- *   active session survived it; `error` carries the failure.
+ *   application-ready session is exposed; `error` carries the failure.
  */
 export type ConnectionPhase =
   | 'initializing'
@@ -142,10 +148,11 @@ export type ConnectionSnapshot = {
   vaultLocked?: boolean;
 
   /**
-   * Whether the delegated session's grants have expired or been revoked, so
-   * continuing requires a fresh wallet approval ({@link ConnectionStore.refresh}
-   * or {@link ConnectionStore.connect}). Cleared when a session (re)connects
-   * or an `'active'` connection status is observed.
+   * Whether delegated grants have expired or been revoked, or the wallet's
+   * protocol configuration is missing or incompatible, so continuing requires
+   * fresh wallet approval. Use {@link ConnectionStore.refresh} while a session
+   * survives, or {@link ConnectionStore.connect} after it has ended. Cleared
+   * when a session (re)connects or an `'active'` connection status is observed.
    */
   walletReapprovalRequired?: boolean;
 
@@ -163,14 +170,29 @@ export type ConnectionSnapshot = {
 /** A listener invoked with each new {@link ConnectionSnapshot} after a state change. */
 export type ConnectionSnapshotListener = (snapshot: ConnectionSnapshot) => void;
 
+/** Delegated-connect options for a manifest-backed store, whose protocols come only from the manifest. */
+export type ApplicationConnectionStoreConnectOptions = Omit<HandlerConnectOptions, 'protocols'> & {
+  createIdentity?: never;
+  dwnEndpoints?: never;
+  identitySyncProtocols?: never;
+  metadata?: never;
+  protocols?: never;
+  recoveryPhrase?: never;
+};
+
+/** Refresh options for a manifest-backed store, whose protocols come only from the manifest. */
+export type ApplicationConnectionStoreRefreshOptions = Omit<RefreshOptions, 'protocols'> & {
+  protocols?: never;
+};
+
 /**
- * Options for {@link createConnectionStore}.
+ * Options shared by plain and manifest-backed connection stores.
  *
  * Extends `AuthManagerOptions` — everything the store does not consume itself
  * (`connectHandler`, `sync`, `storage`, `password`, …) is forwarded verbatim
  * to `AuthManager.create()` during the first action.
  */
-export type ConnectionStoreOptions = AuthManagerOptions & {
+type ConnectionStoreSharedOptions = AuthManagerOptions & {
   /**
    * A pre-built `AuthManager` to drive instead of creating one.
    *
@@ -183,6 +205,14 @@ export type ConnectionStoreOptions = AuthManagerOptions & {
    */
   auth?: AuthManager;
 
+  /** Options forwarded to `AuthManager.restoreSession()` during {@link ConnectionStore.initialize}. */
+  restore?: RestoreSessionOptions;
+};
+
+/** Options for a connection store without an application manifest. */
+type PlainConnectionStoreOptions = ConnectionStoreSharedOptions & {
+  application?: undefined;
+
   /**
    * Options for the delegated-connection monitor the store starts whenever a
    * wallet-delegated session connects, or `false` to disable monitoring.
@@ -190,9 +220,25 @@ export type ConnectionStoreOptions = AuthManagerOptions & {
    */
   monitor?: ConnectionMonitorOptions | false;
 
-  /** Options forwarded to `AuthManager.restoreSession()` during {@link ConnectionStore.initialize}. */
-  restore?: RestoreSessionOptions;
+  requireHostedReadiness?: never;
 };
+
+/** Options for a connection store backed by one canonical application manifest. */
+export type ApplicationConnectionStoreOptions = ConnectionStoreSharedOptions & {
+  /** One or more typed protocols used for delegated grants and session-local readiness. */
+  application: ApplicationManifest;
+
+  /** Delegated monitor options whose automatic refresh derives protocols from {@link application}. */
+  monitor?: (Omit<ConnectionMonitorOptions, 'autoRefresh'> & {
+    autoRefresh?: ApplicationConnectionStoreRefreshOptions;
+  }) | false;
+
+  /** Require owner protocols to be published and verified at the hosted DWN before connecting. Defaults to `false`. */
+  requireHostedReadiness?: boolean;
+};
+
+/** Options for {@link createConnectionStore}. */
+export type ConnectionStoreOptions = PlainConnectionStoreOptions | ApplicationConnectionStoreOptions;
 
 /**
  * A framework-agnostic observable store over the Enbox connection lifecycle.
@@ -245,6 +291,8 @@ export interface ConnectionStore {
    * Runs `AuthManager.connect()` — restore, handler (wallet), or vault flow
    * based on the options. Denial resolves to `'disconnected'` with `error`
    * set to the `ConnectDeniedError`; other failures resolve to `'error'`.
+   * A registered application supplies protocols to this delegated flow. Use
+   * {@link connectVault} for an explicit local-vault connection.
    */
   connect(options?: ConnectOptions): Promise<ConnectionSnapshot>;
 
@@ -254,8 +302,9 @@ export interface ConnectionStore {
   /**
    * Runs `AuthManager.refresh()` to re-grant the current delegated session.
    * On success the reapproval flag clears and the connection status reseeds.
-   * A denied or failed refresh keeps the surviving session `'connected'`
-   * and surfaces the outcome via `error`.
+   * An auth/approval failure before replacement keeps the surviving session
+   * `'connected'`; a readiness failure keeps the replacement unpublished.
+   * Both outcomes are surfaced via `error`.
    */
   refresh(options: RefreshOptions): Promise<ConnectionSnapshot>;
 
@@ -279,6 +328,15 @@ export interface ConnectionStore {
    */
   dispose(): Promise<void>;
 }
+
+/** A manifest-backed store whose delegated operations derive protocols from that manifest. */
+export type ApplicationConnectionStore = Omit<ConnectionStore, 'connect' | 'refresh'> & {
+  /** Connect through the delegated handler. Use `connectVault()` for an owner session. */
+  connect(options?: ApplicationConnectionStoreConnectOptions): Promise<ConnectionSnapshot>;
+
+  /** Refresh delegated grants using the manifest's canonical protocol requests. */
+  refresh(options?: ApplicationConnectionStoreRefreshOptions): Promise<ConnectionSnapshot>;
+};
 
 /** Snapshot patch that clears every session-derived field. */
 const CLEARED_SESSION_FIELDS = {
@@ -327,6 +385,17 @@ function toError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
 }
 
+/** Whether an auth session still owns a usable, unaborted lifetime. */
+function isActiveAuthSession(session: AuthSession | undefined): session is AuthSession {
+  return session !== undefined && !session.signal.aborted;
+}
+
+/** Whether readiness rejected a delegated definition that needs fresh wallet approval. */
+function requiresWalletReapproval(error: Error): boolean {
+  return error instanceof ProtocolReadinessError &&
+    error.cause instanceof WalletReapprovalRequiredError;
+}
+
 type SyncStatusBinding = {
   hasBeenReady: boolean;
   onAbort: () => void;
@@ -356,14 +425,16 @@ type SyncStatusBinding = {
  * `session-start`/`session-end` events (which its own flow raised); outside
  * of actions both events are wake signals that let the store follow the
  * authoritative session on the underlying `AuthManager`. After each awaited
- * status read, the action reconciles against `AuthManager.session`, so an
- * external lifecycle change that lands while an action is finishing cannot
- * be lost.
+ * readiness or status read, the action reconciles against
+ * `AuthManager.session`, so an external lifecycle change that lands while an
+ * action is finishing cannot be lost.
  */
 class HeadlessConnectionStore implements ConnectionStore {
+  private readonly _application?: ApplicationManifest;
   private readonly _authManagerOptions: AuthManagerOptions;
   private readonly _providedAuth?: AuthManager;
-  private readonly _monitor: ConnectionMonitorOptions | false;
+  private readonly _monitor: Exclude<ConnectionStoreOptions['monitor'], undefined>;
+  private readonly _requireHostedReadiness: boolean;
   private readonly _restore?: RestoreSessionOptions;
   private readonly _listeners = new Set<ConnectionSnapshotListener>();
   private readonly _unsubscribers: (() => void)[] = [];
@@ -380,9 +451,14 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _syncBinding?: SyncStatusBinding;
 
   public constructor(options: ConnectionStoreOptions) {
-    const { auth, monitor, restore, ...authManagerOptions } = options;
+    const { application, auth, monitor, requireHostedReadiness, restore, ...authManagerOptions } = options;
+    if (application?.protocols.length === 0) {
+      throw new TypeError('[@enbox/api] createConnectionStore requires at least one application protocol.');
+    }
+    this._application = application;
     this._providedAuth = auth;
     this._monitor = monitor ?? {};
+    this._requireHostedReadiness = requireHostedReadiness ?? false;
     this._restore = restore;
     this._authManagerOptions = authManagerOptions;
   }
@@ -418,15 +494,20 @@ class HeadlessConnectionStore implements ConnectionStore {
   }
 
   public connect(options?: ConnectOptions): Promise<ConnectionSnapshot> {
-    return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => auth.connect(options));
+    const connectOptions = this._application === undefined
+      ? options
+      : { ...options, protocols: getApplicationProtocolRequests(this._application) };
+    return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => auth.connect(connectOptions));
   }
 
   public connectVault(options?: VaultConnectOptions): Promise<ConnectionSnapshot> {
     return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => auth.connectVault(options));
   }
 
-  public refresh(options: RefreshOptions): Promise<ConnectionSnapshot> {
-    return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => auth.refresh(options));
+  public refresh(options: Partial<RefreshOptions> = {}): Promise<ConnectionSnapshot> {
+    return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => (
+      auth.refresh(this._refreshOptions(options))
+    ));
   }
 
   public disconnect(options?: DisconnectOptions): Promise<ConnectionSnapshot> {
@@ -497,15 +578,19 @@ class HeadlessConnectionStore implements ConnectionStore {
         return this._settleSuperseded();
       }
 
-      this._initialized = true;
       if (session === undefined) {
+        this._initialized = true;
         return this._apply({
           ...CLEARED_SESSION_FIELDS,
           phase       : 'disconnected',
           vaultLocked : auth.state === 'locked',
         });
       }
-      return await this._commitConnected(auth, session, generation);
+      const snapshot = await this._commitConnected(auth, generation);
+      if (!this._isStale(generation)) {
+        this._initialized = true;
+      }
+      return snapshot;
     } catch (cause: unknown) {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
@@ -520,16 +605,18 @@ class HeadlessConnectionStore implements ConnectionStore {
 
     try {
       const auth = await this._ensureAuth(generation);
-      const session = await flow(auth);
+      await flow(auth);
       if (this._isStale(generation)) {
         return this._settleSuperseded();
       }
 
-      // A completed connect implies the store is bootstrapped — a later
-      // initialize() (e.g. a boot effect firing after an eager connect)
-      // must not re-run session restore over the live session.
-      this._initialized = true;
-      return await this._commitConnected(auth, session, generation);
+      const snapshot = await this._commitConnected(auth, generation);
+      // A completed, ready connect implies the store is bootstrapped — a
+      // later initialize() must not re-run restore over the live session.
+      if (!this._isStale(generation)) {
+        this._initialized = true;
+      }
+      return snapshot;
     } catch (cause: unknown) {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
@@ -574,36 +661,100 @@ class HeadlessConnectionStore implements ConnectionStore {
   // ─── Outcome mapping ───────────────────────────────────────────
 
   /** Apply and seed the authoritative session, repeating if auth changes while status is read. */
-  private async _commitConnected(auth: AuthManager, session: AuthSession, generation: number): Promise<ConnectionSnapshot> {
-    let activeSession = session;
+  private async _commitConnected(auth: AuthManager, generation: number): Promise<ConnectionSnapshot> {
     // This cannot spin without yielding: each continuation requires a distinct
-    // external session replacement during the awaited status read. Capping it
-    // could publish a stale session while the manager already owns a newer one.
+    // external session replacement during an awaited readiness or status read.
+    // Capping it could publish a session the manager has already replaced.
     while (!this._isStale(generation)) {
-      this._apply(this._connectedPatch(activeSession));
-      this._restartMonitor(auth, activeSession);
-      await this._seedConnectionStatus(auth, activeSession, generation);
-
-      if (this._isStale(generation)) {
-        return this._snapshot;
+      const committed = await this._commitCurrentSession(auth, generation);
+      if (committed !== undefined) {
+        return committed;
       }
-
-      const authoritativeSession = auth.session;
-      if (authoritativeSession === activeSession) {
-        return this._snapshot;
-      }
-      if (authoritativeSession === undefined) {
-        this._stopDelegateMonitor();
-        return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
-      }
-      activeSession = authoritativeSession;
     }
 
     return this._snapshot;
   }
 
+  /** Ready and publish one session candidate; return `undefined` when auth replaced it mid-flight. */
+  private async _commitCurrentSession(
+    auth: AuthManager,
+    generation: number,
+  ): Promise<ConnectionSnapshot | undefined> {
+    const activeSession = auth.session;
+    if (!isActiveAuthSession(activeSession)) {
+      return this._publishDisconnected();
+    }
+    if (this._snapshot.session !== undefined && this._snapshot.session !== activeSession) {
+      // Auth aborts the previous lifetime before publishing its replacement.
+      // Do not expose that dead session while the replacement is readied.
+      this._stopDelegateMonitor();
+      this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'connecting' });
+    }
+
+    const patch = this._connectedPatch(activeSession);
+    const readinessError = this._application === undefined
+      ? undefined
+      : await this._getApplicationReadinessError(patch.enbox, this._application);
+    if (this._isStale(generation)) {
+      return this._snapshot;
+    }
+
+    const readySession = auth.session;
+    if (!isActiveAuthSession(readySession)) {
+      return this._publishDisconnected();
+    }
+    if (readySession !== activeSession) {
+      return undefined;
+    }
+    if (readinessError !== undefined) {
+      await this._rejectUnreadySession(auth, readinessError);
+    }
+
+    this._apply(patch);
+    this._restartMonitor(auth, activeSession);
+    await this._seedConnectionStatus(auth, activeSession, generation);
+    if (this._isStale(generation)) {
+      return this._snapshot;
+    }
+
+    const authoritativeSession = auth.session;
+    if (authoritativeSession === activeSession && isActiveAuthSession(activeSession)) {
+      return this._snapshot;
+    }
+    if (!isActiveAuthSession(authoritativeSession)) {
+      return this._publishDisconnected();
+    }
+    return undefined;
+  }
+
+  /** Run the existing readiness lifecycle while keeping its failure behind the session fence. */
+  private async _getApplicationReadinessError(
+    enbox: Enbox,
+    application: ApplicationManifest,
+  ): Promise<Error | undefined> {
+    try {
+      await enbox.protocols.ensureReady({ application, publish: this._requireHostedReadiness });
+      return undefined;
+    } catch (cause: unknown) {
+      return toError(cause);
+    }
+  }
+
+  /** Reject one unready candidate, forgetting only definitions that require fresh wallet approval. */
+  private async _rejectUnreadySession(auth: AuthManager, error: Error): Promise<never> {
+    this._stopDelegateMonitor();
+    if (requiresWalletReapproval(error)) {
+      // The lifetime is already aborted if cleanup fails; keep the actionable
+      // readiness outcome while making the cleanup failure visible.
+      await auth.disconnect({ clearStorage: false }).catch((cleanupError: unknown): void => {
+        console.warn('[@enbox/api] ConnectionStore: failed to clean up a rejected delegate session:', cleanupError);
+      });
+    }
+    throw error;
+  }
+
   /** Builds the snapshot patch for a connected session, reusing the current `Enbox` when unchanged. */
-  private _connectedPatch(session: AuthSession): Partial<ConnectionSnapshot> {
+  private _connectedPatch(session: AuthSession): Partial<ConnectionSnapshot> & { enbox: Enbox } {
     const sameSession = this._snapshot.session === session;
     const enbox = sameSession && this._snapshot.enbox !== undefined
       ? this._snapshot.enbox
@@ -625,8 +776,10 @@ class HeadlessConnectionStore implements ConnectionStore {
   /**
    * Maps an action failure into the snapshot.
    *
-   * - An active auth session that survived the failed action (e.g. a denied
-   *   or failed refresh) keeps the store `'connected'`, with `error` set.
+   * - An active auth session that survived an auth/approval failure (e.g. a
+   *   denied refresh) keeps the store `'connected'`, with `error` set.
+   *   Protocol-readiness failures are the fail-closed exception: their
+   *   unready session stays unpublished.
    * - A denial without a surviving session rests at `'disconnected'` —
    *   denial is a user decision, not a failure phase.
    * - Anything else is a real failure: phase `'error'`.
@@ -637,14 +790,28 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
 
     const error = toError(cause);
+    if (error instanceof ProtocolReadinessError) {
+      const walletReapprovalRequired = requiresWalletReapproval(error)
+        ? true
+        : undefined;
+      return this._apply({
+        ...CLEARED_SESSION_FIELDS,
+        error,
+        phase: walletReapprovalRequired ? 'disconnected' : 'error',
+        walletReapprovalRequired,
+      });
+    }
+
     const survivingSession = this._auth?.session;
-    if (survivingSession !== undefined) {
+    if (isActiveAuthSession(survivingSession)) {
       if (this._snapshot.session === survivingSession) {
         return this._apply({ error, phase: 'connected' });
       }
-      // The store missed this session (it was established outside the store's
-      // own actions) — rebuild the connected fields around it.
-      return this._apply({ ...this._connectedPatch(survivingSession), error });
+      if (this._application === undefined) {
+        // The store missed this session (it was established outside the
+        // store's own actions) — rebuild the connected fields around it.
+        return this._apply({ ...this._connectedPatch(survivingSession), error });
+      }
     }
 
     if (isConnectDeniedError(error)) {
@@ -750,13 +917,20 @@ class HeadlessConnectionStore implements ConnectionStore {
 
     const session = auth.session;
     if (session === undefined) {
-      this._stopDelegateMonitor();
-      this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
+      this._publishDisconnected();
       return;
     }
     const generation = this._actionGeneration;
-    void this._commitConnected(auth, session, generation).catch((cause: unknown): void => {
-      console.error('[@enbox/api] ConnectionStore: failed to reconcile an externally changed session:', cause);
+    void this._commitConnected(auth, generation).catch((cause: unknown): void => {
+      if (this._isStale(generation)) {
+        return;
+      }
+      const error = toError(cause);
+      if (error instanceof ProtocolReadinessError) {
+        this._applyActionFailure(generation, error);
+      } else {
+        console.error('[@enbox/api] ConnectionStore: failed to reconcile an externally changed session:', error);
+      }
     });
   }
 
@@ -767,7 +941,27 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (this._monitor === false || session.delegateDid === undefined) {
       return;
     }
-    this._stopMonitor = auth.startConnectionMonitor(this._monitor);
+    const { autoRefresh, ...options } = this._monitor;
+    this._stopMonitor = auth.startConnectionMonitor(autoRefresh === undefined
+      ? options
+      : { ...options, autoRefresh: this._refreshOptions(autoRefresh) });
+  }
+
+  private _refreshOptions(options: Partial<RefreshOptions>): RefreshOptions {
+    const protocols = this._application === undefined
+      ? options.protocols
+      : getApplicationProtocolRequests(this._application);
+    if (protocols === undefined) {
+      throw new TypeError(
+        '[@enbox/api] ConnectionStore.refresh requires protocols when no application manifest is registered.'
+      );
+    }
+    return { ...options, protocols };
+  }
+
+  private _publishDisconnected(): ConnectionSnapshot {
+    this._stopDelegateMonitor();
+    return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
   }
 
   private _stopDelegateMonitor(): void {
@@ -819,7 +1013,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   /** Replace the session-scoped observer and return its fresh status snapshot. */
   private _bindSyncStatus(session: AuthSession | undefined): SyncStatusSnapshot | undefined {
     this._unbindSyncStatus();
-    if (session === undefined || session.signal.aborted) {
+    if (!isActiveAuthSession(session)) {
       return undefined;
     }
 
@@ -1046,6 +1240,11 @@ function syncStatusesEqual(a: SyncStatusSnapshot | undefined, b: SyncStatusSnaps
  *   {@link ConnectionStoreOptions.restore}).
  * @returns A new {@link ConnectionStore}.
  */
-export function createConnectionStore(options: ConnectionStoreOptions = {}): ConnectionStore {
+export function createConnectionStore(options: ApplicationConnectionStoreOptions): ApplicationConnectionStore;
+export function createConnectionStore(options?: PlainConnectionStoreOptions): ConnectionStore;
+export function createConnectionStore(options: ConnectionStoreOptions): ConnectionStore | ApplicationConnectionStore;
+export function createConnectionStore(
+  options: ConnectionStoreOptions = {},
+): ConnectionStore | ApplicationConnectionStore {
   return new HeadlessConnectionStore(options);
 }
