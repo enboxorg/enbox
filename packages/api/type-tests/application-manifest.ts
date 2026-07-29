@@ -3,6 +3,7 @@ import type { ProtocolRequest } from '@enbox/auth';
 import type { Enbox, EnboxConnectOptions } from '@enbox/api';
 
 import {
+  createConnectionStore,
   defineApplicationManifest,
   defineProtocol,
   getApplicationProtocolRequests,
@@ -54,7 +55,14 @@ const directStructuralAuthRequests = [
   { protocol: PhotosProtocol, permissions: ['read', 'write'] },
 ] as const satisfies readonly ProtocolRequest[];
 const ownerOptions: EnboxConnectOptions = { createIdentity: true };
+const store = createConnectionStore({
+  application,
+  monitor: { autoRefresh: {} },
+});
 declare const enbox: Enbox;
+void store.connect();
+void store.connectVault({ createIdentity: true });
+void store.refresh();
 void enbox.protocols.ensureReady({ application });
 void enbox.protocols.ensureReady({ application, targetDid: 'did:example:owner' });
 void exactProtocol;

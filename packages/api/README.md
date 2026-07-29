@@ -127,7 +127,9 @@ policies once with `defineApplicationManifest()`:
 
 ```ts
 import {
+  createConnectionStore,
   defineApplicationManifest,
+  Enbox,
   getApplicationProtocolRequests,
 } from '@enbox/api';
 
@@ -138,20 +140,44 @@ const application = defineApplicationManifest({
   ],
 } as const);
 
-// Only delegated handler flows need auth permission requests.
+const store = createConnectionStore({
+  application,
+  connectHandler,
+  monitor: { autoRefresh: {} },
+});
+const initial = await store.initialize(); // restored sessions are readied before publication
+if (initial.phase === 'disconnected') {
+  await store.connect();
+}
+```
+
+The connection store treats the manifest as the canonical protocol source. It
+projects delegated permission requests into `connect()`, `refresh()`, and an
+opted-in monitor `autoRefresh`, then runs production protocol readiness before
+publishing `phase: 'connected'`. Readiness therefore runs for each session the
+store establishes or restores, including app startup with a saved session.
+Transient readiness failures retain the underlying `store.auth.session` for a
+retry while keeping it out of the public snapshot. A missing or incompatible
+wallet protocol configuration instead ends the unusable delegate session and sets
+`walletReapprovalRequired`, so the next `connect()` requests fresh approval.
+Use `connectVault()` for an explicit owner/vault connection; it receives no
+grant requests, but its resulting session passes through the same readiness
+gate.
+
+Without the connection store, project and ready the manifest explicitly:
+
+```ts
 const protocols = getApplicationProtocolRequests(application);
 const { enbox } = await Enbox.connect({ connectHandler, protocols });
 
-// Install locally and make the protocols available at the owner's hosted DWN.
 await enbox.protocols.ensureReady({ application });
 ```
 
 The manifest retains each `TypedProtocol` for application-side use, while the
 auth projection contains only raw definitions and permission names — runtime
-codecs are never transmitted. The manifest itself is not a connect-options
+codecs are never transmitted. The manifest itself is not a raw connect-options
 object. Owner/vault connections remain explicit `connectVault()` or
-`Enbox.connect({ createIdentity: true, ... })` calls without the projected
-protocol requests.
+`Enbox.connect({ createIdentity: true, ... })` calls.
 
 `ensureReady()` publishes only for owner sessions. A delegated session instead
 validates and imports the wallet-owned configurations without authoring or

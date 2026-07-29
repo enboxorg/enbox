@@ -1,6 +1,7 @@
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { AuthState, ConnectionStatus } from '@enbox/auth';
 import type {
   ReplicationLinkSnapshot,
@@ -19,7 +20,11 @@ import { AuthEventEmitter, AuthSession, ConnectDeniedError, isConnectDeniedError
 import type { ConnectionSnapshot } from '../src/connection-store.js';
 
 import { createConnectionStore } from '../src/connection-store.js';
+import { defineApplicationManifest } from '../src/application-manifest.js';
+import { defineProtocol } from '../src/define-protocol.js';
 import { Enbox } from '../src/enbox.js';
+import { ProtocolReadinessError } from '../src/protocol-readiness.js';
+import { WalletReapprovalRequiredError } from '../src/typed-enbox.js';
 
 const OWNER_DID = 'did:dht:store-owner';
 const DELEGATE_DID = 'did:jwk:store-delegate';
@@ -30,6 +35,19 @@ const PROTOCOLS = [{
   types     : {},
   structure : {},
 }];
+
+const ApplicationDefinition = {
+  protocol  : 'https://example.com/connection-store/application',
+  published : true,
+  types     : {},
+  structure : {},
+} as const satisfies ProtocolDefinition;
+
+const ApplicationProtocol = defineProtocol(ApplicationDefinition, {});
+const APPLICATION = defineApplicationManifest({
+  protocols: [{ protocol: ApplicationProtocol, permissions: ['read'] }],
+} as const);
+const APPLICATION_REQUESTS = [{ definition: ApplicationDefinition, permissions: ['read'] }];
 
 const ACTIVE_STATUS: ConnectionStatus = {
   state              : 'active',
@@ -200,6 +218,17 @@ describe('createConnectionStore()', () => {
       identity    : { didUri: did, name: params.name ?? 'Store identity' },
       signal      : params.signal ?? new AbortController().signal,
     });
+  }
+
+  function stubProtocolReadiness(): sinon.SinonStub {
+    const fromSession = Enbox.fromSession;
+    const ensureReady = sinon.stub().resolves();
+    sinon.stub(Enbox, 'fromSession').callsFake((session): Enbox => {
+      const enbox = fromSession(session);
+      enbox.protocols = { ensureReady };
+      return enbox;
+    });
+    return ensureReady;
   }
 
   function agentWithSync(sync: SyncEngine): EnboxUserAgent {
@@ -597,6 +626,221 @@ describe('createConnectionStore()', () => {
     });
   });
 
+  describe('application lifecycle', () => {
+    it('should project the registered manifest through delegated connect, refresh, and opted-in auto-refresh', async () => {
+      const ensureReady = stubProtocolReadiness();
+      const fake = createFakeAuth();
+      const session = createSession({ delegateDid: DELEGATE_DID });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({
+        application : APPLICATION,
+        auth        : asAuth(fake),
+        monitor     : { autoRefresh: { protocols: PROTOCOLS } },
+      });
+
+      await store.connect({ protocols: PROTOCOLS });
+
+      expect(fake.connect.firstCall.args[0]).toEqual({ protocols: APPLICATION_REQUESTS });
+      expect(fake.startConnectionMonitor.firstCall.args[0].autoRefresh).toEqual({
+        protocols: APPLICATION_REQUESTS,
+      });
+      expect(ensureReady.firstCall.args[0]).toEqual({ application: APPLICATION });
+
+      const refreshedSession = createSession({ delegateDid: DELEGATE_DID, name: 'Refreshed identity' });
+      fake.refresh.callsFake(async (): Promise<AuthSession> => {
+        fake.session = refreshedSession;
+        return refreshedSession;
+      });
+
+      await store.refresh({ protocols: PROTOCOLS });
+
+      expect(fake.refresh.firstCall.args[0]).toEqual({ protocols: APPLICATION_REQUESTS });
+      expect(ensureReady.callCount).toBe(2);
+    });
+
+    it('should keep a restored session private until application readiness completes', async () => {
+      const ensureReady = stubProtocolReadiness();
+      let resolveReadiness!: () => void;
+      ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.restoreSession.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+      const phases: ConnectionSnapshot['phase'][] = [];
+      store.subscribe((snapshot) => { phases.push(snapshot.phase); });
+
+      const initializing = store.initialize();
+      await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+
+      expect(store.getSnapshot().phase).toBe('initializing');
+      expect(store.getSnapshot().session).toBeUndefined();
+      expect(store.getSnapshot().enbox).toBeUndefined();
+      expect(phases).not.toContain('connected');
+
+      resolveReadiness();
+      const snapshot = await initializing;
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.session).toBe(session);
+      expect(snapshot.enbox).toBeInstanceOf(Enbox);
+    });
+
+    it('should ready a replacement session instead of failing on the superseded candidate', async () => {
+      const ensureReady = stubProtocolReadiness();
+      let rejectReadiness!: (error: Error) => void;
+      ensureReady.onFirstCall().returns(new Promise<void>((_resolve, reject) => { rejectReadiness = reject; }));
+      const fake = createFakeAuth();
+      const firstSession = createSession({ name: 'First identity' });
+      const replacementSession = createSession({ did: 'did:dht:replacement', name: 'Replacement identity' });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = firstSession;
+        return firstSession;
+      });
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+
+      const connecting = store.connect();
+      await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+      fake.session = replacementSession;
+      rejectReadiness(new Error('superseded readiness failed'));
+      const snapshot = await connecting;
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.session).toBe(replacementSession);
+      expect(ensureReady.callCount).toBe(2);
+      expect(fake.disconnect.called).toBe(false);
+    });
+
+    it('should fail closed, stop the old monitor, and retain a retryable session when readiness fails', async () => {
+      const ensureReady = stubProtocolReadiness();
+      const readinessError = new ProtocolReadinessError({
+        cause     : new Error('hosted DWN unavailable'),
+        operation : 'publish',
+        protocol  : ApplicationDefinition.protocol,
+        targetDid : OWNER_DID,
+      });
+      ensureReady.onSecondCall().rejects(readinessError);
+      const fake = createFakeAuth();
+      const session = createSession({ delegateDid: DELEGATE_DID });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+      await store.connect();
+
+      const replacementSession = createSession({ delegateDid: DELEGATE_DID, name: 'Replacement identity' });
+      fake.refresh.callsFake(async (): Promise<AuthSession> => {
+        fake.session = replacementSession;
+        return replacementSession;
+      });
+
+      const snapshot = await store.refresh();
+
+      expect(snapshot.phase).toBe('error');
+      expect(snapshot.error).toBe(readinessError);
+      expect(snapshot.session).toBeUndefined();
+      expect(snapshot.enbox).toBeUndefined();
+      expect(fake.session).toBe(replacementSession);
+      expect(fake.disconnect.called).toBe(false);
+      expect(fake.stopMonitorSpy.calledOnce).toBe(true);
+      expect(fake.startConnectionMonitor.calledOnce).toBe(true);
+
+      fake.refresh.rejects(new ConnectDeniedError('Refresh denied'));
+      const denied = await store.refresh();
+      expect(denied.phase).toBe('disconnected');
+      expect(denied.session).toBeUndefined();
+      expect(denied.enbox).toBeUndefined();
+    });
+
+    it('should hide an aborted previous session while an external replacement is readied', async () => {
+      const ensureReady = stubProtocolReadiness();
+      let resolveReadiness!: () => void;
+      ensureReady.onSecondCall().returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
+      const fake = createFakeAuth();
+      const previousLifetime = new AbortController();
+      const previousSession = createSession({ delegateDid: DELEGATE_DID, signal: previousLifetime.signal });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = previousSession;
+        return previousSession;
+      });
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+      await store.connect();
+
+      const replacementSession = createSession({ delegateDid: DELEGATE_DID, name: 'Replacement identity' });
+      previousLifetime.abort();
+      fake.session = replacementSession;
+      fake.emitter.emit('session-start', {});
+      await waitFor(() => { expect(ensureReady.callCount).toBe(2); });
+
+      expect(store.getSnapshot().phase).toBe('connecting');
+      expect(store.getSnapshot().session).toBeUndefined();
+      expect(store.getSnapshot().enbox).toBeUndefined();
+
+      resolveReadiness();
+      await waitFor(() => { expect(store.getSnapshot().session).toBe(replacementSession); });
+      expect(store.getSnapshot().phase).toBe('connected');
+    });
+
+    it('should not publish a candidate whose lifetime ends during readiness', async () => {
+      const ensureReady = stubProtocolReadiness();
+      let resolveReadiness!: () => void;
+      ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
+      const fake = createFakeAuth();
+      const lifetime = new AbortController();
+      const session = createSession({ delegateDid: DELEGATE_DID, signal: lifetime.signal });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+
+      const connecting = store.connect();
+      await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+      lifetime.abort();
+      resolveReadiness();
+      const snapshot = await connecting;
+
+      expect(snapshot.phase).toBe('disconnected');
+      expect(snapshot.session).toBeUndefined();
+      expect(snapshot.enbox).toBeUndefined();
+      expect(fake.startConnectionMonitor.called).toBe(false);
+    });
+
+    it('should surface wallet reapproval without exposing the rejected delegate session', async () => {
+      const ensureReady = stubProtocolReadiness();
+      ensureReady.rejects(new ProtocolReadinessError({
+        cause     : new WalletReapprovalRequiredError(ApplicationDefinition.protocol, 'is stale.'),
+        operation : 'install',
+        protocol  : ApplicationDefinition.protocol,
+        targetDid : OWNER_DID,
+      }));
+      const fake = createFakeAuth();
+      const session = createSession({ delegateDid: DELEGATE_DID });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      fake.disconnect.callsFake(async (): Promise<void> => {
+        fake.session = undefined;
+      });
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+
+      const snapshot = await store.connect();
+
+      expect(snapshot.phase).toBe('disconnected');
+      expect(snapshot.walletReapprovalRequired).toBe(true);
+      expect(snapshot.session).toBeUndefined();
+      expect(snapshot.enbox).toBeUndefined();
+      expect(fake.disconnect.firstCall.args[0]).toEqual({ clearStorage: false });
+    });
+  });
+
   describe('connect() / connectVault()', () => {
     it('should pass through the connecting phase and land connected with a seeded delegated status', async () => {
       const fake = createFakeAuth();
@@ -662,13 +906,14 @@ describe('createConnectionStore()', () => {
     });
 
     it('should keep the connection field unset for non-delegated vault sessions', async () => {
+      const ensureReady = stubProtocolReadiness();
       const fake = createFakeAuth();
       const session = createSession();
       fake.connectVault.callsFake(async (): Promise<AuthSession> => {
         fake.session = session;
         return session;
       });
-      const store = createConnectionStore({ auth: asAuth(fake) });
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
 
       const snapshot = await store.connectVault({ createIdentity: true });
 
@@ -676,6 +921,7 @@ describe('createConnectionStore()', () => {
       expect(snapshot.connection).toBeUndefined();
       expect(fake.getConnectionStatus.called).toBe(false);
       expect(fake.connectVault.firstCall.args[0]).toEqual({ createIdentity: true });
+      expect(ensureReady.firstCall.args[0]).toEqual({ application: APPLICATION });
     });
 
     it('should resolve a denied connect as disconnected with a typed ConnectDeniedError', async () => {
@@ -998,6 +1244,34 @@ describe('createConnectionStore()', () => {
       expect(store.getSnapshot().phase).toBe('disconnected');
       expect(store.getSnapshot().error).toBeUndefined();
     });
+
+    it('should not publish a session when disconnect supersedes application readiness', async () => {
+      const ensureReady = stubProtocolReadiness();
+      let resolveReadiness!: () => void;
+      ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      fake.disconnect.callsFake(async (): Promise<void> => {
+        fake.session = undefined;
+      });
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+
+      const connectPromise = store.connect();
+      await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+      const disconnectPromise = store.disconnect();
+      const disconnected = await disconnectPromise;
+      resolveReadiness();
+      const connectResult = await connectPromise;
+
+      expect(disconnected.phase).toBe('disconnected');
+      expect(connectResult.phase).toBe('disconnected');
+      expect(store.getSnapshot().session).toBeUndefined();
+      expect(fake.startConnectionMonitor.called).toBe(false);
+    });
   });
 
   describe('dispose()', () => {
@@ -1080,10 +1354,11 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const create = sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
       const store = createConnectionStore({
-        password : 'pw',
-        sync     : 'off',
-        monitor  : false,
-        restore  : { password: 'restore-pw' },
+        application : APPLICATION,
+        password    : 'pw',
+        sync        : 'off',
+        monitor     : false,
+        restore     : { password: 'restore-pw' },
       });
 
       expect(create.called).toBe(false);
