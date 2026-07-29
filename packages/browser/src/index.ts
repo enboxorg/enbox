@@ -69,6 +69,7 @@ export type {
   RecordViewListener,
   RecordViewSnapshot,
   RecordViewState,
+  SyncStatusSnapshot,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────
