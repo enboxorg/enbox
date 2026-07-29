@@ -57,6 +57,7 @@ import { omitUndefined } from '@enbox/common';
 import { resolveSyncConnectivityState } from '@enbox/agent';
 
 import { Enbox } from './enbox.js';
+import { projectReplicationCurrentness } from './replication-currentness.js';
 
 /**
  * The lifecycle phase of the connection store.
@@ -995,22 +996,14 @@ function projectSyncStatus(
     fallbackConnectivity,
   );
   const lastActivityAt = latestActivityAt(links);
-  if (links.some((link): boolean => link.status === 'paused')) {
+  const state = projectReplicationCurrentness(links, hasBeenReady);
+  if (state === 'error') {
     return immutableSyncStatus({
       state : 'error',
       connectivity,
       lastActivityAt,
       error : new Error('Synchronization is paused for the selected identity.'),
     });
-  }
-
-  const isReady = links.length > 0 && links.every((link): boolean =>
-    link.status === 'live' && link.connectivity === 'online' && link.isPullCurrent);
-  let state: Exclude<RecordViewState, 'error'> = 'loading';
-  if (isReady) {
-    state = 'ready';
-  } else if (hasBeenReady) {
-    state = 'stale';
   }
   return immutableSyncStatus({
     state,
