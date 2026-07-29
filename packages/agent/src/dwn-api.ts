@@ -1468,15 +1468,16 @@ export class AgentDwnApi {
   }
 
   private getRoleAudienceSourceContextId(params: {
-    protocolPath: string;
     parentContextId?: string;
     recordId?: string;
   }): string | undefined {
-    if (params.parentContextId !== undefined) {
-      return params.parentContextId;
+    if (params.recordId !== undefined) {
+      return params.parentContextId === undefined
+        ? params.recordId
+        : `${params.parentContextId}/${params.recordId}`;
     }
 
-    return params.protocolPath.includes('/') ? undefined : params.recordId;
+    return params.parentContextId;
   }
 
   private async getOrCreateAudiencePublicKey(params: {
@@ -1940,7 +1941,6 @@ export class AgentDwnApi {
       granteeDid      : request.granteeDid,
       parentContextId : this.getRoleAudienceSourceContextId({
         parentContextId : messageParams.parentContextId,
-        protocolPath    : messageParams.protocolPath,
         recordId        : messageParams.recordId,
       }),
       permissionGrantId  : messageParams.permissionGrantId,

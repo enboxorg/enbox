@@ -15,6 +15,7 @@ import {
   KeyDerivationScheme,
   Records,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
+  Time,
 } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
@@ -316,7 +317,7 @@ describe('AgentDwnApi sealed audience keys', () => {
     });
   });
 
-  it('mints a pending audience for a nested self-anchoring role context', async () => {
+  it('mints and reuses an audience for a nested self-anchoring role context', async () => {
     const protocolDefinition = selfAnchoredNestedDefinition();
     await installProtocol(ownerDid, protocolDefinition);
 
@@ -367,6 +368,35 @@ describe('AgentDwnApi sealed audience keys', () => {
       protocol : protocolDefinition.protocol,
       rolePath : 'chat/thread/mod',
     });
+
+    await Time.minimalSleep();
+    const { reply: updateReply, message: updateMessage } = await testHarness.agent.dwn.processRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'chat/thread',
+        parentContextId : chatWrite.recordId,
+        recordId        : threadWrite.recordId,
+        dateCreated     : threadWrite.descriptor.dateCreated,
+        dataFormat      : 'text/plain',
+        data            : new TextEncoder().encode('updated thread body'),
+      },
+    });
+
+    expect(updateReply.status.code).toBe(202);
+    const updatedThread = updateMessage as RecordsWriteMessage;
+    expect(updatedThread.descriptor.messageTimestamp > threadWrite.descriptor.messageTimestamp).toBeTrue();
+    const updatedRoleAudienceEntry = updatedThread.encryption?.keyEncryption.find(
+      (entry: any): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME,
+    ) as any;
+    expect(updatedRoleAudienceEntry.keyId).toBe(audiencePayload.keyId);
+    expect(await queryAudienceRecords({
+      contextId,
+      protocol : protocolDefinition.protocol,
+      rolePath : 'chat/thread/mod',
+    })).toHaveLength(1);
   });
 
   it('hydrates a roleHolder delivery for an active role holder', async () => {
