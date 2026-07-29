@@ -9,6 +9,9 @@ describe('projectReplicationCurrentness()', () => {
     for (const [links, hasBeenReady, expected] of [
       [[], false, 'loading'],
       [[CurrentLink], false, 'ready'],
+      [[CurrentLink, { ...CurrentLink, isPullCurrent: false }], false, 'loading'],
+      [[{ ...CurrentLink, connectivity: 'offline' }], false, 'loading'],
+      [[{ ...CurrentLink, status: 'initializing' }], true, 'stale'],
       [[{ ...CurrentLink, isPullCurrent: false }], true, 'stale'],
       [[{ ...CurrentLink, status: 'paused' }], true, 'error'],
     ] as const) {
