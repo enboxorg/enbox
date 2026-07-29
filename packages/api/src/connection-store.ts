@@ -172,7 +172,12 @@ export type ConnectionSnapshotListener = (snapshot: ConnectionSnapshot) => void;
 
 /** Delegated-connect options for a manifest-backed store, whose protocols come only from the manifest. */
 export type ApplicationConnectionStoreConnectOptions = Omit<HandlerConnectOptions, 'protocols'> & {
-  [Key in 'protocols' | Exclude<keyof VaultConnectOptions, keyof HandlerConnectOptions>]?: never;
+  createIdentity?: never;
+  dwnEndpoints?: never;
+  identitySyncProtocols?: never;
+  metadata?: never;
+  protocols?: never;
+  recoveryPhrase?: never;
 };
 
 /** Refresh options for a manifest-backed store, whose protocols come only from the manifest. */
@@ -215,7 +220,7 @@ type PlainConnectionStoreOptions = ConnectionStoreSharedOptions & {
    */
   monitor?: ConnectionMonitorOptions | false;
 
-  publishProtocols?: never;
+  requireHostedReadiness?: never;
 };
 
 /** Options for a connection store backed by one canonical application manifest. */
@@ -229,7 +234,7 @@ export type ApplicationConnectionStoreOptions = ConnectionStoreSharedOptions & {
   }) | false;
 
   /** Require owner protocols to be published and verified at the hosted DWN before connecting. Defaults to `false`. */
-  publishProtocols?: boolean;
+  requireHostedReadiness?: boolean;
 };
 
 /** Options for {@link createConnectionStore}. */
@@ -380,6 +385,11 @@ function toError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
 }
 
+/** Whether an auth session still owns a usable, unaborted lifetime. */
+function isActiveAuthSession(session: AuthSession | undefined): session is AuthSession {
+  return session !== undefined && !session.signal.aborted;
+}
+
 /** Whether readiness rejected a delegated definition that needs fresh wallet approval. */
 function requiresWalletReapproval(error: Error): boolean {
   return error instanceof ProtocolReadinessError &&
@@ -424,7 +434,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   private readonly _authManagerOptions: AuthManagerOptions;
   private readonly _providedAuth?: AuthManager;
   private readonly _monitor: Exclude<ConnectionStoreOptions['monitor'], undefined>;
-  private readonly _publishProtocols: boolean;
+  private readonly _requireHostedReadiness: boolean;
   private readonly _restore?: RestoreSessionOptions;
   private readonly _listeners = new Set<ConnectionSnapshotListener>();
   private readonly _unsubscribers: (() => void)[] = [];
@@ -441,14 +451,14 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _syncBinding?: SyncStatusBinding;
 
   public constructor(options: ConnectionStoreOptions) {
-    const { application, auth, monitor, publishProtocols, restore, ...authManagerOptions } = options;
+    const { application, auth, monitor, requireHostedReadiness, restore, ...authManagerOptions } = options;
     if (application?.protocols.length === 0) {
       throw new TypeError('[@enbox/api] createConnectionStore requires at least one application protocol.');
     }
     this._application = application;
     this._providedAuth = auth;
     this._monitor = monitor ?? {};
-    this._publishProtocols = publishProtocols ?? false;
+    this._requireHostedReadiness = requireHostedReadiness ?? false;
     this._restore = restore;
     this._authManagerOptions = authManagerOptions;
   }
@@ -656,65 +666,65 @@ class HeadlessConnectionStore implements ConnectionStore {
     // external session replacement during an awaited readiness or status read.
     // Capping it could publish a session the manager has already replaced.
     while (!this._isStale(generation)) {
-      const activeSession = auth.session;
-      if (activeSession === undefined || activeSession.signal.aborted) {
-        return this._publishDisconnected();
-      }
-      if (this._snapshot.session !== undefined && this._snapshot.session !== activeSession) {
-        // Auth aborts the previous lifetime before publishing its replacement.
-        // Do not expose that dead session while the replacement is readied.
-        this._stopDelegateMonitor();
-        this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'connecting' });
-      }
-
-      const patch = this._connectedPatch(activeSession);
-      const readinessError = this._application === undefined
-        ? undefined
-        : await this._getApplicationReadinessError(patch.enbox, this._application);
-
-      if (this._isStale(generation)) {
-        return this._snapshot;
-      }
-      const readySession = auth.session;
-      if (readySession === undefined || readySession.signal.aborted) {
-        return this._publishDisconnected();
-      }
-      if (readySession !== activeSession) {
-        continue;
-      }
-      if (readinessError !== undefined) {
-        this._stopDelegateMonitor();
-        // Forget a stale delegated approval so the next connect reaches the
-        // wallet instead of restoring it. Other readiness failures retain the
-        // underlying session so a retry can recover from a transient outage.
-        if (requiresWalletReapproval(readinessError)) {
-          // The lifetime is already aborted if cleanup fails; keep the
-          // actionable readiness outcome while making that failure visible.
-          await auth.disconnect({ clearStorage: false }).catch((cleanupError: unknown): void => {
-            console.warn('[@enbox/api] ConnectionStore: failed to clean up a rejected delegate session:', cleanupError);
-          });
-        }
-        throw readinessError;
-      }
-
-      this._apply(patch);
-      this._restartMonitor(auth, activeSession);
-      await this._seedConnectionStatus(auth, activeSession, generation);
-
-      if (this._isStale(generation)) {
-        return this._snapshot;
-      }
-
-      const authoritativeSession = auth.session;
-      if (authoritativeSession === activeSession && !activeSession.signal.aborted) {
-        return this._snapshot;
-      }
-      if (authoritativeSession === undefined || authoritativeSession.signal.aborted) {
-        return this._publishDisconnected();
+      const committed = await this._commitCurrentSession(auth, generation);
+      if (committed !== undefined) {
+        return committed;
       }
     }
 
     return this._snapshot;
+  }
+
+  /** Ready and publish one session candidate; return `undefined` when auth replaced it mid-flight. */
+  private async _commitCurrentSession(
+    auth: AuthManager,
+    generation: number,
+  ): Promise<ConnectionSnapshot | undefined> {
+    const activeSession = auth.session;
+    if (!isActiveAuthSession(activeSession)) {
+      return this._publishDisconnected();
+    }
+    if (this._snapshot.session !== undefined && this._snapshot.session !== activeSession) {
+      // Auth aborts the previous lifetime before publishing its replacement.
+      // Do not expose that dead session while the replacement is readied.
+      this._stopDelegateMonitor();
+      this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'connecting' });
+    }
+
+    const patch = this._connectedPatch(activeSession);
+    const readinessError = this._application === undefined
+      ? undefined
+      : await this._getApplicationReadinessError(patch.enbox, this._application);
+    if (this._isStale(generation)) {
+      return this._snapshot;
+    }
+
+    const readySession = auth.session;
+    if (!isActiveAuthSession(readySession)) {
+      return this._publishDisconnected();
+    }
+    if (readySession !== activeSession) {
+      return undefined;
+    }
+    if (readinessError !== undefined) {
+      await this._rejectUnreadySession(auth, readinessError);
+    }
+
+    this._apply(patch);
+    this._restartMonitor(auth, activeSession);
+    await this._seedConnectionStatus(auth, activeSession, generation);
+    if (this._isStale(generation)) {
+      return this._snapshot;
+    }
+
+    const authoritativeSession = auth.session;
+    if (authoritativeSession === activeSession && isActiveAuthSession(activeSession)) {
+      return this._snapshot;
+    }
+    if (!isActiveAuthSession(authoritativeSession)) {
+      return this._publishDisconnected();
+    }
+    return undefined;
   }
 
   /** Run the existing readiness lifecycle while keeping its failure behind the session fence. */
@@ -723,11 +733,24 @@ class HeadlessConnectionStore implements ConnectionStore {
     application: ApplicationManifest,
   ): Promise<Error | undefined> {
     try {
-      await enbox.protocols.ensureReady({ application, publish: this._publishProtocols });
+      await enbox.protocols.ensureReady({ application, publish: this._requireHostedReadiness });
       return undefined;
     } catch (cause: unknown) {
       return toError(cause);
     }
+  }
+
+  /** Reject one unready candidate, forgetting only definitions that require fresh wallet approval. */
+  private async _rejectUnreadySession(auth: AuthManager, error: Error): Promise<never> {
+    this._stopDelegateMonitor();
+    if (requiresWalletReapproval(error)) {
+      // The lifetime is already aborted if cleanup fails; keep the actionable
+      // readiness outcome while making the cleanup failure visible.
+      await auth.disconnect({ clearStorage: false }).catch((cleanupError: unknown): void => {
+        console.warn('[@enbox/api] ConnectionStore: failed to clean up a rejected delegate session:', cleanupError);
+      });
+    }
+    throw error;
   }
 
   /** Builds the snapshot patch for a connected session, reusing the current `Enbox` when unchanged. */
@@ -780,7 +803,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
 
     const survivingSession = this._auth?.session;
-    if (survivingSession !== undefined && !survivingSession.signal.aborted) {
+    if (isActiveAuthSession(survivingSession)) {
       if (this._snapshot.session === survivingSession) {
         return this._apply({ error, phase: 'connected' });
       }
@@ -990,7 +1013,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   /** Replace the session-scoped observer and return its fresh status snapshot. */
   private _bindSyncStatus(session: AuthSession | undefined): SyncStatusSnapshot | undefined {
     this._unbindSyncStatus();
-    if (session === undefined || session.signal.aborted) {
+    if (!isActiveAuthSession(session)) {
       return undefined;
     }
 

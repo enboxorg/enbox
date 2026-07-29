@@ -669,7 +669,7 @@ describe('createConnectionStore()', () => {
       expect(ensureReady.callCount).toBe(2);
     });
 
-    it('should keep hosted publication opt-in for an owner without a DWN service', async () => {
+    it('should keep hosted readiness opt-in for an owner without a DWN service', async () => {
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Local owner' },
         didMethod : 'jwk',
@@ -699,9 +699,9 @@ describe('createConnectionStore()', () => {
         return session;
       });
       const hostedStore = createConnectionStore({
-        application      : APPLICATION,
-        auth             : asAuth(hostedAuth),
-        publishProtocols : true,
+        application            : APPLICATION,
+        auth                   : asAuth(hostedAuth),
+        requireHostedReadiness : true,
       });
 
       const failed = await hostedStore.connectVault();
@@ -1416,12 +1416,12 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const create = sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
       const store = createConnectionStore({
-        application      : APPLICATION,
-        password         : 'pw',
-        publishProtocols : true,
-        sync             : 'off',
-        monitor          : false,
-        restore          : { password: 'restore-pw' },
+        application            : APPLICATION,
+        password               : 'pw',
+        requireHostedReadiness : true,
+        sync                   : 'off',
+        monitor                : false,
+        restore                : { password: 'restore-pw' },
       });
 
       expect(create.called).toBe(false);

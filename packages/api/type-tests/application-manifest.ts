@@ -60,8 +60,8 @@ const refreshOptions: RefreshOptions = { protocols: authRequests };
 const vaultOptions: VaultConnectOptions = { createIdentity: true };
 const store = createConnectionStore({
   application,
-  monitor          : { autoRefresh: {} },
-  publishProtocols : true,
+  monitor                : { autoRefresh: {} },
+  requireHostedReadiness : true,
 });
 const plainStore = createConnectionStore();
 declare const enbox: Enbox;

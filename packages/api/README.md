@@ -161,10 +161,10 @@ while delegates validate and import the wallet-approved configurations. This
 includes app startup with a saved session.
 
 Hosted publication is not required for a local owner connection. Set
-`publishProtocols: true` only when the app must publish and verify every owner
-configuration at the hosted DWN before becoming connected. The default keeps
-local-only, offline, and endpoint-less owner identities usable; an app can
-also call `enbox.protocols.ensureReady({ application })` later when hosted
+`requireHostedReadiness: true` only when the app must publish and verify every
+owner configuration at the hosted DWN before becoming connected. The default
+keeps local-only, offline, and endpoint-less owner identities usable; an app
+can also call `enbox.protocols.ensureReady({ application })` later when hosted
 receiving becomes necessary.
 
 Transient readiness failures retain the underlying `store.auth.session` for a
