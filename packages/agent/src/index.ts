@@ -14,6 +14,7 @@ export {
   syncScopeFromProtocols,
 } from './types/sync.js';
 export { SyncRunCancelledError } from './sync-runtime-errors.js';
+export { resolveSyncConnectivityState } from './sync-connectivity-manager.js';
 export type * from './types/vc.js';
 
 export * from './agent-session.js';

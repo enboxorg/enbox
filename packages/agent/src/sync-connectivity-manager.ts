@@ -1,5 +1,29 @@
 import type { SyncConnectivityState } from './types/sync.js';
 
+/** Fold per-link connectivity with online precedence and a zero-link fallback. */
+export function resolveSyncConnectivityState(
+  linkStates: Iterable<SyncConnectivityState>,
+  fallback: SyncConnectivityState = 'unknown',
+): SyncConnectivityState {
+  let hasLinks = false;
+  let hasOffline = false;
+
+  for (const state of linkStates) {
+    hasLinks = true;
+    if (state === 'online') {
+      return 'online';
+    }
+    if (state === 'offline') {
+      hasOffline = true;
+    }
+  }
+
+  if (!hasLinks) {
+    return fallback;
+  }
+  return hasOffline ? 'offline' : 'unknown';
+}
+
 /**
  * Folds transport-reported per-link connectivity with one-shot sync outcomes.
  *
@@ -14,23 +38,7 @@ export class SyncConnectivityManager {
 
   /** Fold active-link connectivity, falling back to the global one-shot sync state. */
   public getState(linkStates: Iterable<SyncConnectivityState>): SyncConnectivityState {
-    let hasLinks = false;
-    let hasOffline = false;
-
-    for (const state of linkStates) {
-      hasLinks = true;
-      if (state === 'online') {
-        return 'online';
-      }
-      if (state === 'offline') {
-        hasOffline = true;
-      }
-    }
-
-    if (!hasLinks) {
-      return this._state;
-    }
-    return hasOffline ? 'offline' : 'unknown';
+    return resolveSyncConnectivityState(linkStates, this._state);
   }
 
   /** Record a successful one-shot sync. */

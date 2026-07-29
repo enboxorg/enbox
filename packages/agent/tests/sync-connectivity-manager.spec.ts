@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { SyncConnectivityManager } from '../src/sync-connectivity-manager.js';
+import { resolveSyncConnectivityState, SyncConnectivityManager } from '../src/sync-connectivity-manager.js';
 
 describe('SyncConnectivityManager', () => {
   it('folds active-link connectivity with online precedence and engine-state fallback', () => {
@@ -13,6 +13,7 @@ describe('SyncConnectivityManager', () => {
     expect(manager.getState(['unknown'])).toBe('unknown');
     expect(manager.getState(['unknown', 'offline'])).toBe('offline');
     expect(manager.getState(['offline', 'online'])).toBe('online');
+    expect(resolveSyncConnectivityState(['offline', 'online'], 'offline')).toBe('online');
   });
 
   it('tracks sync outcomes while preserving unknown until reachability was established', () => {

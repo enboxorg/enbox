@@ -1,15 +1,17 @@
 import type { compileRecordQuery } from './record-query.js';
 import type { DwnApi } from './dwn-api.js';
 import type { Record } from './record.js';
+import type { ReplicationCurrentness } from './replication-currentness.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent, SyncIdentityOptions } from '@enbox/agent';
 
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
+import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 
 /** Currentness of one locally materialized records view. */
-export type RecordViewState = 'loading' | 'ready' | 'stale' | 'error';
+export type RecordViewState = ReplicationCurrentness;
 
 type RecordViewContents<Item> = Readonly<{
   /**
@@ -393,16 +395,14 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
     const links = (await this._sync.getReplicationLinks(this._dwn.connectedDid))
       .filter((link): boolean => linkCoversProtocol(link, this._query.filter.protocol));
-    if (links.some((link): boolean => link.status === 'paused')) {
+    const state = projectReplicationCurrentness(links, this._hasPublishedReady);
+    if (state === 'error') {
       return this.resolveUnavailableCurrentness(true);
     }
-
-    const isCurrent = links.length > 0 && links.every((link): boolean =>
-      link.status === 'live' && link.connectivity === 'online' && link.isPullCurrent);
-    return isCurrent ? { state: 'ready' } : this.resolveUnavailableCurrentness(false);
+    return { state };
   }
 
-  /** Resolve the shared policy for unavailable replication. */
+  /** Resolve a provisional unavailable state or attach the RecordView-specific pause error. */
   private resolveUnavailableCurrentness(isPaused: boolean): RecordViewCurrentness {
     if (isPaused) {
       return {

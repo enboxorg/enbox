@@ -48,6 +48,41 @@ Common options:
 If you already own an auth session, use `Enbox.fromSession(session)`. If you
 own a raw agent and DID, use `new Enbox({ agent, connectedDid })`.
 
+## Observable Connection and Sync State
+
+`createConnectionStore()` publishes connection and selected-identity sync state
+through one framework-neutral external-store contract:
+
+```ts
+import { createConnectionStore } from '@enbox/api';
+
+const store = createConnectionStore({ password: userPassword });
+const unsubscribe = store.subscribe((snapshot) => {
+  console.log(snapshot.phase, snapshot.sync?.state, snapshot.sync?.connectivity);
+});
+
+await store.initialize();
+```
+
+`sync` uses the same `loading`, `ready`, `stale`, and `error` terms as observed
+record views. `loading` means a registered replica has not completed its first
+baseline; `ready` means every current link is caught up (or the identity is
+local-only); `stale` retains a previously reached baseline while a link is no
+longer current; and `error` reports paused replication or an unreadable local
+status projection. `connectivity` is `unknown`, `online`, or `offline`, and
+`lastActivityAt` is the newest activity time recorded by the sync engine.
+`loading` has no timeout: a registered identity with no established links
+remains there until the engine reports new state.
+
+For registered identities, connectivity uses the sync engine's existing
+aggregation rule: any online link makes the identity online; otherwise an
+offline link makes it offline, and no links fall back to the engine-wide state.
+
+The frozen snapshot updates from existing sync events and local state without
+polling or network requests. Its reference stays stable until a field changes,
+and sync state resets on lock, disconnect, replacement, or shutdown. Call
+`unsubscribe()` when the consumer is released and `store.dispose()` at shutdown.
+
 ## Typed Protocols
 
 ```ts

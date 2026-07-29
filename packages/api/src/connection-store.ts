@@ -36,6 +36,7 @@
  * @module
  */
 
+import type { ReplicationCurrentness } from './replication-currentness.js';
 import type {
   AuthManagerOptions,
   AuthSession,
@@ -48,12 +49,15 @@ import type {
   RestoreSessionOptions,
   VaultConnectOptions,
 } from '@enbox/auth';
+import type { ReplicationLinkSnapshot, SyncConnectivityState } from '@enbox/agent';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { isConnectDeniedError } from '@enbox/auth';
 import { omitUndefined } from '@enbox/common';
+import { resolveSyncConnectivityState } from '@enbox/agent';
 
 import { Enbox } from './enbox.js';
+import { projectReplicationCurrentness } from './replication-currentness.js';
 
 /**
  * The lifecycle phase of the connection store.
@@ -75,6 +79,28 @@ export type ConnectionPhase =
   | 'connecting'
   | 'connected'
   | 'error';
+
+type SyncStatusContents = Readonly<{
+  /** Aggregate connectivity across the selected identity's current replication links. */
+  connectivity: SyncConnectivityState;
+
+  /** Latest activity timestamp already recorded by the sync engine, when available. */
+  lastActivityAt?: string;
+}>;
+
+/** Immutable overall sync status for the selected identity. */
+export type SyncStatusSnapshot = SyncStatusContents & Readonly<
+  | {
+    /** Currentness of the selected identity's replication baseline. */
+    state: Exclude<ReplicationCurrentness, 'error'>;
+    error?: never;
+  }
+  | {
+    state: 'error';
+    /** A paused replication link or failure to read the engine's local status projection. */
+    error: Error;
+  }
+>;
 
 /**
  * An immutable snapshot of the connection state.
@@ -99,6 +125,9 @@ export type ConnectionSnapshot = {
 
   /** The connected identity's display name, when one is set. */
   identityName?: string;
+
+  /** Overall sync status for the connected identity. Cleared when the session ends. */
+  sync?: SyncStatusSnapshot;
 
   /**
    * Status of the delegated connect approval, for wallet-delegated sessions.
@@ -259,6 +288,7 @@ const CLEARED_SESSION_FIELDS = {
   identityDid              : undefined,
   identityName             : undefined,
   session                  : undefined,
+  sync                     : undefined,
   walletReapprovalRequired : undefined,
 } as const;
 
@@ -269,6 +299,7 @@ const SNAPSHOT_KEYS: readonly (keyof ConnectionSnapshot)[] = [
   'enbox',
   'identityDid',
   'identityName',
+  'sync',
   'connection',
   'vaultLocked',
   'walletReapprovalRequired',
@@ -295,6 +326,15 @@ function snapshotsEqual(a: ConnectionSnapshot, b: ConnectionSnapshot): boolean {
 function toError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
 }
+
+type SyncStatusBinding = {
+  hasBeenReady: boolean;
+  onAbort: () => void;
+  refreshRequested: boolean;
+  refreshing: boolean;
+  session: AuthSession;
+  unsubscribe?: () => void;
+};
 
 /**
  * The concrete {@link ConnectionStore} returned by {@link createConnectionStore}.
@@ -337,6 +377,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _initialized = false;
   private _disposed = false;
   private _actionGeneration = 0;
+  private _syncBinding?: SyncStatusBinding;
 
   public constructor(options: ConnectionStoreOptions) {
     const { auth, monitor, restore, ...authManagerOptions } = options;
@@ -400,12 +441,15 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._disposed = true;
     this._actionGeneration++;
     this._stopDelegateMonitor();
+    this._unbindSyncStatus();
 
     for (const unsubscribe of this._unsubscribers) {
       unsubscribe();
     }
     this._unsubscribers.length = 0;
     this._listeners.clear();
+    // Clear the stored status without publishing a teardown notification.
+    this._apply({ sync: undefined });
 
     const auth = this._auth;
     this._auth = undefined;
@@ -690,7 +734,10 @@ class HeadlessConnectionStore implements ConnectionStore {
       auth.on('session-end', (): void => { this._onSessionChange(auth); }),
       auth.on('connection-expiring', ({ status }): void => { this._applyConnectionStatus(status); }),
       auth.on('connection-expired', ({ status }): void => { this._applyConnectionStatus(status); }),
-      auth.on('vault-locked', (): void => { this._apply({ vaultLocked: true }); }),
+      auth.on('vault-locked', (): void => {
+        this._unbindSyncStatus();
+        this._apply({ sync: undefined, vaultLocked: true });
+      }),
       auth.on('vault-unlocked', (): void => { this._apply({ vaultLocked: false }); }),
     );
   }
@@ -767,6 +814,120 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._apply({ connection, walletReapprovalRequired });
   }
 
+  // ─── Sync status ────────────────────────────────────────────────
+
+  /** Replace the session-scoped observer and return its fresh status snapshot. */
+  private _bindSyncStatus(session: AuthSession | undefined): SyncStatusSnapshot | undefined {
+    this._unbindSyncStatus();
+    if (session === undefined || session.signal.aborted) {
+      return undefined;
+    }
+
+    const binding: SyncStatusBinding = {
+      hasBeenReady     : false,
+      onAbort          : (): void => { this._handleSyncAbort(binding); },
+      refreshRequested : false,
+      refreshing       : false,
+      session,
+    };
+    this._syncBinding = binding;
+    session.signal.addEventListener('abort', binding.onAbort, { once: true });
+    binding.unsubscribe = session.agent.sync.on((event): void => {
+      if (event.tenantDid !== session.did) {
+        return;
+      }
+      if (event.type === 'identity:registration-change' && event.options !== undefined) {
+        binding.hasBeenReady = false;
+      }
+      this._requestSyncStatus(binding);
+    });
+    this._requestSyncStatus(binding);
+
+    return immutableSyncStatus({ state: 'loading', connectivity: 'unknown' });
+  }
+
+  private _handleSyncAbort(binding: SyncStatusBinding): void {
+    if (this._syncBinding !== binding) {
+      return;
+    }
+    this._unbindSyncStatus();
+    if (!this._disposed) {
+      this._apply({ sync: undefined });
+    }
+  }
+
+  private _unbindSyncStatus(): void {
+    const binding = this._syncBinding;
+    if (binding === undefined) {
+      return;
+    }
+
+    this._syncBinding = undefined;
+    binding.unsubscribe?.();
+    binding.session.signal.removeEventListener('abort', binding.onAbort);
+  }
+
+  /** Coalesce sync wakes into one active local projection read and one trailing read. */
+  private _requestSyncStatus(binding: SyncStatusBinding): void {
+    if (this._syncBinding !== binding) {
+      return;
+    }
+
+    binding.refreshRequested = true;
+    if (binding.refreshing) {
+      return;
+    }
+
+    binding.refreshing = true;
+    void this._drainSyncStatus(binding);
+  }
+
+  private async _drainSyncStatus(binding: SyncStatusBinding): Promise<void> {
+    try {
+      while (this._syncBinding === binding && binding.refreshRequested) {
+        binding.refreshRequested = false;
+        const snapshot = await this._readSyncStatus(binding);
+        if (this._syncBinding !== binding || binding.refreshRequested) {
+          continue;
+        }
+        // A superseded baseline was never published, so it must not make later state stale.
+        if (snapshot.state === 'ready') {
+          binding.hasBeenReady = true;
+        }
+        this._publishSyncStatus(binding, snapshot);
+      }
+    } finally {
+      binding.refreshing = false;
+    }
+  }
+
+  private async _readSyncStatus(binding: SyncStatusBinding): Promise<SyncStatusSnapshot> {
+    const { session } = binding;
+    try {
+      const registration = await session.agent.sync.getIdentityOptions(session.did);
+      if (registration === undefined) {
+        return immutableSyncStatus({ state: 'ready', connectivity: 'unknown' });
+      }
+      const links = await session.agent.sync.getReplicationLinks(session.did);
+      return projectSyncStatus(links, binding.hasBeenReady, session.agent.sync.connectivityState);
+    } catch (cause: unknown) {
+      const current = this._snapshot.sync;
+      return immutableSyncStatus({
+        state          : 'error',
+        connectivity   : current?.connectivity ?? 'unknown',
+        lastActivityAt : current?.lastActivityAt,
+        error          : toError(cause),
+      });
+    }
+  }
+
+  private _publishSyncStatus(binding: SyncStatusBinding, snapshot: SyncStatusSnapshot): void {
+    if (this._syncBinding !== binding || syncStatusesEqual(this._snapshot.sync, snapshot)) {
+      return;
+    }
+    this._apply({ sync: snapshot });
+  }
+
   // ─── Snapshot plumbing ─────────────────────────────────────────
 
   /**
@@ -775,6 +936,10 @@ class HeadlessConnectionStore implements ConnectionStore {
    */
   private _apply(patch: Partial<ConnectionSnapshot>): ConnectionSnapshot {
     const next: ConnectionSnapshot = { ...this._snapshot, ...patch };
+    if (next.session !== this._snapshot.session) {
+      // A changed session also guarantees snapshot inequality, so this binding reaches publication.
+      next.sync = this._bindSyncStatus(next.session);
+    }
     if (snapshotsEqual(this._snapshot, next)) {
       return this._snapshot;
     }
@@ -819,6 +984,53 @@ class HeadlessConnectionStore implements ConnectionStore {
       throw new Error(DISPOSED_MESSAGE);
     }
   }
+}
+
+function projectSyncStatus(
+  links: readonly ReplicationLinkSnapshot[],
+  hasBeenReady: boolean,
+  fallbackConnectivity: SyncConnectivityState,
+): SyncStatusSnapshot {
+  const connectivity = resolveSyncConnectivityState(
+    links.map((link): SyncConnectivityState => link.connectivity),
+    fallbackConnectivity,
+  );
+  const lastActivityAt = latestActivityAt(links);
+  const state = projectReplicationCurrentness(links, hasBeenReady);
+  if (state === 'error') {
+    return immutableSyncStatus({
+      state : 'error',
+      connectivity,
+      lastActivityAt,
+      error : new Error('Synchronization is paused for the selected identity.'),
+    });
+  }
+  return immutableSyncStatus({
+    state,
+    connectivity,
+    lastActivityAt,
+  });
+}
+
+function latestActivityAt(links: readonly ReplicationLinkSnapshot[]): string | undefined {
+  let latest: string | undefined;
+  for (const { lastActivityAt } of links) {
+    if (lastActivityAt !== undefined && (latest === undefined || lastActivityAt > latest)) {
+      latest = lastActivityAt;
+    }
+  }
+  return latest;
+}
+
+function immutableSyncStatus(snapshot: SyncStatusSnapshot): SyncStatusSnapshot {
+  return Object.freeze(snapshot);
+}
+
+function syncStatusesEqual(a: SyncStatusSnapshot | undefined, b: SyncStatusSnapshot): boolean {
+  return a?.state === b.state &&
+    a.connectivity === b.connectivity &&
+    a.lastActivityAt === b.lastActivityAt &&
+    a.error?.message === b.error?.message;
 }
 
 /**
