@@ -1,8 +1,8 @@
 ---
-"@enbox/agent": minor
-"@enbox/api": minor
-"@enbox/browser": minor
-"@enbox/cli": minor
+"@enbox/agent": patch
+"@enbox/api": patch
+"@enbox/browser": patch
+"@enbox/cli": patch
 ---
 
 Add application protocol readiness. Owner sessions install locally, publish to

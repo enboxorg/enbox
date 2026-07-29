@@ -1,6 +1,6 @@
 ---
-"@enbox/api": minor
-"@enbox/browser": minor
+"@enbox/api": patch
+"@enbox/browser": patch
 ---
 
 Let connection stores own a non-empty application manifest. Its protocols are
