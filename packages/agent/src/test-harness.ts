@@ -196,15 +196,17 @@ export class PlatformAgentTestHarness {
     await this.dwnEventLog.open();
   }
 
-  public async createAgentDid(): Promise<void> {
+  /** Create a DHT agent DID; pass `publish: false` for a network-free DID cached locally. */
+  public async createAgentDid({ publish = true }: {
+    publish?: boolean;
+  } = {}): Promise<void> {
     const processEnv = (globalThis as GlobalProcessEnv).process?.env;
 
     // Create a DID for the Agent with Ed25519 (signing) and X25519 (keyAgreement).
     // X25519 is required by DwnKeyStore for JWE record-level encryption.
-    // Must be published so the DWN can resolve it for JWS signature verification.
-    this.agent.agentDid = await DidDht.create({
+    const agentDid = await DidDht.create({
       options: {
-        publish             : true,
+        publish,
         gatewayUri          : processEnv?.DID_DHT_GATEWAY_URI ?? 'http://localhost:7527',
         verificationMethods : [
           {
@@ -220,16 +222,28 @@ export class PlatformAgentTestHarness {
         ]
       }
     });
+    this.agent.agentDid = agentDid;
+
+    if (!publish) {
+      await this.didResolverCache.set(agentDid.uri, {
+        didDocument           : agentDid.document,
+        didDocumentMetadata   : agentDid.metadata,
+        didResolutionMetadata : {},
+      });
+    }
   }
 
-  public async createIdentity({ name, testDwnUrls }: {
+  /** Create a DHT identity with a separate X25519 key, optionally without publication or a DWN service. */
+  public async createIdentity({ name, publish = true, testDwnUrls }: {
     name: string;
-    testDwnUrls: string[];
+    publish?: boolean;
+    testDwnUrls?: string[];
   }): Promise<BearerIdentity> {
     const bearerIdentity = await this.agent.identity.create({
       didMethod  : 'dht',
       didOptions : {
-        services: [
+        publish,
+        services: testDwnUrls === undefined ? undefined : [
           {
             id              : 'dwn',
             type            : 'DecentralizedWebNode',

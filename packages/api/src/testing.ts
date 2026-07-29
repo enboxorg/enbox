@@ -10,7 +10,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
 
-import { DidJwk } from '@enbox/dids';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { AgentSession, EnboxUserAgent } from '@enbox/agent';
 
@@ -72,22 +71,8 @@ export async function createEnboxTestContext(
       agentStores : 'memory',
       testDataLocation,
     });
-    harness.agent.agentDid = await DidJwk.create();
-
-    const identity = await harness.agent.identity.create({
-      didMethod  : 'dht',
-      didOptions : {
-        publish             : false,
-        verificationMethods : [
-          {
-            algorithm : 'X25519',
-            id        : 'enc',
-            purposes  : ['keyAgreement'],
-          },
-        ],
-      },
-      metadata: { name: 'Enbox Test' },
-    });
+    await harness.createAgentDid({ publish: false });
+    const identity = await harness.createIdentity({ name: 'Enbox Test', publish: false });
     const session = new AgentSession({
       agent    : harness.agent,
       did      : identity.did.uri,
