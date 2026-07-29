@@ -1,7 +1,7 @@
 ---
-"@enbox/agent": minor
-"@enbox/api": minor
-"@enbox/browser": minor
+"@enbox/agent": patch
+"@enbox/api": patch
+"@enbox/browser": patch
 ---
 
 Expose the connected identity's aggregate sync currentness, connectivity, and

@@ -1,15 +1,11 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { RecordView } from '../src/record-view.js';
 import type { DwnApi, RecordsQueryRequest, RecordsQueryResponse } from '../src/dwn-api.js';
-import type { MaterializedRecord, Record } from '../src/record.js';
 
-import { EnboxUserAgent } from '@enbox/agent';
-import { PlatformAgentTestHarness } from '@enbox/agent/test';
-import { AuthManager, MemoryStorage } from '@enbox/auth';
 import { describe, expect, it } from 'bun:test';
 
+import { createEnboxTestContext } from '../src/testing.js';
+import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineProtocol } from '../src/define-protocol.js';
-import { Enbox } from '../src/enbox.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
@@ -53,8 +49,8 @@ const ViewIntegrationProtocol = defineProtocol(
     preference : recordCodecs.text(),
   },
 );
+const ViewIntegrationApplication = defineApplicationManifest({ protocols: [ViewIntegrationProtocol] });
 const LABEL_PATH = 'note/label';
-const TEST_PASSWORD = 'test-password';
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -91,37 +87,16 @@ function captureRecordQueries(dwn: DwnApi): { dwn: DwnApi; requests: RecordsQuer
 
 describe('RecordView local DWN integration', () => {
   it('rematerializes real selection changes and stops publishing after close', async () => {
-    const platform = await PlatformAgentTestHarness.setup({
-      agentClass       : EnboxUserAgent,
-      agentStores      : 'memory',
-      testDataLocation : '__TESTDATA__/record-view-integration',
-    });
-    let auth: AuthManager | undefined;
-    let view: RecordView<Record<NoteData>> | undefined;
+    const context = await createEnboxTestContext({ application: ViewIntegrationApplication });
 
     try {
-      await platform.clearStorage();
-      await platform.agent.initialize({ password: TEST_PASSWORD });
-      await platform.agent.start({ password: TEST_PASSWORD });
-      const identity = await platform.agent.identity.create({
-        metadata  : { name: 'Record View Integration' },
-        didMethod : 'jwk',
-      });
-      auth = await AuthManager.create({
-        agent   : platform.agent,
-        storage : new MemoryStorage(),
-        sync    : 'off',
-      });
-      const session = await auth.switchIdentity(identity.did.uri);
-      const typed = Enbox.fromSession(session).using(ViewIntegrationProtocol);
-      const configured = await typed.configure();
-      expect(configured.status.code).toBe(202);
+      const typed = context.enbox.using(ViewIntegrationProtocol);
 
-      view = await typed.records.observe('note', {
+      const view = await typed.records.observe('note', {
         filter     : { tags: { status: 'draft' } },
         pagination : { limit: 10 },
       });
-      await waitFor(() => view?.getSnapshot().state === 'ready');
+      await waitFor(() => view.getSnapshot().state === 'ready');
       expect(view.getSnapshot().records).toHaveLength(0);
 
       let publications = 0;
@@ -131,21 +106,21 @@ describe('RecordView local DWN integration', () => {
         data : { title: 'Created' },
         tags : { status: 'draft' },
       });
-      await waitFor(() => view?.getSnapshot().records.some((record) => record.id === created.id) === true);
+      await waitFor(() => view.getSnapshot().records.some((record) => record.id === created.id));
       const observed = view.getSnapshot().records[0];
       expect(await observed.value()).toEqual({ title: 'Created' });
 
       await created.update({ tags: { status: 'published' } });
-      await waitFor(() => view?.getSnapshot().records.length === 0);
+      await waitFor(() => view.getSnapshot().records.length === 0);
 
       const replacement = await typed.records.create('note', {
         data : { title: 'Replacement' },
         tags : { status: 'draft' },
       });
-      await waitFor(() => view?.getSnapshot().records.some((record) => record.id === replacement.id) === true);
+      await waitFor(() => view.getSnapshot().records.some((record) => record.id === replacement.id));
 
       await replacement.delete();
-      await waitFor(() => view?.getSnapshot().records.length === 0);
+      await waitFor(() => view.getSnapshot().records.length === 0);
 
       const snapshotAtClose = view.getSnapshot();
       const publicationsAtClose = publications;
@@ -159,41 +134,16 @@ describe('RecordView local DWN integration', () => {
       expect(view.getSnapshot()).toBe(snapshotAtClose);
       expect(publications).toBe(publicationsAtClose);
     } finally {
-      await view?.close().catch((): void => {});
-      await auth?.shutdown().catch((): void => {});
-      await platform.closeStorage();
+      await context.close();
     }
   });
 
   it('batches selected singleton children and rematerializes after a child-only write', async () => {
-    const platform = await PlatformAgentTestHarness.setup({
-      agentClass       : EnboxUserAgent,
-      agentStores      : 'memory',
-      testDataLocation : '__TESTDATA__/record-view-materialization-integration',
-    });
-    let auth: AuthManager | undefined;
-    let view: RecordView<MaterializedRecord<NoteData> & Readonly<{
-      children: { readonly label: MaterializedRecord<string> | undefined };
-    }>> | undefined;
-    let typed!: TypedEnbox<typeof ViewIntegrationDefinition, typeof ViewIntegrationProtocol.codecs>;
+    const context = await createEnboxTestContext({ application: ViewIntegrationApplication });
 
     try {
-      await platform.clearStorage();
-      await platform.agent.initialize({ password: TEST_PASSWORD });
-      await platform.agent.start({ password: TEST_PASSWORD });
-      const identity = await platform.agent.identity.create({
-        metadata  : { name: 'Record View Materialization Integration' },
-        didMethod : 'jwk',
-      });
-      auth = await AuthManager.create({
-        agent   : platform.agent,
-        storage : new MemoryStorage(),
-        sync    : 'off',
-      });
-      const session = await auth.switchIdentity(identity.did.uri);
-      const captured = captureRecordQueries(Enbox.fromSession(session).dwn);
-      typed = new TypedEnbox(captured.dwn, ViewIntegrationProtocol);
-      expect((await typed.configure()).status.code).toBe(202);
+      const captured = captureRecordQueries(context.enbox.dwn);
+      const typed = new TypedEnbox(captured.dwn, ViewIntegrationProtocol);
 
       const setAtRuntime = typed.records.set as unknown as (
         path: string,
@@ -256,22 +206,20 @@ describe('RecordView local DWN integration', () => {
       expect(Object.hasOwn(secondResult.children, 'label')).toBe(true);
       expect(secondResult.children.label).toBeUndefined();
 
-      view = await typed.records.observe('note', {
+      const view = await typed.records.observe('note', {
         materialize : { children: [LABEL_PATH] as const },
         pagination  : { limit: 10 },
       });
-      await waitFor(() => view?.getSnapshot().state === 'ready');
+      await waitFor(() => view.getSnapshot().state === 'ready');
       const updatedLabel = await typed.records.set(LABEL_PATH, {
         data   : 'updated',
         within : first.contextId,
       });
       expect(updatedLabel.id).toBe(firstLabel.id);
-      await waitFor(() => view?.getSnapshot().records
+      await waitFor(() => view.getSnapshot().records
         .find((record) => record.record.id === first.id)?.children.label?.value === 'updated');
     } finally {
-      await view?.close().catch((): void => {});
-      await auth?.shutdown().catch((): void => {});
-      await platform.closeStorage();
+      await context.close();
     }
   });
 });

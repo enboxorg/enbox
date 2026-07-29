@@ -85,6 +85,19 @@ describe('EnboxUserAgent', () => {
         });
       });
 
+      describe('test harness', () => {
+        it('creates an unpublished agent and local identity', async () => {
+          await testHarness.clearStorage();
+          await testHarness.createAgentDid({ publish: false });
+
+          const identity = await testHarness.createIdentity({ name: 'Local', publish: false });
+
+          expect(testHarness.agent.agentDid.uri).toStartWith('did:dht:');
+          expect(identity.did.uri).toStartWith('did:dht:');
+          expect(identity.did.document.service).toBeUndefined();
+        });
+      });
+
       describe('initialize()', () => {
         it('generates and returns a 12-word mnenomic if one is not provided', async () => {
           // Initialize the vault.

@@ -237,7 +237,7 @@ Downstream repos typically consume **npm releases** of scoped `@enbox/*` package
 - **web-wallet** (package `@enbox/dweb-wallet`): Full stack — `agent`, `api`, `auth`, `browser`, `dwn-clients`, `protocols`, plus crypto/dids/common. Typical pattern: Vite + React, PWA, browser-conditioned Enbox entrypoints, Vitest/Playwright.
 - **nutsd** (package `@enbox/nutsd`): Narrower surface — e.g. **`@enbox/browser`** (and Cashu) for wallet/DID UX without pulling the full DWN server stack into the app bundle.
 
-When changing public APIs, assume **multiple external apps** pin different semver ranges; follow the changeset workflow below for releases. `.changeset/config.json` sets `updateInternalDependencies: "patch"`, so bumping one package (e.g. `dwn-sdk-js` as `minor`) auto-patches every direct consumer in the graph — keep that in mind when drafting changeset files.
+When changing public APIs, assume **multiple external apps** pin different semver ranges and follow the changeset workflow below. Enbox is greenfield: every releasable package change uses a `patch` changeset, including new and breaking APIs.
 
 ### Where to make common kinds of changes
 
@@ -354,11 +354,11 @@ Packages are published to npm via **Changesets** and CI. **NEVER bump versions m
 
 ### How it works
 
-1. **Create a changeset** describing the changes and the semver bump type:
+1. **Create a patch changeset** describing the changes:
    ```bash
    bun changeset
    ```
-   This interactively creates a `.changeset/<random-name>.md` file. Select which packages are affected and whether the bump is `patch`, `minor`, or `major`.
+   This interactively creates a `.changeset/<random-name>.md` file. Select the affected packages and use `patch` for each one.
 
 2. **Commit and push** the changeset file(s) to `main` (directly or via PR).
 
@@ -370,7 +370,7 @@ Packages are published to npm via **Changesets** and CI. **NEVER bump versions m
 
 - **Changeset config** is in `.changeset/config.json`.
 - **`@enbox/dwn-relay`** has been moved to its own repository at <https://github.com/enboxorg/dwn-relay>.
-- **`updateInternalDependencies: "patch"`** — when a dependency gets bumped, its dependents automatically get a patch bump too. For example, bumping `@enbox/dwn-sdk-js` as `minor` will auto-bump `@enbox/agent`, `@enbox/api`, `@enbox/protocols`, `@enbox/crypto`, etc. as `patch`.
+- **`updateInternalDependencies: "patch"`** — when a dependency gets bumped, its dependents automatically get a patch bump too.
 - **`scripts/publish.sh`** handles the Bun `workspace:*` → real version resolution that changesets' built-in publish cannot do.
 - The publish script **skips already-published versions** (idempotent).
 - Git tags are created automatically in the format `@enbox/<package>@<version>`.
@@ -393,7 +393,7 @@ Since `bun changeset` is interactive (not supported in agents), create the chang
 ```bash
 cat > .changeset/my-changeset.md << 'EOF'
 ---
-"@enbox/dwn-sdk-js": minor
+"@enbox/dwn-sdk-js": patch
 "@enbox/agent": patch
 ---
 
@@ -403,11 +403,11 @@ EOF
 
 Use `bunx changeset status` to verify the changeset is valid before committing.
 
-### Semver guidelines for this project
+### Version policy for this project
 
 | Change type | Bump | Examples |
 |---|---|---|
-| New feature / new API | `minor` | New protocol directive, new sync engine, new public method |
+| New feature / new API | `patch` | New protocol directive, new sync engine, new public method |
 | Bug fix / security fix | `patch` | SSRF protection, escape LIKE wildcards, crash fix |
 | Breaking change | `patch` | Removed public API, changed wire format, renamed exports — greenfield project, breaking changes are expected |
 | Test-only changes | No bump needed | Don't include test-only packages in the changeset |

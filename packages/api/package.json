@@ -64,6 +64,10 @@
     "./browser": {
       "types": "./dist/types/index.d.ts",
       "import": "./dist/browser.mjs"
+    },
+    "./testing": {
+      "types": "./dist/types/testing.d.ts",
+      "import": "./dist/esm/testing.js"
     }
   },
   "react-native": "./dist/esm/index.js",
