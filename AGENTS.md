@@ -52,7 +52,20 @@ Branch naming follows the existing convention in `git log`: `fix/...`, `feat/...
 1. Commit with a conventional message (`<type>(<scope>): <summary>`) matching the log (e.g. `fix(agent): …`, `feat(auth): …`, `docs: …`, `chore(deps): …`).
 2. Push your branch to `origin` (never force-push shared branches).
 3. Open the PR against the requested base branch (default `main`) with `gh pr create`.
-4. Keep the PR description tight: **Summary**, **Test plan** (checklist), and any migration/rollout notes.
+4. Write a concise, reviewer-focused PR body:
+   - State what changed and why. Include behavior, API, compatibility, migration,
+     rollout, or design details only when they help review the specific change.
+   - Do **not** add a **Test plan** or **Validation** section for routine CI work
+     such as builds, lint, typechecks, standard test suites, coverage, or other
+     checks required of every PR. CI is the authoritative record for those.
+   - Mention validation only when it is non-standard or manual and gives the
+     reviewer evidence CI cannot provide, such as a visual check, benchmark,
+     hardware test, or reproduction of the reported bug.
+   - Never include unrelated local failures, environment limitations, expected
+     CI behavior, implementation chronology, or commentary about the work
+     process.
+   - Omit empty or boilerplate sections. A short summary is sufficient for most
+     PRs; add migration or rollout notes only when they actually exist.
 
 #### GitHub CLI (`gh`) — use REST API for mutations
 
