@@ -41,26 +41,14 @@ API from `@enbox/api`, auth/session helpers from `@enbox/auth`, and
 browser-specific connect utilities.
 
 ```ts
-import {
-  BrowserConnectHandler,
-  Enbox,
-  defineApplicationManifest,
-  getApplicationProtocolRequests,
-} from '@enbox/browser';
-
-const application = defineApplicationManifest({ protocols: [NotesProtocol] });
+import { BrowserConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enbox/browser';
 
 const { enbox } = await Enbox.connect({
   connectHandler : BrowserConnectHandler({ appName: 'Notes' }),
-  protocols      : getApplicationProtocolRequests(application),
+  createIdentity : true,
+  protocols      : [NotesProtocol],
 });
-
-await enbox.protocols.ensureReady({ application, publication: 'required' });
 ```
-
-Await readiness before exposing protocol-backed UI. Owner sessions publish the
-exact local protocol artifact to their remote DWNs; delegated sessions verify
-and import the wallet-owned artifact without publishing it.
 
 ## Bundlers and Service Workers
 

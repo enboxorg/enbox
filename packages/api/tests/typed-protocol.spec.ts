@@ -64,71 +64,6 @@ const TodoProtocol = defineProtocol(TodoProtocolDefinition, {
   task       : recordCodecs.json<{ title: string; completed: boolean }>(),
 });
 
-const EncryptedProtocolDefinition = {
-  protocol  : 'https://example.com/protocols/incomplete-encryption',
-  published : true,
-  types     : {
-    note: {
-      schema      : 'https://example.com/schemas/incomplete-encryption-note',
-      dataFormats : ['application/json'],
-    },
-    secret: {
-      schema             : 'https://example.com/schemas/incomplete-encryption-secret',
-      dataFormats        : ['application/json'],
-      encryptionRequired : true,
-    },
-  },
-  structure: {
-    note   : {},
-    secret : {},
-  },
-} as const satisfies ProtocolDefinition;
-
-const EncryptedProtocol = defineProtocol(EncryptedProtocolDefinition, {
-  note   : recordCodecs.json<unknown>(),
-  secret : recordCodecs.json<unknown>(),
-});
-
-type IncompleteEncryptionFixture = {
-  configure: sinon.SinonStub;
-  recordsQuery: sinon.SinonStub;
-  typed: TypedEnbox<typeof EncryptedProtocolDefinition, typeof EncryptedProtocol.codecs>;
-};
-
-function incompleteEncryptionFixture(): IncompleteEncryptionFixture {
-  const keyAgreement = { publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'partial-key' } };
-  const partialDefinition = {
-    ...EncryptedProtocolDefinition,
-    $keyAgreement : keyAgreement,
-    structure     : {
-      note   : {},
-      secret : { $keyAgreement: keyAgreement },
-    },
-  } as unknown as ProtocolDefinition;
-  const installedProtocol = { definition: partialDefinition };
-  const configure = sinon.stub().resolves({
-    protocol : installedProtocol,
-    status   : { code: 202, detail: 'Accepted' },
-  });
-  const recordsQuery = sinon.stub().resolves({
-    records : [],
-    status  : { code: 200, detail: 'OK' },
-  });
-  const dwn = {
-    isDelegate : false,
-    protocols  : {
-      configure,
-      query: sinon.stub().resolves({
-        protocols : [installedProtocol],
-        status    : { code: 200, detail: 'OK' },
-      }),
-    },
-    records: { query: recordsQuery },
-  } as unknown as DwnApi;
-
-  return { configure, recordsQuery, typed: new TypedEnbox(dwn, EncryptedProtocol) };
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -219,58 +154,11 @@ describe('TypedProtocol API', () => {
       expect(typed.definition).toBe(TodoProtocolDefinition);
     });
 
-    it('should not configure or cache readiness when protocol queries fail', async () => {
-      const configure = sinon.stub().resolves({
-        status: { code: 202, detail: 'Accepted' },
-      });
-      const query = sinon.stub().resolves({
-        protocols : [],
-        status    : { code: 503, detail: 'Service Unavailable' },
-      });
-      const dwn = {
-        isDelegate : false,
-        protocols  : {
-          configure,
-          query,
-        },
-      } as unknown as DwnApi;
-      const typed = new TypedEnbox(dwn, TodoProtocol);
-
-      await expect(typed.configure()).rejects.toThrow(
-        'TypedEnbox.configure protocol query failed (503): Service Unavailable',
-      );
-      await expect(typed.records.query('list')).rejects.toThrow(
-        'TypedEnbox automatic protocol query failed (503): Service Unavailable',
-      );
-      expect(configure.notCalled).toBe(true);
-      expect(query.calledTwice).toBe(true);
-      expect(typed.isConfigured).toBe(false);
-    });
-
     it('should return the same records object on repeated access', () => {
       const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const records1 = typed.records;
       const records2 = typed.records;
       expect(records1).toBe(records2);
-    });
-
-    it('should explicitly repair a policy-equal encrypted install with incomplete key coverage', async () => {
-      const { configure, typed } = incompleteEncryptionFixture();
-
-      const result = await typed.configure();
-
-      expect(result.status.code).toBe(202);
-      expect(configure.calledOnceWith({ definition: EncryptedProtocolDefinition })).toBe(true);
-    });
-
-    it('should repair incomplete encryption keys before the first automatic record operation', async () => {
-      const { configure, recordsQuery, typed } = incompleteEncryptionFixture();
-
-      const page = await typed.records.query('note');
-
-      expect(page.records).toEqual([]);
-      expect(configure.calledOnceWith({ definition: EncryptedProtocolDefinition })).toBe(true);
-      expect(recordsQuery.calledOnce).toBe(true);
     });
 
     it('should import the wallet-owned protocol configuration when configuring as a delegate', async () => {
@@ -286,8 +174,7 @@ describe('TypedProtocol API', () => {
         toJSON     : (): typeof protocolsConfigureMessage => protocolsConfigureMessage,
       };
       const query = sinon.stub();
-      query.onFirstCall().resolves({ status: { code: 200, detail: 'OK' }, protocols: [] });
-      query.onSecondCall().resolves({ status: { code: 200, detail: 'OK' }, protocols: [remoteProtocol] });
+      query.resolves({ status: { code: 200, detail: 'OK' }, protocols: [remoteProtocol] });
       const importProtocolConfiguration = sinon.stub().resolves({
         status   : { code: 202, detail: 'Accepted' },
         protocol : remoteProtocol,
@@ -305,10 +192,12 @@ describe('TypedProtocol API', () => {
 
       expect(result.status.code).toBe(202);
       expect(importProtocolConfiguration.calledOnceWith(protocolsConfigureMessage)).toBe(true);
-      expect(query.secondCall.args[0]).toEqual({
-        from   : aliceDid.uri,
-        filter : { protocol: TodoProtocolDefinition.protocol },
+      expect(query.firstCall.args[0]).toEqual({
+        filter              : { protocol: TodoProtocolDefinition.protocol },
+        from                : aliceDid.uri,
+        remoteEndpointsOnly : true,
       });
+      expect(query.secondCall.args[0]).toEqual({ filter: { protocol: TodoProtocolDefinition.protocol } });
     });
 
     it('should import a signed wallet protocol configuration through Protocol.toJSON()', async () => {

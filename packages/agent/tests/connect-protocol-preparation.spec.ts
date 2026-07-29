@@ -7,12 +7,10 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import {
-  ensureOwnerProtocolReady,
   getProtocolSetupStatus,
   hasEncryptedProtocolTypes,
   prepareProtocol,
   protocolDefinitionsMatch,
-  ProtocolPreparationError,
 } from '../src/connect-protocol-preparation.js';
 
 /** The signed local ProtocolsQuery message reused for remote verification. */
@@ -104,28 +102,18 @@ function stubAgent(options: StubAgentOptions = {}): {
     [JSON.stringify([KeyDerivationScheme.ProtocolPath, encryptedProtocol.protocol, 'mint', 'proof']), 'proof-key'],
   ]);
 
-  let installed = options.installed;
-  const processDwnRequest = sinon.stub().callsFake(async (request: {
-    messageParams?: { definition?: DwnProtocolDefinition };
-    messageType: string;
-  }) => {
-    if (request.messageType === DwnInterface.ProtocolsConfigure) {
-      const status = options.configureStatus ?? { code: 202, detail: 'Accepted' };
-      if (status.code >= 200 && status.code < 300 && request.messageParams?.definition !== undefined) {
-        installed = request.messageParams.definition;
-      }
-      return {
+  const processDwnRequest = sinon.stub().callsFake(async (request: { messageType: string }) =>
+    request.messageType === DwnInterface.ProtocolsConfigure
+      ? {
         messageCid : '',
-        reply      : { status },
+        reply      : { status: options.configureStatus ?? { code: 202, detail: 'Accepted' } },
         message    : signedProtocolConfigure,
-      };
-    }
-    return {
-      messageCid : '',
-      reply      : protocolQueryReply(installed),
-      message    : signedProtocolQuery,
-    };
-  });
+      }
+      : {
+        messageCid : '',
+        reply      : protocolQueryReply(options.installed),
+        message    : signedProtocolQuery,
+      });
 
   const queriesSeen = new Map<string, number>();
   const sendDwnRequest = sinon.stub().callsFake(async (request: { dwnUrl: string; message: unknown }) => {
@@ -142,7 +130,6 @@ function stubAgent(options: StubAgentOptions = {}): {
     rpc : { sendDwnRequest },
     dwn : {
       getDwnEndpointUrlsForTarget : sinon.stub().resolves(options.endpoints ?? []),
-      getRemoteDwnEndpointUrls    : sinon.stub().resolves(options.endpoints ?? []),
       getEncryptionKeyDeriver     : sinon.stub().resolves({
         rootKeyId        : 'urn:test:owner-root',
         derivationScheme : KeyDerivationScheme.ProtocolPath,
@@ -343,21 +330,8 @@ describe('connect protocol preparation', () => {
       const { agent, sendDwnRequest } = stubAgent({ endpoints: ['https://dwn-a.example/', 'https://dwn-b.example/'] });
       sendDwnRequest.rejects(new Error('connection refused'));
 
-      let failure: unknown;
-      try {
-        await prepareProtocol('did:example:owner', agent, notesProtocol);
-      } catch (error: unknown) {
-        failure = error;
-      }
-
-      expect(failure).toBeInstanceOf(ProtocolPreparationError);
-      expect(failure).toMatchObject({
-        endpointFailures: [
-          { detail: 'connection refused', endpoint: 'https://dwn-a.example/' },
-          { detail: 'connection refused', endpoint: 'https://dwn-b.example/' },
-        ],
-        stage: 'remote-query',
-      });
+      await expect(prepareProtocol('did:example:owner', agent, notesProtocol))
+        .rejects.toThrow('Could not verify the protocol definition');
     });
 
     it('should fail closed when endpoints do not converge after the configure fan-out', async () => {
@@ -384,147 +358,8 @@ describe('connect protocol preparation', () => {
     it('should throw when the local configure is rejected', async () => {
       const { agent } = stubAgent({ configureStatus: { code: 400, detail: 'Invalid definition' } });
 
-      await expect(prepareProtocol('did:example:owner', agent, notesProtocol)).rejects.toMatchObject({
-        message : 'Could not configure protocol locally: Invalid definition',
-        stage   : 'local-configure',
-        status  : { code: 400, detail: 'Invalid definition' },
-      });
-    });
-  });
-
-  describe('ensureOwnerProtocolReady', () => {
-    it('should preserve cancellation that lands during a locally-current fast path', async () => {
-      const controller = new AbortController();
-      const cancellation = new Error('session ended');
-      const { agent, processDwnRequest } = stubAgent({ installed: notesProtocol });
-      processDwnRequest.callsFake(async () => {
-        controller.abort(cancellation);
-        return {
-          messageCid : '',
-          message    : signedProtocolQuery,
-          reply      : protocolQueryReply(notesProtocol),
-        };
-      });
-
-      await expect(ensureOwnerProtocolReady({
-        agent,
-        ownerDid           : 'did:example:owner',
-        protocolDefinition : notesProtocol,
-        publication        : 'local-only',
-        signal             : controller.signal,
-      })).rejects.toBe(cancellation);
-
-      expect(processDwnRequest.calledOnce).toBe(true);
-    });
-
-    it('should not configure when cancellation lands during a missing-protocol query', async () => {
-      const controller = new AbortController();
-      const cancellation = new Error('session ended');
-      const { agent, processDwnRequest } = stubAgent();
-      processDwnRequest.callsFake(async () => {
-        controller.abort(cancellation);
-        return {
-          messageCid : '',
-          message    : signedProtocolQuery,
-          reply      : protocolQueryReply(),
-        };
-      });
-
-      await expect(ensureOwnerProtocolReady({
-        agent,
-        ownerDid           : 'did:example:owner',
-        protocolDefinition : notesProtocol,
-        publication        : 'local-only',
-        signal             : controller.signal,
-      })).rejects.toBe(cancellation);
-
-      expect(processDwnRequest.calledOnce).toBe(true);
-      expect(configureCalls(processDwnRequest)).toHaveLength(0);
-    });
-
-    it('should reject a missing runtime publication policy before querying local state', async () => {
-      const { agent, processDwnRequest } = stubAgent();
-
-      await expect(ensureOwnerProtocolReady({
-        agent,
-        ownerDid           : 'did:example:owner',
-        protocolDefinition : notesProtocol,
-        publication        : undefined as never,
-      })).rejects.toThrow('publication must be either \'local-only\' or \'required\'');
-
-      expect(processDwnRequest.called).toBe(false);
-    });
-
-    it('should update a drifted local definition in explicit local-only mode', async () => {
-      const olderDefinition = {
-        ...notesProtocol,
-        types: { note: { schema: 'old-note' } },
-      } as DwnProtocolDefinition;
-      const { agent, processDwnRequest, sendDwnRequest } = stubAgent({ installed: olderDefinition });
-
-      await ensureOwnerProtocolReady({
-        agent,
-        ownerDid           : 'did:example:owner',
-        protocolDefinition : notesProtocol,
-        publication        : 'local-only',
-      });
-
-      expect(configureCalls(processDwnRequest)).toHaveLength(1);
-      expect(sendDwnRequest.callCount).toBe(0);
-    });
-
-    it('should fail with a structured endpoint-resolution error when publication has no remote target', async () => {
-      const { agent, processDwnRequest } = stubAgent();
-
-      let failure: unknown;
-      try {
-        await ensureOwnerProtocolReady({
-          agent,
-          ownerDid           : 'did:example:owner',
-          protocolDefinition : notesProtocol,
-          publication        : 'required',
-        });
-      } catch (error: unknown) {
-        failure = error;
-      }
-
-      expect(failure).toBeInstanceOf(ProtocolPreparationError);
-      expect(failure).toMatchObject({
-        protocol  : notesProtocol.protocol,
-        stage     : 'endpoint-resolution',
-        targetDid : 'did:example:owner',
-      });
-      expect(configureCalls(processDwnRequest)).toHaveLength(0);
-    });
-
-    it('should keep rejecting caller-supplied wallet encryption metadata', async () => {
-      const requestedWithKeys = {
-        ...notesProtocol,
-        $keyAgreement: { publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'caller-key' } },
-      } as DwnProtocolDefinition;
-      const { agent } = stubAgent();
-
-      await expect(ensureOwnerProtocolReady({
-        agent,
-        ownerDid           : 'did:example:owner',
-        protocolDefinition : requestedWithKeys,
-        publication        : 'local-only',
-      })).rejects.toThrow('contains wallet-managed encryption keys');
-    });
-
-    it('should accept any successful 2xx local configure response', async () => {
-      const { agent, processDwnRequest } = stubAgent({
-        configureStatus: { code: 204, detail: 'No Content' },
-      });
-
-      await ensureOwnerProtocolReady({
-        agent,
-        ownerDid           : 'did:example:owner',
-        protocolDefinition : notesProtocol,
-        publication        : 'local-only',
-      });
-
-      expect(configureCalls(processDwnRequest)).toHaveLength(1);
+      await expect(prepareProtocol('did:example:owner', agent, notesProtocol))
+        .rejects.toThrow('Could not configure protocol locally: Invalid definition');
     });
   });
 });
@@ -732,15 +567,8 @@ describe('connect protocol preparation — composed protocols', () => {
     // The dependency is missing locally too, so it cannot be propagated —
     // the error must carry BOTH the local-dependency reason (first wins)
     // and identify the failing endpoint.
-    const preparation = prepareProtocol('did:example:owner', agent, composedProtocol);
-    await expect(preparation)
+    await expect(prepareProtocol('did:example:owner', agent, composedProtocol))
       .rejects.toThrow(/dwn-a\.example.*uses dependency '.*membership' is not installed locally/);
-    await expect(preparation).rejects.toMatchObject({
-      endpointFailures: [{
-        endpoint : 'https://dwn-a.example/',
-        status   : { code: 400 },
-      }],
-    });
   });
 
   it('should surface a configure rejection when dependencies are satisfied', async () => {

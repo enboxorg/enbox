@@ -14,29 +14,16 @@ bun add @enbox/cli
 ## Usage
 
 ```ts
-import {
-  CliConnectHandler,
-  Enbox,
-  defineApplicationManifest,
-  getApplicationProtocolRequests,
-} from '@enbox/cli';
-
-const application = defineApplicationManifest({ protocols: [NotesProtocol] });
+import { CliConnectHandler, Enbox } from '@enbox/cli';
 
 const { enbox, session } = await Enbox.connect({
   connectHandler: CliConnectHandler({
     appName          : 'Notes CLI',
     connectServerUrl : 'https://your-dwn.example/connect',
   }),
-  protocols: getApplicationProtocolRequests(application),
+  protocols: [NotesProtocol],
 });
-
-await enbox.protocols.ensureReady({ application, publication: 'required' });
 ```
-
-Await readiness before running protocol-backed commands. Owner sessions
-publish the exact local protocol artifact; delegated sessions verify and
-import the wallet-owned artifact without publishing it.
 
 The handler uses the existing encrypted relay flow:
 

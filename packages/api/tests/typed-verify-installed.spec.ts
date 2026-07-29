@@ -268,6 +268,10 @@ describe('TypedEnbox.verifyInstalled()', () => {
       // Root and `secret` carry keys; the uncovered path is `note`.
       expect(result.missingKeyAgreementPaths).toEqual(['note']);
       expect(result.reason).toContain('$keyAgreement');
+
+      const repaired = await typed.configure();
+      expect(repaired.status.code).toBe(202);
+      expect((await typed.verifyInstalled()).status).toBe('up-to-date');
     });
 
     it('should not change configure() auto-configure state (read-only)', async () => {
@@ -297,6 +301,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
       // The wallet's definition is fetched from the OWNER tenant, remotely.
       expect(fake.queryRequests).toHaveLength(1);
       expect(fake.queryRequests[0].from).toBe('did:example:owner');
+      expect(fake.queryRequests[0].remoteEndpointsOnly).toBe(true);
       expect(fake.importCalls).toBe(0);
     });
 

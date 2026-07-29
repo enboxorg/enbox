@@ -1,10 +1,7 @@
-import type { DwnApi } from '../src/dwn-api.js';
-import type { Protocol } from '../src/protocol.js';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordCodecMap } from '../src/record-codec.js';
-import type { TypedProtocol } from '../src/protocol-types.js';
+import type { TypedEnbox } from '../src/typed-enbox.js';
 import type { DwnMessage, EnboxPlatformAgent } from '@enbox/agent';
-import type { TypedEnbox, VerifyInstalledResult } from '../src/typed-enbox.js';
 
 import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
@@ -15,504 +12,187 @@ import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { recordCodecs } from '../src/record-codec.js';
-import { WalletReapprovalRequiredError } from '../src/typed-enbox.js';
-import { ProtocolReadinessApi, ProtocolReadinessError } from '../src/protocol-readiness.js';
+import { createProtocolReadinessApi, ProtocolReadinessError } from '../src/protocol-readiness.js';
 
 const OWNER_DID = 'did:example:owner';
 const DELEGATE_DID = 'did:example:delegate';
+const TARGET_DID = 'did:example:target';
 
 const NotesDefinition = {
   protocol  : 'https://example.com/protocols/readiness-notes',
   published : true,
-  types     : {
-    note: { schema: 'https://example.com/schemas/readiness-note', dataFormats: ['application/json'] },
-  },
-  structure: { note: {} },
+  types     : { note: { dataFormats: ['application/json'] } },
+  structure : { note: {} },
 } as const satisfies ProtocolDefinition;
 
 const NotesProtocol = defineProtocol(NotesDefinition, {
   note: recordCodecs.json<{ text: string }>(),
 });
+const Application = defineApplicationManifest({ protocols: [NotesProtocol] });
 
-type TypedStub = {
-  configure: sinon.SinonStub;
-  definition: ProtocolDefinition;
-  markConfiguredFromReadiness: sinon.SinonStub;
-  protocol: string;
-  verifyInstalled: sinon.SinonStub;
+type ConfigureMessage = DwnMessage[DwnInterface.ProtocolsConfigure];
+type AgentRequest = {
+  author: string;
+  messageParams?: {
+    definition?: ProtocolDefinition;
+    filter?: { protocol?: string };
+  };
+  messageType: DwnInterface;
+  rawMessage?: ConfigureMessage;
+  remoteEndpointsOnly?: boolean;
+  store?: boolean;
+  target: string;
 };
 
-function createTypedStub(
-  protocol: TypedProtocol,
-  verification: VerifyInstalledResult = upToDateVerification(),
-): TypedStub {
-  return {
-    configure                   : sinon.stub().resolves({ status: { code: 200, detail: 'OK' } }),
-    definition                  : protocol.definition,
-    markConfiguredFromReadiness : sinon.stub(),
-    protocol                    : protocol.definition.protocol,
-    verifyInstalled             : sinon.stub().resolves(verification),
-  };
-}
-
-function upToDateVerification(protocol?: Protocol): VerifyInstalledResult {
-  return {
-    definitionsMatch         : true,
-    installed                : true,
-    missingKeyAgreementPaths : [],
-    protocol,
-    status                   : 'up-to-date',
-  };
-}
-
-function createReadinessApi(options: {
-  agent?: EnboxPlatformAgent;
-  delegateDid?: string;
-  dwn?: DwnApi;
-  signal?: AbortSignal;
-  typed: Map<string, TypedStub>;
-}): ProtocolReadinessApi {
-  const using = <D extends ProtocolDefinition, C extends RecordCodecMap>(
-    protocol: TypedProtocol<D, C>,
-  ): TypedEnbox<D, C> => options.typed.get(protocol.definition.protocol) as unknown as TypedEnbox<D, C>;
-
-  return new ProtocolReadinessApi({
-    agent        : options.agent ?? createUnusedAgent(),
-    connectedDid : OWNER_DID,
-    delegateDid  : options.delegateDid,
-    dwn          : options.dwn ?? {} as DwnApi,
-    signal       : options.signal ?? new AbortController().signal,
-    using,
-  });
-}
-
-function createUnusedAgent(): EnboxPlatformAgent {
-  return {
-    processDwnRequest : sinon.stub().rejects(new Error('owner path must not run')),
-    rpc               : { sendDwnRequest: sinon.stub().rejects(new Error('remote publish must not run')) },
-  } as unknown as EnboxPlatformAgent;
-}
-
-function createOwnerAgent(initial: Record<string, ProtocolDefinition> = {}): {
-  agent: EnboxPlatformAgent;
-  getRemoteDwnEndpointUrls: sinon.SinonStub;
-  processDwnRequest: sinon.SinonStub;
-  sendDwnRequest: sinon.SinonStub;
-} {
-  const installed = new Map(Object.entries(initial));
-  const processDwnRequest = sinon.stub().callsFake(async (request: {
-    messageParams: { definition?: ProtocolDefinition; filter?: { protocol?: string } };
-    messageType: DwnInterface;
-  }) => {
-    if (request.messageType === DwnInterface.ProtocolsConfigure) {
-      const definition = request.messageParams.definition!;
-      installed.set(definition.protocol, definition);
-      return {
-        messageCid : 'configure-cid',
-        message    : protocolMessage(definition),
-        reply      : { status: { code: 202, detail: 'Accepted' } },
-      };
-    }
-
-    const protocol = request.messageParams.filter?.protocol;
-    const definition = protocol === undefined ? undefined : installed.get(protocol);
-    return {
-      messageCid : 'query-cid',
-      message    : { descriptor: { interface: 'Protocols', method: 'Query' } },
-      reply      : {
-        entries : definition === undefined ? [] : [protocolMessage(definition)],
-        status  : { code: 200, detail: 'OK' },
-      },
-    };
-  });
-  const getRemoteDwnEndpointUrls = sinon.stub().resolves([]);
-  const sendDwnRequest = sinon.stub();
-  const agent = {
-    dwn: {
-      getEncryptionKeyDeriver: sinon.stub().rejects(new Error('plain protocol has no encryption keys')),
-      getRemoteDwnEndpointUrls,
-    },
-    processDwnRequest,
-    rpc: { sendDwnRequest },
-  } as unknown as EnboxPlatformAgent;
-  return { agent, getRemoteDwnEndpointUrls, processDwnRequest, sendDwnRequest };
-}
-
-function protocolMessage(definition: ProtocolDefinition): DwnMessage[DwnInterface.ProtocolsConfigure] {
+function messageFor(definition: ProtocolDefinition): ConfigureMessage {
   return {
     authorization : { signature: 'owner-signature' },
     descriptor    : {
       definition,
       interface        : 'Protocols',
-      messageTimestamp : '2026-07-28T00:00:00.000000Z',
+      messageTimestamp : '2026-07-29T00:00:00.000000Z',
       method           : 'Configure',
     },
-  } as unknown as DwnMessage[DwnInterface.ProtocolsConfigure];
+  } as unknown as ConfigureMessage;
 }
 
-describe('ProtocolReadinessApi', () => {
-  it('preserves cancellation after delegate verification and before local import', async () => {
-    const controller = new AbortController();
-    const cancellation = new Error('session ended');
-    const walletMessage = protocolMessage(NotesDefinition);
-    const remoteProtocol = {
-      toJSON: (): DwnMessage[DwnInterface.ProtocolsConfigure] => walletMessage,
-    } as unknown as Protocol;
-    const typed = createTypedStub(NotesProtocol, upToDateVerification(remoteProtocol));
-    typed.verifyInstalled.callsFake(async () => {
-      controller.abort(cancellation);
-      return upToDateVerification(remoteProtocol);
-    });
-    const importProtocolConfiguration = sinon.stub();
-    const api = createReadinessApi({
-      delegateDid : DELEGATE_DID,
-      dwn         : { importProtocolConfiguration } as unknown as DwnApi,
-      signal      : controller.signal,
-      typed       : new Map([[NotesDefinition.protocol, typed]]),
-    });
+function hostedKey(target: string, protocol: string): string {
+  return `${target}\u0000${protocol}`;
+}
 
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'required',
-    })).rejects.toBe(cancellation);
+function callsFor(stub: sinon.SinonStub, messageType: DwnInterface): sinon.SinonSpyCall[] {
+  return stub.getCalls().filter((call): boolean => (
+    (call.args[0] as AgentRequest).messageType === messageType
+  ));
+}
 
-    expect(importProtocolConfiguration.called).toBe(false);
-  });
-
-  it('does not seed delegate readiness when cancellation lands during local verification', async () => {
-    const controller = new AbortController();
-    const cancellation = new Error('session ended');
-    const walletMessage = protocolMessage(NotesDefinition);
-    const remoteProtocol = {
-      toJSON: (): DwnMessage[DwnInterface.ProtocolsConfigure] => walletMessage,
-    } as unknown as Protocol;
-    const typed = createTypedStub(NotesProtocol, upToDateVerification(remoteProtocol));
-    const query = sinon.stub().callsFake(async () => {
-      controller.abort(cancellation);
+function createFixture(options: {
+  delegateDid?: string;
+  publishStatus?: { code: number; detail: string };
+  retainPublishedDefinition?: boolean;
+} = {}): {
+  api: ReturnType<typeof createProtocolReadinessApi>;
+  configure: sinon.SinonStub;
+  hosted: Map<string, ProtocolDefinition>;
+  processDwnRequest: sinon.SinonStub;
+  sendDwnRequest: sinon.SinonStub;
+} {
+  const hosted = new Map<string, ProtocolDefinition>();
+  const processDwnRequest = sinon.stub().callsFake(async (request: AgentRequest): Promise<unknown> => ({
+    message : messageFor(request.messageParams!.definition!),
+    reply   : { status: { code: 202, detail: 'Accepted' } },
+  }));
+  const sendDwnRequest = sinon.stub().callsFake(async (request: AgentRequest): Promise<unknown> => {
+    if (request.messageType === DwnInterface.ProtocolsQuery) {
+      const protocol = request.messageParams!.filter!.protocol!;
+      const definition = hosted.get(hostedKey(request.target, protocol));
       return {
-        protocols : [remoteProtocol],
-        status    : { code: 200, detail: 'OK' },
-      };
-    });
-    const api = createReadinessApi({
-      delegateDid : DELEGATE_DID,
-      dwn         : {
-        importProtocolConfiguration: sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } }),
-        get protocols(): { query: typeof query } { return { query }; },
-      } as unknown as DwnApi,
-      signal : controller.signal,
-      typed  : new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'required',
-    })).rejects.toBe(cancellation);
-
-    expect(typed.configure.called).toBe(false);
-    expect(typed.markConfiguredFromReadiness.called).toBe(false);
-  });
-
-  it('rejects a missing runtime publication policy before doing readiness work', async () => {
-    const owner = createOwnerAgent();
-    const typed = createTypedStub(NotesProtocol);
-    const api = createReadinessApi({
-      agent : owner.agent,
-      typed : new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : undefined as never,
-    })).rejects.toThrow('publication must be either \'local-only\' or \'required\'');
-
-    expect(owner.processDwnRequest.called).toBe(false);
-    expect(typed.configure.called).toBe(false);
-    expect(typed.markConfiguredFromReadiness.called).toBe(false);
-  });
-
-  it('configures owner protocols without resolving or publishing in explicit local-only mode', async () => {
-    const owner = createOwnerAgent();
-    const typed = createTypedStub(NotesProtocol);
-    const api = createReadinessApi({
-      agent : owner.agent,
-      typed : new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    await api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'local-only',
-    });
-
-    expect(owner.getRemoteDwnEndpointUrls.called).toBe(false);
-    expect(owner.sendDwnRequest.called).toBe(false);
-    expect(owner.processDwnRequest.getCalls().filter(
-      (call) => call.args[0].messageType === DwnInterface.ProtocolsConfigure,
-    )).toHaveLength(1);
-    expect(typed.configure.called).toBe(false);
-    expect(typed.markConfiguredFromReadiness.calledOnce).toBe(true);
-  });
-
-  it('surfaces required publication without advertised endpoints as a typed actionable error', async () => {
-    const owner = createOwnerAgent();
-    const typed = createTypedStub(NotesProtocol);
-    const api = createReadinessApi({
-      agent : owner.agent,
-      typed : new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    let failure: unknown;
-    try {
-      await api.ensureReady({
-        application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-        publication : 'required',
-        targetDid   : 'did:example:hosted-owner',
-      });
-    } catch (error: unknown) {
-      failure = error;
-    }
-
-    expect(failure).toBeInstanceOf(ProtocolReadinessError);
-    expect(failure).toMatchObject({
-      protocol  : NotesDefinition.protocol,
-      recovery  : 'retry',
-      stage     : 'endpoint-resolution',
-      targetDid : 'did:example:hosted-owner',
-    });
-  });
-
-  it('retains a rejected owner local configure status', async () => {
-    const owner = createOwnerAgent();
-    owner.processDwnRequest.onSecondCall().resolves({
-      message : protocolMessage(NotesDefinition),
-      reply   : { status: { code: 400, detail: 'invalid definition', errorCode: 'InvalidProtocol' } },
-    });
-    const typed = createTypedStub(NotesProtocol);
-    const api = createReadinessApi({
-      agent : owner.agent,
-      typed : new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'local-only',
-    })).rejects.toMatchObject({
-      stage  : 'local-configure',
-      status : { code: 400, detail: 'invalid definition', errorCode: 'InvalidProtocol' },
-    });
-  });
-
-  it('orders manifest protocols by in-manifest uses dependencies', async () => {
-    const DependencyDefinition = {
-      ...NotesDefinition,
-      protocol: 'https://example.com/protocols/readiness-membership',
-    } as const satisfies ProtocolDefinition;
-    const DependencyProtocol = defineProtocol(DependencyDefinition, NotesProtocol.codecs);
-    const BoardDefinition = {
-      ...NotesDefinition,
-      protocol : 'https://example.com/protocols/readiness-board',
-      uses     : { membership: DependencyDefinition.protocol },
-    } as const satisfies ProtocolDefinition;
-    const BoardProtocol = defineProtocol(BoardDefinition, NotesProtocol.codecs);
-    const owner = createOwnerAgent();
-    const configureOrder: string[] = [];
-    owner.processDwnRequest.callsFake(async (request: {
-      messageParams: { definition?: ProtocolDefinition; filter?: { protocol?: string } };
-      messageType: DwnInterface;
-    }) => {
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        configureOrder.push(request.messageParams.definition!.protocol);
-        return {
-          messageCid : 'configure-cid',
-          message    : protocolMessage(request.messageParams.definition!),
-          reply      : { status: { code: 202, detail: 'Accepted' } },
-        };
-      }
-      const configured = configureOrder.includes(request.messageParams.filter?.protocol ?? '');
-      const definition = request.messageParams.filter?.protocol === DependencyDefinition.protocol
-        ? DependencyDefinition
-        : BoardDefinition;
-      return {
-        messageCid : 'query-cid',
-        message    : { descriptor: { interface: 'Protocols', method: 'Query' } },
-        reply      : {
-          entries : configured ? [protocolMessage(definition)] : [],
+        reply: {
+          entries : definition === undefined ? [] : [messageFor(definition)],
           status  : { code: 200, detail: 'OK' },
         },
       };
-    });
-    const api = createReadinessApi({
-      agent : owner.agent,
-      typed : new Map([
-        [DependencyDefinition.protocol, createTypedStub(DependencyProtocol)],
-        [BoardDefinition.protocol, createTypedStub(BoardProtocol)],
-      ]),
-    });
+    }
 
-    await api.ensureReady({
-      application : defineApplicationManifest({ protocols: [BoardProtocol, DependencyProtocol] }),
-      publication : 'local-only',
-    });
-
-    expect(configureOrder).toEqual([DependencyDefinition.protocol, BoardDefinition.protocol]);
+    const definition = request.rawMessage!.descriptor.definition;
+    const key = hostedKey(request.target, definition.protocol);
+    const status = options.publishStatus ?? (hosted.has(key)
+      ? { code: 409, detail: 'Conflict' }
+      : { code: 202, detail: 'Accepted' });
+    if (options.retainPublishedDefinition !== false && (status.code < 300 || status.code === 409)) {
+      hosted.set(key, definition);
+    }
+    return { reply: { status } };
+  });
+  const agent = { processDwnRequest, sendDwnRequest } as unknown as EnboxPlatformAgent;
+  const localMessage = messageFor(NotesDefinition);
+  const configure = sinon.stub().resolves({
+    protocol: {
+      definition : NotesDefinition,
+      toJSON     : (): ConfigureMessage => localMessage,
+    },
+    status: { code: 200, detail: 'OK' },
+  });
+  const typed = {
+    configure,
+    definition : NotesDefinition,
+    protocol   : NotesDefinition.protocol,
+  };
+  const api = createProtocolReadinessApi({
+    agent,
+    connectedDid : OWNER_DID,
+    delegateDid  : options.delegateDid,
+    using        : <D extends ProtocolDefinition, C extends RecordCodecMap>(): TypedEnbox<D, C> => (
+      typed as unknown as TypedEnbox<D, C>
+    ),
   });
 
-  it('imports and verifies the exact wallet-owned message for delegates without publishing', async () => {
-    const walletMessage = protocolMessage(NotesDefinition);
-    const remoteProtocol = { toJSON: (): DwnMessage[DwnInterface.ProtocolsConfigure] => walletMessage };
-    const importProtocolConfiguration = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-    const query = sinon.stub().resolves({
-      protocols : [remoteProtocol],
-      status    : { code: 200, detail: 'OK' },
-    });
-    const typed = createTypedStub(
-      NotesProtocol,
-      upToDateVerification(remoteProtocol as unknown as Protocol),
-    );
-    const agent = createUnusedAgent();
-    const api = createReadinessApi({
-      agent,
-      delegateDid : DELEGATE_DID,
-      dwn         : {
-        importProtocolConfiguration,
-        get protocols(): { query: typeof query } { return { query }; },
-      } as unknown as DwnApi,
-      typed: new Map([[NotesDefinition.protocol, typed]]),
-    });
+  return { api, configure, hosted, processDwnRequest, sendDwnRequest };
+}
 
-    await api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'required',
-    });
+describe('ProtocolReadinessApi', () => {
+  it('should install, publish, verify, and accept an idempotent rerun', async () => {
+    const fixture = createFixture();
 
-    expect(importProtocolConfiguration.calledOnceWith(walletMessage)).toBe(true);
-    expect((agent.processDwnRequest as sinon.SinonStub).called).toBe(false);
-    expect((agent.rpc.sendDwnRequest as sinon.SinonStub).called).toBe(false);
-    expect(typed.configure.called).toBe(false);
-    expect(typed.markConfiguredFromReadiness.calledOnce).toBe(true);
+    await fixture.api.ensureReady({ application: Application });
+    await fixture.api.ensureReady({ application: Application });
+
+    expect(fixture.configure.callCount).toBe(2);
+    expect(callsFor(fixture.sendDwnRequest, DwnInterface.ProtocolsConfigure)).toHaveLength(2);
+    expect(callsFor(fixture.sendDwnRequest, DwnInterface.ProtocolsQuery)).toHaveLength(2);
+    for (const call of fixture.sendDwnRequest.getCalls()) {
+      expect(call.args[0].remoteEndpointsOnly).toBe(true);
+    }
   });
 
-  it('preserves WalletReapprovalRequiredError identity for stale delegate configurations', async () => {
-    const reapproval = new WalletReapprovalRequiredError(NotesDefinition.protocol, 'is stale.');
-    const typed = createTypedStub(NotesProtocol, {
-      definitionsMatch         : false,
-      error                    : reapproval,
-      installed                : true,
-      missingKeyAgreementPaths : [],
-      reason                   : 'stale',
-      status                   : 'wallet-reapproval-required',
-    });
-    const api = createReadinessApi({
-      delegateDid : DELEGATE_DID,
-      typed       : new Map([[NotesDefinition.protocol, typed]]),
-    });
+  it('should expose publication failures with their status and cause', async () => {
+    const fixture = createFixture({ publishStatus: { code: 503, detail: 'Unavailable' } });
+    const failure = await fixture.api.ensureReady({ application: Application })
+      .catch((error: unknown): unknown => error);
 
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'required',
-    })).rejects.toBe(reapproval);
-  });
-
-  it('retains remote query status and recommends retry for a temporary delegate failure', async () => {
-    const typed = createTypedStub(NotesProtocol);
-    typed.verifyInstalled.rejects(new DwnResponseError(
-      'wallet protocol query',
-      { code: 503, detail: 'temporarily unavailable', info: { retryAfter: 1 } },
-    ));
-    const api = createReadinessApi({
-      delegateDid : DELEGATE_DID,
-      typed       : new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'required',
-    })).rejects.toMatchObject({
-      recovery : 'retry',
-      stage    : 'remote-query',
-      status   : { code: 503, detail: 'temporarily unavailable', info: { retryAfter: 1 } },
-    });
-  });
-
-  it('wraps delegate import exceptions as local-import readiness failures', async () => {
-    const walletMessage = protocolMessage(NotesDefinition);
-    const remoteProtocol = {
-      toJSON: (): DwnMessage[DwnInterface.ProtocolsConfigure] => walletMessage,
-    } as unknown as Protocol;
-    const typed = createTypedStub(NotesProtocol, upToDateVerification(remoteProtocol));
-    const api = createReadinessApi({
-      delegateDid : DELEGATE_DID,
-      dwn         : {
-        importProtocolConfiguration: sinon.stub().rejects(new Error('local DWN unavailable')),
-      } as unknown as DwnApi,
-      typed: new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'required',
-    })).rejects.toMatchObject({
-      protocol : NotesDefinition.protocol,
-      recovery : 'retry',
-      stage    : 'local-import',
-    });
-  });
-
-  it('wraps delegate local verification exceptions as typed readiness failures', async () => {
-    const walletMessage = protocolMessage(NotesDefinition);
-    const remoteProtocol = {
-      toJSON: (): DwnMessage[DwnInterface.ProtocolsConfigure] => walletMessage,
-    } as unknown as Protocol;
-    const typed = createTypedStub(NotesProtocol, upToDateVerification(remoteProtocol));
-    const query = sinon.stub().rejects(new Error('local query unavailable'));
-    const api = createReadinessApi({
-      delegateDid : DELEGATE_DID,
-      dwn         : {
-        importProtocolConfiguration: sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } }),
-        get protocols(): { query: typeof query } { return { query }; },
-      } as unknown as DwnApi,
-      typed: new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'local-only',
-    })).rejects.toMatchObject({
-      protocol : NotesDefinition.protocol,
-      recovery : 'retry',
-      stage    : 'local-verify',
-    });
-  });
-
-  it('fails delegate readiness when the local import does not retain the wallet artifact', async () => {
-    const walletMessage = protocolMessage(NotesDefinition);
-    const otherMessage = protocolMessage({ ...NotesDefinition, published: false });
-    const remoteProtocol = {
-      toJSON: (): DwnMessage[DwnInterface.ProtocolsConfigure] => walletMessage,
-    } as unknown as Protocol;
-    const query = sinon.stub().resolves({
-      protocols : [{ toJSON: (): DwnMessage[DwnInterface.ProtocolsConfigure] => otherMessage }],
-      status    : { code: 200, detail: 'OK' },
-    });
-    const typed = createTypedStub(NotesProtocol, upToDateVerification(remoteProtocol));
-    const api = createReadinessApi({
-      delegateDid : DELEGATE_DID,
-      dwn         : {
-        importProtocolConfiguration: sinon.stub().resolves({ status: { code: 409, detail: 'Conflict' } }),
-        get protocols(): { query: typeof query } { return { query }; },
-      } as unknown as DwnApi,
-      typed: new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'local-only',
-    })).rejects.toMatchObject({
+    expect(failure).toBeInstanceOf(ProtocolReadinessError);
+    expect(failure).toMatchObject({
+      operation : 'publish',
       protocol  : NotesDefinition.protocol,
-      recovery  : 'reconnect',
-      stage     : 'local-verify',
+      status    : { code: 503, detail: 'Unavailable' },
       targetDid : OWNER_DID,
     });
-    expect(typed.markConfiguredFromReadiness.called).toBe(false);
+    expect((failure as ProtocolReadinessError).cause).toBeInstanceOf(DwnResponseError);
+  });
+
+  it('should fail when an accepted publication is not active remotely', async () => {
+    const fixture = createFixture({ retainPublishedDefinition: false });
+
+    await expect(fixture.api.ensureReady({ application: Application })).rejects.toMatchObject({
+      operation : 'publish',
+      protocol  : NotesDefinition.protocol,
+      targetDid : OWNER_DID,
+    });
+  });
+
+  it('should configure delegates without publishing', async () => {
+    const fixture = createFixture({ delegateDid: DELEGATE_DID });
+
+    await fixture.api.ensureReady({ application: Application, targetDid: TARGET_DID });
+
+    expect(fixture.configure.calledOnce).toBe(true);
+    expect(fixture.processDwnRequest.called).toBe(false);
+    expect(fixture.sendDwnRequest.called).toBe(false);
+  });
+
+  it('should keep the local install and avoid storing an override target artifact', async () => {
+    const fixture = createFixture();
+
+    await fixture.api.ensureReady({ application: Application, targetDid: TARGET_DID });
+
+    expect(fixture.configure.calledOnce).toBe(true);
+    expect(fixture.processDwnRequest.calledOnce).toBe(true);
+    expect(fixture.processDwnRequest.firstCall.args[0]).toMatchObject({
+      author      : TARGET_DID,
+      messageType : DwnInterface.ProtocolsConfigure,
+      store       : false,
+      target      : TARGET_DID,
+    });
+    expect(fixture.hosted.get(hostedKey(TARGET_DID, NotesDefinition.protocol))).toEqual(NotesDefinition);
   });
 });

@@ -75,14 +75,11 @@ export class Protocol {
    * @returns A promise that resolves to an object containing the status of the send operation.
    */
   async send(target: string): Promise<DwnResponseStatus> {
-    const storedMessage = this._metadata.messageCid === undefined
-      ? { rawMessage: this._protocolsConfigureMessage }
-      : { messageCid: this._metadata.messageCid };
     const { reply } = await this._agent.sendDwnRequest({
       author      : this._metadata.author,
+      messageCid  : this._metadata.messageCid,
       messageType : DwnInterface.ProtocolsConfigure,
       target      : target,
-      ...storedMessage,
     });
 
     return { status: reply.status };

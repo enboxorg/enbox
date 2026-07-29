@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
-import { TypedEnbox } from '../src/typed-enbox.js';
+import { TypedEnbox, WalletReapprovalRequiredError } from '../src/typed-enbox.js';
 
 /**
  * Builds a TypedEnbox instance over a stubbed DwnApi so the private
- * delegate-protocol ensure path can be exercised without an agent.
+ * delegate configure path can be exercised without an agent.
  */
 function createDelegateTypedEnbox(queryResult: unknown): any {
   const typed: any = Object.create((TypedEnbox as any).prototype);
@@ -26,17 +26,39 @@ describe('TypedEnbox delegate protocol ensure', () => {
       protocols : [],
     });
 
-    await expect(typed._autoConfigureDelegateProtocol()).rejects.toThrow(
-      '401 GrantAuthorizationGrantRevoked'
-    );
+    await expect(typed.configure()).rejects.toMatchObject({
+      status: {
+        code   : 401,
+        detail : 'GrantAuthorizationGrantRevoked: grant has been revoked',
+      },
+    });
   });
 
-  it('should return undefined when the wallet has genuinely not installed the protocol', async () => {
+  it('should require wallet reapproval when the wallet has not installed the protocol', async () => {
     const typed = createDelegateTypedEnbox({
       status    : { code: 200, detail: 'OK' },
       protocols : [],
     });
 
-    await expect(typed._autoConfigureDelegateProtocol()).resolves.toBeUndefined();
+    await expect(typed.configure()).rejects.toBeInstanceOf(WalletReapprovalRequiredError);
+  });
+
+  it('should reuse a matching local wallet configuration for implicit readiness', async () => {
+    const requests: unknown[] = [];
+    const typed = createDelegateTypedEnbox({
+      status    : { code: 200, detail: 'OK' },
+      protocols : [{ definition: { protocol: 'https://example.com/protocols/demo', types: {}, structure: {} } }],
+    });
+    const query = typed._dwn.protocols.query;
+    typed._dwn.protocols.query = async (request: unknown): Promise<unknown> => {
+      requests.push(request);
+      return query(request);
+    };
+    typed._hasEncryptedTypes = false;
+
+    await typed._autoConfigureOnce();
+
+    expect(typed._configured).toBe(true);
+    expect(requests).toEqual([{ filter: { protocol: 'https://example.com/protocols/demo' } }]);
   });
 });

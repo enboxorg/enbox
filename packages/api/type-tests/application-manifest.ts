@@ -55,26 +55,13 @@ const directStructuralAuthRequests = [
 ] as const satisfies readonly ProtocolRequest[];
 const ownerOptions: EnboxConnectOptions = { createIdentity: true };
 declare const enbox: Enbox;
-const readiness: Promise<void> = enbox.protocols.ensureReady({
-  application,
-  publication : 'required',
-  targetDid   : 'did:example:hosted-owner',
-});
+void enbox.protocols.ensureReady({ application });
+void enbox.protocols.ensureReady({ application, targetDid: 'did:example:owner' });
 void exactProtocol;
 void exactExplicitProtocol;
 void authRequests;
 void directStructuralAuthRequests;
 void ownerOptions;
-void readiness;
-
-// @ts-expect-error readiness requires an explicit publication policy.
-enbox.protocols.ensureReady({ application });
-
-enbox.protocols.ensureReady({
-  application,
-  // @ts-expect-error only required and local-only are valid publication policies.
-  publication: 'when-available',
-});
 
 defineApplicationManifest({
   protocols: [
@@ -94,3 +81,6 @@ defineApplicationManifest({
 // @ts-expect-error a manifest is not an AuthManager connect payload; owner routing stays explicit.
 const unsafeOwnerOptions: EnboxConnectOptions = { ...application, createIdentity: true };
 void unsafeOwnerOptions;
+
+// @ts-expect-error readiness requires an application manifest.
+void enbox.protocols.ensureReady({});

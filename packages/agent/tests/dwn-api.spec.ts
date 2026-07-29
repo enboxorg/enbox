@@ -513,6 +513,38 @@ describe('AgentDwnApi', () => {
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
     });
 
+    it('sendRequest can bypass local discovery for hosted publication', async () => {
+      const dwnApi = new AgentDwnApi({
+        agent: {
+          rpc: {
+            getServerInfo  : sinon.stub(),
+            sendDwnRequest : sinon.stub(),
+          },
+        } as any,
+      });
+      const localEndpoints = sinon.stub(dwnApi, 'getDwnEndpointUrlsForTarget').resolves(['http://local.example']);
+      const remoteEndpoints = sinon.stub(dwnApi, 'getRemoteDwnEndpointUrls').resolves(['https://hosted.example']);
+      const sendDwnRpcRequest = sinon.stub(dwnApi as any, 'sendDwnRpcRequest').resolves({
+        status: { code: 200, detail: 'OK' },
+      });
+      sinon.stub(dwnApi as any, 'constructDwnMessage').resolves({
+        message: { descriptor: { interface: 'Protocols', method: 'Query' } },
+      });
+      sinon.stub(Message, 'getCid').resolves('bafytestmessagecid');
+
+      await dwnApi.sendRequest({
+        author              : 'did:example:owner',
+        messageParams       : { filter: { protocol: 'https://example.com/notes' } },
+        messageType         : DwnInterface.ProtocolsQuery,
+        remoteEndpointsOnly : true,
+        target              : 'did:example:owner',
+      });
+
+      expect(remoteEndpoints.calledOnceWithExactly('did:example:owner')).toBe(true);
+      expect(localEndpoints.notCalled).toBe(true);
+      expect(sendDwnRpcRequest.firstCall.args[0].dwnEndpointUrls).toEqual(['https://hosted.example']);
+    });
+
     it('sendRequest streams existing message data through RPC when using messageCid', async () => {
       const mockAgent: any = {
         rpc: {
