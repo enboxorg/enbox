@@ -725,9 +725,11 @@ export class TypedEnbox<
    */
   public async configure(): Promise<DwnResponseStatus & { protocol?: Protocol }> {
     // Query for an existing installation of this protocol.
-    const { protocols } = await this._dwn.protocols.query({
+    const query = await this._dwn.protocols.query({
       filter: { protocol: this._definition.protocol },
     });
+    requireDwnSuccess('TypedEnbox.configure protocol query', query);
+    const { protocols } = query;
 
     // If already installed with the same definition, return it as-is.
     if (protocols.length > 0) {
@@ -771,11 +773,16 @@ export class TypedEnbox<
   /**
    * Whether the protocol has been configured (installed) on the local DWN.
    *
-   * Returns `true` after a successful call to {@link TypedEnbox.configure | configure()}.
+   * Returns `true` after configuration or protocol readiness verifies the local installation.
    * Record operations will throw if this is `false`.
    */
   public get isConfigured(): boolean {
     return this._configured;
+  }
+
+  /** @internal Called after protocol readiness independently verifies the local installation. */
+  public markConfiguredFromReadiness(): void {
+    this._configured = true;
   }
 
   /**
@@ -1211,9 +1218,11 @@ export class TypedEnbox<
    * subsequent calls reuse the same Promise via `_ensureReadyPromise`.
    */
   private async _autoConfigureOnce(): Promise<void> {
-    const { protocols } = await this._dwn.protocols.query({
+    const query = await this._dwn.protocols.query({
       filter: { protocol: this._definition.protocol },
     });
+    requireDwnSuccess('TypedEnbox automatic protocol query', query);
+    const { protocols } = query;
 
     if (protocols.length > 0) {
       const existing = protocols[0];

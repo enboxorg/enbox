@@ -732,8 +732,15 @@ describe('connect protocol preparation — composed protocols', () => {
     // The dependency is missing locally too, so it cannot be propagated —
     // the error must carry BOTH the local-dependency reason (first wins)
     // and identify the failing endpoint.
-    await expect(prepareProtocol('did:example:owner', agent, composedProtocol))
+    const preparation = prepareProtocol('did:example:owner', agent, composedProtocol);
+    await expect(preparation)
       .rejects.toThrow(/dwn-a\.example.*uses dependency '.*membership' is not installed locally/);
+    await expect(preparation).rejects.toMatchObject({
+      endpointFailures: [{
+        endpoint : 'https://dwn-a.example/',
+        status   : { code: 400 },
+      }],
+    });
   });
 
   it('should surface a configure rejection when dependencies are satisfied', async () => {

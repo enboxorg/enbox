@@ -29,7 +29,7 @@ import { DwnResponseError } from './dwn-response-error.js';
 export type ProtocolReadinessPublication = 'local-only' | 'required';
 
 /** Stage at which application protocol readiness failed. */
-export type ProtocolReadinessStage = ProtocolPreparationStage | 'local-import' | 'local-verify';
+export type ProtocolReadinessStage = ProtocolPreparationStage | 'local-import';
 
 /** Suggested recovery for an operational readiness failure. */
 export type ProtocolReadinessRecovery = 'reconnect' | 'retry';
@@ -175,17 +175,11 @@ export class ProtocolReadinessApi {
         signal             : this.signal,
       });
 
-      // Seed the cached TypedEnbox readiness bit through its existing local-only
-      // idempotent path. The agent primitive has already established the strict
-      // local/remote postconditions, so this performs only a local query. An
-      // explicit alternate identity is prepared independently of this facade.
       if (readinessDid === this.connectedDid) {
-        await this.seedOwnerFacadeReadiness(typed);
+        this.signal.throwIfAborted();
+        typed.markConfiguredFromReadiness();
       }
     } catch (cause: unknown) {
-      if (cause instanceof ProtocolReadinessError) {
-        throw cause;
-      }
       if (cause instanceof ProtocolPreparationError) {
         const endpointFailures = cause.endpointFailures;
         const endpointStatus = endpointFailures.find((failure) => failure.status !== undefined)?.status;
@@ -208,26 +202,6 @@ export class ProtocolReadinessApi {
         targetDid : readinessDid,
       });
     }
-  }
-
-  private async seedOwnerFacadeReadiness(typed: TypedEnbox): Promise<void> {
-    try {
-      const configured = await typed.configure();
-      if (!isSuccessfulStatus(configured.status)) {
-        throw new DwnResponseError('ProtocolReadinessApi owner local verification', configured.status);
-      }
-    } catch (cause: unknown) {
-      const status = statusFromCause(cause);
-      throw readinessError({
-        cause,
-        detail    : cause instanceof Error ? cause.message : String(cause),
-        protocol  : typed.protocol,
-        stage     : 'local-verify',
-        status,
-        targetDid : this.connectedDid,
-      });
-    }
-    this.signal.throwIfAborted();
   }
 
   private async ensureDelegateReady(typed: TypedEnbox): Promise<void> {
@@ -328,19 +302,9 @@ export class ProtocolReadinessApi {
           targetDid : this.connectedDid,
         });
       }
-
-      const configured = await typed.configure();
-      if (!isSuccessfulStatus(configured.status)) {
-        throw readinessError({
-          detail    : configured.status.detail,
-          protocol,
-          recovery  : recoveryForStatus(configured.status, 'retry'),
-          stage     : 'local-verify',
-          status    : configured.status,
-          targetDid : this.connectedDid,
-        });
-      }
     });
+    this.signal.throwIfAborted();
+    typed.markConfiguredFromReadiness();
   }
 
   private async runDelegateStage<T>(

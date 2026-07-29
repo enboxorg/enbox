@@ -70,6 +70,7 @@ export type ProtocolSetupStatus = 'configured' | 'conflict' | 'install' | 'updat
 export type ProtocolPreparationStage =
   | 'local-query'
   | 'local-configure'
+  | 'local-verify'
   | 'endpoint-resolution'
   | 'remote-query'
   | 'remote-publish'
@@ -457,6 +458,36 @@ function getProtocolDefinitionFromEntry(
 // Preparation flow
 // ---------------------------------------------------------------------------
 
+async function queryLocalProtocol(
+  selectedDid: string,
+  agent: EnboxPlatformAgent,
+  protocol: string,
+  failureStage: ProtocolPreparationStage = 'local-query',
+): Promise<{
+  queryResult: DwnResponse<DwnInterface.ProtocolsQuery>;
+  existingEntry: ProtocolConfigureEntry | undefined;
+}> {
+  const queryResult = await agent.processDwnRequest({
+    author        : selectedDid,
+    messageType   : DwnInterface.ProtocolsQuery,
+    target        : selectedDid,
+    messageParams : { filter: { protocol } },
+  });
+
+  if (queryResult.reply.status.code !== 200) {
+    throw new ProtocolPreparationError({
+      message   : `Could not fetch protocol: ${queryResult.reply.status.detail}`,
+      protocol,
+      stage     : failureStage,
+      status    : { ...queryResult.reply.status },
+      targetDid : selectedDid,
+    });
+  }
+
+  const existingEntry = queryResult.reply.entries?.[0] as ProtocolConfigureEntry | undefined;
+  return { queryResult, existingEntry };
+}
+
 /**
  * Runs the local `ProtocolsQuery` for the requested protocol and computes its
  * verified setup status, throwing on a non-200 reply or a definition/key
@@ -467,29 +498,18 @@ async function queryLocalProtocolStatus(
   agent: EnboxPlatformAgent,
   protocolDefinition: DwnProtocolDefinition,
   definitionPolicy: DefinitionPolicy = 'reject',
+  failureStage: ProtocolPreparationStage = 'local-query',
 ): Promise<{
   queryResult: DwnResponse<DwnInterface.ProtocolsQuery>;
   existingEntry: ProtocolConfigureEntry | undefined;
   setupStatus: ProtocolSetupStatus;
 }> {
-  const queryResult = await agent.processDwnRequest({
-    author        : selectedDid,
-    messageType   : DwnInterface.ProtocolsQuery,
-    target        : selectedDid,
-    messageParams : { filter: { protocol: protocolDefinition.protocol } },
-  });
-
-  if (queryResult.reply.status.code !== 200) {
-    throw new ProtocolPreparationError({
-      message   : `Could not fetch protocol: ${queryResult.reply.status.detail}`,
-      protocol  : protocolDefinition.protocol,
-      stage     : 'local-query',
-      status    : { ...queryResult.reply.status },
-      targetDid : selectedDid,
-    });
-  }
-
-  const existingEntry = queryResult.reply.entries?.[0] as ProtocolConfigureEntry | undefined;
+  const { queryResult, existingEntry } = await queryLocalProtocol(
+    selectedDid,
+    agent,
+    protocolDefinition.protocol,
+    failureStage,
+  );
   const installedDefinition = getProtocolDefinitionFromEntry(existingEntry);
   let setupStatus = await getVerifiedProtocolSetupStatus(
     installedDefinition,
@@ -640,24 +660,26 @@ async function getRemoteProtocolStates(
   protocolDefinition: DwnProtocolDefinition,
   ownerDid: string,
   agent: EnboxPlatformAgent,
-  definitionPolicy: DefinitionPolicy = 'reject',
+  exactMessageConvergence: boolean = false,
 ): Promise<RemoteProtocolState[]> {
+  if (exactMessageConvergence) {
+    return reachableReplies.map(({ dwnUrl, reply }) => ({
+      dwnUrl,
+      entry       : reply.entries?.[0],
+      setupStatus : reply.entries?.[0] === undefined ? 'install' : 'update',
+    }));
+  }
+
   const remoteStates: RemoteProtocolState[] = [];
   for (const { dwnUrl, reply } of reachableReplies) {
     const entry = reply.entries?.[0];
-    let remoteStatus = await getVerifiedProtocolSetupStatus(
+    const remoteStatus = await getVerifiedProtocolSetupStatus(
       getProtocolDefinitionFromEntry(entry),
       protocolDefinition,
       ownerDid,
       agent,
     );
     if (remoteStatus === 'conflict') {
-      if (definitionPolicy === 'update') {
-        remoteStatus = 'update';
-        remoteStates.push({ dwnUrl, entry, setupStatus: remoteStatus });
-        continue;
-      }
-
       throw new Error(
         `Protocol '${protocolDefinition.protocol}' conflicts with the latest definition or encryption keys on ${dwnUrl}.`,
       );
@@ -668,13 +690,12 @@ async function getRemoteProtocolStates(
 }
 
 /**
- * Postcondition: re-queries every endpoint that was fanned out to and requires it
- * to now report the requested definition. Throws — with the per-endpoint failure
- * reasons accumulated across the dependency sends, the configure send, and this
- * re-query attached — on any endpoint that did not converge.
+ * Postcondition: re-queries the supplied endpoints and requires them to report
+ * the requested definition. Throws with the accumulated per-endpoint failure
+ * reasons when any endpoint did not converge.
  */
 async function verifyEndpointsConverged(
-  endpointsNeedingConfigure: string[],
+  endpoints: string[],
   context: RemotePreparationContext,
   queryMessage: ProtocolsQueryMessage,
   protocolDefinition: DwnProtocolDefinition,
@@ -685,7 +706,7 @@ async function verifyEndpointsConverged(
     ? undefined
     : await Message.getCid(expectedMessage as GenericMessage);
   const verifiedPostconditions = await mapConcurrentSettled(
-    endpointsNeedingConfigure,
+    endpoints,
     PROTOCOL_FANOUT_CONCURRENCY,
     async (dwnUrl): Promise<{ converged: boolean; observed: string; status?: Status }> => {
       const reply = await sendProtocolEndpointRequest(context, dwnUrl, queryMessage);
@@ -698,28 +719,33 @@ async function verifyEndpointsConverged(
         };
       }
 
+      const entry = reply.entries?.[0];
+      const observedCid = entry === undefined
+        ? undefined
+        : await Message.getCid(entry as GenericMessage);
+      if (expectedCid !== undefined) {
+        return {
+          converged : observedCid === expectedCid,
+          observed  : `endpoint retained message '${observedCid ?? 'none'}' instead of '${expectedCid}'`,
+        };
+      }
+
       const verifiedStatus = await getVerifiedProtocolSetupStatus(
-        getProtocolDefinitionFromEntry(reply.entries?.[0]),
+        getProtocolDefinitionFromEntry(entry),
         protocolDefinition,
         context.ownerDid,
         context.agent,
       );
-      const observedCid = reply.entries?.[0] === undefined
-        ? undefined
-        : await Message.getCid(reply.entries[0] as GenericMessage);
-      const exactMessageMatches = expectedCid === undefined || observedCid === expectedCid;
       return {
-        converged : verifiedStatus === 'configured' && exactMessageMatches,
-        observed  : verifiedStatus !== 'configured'
-          ? `endpoint still reports '${verifiedStatus}' after configure`
-          : `endpoint retained message '${observedCid ?? 'none'}' instead of '${expectedCid}'`,
+        converged : verifiedStatus === 'configured',
+        observed  : `endpoint still reports '${verifiedStatus}' after configure`,
       };
     },
   );
 
   const failedEndpoints: ProtocolEndpointFailure[] = [];
   for (const [taskIndex, settled] of verifiedPostconditions.entries()) {
-    const dwnUrl = endpointsNeedingConfigure[taskIndex];
+    const dwnUrl = endpoints[taskIndex];
     if (settled.status === 'rejected') {
       const unreachableReason = `unreachable at verification: ${settled.reason}`;
       const earlier = endpointFailures.get(dwnUrl);
@@ -817,19 +843,33 @@ type RemoteConvergencePlan = {
   endpointsNeedingConfigure: string[];
 };
 
-async function remoteMessagesMatchLocal(
+async function planFromCurrentLocalArtifact(
   existingEntry: ProtocolConfigureEntry | undefined,
   setupStatus: ProtocolSetupStatus,
   remoteStates: RemoteProtocolState[],
-): Promise<boolean> {
-  if (setupStatus !== 'configured' || existingEntry === undefined || remoteStates.length === 0) {
-    return false;
+): Promise<RemoteConvergencePlan | undefined> {
+  if (setupStatus !== 'configured' || existingEntry === undefined) {
+    return undefined;
   }
 
   const localCid = await Message.getCid(existingEntry as GenericMessage);
-  const matches = await Promise.all(remoteStates.map(async ({ entry }) => entry !== undefined
-    && await Message.getCid(entry as GenericMessage) === localCid));
-  return matches.every(Boolean);
+  const endpointsNeedingConfigure: string[] = [];
+  for (const { dwnUrl, entry } of remoteStates) {
+    if (entry === undefined) {
+      endpointsNeedingConfigure.push(dwnUrl);
+      continue;
+    }
+
+    if (await Message.getCid(entry as GenericMessage) === localCid) {
+      continue;
+    }
+    if (await Message.isNewer(entry as GenericMessage, existingEntry as GenericMessage)) {
+      return undefined;
+    }
+    endpointsNeedingConfigure.push(dwnUrl);
+  }
+
+  return { configureMessage: existingEntry, endpointsNeedingConfigure };
 }
 
 async function planRemoteConvergence(options: {
@@ -845,18 +885,18 @@ async function planRemoteConvergence(options: {
   const protocol = protocolDefinition.protocol;
 
   if (policy.exactMessageConvergence) {
-    const converged = await runPreparationStage(
+    const reusablePlan = await runPreparationStage(
       'remote-query',
       protocol,
       policy.targetDid,
-      async () => remoteMessagesMatchLocal(existingEntry, setupStatus, remoteStates),
+      async () => planFromCurrentLocalArtifact(existingEntry, setupStatus, remoteStates),
     );
-    if (converged) {
-      return { configureMessage: existingEntry!, endpointsNeedingConfigure: [] };
+    if (reusablePlan !== undefined) {
+      return reusablePlan;
     }
 
-    // Any exact-artifact drift causes one fresh local configure and a fan-out
-    // of the resulting current artifact to every reachable endpoint.
+    // A newer remote artifact must be superseded by one fresh local configure;
+    // every endpoint then receives that new exact message.
     const configureMessage = await configureAndVerifyLocalProtocol(ownerDid, agent, protocolDefinition, policy);
     return {
       configureMessage,
@@ -970,7 +1010,7 @@ async function prepareProtocolWithPolicy(
       protocolDefinition,
       ownerDid,
       agent,
-      policy.definitionPolicy,
+      policy.exactMessageConvergence,
     ),
   );
   const { configureMessage, endpointsNeedingConfigure } = await planRemoteConvergence({
@@ -983,50 +1023,54 @@ async function prepareProtocolWithPolicy(
     setupStatus,
   });
 
-  if (endpointsNeedingConfigure.length === 0) {
-    return;
+  if (endpointsNeedingConfigure.length > 0) {
+    // Per-endpoint failure reasons accumulated across dependencies, the exact
+    // configure fan-out, and the convergence re-query.
+    const endpointFailures = new Map<string, EndpointFailureDetail>();
+    await runPreparationStage(
+      'remote-publish',
+      protocol,
+      policy.targetDid,
+      async () => ensureRemoteUsesDependencies(
+        context,
+        protocolDefinition,
+        endpointsNeedingConfigure,
+        new Set([protocol]),
+        endpointFailures,
+      ),
+    );
+    await runPreparationStage(
+      'remote-publish',
+      protocol,
+      policy.targetDid,
+      async () => sendConfigureToEndpoints(
+        context,
+        configureMessage,
+        endpointsNeedingConfigure,
+        'configure',
+        endpointFailures,
+      ),
+    );
+    await runPreparationStage(
+      'remote-verify',
+      protocol,
+      policy.targetDid,
+      async () => verifyEndpointsConverged(
+        policy.exactMessageConvergence
+          ? remoteStates.map(({ dwnUrl }) => dwnUrl)
+          : endpointsNeedingConfigure,
+        context,
+        queryMessage,
+        protocolDefinition,
+        endpointFailures,
+        policy.exactMessageConvergence ? configureMessage : undefined,
+      ),
+    );
   }
 
-  // Per-endpoint failure reasons accumulated across dependencies, the exact
-  // configure fan-out, and the convergence re-query.
-  const endpointFailures = new Map<string, EndpointFailureDetail>();
-  await runPreparationStage(
-    'remote-publish',
-    protocol,
-    policy.targetDid,
-    async () => ensureRemoteUsesDependencies(
-      context,
-      protocolDefinition,
-      endpointsNeedingConfigure,
-      new Set([protocol]),
-      endpointFailures,
-    ),
-  );
-  await runPreparationStage(
-    'remote-publish',
-    protocol,
-    policy.targetDid,
-    async () => sendConfigureToEndpoints(
-      context,
-      configureMessage,
-      endpointsNeedingConfigure,
-      'configure',
-      endpointFailures,
-    ),
-  );
-  await runPreparationStage(
-    'remote-verify',
-    protocol,
-    policy.targetDid,
-    async () => verifyEndpointsConverged(
-      endpointsNeedingConfigure,
-      context,
-      queryMessage,
-      protocolDefinition,
-      endpointFailures,
-      policy.exactMessageConvergence ? configureMessage : undefined,
-    ),
-  );
+  if (policy.exactMessageConvergence) {
+    await verifyLocalArtifactCurrent(ownerDid, agent, protocol, configureMessage, policy.signal);
+  }
 }
 
 async function configureAndVerifyLocalProtocol(
@@ -1051,7 +1095,7 @@ async function configureAndVerifyLocalProtocol(
     'local-configure',
     protocolDefinition.protocol,
     ownerDid,
-    async () => queryLocalProtocolStatus(ownerDid, agent, protocolDefinition, 'reject'),
+    async () => queryLocalProtocolStatus(ownerDid, agent, protocolDefinition, 'reject', 'local-configure'),
   );
   if (local.setupStatus !== 'configured') {
     throw new ProtocolPreparationError({
@@ -1071,6 +1115,33 @@ async function configureAndVerifyLocalProtocol(
   }
   policy.signal?.throwIfAborted();
   return local.existingEntry;
+}
+
+/** Fails closed if another local configure superseded the artifact verified remotely. */
+async function verifyLocalArtifactCurrent(
+  ownerDid: string,
+  agent: EnboxPlatformAgent,
+  protocol: string,
+  expectedEntry: ProtocolConfigureEntry,
+  signal?: AbortSignal,
+): Promise<void> {
+  await runPreparationStage(
+    'local-verify',
+    protocol,
+    ownerDid,
+    async () => {
+      signal?.throwIfAborted();
+      const { existingEntry } = await queryLocalProtocol(ownerDid, agent, protocol, 'local-verify');
+      const currentCid = existingEntry === undefined
+        ? undefined
+        : await Message.getCid(existingEntry as GenericMessage);
+      const expectedCid = await Message.getCid(expectedEntry as GenericMessage);
+      if (currentCid !== expectedCid) {
+        throw new Error(`Local protocol '${protocol}' changed during remote convergence.`);
+      }
+      signal?.throwIfAborted();
+    },
+  );
 }
 
 async function runPreparationStage<T>(
@@ -1099,9 +1170,8 @@ async function runPreparationStage<T>(
 }
 
 /**
- * Records the first failure reason observed for an endpoint. Dependency
- * failures are recorded before dependent ones, so first-wins keeps the root
- * cause rather than its knock-on effect.
+ * Keeps the first failure detail for an endpoint while retaining a concrete
+ * DWN status observed by any later attempt.
  */
 function recordEndpointFailure(
   endpointFailures: Map<string, EndpointFailureDetail>,
@@ -1109,11 +1179,14 @@ function recordEndpointFailure(
   reason: string,
   status?: Status,
 ): void {
-  if (!endpointFailures.has(dwnUrl)) {
+  const existing = endpointFailures.get(dwnUrl);
+  if (existing === undefined) {
     endpointFailures.set(dwnUrl, {
       detail : reason,
       status : status === undefined ? undefined : { ...status },
     });
+  } else if (existing.status === undefined && status !== undefined) {
+    endpointFailures.set(dwnUrl, { ...existing, status: { ...status } });
   }
 }
 

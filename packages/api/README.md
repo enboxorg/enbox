@@ -157,8 +157,9 @@ never authors or publishes a replacement.
 
 The publication policy is intentionally mandatory. Use `'local-only'` only
 for tests, offline/local applications, or advanced flows that deliberately do
-not accept remote writes. `publication: 'required'` fails with a typed error
-when endpoints cannot be resolved, no endpoint can be reached, a response
+not accept remote writes. It controls owner publication; delegates always
+verify the wallet's remote configuration. `publication: 'required'` fails with
+a typed error when endpoints cannot be resolved, no endpoint can be reached, a response
 artifact cannot be authenticated, publication is rejected, or the endpoints
 do not converge. `targetDid` can prepare another identity whose signing keys
 are available to the same agent; otherwise it defaults to the connected DID.

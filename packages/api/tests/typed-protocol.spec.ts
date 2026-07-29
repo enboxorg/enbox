@@ -219,6 +219,34 @@ describe('TypedProtocol API', () => {
       expect(typed.definition).toBe(TodoProtocolDefinition);
     });
 
+    it('should not configure or cache readiness when protocol queries fail', async () => {
+      const configure = sinon.stub().resolves({
+        status: { code: 202, detail: 'Accepted' },
+      });
+      const query = sinon.stub().resolves({
+        protocols : [],
+        status    : { code: 503, detail: 'Service Unavailable' },
+      });
+      const dwn = {
+        isDelegate : false,
+        protocols  : {
+          configure,
+          query,
+        },
+      } as unknown as DwnApi;
+      const typed = new TypedEnbox(dwn, TodoProtocol);
+
+      await expect(typed.configure()).rejects.toThrow(
+        'TypedEnbox.configure protocol query failed (503): Service Unavailable',
+      );
+      await expect(typed.records.query('list')).rejects.toThrow(
+        'TypedEnbox automatic protocol query failed (503): Service Unavailable',
+      );
+      expect(configure.notCalled).toBe(true);
+      expect(query.calledTwice).toBe(true);
+      expect(typed.isConfigured).toBe(false);
+    });
+
     it('should return the same records object on repeated access', () => {
       const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const records1 = typed.records;

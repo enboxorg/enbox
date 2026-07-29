@@ -37,6 +37,7 @@ const NotesProtocol = defineProtocol(NotesDefinition, {
 type TypedStub = {
   configure: sinon.SinonStub;
   definition: ProtocolDefinition;
+  markConfiguredFromReadiness: sinon.SinonStub;
   protocol: string;
   verifyInstalled: sinon.SinonStub;
 };
@@ -46,10 +47,11 @@ function createTypedStub(
   verification: VerifyInstalledResult = upToDateVerification(),
 ): TypedStub {
   return {
-    configure       : sinon.stub().resolves({ status: { code: 200, detail: 'OK' } }),
-    definition      : protocol.definition,
-    protocol        : protocol.definition.protocol,
-    verifyInstalled : sinon.stub().resolves(verification),
+    configure                   : sinon.stub().resolves({ status: { code: 200, detail: 'OK' } }),
+    definition                  : protocol.definition,
+    markConfiguredFromReadiness : sinon.stub(),
+    protocol                    : protocol.definition.protocol,
+    verifyInstalled             : sinon.stub().resolves(verification),
   };
 }
 
@@ -208,6 +210,7 @@ describe('ProtocolReadinessApi', () => {
     })).rejects.toBe(cancellation);
 
     expect(typed.configure.called).toBe(false);
+    expect(typed.markConfiguredFromReadiness.called).toBe(false);
   });
 
   it('rejects a missing runtime publication policy before doing readiness work', async () => {
@@ -225,6 +228,7 @@ describe('ProtocolReadinessApi', () => {
 
     expect(owner.processDwnRequest.called).toBe(false);
     expect(typed.configure.called).toBe(false);
+    expect(typed.markConfiguredFromReadiness.called).toBe(false);
   });
 
   it('configures owner protocols without resolving or publishing in explicit local-only mode', async () => {
@@ -245,7 +249,8 @@ describe('ProtocolReadinessApi', () => {
     expect(owner.processDwnRequest.getCalls().filter(
       (call) => call.args[0].messageType === DwnInterface.ProtocolsConfigure,
     )).toHaveLength(1);
-    expect(typed.configure.calledOnce).toBe(true);
+    expect(typed.configure.called).toBe(false);
+    expect(typed.markConfiguredFromReadiness.calledOnce).toBe(true);
   });
 
   it('surfaces required publication without advertised endpoints as a typed actionable error', async () => {
@@ -294,25 +299,6 @@ describe('ProtocolReadinessApi', () => {
     })).rejects.toMatchObject({
       stage  : 'local-configure',
       status : { code: 400, detail: 'invalid definition', errorCode: 'InvalidProtocol' },
-    });
-  });
-
-  it('labels a thrown owner cache-seeding failure as local verification', async () => {
-    const owner = createOwnerAgent();
-    const typed = createTypedStub(NotesProtocol);
-    typed.configure.rejects(new Error('local query unavailable'));
-    const api = createReadinessApi({
-      agent : owner.agent,
-      typed : new Map([[NotesDefinition.protocol, typed]]),
-    });
-
-    await expect(api.ensureReady({
-      application : defineApplicationManifest({ protocols: [NotesProtocol] }),
-      publication : 'local-only',
-    })).rejects.toMatchObject({
-      protocol : NotesDefinition.protocol,
-      recovery : 'retry',
-      stage    : 'local-verify',
     });
   });
 
@@ -402,7 +388,8 @@ describe('ProtocolReadinessApi', () => {
     expect(importProtocolConfiguration.calledOnceWith(walletMessage)).toBe(true);
     expect((agent.processDwnRequest as sinon.SinonStub).called).toBe(false);
     expect((agent.rpc.sendDwnRequest as sinon.SinonStub).called).toBe(false);
-    expect(typed.configure.calledOnce).toBe(true);
+    expect(typed.configure.called).toBe(false);
+    expect(typed.markConfiguredFromReadiness.calledOnce).toBe(true);
   });
 
   it('preserves WalletReapprovalRequiredError identity for stale delegate configurations', async () => {
@@ -526,5 +513,6 @@ describe('ProtocolReadinessApi', () => {
       stage     : 'local-verify',
       targetDid : OWNER_DID,
     });
+    expect(typed.markConfiguredFromReadiness.called).toBe(false);
   });
 });
