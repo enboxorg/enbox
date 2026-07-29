@@ -513,6 +513,46 @@ describe('AgentDwnApi', () => {
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
     });
 
+    it('sendRequest can target hosted endpoints without overriding local-only routing', async () => {
+      const dwnApi = new AgentDwnApi({
+        agent: {
+          rpc: {
+            getServerInfo  : sinon.stub(),
+            sendDwnRequest : sinon.stub(),
+          },
+        } as any,
+      });
+      const localEndpoints = sinon.stub(dwnApi, 'getDwnEndpointUrlsForTarget').resolves(['http://local.example']);
+      const remoteEndpoints = sinon.stub(dwnApi, 'getRemoteDwnEndpointUrls').resolves(['https://hosted.example']);
+      const sendDwnRpcRequest = sinon.stub(dwnApi as any, 'sendDwnRpcRequest').resolves({
+        status: { code: 200, detail: 'OK' },
+      });
+      sinon.stub(dwnApi as any, 'constructDwnMessage').resolves({
+        message: { descriptor: { interface: 'Protocols', method: 'Query' } },
+      });
+      sinon.stub(Message, 'getCid').resolves('bafytestmessagecid');
+
+      const request = {
+        author              : 'did:example:owner',
+        messageParams       : { filter: { protocol: 'https://example.com/notes' } },
+        messageType         : DwnInterface.ProtocolsQuery,
+        remoteEndpointsOnly : true,
+        target              : 'did:example:owner',
+      } as const;
+
+      await dwnApi.sendRequest(request);
+
+      expect(remoteEndpoints.calledOnceWithExactly('did:example:owner')).toBe(true);
+      expect(localEndpoints.notCalled).toBe(true);
+      expect(sendDwnRpcRequest.firstCall.args[0].dwnEndpointUrls).toEqual(['https://hosted.example']);
+
+      dwnApi.setLocalDwnStrategy('only');
+      await expect(dwnApi.sendRequest(request)).rejects.toThrow(
+        `remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'`
+      );
+      expect(remoteEndpoints.calledOnce).toBe(true);
+    });
+
     it('sendRequest streams existing message data through RPC when using messageCid', async () => {
       const mockAgent: any = {
         rpc: {

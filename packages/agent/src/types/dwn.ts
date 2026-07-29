@@ -249,7 +249,12 @@ export type DecryptRecordDataParams = {
   delegatedGrant?: DataEncodedRecordsWriteMessage;
 };
 
-export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T> & (ProcessDwnRequest<T> | { messageCid: string });
+export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T>
+  & (ProcessDwnRequest<T> | { messageCid: string })
+  & {
+    /** Resolve only endpoints advertised by the target DID. Incompatible with local-only routing. */
+    remoteEndpointsOnly?: boolean;
+  };
 
 /**
  * Outcome of role-audience key delivery provisioning for an accepted `$role`

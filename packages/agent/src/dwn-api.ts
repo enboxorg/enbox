@@ -971,8 +971,16 @@ export class AgentDwnApi {
       );
     }
 
-    // Resolve DWN service endpoint URLs, with local DWN discovery if enabled.
-    const dwnEndpointUrls = await this.getDwnEndpointUrlsForTarget(request.target);
+    if (request.remoteEndpointsOnly && this._localDwnStrategy === 'only') {
+      throw new Error(
+        `AgentDwnApi: remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'.`
+      );
+    }
+
+    // Bypass local discovery when the caller needs the hosted DWN's state.
+    const dwnEndpointUrls = request.remoteEndpointsOnly
+      ? await this.getRemoteDwnEndpointUrls(request.target)
+      : await this.getDwnEndpointUrlsForTarget(request.target);
     if (dwnEndpointUrls.length === 0) {
       throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${request.target}#dwn`);
     }

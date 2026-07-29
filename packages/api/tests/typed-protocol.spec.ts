@@ -174,8 +174,7 @@ describe('TypedProtocol API', () => {
         toJSON     : (): typeof protocolsConfigureMessage => protocolsConfigureMessage,
       };
       const query = sinon.stub();
-      query.onFirstCall().resolves({ status: { code: 200, detail: 'OK' }, protocols: [] });
-      query.onSecondCall().resolves({ status: { code: 200, detail: 'OK' }, protocols: [remoteProtocol] });
+      query.resolves({ status: { code: 200, detail: 'OK' }, protocols: [remoteProtocol] });
       const importProtocolConfiguration = sinon.stub().resolves({
         status   : { code: 202, detail: 'Accepted' },
         protocol : remoteProtocol,
@@ -193,10 +192,11 @@ describe('TypedProtocol API', () => {
 
       expect(result.status.code).toBe(202);
       expect(importProtocolConfiguration.calledOnceWith(protocolsConfigureMessage)).toBe(true);
-      expect(query.secondCall.args[0]).toEqual({
+      expect(query.firstCall.args[0]).toEqual({
         from   : aliceDid.uri,
         filter : { protocol: TodoProtocolDefinition.protocol },
       });
+      expect(query.secondCall.args[0]).toEqual({ filter: { protocol: TodoProtocolDefinition.protocol } });
     });
 
     it('should import a signed wallet protocol configuration through Protocol.toJSON()', async () => {

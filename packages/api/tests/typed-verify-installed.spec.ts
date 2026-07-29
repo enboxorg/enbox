@@ -268,6 +268,10 @@ describe('TypedEnbox.verifyInstalled()', () => {
       // Root and `secret` carry keys; the uncovered path is `note`.
       expect(result.missingKeyAgreementPaths).toEqual(['note']);
       expect(result.reason).toContain('$keyAgreement');
+
+      const repaired = await typed.configure();
+      expect(repaired.status.code).toBe(202);
+      expect((await typed.verifyInstalled()).status).toBe('up-to-date');
     });
 
     it('should not change configure() auto-configure state (read-only)', async () => {
@@ -294,7 +298,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
       const result = await typed.verifyInstalled();
 
       expect(result.status).toBe('up-to-date');
-      // The wallet's definition is fetched from the OWNER tenant, remotely.
+      // The wallet's definition is fetched from the OWNER tenant.
       expect(fake.queryRequests).toHaveLength(1);
       expect(fake.queryRequests[0].from).toBe('did:example:owner');
       expect(fake.importCalls).toBe(0);
@@ -393,7 +397,9 @@ describe('TypedEnbox.verifyInstalled()', () => {
       });
       const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, plainCodecs));
 
-      await expect(typed.verifyInstalled()).rejects.toThrow('401 grant revoked');
+      await expect(typed.verifyInstalled()).rejects.toMatchObject({
+        status: { code: 401, detail: 'grant revoked' },
+      });
     });
 
     it('should throw (not classify) when the owner protocol query itself fails', async () => {
@@ -405,7 +411,9 @@ describe('TypedEnbox.verifyInstalled()', () => {
       const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, plainCodecs));
 
       // A failed local read must never be classified as "not installed".
-      await expect(typed.verifyInstalled()).rejects.toThrow('500 store unavailable');
+      await expect(typed.verifyInstalled()).rejects.toMatchObject({
+        status: { code: 500, detail: 'store unavailable' },
+      });
     });
   });
 

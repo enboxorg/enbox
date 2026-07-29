@@ -106,6 +106,9 @@ const application = defineApplicationManifest({
 // Only delegated handler flows need auth permission requests.
 const protocols = getApplicationProtocolRequests(application);
 const { enbox } = await Enbox.connect({ connectHandler, protocols });
+
+// Install locally and make the protocols available at the owner's hosted DWN.
+await enbox.protocols.ensureReady({ application });
 ```
 
 The manifest retains each `TypedProtocol` for application-side use, while the
@@ -114,6 +117,13 @@ codecs are never transmitted. The manifest itself is not a connect-options
 object. Owner/vault connections remain explicit `connectVault()` or
 `Enbox.connect({ createIdentity: true, ... })` calls without the projected
 protocol requests.
+
+`ensureReady()` publishes only for owner sessions. A delegated session instead
+validates and imports the wallet-owned configurations without authoring or
+publishing replacements. `targetDid` is publish-only: the local install remains
+on the connected identity, and the target must be controlled by the same agent
+so it can sign the configuration. The lower-level
+`enbox.using(protocol).configure()` never publishes to a hosted DWN.
 
 Typed protocol composition through `$ref` is not inferred from incomplete
 local metadata. `defineProtocol()` rejects it for now; use the raw `enbox.dwn`

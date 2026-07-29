@@ -1,6 +1,6 @@
-import type { EnboxConnectOptions } from '@enbox/api';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { ProtocolRequest } from '@enbox/auth';
+import type { Enbox, EnboxConnectOptions } from '@enbox/api';
 
 import {
   defineApplicationManifest,
@@ -54,6 +54,9 @@ const directStructuralAuthRequests = [
   { protocol: PhotosProtocol, permissions: ['read', 'write'] },
 ] as const satisfies readonly ProtocolRequest[];
 const ownerOptions: EnboxConnectOptions = { createIdentity: true };
+declare const enbox: Enbox;
+void enbox.protocols.ensureReady({ application });
+void enbox.protocols.ensureReady({ application, targetDid: 'did:example:owner' });
 void exactProtocol;
 void exactExplicitProtocol;
 void authRequests;
@@ -78,3 +81,6 @@ defineApplicationManifest({
 // @ts-expect-error a manifest is not an AuthManager connect payload; owner routing stays explicit.
 const unsafeOwnerOptions: EnboxConnectOptions = { ...application, createIdentity: true };
 void unsafeOwnerOptions;
+
+// @ts-expect-error readiness requires an application manifest.
+void enbox.protocols.ensureReady({});

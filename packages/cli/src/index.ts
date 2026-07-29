@@ -12,6 +12,7 @@ export {
   Enbox,
   defineProtocol,
   getApplicationProtocolRequests,
+  ProtocolReadinessError,
   recordCodecs,
 } from '@enbox/api';
 
@@ -26,6 +27,7 @@ export type {
   EnboxParams,
   EnboxSessionParams,
   EncodedRecordData,
+  EnsureProtocolsReadyOptions,
   RecordCodec,
   RecordCodecValue,
 } from '@enbox/api';

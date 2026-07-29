@@ -50,11 +50,12 @@ import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-cod
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createRecordView } from './record-view.js';
+import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
 import { removeUndefinedProperties } from '@enbox/common';
-import { requireDwnSuccess } from './dwn-response-error.js';
 import { assertTypedProtocolStructureSupported, collectProtocolPaths } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
+import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
 import { getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
@@ -718,35 +719,26 @@ export class TypedEnbox<
    * ```
    */
   public async configure(): Promise<DwnResponseStatus & { protocol?: Protocol }> {
+    if (this._dwn.isDelegate) {
+      return this._autoConfigureDelegateProtocol();
+    }
+
     // Query for an existing installation of this protocol.
-    const { protocols } = await this._dwn.protocols.query({
+    const query = await this._dwn.protocols.query({
       filter: { protocol: this._definition.protocol },
     });
+    requireDwnSuccess('TypedEnbox.configure protocol query', query);
+    const { protocols } = query;
 
     // If already installed with the same definition, return it as-is.
     if (protocols.length > 0) {
       const existing = protocols[0];
-      if (definitionsEqual(existing.definition, this._definition)) {
+      const encryptionKeysComplete = !this._hasEncryptedTypes
+        || collectMissingKeyAgreementPaths(existing.definition).length === 0;
+      if (definitionsEqual(existing.definition, this._definition) && encryptionKeysComplete) {
         this._configured = true;
         return { status: { code: 200, detail: 'OK' }, protocol: existing };
       }
-    }
-
-    // Not installed or definition has changed. In delegate mode, the wallet
-    // owns protocol configuration; the delegate may only import the wallet's
-    // already-signed ProtocolsConfigure message into its local DWN.
-    if (this._dwn.isDelegate) {
-      const imported = await this._autoConfigureDelegateProtocol();
-      if (imported) {
-        return imported;
-      }
-
-      throw new Error(
-        `TypedEnbox: delegate cannot install protocol '${this._definition.protocol}' ` +
-        `because the wallet's remote protocol definition could not be found. ` +
-        `Ensure the wallet installed the protocol during connect and that the ` +
-        `delegate has access to the wallet's DWN endpoints.`,
-      );
     }
 
     const result = await this._dwn.protocols.configure({
@@ -774,8 +766,6 @@ export class TypedEnbox<
    * Strictly verifies the installed protocol definition without modifying
    * anything — the read-only counterpart to {@link TypedEnbox.configure}.
    *
-   * Where `configure()` only compares definitions (and, for delegates,
-   * silently imports whatever the wallet installed, warning on drift),
    * `verifyInstalled()`:
    *
    * 1. canonically compares the installed definition against the code
@@ -792,13 +782,13 @@ export class TypedEnbox<
    *    {@link WalletReapprovalRequiredError} — never a silent import.
    *
    * For owner sessions the LOCAL installation is verified; for delegate
-   * sessions the WALLET-installed definition is fetched from the owner
-   * tenant's remote DWN (the source auto-configure imports from).
+   * sessions the WALLET-installed definition is fetched from the owner tenant
+   * through the agent's configured routing (the source auto-configure imports from).
    *
    * Never changes state: no configure, no import, no cache updates.
    *
    * @returns The structured verification result — see {@link VerifyInstalledResult}.
-   * @throws `Error` when the delegate's remote protocol query itself fails
+   * @throws {@link DwnResponseError} when the protocol query itself fails
    *   (e.g. a revoked or expired session grant surfaces as a 401) — a
    *   transport/authorization failure, not a verification outcome.
    */
@@ -808,28 +798,24 @@ export class TypedEnbox<
     // Owners verify their local installation; delegates verify the
     // wallet-installed definition on the owner tenant — the same source
     // `_autoConfigureDelegateProtocol` imports from.
-    const { protocols, status } = await this._dwn.protocols.query({
+    const query = await this._dwn.protocols.query({
       ...(isDelegate ? { from: this._dwn.connectedDid } : {}),
       filter: { protocol: this._definition.protocol },
     });
+    requireDwnSuccess(
+      isDelegate
+        ? 'TypedEnbox.verifyInstalled wallet protocol query; reconnect to refresh delegated grants'
+        : 'TypedEnbox.verifyInstalled local protocol query',
+      query,
+    );
+    return this._assessInstalledDefinition(query.protocols[0]?.definition, isDelegate);
+  }
 
-    // A failed query is a transport/authorization failure, not a verification
-    // outcome — never classify it as "not installed".
-    if (status !== undefined && status.code >= 300) {
-      const source = isDelegate
-        ? `the wallet's protocol definition from the owner's DWN`
-        : 'the locally installed protocol definition';
-      const delegateHint = isDelegate
-        ? ' A revoked or expired session grant fails with 401 — reconnect to obtain fresh grants.'
-        : '';
-      throw new Error(
-        `TypedEnbox: verifyInstalled() could not fetch ${source} ` +
-        `for '${this._definition.protocol}': ${status.code} ${status.detail}.${delegateHint}`,
-      );
-    }
-
-    const installedDefinition = protocols.length > 0 ? protocols[0].definition : undefined;
-
+  /** Compares one installed definition with the application definition without changing state. */
+  private _assessInstalledDefinition(
+    installedDefinition: ProtocolDefinition | undefined,
+    isDelegate: boolean,
+  ): VerifyInstalledResult {
     if (installedDefinition === undefined) {
       return this.buildVerifyInstalledResult({
         isDelegate,
@@ -1196,50 +1182,39 @@ export class TypedEnbox<
    * subsequent calls reuse the same Promise via `_ensureReadyPromise`.
    */
   private async _autoConfigureOnce(): Promise<void> {
-    const { protocols } = await this._dwn.protocols.query({
+    const query = await this._dwn.protocols.query({
       filter: { protocol: this._definition.protocol },
     });
+    requireDwnSuccess('TypedEnbox automatic protocol query', query);
+    const { protocols } = query;
 
     if (protocols.length > 0) {
       const existing = protocols[0];
-      if (definitionsEqual(existing.definition, this._definition)) {
+      const definitionsMatch = definitionsEqual(existing.definition, this._definition);
+      const encryptionKeysComplete = !this._hasEncryptedTypes
+        || collectMissingKeyAgreementPaths(existing.definition).length === 0;
+      if (definitionsMatch && encryptionKeysComplete) {
         this._configured = true;
         return;
       }
 
-      // Installed but definitions differ — allow operations but warn.
-      console.warn(
-        `TypedEnbox: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
-        'Call configure() to update it.',
-      );
-      this._configured = true;
+      if (!this._dwn.isDelegate && !definitionsMatch) {
+        // Installed but definitions differ — allow operations but warn.
+        console.warn(
+          `TypedEnbox: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
+          'Call configure() to update it.',
+        );
+        this._configured = true;
+        return;
+      }
+    }
+
+    if (this._dwn.isDelegate) {
+      await this._autoConfigureDelegateProtocol();
       return;
     }
 
     // Not installed locally — configure it now.
-    //
-    // For delegates: the wallet already installed the protocol with derived
-    // `$keyAgreement` keys on the owner's remote DWN. We fetch that remote
-    // definition and install it locally so the delegate can encrypt records
-    // using the public keys from `$keyAgreement`. This avoids the delegate
-    // needing the owner's private X25519 key — only the already-public
-    // derived keys are used for ProtocolPath encryption.
-    //
-    // For owners: derive encryption keys locally via the KMS.
-    if (this._dwn.isDelegate) {
-      const imported = await this._autoConfigureDelegateProtocol();
-      if (imported) {
-        return;
-      }
-
-      throw new Error(
-        `TypedEnbox: delegate cannot install protocol '${this._definition.protocol}' ` +
-        `because the wallet's remote protocol definition could not be found. ` +
-        `Ensure the wallet installed the protocol during connect and that the ` +
-        `delegate has access to the wallet's DWN endpoints.`,
-      );
-    }
-
     const result = await this._dwn.protocols.configure({
       definition: this._definition,
     });
@@ -1250,46 +1225,57 @@ export class TypedEnbox<
   }
 
   /**
-   * For delegates: fetch the owner's signed ProtocolsConfigure message from
-   * the remote DWN and import that same wallet-owned message locally.
+   * For delegates: fetch the owner's signed ProtocolsConfigure message through
+   * normal routing and import that same wallet-owned message locally.
    *
-   * Returns the local import response when the remote configuration was found.
+   * The wallet definition is validated before import, and the active local
+   * definition is checked afterward before this instance is marked configured.
    */
-  private async _autoConfigureDelegateProtocol(): Promise<ProtocolsConfigureResponse | undefined> {
-    const { protocols: remoteProtocols, status: queryStatus } = await this._dwn.protocols.query({
-      from   : this._dwn.connectedDid,
+  private async _autoConfigureDelegateProtocol(): Promise<ProtocolsConfigureResponse> {
+    const remote = await this._dwn.protocols.query({
       filter : { protocol: this._definition.protocol },
+      from   : this._dwn.connectedDid,
     });
+    requireDwnSuccess(
+      `TypedEnbox delegate wallet protocol query for '${this._definition.protocol}'; reconnect to refresh delegated grants`,
+      remote,
+    );
 
-    if (queryStatus !== undefined && queryStatus.code >= 300) {
-      throw new Error(
-        `TypedEnbox: delegate could not fetch the wallet's protocol definition for ` +
-        `'${this._definition.protocol}' from the owner's DWN: ${queryStatus.code} ` +
-        `${queryStatus.detail}. A revoked or expired session grant fails with 401 — ` +
-        `reconnect to obtain fresh grants.`,
-      );
+    const remoteProtocols = remote.protocols;
+    const remoteProtocol = remoteProtocols[0];
+    const verification = this._assessInstalledDefinition(remoteProtocol?.definition, true);
+    if (verification.error !== undefined) {
+      throw verification.error;
     }
-
-    if (remoteProtocols.length === 0) {
-      return undefined;
+    if (remoteProtocol === undefined) {
+      throw new Error(`TypedEnbox: verified wallet protocol '${this._definition.protocol}' is unavailable.`);
     }
 
     // The remote message includes the wallet's signature and, for encrypted
     // protocols, `$keyAgreement` keys injected by the wallet during configure.
     // Import that exact message locally so the delegate can validate/encrypt
     // owner-tenant records without receiving Protocols.Configure permission.
-    const result = await this._dwn.importProtocolConfiguration(remoteProtocols[0].toJSON());
+    const result = await this._dwn.importProtocolConfiguration(remoteProtocol.toJSON());
 
-    if (result.status.code < 300 || result.status.code === 409) {
-      this._configured = true;
-      return result;
+    if ((result.status.code < 200 || result.status.code > 299) && result.status.code !== 409) {
+      throw new DwnResponseError(
+        `TypedEnbox delegate protocol import for '${this._definition.protocol}'`,
+        result.status,
+      );
     }
 
-    throw new Error(
-      `TypedEnbox: delegate failed to import wallet-owned protocol ` +
-      `'${this._definition.protocol}' locally: ${result.status.code} ` +
-      `${result.status.detail}`,
-    );
+    const local = await this._dwn.protocols.query({
+      filter: { protocol: this._definition.protocol },
+    });
+    requireDwnSuccess(`TypedEnbox delegate local protocol query for '${this._definition.protocol}'`, local);
+    if (!installedProtocolDefinitionsEqual(local.protocols[0]?.definition, remoteProtocol.definition)) {
+      throw new Error(
+        `TypedEnbox: wallet protocol '${this._definition.protocol}' was imported but is not the active local definition.`,
+      );
+    }
+
+    this._configured = true;
+    return result;
   }
 
   /**
@@ -1718,7 +1704,7 @@ export class TypedEnbox<
  * with different key ordering are treated as equal.
  */
 export function definitionsEqual(a: unknown, b: unknown): boolean {
-  return stableStringify(stripEncryptionBlocks(a)) === stableStringify(stripEncryptionBlocks(b));
+  return installedProtocolDefinitionsEqual(stripEncryptionBlocks(a), stripEncryptionBlocks(b));
 }
 
 /**
@@ -1804,23 +1790,4 @@ function normalizePath(path: string): string {
   let end = path.length;
   while (end > start && path.codePointAt(end - 1) === 47) { end--; }
   return path.slice(start, end);
-}
-
-/**
- * Deterministic JSON serialization with sorted keys.
- */
-function stableStringify(value: unknown): string {
-  if (value === null || value === undefined || typeof value !== 'object') {
-    return JSON.stringify(value);
-  }
-
-  if (Array.isArray(value)) {
-    return '[' + value.map((item) => stableStringify(item)).join(',') + ']';
-  }
-
-  const keys = Object.keys(value as globalThis.Record<string, unknown>).sort((a, b) => a.localeCompare(b));
-  const pairs = keys.map((key) =>
-    JSON.stringify(key) + ':' + stableStringify((value as globalThis.Record<string, unknown>)[key])
-  );
-  return '{' + pairs.join(',') + '}';
 }
