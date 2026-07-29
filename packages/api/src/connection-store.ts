@@ -36,7 +36,7 @@
  * @module
  */
 
-import type { RecordViewState } from './record-view.js';
+import type { ReplicationCurrentness } from './replication-currentness.js';
 import type {
   AuthManagerOptions,
   AuthSession,
@@ -91,8 +91,8 @@ type SyncStatusContents = Readonly<{
 /** Immutable overall sync status for the selected identity. */
 export type SyncStatusSnapshot = SyncStatusContents & Readonly<
   | {
-    /** Uses the same currentness vocabulary as an observed records view. */
-    state: Exclude<RecordViewState, 'error'>;
+    /** Currentness of the selected identity's replication baseline. */
+    state: Exclude<ReplicationCurrentness, 'error'>;
     error?: never;
   }
   | {

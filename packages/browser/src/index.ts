@@ -69,6 +69,7 @@ export type {
   RecordViewListener,
   RecordViewSnapshot,
   RecordViewState,
+  ReplicationCurrentness,
   SyncStatusSnapshot,
 } from '@enbox/api';
 

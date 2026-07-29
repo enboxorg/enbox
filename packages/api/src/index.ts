@@ -52,6 +52,7 @@ export * from './read-only-record.js';
 export { recordCodecs, type EncodedRecordData, type RecordCodec, type RecordCodecValue } from './record-codec.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
 export type { RecordView, RecordViewListener, RecordViewSnapshot, RecordViewState } from './record-view.js';
+export type { ReplicationCurrentness } from './replication-currentness.js';
 export * from './record.js';
 export * from './typed-enbox.js';
 export * from './vc-api.js';
