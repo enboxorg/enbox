@@ -11,7 +11,7 @@ import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
 
-/** Currentness of one locally materialized records view. */
+/** Currentness of one materialized records view. */
 export type RecordViewState = ReplicationCurrentness;
 
 type RecordViewContents<Item> = Readonly<{
@@ -30,7 +30,7 @@ type RecordViewContents<Item> = Readonly<{
 /** Immutable materialization published by a {@link RecordView}. */
 export type RecordViewSnapshot<Item = Record> = RecordViewContents<Item> & Readonly<
   | {
-    /** Whether the local materialization is current with its configured replicated sources. */
+    /** Whether the materialization is current with its source. */
     state: Exclude<RecordViewState, 'error'>;
     error?: never;
   }
@@ -45,7 +45,7 @@ export type RecordViewSnapshot<Item = Record> = RecordViewContents<Item> & Reado
 export type RecordViewListener<Item = Record> = (snapshot: RecordViewSnapshot<Item>) => void;
 
 /**
- * A closeable local materialized view over one canonical record query.
+ * A closeable materialized view over one canonical record query.
  *
  * Subscription events are wake signals only. Consumers render immutable
  * snapshots and never maintain collection truth from event payloads.
@@ -83,7 +83,7 @@ type LinkStatusChangeEvent = Extract<SyncEvent, { type: 'link:status-change' }>;
 type LinkConnectivityChangeEvent = Extract<SyncEvent, { type: 'link:connectivity-change' }>;
 type PullCurrentnessChangeEvent = Extract<SyncEvent, { type: 'pull:currentness-change' }>;
 
-/** @internal Create and open one local observed records view. */
+/** @internal Create and open one observed records view. */
 export async function createRecordView<Item = Record>(
   options: RecordViewOptions<Item>,
 ): Promise<RecordView<Item>> {
@@ -131,7 +131,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     this._materializeRecords = options.materializeRecords;
     this._query = options.query;
     this._signal = options.signal;
-    this._sync = options.sync;
+    this._sync = options.query.from === undefined ? options.sync : undefined;
 
     this._signal?.addEventListener('abort', this._handleAbort, { once: true });
     this._syncUnsubscribe = this._sync?.on((event): void => {
@@ -201,6 +201,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     subscriptionHandler: DwnSubscriptionHandler,
   ): Promise<void> {
     const reply = await this._dwn.records.subscribe({
+      from         : this._query.from,
       filter,
       pagination   : { limit: 1 },
       protocolRole : this._query.protocolRole,
@@ -210,7 +211,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     if (this._closed) {
       await reply.subscription?.close();
       this._signal?.throwIfAborted();
-      throw new Error('RecordView: closed while opening the local subscription.');
+      throw new Error('RecordView: closed while opening the subscription.');
     }
 
     try {

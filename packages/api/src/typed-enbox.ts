@@ -176,8 +176,7 @@ type TypedObserveRequest<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
-> = Omit<RecordQuery<D, Path>, 'from' | 'pagination'> & {
-  from?: never;
+> = Omit<RecordQuery<D, Path>, 'pagination'> & {
   pagination: { limit: number; cursor?: DwnPaginationCursor };
 } & ([Materialization] extends [undefined]
   ? { materialize?: undefined }
@@ -1350,7 +1349,7 @@ export class TypedEnbox<
    * Available methods:
    * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
    * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
-   * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable local query snapshots
+   * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable query snapshots
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
    * - {@link TypedEnbox.records.read | read(path, recordId or request)} — Read a single record
    * - {@link TypedEnbox.records.deliveryState | deliveryState(path, recordId)} — Read an encrypted role's delivery state
@@ -1553,9 +1552,9 @@ export class TypedEnbox<
       },
 
       /**
-       * Observe one bounded local query as immutable materialized snapshots.
+       * Observe one bounded query as immutable materialized snapshots.
        *
-       * A local subscription is installed before the initial query. Its
+       * A subscription is installed before the initial query. Its
        * payloads are wake hints only; every published collection comes from
        * re-running this exact canonical query. A pagination limit is required
        * so the view's retained collection has an explicit resource bound.
@@ -1572,9 +1571,6 @@ export class TypedEnbox<
       ): Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
         this._options.signal?.throwIfAborted();
         const normalizedPath = normalizePath(path);
-        if (request?.from !== undefined) {
-          throw new TypeError('RecordView: remote queries are not supported; observe the connected tenant local replica.');
-        }
         if (request?.pagination?.limit === undefined) {
           throw new TypeError('RecordView: pagination.limit is required to bound retained records.');
         }
@@ -1608,7 +1604,7 @@ export class TypedEnbox<
             records,
             materialize as Materialization,
             childPaths,
-            { protocolRole: compiled.protocolRole, within: query.within },
+            { from: compiled.from, protocolRole: compiled.protocolRole, within: query.within },
           ),
           query  : compiled,
           signal : this._options.signal,

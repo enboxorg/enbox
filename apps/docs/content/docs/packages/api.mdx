@@ -224,7 +224,7 @@ payloads and consume `record.data.stream()` instead.
 
 #### observe
 
-`observe()` is the normal reactive collection primitive. It installs a local
+`observe()` is the normal reactive collection primitive. It installs a
 wake subscription before its first query, then rematerializes that same query
 after matching changes. The required limit makes retained collection size
 explicit:
@@ -249,7 +249,11 @@ unsubscribe();
 await view.close();
 ```
 
-Observed views are local-replica resources: they do not accept `from`.
+Pass `from`—and `protocolRole` when authorization requires one—to observe the
+same bounded selection on a foreign tenant. Foreign views use the remote query
+and subscription paths; successful queries are `ready` because local
+replication currentness does not describe their source.
+
 Subscription payloads never mutate collection truth directly, and record data
 continues to decrypt lazily through each `Record<T>`. Views created through
 `enbox.using()` publish one terminal `error` snapshot and close when that Enbox
@@ -257,13 +261,14 @@ session ends. After automatic grant refresh, `ConnectionStore` publishes a
 replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
 from the replacement `AuthManager.session` announced by `session-start`.
 
-`loading` means a configured replicated source has not completed its required
-pull. An empty `ready` snapshot is therefore an authoritative empty result.
-After the first ready snapshot, an offline or catching-up source reports
-`stale`; successful local materializations still update its records so offline
-writes remain visible. Query, authorization, or terminal sync failures report
-`error` while retaining the latest successful records. `hasMore` is always a
-boolean and is false until the first query completes.
+Before the first query, every view is `loading`; a local view also remains
+`loading` until its configured replicas complete their required pull. An empty
+`ready` snapshot is therefore an authoritative empty result. After the first
+ready local snapshot, an offline or catching-up source reports `stale`;
+successful local materializations still update its records so offline writes
+remain visible. Query, authorization, or terminal sync failures report `error`
+while retaining the latest successful records. `hasMore` is always a boolean
+and is false until the first query completes.
 
 Snapshots and their record arrays are immutable. A `Record<T>` represents
 the queried version until the caller explicitly invokes that handle's regular

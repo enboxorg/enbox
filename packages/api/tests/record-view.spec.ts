@@ -264,10 +264,6 @@ describe('RecordView', () => {
 
     await expect(observe('note')).rejects.toThrow('pagination.limit is required');
     await expect(observe('note', {
-      from       : 'did:example:remote',
-      pagination : { limit: 10 },
-    })).rejects.toThrow('remote queries are not supported');
-    await expect(observe('note', {
       pagination: { limit: 0 },
     })).rejects.toThrow('pagination.limit must be a finite number greater than or equal to 1');
     await expect(query('note', { materialize: true }))
@@ -371,6 +367,45 @@ describe('RecordView', () => {
         protocolPath : 'note/label',
       },
     });
+  });
+
+  it('observes and materializes a foreign tenant through the remote query and subscription paths', async () => {
+    const remoteDid = 'did:example:remote';
+    const parent = decodedRecord('note-1', { title: 'First' });
+    const child = decodedRecord('label-1', 'important', parent.id);
+    const harness = createHarness(async (_request, call) => ok(call % 2 === 1 ? [parent] : [child]));
+    const fakeSync = createSync();
+    fakeSync.links = [link('paused', 'offline')];
+
+    const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
+      from         : remoteDid,
+      materialize  : { children: ['note/label'] as const },
+      pagination   : { limit: 10 },
+      protocolRole : 'member',
+      within       : 'root',
+    });
+
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    expect(view.getSnapshot().records[0]?.children.label?.value).toBe('important');
+    expect(fakeSync.listenerCount()).toBe(0);
+    expect(harness.subscribeRequests).toHaveLength(2);
+    for (const request of harness.subscribeRequests) {
+      expect(request).toMatchObject({
+        from         : remoteDid,
+        protocolRole : 'member',
+      });
+    }
+    expect(harness.queryRequests).toHaveLength(2);
+    for (const request of harness.queryRequests) {
+      expect(request).toMatchObject({
+        from         : remoteDid,
+        protocolRole : 'member',
+      });
+    }
+
+    harness.emit(recordEvent(), 1);
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(4); });
+    await view.close();
   });
 
   it('rejects an already-aborted session without acquiring view resources', async () => {
