@@ -702,9 +702,7 @@ describe('TypedProtocol API', () => {
           data: { name: 'Reading List' },
         });
 
-        const readRecord = await typed.records.read('list', {
-          filter: { recordId: written.id },
-        });
+        const readRecord = await typed.records.read('list', written.id);
 
         expect(readRecord).toBeInstanceOf(Record);
         const data = await readRecord!.value();

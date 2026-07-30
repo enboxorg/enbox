@@ -124,9 +124,7 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   void queriedRecord;
   void nextRecord;
 
-  const readRecord: Record<TaskData> | undefined = await typed.records.read('task', {
-    filter: { recordId: 'record-id' },
-  });
+  const readRecord: Record<TaskData> | undefined = await typed.records.read('task', 'record-id');
   void readRecord;
 
   const view: RecordView<Record<TaskData>> = await typed.records.observe('task', {
