@@ -1,5 +1,11 @@
 # @enbox/protocol-codegen
 
+## 0.1.5
+
+### Patch Changes
+
+- [#1510](https://github.com/enboxorg/enbox/pull/1510) [`46c74fd`](https://github.com/enboxorg/enbox/commit/46c74fd26adeb617d79235fe18a97dca0be7194a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Generate self-contained validators for resolved JSON schemas, support browser-only runtime imports, and emit the published CLI and library entrypoints at their declared paths.
+
 ## 0.1.4
 
 ### Patch Changes

@@ -1,5 +1,27 @@
 # @enbox/browser
 
+## 0.3.67
+
+### Patch Changes
+
+- [#1512](https://github.com/enboxorg/enbox/pull/1512) [`20e1c7c`](https://github.com/enboxorg/enbox/commit/20e1c7c12cb829dd8c0da0a76bc0064df49598e6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Allow typed record views to observe bounded queries on a foreign DWN tenant with `from` and `protocolRole`, reusing the existing remote subscription and canonical query materialization path.
+
+- [#1502](https://github.com/enboxorg/enbox/pull/1502) [`69a1c6a`](https://github.com/enboxorg/enbox/commit/69a1c6ad9c68a36e19c3f93dcc379e7ac16f4f15) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add a concise `records.read(path, recordId)` form for local point reads while preserving advanced request options.
+
+- [#1501](https://github.com/enboxorg/enbox/pull/1501) [`a2848ac`](https://github.com/enboxorg/enbox/commit/a2848acf96fee15fba5701ddb3e04f4b98787f3e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add `RecordPage.next()` for continuing the same typed records query without reconstructing cursor requests.
+
+- [#1508](https://github.com/enboxorg/enbox/pull/1508) [`16b7cbc`](https://github.com/enboxorg/enbox/commit/16b7cbc5e7d5f69dc0b87738c0cc6e69951ce649) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose persisted audience-key delivery state and coordinator-backed retry through typed role records. Remove raw status verification and routine update-side delivery; retain supplied-key updates for out-of-band recovery.
+
+- [#1509](https://github.com/enboxorg/enbox/pull/1509) [`fa8346c`](https://github.com/enboxorg/enbox/commit/fa8346cd21c2edb91270b0d198312d0855244584) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Validate serialized JSON record values with optional standalone validators and expose typed failures with protocol, schema, and record context.
+
+- Updated dependencies [[`87129bd`](https://github.com/enboxorg/enbox/commit/87129bd86cd1c3a0c0c7d288407f063e3ef5a030), [`23b11e8`](https://github.com/enboxorg/enbox/commit/23b11e899f8f463ea897a6af17858ae639b34c48), [`41ce181`](https://github.com/enboxorg/enbox/commit/41ce181a981b17cc82d50bc496b0a2cab97df820), [`cf909fd`](https://github.com/enboxorg/enbox/commit/cf909fd4f6394d81e87e0a24d6f46ea1bb76a1a1), [`cb112bc`](https://github.com/enboxorg/enbox/commit/cb112bcbc0b4e0f545ad5852a6c5fcd10fd0103b), [`20e1c7c`](https://github.com/enboxorg/enbox/commit/20e1c7c12cb829dd8c0da0a76bc0064df49598e6), [`69a1c6a`](https://github.com/enboxorg/enbox/commit/69a1c6ad9c68a36e19c3f93dcc379e7ac16f4f15), [`23b11e8`](https://github.com/enboxorg/enbox/commit/23b11e899f8f463ea897a6af17858ae639b34c48), [`e6b1c06`](https://github.com/enboxorg/enbox/commit/e6b1c0636c3c63a9fba2dd154db38f147358c460), [`a2848ac`](https://github.com/enboxorg/enbox/commit/a2848acf96fee15fba5701ddb3e04f4b98787f3e), [`16b7cbc`](https://github.com/enboxorg/enbox/commit/16b7cbc5e7d5f69dc0b87738c0cc6e69951ce649), [`fa8346c`](https://github.com/enboxorg/enbox/commit/fa8346cd21c2edb91270b0d198312d0855244584)]:
+  - @enbox/agent@0.8.36
+  - @enbox/api@0.6.75
+  - @enbox/dwn-sdk-js@0.4.20
+  - @enbox/auth@0.6.82
+  - @enbox/protocols@0.2.102
+  - @enbox/connect@0.1.16
+
 ## 0.3.66
 
 ### Patch Changes
