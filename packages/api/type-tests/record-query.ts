@@ -102,8 +102,11 @@ void typed.records.query('missing');
 // @ts-expect-error count uses the same exact protocol paths.
 void typed.records.count('missing');
 
-// @ts-expect-error observed views materialize only the connected tenant's local replica.
-void typed.records.observe('note', { from: 'did:example:remote', pagination: { limit: 20 } });
+void typed.records.observe('note', {
+  from         : 'did:example:remote',
+  pagination   : { limit: 20 },
+  protocolRole : 'member',
+});
 
 // @ts-expect-error observed views require an explicit retained-result bound.
 void typed.records.observe('note', {});

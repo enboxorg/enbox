@@ -240,7 +240,7 @@ const page = await notes.records.query('note', selection);
 const { records } = page;
 const nextPage = await page.next(); // undefined after the final page
 
-// Observe one bounded local materialization
+// Observe one bounded materialization
 const view = await notes.records.observe('note', selection);
 const unsubscribe = view.subscribe((snapshot) => {
   console.log(snapshot.state, snapshot.records, snapshot.hasMore);
@@ -293,21 +293,23 @@ typed application value through the protocol codec, while `data.json()`,
 raw representation without wrapping a second record object. `update({ data })`
 replaces the full payload; use `patch()` for a shallow partial object update.
 
-`observe()` watches only the connected tenant's local replica. Subscription
-events are wake hints: every immutable snapshot is rebuilt from the same
-canonical query. Its required pagination limit bounds retained records, and
-its `loading`, `ready`, `stale`, or `error` state reflects replica currentness.
+`observe()` watches the connected tenant by default; pass `from` and, when
+required, `protocolRole` to watch a foreign tenant. Subscription events are
+wake hints: every immutable snapshot is rebuilt from the same canonical query.
+Its required pagination limit bounds retained records. Local views report
+replica currentness; a successful foreign query is `ready`.
 When the owning session ends, a view publishes one terminal `error` snapshot
 and closes. After automatic grant refresh, `ConnectionStore` publishes a
 replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
 from the replacement `AuthManager.session` announced by `session-start`.
 
-`loading` means a replicated source has not completed its required pull yet;
-an empty `ready` snapshot is therefore authoritatively empty, not still
-bootstrapping. After a view has been ready, an offline or catching-up source
-makes it `stale`. Successful local queries continue to update stale snapshots,
-so offline writes remain visible. Query, authorization, and terminal sync
-failures publish `error` while retaining the latest successful records.
+Before the first query, every view is `loading`; a local view also remains
+`loading` until its configured replicas complete their required pull. An empty
+`ready` snapshot is therefore authoritatively empty, not still bootstrapping.
+After a local view has been ready, an offline or catching-up source makes it
+`stale`. Successful local queries continue to update stale snapshots, so
+offline writes remain visible. Query, authorization, and terminal sync failures
+publish `error` while retaining the latest successful records.
 `hasMore` is always present: it is `false` before the first query and whenever
 the latest bounded result has no continuation cursor.
 
@@ -376,7 +378,7 @@ coordinates writes across browser contexts.
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
 | `RecordPage<Item>` | One page of selected record items with `next()` and its optional raw continuation cursor. |
-| `RecordView<Item>` | Closeable bounded local query view with immutable snapshots. |
+| `RecordView<Item>` | Closeable bounded query view with immutable snapshots. |
 | `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |
