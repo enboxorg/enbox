@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ResumableTaskStore } from '../../src/index.js';
-import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
+import type { EventLog, SubscriptionEvent, SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type { GenerateGrantCreateOutput, GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -748,11 +748,13 @@ export function testMessagesSubscribeHandler(): void {
 
             // bob uses the grant to subscribe to protocol 1 messages
             const proto1MessageCids: string[] = [];
+            let proto1EncodedData: string | undefined;
             const proto1Handler = async (msg: SubscriptionMessage):Promise<void> => {
               if (msg.type !== 'event') { return; }
               const { message } = msg.event;
               const messageCid = await Message.getCid(message);
               proto1MessageCids.push(messageCid);
+              proto1EncodedData = msg.encodedData;
             };
 
             const { message: bobSubscribe1 } = await TestDataGenerator.generateMessagesSubscribe({
@@ -778,7 +780,9 @@ export function testMessagesSubscribeHandler(): void {
             expect(allReply.status.code).toBe(200);
 
             // alice writes a message to protocol 1
+            const proto1Data = Encoder.stringToBytes('protocol payload');
             const { message: proto1Message, dataStream: proto1DataStream } = await TestDataGenerator.generateRecordsWrite({
+              data         : proto1Data,
               protocol     : protocol1.protocol,
               protocolPath : 'post',
               schema       : protocol1.types.post.schema,
@@ -811,6 +815,7 @@ export function testMessagesSubscribeHandler(): void {
               const expectedProto1Cids = [await Message.getCid(proto1Message)];
               expect(proto1MessageCids.sort()).toEqual(expectedProto1Cids.sort());
             });
+            expect(proto1EncodedData).toBe(Encoder.bytesToBase64Url(proto1Data));
 
           });
 
@@ -1527,57 +1532,118 @@ export function testMessagesSubscribeHandler(): void {
             expect(bobReply2.status.code).toBe(401);
             expect(bobReply2.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
             expect(bobReply2.subscription).toBeUndefined();
+          });
 
-            // A protocolPath-scoped grant cannot authorize a protocolPathPrefix
-            // filter because the prefix includes child paths and is broader than
-            // an exact protocolPath grant.
-            const { message: pathGrantMessage, dataStream: pathGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+          it('delivers live and replayed path- and context-scoped metadata without payload or support records', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const bob = await TestDataGenerator.generateDidKeyPersona();
+
+            const pathGrant = await TestDataGenerator.generateGrantCreate({
               author    : alice,
               grantedTo : bob,
               scope     : {
                 interface    : DwnInterfaceName.Messages,
                 method       : DwnMethodName.Read,
-                protocol     : protocol1.protocol,
-                protocolPath : 'post'
-              }
+                protocol     : freeForAll.protocol,
+                protocolPath : 'post',
+              },
             });
+            expect((await dwn.processMessage(alice.did, pathGrant.message, { dataStream: pathGrant.dataStream })).status.code).toBe(202);
 
-            const pathGrantReply = await dwn.processMessage(alice.did, pathGrantMessage, { dataStream: pathGrantDataStream });
-            expect(pathGrantReply.status.code).toBe(202);
-
-            const { message: pathScopedSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
+            const pathEvents: SubscriptionEvent[] = [];
+            const pathSubscribe = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
-              filters            : [{ protocol: protocol1.protocol, protocolPathPrefix: 'post' }],
-              permissionGrantIds : [pathGrantMessage.recordId]
+              filters            : [{ protocol: freeForAll.protocol, protocolPathPrefix: 'post' }],
+              permissionGrantIds : [pathGrant.message.recordId],
             });
-            const pathScopedReply = await dwn.processMessage(alice.did, pathScopedSubscribe);
-            expect(pathScopedReply.status.code).toBe(401);
-            expect(pathScopedReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
-            expect(pathScopedReply.subscription).toBeUndefined();
+            const pathReply = await dwn.processMessage(alice.did, pathSubscribe.message, {
+              subscriptionHandler: (message): void => {
+                if (message.type === 'event') {
+                  pathEvents.push(message);
+                }
+              },
+            });
+            expect(pathReply.status.code).toBe(200);
 
-            const { message: contextGrantMessage, dataStream: contextGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+            const configure = await TestDataGenerator.generateProtocolsConfigure({
+              author             : alice,
+              protocolDefinition : freeForAll,
+            });
+            expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+
+            const postA = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              data         : Encoder.stringToBytes('post payload'),
+              protocol     : freeForAll.protocol,
+              protocolPath : 'post',
+              schema       : freeForAll.types.post.schema,
+            });
+            expect((await dwn.processMessage(alice.did, postA.message, { dataStream: postA.dataStream })).status.code).toBe(202);
+
+            const contextId = postA.message.contextId ?? postA.message.recordId;
+            const contextGrant = await TestDataGenerator.generateGrantCreate({
               author    : alice,
               grantedTo : bob,
               scope     : {
+                contextId,
                 interface : DwnInterfaceName.Messages,
                 method    : DwnMethodName.Read,
-                protocol  : protocol1.protocol,
-                contextId : 'root'
-              }
+                protocol  : freeForAll.protocol,
+              },
             });
+            expect((await dwn.processMessage(alice.did, contextGrant.message, { dataStream: contextGrant.dataStream })).status.code).toBe(202);
 
-            const contextGrantReply = await dwn.processMessage(alice.did, contextGrantMessage, { dataStream: contextGrantDataStream });
-            expect(contextGrantReply.status.code).toBe(202);
+            const { cursor } = await eventLog.read(alice.did);
 
-            const { message: contextScopedSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
+            const attachmentA = await TestDataGenerator.generateRecordsWrite({
+              author          : alice,
+              data            : Encoder.stringToBytes('inside context'),
+              parentContextId : postA.message.recordId,
+              protocol        : freeForAll.protocol,
+              protocolPath    : 'post/attachment',
+            });
+            expect((await dwn.processMessage(alice.did, attachmentA.message, { dataStream: attachmentA.dataStream })).status.code).toBe(202);
+
+            const update = await TestDataGenerator.generateFromRecordsWrite({
+              author        : alice,
+              data          : Encoder.stringToBytes('updated payload'),
+              existingWrite : postA.recordsWrite,
+            });
+            expect((await dwn.processMessage(alice.did, update.message, { dataStream: update.dataStream })).status.code).toBe(202);
+
+            const contextMessages: SubscriptionMessage[] = [];
+            const contextSubscribe = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
-              filters            : [{ protocol: protocol1.protocol, contextIdPrefix: 'root' }],
-              permissionGrantIds : [contextGrantMessage.recordId]
+              cursor,
+              filters            : [{ protocol: freeForAll.protocol, contextIdPrefix: contextId }],
+              permissionGrantIds : [contextGrant.message.recordId],
             });
-            const contextScopedReply = await dwn.processMessage(alice.did, contextScopedSubscribe);
-            expect(contextScopedReply.status.code).toBe(401);
-            expect(contextScopedReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
-            expect(contextScopedReply.subscription).toBeUndefined();
+            const contextReply = await dwn.processMessage(alice.did, contextSubscribe.message, {
+              subscriptionHandler: (message): void => { contextMessages.push(message); },
+            });
+            expect(contextReply.status.code).toBe(200);
+
+            const postACid = await Message.getCid(postA.message);
+            const attachmentACid = await Message.getCid(attachmentA.message);
+            const updateCid = await Message.getCid(update.message);
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              const pathCids = await Promise.all(pathEvents.map(event => Message.getCid(event.event.message)));
+              expect(pathCids).toEqual([postACid, attachmentACid, updateCid]);
+
+              const contextEvents = contextMessages.filter(message => message.type === 'event');
+              const contextCids = await Promise.all(contextEvents.map(event => Message.getCid(event.event.message)));
+              expect(contextCids).toEqual([attachmentACid, updateCid]);
+              expect(contextMessages.at(-1)?.type).toBe('eose');
+            });
+
+            const contextEvents = contextMessages.filter(message => message.type === 'event');
+            const scopedEvents = [...pathEvents, ...contextEvents];
+            expect(scopedEvents.every(event => event.encodedData === undefined)).toBe(true);
+            expect(scopedEvents.every(event => (event.event.message as { encodedData?: string }).encodedData === undefined)).toBe(true);
+
+            const updateEvent = contextEvents.find(event => event.messageCid === updateCid);
+            expect(updateEvent?.event.initialWrite).toBeDefined();
+            expect((updateEvent?.event.initialWrite as { encodedData?: string } | undefined)?.encodedData).toBeUndefined();
           });
         });
       });

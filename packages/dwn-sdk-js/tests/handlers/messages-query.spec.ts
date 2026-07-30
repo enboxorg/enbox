@@ -255,7 +255,7 @@ export function testMessagesQueryHandler(): void {
       expect(reply.error?.reason).toBe('stream_mismatch');
     });
 
-    it.skipIf(!supportsReplicationFeed)('allows delegated protocol-scoped queries and includes tagged core protocol records', async () => {
+    it.skipIf(!supportsReplicationFeed)('applies broad and subtree grant visibility to delegated queries', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: false, protocol: 'http://messages-query-delegated' };
@@ -288,6 +288,39 @@ export function testMessagesQueryHandler(): void {
       const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
       expect(writeReply.status.code).toBe(202);
 
+      const recordContextId = record.message.contextId ?? record.message.recordId;
+      const attachment = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'post/attachment',
+        parentContextId : recordContextId,
+      });
+      expect((await dwn.processMessage(alice.did, attachment.message, { dataStream: attachment.dataStream })).status.code).toBe(202);
+
+      const pathGrant = await TestDataGenerator.generateGrantCreate({
+        author    : alice,
+        grantedTo : bob,
+        scope     : {
+          interface    : DwnInterfaceName.Messages,
+          method       : DwnMethodName.Read,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'post',
+        },
+      });
+      expect((await dwn.processMessage(alice.did, pathGrant.message, { dataStream: pathGrant.dataStream })).status.code).toBe(202);
+
+      const contextGrant = await TestDataGenerator.generateGrantCreate({
+        author    : alice,
+        grantedTo : bob,
+        scope     : {
+          interface : DwnInterfaceName.Messages,
+          method    : DwnMethodName.Read,
+          protocol  : protocolDefinition.protocol,
+          contextId : recordContextId,
+        },
+      });
+      expect((await dwn.processMessage(alice.did, contextGrant.message, { dataStream: contextGrant.dataStream })).status.code).toBe(202);
+
       const encryptionRecord = await TestDataGenerator.generateRecordsWrite({
         author       : alice,
         protocol     : EncryptionProtocol.uri,
@@ -313,8 +346,83 @@ export function testMessagesQueryHandler(): void {
         await Message.getCid(protocolConfigure),
         await Message.getCid(encryptionRecord.message),
         await Message.getCid(grant.message),
+        await Message.getCid(pathGrant.message),
+        await Message.getCid(contextGrant.message),
         await Message.getCid(record.message),
+        await Message.getCid(attachment.message),
       ].sort());
+
+      const { message: pathQuery } = await TestDataGenerator.generateMessagesQuery({
+        author             : bob,
+        filters            : [{ protocol: protocolDefinition.protocol, protocolPathPrefix: 'post' }],
+        permissionGrantIds : [pathGrant.message.recordId],
+      });
+      const pathReply = await dwn.processMessage(alice.did, pathQuery);
+
+      const { message: contextQuery } = await TestDataGenerator.generateMessagesQuery({
+        author             : bob,
+        filters            : [{ protocol: protocolDefinition.protocol, contextIdPrefix: recordContextId }],
+        permissionGrantIds : [contextGrant.message.recordId],
+      });
+      const contextReply = await dwn.processMessage(alice.did, contextQuery);
+
+      const expectedRecordCids = [
+        await Message.getCid(record.message),
+        await Message.getCid(attachment.message),
+      ].sort();
+      for (const subtreeReply of [pathReply, contextReply]) {
+        expect(subtreeReply.status.code).toBe(200);
+        expect(subtreeReply.entries!.map(entry => entry.messageCid).sort()).toEqual(expectedRecordCids);
+        expect(subtreeReply.entries!.every(entry => entry.encodedData === undefined)).toBe(true);
+        expect(subtreeReply.entries!.every(entry => entry.message !== undefined && !('encodedData' in entry.message))).toBe(true);
+      }
+
+      const { message: mixedQuery } = await TestDataGenerator.generateMessagesQuery({
+        author             : bob,
+        filters            : [{ protocol: protocolDefinition.protocol, protocolPathPrefix: 'post' }],
+        permissionGrantIds : [grant.message.recordId, pathGrant.message.recordId],
+      });
+      const mixedReply = await dwn.processMessage(alice.did, mixedQuery);
+      expect(mixedReply.status.code).toBe(200);
+      const recordCid = await Message.getCid(record.message);
+      const protocolConfigureCid = await Message.getCid(protocolConfigure);
+      const mixedRecord = mixedReply.entries!.find(entry => entry.messageCid === recordCid);
+      expect(mixedReply.entries!.some(entry => entry.messageCid === protocolConfigureCid)).toBe(true);
+      expect(mixedRecord?.encodedData).toBe(Encoder.bytesToBase64Url(record.dataBytes!));
+
+      for (const filter of [
+        { protocol: protocolDefinition.protocol },
+        { protocol: protocolDefinition.protocol, protocolPathPrefix: 'poster' },
+      ]) {
+        const { message: rejectedQuery } = await TestDataGenerator.generateMessagesQuery({
+          author             : bob,
+          filters            : [filter],
+          permissionGrantIds : [pathGrant.message.recordId],
+        });
+        const rejectedReply = await dwn.processMessage(alice.did, rejectedQuery);
+        expect(rejectedReply.status.code).toBe(401);
+        expect(rejectedReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
+      }
+
+      const coreGrant = await TestDataGenerator.generateGrantCreate({
+        author    : alice,
+        grantedTo : bob,
+        scope     : {
+          interface    : DwnInterfaceName.Messages,
+          method       : DwnMethodName.Read,
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.grantPath,
+        },
+      });
+      expect((await dwn.processMessage(alice.did, coreGrant.message, { dataStream: coreGrant.dataStream })).status.code).toBe(202);
+      const { message: coreQuery } = await TestDataGenerator.generateMessagesQuery({
+        author             : bob,
+        filters            : [{ protocol: PermissionsProtocol.uri, protocolPathPrefix: PermissionsProtocol.grantPath }],
+        permissionGrantIds : [coreGrant.message.recordId],
+      });
+      const coreReply = await dwn.processMessage(alice.did, coreQuery);
+      expect(coreReply.status.code).toBe(401);
+      expect(coreReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
     });
 
     it.skipIf(!supportsReplicationFeed)('transports delivery control events and accumulator fingerprints for delegated MessagesQuery', async () => {

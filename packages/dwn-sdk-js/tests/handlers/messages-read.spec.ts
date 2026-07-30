@@ -21,7 +21,19 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { DataStream, Dwn, DwnConstant, DwnErrorCode, DwnInterfaceName, DwnMethodName, Jws, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
+import {
+  DataStream,
+  Dwn,
+  DwnConstant,
+  DwnErrorCode,
+  DwnInterfaceName,
+  DwnMethodName,
+  EncryptionProtocol,
+  Jws,
+  PermissionGrant,
+  PermissionsProtocol,
+  Time,
+} from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 export function testMessagesReadHandler(): void {
@@ -1056,13 +1068,28 @@ export function testMessagesReadHandler(): void {
           )).status.code).toBe(202);
 
           const grantId = permissionGrant.recordsWrite.message.recordId;
+          const encryptionRecord = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.grantKeyPath,
+            tags         : {
+              grantId      : grantId,
+              keyId        : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'post',
+            },
+          });
+          await messageStore.put(alice.did, encryptionRecord.message, await encryptionRecord.recordsWrite.constructIndexes(true));
 
           const postRead = await TestDataGenerator.generateMessagesRead({
             author             : bob,
             messageCid         : await Message.getCid(post.message),
             permissionGrantIds : [grantId],
           });
-          expect((await dwn.processMessage(alice.did, postRead.message)).status.code).toBe(200);
+          const postReadReply = await dwn.processMessage(alice.did, postRead.message);
+          expect(postReadReply.status.code).toBe(200);
+          expect(postReadReply.entry!.data).toBeUndefined();
+          expect('encodedData' in postReadReply.entry!.message).toBe(false);
 
           const deleteRead = await TestDataGenerator.generateMessagesRead({
             author             : bob,
@@ -1076,7 +1103,10 @@ export function testMessagesReadHandler(): void {
             messageCid         : await Message.getCid(attachment.message),
             permissionGrantIds : [grantId],
           });
-          expect((await dwn.processMessage(alice.did, attachmentRead.message)).status.code).toBe(200);
+          const attachmentReadReply = await dwn.processMessage(alice.did, attachmentRead.message);
+          expect(attachmentReadReply.status.code).toBe(200);
+          expect(attachmentReadReply.entry!.data).toBeUndefined();
+          expect('encodedData' in attachmentReadReply.entry!.message).toBe(false);
 
           const otherProtocolRead = await TestDataGenerator.generateMessagesRead({
             author             : bob,
@@ -1093,8 +1123,8 @@ export function testMessagesReadHandler(): void {
             permissionGrantIds : [grantId],
           });
           const protocolReadReply = await dwn.processMessage(alice.did, protocolRead.message);
-          expect(protocolReadReply.status.code).toBe(200);
-          expect(protocolReadReply.entry!.message).toEqual(protocolMessage);
+          expect(protocolReadReply.status.code).toBe(401);
+          expect(protocolReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
 
           const otherProtocolConfigRead = await TestDataGenerator.generateMessagesRead({
             author             : bob,
@@ -1114,37 +1144,14 @@ export function testMessagesReadHandler(): void {
           expect(grantRecordReadReply.status.code).toBe(401);
           expect(grantRecordReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
 
-          const expectPermissionsSubtreeGrantReadRejected = async (scope: { protocolPath: string } | { contextId: string }): Promise<void> => {
-            const grant = await PermissionsProtocol.createGrant({
-              signer      : Jws.createSigner(alice),
-              grantedTo   : bob.did,
-              dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
-              scope       : {
-                interface : DwnInterfaceName.Messages,
-                method    : DwnMethodName.Read,
-                protocol  : PermissionsProtocol.uri,
-                ...scope,
-              }
-            });
-            expect((await dwn.processMessage(
-              alice.did,
-              grant.recordsWrite.message,
-              { dataStream: DataStream.fromBytes(grant.permissionGrantBytes) }
-            )).status.code).toBe(202);
-
-            const messagesRead = await TestDataGenerator.generateMessagesRead({
-              author             : bob,
-              messageCid         : await Message.getCid(permissionGrant.recordsWrite.message),
-              permissionGrantIds : [grant.recordsWrite.message.recordId],
-            });
-            const messagesReadReply = await dwn.processMessage(alice.did, messagesRead.message);
-            expect(messagesReadReply.status.code).toBe(401);
-            expect(messagesReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
-          };
-
-          const permissionGrantContextId = permissionGrant.recordsWrite.message.contextId ?? permissionGrant.recordsWrite.message.recordId;
-          await expectPermissionsSubtreeGrantReadRejected({ protocolPath: PermissionsProtocol.grantPath });
-          await expectPermissionsSubtreeGrantReadRejected({ contextId: permissionGrantContextId });
+          const encryptionRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(encryptionRecord.message),
+            permissionGrantIds : [grantId],
+          });
+          const encryptionReadReply = await dwn.processMessage(alice.did, encryptionRead.message);
+          expect(encryptionReadReply.status.code).toBe(401);
+          expect(encryptionReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
         });
 
         it('authorizes Records messages with context subtree Messages.Read grants', async () => {
@@ -1208,7 +1215,10 @@ export function testMessagesReadHandler(): void {
               messageCid         : await Message.getCid(message),
               permissionGrantIds : [grantId],
             });
-            expect((await dwn.processMessage(alice.did, messagesRead.message)).status.code).toBe(200);
+            const messagesReadReply = await dwn.processMessage(alice.did, messagesRead.message);
+            expect(messagesReadReply.status.code).toBe(200);
+            expect(messagesReadReply.entry!.data).toBeUndefined();
+            expect('encodedData' in messagesReadReply.entry!.message).toBe(false);
           }
 
           const siblingRead = await TestDataGenerator.generateMessagesRead({
@@ -1226,8 +1236,8 @@ export function testMessagesReadHandler(): void {
             permissionGrantIds : [grantId],
           });
           const protocolReadReply = await dwn.processMessage(alice.did, protocolRead.message);
-          expect(protocolReadReply.status.code).toBe(200);
-          expect(protocolReadReply.entry!.message).toEqual(protocolMessage);
+          expect(protocolReadReply.status.code).toBe(401);
+          expect(protocolReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
 
           const grantRecordRead = await TestDataGenerator.generateMessagesRead({
             author             : bob,

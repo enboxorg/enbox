@@ -160,5 +160,17 @@ describe('Messages Utils', () => {
       expect(messageFilter[1].method).toEqual(DwnMethodName.Write);
       expect(messageFilter[1].messageTimestamp).toEqual(messageTimestampFilterResult);
     });
+
+    it('omits support-record shadow filters when requested', () => {
+      const messageFilter = Messages.convertFilters([{
+        protocol           : 'https://example.xyz/protocol/1',
+        protocolPathPrefix : 'post',
+      }], coreProtocols, false);
+
+      expect(messageFilter).toEqual([{
+        protocol     : 'https://example.xyz/protocol/1',
+        protocolPath : { subtree: 'post' },
+      }]);
+    });
   });
 });

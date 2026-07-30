@@ -52,9 +52,17 @@ export class Messages {
    *
    * @param filters An array of MessagesFilter
    * @param coreProtocols Optional registry of core protocols whose additional filters are injected.
+   * @param includeShadowFilters Whether to include protocol support-record filters.
    * @returns {Filter[]} an array of generic Filter able to be used when querying.
    */
-  public static convertFilters(filters: MessagesFilter[], coreProtocols?: CoreProtocolRegistry): Filter[] {
+  public static convertFilters(
+    filters: MessagesFilter[],
+    coreProtocols?: CoreProtocolRegistry,
+    includeShadowFilters = true,
+  ): Filter[] {
+    if (!includeShadowFilters) {
+      return filters.map(filter => this.convertFilter(filter));
+    }
 
     const messagesQueryFilters: Filter[] = [];
 
