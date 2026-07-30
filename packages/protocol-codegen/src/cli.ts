@@ -12,7 +12,7 @@
  * @module
  */
 
-import type { CodegenResult, ProtocolDefinitionInput } from './codegen.js';
+import type { CodegenResult, CodegenTarget, ProtocolDefinitionInput } from './codegen.js';
 
 import { constants } from 'node:fs';
 import { generateProtocolModule } from './codegen.js';
@@ -45,6 +45,7 @@ Options:
   -n, --name        PascalCase name for the protocol (e.g. Inventory).  [required]
   -o, --output      Output file path. If omitted, prints to stdout.
       --allow-unresolved  Permit reachable JSON types without local schemas.
+      --target      Runtime import target: api or browser. Default: api.
   -h, --help        Show help
 `;
 
@@ -56,6 +57,7 @@ Options:
   -n, --name        PascalCase name for the protocol (e.g. Inventory).  [required]
   -o, --output      Generated output file to verify.                    [required]
       --allow-unresolved  Permit reachable JSON types without local schemas.
+      --target      Runtime import target: api or browser. Default: api.
   -h, --help        Show help
 `;
 
@@ -71,6 +73,7 @@ export type GenerateArgs = {
   name : string;
   output? : string;
   schemas : string;
+  target? : CodegenTarget;
 };
 
 export type CheckArgs = GenerateArgs & { output: string };
@@ -110,6 +113,14 @@ function readRequiredOption(values: ParsedOptionValues, key: string): string {
   return value;
 }
 
+function readTargetOption(value: ParsedOptionValues[string]): CodegenTarget | undefined {
+  if (value === undefined || value === 'api' || value === 'browser') {
+    return value;
+  }
+
+  fail(`Invalid target '${String(value)}': expected 'api' or 'browser'.`);
+}
+
 function parseCodegenArgs(args: string[], helpText: string, io: CliIo): GenerateArgs | undefined {
   let parsed: ReturnType<typeof parseArgs>;
   try {
@@ -123,6 +134,7 @@ function parseCodegenArgs(args: string[], helpText: string, io: CliIo): Generate
         name               : { type: 'string', short: 'n' },
         output             : { type: 'string', short: 'o' },
         schemas            : { type: 'string', short: 's' },
+        target             : { type: 'string' },
       },
       strict: true,
     });
@@ -136,8 +148,11 @@ function parseCodegenArgs(args: string[], helpText: string, io: CliIo): Generate
     return undefined;
   }
 
+  const target = readTargetOption(parsed.values.target);
+
   return {
     ...(parsed.values['allow-unresolved'] === true ? { allowUnresolvedJsonSchemas: true } : {}),
+    ...(target === undefined ? {} : { target }),
     definition : readRequiredOption(parsed.values, 'definition'),
     name       : readRequiredOption(parsed.values, 'name'),
     output     : typeof parsed.values.output === 'string' ? parsed.values.output : undefined,
@@ -280,6 +295,7 @@ async function prepareGeneration(args: GenerateArgs, io: CliIo): Promise<Prepare
     allowUnresolvedJsonSchemas : args.allowUnresolvedJsonSchemas,
     schemasDir,
     protocolName               : args.name,
+    target                     : args.target,
   });
 
   return { ...result, cwd };

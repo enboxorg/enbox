@@ -8,6 +8,7 @@ Given a protocol definition JSON file and a directory of JSON Schema files, it g
 
 - TypeScript interfaces for each protocol type (via [`json-schema-to-typescript`](https://github.com/bcherny/json-schema-to-typescript))
 - Runtime codecs for JSON, text, bytes, and variable-MIME `Blob` data
+- Self-contained JSON Schema validators for resolved JSON payloads
 - The complete protocol definition and a ready-to-use `defineProtocol()` result
 - Strict, local JSON Schema resolution for every reachable JSON payload type
 - Deterministic generated-output checks for CI
@@ -21,7 +22,8 @@ bun add -D @enbox/protocol-codegen
 
 Generated modules import the runtime codec helpers from `@enbox/api` and the
 protocol definition type from `@enbox/dwn-sdk-js`, so both are direct app
-dependencies.
+dependencies. Browser-only apps can instead install `@enbox/browser` and pass
+`--target browser`; generated code then imports only that package.
 
 ## CLI Usage
 
@@ -32,6 +34,9 @@ bunx @enbox/protocol-codegen generate \
   --name MyProtocol \
   --output ./my-protocol.generated.ts
 ```
+
+Add `--target browser` when the generated module should import solely from
+`@enbox/browser`.
 
 Generation is strict by default. Every protocol type reachable through the
 protocol structure that declares exactly one `application/json` or
@@ -71,6 +76,7 @@ part of the normal test workflow:
 | `--name` | `-n` | yes | PascalCase name for the protocol (e.g. `Inventory`) |
 | `--output` | `-o` | no | Output file path. If omitted, prints to stdout |
 | `--allow-unresolved` | | no | Explicitly emit `unknown` for reachable JSON types whose local schema is missing |
+| `--target` | | no | Runtime import target: `api` (default) or `browser` |
 
 The `check` command accepts the same options but requires `--output`. It
 generates in memory, compares the exact UTF-8 output, and exits nonzero when
@@ -199,7 +205,7 @@ Generates:
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { defineProtocol, recordCodecs } from '@enbox/api';
+import { defineProtocol, recordCodecs, type RecordValidator } from '@enbox/api';
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -246,13 +252,20 @@ export const TodoDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
+// The generated file contains the validator implementations; declarations
+// are shown here only to keep this example short.
+declare const protocolValidators: {
+  validateItemData: RecordValidator;
+  validateListData: RecordValidator;
+};
+
 // ---------------------------------------------------------------------------
 // Runtime codecs
 // ---------------------------------------------------------------------------
 
 export const TodoCodecs = {
-  list       : recordCodecs.json<ListData>(),
-  item       : recordCodecs.json<ItemData>(),
+  list       : recordCodecs.json<ListData>({ validator: protocolValidators.validateListData }),
+  item       : recordCodecs.json<ItemData>({ validator: protocolValidators.validateItemData }),
   attachment : recordCodecs.blob(),
 } as const;
 
@@ -269,6 +282,11 @@ Codec selection follows the declared representation: one JSON MIME type uses
 `json<T>()`; one `text/*` format uses `text()`; one fixed binary format uses
 `bytes()`; and multiple possible formats use `blob()` so each value carries
 its MIME type. A schema never causes non-JSON bytes to be mislabeled as JSON.
+Resolved JSON codecs validate the exact serialized representation on writes
+and parsed values on reads. Their validators are generated into the module;
+applications do not ship Ajv or a runtime schema compiler. Generated validators
+stop after the first failing schema rule; custom `RecordValidator`
+implementations may report multiple failures.
 
 Composed `$ref` paths require referenced protocol metadata that a standalone
 definition file does not contain. Code generation rejects them clearly until
@@ -305,6 +323,7 @@ const { code, resolutions } = await generateProtocolModule(definition, {
 | `definition` | `ProtocolDefinitionInput` | Protocol definition object with `protocol`, `types`, `structure` |
 | `options.schemasDir` | `string` | Directory containing `.json` schema files |
 | `options.protocolName` | `string` | PascalCase name for the generated definition, codecs, and typed protocol exports |
+| `options.target` | `'api' \| 'browser'?` | Runtime import target (default: `'api'`) |
 | `options.bannerComment` | `string?` | Custom banner comment at the top of the file (default: auto-generated notice) |
 | `options.allowUnresolvedJsonSchemas` | `boolean?` | Explicitly allow missing local schemas for reachable JSON types (default: `false`) |
 

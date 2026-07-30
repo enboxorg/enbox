@@ -18,6 +18,7 @@ import type { JSONSchema4 } from 'json-schema';
 import type { JsonSchema, SchemaResolution } from './schema-resolver.js';
 
 import { compile } from 'json-schema-to-typescript';
+import { generateStandaloneValidators } from './standalone-validator.js';
 import { resolveAllSchemas } from './schema-resolver.js';
 
 // ---------------------------------------------------------------------------
@@ -40,6 +41,9 @@ export type ProtocolTypeInput = {
   [key: string]: unknown;
 };
 
+/** Runtime package imported by the generated module. */
+export type CodegenTarget = 'api' | 'browser';
+
 /** Options for the code generation. */
 export type CodegenOptions = {
   /** Permit reachable JSON types without a local schema to fall back to `unknown`. */
@@ -50,6 +54,9 @@ export type CodegenOptions = {
 
   /** Base name for the generated protocol exports (e.g. `'Inventory'`). */
   protocolName: string;
+
+  /** Enbox runtime surface imported by the generated module. Defaults to `'api'`. */
+  target?: CodegenTarget;
 
   /** Banner comment at the top of the file. Set to `''` to suppress. */
   bannerComment?: string;
@@ -79,7 +86,7 @@ export async function generateProtocolModule(
   definition: ProtocolDefinitionInput,
   options: CodegenOptions,
 ): Promise<CodegenResult> {
-  const { allowUnresolvedJsonSchemas = false, schemasDir, protocolName } = options;
+  const { allowUnresolvedJsonSchemas = false, schemasDir, protocolName, target = 'api' } = options;
   const banner = options.bannerComment ?? DEFAULT_BANNER;
 
   const reachableTypeNames = collectReachableTypeNames(definition.structure);
@@ -112,6 +119,15 @@ export async function generateProtocolModule(
     resolutions,
   });
 
+  const validatorBlock = await generateStandaloneValidators(
+    Object.keys(jsonSchemaTypes).flatMap((typeName: string) => {
+      const schema = resolutions.get(typeName)?.schema;
+      return schema === undefined
+        ? []
+        : [{ name: `validate${pascalCase(typeName)}Data`, schema }];
+    }),
+  );
+
   // Generate TypeScript interfaces from resolved schemas
   const typeBlocks: string[] = [];
 
@@ -133,13 +149,24 @@ export async function generateProtocolModule(
     .filter(([typeName]): boolean => reachableTypeNames.has(typeName))
     .map(([typeName, type]): readonly [string, string] => [
       typeName,
-      generateCodecExpression(typeName, pascalCase(typeName) + 'Data', type),
+      generateCodecExpression(
+        typeName,
+        pascalCase(typeName) + 'Data',
+        type,
+        resolutions.get(typeName)?.schema === undefined
+          ? undefined
+          : `validate${pascalCase(typeName)}Data`,
+      ),
     ]);
+
+  const runtimePackage = target === 'browser' ? '@enbox/browser' : '@enbox/api';
+  const definitionPackage = target === 'browser' ? '@enbox/browser' : '@enbox/dwn-sdk-js';
+  const validatorImport = validatorBlock === '' ? '' : ', type RecordValidator';
 
   const sections = [
     ...(banner === '' ? [] : [banner]),
-    `import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';\n`,
-    `import { defineProtocol, recordCodecs } from '@enbox/api';\n`,
+    `import type { ProtocolDefinition } from '${definitionPackage}';\n`,
+    `import { defineProtocol, recordCodecs${validatorImport} } from '${runtimePackage}';\n`,
     '// ---------------------------------------------------------------------------',
     '// Data types',
     '// ---------------------------------------------------------------------------\n',
@@ -148,6 +175,7 @@ export async function generateProtocolModule(
     '// Protocol definition',
     '// ---------------------------------------------------------------------------\n',
     `export const ${protocolName}Definition = ${formatTypeScriptValue(definition)} as const satisfies ProtocolDefinition;\n`,
+    ...(validatorBlock === '' ? [] : [validatorBlock]),
     '// ---------------------------------------------------------------------------',
     '// Runtime codecs',
     '// ---------------------------------------------------------------------------\n',
@@ -230,9 +258,21 @@ function generateDataType(typeName: string, tsTypeName: string, type: ProtocolTy
 }
 
 /** Generates the built-in runtime codec for one protocol type. */
-function generateCodecExpression(typeName: string, tsTypeName: string, type: ProtocolTypeInput): string {
+function generateCodecExpression(
+  typeName: string,
+  tsTypeName: string,
+  type: ProtocolTypeInput,
+  validatorName?: string,
+): string {
   const formats = uniqueDataFormats(type);
   if (formats.length === 1 && isJsonFormat(formats[0])) {
+    if (validatorName !== undefined) {
+      const dataFormat = formats[0] === 'application/json'
+        ? ''
+        : `dataFormat: ${quoteString(formats[0])}, `;
+      return `recordCodecs.json<${tsTypeName}>({ ${dataFormat}` +
+        `validator: protocolValidators.${validatorName} })`;
+    }
     return callCodec(`json<${tsTypeName}>`, formats[0], 'application/json');
   }
 
