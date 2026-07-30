@@ -1283,9 +1283,20 @@ export class AgentDwnApi {
 
   /** Single-flight body of {@link reprovisionAudienceKeyDelivery}; never throws — failures resolve to the failure outcome. */
   private async executeAudienceKeyDeliveryReprovision(input: ExecuteAudienceKeyDeliveryReprovisionInput): Promise<AudienceKeyDeliveryOutcome> {
-    const { target, protocol, rolePath, contextId, recipientDid, granteeDid, permissionGrantId, delegatedGrant, protocolRole } = input;
+    const { target, protocol, rolePath, contextId, recipientDid, granteeDid, permissionGrantId, protocolRole } = input;
+    let { delegatedGrant } = input;
     try {
       const isDelegate = granteeDid !== undefined && granteeDid !== target;
+      if (isDelegate && delegatedGrant === undefined && permissionGrantId === undefined) {
+        delegatedGrant = (await this.agent.permissions.getPermissionForRequest({
+          connectedDid : target,
+          delegate     : true,
+          delegateDid  : granteeDid,
+          messageType  : DwnInterface.RecordsWrite,
+          protocol,
+          protocolPath : rolePath,
+        })).message;
+      }
       if (!isDelegate) {
         const currentAudience = await this.resolveCurrentAudienceRecord({
           authorDid : target,
