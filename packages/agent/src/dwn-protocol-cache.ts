@@ -23,6 +23,21 @@ import type {
 
 import { DwnInterface as DwnInterfaceEnum, dwnMessageConstructors } from './types/dwn.js';
 
+type RemoteProtocolDefinitionFailure = 'not-found' | 'no-endpoint' | 'rejected';
+
+/** Typed remote protocol lookup failure used by audience-delivery policy. */
+export class RemoteProtocolDefinitionError extends Error {
+  public readonly failure: RemoteProtocolDefinitionFailure;
+  public readonly statusCode?: number;
+
+  public constructor(message: string, failure: RemoteProtocolDefinitionFailure, statusCode?: number) {
+    super(message);
+    this.name = 'RemoteProtocolDefinitionError';
+    this.failure = failure;
+    this.statusCode = statusCode;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Dependency signatures — keep the extracted code free of `this` references.
 // ---------------------------------------------------------------------------
@@ -136,21 +151,36 @@ export async function fetchRemoteProtocolDefinition(
     filter: { protocol: protocolUri },
   });
 
-  const reply = await sendDwnRpcRequest({
-    targetDid,
-    dwnEndpointUrls : await getDwnEndpointUrls(targetDid),
-    message         : protocolsQuery.message,
-    verifyResponse  : true,
-  }) as ProtocolsQueryReply;
-
-  if (reply.status.code !== 200 || !reply.entries?.length) {
-    throw new Error(
-      `AgentDwnApi: Failed to fetch protocol '${protocolUri}' from ` +
-      `'${targetDid}'. The recipient may not have the protocol installed.`
+  const dwnEndpointUrls = await getDwnEndpointUrls(targetDid);
+  if (dwnEndpointUrls.length === 0) {
+    throw new RemoteProtocolDefinitionError(
+      `AgentDwnApi: DID '${targetDid}' has no DWN endpoint from which to fetch protocol '${protocolUri}'.`,
+      'no-endpoint',
     );
   }
 
-  const definition = reply.entries[0].descriptor.definition;
-  cache.set(cacheKey, definition);
-  return definition;
+  const reply = await sendDwnRpcRequest({
+    targetDid,
+    dwnEndpointUrls,
+    message        : protocolsQuery.message,
+    verifyResponse : true,
+  }) as ProtocolsQueryReply;
+
+  const definition = reply.entries?.[0]?.descriptor.definition;
+  if (reply.status.code === 200 && definition !== undefined) {
+    cache.set(cacheKey, definition);
+    return definition;
+  }
+  if (reply.status.code === 200) {
+    throw new RemoteProtocolDefinitionError(
+      `AgentDwnApi: Failed to fetch protocol '${protocolUri}' from ` +
+      `'${targetDid}'. The recipient may not have the protocol installed.`,
+      'not-found',
+    );
+  }
+  throw new RemoteProtocolDefinitionError(
+    `AgentDwnApi: Failed to fetch protocol '${protocolUri}' from '${targetDid}': ${reply.status.detail}`,
+    'rejected',
+    reply.status.code,
+  );
 }

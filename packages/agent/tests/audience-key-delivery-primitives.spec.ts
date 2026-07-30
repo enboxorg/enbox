@@ -22,6 +22,7 @@ import {
 import { createImportedDelegateDid } from './utils/delegate-did.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { RemoteProtocolDefinitionError } from '../src/dwn-protocol-cache.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { createAudienceDeliveryRecord, createAudienceRecord, createGrantKeyRecordsForGrants, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
@@ -551,8 +552,32 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       roleKeyStub.restore();
 
       expect(outcome.delivered).toBe(false);
+      expect(!outcome.delivered && outcome.failure).toBe('retryable');
       expect(!outcome.delivered && outcome.reason).toMatch(/unresolvable in test/i);
     }, 30000);
+
+    it('reports when the recipient has not installed the protocol', async () => {
+      const dwnApi = testHarness.agent.dwn as any;
+      sinon.stub(dwnApi, 'getProtocolDefinition').resolves(undefined);
+      sinon.stub(dwnApi, 'fetchRemoteProtocolDefinition').rejects(
+        new RemoteProtocolDefinitionError('protocol not installed', 'not-found'),
+      );
+
+      const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
+        contextId    : 'thread-context',
+        protocol     : 'https://protocol.example/chat',
+        recipientDid : 'did:example:recipient',
+        rolePath     : ROLE_PATH,
+        target       : alice.did.uri,
+      });
+
+      expect(outcome).toEqual({
+        delivered    : false,
+        failure      : 'awaiting-recipient-install',
+        reason       : 'protocol not installed',
+        recipientDid : 'did:example:recipient',
+      });
+    });
 
     it('coalesces concurrent re-provision calls into a single delivery write', async () => {
       const chat = chatProtocolDefinition();
@@ -607,6 +632,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
           }
           return Promise.resolve({
             delivered    : false,
+            failure      : 'retryable',
             reason       : 'the second authorization context was evaluated independently',
             recipientDid : input.recipientDid,
           });
@@ -729,6 +755,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       });
 
       expect(outcome.delivered).toBe(false);
+      expect(!outcome.delivered && outcome.failure).toBe('terminal');
       expect(!outcome.delivered && outcome.reason).toMatch(/role record is missing/i);
       expect(await countDeliveries(chat, bob.did.uri)).toBe(0);
     }, 30000);
@@ -755,6 +782,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const second = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery(request);
 
       expect(first.delivered).toBe(false);
+      expect(!first.delivered && first.failure).toBe('terminal');
       expect(!first.delivered && first.reason).toMatch(/no matching permission grant/i);
       expect(second.delivered).toBe(false);
       expect(permissionLookup.callCount).toBe(2);

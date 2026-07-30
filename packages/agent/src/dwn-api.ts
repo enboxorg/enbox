@@ -78,6 +78,7 @@ import type {
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
 import { PermissionGrantNotFoundError } from './permissions-api.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
+import { AudienceKeyDeliveryConfigurationError, classifyAudienceKeyDeliveryFailure } from './audience-key-delivery.js';
 import { DEFAULT_LOCAL_DWN_STRATEGY, LocalDwnDiscovery } from './local-dwn.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite, resolveDwnSubscriptionUrl } from './utils.js';
@@ -114,6 +115,7 @@ import {
 import {
   fetchRemoteProtocolDefinition as fetchRemoteProtocolDefinitionFn,
   getProtocolDefinition as getProtocolDefinitionFn,
+  RemoteProtocolDefinitionError,
 } from './dwn-protocol-cache.js';
 
 type DwnRpcData = Blob | ReadableStream<Uint8Array>;
@@ -838,7 +840,7 @@ export class AgentDwnApi {
    *
    * The `$role` write is already accepted and valid, so a delivery that cannot be
    * provisioned is surfaced on `DwnResponse.audienceKeyDelivery` as
-   * `{ delivered: false, reason }` for the caller to act on — never by throwing or
+   * `{ delivered: false, failure, reason }` for the caller to act on — never by throwing or
    * unwinding the write. That holds whether or not a `recipientRolePublicKey` was
    * supplied: the supplied key only chooses which key the delivery is wrapped to
    * (the caller's, skipping recipient DID resolution), not whether a failure is
@@ -871,6 +873,7 @@ export class AgentDwnApi {
       if (request.recipientRolePublicKey !== undefined) {
         return {
           delivered    : false,
+          failure      : 'terminal',
           recipientDid : recordsWrite.descriptor.recipient ?? '',
           reason       : 'role-audience delivery was skipped for the supplied recipient key ' +
             '(the path is no longer a deliverable role audience)',
@@ -886,6 +889,7 @@ export class AgentDwnApi {
       const detail = error instanceof Error ? error.message : String(error);
       return {
         delivered    : false,
+        failure      : classifyAudienceKeyDeliveryFailure(error),
         recipientDid : recordsWrite.descriptor.recipient ?? '',
         reason       : detail,
       };
@@ -1117,7 +1121,7 @@ export class AgentDwnApi {
    * {@link AudienceKeyDeliveryOutcome} with `delivered: true` on success. It throws
    * if delivery cannot be provisioned; the caller
    * ({@link provisionAudienceKeyDeliveryForReply}) turns that into a best-effort
-   * `{ delivered: false, reason }` outcome and never unwinds the accepted write.
+   * `{ delivered: false, failure, reason }` outcome and never unwinds the accepted write.
    */
   private async provisionAudienceKeyForAcceptedRoleRecord(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
@@ -1259,7 +1263,7 @@ export class AgentDwnApi {
       recipientRoleKeyId = await Encryption.getKeyId(recipientRolePublicKey);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      return { delivered: false, reason: detail, recipientDid };
+      return { delivered: false, failure: classifyAudienceKeyDeliveryFailure(error), reason: detail, recipientDid };
     }
     const executionInput = { ...params, contextId, recipientRoleKeyId, recipientRolePublicKey };
     const hasExplicitAuthorizationContext = params.granteeDid !== undefined ||
@@ -1347,7 +1351,7 @@ export class AgentDwnApi {
       return { delivered: true, recipientDid };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      return { delivered: false, reason: detail, recipientDid };
+      return { delivered: false, failure: classifyAudienceKeyDeliveryFailure(error), reason: detail, recipientDid };
     }
   }
 
@@ -1567,7 +1571,7 @@ export class AgentDwnApi {
         sourceDid                  : params.sourceDid,
       });
       if (resolved === undefined) {
-        throw new Error(
+        throw new AudienceKeyDeliveryConfigurationError(
           `AgentDwnApi: Audience key '${existingAudience.payload.keyId}' exists, but no seal or delivery can open it.`
         );
       }
@@ -1582,13 +1586,15 @@ export class AgentDwnApi {
 
     const protocolDefinition = await this.getProtocolDefinition(params.sourceDid, params.protocol, params.granteeDid);
     if (protocolDefinition === undefined) {
-      throw new Error(`AgentDwnApi: protocol '${params.protocol}' is not installed for '${params.sourceDid}'.`);
+      throw new AudienceKeyDeliveryConfigurationError(
+        `AgentDwnApi: protocol '${params.protocol}' is not installed for '${params.sourceDid}'.`
+      );
     }
 
     const ruleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
     const sealingPublicKey = ruleSet?.$keyAgreement?.publicKeyJwk as PublicKeyJwk | undefined;
     if (ruleSet?.$role !== true || sealingPublicKey === undefined) {
-      throw new Error(
+      throw new AudienceKeyDeliveryConfigurationError(
         `AgentDwnApi: role '${params.rolePath}' is not an encrypted audience ` +
         `(requires $role with $keyAgreement) in protocol '${params.protocol}'.`,
       );
@@ -1650,7 +1656,7 @@ export class AgentDwnApi {
       sourceDid                  : params.sourceDid,
     });
     if (!hasCoverage) {
-      throw new Error(
+      throw new AudienceKeyDeliveryConfigurationError(
         `AgentDwnApi: Cannot mint role audience (${params.protocol}, ${params.rolePath}, ${params.contextId}) without seal coverage. ` +
         'Use the owner identity or a delegate with grantKey material covering the role path, or provision the audience with a seal-covered actor first.'
       );
@@ -1782,9 +1788,19 @@ export class AgentDwnApi {
     const roleRuleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
     const publicKeyJwk = roleRuleSet?.$keyAgreement?.publicKeyJwk;
     if (publicKeyJwk === undefined) {
-      throw new Error(
+      throw new AudienceKeyDeliveryConfigurationError(
         `AgentDwnApi: Recipient '${params.recipientDid}' has no encryption key for role path ` +
         `'${params.protocol}/${params.rolePath}'.`
+      );
+    }
+
+    try {
+      await assertX25519RolePublicKey(publicKeyJwk);
+    } catch (error) {
+      throw new AudienceKeyDeliveryConfigurationError(
+        `AgentDwnApi: Recipient '${params.recipientDid}' has an invalid encryption key for role path ` +
+        `'${params.protocol}/${params.rolePath}'.`,
+        { cause: error },
       );
     }
 
@@ -2493,8 +2509,7 @@ export class AgentDwnApi {
         // errors (network timeouts, auth failures) are rethrown so the
         // caller does not silently skip encryption or other protocol-
         // required behaviours.
-        const msg = error instanceof Error ? error.message : '';
-        if (msg.includes('not found') || msg.includes('404') || msg.includes('No protocol')) {
+        if (error instanceof RemoteProtocolDefinitionError && error.failure === 'not-found') {
           return undefined;
         }
         throw error;

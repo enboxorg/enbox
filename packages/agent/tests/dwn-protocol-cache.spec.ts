@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import {
   fetchRemoteProtocolDefinition,
   getProtocolDefinition,
+  RemoteProtocolDefinitionError,
 } from '../src/dwn-protocol-cache.js';
 
 describe('dwn-protocol-cache', () => {
@@ -144,7 +145,7 @@ describe('dwn-protocol-cache', () => {
 
       await expect(fetchRemoteProtocolDefinition(
         targetDid, protocolUri, getDwnEndpointUrls, sendDwnRpcRequest, cache,
-      )).rejects.toThrow('Failed to fetch protocol');
+      )).rejects.toMatchObject({ failure: 'rejected', statusCode: 404 });
     });
 
     it('should throw when remote DWN returns empty entries', async () => {
@@ -157,7 +158,33 @@ describe('dwn-protocol-cache', () => {
 
       await expect(fetchRemoteProtocolDefinition(
         targetDid, protocolUri, getDwnEndpointUrls, sendDwnRpcRequest, cache,
-      )).rejects.toThrow('Failed to fetch protocol');
+      )).rejects.toMatchObject({ failure: 'not-found' });
+    });
+
+    it('should distinguish a target with no DWN endpoint', async () => {
+      const cache = new TtlCache<string, ProtocolDefinition>({ ttl: 60_000 });
+      const sendDwnRpcRequest = sinon.stub();
+      const getDwnEndpointUrls = sinon.stub().resolves([]);
+
+      await expect(fetchRemoteProtocolDefinition(
+        targetDid, protocolUri, getDwnEndpointUrls, sendDwnRpcRequest, cache,
+      )).rejects.toEqual(expect.objectContaining({
+        failure : 'no-endpoint',
+        name    : RemoteProtocolDefinitionError.name,
+      }));
+      expect(sendDwnRpcRequest.callCount).toBe(0);
+    });
+
+    it('should preserve a rejected query status', async () => {
+      const cache = new TtlCache<string, ProtocolDefinition>({ ttl: 60_000 });
+      const sendDwnRpcRequest = sinon.stub().resolves({
+        status: { code: 503, detail: 'Service Unavailable' },
+      } as unknown as ProtocolsQueryReply);
+      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
+
+      await expect(fetchRemoteProtocolDefinition(
+        targetDid, protocolUri, getDwnEndpointUrls, sendDwnRpcRequest, cache,
+      )).rejects.toMatchObject({ failure: 'rejected', statusCode: 503 });
     });
   });
 

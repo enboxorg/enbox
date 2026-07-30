@@ -3,7 +3,7 @@ import type { CreateGrantParams, CreateRequestParams, CreateRevocationParams, Fe
 import type { DwnDataEncodedRecordsWriteMessage, DwnMessageParams, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
 import type { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData } from '@enbox/dwn-sdk-js';
 
-import { isRecordsType } from './dwn-api.js';
+import { isRecordsType } from './dwn-type-guards.js';
 import { mapConcurrent } from './utils.js';
 import { Convert, TtlCache } from '@enbox/common';
 import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/dwn.js';

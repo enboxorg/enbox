@@ -33,6 +33,7 @@ import emailProtocolDefinition from './fixtures/protocol-definitions/email.json'
 import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { RemoteProtocolDefinitionError } from '../src/dwn-protocol-cache.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { AgentDwnApi, isDwnMessage, isMessagesPermissionScope, isRecordPermissionScope } from '../src/dwn-api.js';
@@ -195,6 +196,25 @@ describe('AgentDwnApi', () => {
   });
 
   describe('remote mode (localDwnEndpoint)', () => {
+    it('only treats typed remote protocol absence as uninstalled', async () => {
+      const dwnApi = new AgentDwnApi({
+        agent            : testHarness.agent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+      const fetchDefinition = sinon.stub(dwnApi as any, 'fetchRemoteProtocolDefinition');
+      const protocol = 'https://uninstalled-protocol.example';
+      const targetDid = 'did:example:alice';
+
+      fetchDefinition.onFirstCall().rejects(
+        new RemoteProtocolDefinitionError('Protocol is not installed', 'not-found')
+      );
+      expect(await dwnApi['getProtocolDefinition'](targetDid, protocol)).toBeUndefined();
+
+      const unrelatedError = new Error('Unrelated upstream 404');
+      fetchDefinition.onSecondCall().rejects(unrelatedError);
+      await expect(dwnApi['getProtocolDefinition'](targetDid, protocol)).rejects.toBe(unrelatedError);
+    });
+
     it('routes processRequest through RPC in remote mode', async () => {
       // Create a mock agent with enough structure for constructDwnMessage + sendDwnRpcRequest
       const rpcSendStub = sinon.stub().resolves({
@@ -4441,7 +4461,7 @@ describe('Role record write behavior', () => {
   it('records a best-effort skip (no throw) when no key is supplied and the recipient key cannot be resolved', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
     const roleKeyLookupStub = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-      .rejects(new Error('recipient protocol not installed'));
+      .rejects(new RemoteProtocolDefinitionError('recipient protocol not installed', 'not-found'));
 
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4463,12 +4483,8 @@ describe('Role record write behavior', () => {
       dataStream: new Blob([new TextEncoder().encode('{"title":"BestEffort"}')]),
     });
 
-    // No `recipientRolePublicKey` supplied and the recipient's key cannot be
-    // resolved. Under Design A a DWN-less/unresolvable recipient is a supported
-    // participant state (it may not need to decrypt, or will be supplied a key by
-    // a caller that does), so the `$role` write still succeeds. The skipped
-    // delivery is surfaced on the response — visible and inspectable — instead of
-    // being swallowed into a silent log or failing an otherwise-valid write.
+    // The role write remains accepted; delivery state tells the caller that the
+    // recipient must install the protocol before the key can be delivered.
     const roleWrite = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -4487,6 +4503,8 @@ describe('Role record write behavior', () => {
     expect(roleWrite.reply.status.code).toBe(202);
     expect(roleWrite.audienceKeyDelivery).toBeDefined();
     expect(roleWrite.audienceKeyDelivery!.delivered).toBe(false);
+    expect(!roleWrite.audienceKeyDelivery!.delivered && roleWrite.audienceKeyDelivery!.failure)
+      .toBe('awaiting-recipient-install');
     expect(roleWrite.audienceKeyDelivery!.recipientDid).toBe(bob.did.uri);
     expect(roleWrite.audienceKeyDelivery!.reason).toContain('recipient protocol not installed');
     expect(roleKeyLookupStub.calledOnce).toBe(true);
