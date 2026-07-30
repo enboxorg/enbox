@@ -1,6 +1,6 @@
 {
   "name": "@enbox/auth",
-  "version": "0.6.81",
+  "version": "0.6.82",
   "description": "Headless authentication and identity management SDK for Enbox",
   "type": "module",
   "main": "./dist/esm/index.js",

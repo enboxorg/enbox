@@ -1,5 +1,11 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.20
+
+### Patch Changes
+
+- [#1511](https://github.com/enboxorg/enbox/pull/1511) [`e6b1c06`](https://github.com/enboxorg/enbox/commit/e6b1c0636c3c63a9fba2dd154db38f147358c460) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Authorize context- and path-scoped metadata feeds while excluding record payloads and protocol-support messages.
+
 ## 0.4.19
 
 ### Patch Changes

@@ -1,5 +1,28 @@
 # @enbox/agent
 
+## 0.8.36
+
+### Patch Changes
+
+- [#1503](https://github.com/enboxorg/enbox/pull/1503) [`87129bd`](https://github.com/enboxorg/enbox/commit/87129bd86cd1c3a0c0c7d288407f063e3ef5a030) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Resolve delegated write authorization internally when repairing role-audience key delivery.
+
+- [#1506](https://github.com/enboxorg/enbox/pull/1506) [`23b11e8`](https://github.com/enboxorg/enbox/commit/23b11e899f8f463ea897a6af17858ae639b34c48) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Run role-audience delivery reconciliation and bounded transient retries in the background for each encrypted-role protocol used by an Enbox session. Work waits for a current reachable replica and wakes on startup, relevant role changes, connectivity recovery, and recipient protocol installation without delaying connection readiness or accepted writes.
+
+- [#1505](https://github.com/enboxorg/enbox/pull/1505) [`41ce181`](https://github.com/enboxorg/enbox/commit/41ce181a981b17cc82d50bc496b0a2cab97df820) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Persist an internal, reconstructable audience-key delivery projection for locally accepted role records so initial delivery outcomes survive agent restarts without becoming a second membership authority. This is the storage foundation for role-record reconciliation and restart-safe retry tracked by #1092.
+
+- [#1504](https://github.com/enboxorg/enbox/pull/1504) [`cf909fd`](https://github.com/enboxorg/enbox/commit/cf909fd4f6394d81e87e0a24d6f46ea1bb76a1a1) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Classify audience-key delivery failures for durable retry and recipient-install handling.
+
+- [#1499](https://github.com/enboxorg/enbox/pull/1499) [`cb112bc`](https://github.com/enboxorg/enbox/commit/cb112bcbc0b4e0f545ad5852a6c5fcd10fd0103b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Fix encrypted nested record updates resolving a shallow role-audience context, which reminted keys and backdated the operation.
+
+- [#1506](https://github.com/enboxorg/enbox/pull/1506) [`23b11e8`](https://github.com/enboxorg/enbox/commit/23b11e899f8f463ea897a6af17858ae639b34c48) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Reconstruct the internal audience-key delivery projection from complete encrypted role-record feeds, including delegated scans, so missing active roles become pending and deleted roles no longer remain scheduled as tracked by #1092.
+
+- [#1508](https://github.com/enboxorg/enbox/pull/1508) [`16b7cbc`](https://github.com/enboxorg/enbox/commit/16b7cbc5e7d5f69dc0b87738c0cc6e69951ce649) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose persisted audience-key delivery state and coordinator-backed retry through typed role records. Remove raw status verification and routine update-side delivery; retain supplied-key updates for out-of-band recovery.
+
+- Updated dependencies [[`e6b1c06`](https://github.com/enboxorg/enbox/commit/e6b1c0636c3c63a9fba2dd154db38f147358c460)]:
+  - @enbox/dwn-sdk-js@0.4.20
+  - @enbox/connect@0.1.16
+  - @enbox/dwn-clients@0.4.27
+
 ## 0.8.35
 
 ### Patch Changes
