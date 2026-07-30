@@ -1,5 +1,5 @@
 import type { PublicKeyJwk } from '@enbox/crypto';
-import type { ProtocolDefinition, ProtocolsConfigureMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import type { AudienceKeyDeliveryOutcome } from '../src/types/dwn.js';
 import type { AudienceKeyDeliveryState } from '../src/audience-key-delivery.js';
@@ -465,6 +465,24 @@ describe('AgentDwnApi audience key delivery primitives', () => {
   });
 
   describe('automatic audience-key delivery', () => {
+    it('does not reconcile an installed-only retired role audience', async () => {
+      const chat = chatProtocolDefinition();
+      chat.types.retired = { dataFormats: ['application/json'] };
+      (chat.structure.thread as ProtocolRuleSet).retired = { $role: true };
+      await installProtocol(alice.did.uri, chat);
+      const reconcile = sinon.spy(testHarness.audienceKeyDeliveryStore, 'reconcileProtocol');
+
+      const retry = await (testHarness.agent.dwn as any).runAudienceKeyDeliveryPass({
+        protocol  : chat.protocol,
+        rolePaths : new Set([ROLE_PATH]),
+        signal    : new AbortController().signal,
+        target    : alice.did.uri,
+      }, true);
+
+      expect(retry).toBe(false);
+      expect(reconcile.notCalled).toBe(true);
+    }, 30000);
+
     it('waits for a current replica, repairs after recipient install, and removes deleted roles', async () => {
       const chat = chatProtocolDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Automatic Repair', testDwnUrls });

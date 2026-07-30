@@ -318,6 +318,7 @@ export class Enbox {
       signal : this._lifetimeSignal,
       sync   : this.agent.sync,
     });
+    // Configure injects $keyAgreement at every authored path when any type is encrypted.
     const rolePaths = Object.values(protocol.definition.types).some(type => type.encryptionRequired === true)
       ? [...collectProtocolPaths(protocol.definition.structure)]
         .filter(path => getRuleSetAtPath(path, protocol.definition.structure)?.$role === true)

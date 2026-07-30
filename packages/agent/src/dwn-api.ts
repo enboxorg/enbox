@@ -26,6 +26,7 @@ import {
   DataStream,
   DurableEventLog,
   Dwn,
+  DwnInterfaceName,
   DwnMethodName,
   Encoder,
   Encryption,
@@ -33,6 +34,7 @@ import {
   EncryptionControl,
   EncryptionControlDeliveryRecipientAuthority,
   EncryptionProtocol,
+  getGrantKeyDeliveryScopes,
   getRoleAudienceContextId,
   getRuleSetAtPath,
   getTypeName,
@@ -76,13 +78,20 @@ import type {
   SendDwnRequest,
 } from './types/dwn.js';
 
-import { AudienceKeyDeliveryCoordinator } from './audience-key-delivery-coordinator.js';
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
-import { isReplicationLinkCurrent } from './types/sync.js';
 import { PermissionGrantNotFoundError } from './permissions-api.js';
 import { scanActiveAudienceKeyDeliveryIntents } from './audience-key-delivery-reconciliation.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
+import {
+  areReplicationLinksCurrent,
+  syncRegistrationCoversProtocol,
+  syncScopeCoversProtocol,
+} from './types/sync.js';
 import { AudienceKeyDeliveryConfigurationError, classifyAudienceKeyDeliveryFailure } from './audience-key-delivery.js';
+import {
+  AudienceKeyDeliveryCoordinator,
+  AudienceKeyDeliveryReplicaNotCurrentError,
+} from './audience-key-delivery-coordinator.js';
 import { DEFAULT_LOCAL_DWN_STRATEGY, LocalDwnDiscovery } from './local-dwn.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite, resolveDwnSubscriptionUrl } from './utils.js';
@@ -930,60 +939,80 @@ export class AgentDwnApi {
     outcome?: AudienceKeyDeliveryOutcome,
   ): Promise<void> {
     const configured = isDwnMessage(DwnInterface.ProtocolsConfigure, message);
-    if (this._audienceKeyDeliveryStore === undefined || request.store === false ||
+    const store = this._audienceKeyDeliveryStore;
+    if (store === undefined || request.store === false ||
         (reply.status.code !== 202 && !(configured && reply.status.code === 409))) {
       return;
     }
 
     try {
       if (outcome !== undefined && isDwnRequest(request, DwnInterface.RecordsWrite)) {
-        const recordsWrite = message as RecordsWriteMessage;
-        const { protocol, protocolPath: rolePath, recipient: recipientDid } = recordsWrite.descriptor;
-        const contextId = rolePath === undefined ? undefined : getRoleAudienceContextId(rolePath, recordsWrite.contextId);
-        if (protocol === undefined || rolePath === undefined || recipientDid === undefined || contextId === undefined) {
-          return;
-        }
-
-        if (!outcome.delivered && outcome.failure === 'retryable') {
-          for (const coordinator of this._audienceKeyDeliveryCoordinators.values()) {
-            if (coordinator.targetDid === request.target && coordinator.protocol === protocol) {
-              coordinator.retry();
-            }
-          }
-        }
-        await this._audienceKeyDeliveryStore.record({
-          intent: {
-            contextId,
-            protocol,
-            recipientDid,
-            rolePath,
-            roleRecordId : recordsWrite.recordId,
-            sourceDid    : request.target,
-          },
-          outcome,
-        });
+        await this.recordAudienceKeyDeliveryOutcome(store, request.target, message as RecordsWriteMessage, outcome);
         return;
       }
 
       if (isDwnMessage(DwnInterface.RecordsDelete, message)) {
-        for (const coordinator of this._audienceKeyDeliveryCoordinators.values()) {
-          if (coordinator.targetDid === request.target) {
-            coordinator.reconcile();
-          }
-        }
+        this.reconcileAudienceKeyDelivery(request.target);
         return;
       }
 
       if (configured) {
-        const protocol = message.descriptor.definition.protocol;
-        for (const coordinator of this._audienceKeyDeliveryCoordinators.values()) {
-          if (coordinator.protocol === protocol) {
-            coordinator.wake();
-          }
-        }
+        this.wakeAudienceKeyDelivery(message.descriptor.definition.protocol);
       }
     } catch {
       // Accepted DWN messages remain authoritative; the private projection is reconstructed later.
+    }
+  }
+
+  private async recordAudienceKeyDeliveryOutcome(
+    store: AudienceKeyDeliveryStore,
+    target: string,
+    recordsWrite: RecordsWriteMessage,
+    outcome: AudienceKeyDeliveryOutcome,
+  ): Promise<void> {
+    const { protocol, protocolPath: rolePath, recipient: recipientDid } = recordsWrite.descriptor;
+    const contextId = rolePath === undefined ? undefined : getRoleAudienceContextId(rolePath, recordsWrite.contextId);
+    if (protocol === undefined || rolePath === undefined || recipientDid === undefined || contextId === undefined) {
+      return;
+    }
+
+    if (!outcome.delivered && outcome.failure === 'retryable') {
+      this.retryAudienceKeyDelivery(target, protocol);
+    }
+    await store.record({
+      intent: {
+        contextId,
+        protocol,
+        recipientDid,
+        rolePath,
+        roleRecordId : recordsWrite.recordId,
+        sourceDid    : target,
+      },
+      outcome,
+    });
+  }
+
+  private reconcileAudienceKeyDelivery(target: string): void {
+    for (const coordinator of this._audienceKeyDeliveryCoordinators.values()) {
+      if (coordinator.targetDid === target) {
+        coordinator.reconcile();
+      }
+    }
+  }
+
+  private retryAudienceKeyDelivery(target: string, protocol: string): void {
+    for (const coordinator of this._audienceKeyDeliveryCoordinators.values()) {
+      if (coordinator.targetDid === target && coordinator.protocol === protocol) {
+        coordinator.retry();
+      }
+    }
+  }
+
+  private wakeAudienceKeyDelivery(protocol: string): void {
+    for (const coordinator of this._audienceKeyDeliveryCoordinators.values()) {
+      if (coordinator.protocol === protocol) {
+        coordinator.wake();
+      }
     }
   }
 
@@ -1006,28 +1035,27 @@ export class AgentDwnApi {
     if (protocolDefinition === undefined) {
       return false;
     }
-    if ([...params.rolePaths].some((rolePath) => {
-      const ruleSet = getRuleSetAtPath(rolePath, protocolDefinition.structure);
-      return ruleSet?.$role !== true || ruleSet.$keyAgreement === undefined;
-    })) {
+    const installedRolePaths = new Set(getGrantKeyDeliveryScopes({
+      interface : DwnInterfaceName.Records,
+      method    : DwnMethodName.Write,
+      protocol  : params.protocol,
+    }, protocolDefinition).flatMap(scope => scope.protocolPath === undefined ? [] : [scope.protocolPath]));
+    if (installedRolePaths.size !== params.rolePaths.size ||
+        [...params.rolePaths].some(rolePath => !installedRolePaths.has(rolePath))) {
       return false;
     }
     const states = await store.reconcileProtocol({
       protocol  : params.protocol,
       sourceDid : params.target,
       scan      : async () => {
-        if (!await this.isAudienceKeyDeliveryFeedCurrent(params.target, params.protocol)) {
-          throw new Error('Audience-key delivery reconciliation is waiting for the local replica to become current.');
-        }
+        await this.assertAudienceKeyDeliveryFeedCurrent(params.target, params.protocol);
         const intents = await scanActiveAudienceKeyDeliveryIntents({
           agent       : this.agent,
           delegateDid : params.granteeDid,
           protocolDefinition,
           sourceDid   : params.target,
         });
-        if (!await this.isAudienceKeyDeliveryFeedCurrent(params.target, params.protocol)) {
-          throw new Error('Audience-key delivery reconciliation is waiting for the local replica to become current.');
-        }
+        await this.assertAudienceKeyDeliveryFeedCurrent(params.target, params.protocol);
         return intents;
       },
     });
@@ -1052,17 +1080,18 @@ export class AgentDwnApi {
     return retry;
   }
 
-  private async isAudienceKeyDeliveryFeedCurrent(target: string, protocol: string): Promise<boolean> {
+  private async assertAudienceKeyDeliveryFeedCurrent(target: string, protocol: string): Promise<void> {
     const registration = await this.agent.sync.getIdentityOptions(target);
-    if (registration === undefined ||
-        (registration.protocols !== 'all' && !registration.protocols.includes(protocol))) {
-      return true;
+    if (!syncRegistrationCoversProtocol(registration, protocol)) {
+      return;
     }
 
     const links = (await this.agent.sync.getReplicationLinks(target)).filter(link =>
-      link.scope.kind === 'full' || link.scope.protocols.includes(protocol)
+      syncScopeCoversProtocol(link.scope, protocol)
     );
-    return links.length > 0 && links.every(isReplicationLinkCurrent);
+    if (!areReplicationLinksCurrent(links)) {
+      throw new AudienceKeyDeliveryReplicaNotCurrentError();
+    }
   }
 
   /**
