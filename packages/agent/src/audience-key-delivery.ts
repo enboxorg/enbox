@@ -2,10 +2,16 @@ import type { Status } from '@enbox/dwn-sdk-js';
 
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 
-import type { AudienceKeyDeliveryFailure } from './types/dwn.js';
+import type { AudienceKeyDeliveryFailure, AudienceKeyDeliveryOutcome } from './types/dwn.js';
 
 import { PermissionGrantNotFoundError } from './permissions-api.js';
 import { RemoteProtocolDefinitionError } from './dwn-protocol-cache.js';
+
+const projectedFailureStates = {
+  'awaiting-recipient-install' : 'awaiting-recipient-install',
+  retryable                    : 'pending',
+  terminal                     : 'failed',
+} as const;
 
 /** A source-side configuration or key-custody failure that requires an external change. */
 export class AudienceKeyDeliveryConfigurationError extends Error {
@@ -24,6 +30,35 @@ export class AudienceControlWriteError extends Error {
     this.name = 'AudienceControlWriteError';
     this.status = status;
   }
+}
+
+/** Identity of one accepted role record's audience-key delivery intent. */
+export type AudienceKeyDeliveryIntent = Readonly<{
+  sourceDid: string;
+  roleRecordId: string;
+  protocol: string;
+  rolePath: string;
+  contextId: string;
+  recipientDid: string;
+}>;
+
+/** Internal, reconstructable projection of one role record's delivery lifecycle. */
+export type AudienceKeyDeliveryState = AudienceKeyDeliveryIntent & (
+  | { readonly state: 'delivered' }
+  | { readonly state: 'pending'; readonly reason?: string }
+  | { readonly state: 'awaiting-recipient-install' | 'failed'; readonly reason: string }
+);
+
+/** Projects one typed delivery attempt. */
+export function projectAudienceKeyDeliveryOutcome(
+  intent: AudienceKeyDeliveryIntent,
+  outcome: AudienceKeyDeliveryOutcome,
+): AudienceKeyDeliveryState {
+  if (outcome.delivered) {
+    return { ...intent, state: 'delivered' };
+  }
+
+  return { ...intent, reason: outcome.reason, state: projectedFailureStates[outcome.failure] };
 }
 
 /** Maps typed delivery failures to the retry policy persisted by reconciliation. */

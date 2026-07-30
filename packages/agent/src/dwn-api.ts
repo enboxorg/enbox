@@ -52,6 +52,7 @@ import { Convert, TtlCache } from '@enbox/common';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
 
+import type { AudienceKeyDeliveryStore } from './audience-key-delivery-store.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';
 import type { RemoteReadOutcome } from './dwn-read-through.js';
@@ -156,6 +157,7 @@ const REMOTE_UNVERIFIABLE_REASON = 'the remote DWN could not be reached or repli
 
 type DwnApiParams = {
   agent?: EnboxPlatformAgent;
+  audienceKeyDeliveryStore?: AudienceKeyDeliveryStore;
   localDwnStrategy?: LocalDwnStrategy;
 } & (
   | {
@@ -275,6 +277,9 @@ export class AgentDwnApi {
   /** Wake bus owned by this API (see {@link DwnApiParams.wakePublisher}); released in `close()`. */
   private readonly _wakePublisher?: { close(): void };
 
+  /** Reconstructable delivery projection keyed by source tenant and role record. */
+  private readonly _audienceKeyDeliveryStore?: AudienceKeyDeliveryStore;
+
   /**
    * The local DWN server endpoint for remote mode.
    * When set, `_dwn` is `undefined` and `processRequest()` routes
@@ -338,7 +343,7 @@ export class AgentDwnApi {
   private _localDwnDiscovery?: LocalDwnDiscovery;
 
   constructor(params: DwnApiParams) {
-    const { agent, localDwnStrategy = DEFAULT_LOCAL_DWN_STRATEGY } = params;
+    const { agent, audienceKeyDeliveryStore, localDwnStrategy = DEFAULT_LOCAL_DWN_STRATEGY } = params;
 
     // If an agent is provided, set it as the execution context for this API.
     this._agent = agent;
@@ -348,6 +353,8 @@ export class AgentDwnApi {
 
     // Wake bus owned by this API, released in close() (undefined unless handed off).
     this._wakePublisher = 'wakePublisher' in params ? params.wakePublisher : undefined;
+
+    this._audienceKeyDeliveryStore = audienceKeyDeliveryStore;
 
     // Set the remote endpoint (undefined in local mode).
     this._localDwnEndpoint = 'localDwnEndpoint' in params ? params.localDwnEndpoint : undefined;
@@ -570,16 +577,22 @@ export class AgentDwnApi {
    */
   /**
    * Closes the in-process DWN's stores (message store, data store, event log,
-   * resumable task store), releasing their LevelDB handles — then the wake
-   * bus this API owns, so channel-bridged wakes don't leak a
-   * `BroadcastChannel` (and its `onmessage` handler) per agent lifecycle.
-   * No-op when the agent operates in remote mode (no in-process DWN).
+   * resumable task store), releasing their LevelDB handles, then its wake bus
+   * and audience-delivery projection store. Remote-mode agents still
+   * close the projection store.
    */
   public async close(): Promise<void> {
-    if (this._dwn !== undefined) {
-      await this._dwn.close();
+    try {
+      if (this._dwn !== undefined) {
+        await this._dwn.close();
+      }
+    } finally {
+      try {
+        this._wakePublisher?.close();
+      } finally {
+        await this._audienceKeyDeliveryStore?.close();
+      }
     }
-    this._wakePublisher?.close();
   }
 
   get node(): Dwn {
@@ -705,6 +718,7 @@ export class AgentDwnApi {
     }
 
     const audienceKeyDelivery = await this.provisionAudienceKeyDeliveryForReply(request, message, reply);
+    await this.updateAudienceKeyDeliveryProjection(request, message, reply, audienceKeyDelivery);
 
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
@@ -893,6 +907,46 @@ export class AgentDwnApi {
         recipientDid : recordsWrite.descriptor.recipient ?? '',
         reason       : detail,
       };
+    }
+  }
+
+  /** Projects an accepted role write's initial delivery outcome without changing its result. */
+  private async updateAudienceKeyDeliveryProjection<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    message: DwnMessage[T],
+    reply: DwnMessageReply[T],
+    outcome?: AudienceKeyDeliveryOutcome,
+  ): Promise<void> {
+    if (this._audienceKeyDeliveryStore === undefined || reply.status.code !== 202 || request.store === false) {
+      return;
+    }
+
+    try {
+      if (outcome === undefined || !isDwnRequest(request, DwnInterface.RecordsWrite)) {
+        return;
+      }
+
+      const recordsWrite = message as RecordsWriteMessage;
+      const { protocol, protocolPath: rolePath, recipient: recipientDid } = recordsWrite.descriptor;
+      const contextId = rolePath === undefined ? undefined : getRoleAudienceContextId(rolePath, recordsWrite.contextId);
+      if (protocol === undefined || rolePath === undefined || recipientDid === undefined || contextId === undefined) {
+        return;
+      }
+
+      const intent = {
+        contextId,
+        protocol,
+        recipientDid,
+        rolePath,
+        roleRecordId : recordsWrite.recordId,
+        sourceDid    : request.target,
+      };
+      await this._audienceKeyDeliveryStore.record({
+        intent,
+        outcome,
+      });
+    } catch {
+      // The accepted role record remains the authority; a missing projection is reconstructed later.
     }
   }
 
