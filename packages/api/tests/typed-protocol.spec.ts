@@ -372,16 +372,16 @@ describe('TypedProtocol API', () => {
         expect(readBack.description).toBe('Grocery list');
       });
 
-      it('should report protocol and record context for schema validation failures', async () => {
+      it('should fail closed with protocol and record context for schema validation failures', async () => {
         const failure: RecordValidationFailure = {
           instancePath : '/name',
           keyword      : 'minLength',
           message      : 'must NOT have fewer than 1 characters',
           params       : { limit: 1 },
         };
-        let valid = false;
+        let rejectedName = '';
         const validator = Object.assign(
-          (_value: unknown): boolean => valid,
+          (value: unknown): boolean => (value as { name?: unknown }).name !== rejectedName,
           { errors: [failure] },
         ) as RecordValidator;
         const validated = new TypedEnbox(dwnAlice, defineProtocol(TodoProtocolDefinition, {
@@ -397,20 +397,30 @@ describe('TypedProtocol API', () => {
         });
         expect((await validated.records.query('list')).records).toHaveLength(0);
 
-        valid = true;
         const record = await validated.records.create('list', { data: { name: 'Valid' } });
-        valid = false;
+        const invalidRecord = await validated.records.create('list', { data: { name: 'Invalid' } });
+        rejectedName = 'Invalid';
 
-        await expect(record.value()).rejects.toMatchObject({
+        await expect(record.value()).resolves.toEqual({ name: 'Valid' });
+        await expect(invalidRecord.value()).rejects.toMatchObject({
           name         : 'RecordValidationError',
           protocolPath : 'list',
-          recordId     : record.id,
+          recordId     : invalidRecord.id,
           schema       : TodoProtocolDefinition.types.list.schema,
         });
-        await expect(record.update({ data: { name: 'Still valid' } })).rejects.toMatchObject({
+        await expect(record.update({ data: { name: 'Invalid' } })).rejects.toMatchObject({
           name     : 'RecordValidationError',
           recordId : record.id,
         });
+
+        await expect(validated.records.query('list', {
+          materialize : true,
+          pagination  : { limit: 10 },
+        })).rejects.toMatchObject({
+          name     : 'RecordValidationError',
+          recordId : invalidRecord.id,
+        });
+        expect((await validated.records.query('list')).records).toHaveLength(2);
       });
 
       it('should use one custom codec across create, update, query, and read handles', async () => {

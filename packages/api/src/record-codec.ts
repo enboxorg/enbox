@@ -88,7 +88,14 @@ function validateRecordValue<T>(
   validator : RecordValidator,
   context : RecordCodecContext | undefined,
 ): T {
-  if (validator(value)) {
+  const valid: unknown = validator(value);
+  if (typeof valid !== 'boolean') {
+    if (valid instanceof Promise) {
+      void valid.catch((): void => {});
+    }
+    throw new TypeError('RecordCodec: validator must be synchronous; async schemas are not supported.');
+  }
+  if (valid) {
     return value as T;
   }
   throw new RecordValidationError(validator.errors ?? [], context);

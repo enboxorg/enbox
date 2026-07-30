@@ -81,6 +81,29 @@ describe('recordCodecs', () => {
     }]);
   });
 
+  it('rejects asynchronous validators instead of treating their promises as success', async () => {
+    const validator = (async (): Promise<boolean> => {
+      throw new Error('async validator rejection');
+    }) as unknown as RecordValidator;
+    const codec = recordCodecs.json<{ title: string }>({ validator });
+
+    await expect(encodeRecordValue(codec, { title: 'hello' }))
+      .rejects.toThrow('validator must be synchronous');
+  });
+
+  it('reports an empty failure list when a rejecting validator provides no diagnostics', async () => {
+    const codec = recordCodecs.json<{ title: string }>({
+      validator: (() => false) as RecordValidator,
+    });
+
+    const thrown = await encodeRecordValue(codec, { title: 'hello' })
+      .catch((error: unknown): unknown => error);
+
+    expect(thrown).toBeInstanceOf(RecordValidationError);
+    expect((thrown as RecordValidationError).failures).toEqual([]);
+    expect((thrown as RecordValidationError).message).toBe('Record data failed JSON Schema validation.');
+  });
+
   it('round-trips text and byte values without JSON serialization', async () => {
     const textCodec = recordCodecs.text('text/markdown');
     const encodedText = await encodeRecordValue(textCodec, '# title', ['text/markdown']);
