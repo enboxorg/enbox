@@ -20,6 +20,7 @@ import type {
 
 import type { ProtocolReadinessApi } from './protocol-readiness.js';
 import type { RecordCodecMap } from './record-codec.js';
+import type { RoleDeliveryState } from './typed-enbox.js';
 import type { TypedProtocol } from './protocol-types.js';
 import type {
   EnboxAnonymousApi,
@@ -314,7 +315,22 @@ export class Enbox {
       return cached as TypedEnbox<D, C>;
     }
 
+    const deliverySession = {
+      protocol : protocol.definition.protocol,
+      signal   : this._lifetimeSignal,
+      target   : this._connectedDid,
+    };
     const instance = new TypedEnbox<D, C>(this._dwn, protocol, {
+      roleDelivery: {
+        get: (roleRecordId): Promise<RoleDeliveryState | undefined> => this.agent.dwn.getAudienceKeyDeliveryState({
+          ...deliverySession,
+          roleRecordId,
+        }),
+        retry: (roleRecordId): Promise<RoleDeliveryState | undefined> => this.agent.dwn.retryAudienceKeyDeliveryState({
+          ...deliverySession,
+          roleRecordId,
+        }),
+      },
       signal : this._lifetimeSignal,
       sync   : this.agent.sync,
     });
@@ -325,11 +341,9 @@ export class Enbox {
       : [];
     if (rolePaths.length > 0) {
       this.agent.dwn.registerAudienceKeyDeliveryProtocol({
-        granteeDid : this._delegateDid,
-        protocol   : protocol.definition.protocol,
+        ...deliverySession,
+        granteeDid: this._delegateDid,
         rolePaths,
-        signal     : this._lifetimeSignal,
-        target     : this._connectedDid,
       });
     }
     this._typedInstances.set(protocol, instance);

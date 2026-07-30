@@ -30,6 +30,7 @@ export class AudienceKeyDeliveryCoordinator {
   private _closed = false;
   private _pending?: boolean;
   private _retryAttempt = 0;
+  private _retryDormant = false;
   private _running = false;
   private _waitingForCurrent = false;
 
@@ -87,7 +88,7 @@ export class AudienceKeyDeliveryCoordinator {
     }
     this._retryRuntime.cancelTimer(RETRY_TIMER);
     this._retryAttempt = 0;
-    this.scheduleRetry();
+    this.scheduleRetry(this._retryDormant);
   }
 
   /** Reconciles active roles without retrying dormant recipient-install failures. */
@@ -95,7 +96,7 @@ export class AudienceKeyDeliveryCoordinator {
     this.request(false);
   }
 
-  /** Wakes active and recipient-install-blocked delivery work. */
+  /** Wakes pending and dormant delivery work. */
   public wake(): void {
     this.request(true);
   }
@@ -107,16 +108,21 @@ export class AudienceKeyDeliveryCoordinator {
         this._pending = undefined;
 
         let retry: boolean;
+        let retryDormant = false;
         try {
           retry = await this._run(includeDormant);
           this._waitingForCurrent = false;
         } catch (error) {
           retry = true;
+          retryDormant = includeDormant;
           this._waitingForCurrent = error instanceof AudienceKeyDeliveryReplicaNotCurrentError;
         }
 
+        if (retryDormant && this._pending !== undefined) {
+          this._pending = true;
+        }
         if (retry && this._pending === undefined) {
-          this.scheduleRetry();
+          this.scheduleRetry(retryDormant);
         } else if (!retry && !this._retryRuntime.hasTimer(RETRY_TIMER)) {
           this._retryAttempt = 0;
         }
@@ -186,16 +192,22 @@ export class AudienceKeyDeliveryCoordinator {
       return;
     }
 
-    this._retryAttempt = 0;
+    const retryDormant = includeDormant || this._retryDormant;
     this._retryRuntime.cancelTimer(RETRY_TIMER);
-    this._pending = includeDormant || this._pending === true;
+    this._retryDormant = false;
+    this._retryAttempt = 0;
+    this._pending = retryDormant || this._pending === true;
     if (!this._running) {
       this.startDrain();
     }
   }
 
-  private scheduleRetry(): void {
-    if (this._closed || this._retryRuntime.hasTimer(RETRY_TIMER)) {
+  private scheduleRetry(includeDormant = false): void {
+    if (this._closed) {
+      return;
+    }
+    if (this._retryRuntime.hasTimer(RETRY_TIMER)) {
+      this._retryDormant ||= includeDormant;
       return;
     }
 
@@ -203,9 +215,11 @@ export class AudienceKeyDeliveryCoordinator {
     if (delay === undefined) {
       return;
     }
+    this._retryDormant = includeDormant;
     this._retryAttempt += 1;
     this._retryRuntime.armTimeout(RETRY_TIMER, (): void => {
-      this._pending ??= false;
+      this._pending = this._retryDormant || this._pending === true;
+      this._retryDormant = false;
       if (!this._running) {
         this.startDrain();
       }

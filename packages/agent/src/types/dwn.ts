@@ -312,120 +312,12 @@ export type AudienceKeyDeliveryOutcome =
     };
 
 /**
- * Result of `AgentDwnApi.getAudienceKeyDeliveryStatus` — whether a
- * `$encryption/delivery` record wraps the CURRENT role-audience key of one
- * audience tuple to one recipient.
- *
- * This is the supported alternative to hand-rolling `$encryption/delivery`
- * queries, which get two things wrong:
- *
- *   - A delivery of a SUPERSEDED audience key still matches a query that omits
- *     the audience `keyId`, reporting delivered for a key the recipient can no
- *     longer use. The primitive resolves the current audience record for the
- *     tuple first and matches deliveries on its `keyId` only.
- *   - A DELEGATE querying its grantor's tenant is visibility-filtered: the DWN
- *     lets a delivery record be read only by the tenant, its author, its
- *     recipient, or a delegate whose invoked Read grant names the delivery's
- *     recipient as the grant's grantor or grantee. A third-party collaborator's
- *     delivery is therefore NEVER visible to a wallet-session delegate, under
- *     any grant — empty results are structural, not evidence of non-delivery.
- *     A delegate caller gets `'unverifiable'` WITHOUT the query being issued,
- *     rather than that blindness being laundered into `'not-delivered'`.
- */
-export type AudienceKeyDeliveryStatus =
-  | {
-      /**
-       * A delivery record wrapping the CURRENT audience key exists for the
-       * recipient. This asserts the record's existence only — not that the
-       * recipient can decrypt it (e.g. a delivery wrapped to a mistaken
-       * caller-supplied key still counts as delivered).
-       */
-      status: 'delivered';
-
-      /** The recipient the delivery status was resolved for. */
-      recipientDid: string;
-
-      /** The current audience key id the delivery record wraps. */
-      keyId: string;
-    }
-  | {
-      /** No delivery record wraps the CURRENT audience key to the recipient. */
-      status: 'not-delivered';
-
-      /** The recipient the delivery status was resolved for. */
-      recipientDid: string;
-
-      /**
-       * The current audience key id deliveries were matched against. Absent when
-       * no audience record exists for the tuple at all (nothing was ever
-       * provisioned, so nothing could have been delivered).
-       */
-      keyId?: string;
-
-      /** Why the status is not-delivered. */
-      reason: string;
-    }
-  | {
-      /**
-       * The status cannot be determined, for one of two reasons (told apart by
-       * `reason`): the caller operates as a delegate, whose view of third-party
-       * delivery records is visibility-filtered by the DWN (no query is issued);
-       * or the remote DWN was unreachable (or replied with an error) while the
-       * local projection had no matching record, so an empty result cannot be
-       * asserted as authoritative absence.
-       */
-      status: 'unverifiable';
-
-      /** The recipient the delivery status was requested for. */
-      recipientDid: string;
-
-      /** Why the status cannot be determined from this caller's context. */
-      reason: string;
-    };
-
-/**
- * Parameters of `AgentDwnApi.getAudienceKeyDeliveryStatus`, addressing one
- * audience tuple (`protocol`, `rolePath`, context) and one recipient on the
- * `target` tenant. See {@link AudienceKeyDeliveryStatus} for result semantics.
- */
-export type GetAudienceKeyDeliveryStatusParams = {
-  /** The owner tenant DID whose DWN holds the audience and delivery records. */
-  target: string;
-
-  /** The protocol URI of the audience tuple. */
-  protocol: string;
-
-  /** The `$role` protocol path of the audience tuple. */
-  rolePath: string;
-
-  /**
-   * Context anchoring the audience tuple: the role RECORD's `contextId` (or the
-   * role-audience context id itself) — both normalize internally to the same
-   * role-audience context id. Omit for root-level role paths. A nested
-   * `rolePath` with no context deep enough to reach its parent context is
-   * caller misuse and throws.
-   */
-  contextId?: string;
-
-  /** The recipient whose delivery status is resolved. */
-  recipientDid: string;
-
-  /**
-   * The delegate the caller operates as, when not the tenant itself. Delegates
-   * are structurally blind to third-party deliveries (see
-   * {@link AudienceKeyDeliveryStatus}), so a delegate caller gets
-   * `'unverifiable'` without any query being issued.
-   */
-  granteeDid?: string;
-};
-
-/**
  * Parameters of `AgentDwnApi.reprovisionAudienceKeyDelivery` — provisions (or
  * re-provisions) the `$encryption/delivery` record wrapping the CURRENT
  * role-audience key of one audience tuple to `recipientDid`, WITHOUT touching
- * the `$role` record. This is the supported alternative to "touch-updating"
- * the role record to force re-delivery, which piles up record states and
- * duplicate delivery records (delivery records are immutable and undeletable).
+ * the `$role` record. This is the normal retry path; an update carrying an
+ * explicit `recipientRolePublicKey` remains the fallback for a recipient whose
+ * key cannot be resolved from a DWN.
  *
  * The recipient's role-path public key is resolved FIRST (the supplied
  * `recipientRolePublicKey`, else remote resolution from the recipient's
@@ -438,9 +330,8 @@ export type GetAudienceKeyDeliveryStatusParams = {
  * written. A delivery wrapping a DIFFERENT recipient key (a mistaken earlier
  * supplied key, or a superseded recipient key) does not suppress the write —
  * that is exactly the state this primitive repairs. Delegate contexts are
- * structurally blind to third-party deliveries (see
- * {@link AudienceKeyDeliveryStatus}), so the existence check is skipped for
- * them and a duplicate may be written. An existence check the remote cannot
+ * structurally blind to third-party deliveries, so the existence check is
+ * skipped for them and a duplicate may be written. An existence check the remote cannot
  * confirm never blocks the write either — re-provisioning stays best-effort
  * and may duplicate. Concurrent OWNER-authorized calls in one agent for the same
  * tuple and recipient key are coalesced onto one execution. Calls carrying an

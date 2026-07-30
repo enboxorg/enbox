@@ -626,6 +626,45 @@ describe('TypedProtocol API', () => {
         });
         expect(reassigned.recipient).toBe(recipient);
       });
+
+      it('reads and retries persisted delivery state for active encrypted role records', async () => {
+        const DeliveryDefinition = {
+          ...RoleDefinition,
+          protocol : `${RoleDefinition.protocol}/delivery`,
+          types    : {
+            ...RoleDefinition.types,
+            member: { ...RoleDefinition.types.member, encryptionRequired: true },
+          },
+        } as const satisfies ProtocolDefinition;
+        const get = sinon.stub().resolves(undefined);
+        const retry = sinon.stub().resolves({ state: 'delivered' as const });
+        const roles = new TypedEnbox(dwnAlice, defineProtocol(DeliveryDefinition, RoleProtocol.codecs), {
+          roleDelivery: { get, retry },
+        });
+        await roles.configure();
+        sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
+          .rejects(new Error('recipient protocol not installed'));
+
+        const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
+        const assignment = await roles.records.create('workspace/member', {
+          data            : { label: 'maintainer' },
+          parentContextId : workspace.contextId,
+          recipient       : 'did:example:bob',
+        });
+
+        expect(await roles.records.deliveryState('workspace/member', assignment.id)).toEqual({ state: 'pending' });
+        expect(get.calledOnceWith(assignment.id)).toBe(true);
+        expect(await roles.records.retryDelivery('workspace/member', assignment.id)).toEqual({ state: 'delivered' });
+        expect(retry.calledOnceWith(assignment.id)).toBe(true);
+
+        await roles.records.delete('workspace/member', { recordId: assignment.id });
+        expect(await roles.records.deliveryState('workspace/member', assignment.id)).toBeUndefined();
+        expect(get.calledOnce).toBe(true);
+
+        await expect((roles.records.deliveryState as (path: string, id: string) => Promise<unknown>)(
+          'workspace', workspace.id,
+        )).rejects.toThrow('does not have an encrypted role audience');
+      }, 15000);
     });
 
     describe('query()', () => {

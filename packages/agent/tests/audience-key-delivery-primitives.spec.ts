@@ -28,7 +28,7 @@ import { RemoteProtocolDefinitionError } from '../src/dwn-protocol-cache.js';
 import { scanActiveAudienceKeyDeliveryIntents } from '../src/audience-key-delivery-reconciliation.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { createAudienceDeliveryRecord, createAudienceRecord, createGrantKeyRecordsForGrants, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
+import { createAudienceDeliveryRecord, createGrantKeyRecordsForGrants, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -194,235 +194,6 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     await testHarness.closeStorage();
   });
 
-  describe('getAudienceKeyDeliveryStatus()', () => {
-    it('reports delivered after a role write provisions a delivery for the current audience key', async () => {
-      const chat = chatProtocolDefinition();
-      const bob = await testHarness.createIdentity({ name: 'Bob Delivered', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
-      // Bob installs the protocol on his own tenant so Alice can resolve his role-path key.
-      await installProtocol(bob.did.uri, chat);
-
-      const threadContextId = await writeThread(chat);
-      const { roleContextId, roleRecordId, delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
-      expect(delivery?.delivered).toBe(true);
-      await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
-          .toMatchObject({ state: 'delivered' });
-      });
-
-      // The role RECORD's contextId is accepted directly — normalization to the
-      // role-audience context id happens inside the primitive.
-      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
-        contextId    : roleContextId,
-        protocol     : chat.protocol,
-        recipientDid : bob.did.uri,
-        rolePath     : ROLE_PATH,
-        target       : alice.did.uri,
-      });
-
-      expect(status.status).toBe('delivered');
-      expect(status.status === 'delivered' && status.keyId.length > 0).toBe(true);
-      expect(status.recipientDid).toBe(bob.did.uri);
-    }, 30000);
-
-    it('reports not-delivered when no delivery record exists for the recipient', async () => {
-      const chat = chatProtocolDefinition();
-      const bob = await testHarness.createIdentity({ name: 'Bob Undelivered', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
-
-      // The recipient key cannot be resolved at share time, so the accepted $role
-      // write reports a best-effort skip — the audience exists but no delivery does.
-      const roleKeyStub = stubUnresolvableRecipientKey();
-      const threadContextId = await writeThread(chat);
-      const { delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
-      expect(delivery?.delivered).toBe(false);
-      expect(roleKeyStub.calledOnce).toBe(true);
-      roleKeyStub.restore();
-
-      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
-        contextId    : threadContextId,
-        protocol     : chat.protocol,
-        recipientDid : bob.did.uri,
-        rolePath     : ROLE_PATH,
-        target       : alice.did.uri,
-      });
-
-      expect(status.status).toBe('not-delivered');
-      expect(status.status === 'not-delivered' && status.keyId !== undefined).toBe(true);
-      expect(status.status === 'not-delivered' && status.reason.includes('no $encryption/delivery record')).toBe(true);
-    }, 30000);
-
-    it('reports not-delivered when the audience tuple was never provisioned', async () => {
-      const chat = chatProtocolDefinition();
-      const bob = await testHarness.createIdentity({ name: 'Bob NoAudience', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
-      const threadContextId = await writeThread(chat);
-
-      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
-        contextId    : threadContextId,
-        protocol     : chat.protocol,
-        recipientDid : bob.did.uri,
-        rolePath     : ROLE_PATH,
-        target       : alice.did.uri,
-      });
-
-      expect(status.status).toBe('not-delivered');
-      expect(status.status === 'not-delivered' && status.keyId).toBeUndefined();
-      expect(status.status === 'not-delivered' && status.reason.includes('no audience record')).toBe(true);
-    }, 30000);
-
-    it('does not count a delivery of a non-current audience key as delivered', async () => {
-      const chat = chatProtocolDefinition();
-      const bob = await testHarness.createIdentity({ name: 'Bob Stale', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
-
-      // Audience A is minted during the $role write, but its delivery is skipped.
-      const roleKeyStub = stubUnresolvableRecipientKey();
-      const threadContextId = await writeThread(chat);
-      const { delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
-      expect(delivery?.delivered).toBe(false);
-      roleKeyStub.restore();
-
-      const [currentKeyId] = await queryAudienceKeyIds(chat, threadContextId);
-      expect(currentKeyId).toBeDefined();
-
-      // Mint a SECOND audience record (B) for the same tuple, strictly later than A
-      // so the tenant-signed earliest-dateCreated projection keeps A current, then
-      // deliver ONLY B's key to Bob. Delivery writes are validated against an
-      // existing audience record, so this is how a stale-key delivery state is
-      // constructed with real records.
-      await Time.minimalSleep();
-      const sealingPublicKey = await readRolePublicKey(alice.did.uri, chat.protocol);
-      const { audienceKey: staleAudienceKey } = await createAudienceRecord({
-        agent     : testHarness.agent,
-        authorDid : alice.did.uri,
-        contextId : threadContextId,
-        protocol  : chat.protocol,
-        rolePath  : ROLE_PATH,
-        sealingPublicKey,
-        sourceDid : alice.did.uri,
-      });
-      expect(staleAudienceKey.keyId).not.toBe(currentKeyId);
-      await createAudienceDeliveryRecord({
-        agent                  : testHarness.agent,
-        audienceKey            : staleAudienceKey,
-        authorDid              : alice.did.uri,
-        recipientAuthority     : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
-        recipientDid           : bob.did.uri,
-        recipientRolePublicKey : await randomX25519PublicKey(),
-        sourceDid              : alice.did.uri,
-      });
-
-      // The folklore existence query (no keyId match) finds the stale delivery and
-      // would falsely conclude delivered.
-      expect(await countDeliveries(chat, bob.did.uri)).toBe(1);
-
-      // The primitive matches deliveries against the CURRENT audience key only.
-      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
-        contextId    : threadContextId,
-        protocol     : chat.protocol,
-        recipientDid : bob.did.uri,
-        rolePath     : ROLE_PATH,
-        target       : alice.did.uri,
-      });
-
-      expect(status.status).toBe('not-delivered');
-      expect(status.status === 'not-delivered' && status.keyId).toBe(currentKeyId);
-    }, 30000);
-
-    it('short-circuits to unverifiable for a delegate context without issuing any query', async () => {
-      const chat = chatProtocolDefinition();
-      const bob = await testHarness.createIdentity({ name: 'Bob Unverifiable', testDwnUrls });
-      const delegate = await testHarness.agent.identity.create({
-        didMethod : 'jwk',
-        metadata  : { name: 'Wallet Session Delegate' },
-      });
-      await installProtocol(alice.did.uri, chat);
-      const threadContextId = await writeThread(chat);
-
-      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-      const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
-      const audienceResolveSpy = sinon.spy(testHarness.agent.dwn as any, 'resolveCurrentAudienceRecord');
-
-      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
-        contextId    : threadContextId,
-        granteeDid   : delegate.did.uri,
-        protocol     : chat.protocol,
-        recipientDid : bob.did.uri,
-        rolePath     : ROLE_PATH,
-        target       : alice.did.uri,
-      });
-
-      expect(status.status).toBe('unverifiable');
-      expect(status.status === 'unverifiable' && status.reason.includes('delegate')).toBe(true);
-      // Structurally blind — the primitive must not have issued any DWN round trip.
-      expect(processSpy.called).toBe(false);
-      expect(sendSpy.called).toBe(false);
-      expect(audienceResolveSpy.called).toBe(false);
-    }, 30000);
-
-    it('reports unverifiable when the remote cannot confirm a missing audience record', async () => {
-      const chat = chatProtocolDefinition();
-      const bob = await testHarness.createIdentity({ name: 'Bob AudienceRemoteDown', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
-      const threadContextId = await writeThread(chat);
-
-      // No audience exists locally and the remote leg is down, so an empty local
-      // projection cannot be asserted as authoritative absence.
-      const sendStub = sinon.stub(testHarness.agent.dwn as any, 'sendRequest')
-        .rejects(new Error('remote transport down in test'));
-      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
-        contextId    : threadContextId,
-        protocol     : chat.protocol,
-        recipientDid : bob.did.uri,
-        rolePath     : ROLE_PATH,
-        target       : alice.did.uri,
-      });
-      sendStub.restore();
-
-      expect(status.status).toBe('unverifiable');
-      expect(status.status === 'unverifiable' && status.reason.includes('remote DWN')).toBe(true);
-    }, 30000);
-
-    it('reports unverifiable when the remote cannot confirm a missing delivery record', async () => {
-      const chat = chatProtocolDefinition();
-      const bob = await testHarness.createIdentity({ name: 'Bob DeliveryRemoteDown', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
-
-      // The audience resolves locally (minted during the role write); only the
-      // delivery query's remote leg is down.
-      const roleKeyStub = stubUnresolvableRecipientKey();
-      const threadContextId = await writeThread(chat);
-      const { delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
-      expect(delivery?.delivered).toBe(false);
-      roleKeyStub.restore();
-
-      const sendStub = sinon.stub(testHarness.agent as any, 'sendDwnRequest')
-        .rejects(new Error('remote transport down in test'));
-      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
-        contextId    : threadContextId,
-        protocol     : chat.protocol,
-        recipientDid : bob.did.uri,
-        rolePath     : ROLE_PATH,
-        target       : alice.did.uri,
-      });
-      sendStub.restore();
-
-      expect(status.status).toBe('unverifiable');
-      expect(status.status === 'unverifiable' && status.reason.includes('remote DWN')).toBe(true);
-    }, 30000);
-
-    it('throws on a nested role path without a contextId instead of guessing a tuple', async () => {
-      const chat = chatProtocolDefinition();
-      await expect(testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
-        protocol     : chat.protocol,
-        recipientDid : alice.did.uri,
-        rolePath     : ROLE_PATH,
-        target       : alice.did.uri,
-      })).rejects.toThrow(/contextId that reaches the parent context/i);
-    });
-  });
-
   describe('audience-key delivery reconciliation', () => {
     it('rebuilds active role intent and removes it after the role is deleted', async () => {
       const chat = chatProtocolDefinition();
@@ -565,6 +336,66 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId)).toBeUndefined();
       });
       session.abort();
+    }, 30000);
+
+    it('reads persisted state and explicitly retries dormant work through the session coordinator', async () => {
+      const chat = chatProtocolDefinition();
+      const bob = await testHarness.createIdentity({ name: 'Bob Explicit Repair', testDwnUrls });
+      await installProtocol(alice.did.uri, chat);
+      const threadContextId = await writeThread(chat);
+      const roleKey = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
+        .rejects(new RemoteProtocolDefinitionError('recipient protocol not installed', 'not-found'));
+      const { roleRecordId } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
+      const session = new AbortController();
+      testHarness.agent.dwn.registerAudienceKeyDeliveryProtocol({
+        protocol  : chat.protocol,
+        rolePaths : [ROLE_PATH],
+        signal    : session.signal,
+        target    : alice.did.uri,
+      });
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(await testHarness.agent.dwn.getAudienceKeyDeliveryState({
+          protocol : chat.protocol,
+          roleRecordId,
+          signal   : session.signal,
+          target   : alice.did.uri,
+        })).toMatchObject({ state: 'awaiting-recipient-install' });
+      });
+      await expect(testHarness.agent.dwn.getAudienceKeyDeliveryState({
+        protocol : chat.protocol,
+        roleRecordId,
+        signal   : new AbortController().signal,
+        target   : alice.did.uri,
+      })).rejects.toThrow('no audience-key delivery coordinator');
+
+      await Poller.pollUntilSuccessOrTimeout(async () => { expect(roleKey.callCount).toBeGreaterThan(1); });
+      const projected = await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId);
+      expect(projected).toBeDefined();
+      await testHarness.audienceKeyDeliveryStore.record({
+        intent  : projected!,
+        outcome : { delivered: false, failure: 'terminal', reason: 'authorization was repaired', recipientDid: bob.did.uri },
+      });
+      roleKey.resolves(await randomX25519PublicKey());
+
+      expect(await testHarness.agent.dwn.getAudienceKeyDeliveryState({
+        protocol : chat.protocol,
+        roleRecordId,
+        signal   : session.signal,
+        target   : alice.did.uri,
+      })).toMatchObject({ state: 'failed' });
+      expect(await testHarness.agent.dwn.retryAudienceKeyDeliveryState({
+        protocol : chat.protocol,
+        roleRecordId,
+        signal   : session.signal,
+        target   : alice.did.uri,
+      })).toMatchObject({ state: 'delivered' });
+      session.abort();
+      await expect(testHarness.agent.dwn.getAudienceKeyDeliveryState({
+        protocol : chat.protocol,
+        roleRecordId,
+        signal   : session.signal,
+        target   : alice.did.uri,
+      })).rejects.toThrow();
     }, 30000);
   });
 

@@ -1,5 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { ProtocolRolePaths, TypedCreateRequest, TypedEnbox } from '@enbox/api';
+import type { ProtocolRolePaths, RoleDeliveryState, TypedCreateRequest, TypedEnbox } from '@enbox/api';
 
 import { defineProtocol, recordCodecs } from '@enbox/api';
 
@@ -32,10 +32,20 @@ const RoleProtocol = defineProtocol(RoleDefinition, {
 });
 void RoleProtocol;
 
+const EncryptedRoleDefinition = {
+  ...RoleDefinition,
+  types: {
+    ...RoleDefinition.types,
+    member: { ...RoleDefinition.types.member, encryptionRequired: true },
+  },
+} as const satisfies ProtocolDefinition;
+void EncryptedRoleDefinition;
+
 type RolePath = ProtocolRolePaths<typeof RoleDefinition>;
 type RoleCodecs = typeof RoleProtocol.codecs;
 
 declare const typed: TypedEnbox<typeof RoleDefinition, RoleCodecs>;
+declare const encryptedTyped: TypedEnbox<typeof EncryptedRoleDefinition, RoleCodecs>;
 declare const roleOrRecordPath: 'admin' | 'workspace';
 
 const rootRolePath: RolePath = 'admin';
@@ -67,6 +77,22 @@ void typed.records.create(roleOrRecordPath, {
   data      : { label: 'administrator' },
   recipient : 'did:example:alice',
 });
+
+const deliveryState: Promise<RoleDeliveryState | undefined> = encryptedTyped.records.deliveryState('admin', 'role-id');
+void deliveryState;
+void encryptedTyped.records.retryDelivery('workspace/member', 'role-id');
+
+// @ts-expect-error unencrypted roles have no audience-key delivery lifecycle.
+void typed.records.deliveryState('admin', 'role-id');
+
+// @ts-expect-error unencrypted roles have no audience-key delivery lifecycle.
+void typed.records.retryDelivery('workspace/member', 'role-id');
+
+// @ts-expect-error delivery diagnostics are restricted to role paths.
+void encryptedTyped.records.deliveryState('workspace', 'record-id');
+
+// @ts-expect-error delivery retry is restricted to role paths.
+void encryptedTyped.records.retryDelivery('workspace', 'record-id');
 
 // @ts-expect-error role-record creates require a recipient.
 void typed.records.create('admin', { data: { label: 'administrator' } });

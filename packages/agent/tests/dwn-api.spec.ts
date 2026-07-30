@@ -4459,7 +4459,7 @@ describe('Role record write behavior', () => {
     expect(new TextDecoder().decode(decodedBytes)).toBe(participantData);
   }, 10000);
 
-  it('records a best-effort skip (no throw) when no key is supplied and the recipient key cannot be resolved', async () => {
+  it('records a best-effort skip and provisions updates only with a supplied key', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
     const roleKeyLookupStub = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
       .rejects(new RemoteProtocolDefinitionError('recipient protocol not installed', 'not-found'));
@@ -4518,7 +4518,56 @@ describe('Role record write behavior', () => {
       });
     });
     expect(roleKeyLookupStub.calledOnce).toBe(true);
-  }, 10000);
+
+    const initialRole = roleWrite.message as RecordsWriteMessage;
+    const updateParams = {
+      protocol        : chatProtocol.protocol,
+      protocolPath    : 'thread/participant',
+      parentContextId : (threadMessage as RecordsWriteMessage).contextId,
+      dataFormat      : 'application/json',
+      schema          : 'https://schemas.xyz/participant',
+      recipient       : bob.did.uri,
+      recordId        : initialRole.recordId,
+      dateCreated     : initialRole.descriptor.dateCreated,
+    };
+
+    await Time.minimalSleep();
+    const ordinaryUpdate = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : { ...updateParams },
+      dataStream    : new Blob([new TextEncoder().encode('{"name":"Bob","role":"member"}')]),
+    });
+    expect(ordinaryUpdate.reply.status.code).toBe(202);
+    expect(ordinaryUpdate.audienceKeyDelivery).toBeUndefined();
+    expect(roleKeyLookupStub.calledOnce).toBe(true);
+
+    await Time.minimalSleep();
+    const suppliedKeyUpdate = await testHarness.agent.dwn.processRequest({
+      author                 : alice.did.uri,
+      target                 : alice.did.uri,
+      messageType            : DwnInterface.RecordsWrite,
+      messageParams          : { ...updateParams },
+      dataStream             : new Blob([new TextEncoder().encode('{"name":"Bob","role":"admin"}')]),
+      recipientRolePublicKey : VALID_X25519_KEY,
+    });
+    expect(suppliedKeyUpdate.reply.status.code).toBe(202);
+    expect(suppliedKeyUpdate.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bob.did.uri });
+    expect(roleKeyLookupStub.calledOnce).toBe(true);
+
+    const deliveries = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: {
+        protocol     : chatProtocol.protocol,
+        protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+        recipient    : bob.did.uri,
+      } },
+    });
+    expect(deliveries.reply.entries ?? []).toHaveLength(1);
+  }, 15000);
 
   // A structurally VALID X25519 OKP public key (32-byte x) — passes validation.
   const VALID_X25519_KEY = { kty: 'OKP', crv: 'X25519', x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo' } as any;

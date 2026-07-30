@@ -54,14 +54,13 @@ import { Convert, TtlCache } from '@enbox/common';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
 
+import type { AudienceKeyDeliveryState } from './audience-key-delivery.js';
 import type { AudienceKeyDeliveryStore } from './audience-key-delivery-store.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';
-import type { RemoteReadOutcome } from './dwn-read-through.js';
 import type { AudienceDecryptionKeyEntry, AudienceKeyPayload, DelegateDecryptionKeyEntry } from './dwn-encryption.js';
 import type {
   AudienceKeyDeliveryOutcome,
-  AudienceKeyDeliveryStatus,
   DecryptRecordDataParams,
   DwnMessage,
   DwnMessageInstance,
@@ -71,7 +70,6 @@ import type {
   DwnResponse,
   DwnResponseStatus,
   DwnSigner,
-  GetAudienceKeyDeliveryStatusParams,
   MessageHandler,
   ProcessDwnRequest,
   ReprovisionAudienceKeyDeliveryParams,
@@ -99,12 +97,9 @@ import { getDwnServiceEndpointUrls, isRecordsWrite, resolveDwnSubscriptionUrl } 
 // Re-export DWN type guards from the agent API surface.
 export { isDwnMessage, isDwnRequest, isMessagesPermissionScope, isRecordPermissionScope, isRecordsType } from './dwn-type-guards.js';
 
+import { processDwnRequestWithRemoteFallback as processDwnReadThrough } from './dwn-read-through.js';
 // Import type guards for internal use
 import { isDwnMessage, isDwnRequest } from './dwn-type-guards.js';
-import {
-  processDwnRequestWithRemoteFallback as processDwnReadThrough,
-  processDwnRequestWithRemoteFallbackDetailed as processDwnReadThroughDetailed,
-} from './dwn-read-through.js';
 
 // Import extracted encryption functions
 import {
@@ -119,7 +114,6 @@ import {
   getEncryptionKeyDeriver as getEncryptionKeyDeriverFn,
   hasAudienceSealCoverage as hasAudienceSealCoverageFn,
   ivLength as ivLengthFn,
-  queryAudienceDeliveryMessagesDetailed as queryAudienceDeliveryMessagesDetailedFn,
   queryAudienceDeliveryMessages as queryAudienceDeliveryMessagesFn,
   resolveAudienceDecryptionKey as resolveAudienceDecryptionKeyFn,
 } from './dwn-encryption.js';
@@ -163,9 +157,6 @@ type ExecuteAudienceKeyDeliveryReprovisionInput = Omit<ReprovisionAudienceKeyDel
   recipientRoleKeyId: string;
   recipientRolePublicKey: PublicKeyJwk;
 };
-
-/** Reason reported when an empty projection cannot be asserted as absence because the remote leg failed. */
-const REMOTE_UNVERIFIABLE_REASON = 'the remote DWN could not be reached or replied with an error, and the local projection has no matching record, so non-delivery cannot be asserted — retry when the remote is reachable';
 
 type DwnApiParams = {
   agent?: EnboxPlatformAgent;
@@ -770,7 +761,7 @@ export class AgentDwnApi {
    * delivery provisioning for an accepted, stored, non-raw RecordsWrite to a
    * `$role` path with a `recipient`. Runs BEFORE the record is written so caller
    * MISUSE fails fast without leaving state behind. Rejects:
-   *   - a non-RecordsWrite, a raw/replayed message, or `store: false` (nothing is
+   *   - a non-RecordsWrite, raw/replayed message, or `store: false` (nothing is
    *     persisted to deliver against), so a supplied key is never silently ignored;
    *   - a malformed/unusable key (see {@link assertX25519RolePublicKey}); and
    *   - a target path that is not a `$role` with a `$keyAgreement` audience and a
@@ -866,12 +857,10 @@ export class AgentDwnApi {
    * Provisions role-audience key delivery for a RecordsWrite reply and reports the
    * outcome — always BEST-EFFORT.
    *
-   * Runs ONLY on a fresh 202 accept of a stored, non-raw RecordsWrite. A 409 means
-   * the identical record already existed — it was provisioned when first accepted,
-   * and `createAudienceDeliveryRecord` mints a fresh DEK/IV per call, so re-running
-   * on 409 would pile up duplicate delivery records; 409 is therefore skipped.
-   * `store: false` persists nothing to deliver against and is excluded too.
-   * `!rawMessage` keeps this off the sync/replay path.
+   * Runs on a fresh 202 accept of a stored, non-raw initial RecordsWrite, or an
+   * update carrying an explicit `recipientRolePublicKey`. Ordinary role updates
+   * leave repair to the delivery coordinator instead of writing duplicate
+   * delivery records. A 409, `store: false`, and raw sync/replay writes are skipped.
    *
    * The `$role` write is already accepted and valid, so a delivery that cannot be
    * provisioned is surfaced on `DwnResponse.audienceKeyDelivery` as
@@ -896,6 +885,10 @@ export class AgentDwnApi {
     }
 
     const recordsWrite = message as RecordsWriteMessage;
+    const initialWrite = await RecordsWrite.isInitialWrite(recordsWrite);
+    if (!initialWrite && request.recipientRolePublicKey === undefined) {
+      return undefined;
+    }
     try {
       const outcome = await this.provisionAudienceKeyForAcceptedRoleRecord(request, recordsWrite);
       if (outcome !== undefined) {
@@ -977,7 +970,7 @@ export class AgentDwnApi {
     }
 
     if (!outcome.delivered && outcome.failure === 'retryable') {
-      this.retryAudienceKeyDelivery(target, protocol);
+      this.scheduleAudienceKeyDeliveryRetry(target, protocol);
     }
     await store.record({
       intent: {
@@ -1000,7 +993,7 @@ export class AgentDwnApi {
     }
   }
 
-  private retryAudienceKeyDelivery(target: string, protocol: string): void {
+  private scheduleAudienceKeyDeliveryRetry(target: string, protocol: string): void {
     for (const coordinator of this._audienceKeyDeliveryCoordinators.values()) {
       if (coordinator.targetDid === target && coordinator.protocol === protocol) {
         coordinator.retry();
@@ -1063,7 +1056,7 @@ export class AgentDwnApi {
     let retry = false;
     for (const state of states) {
       if (params.signal.aborted || (state.state !== 'pending' &&
-          !(includeDormant && state.state === 'awaiting-recipient-install'))) {
+          !(includeDormant && state.state !== 'delivered'))) {
         continue;
       }
       const outcome = await this.reprovisionAudienceKeyDelivery({
@@ -1383,61 +1376,45 @@ export class AgentDwnApi {
     return { delivered: true, recipientDid: recipient };
   }
 
-  /**
-   * Resolves whether a `$encryption/delivery` record wraps the CURRENT role-audience key of one audience
-   * tuple to `recipientDid` on `target` — full semantics on {@link AudienceKeyDeliveryStatus} and
-   * {@link GetAudienceKeyDeliveryStatusParams} (current-key matching, delegate/transport `'unverifiable'`).
-   * @throws On caller misuse: a nested `rolePath` without a `contextId` reaching its parent context.
-   */
-  public async getAudienceKeyDeliveryStatus(params: GetAudienceKeyDeliveryStatusParams): Promise<AudienceKeyDeliveryStatus> {
-    const { target, protocol, rolePath, recipientDid, granteeDid } = params;
-    const contextId = AgentDwnApi.getRoleAudienceContextIdOrThrow('getAudienceKeyDeliveryStatus', rolePath, params.contextId);
-    if (granteeDid !== undefined && granteeDid !== target) {
-      return {
-        reason : 'the caller operates as a delegate, and the DWN visibility-filters delivery records for delegates (a third-party recipient\'s delivery is never readable through a delegated grant), so an empty query result would be structural rather than evidence of non-delivery',
-        recipientDid,
-        status : 'unverifiable',
-      };
+  /** @internal Reads the local, reconstructable delivery projection for one role record. */
+  public async getAudienceKeyDeliveryState(params: {
+    protocol: string;
+    roleRecordId: string;
+    signal: AbortSignal;
+    target: string;
+  }): Promise<AudienceKeyDeliveryState | undefined> {
+    this.requireAudienceKeyDeliveryCoordinator(params.protocol, params.signal, params.target);
+    const state = await this._audienceKeyDeliveryStore?.get(params.target, params.roleRecordId);
+    params.signal.throwIfAborted();
+    return state?.protocol === params.protocol ? state : undefined;
+  }
+
+  /** @internal Reconciles the session's protocol deliveries and returns one updated projection. */
+  public async retryAudienceKeyDeliveryState(params: {
+    protocol: string;
+    roleRecordId: string;
+    signal: AbortSignal;
+    target: string;
+  }): Promise<AudienceKeyDeliveryState | undefined> {
+    const coordinator = this.requireAudienceKeyDeliveryCoordinator(params.protocol, params.signal, params.target);
+    coordinator.wake();
+    await coordinator.whenIdle();
+    return this.getAudienceKeyDeliveryState(params);
+  }
+
+  private requireAudienceKeyDeliveryCoordinator(
+    protocol: string,
+    signal: AbortSignal,
+    target: string,
+  ): AudienceKeyDeliveryCoordinator {
+    signal.throwIfAborted();
+    const coordinator = [...this._audienceKeyDeliveryCoordinators].find(candidate =>
+      candidate.protocol === protocol && candidate.sessionSignal === signal && candidate.targetDid === target
+    );
+    if (coordinator === undefined) {
+      throw new Error(`AgentDwnApi: no audience-key delivery coordinator is registered for protocol '${protocol}'.`);
     }
-    const audienceLookup = await this.resolveCurrentAudienceRecordDetailed({
-      authorDid : target,
-      contextId,
-      protocol,
-      rolePath,
-      sourceDid : target,
-    });
-    if (audienceLookup.record === undefined) {
-      if (audienceLookup.remote === 'failed') {
-        return { reason: REMOTE_UNVERIFIABLE_REASON, recipientDid, status: 'unverifiable' };
-      }
-      return {
-        reason : `no audience record exists for (${protocol}, ${rolePath}, '${contextId}'); nothing was ever provisioned to deliver`,
-        recipientDid,
-        status : 'not-delivered',
-      };
-    }
-    const keyId = audienceLookup.record.payload.keyId;
-    const deliveryLookup = await queryAudienceDeliveryMessagesDetailedFn({
-      agent     : this.agent,
-      contextId,
-      keyId,
-      protocol,
-      recipientDid,
-      rolePath,
-      sourceDid : target,
-    }, { authorDid: target });
-    if (deliveryLookup.messages.length === 0) {
-      if (deliveryLookup.remote === 'failed') {
-        return { reason: REMOTE_UNVERIFIABLE_REASON, recipientDid, status: 'unverifiable' };
-      }
-      return {
-        keyId,
-        reason : `no $encryption/delivery record wraps current audience key '${keyId}' to '${recipientDid}' (superseded keys do not count)`,
-        recipientDid,
-        status : 'not-delivered',
-      };
-    }
-    return { keyId, recipientDid, status: 'delivered' };
+    return coordinator;
   }
 
   /** @internal Registers one protocol with the active session's background delivery coordinator. */
@@ -1905,17 +1882,6 @@ export class AgentDwnApi {
     contextId: string;
     rolePath: string;
   }): Promise<{ message: RecordsWriteMessage; payload: EncryptionControlAudiencePayload } | undefined> {
-    return (await this.resolveCurrentAudienceRecordDetailed(params)).record;
-  }
-
-  /** {@link resolveCurrentAudienceRecord} plus the {@link RemoteReadOutcome} of the read-through (missing record vs unreachable remote). */
-  private async resolveCurrentAudienceRecordDetailed(params: {
-    authorDid: string;
-    sourceDid: string;
-    protocol: string;
-    contextId: string;
-    rolePath: string;
-  }): Promise<{ record?: { message: RecordsWriteMessage; payload: EncryptionControlAudiencePayload }; remote: RemoteReadOutcome }> {
     if (this._dwn !== undefined) {
       const record = await EncryptionControl.resolveCurrentAudienceRecord({
         contextId    : params.contextId,
@@ -1926,11 +1892,11 @@ export class AgentDwnApi {
       });
       if (record !== undefined) {
         const payload = await this.readAudiencePayload(params.authorDid, params.sourceDid, record);
-        return { record: payload === undefined ? undefined : { message: record, payload }, remote: 'skipped' };
+        return payload === undefined ? undefined : { message: record, payload };
       }
     }
 
-    const { response, remote } = await this.processRequestWithRemoteFallbackDetailed({
+    const { reply } = await this.processRequestWithRemoteFallback({
       author        : params.authorDid,
       target        : params.sourceDid,
       messageType   : DwnInterface.RecordsQuery,
@@ -1947,9 +1913,8 @@ export class AgentDwnApi {
       },
     }, (reply): boolean => reply.status.code === 200 && reply.entries !== undefined && reply.entries.length > 0);
 
-    const reply = response.reply;
     if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
-      return { remote };
+      return undefined;
     }
 
     const records = reply.entries as RecordsWriteMessage[];
@@ -1957,11 +1922,11 @@ export class AgentDwnApi {
     for (const record of records) {
       const payload = await this.readAudiencePayload(params.authorDid, params.sourceDid, record);
       if (payload !== undefined) {
-        return { record: { message: record, payload }, remote };
+        return { message: record, payload };
       }
     }
 
-    return { remote };
+    return undefined;
   }
 
   private async readAudiencePayload(
@@ -1991,16 +1956,6 @@ export class AgentDwnApi {
     hasUsableReply: (reply: DwnMessageReply[T]) => boolean,
   ): Promise<DwnResponse<T>> {
     return processDwnReadThrough({
-      process : this.processRequest.bind(this),
-      send    : this.sendRequest.bind(this),
-    }, request, hasUsableReply);
-  }
-
-  private async processRequestWithRemoteFallbackDetailed<T extends DwnInterface>(
-    request: ProcessDwnRequest<T>,
-    hasUsableReply: (reply: DwnMessageReply[T]) => boolean,
-  ): Promise<{ response: DwnResponse<T>; remote: RemoteReadOutcome }> {
-    return processDwnReadThroughDetailed({
       process : this.processRequest.bind(this),
       send    : this.sendRequest.bind(this),
     }, request, hasUsableReply);

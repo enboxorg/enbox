@@ -333,8 +333,8 @@ export type RecordsWriteResponse<T = unknown> = DwnResponseStatus & {
    *
    * On the best-effort path (no `recipientRolePublicKey` supplied), a recipient whose role-path
    * key could not be resolved is reported here with `delivered: false` instead of failing the
-   * write — inspect the outcome and re-write the role record (e.g. with a caller-supplied
-   * `recipientRolePublicKey`) to retry delivery.
+   * write. Typed callers can inspect and retry the persisted lifecycle through
+   * `records.deliveryState()` and `records.retryDelivery()`.
    *
    * Never present for remote writes ({@link RecordsWriteRequest.from} set): delivery
    * provisioning happens only during local processing (`processRequest`), and its absence on the
