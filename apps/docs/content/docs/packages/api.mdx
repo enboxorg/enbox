@@ -190,12 +190,10 @@ const selection = {
 
 const page = await tasks.records.query('task', selection);
 
-// Fetch next page
-if (page.cursor) {
-  const { records: next } = await tasks.records.query('task', {
-    ...selection,
-    pagination: { ...selection.pagination, cursor: page.cursor },
-  });
+// Continue the same captured selection
+const nextPage = await page.next();
+if (nextPage) {
+  console.log(nextPage.records);
 }
 ```
 

@@ -1,6 +1,6 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordQuery } from '../src/record-query.js';
-import type { DwnApi, RecordsCountRequest, RecordsQueryRequest } from '../src/dwn-api.js';
+import type { DwnApi, RecordsCountRequest, RecordsQueryRequest, RecordsQueryResponse } from '../src/dwn-api.js';
 
 import { DateSort } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
@@ -47,7 +47,7 @@ type CapturingDwn = {
   queryRequests: RecordsQueryRequest[];
 };
 
-function createCapturingDwn(): CapturingDwn {
+function createCapturingDwn(queryResponses: RecordsQueryResponse[] = []): CapturingDwn {
   const countRequests: RecordsCountRequest[] = [];
   const queryRequests: RecordsQueryRequest[] = [];
   const dwn = {
@@ -58,7 +58,7 @@ function createCapturingDwn(): CapturingDwn {
       },
       query: async (request: RecordsQueryRequest) => {
         queryRequests.push(request);
-        return { status: { code: 200, detail: 'OK' }, records: [] };
+        return queryResponses.shift() ?? { status: { code: 200, detail: 'OK' }, records: [] };
       },
     },
   } as unknown as DwnApi;
@@ -113,6 +113,71 @@ describe('RecordQuery', () => {
     }]);
     expect(count).toBe(7);
     expect(filter).toEqual({ tags: { status: 'published', priority: { gte: 2 } } });
+  });
+
+  it('should continue the captured query without exposing its cursor state', async () => {
+    const cursor = { messageCid: 'bafy-page-one', value: '2026-01-01T00:00:00Z' };
+    const { dwn, queryRequests } = createCapturingDwn([
+      { status: { code: 200, detail: 'OK' }, records: [], cursor },
+      { status: { code: 200, detail: 'OK' }, records: [] },
+    ]);
+    const typed = createTypedEnbox(dwn);
+    const request: RecordQuery<typeof QueryDefinition, 'note'> = {
+      from         : 'did:example:remote',
+      filter       : { tags: { status: 'published' } },
+      dateSort     : DateSort.CreatedDescending,
+      pagination   : { limit: 2 },
+      protocolRole : 'editor',
+      within       : 'root',
+    };
+
+    const firstPagePromise = typed.records.query('note', request);
+    request.from = 'did:example:mutated';
+    request.filter!.tags!.status = 'draft';
+    request.pagination!.limit = 99;
+    request.within = 'mutated';
+    const firstPage = await firstPagePromise;
+
+    const expectedRequest: RecordsQueryRequest = {
+      from   : 'did:example:remote',
+      filter : {
+        contextId    : 'root',
+        protocol     : QueryDefinition.protocol,
+        protocolPath : 'note',
+        schema       : QueryDefinition.types.note.schema,
+        tags         : { status: 'published' },
+      },
+      dateSort     : DateSort.CreatedDescending,
+      pagination   : { limit: 2 },
+      protocolRole : 'editor',
+    };
+    expect(queryRequests[0]).toEqual(expectedRequest);
+
+    firstPage.cursor!.messageCid = 'bafy-mutated';
+    const secondPage = await firstPage.next();
+    expect(queryRequests[1]).toEqual({
+      ...expectedRequest,
+      pagination: { limit: 2, cursor },
+    });
+    expect(secondPage).toBeDefined();
+    expect(await secondPage!.next()).toBeUndefined();
+    expect(queryRequests).toHaveLength(2);
+  });
+
+  it('should reject a repeated continuation cursor across the page lineage', async () => {
+    const firstCursor = { messageCid: 'bafy-first', value: 7 };
+    const secondCursor = { messageCid: 'bafy-second', value: 8 };
+    const { dwn, queryRequests } = createCapturingDwn([
+      { status: { code: 200, detail: 'OK' }, records: [], cursor: firstCursor },
+      { status: { code: 200, detail: 'OK' }, records: [], cursor: secondCursor },
+      { status: { code: 200, detail: 'OK' }, records: [], cursor: firstCursor },
+    ]);
+    const firstPage = await createTypedEnbox(dwn).records.query('note', { pagination: { limit: 1 } });
+    const secondPage = await firstPage.next();
+
+    expect(secondPage).toBeDefined();
+    await expect(secondPage!.next()).rejects.toThrow('query returned a repeated pagination cursor');
+    expect(queryRequests).toHaveLength(3);
   });
 
   it('should omit schema for a schema-less protocol type', () => {
