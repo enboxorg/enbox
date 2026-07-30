@@ -250,9 +250,7 @@ const unsubscribe = view.subscribe((snapshot) => {
 const count = await notes.records.count('note', selection);
 
 // Read
-const found = await notes.records.read('note', {
-  filter: { recordId: record.id },
-});
+const found = await notes.records.read('note', record.id);
 
 if (found === undefined) {
   throw new Error('Note not found');

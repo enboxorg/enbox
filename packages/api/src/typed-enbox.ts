@@ -416,17 +416,16 @@ export type TypedSetRequest<
   });
 
 /**
- * Options for {@link TypedEnbox} `records.read()`.
+ * Advanced options for {@link TypedEnbox} `records.read()`.
  *
- * A `filter` is required to identify which record to read. The most common
- * approach is to filter by `recordId`.
+ * Pass a record ID directly for a local point read. Use this request shape
+ * when additional filters, a remote source, a protocol role, or a context
+ * selector is required.
  *
  * @example
  * ```ts
  * // Read a specific record by ID
- * const record = await proto.records.read('notebook', {
- *   filter: { recordId: notebookId },
- * });
+ * const record = await proto.records.read('notebook', notebookId);
  *
  * // Read a nested record from a remote DWN using a protocol role
  * const remote = await proto.records.read('notebook/entry', {
@@ -1297,7 +1296,7 @@ export class TypedEnbox<
    * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
    * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable local query snapshots
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
-   * - {@link TypedEnbox.records.read | read(path, request)} — Read a single record
+   * - {@link TypedEnbox.records.read | read(path, recordId or request)} — Read a single record
    * - {@link TypedEnbox.records.set | set(path, request)} — Replace one protocol-declared singleton
    * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
    */
@@ -1329,7 +1328,7 @@ export class TypedEnbox<
 
     read: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request: TypedReadRequest<D, Path>,
+      recordIdOrRequest: string | TypedReadRequest<D, Path>,
     ) => Promise<Record<DataForPath<C, Path>> | undefined>;
 
     set: <Path extends SingletonProtocolPaths<D> & string>(
@@ -1569,19 +1568,18 @@ export class TypedEnbox<
        * Read a single record at the given protocol path.
        *
        * Unlike `query()`, which returns an array, `read()` returns exactly
-       * one record. Use `filter.recordId` to target a specific record.
+       * one record. Pass its record ID directly for a local point read, or use
+       * a request object for advanced filters and routing.
        *
        * @param path - The protocol path to read from.
-       * @param request - Read options including a `filter` to identify the
-       *   record. See {@link TypedReadRequest} for details.
+       * @param recordIdOrRequest - A record ID, or advanced read options. See
+       *   {@link TypedReadRequest} for details.
        * @returns The matching typed {@link Record}, or `undefined` when no
        *   current record exists.
        *
        * @example
        * ```ts
-       * const record = await proto.records.read('notebook', {
-       *   filter: { recordId: notebookId },
-       * });
+       * const record = await proto.records.read('notebook', notebookId);
        *
        * if (record === undefined) {
        *   throw new Error('Notebook not found');
@@ -1593,9 +1591,12 @@ export class TypedEnbox<
        */
       read: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request: TypedReadRequest<D, Path>,
+        recordIdOrRequest: string | TypedReadRequest<D, Path>,
       ): Promise<Record<DataForPath<C, Path>> | undefined> => {
         const normalizedPath = normalizePath(path);
+        const request: TypedReadRequest<D, Path> = typeof recordIdOrRequest === 'string'
+          ? { filter: { recordId: recordIdOrRequest } }
+          : recordIdOrRequest;
         await this._ensureReady(normalizedPath);
         const readFilter = compileRecordFilter(
           this._definition,

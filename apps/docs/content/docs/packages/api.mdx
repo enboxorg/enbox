@@ -311,9 +311,7 @@ const count = await tasks.records.count('task', selection);
 Read a specific record by ID:
 
 ```ts
-const record = await tasks.records.read('task', {
-  filter: { recordId: taskId },
-});
+const record = await tasks.records.read('task', taskId);
 
 if (record === undefined) {
   throw new Error('Task not found');
