@@ -37,6 +37,7 @@ export {
   defineProtocol,
   getApplicationProtocolRequests,
   ProtocolReadinessError,
+  RecordValidationError,
   recordCodecs,
 } from '@enbox/api';
 
@@ -62,9 +63,11 @@ export type {
   EnboxSessionParams,
   EncodedRecordData,
   EnsureProtocolsReadyOptions,
+  JsonRecordCodecOptions,
   MaterializedRecord,
   ProtocolRolePaths,
   RecordCodec,
+  RecordCodecContext,
   RecordCodecValue,
   RecordFilter,
   RecordPage,
@@ -73,6 +76,8 @@ export type {
   RecordViewListener,
   RecordViewSnapshot,
   RecordViewState,
+  RecordValidationFailure,
+  RecordValidator,
   ReplicationCurrentness,
   RoleDeliveryState,
   SyncStatusSnapshot,

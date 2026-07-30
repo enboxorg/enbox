@@ -1,6 +1,11 @@
 import type { BearerDid } from '@enbox/dids';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { EncodedRecordData, RecordCodec } from '../src/record-codec.js';
+import type {
+  EncodedRecordData,
+  RecordCodec,
+  RecordValidationFailure,
+  RecordValidator,
+} from '../src/record-codec.js';
 
 import sinon from 'sinon';
 
@@ -365,6 +370,47 @@ describe('TypedProtocol API', () => {
         const readBack = await record.value();
         expect(readBack.name).toBe('Shopping');
         expect(readBack.description).toBe('Grocery list');
+      });
+
+      it('should report protocol and record context for schema validation failures', async () => {
+        const failure: RecordValidationFailure = {
+          instancePath : '/name',
+          keyword      : 'minLength',
+          message      : 'must NOT have fewer than 1 characters',
+          params       : { limit: 1 },
+        };
+        let valid = false;
+        const validator = Object.assign(
+          (_value: unknown): boolean => valid,
+          { errors: [failure] },
+        ) as RecordValidator;
+        const validated = new TypedEnbox(dwnAlice, defineProtocol(TodoProtocolDefinition, {
+          ...TodoProtocol.codecs,
+          list: recordCodecs.json<{ name: string }>({ validator }),
+        }));
+
+        await expect(validated.records.create('list', { data: { name: '' } })).rejects.toMatchObject({
+          name         : 'RecordValidationError',
+          protocolPath : 'list',
+          recordId     : undefined,
+          schema       : TodoProtocolDefinition.types.list.schema,
+        });
+        expect((await validated.records.query('list')).records).toHaveLength(0);
+
+        valid = true;
+        const record = await validated.records.create('list', { data: { name: 'Valid' } });
+        valid = false;
+
+        await expect(record.value()).rejects.toMatchObject({
+          name         : 'RecordValidationError',
+          protocolPath : 'list',
+          recordId     : record.id,
+          schema       : TodoProtocolDefinition.types.list.schema,
+        });
+        await expect(record.update({ data: { name: 'Still valid' } })).rejects.toMatchObject({
+          name     : 'RecordValidationError',
+          recordId : record.id,
+        });
       });
 
       it('should use one custom codec across create, update, query, and read handles', async () => {

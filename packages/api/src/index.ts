@@ -49,7 +49,17 @@ export type {
   TypeNameAtPath,
 } from './protocol-types.js';
 export * from './read-only-record.js';
-export { recordCodecs, type EncodedRecordData, type RecordCodec, type RecordCodecValue } from './record-codec.js';
+export {
+  RecordValidationError,
+  recordCodecs,
+  type EncodedRecordData,
+  type JsonRecordCodecOptions,
+  type RecordCodec,
+  type RecordCodecContext,
+  type RecordCodecValue,
+  type RecordValidationFailure,
+  type RecordValidator,
+} from './record-codec.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
 export type { RecordView, RecordViewListener, RecordViewSnapshot, RecordViewState } from './record-view.js';
 export type { ReplicationCurrentness } from './replication-currentness.js';

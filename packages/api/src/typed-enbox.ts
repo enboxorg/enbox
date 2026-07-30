@@ -1150,7 +1150,10 @@ export class TypedEnbox<
     const typeEntry = this._definition.types[typeName];
 
     const codec = this.getCodec<Path>(normalizedPath);
-    const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats);
+    const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats, {
+      protocolPath : normalizedPath,
+      schema       : typeEntry?.schema,
+    });
     const result = await this._dwn.records.write({
       data                   : encoded.data,
       from                   : request.from,
