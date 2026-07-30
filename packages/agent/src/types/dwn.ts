@@ -256,6 +256,12 @@ export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T>
     remoteEndpointsOnly?: boolean;
   };
 
+/** Retry disposition for a failed role-audience key delivery. */
+export type AudienceKeyDeliveryFailure =
+  | 'awaiting-recipient-install'
+  | 'retryable'
+  | 'terminal';
+
 /**
  * Outcome of role-audience key delivery provisioning for an accepted `$role`
  * record write. Surfaced on {@link DwnResponse.audienceKeyDelivery} so a skipped
@@ -288,6 +294,12 @@ export type AudienceKeyDeliveryOutcome =
 
       /** The recipient the role-audience key was NOT delivered to. */
       recipientDid: string;
+
+      /**
+       * Machine-readable retry policy: wait for recipient setup, retry after a
+       * transient failure, or wait for an external fix to a terminal failure.
+       */
+      failure: AudienceKeyDeliveryFailure;
 
       /**
        * Why best-effort delivery was skipped or failed — e.g. the recipient
@@ -445,7 +457,7 @@ export type GetAudienceKeyDeliveryStatusParams = {
  * a `$role` write, this is BEST-EFFORT: failures — missing seal coverage, an
  * unresolvable recipient key, or the DWN rejecting the write because the
  * recipient holds no active role record at `rolePath` — are reported as
- * `{ delivered: false, reason }` on {@link AudienceKeyDeliveryOutcome}, never
+ * `{ delivered: false, failure, reason }` on {@link AudienceKeyDeliveryOutcome}, never
  * thrown. Only pre-write validation (a malformed/unusable supplied key, or a
  * nested `rolePath` without a deep-enough `contextId`) throws.
  */

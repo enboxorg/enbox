@@ -61,6 +61,7 @@ import { Ed25519, X25519 } from '@enbox/crypto';
 
 import type { RemoteReadOutcome } from './dwn-read-through.js';
 
+import { AudienceControlWriteError } from './audience-key-delivery.js';
 import { DwnInterface } from './types/dwn.js';
 import {
   processDwnRequestWithRemoteFallback as processDwnReadThrough,
@@ -972,7 +973,7 @@ export async function createAudienceRecord(params: {
   });
 
   if (reply.status.code !== 202 && reply.status.code !== 409) {
-    throw new Error(`AgentDwnApi: Failed to create audience record: ${reply.status.detail}`);
+    throw new AudienceControlWriteError('create audience record', reply.status);
   }
 
   return {
@@ -1084,7 +1085,7 @@ export async function createAudienceDeliveryRecord(params: {
   });
 
   if (reply.status.code !== 202 && reply.status.code !== 409) {
-    throw new Error(`AgentDwnApi: Failed to create audience delivery record: ${reply.status.detail}`);
+    throw new AudienceControlWriteError('create audience delivery record', reply.status);
   }
 
   return {
