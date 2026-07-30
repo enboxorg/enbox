@@ -631,8 +631,6 @@ export class Record<T = unknown> implements RecordModel {
 
     await this.applyDelegateGrant(requestOptions);
 
-    // The agent rejects `recipientRolePublicKey` on the remote path (role-audience
-    // key delivery is a local `processRequest`-only concept) — surfaced, not masked.
     const agentResponse = isRemote ?
       await this._agent.sendDwnRequest(requestOptions) :
       await this._agent.processDwnRequest(requestOptions);

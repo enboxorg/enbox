@@ -123,7 +123,7 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     controller.abort();
   });
 
-  it('bounds transient retries and restarts the budget for a newly observed failure', async () => {
+  it('bounds transient retries and preserves dormant wakes across thrown passes', async () => {
     const clock = sinon.useFakeTimers();
     const run = sinon.stub().resolves(true);
     const coordinator = new AudienceKeyDeliveryCoordinator({
@@ -145,6 +145,29 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     await clock.runAllAsync();
     expect(run.callCount).toBe(5);
     expect(run.getCalls().slice(3).map(call => call.args[0])).toEqual([false, false]);
+
+    const dormantRunStarted = createDeferred();
+    const releaseDormantRun = createDeferred();
+    run.onCall(5).callsFake(async (): Promise<boolean> => {
+      dormantRunStarted.resolve();
+      await releaseDormantRun.promise;
+      throw new Error('temporary scan failure');
+    });
+    run.onCall(6).resolves(false);
+    coordinator.wake();
+    await dormantRunStarted.promise;
+    coordinator.reconcile();
+    releaseDormantRun.resolve();
+    await clock.runAllAsync();
+    expect(run.getCalls().slice(5).map(call => call.args[0])).toEqual([true, true]);
+
+    run.onCall(7).rejects(new Error('temporary scan failure'));
+    run.onCall(8).resolves(false);
+    coordinator.wake();
+    await coordinator.whenIdle();
+    coordinator.reconcile();
+    await coordinator.whenIdle();
+    expect(run.getCalls().slice(7).map(call => call.args[0])).toEqual([true, true]);
     coordinator.close();
     await coordinator.whenIdle();
   });

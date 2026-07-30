@@ -52,7 +52,11 @@ import type { RecordFilter, RecordQuery } from './record-query.js';
 import { createRecordView } from './record-view.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
 import { removeUndefinedProperties } from '@enbox/common';
-import { assertTypedProtocolStructureSupported, collectProtocolPaths } from './protocol-paths.js';
+import {
+  assertTypedProtocolStructureSupported,
+  collectProtocolPaths,
+  isEncryptedRoleAudiencePath,
+} from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
 import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
@@ -72,6 +76,11 @@ export type DataForPath<
   C extends RecordCodecMap,
   Path extends string,
 > = TypeNameAtPath<Path> extends keyof C ? RecordCodecValue<C[TypeNameAtPath<Path>]> : never;
+
+/** Role paths that receive audience keys under the protocol's global encryption policy. */
+type ProtocolDeliveryRolePaths<D extends ProtocolDefinition> = {
+  [Name in keyof D['types']]: D['types'][Name] extends { readonly encryptionRequired: true } ? Name : never;
+}[keyof D['types']] extends never ? never : ProtocolRolePaths<D>;
 
 /** One page returned by a typed records query. */
 export type RecordPage<Item = Record> = {
@@ -176,6 +185,12 @@ type TypedObserveRequest<
 
 /** @internal Runtime resources owned by the Enbox session that created this typed API. */
 type TypedEnboxOptions = {
+  /** Session-owned role-delivery projection and retry operations. */
+  roleDelivery?: {
+    get(roleRecordId: string): Promise<RoleDeliveryState | undefined>;
+    retry(roleRecordId: string): Promise<RoleDeliveryState | undefined>;
+  };
+
   /** Session-lifetime signal; aborting it closes every view created by this instance. */
   signal?: AbortSignal;
 
@@ -186,6 +201,15 @@ type TypedEnboxOptions = {
 // ---------------------------------------------------------------------------
 // Request / response types
 // ---------------------------------------------------------------------------
+
+/**
+ * Local, reconstructable delivery lifecycle state for one active encrypted role record.
+ * `delivered` means the delivery write was accepted; it is not a recipient decryption receipt.
+ */
+export type RoleDeliveryState =
+  | Readonly<{ state: 'delivered' }>
+  | Readonly<{ state: 'pending'; reason?: string }>
+  | Readonly<{ state: 'awaiting-recipient-install' | 'failed'; reason: string }>;
 
 /**
  * Options for {@link TypedEnbox} `records.create()`.
@@ -302,8 +326,8 @@ type TypedCreateOptions<
    * their DWN (e.g. a bare `did:jwk` publishing no resolvable DWN
    * endpoint); the recipient computes the key locally and carries it out
    * of band for the writer to supply here. When omitted, role-audience
-   * key delivery is best-effort. Use the low-level DWN API when the delivery
-   * outcome is required.
+   * key delivery is best-effort and its persisted state is available through
+   * `records.deliveryState()`.
    *
    * Enbox validates only that the supplied key is a usable X25519 public
    * key — it does NOT verify that the key belongs to the recipient. That
@@ -1155,6 +1179,35 @@ export class TypedEnbox<
     return this.bindCodec<Path>(normalizedPath, result.record);
   }
 
+  /** Resolve one active role's state, optionally after reconciling the protocol. */
+  private async resolveRoleDeliveryState<Path extends ProtocolDeliveryRolePaths<D> & string>(
+    path: Path,
+    roleRecordId: string,
+    retry: boolean,
+  ): Promise<RoleDeliveryState | undefined> {
+    const normalizedPath = normalizePath(path);
+    this._assertValidPath(normalizedPath);
+    if (!isEncryptedRoleAudiencePath(this._definition, normalizedPath)) {
+      throw new TypeError(`TypedEnbox.records: path '${normalizedPath}' does not have an encrypted role audience.`);
+    }
+    const roleDelivery = this._options.roleDelivery;
+    if (roleDelivery === undefined) {
+      throw new Error('TypedEnbox.records: role delivery state requires an Enbox session.');
+    }
+    this._options.signal?.throwIfAborted();
+    const role = await this.records.read(path, roleRecordId);
+    this._options.signal?.throwIfAborted();
+    if (role === undefined) {
+      return undefined;
+    }
+
+    const state = await (retry ? roleDelivery.retry(roleRecordId) : roleDelivery.get(roleRecordId));
+    if (state === undefined) {
+      return { state: 'pending' };
+    }
+    return 'reason' in state ? { reason: state.reason, state: state.state } : { state: state.state };
+  }
+
   /**
    * Ensures the protocol is configured before performing record operations.
    *
@@ -1297,6 +1350,8 @@ export class TypedEnbox<
    * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable local query snapshots
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
    * - {@link TypedEnbox.records.read | read(path, recordId or request)} — Read a single record
+   * - {@link TypedEnbox.records.deliveryState | deliveryState(path, recordId)} — Read an encrypted role's delivery state
+   * - {@link TypedEnbox.records.retryDelivery | retryDelivery(path, recordId)} — Reconcile protocol delivery and return one role's state
    * - {@link TypedEnbox.records.set | set(path, request)} — Replace one protocol-declared singleton
    * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
    */
@@ -1330,6 +1385,21 @@ export class TypedEnbox<
       path: Path,
       recordIdOrRequest: string | TypedReadRequest<D, Path>,
     ) => Promise<Record<DataForPath<C, Path>> | undefined>;
+
+    /** Read an active encrypted role's delivery state, or `undefined` when the role is inactive. */
+    deliveryState: <Path extends ProtocolDeliveryRolePaths<D> & string>(
+      path: Path,
+      roleRecordId: string,
+    ) => Promise<RoleDeliveryState | undefined>;
+
+    /**
+     * Wake protocol-wide delivery repair, then return the requested active role's state.
+     * One call retries every undelivered active role; refresh other rows with `deliveryState()`.
+     */
+    retryDelivery: <Path extends ProtocolDeliveryRolePaths<D> & string>(
+      path: Path,
+      roleRecordId: string,
+    ) => Promise<RoleDeliveryState | undefined>;
 
     set: <Path extends SingletonProtocolPaths<D> & string>(
       path: Path,
@@ -1619,6 +1689,16 @@ export class TypedEnbox<
           ? undefined
           : this.bindCodec<Path>(normalizedPath, result.record);
       },
+
+      deliveryState: async <Path extends ProtocolDeliveryRolePaths<D> & string>(
+        path: Path,
+        roleRecordId: string,
+      ): Promise<RoleDeliveryState | undefined> => this.resolveRoleDeliveryState(path, roleRecordId, false),
+
+      retryDelivery: async <Path extends ProtocolDeliveryRolePaths<D> & string>(
+        path: Path,
+        roleRecordId: string,
+      ): Promise<RoleDeliveryState | undefined> => this.resolveRoleDeliveryState(path, roleRecordId, true),
 
       /**
        * Replace the visible value at a protocol-declared singleton path.

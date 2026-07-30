@@ -155,13 +155,8 @@ export type RecordUpdateParams<T = unknown> = {
    * updates therefore re-read lazily from the explicit `from` tenant, while a
    * local update replaces any remote read context with local routing.
    *
-   * Remote-path boundaries:
-   * - {@link RecordUpdateParams.recipientRolePublicKey} is NOT supported with
-   *   `from` — role-audience key delivery is provisioned on the owner's local
-   *   DWN via `processRequest` only, and the agent throws rather than
-   *   silently ignoring the key.
-   * - Delivery outcomes are available only through the low-level DWN API;
-   *   {@link Record.update} returns the updated record itself.
+   * `recipientRolePublicKey` is local-only because remote dispatch does not
+   * provision role-audience key delivery.
    */
   from?: string;
 
@@ -193,27 +188,10 @@ export type RecordUpdateParams<T = unknown> = {
   tags?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['tags'];
 
   /**
-   * The recipient's role-path public key for this update, forwarded to the
-   * agent at the top level of the request (never into the message
-   * descriptor) when updating a `$role` record with a `recipient`.
-   *
-   * Updating a role record re-provisions its role-audience key delivery, so
-   * supplying the key here is the retry idiom for a write whose best-effort
-   * delivery was previously reported with `delivered: false`: the recipient
-   * computes its role-path key locally and carries it out of band (e.g. in
-   * a signed join request) for the writer to supply on the retry.
-   *
-   * Enbox validates only that the supplied key is a usable X25519 public
-   * key — it does NOT verify that the key belongs to the recipient. That
-   * authenticity binding rests entirely on the out-of-band channel the
-   * caller trusts. A `delivered: true` outcome means the delivery record
-   * was written wrapping THIS supplied key; it does not assert the intended
-   * recipient can decrypt it — supplying the wrong key yields
-   * `delivered: true` and a delivery the real recipient cannot decrypt.
-   *
-   * NOT supported together with {@link RecordUpdateParams.from} — remote
-   * dispatch never provisions role-audience key delivery, and the agent
-   * throws rather than silently ignoring the supplied key.
+   * An out-of-band recipient role-path key used to retry delivery while updating
+   * a local `$role` record. This is the fallback for recipients whose key cannot
+   * be resolved from a DWN. The caller is responsible for authenticating that the
+   * supplied X25519 public key belongs to the recipient.
    */
   recipientRolePublicKey?: DwnPublicKeyJwk;
 };

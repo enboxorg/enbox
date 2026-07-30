@@ -1,12 +1,9 @@
 /**
  * Role-audience key-delivery propagation through the `@enbox/api` layer.
  *
- * Verifies that `DwnApi.records.write()`, `Record.update()`, and the typed
- * `records.create()` / `Record.update()` surfaces forward the agent's
- * `audienceKeyDelivery` outcome, and that a caller-supplied
- * `recipientRolePublicKey` rides `agent.processDwnRequest()` at the top level
- * (never inside `messageParams`). Mirrors the agent's own role-delivery tests
- * in `packages/agent/tests/dwn-api.spec.ts`.
+ * Verifies that raw and typed creates forward recipient role keys, ordinary
+ * updates leave repair to the agent-owned lifecycle, and a supplied key remains
+ * available as the fallback for a recipient without a resolvable DWN key.
  */
 
 import type { BearerDid } from '@enbox/dids';
@@ -220,7 +217,7 @@ describe('audience key delivery propagation', () => {
     it('should update a role record and return the same canonical handle', async () => {
       const { definition, threadContextId } = await installChatProtocolWithThread();
 
-      sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
+      const roleKey = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
         .rejects(new Error('recipient protocol not installed'));
 
       const { status: writeStatus, record } = await dwnAlice.records.write({
@@ -233,13 +230,13 @@ describe('audience key delivery propagation', () => {
         recipient       : bobDid.uri,
       });
       expect(writeStatus.code).toBe(202);
+      expect(roleKey.callCount).toBe(1);
 
-      // Updating the `$role` record re-provisions delivery — the retry idiom
-      // for a previously skipped best-effort delivery.
       const updatedRecord = await record!.update({ data: { name: 'Bob', role: 'admin' } });
 
       expect(updatedRecord).toBe(record);
       expect(await updatedRecord.data.json()).toEqual({ name: 'Bob', role: 'admin' });
+      expect(roleKey.callCount).toBe(1);
     }, 15000);
 
     it('should retry a skipped delivery via update() with a caller-supplied recipientRolePublicKey', async () => {
@@ -271,15 +268,14 @@ describe('audience key delivery propagation', () => {
 
       expect(updatedRecord).toBe(record);
 
-      // The key rides the update's agent request at the top level and never
-      // lands in `messageParams`, where the DWN would reject it as an
-      // immutable descriptor property.
       const updateCall = processSpy.getCalls().find((call): boolean =>
         call.args[0].messageType === DwnInterface.RecordsWrite &&
         (call.args[0] as { messageParams?: { protocolPath?: string } }).messageParams?.protocolPath === 'thread/participant');
       expect(updateCall).toBeDefined();
       expect((updateCall!.args[0] as { recipientRolePublicKey?: DwnPublicKeyJwk }).recipientRolePublicKey).toEqual(VALID_X25519_KEY);
       expect((updateCall!.args[0] as { messageParams?: Record<string, unknown> }).messageParams!.recipientRolePublicKey).toBeUndefined();
+      expect((await updateCall!.returnValue).audienceKeyDelivery)
+        .toEqual({ delivered: true, recipientDid: bobDid.uri });
     }, 15000);
 
     it('should update a non-role record through the same value contract', async () => {
