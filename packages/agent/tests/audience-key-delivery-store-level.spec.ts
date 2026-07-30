@@ -89,7 +89,7 @@ describe('AudienceKeyDeliveryStoreLevel', () => {
     const delivered = deliveryIntent();
     const stale = deliveryIntent({ roleRecordId: 'stale-role' });
     const otherProtocol = deliveryIntent({ protocol: 'https://example.com/other', roleRecordId: 'other-protocol' });
-    const otherSource = deliveryIntent({ sourceDid: 'did:example:carol', roleRecordId: 'other-source' });
+    const otherSource = deliveryIntent({ sourceDid: `${delivered.sourceDid}-other`, roleRecordId: 'other-source' });
     const discovered = deliveryIntent({ roleRecordId: 'discovered-role' });
     await Promise.all([
       recordDelivered(store, delivered),

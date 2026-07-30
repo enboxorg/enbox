@@ -103,7 +103,8 @@ export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
 
   private async getForProtocol(sourceDid: string, protocol: string): Promise<AudienceKeyDeliveryState[]> {
     const states: AudienceKeyDeliveryState[] = [];
-    for await (const [, value] of this._states.iterator()) {
+    const prefix = `${JSON.stringify([sourceDid]).slice(0, -1)},`;
+    for await (const [, value] of this._states.iterator({ gte: prefix, lt: `${prefix}\uffff` })) {
       const state = AudienceKeyDeliveryStoreLevel.parseEntry(value);
       if (state?.sourceDid === sourceDid && state.protocol === protocol) {
         states.push(state);

@@ -718,7 +718,7 @@ export class AgentDwnApi {
     }
 
     const audienceKeyDelivery = await this.provisionAudienceKeyDeliveryForReply(request, message, reply);
-    await this.updateAudienceKeyDeliveryProjection(request, message, reply, audienceKeyDelivery);
+    void this.updateAudienceKeyDeliveryProjection(request, message, reply, audienceKeyDelivery);
 
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
