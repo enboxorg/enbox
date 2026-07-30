@@ -10,16 +10,71 @@ export type EncodedRecordData = {
   dataFormat: string;
 };
 
+/** Structured failure returned by a standalone JSON Schema validator. */
+export type RecordValidationFailure = Readonly<{
+  instancePath: string;
+  keyword: string;
+  message?: string;
+  params: Readonly<globalThis.Record<string, unknown>>;
+}>;
+
+/** Synchronous contract compatible with standalone JSON Schema validators. */
+export type RecordValidator = ((value: unknown) => boolean) & {
+  readonly errors?: readonly RecordValidationFailure[] | null;
+};
+
+/** Metadata available when a protocol codec processes one record value. */
+export type RecordCodecContext = Readonly<{
+  protocolPath?: string;
+  recordId?: string;
+  schema?: string;
+}>;
+
+/** Options for a JSON record codec backed by a standalone validator. */
+export type JsonRecordCodecOptions = {
+  dataFormat?: string;
+  validator: RecordValidator;
+};
+
+/** A record value did not conform to its declared JSON Schema. */
+export class RecordValidationError extends Error {
+  /** Validator diagnostics, or an empty array when the validator supplied none. */
+  public readonly failures: readonly RecordValidationFailure[];
+  public readonly protocolPath?: string;
+  public readonly recordId?: string;
+  public readonly schema?: string;
+
+  constructor(
+    failures : readonly RecordValidationFailure[],
+    context: RecordCodecContext = {},
+  ) {
+    const subject = context.recordId === undefined ? 'Record data' : `Record '${context.recordId}' data`;
+    const path = context.protocolPath === undefined ? '' : ` at protocol path '${context.protocolPath}'`;
+    const schema = context.schema === undefined ? '' : ` against schema '${context.schema}'`;
+    const firstFailure = failures[0];
+    const detail = firstFailure === undefined
+      ? ''
+      : ` ${firstFailure.instancePath || '/'}: ${firstFailure.message ?? firstFailure.keyword}.`;
+
+    super(`${subject}${path} failed JSON Schema validation${schema}.${detail}`);
+    this.name = 'RecordValidationError';
+    this.failures = [...failures];
+    this.protocolPath = context.protocolPath;
+    this.recordId = context.recordId;
+    this.schema = context.schema;
+  }
+}
+
 /**
  * Converts one protocol record type between its application value and stored
  * plaintext representation. Encryption remains below this boundary.
  */
 export interface RecordCodec<T> {
   /** Encode an application value for a RecordsWrite operation. */
-  encode(value: T): EncodedRecordData | Promise<EncodedRecordData>;
+  encode(value: T, context?: RecordCodecContext): EncodedRecordData | Promise<EncodedRecordData>;
 
   /** Decode a record's lazy plaintext data into its application value. */
-  decode(data: RecordData, dataFormat: string): Promise<T>;
+  decode(data: RecordData, dataFormat: string, context?: RecordCodecContext): Promise<T>;
 }
 
 /** Runtime codecs keyed by protocol type name. */
@@ -28,30 +83,53 @@ export type RecordCodecMap = globalThis.Record<string, RecordCodec<unknown>>;
 /** Extract the application value type accepted by a record codec. */
 export type RecordCodecValue<C> = C extends RecordCodec<infer T> ? T : never;
 
+function validateRecordValue<T>(
+  value : unknown,
+  validator : RecordValidator,
+  context : RecordCodecContext | undefined,
+): T {
+  const valid: unknown = validator(value);
+  if (typeof valid !== 'boolean') {
+    if (valid instanceof Promise) {
+      void valid.catch((): void => {});
+    }
+    throw new TypeError('RecordCodec: validator must be synchronous; async schemas are not supported.');
+  }
+  if (valid) {
+    return value as T;
+  }
+  throw new RecordValidationError(validator.errors ?? [], context);
+}
+
 /** Built-in codecs for the common DWN record representations. */
 export const recordCodecs = {
   /**
    * JSON values encoded with a caller-selected JSON MIME type.
    *
-   * `T` is the trusted application type asserted after `JSON.parse()`; this
-   * codec does not perform runtime JSON Schema validation.
+   * Without a validator, `T` is the trusted application type asserted after
+   * `JSON.parse()`. A standalone validator checks the serialized value on
+   * encode and the parsed value on decode.
    */
-  json<T>(dataFormat = 'application/json'): RecordCodec<T> {
+  json<T>(options: string | JsonRecordCodecOptions = 'application/json'): RecordCodec<T> {
+    const dataFormat = typeof options === 'string' ? options : options.dataFormat ?? 'application/json';
+    const validator = typeof options === 'string' ? undefined : options.validator;
     return {
-      encode(value: T): EncodedRecordData {
+      encode(value: T, context?: RecordCodecContext): EncodedRecordData {
         const serialized = JSON.stringify(value);
         if (serialized === undefined) {
           throw new TypeError('RecordCodec: JSON values must be serializable.');
+        }
+        if (validator !== undefined) {
+          validateRecordValue(JSON.parse(serialized), validator, context);
         }
         return {
           data: new Blob([serialized], { type: dataFormat }),
           dataFormat,
         };
       },
-      async decode(data: RecordData): Promise<T> {
-        // Runtime schema validation is intentionally outside the codec contract;
-        // this is the single trusted boundary declared by json<T>().
-        return await data.json() as T;
+      async decode(data: RecordData, _dataFormat: string, context?: RecordCodecContext): Promise<T> {
+        const value: unknown = await data.json();
+        return validator === undefined ? value as T : validateRecordValue(value, validator, context);
       },
     };
   },
@@ -134,8 +212,9 @@ export async function encodeRecordValue<T>(
   codec : RecordCodec<T>,
   value : T,
   dataFormats?: readonly string[],
+  context?: RecordCodecContext,
 ): Promise<EncodedRecordData> {
-  const encoded = await codec.encode(value);
+  const encoded = await codec.encode(value, context);
   if (!(encoded?.data instanceof Blob) || typeof encoded.dataFormat !== 'string' || encoded.dataFormat === '') {
     throw new TypeError('RecordCodec: encode() must return a Blob and a non-empty dataFormat.');
   }

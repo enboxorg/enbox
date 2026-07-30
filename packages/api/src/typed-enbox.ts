@@ -1150,7 +1150,10 @@ export class TypedEnbox<
     const typeEntry = this._definition.types[typeName];
 
     const codec = this.getCodec<Path>(normalizedPath);
-    const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats);
+    const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats, {
+      protocolPath : normalizedPath,
+      schema       : typeEntry?.schema,
+    });
     const result = await this._dwn.records.write({
       data                   : encoded.data,
       from                   : request.from,
@@ -1455,6 +1458,8 @@ export class TypedEnbox<
        * `materialize` to eagerly decode one explicitly bounded page while
        * retaining each canonical record handle. Selected direct children must
        * declare `$recordLimit.max: 1` and are fetched once per child path.
+       * Materialization is fail-closed: any decode or validation failure
+       * rejects the page. Omit it to handle `record.value()` per record.
        *
        * @param path - The protocol path to query (e.g. `'notebook'`,
        *   `'notebook/page'`).
@@ -1554,7 +1559,9 @@ export class TypedEnbox<
        * payloads are wake hints only; every published collection comes from
        * re-running this exact canonical query. A pagination limit is required
        * so the view's retained collection has an explicit resource bound.
-       * Query and observe share the same record materialization path.
+       * When requested, query and observe share the same fail-closed
+       * materialization path, so any decode or validation failure publishes
+       * an error state.
        */
       observe: async <
         Path extends ProtocolPaths<D> & string,

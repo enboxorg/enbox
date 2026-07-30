@@ -384,7 +384,11 @@ export class Record<T = unknown> implements RecordModel {
     if (this.dataFormat === undefined) {
       throw new Error('Record.value: this record does not have a data format.');
     }
-    return await binding.codec.decode(this.data, this.dataFormat);
+    return await binding.codec.decode(this.data, this.dataFormat, {
+      protocolPath : this.protocolPath,
+      recordId     : this.id,
+      schema       : this.schema,
+    });
   }
 
   /**
@@ -688,7 +692,11 @@ export class Record<T = unknown> implements RecordModel {
       return dataToBlob(data, updateMessage.dataFormat).dataBlob;
     }
 
-    const encoded = await encodeRecordValue(codecBinding.codec, data, codecBinding.dataFormats);
+    const encoded = await encodeRecordValue(codecBinding.codec, data, codecBinding.dataFormats, {
+      protocolPath : this.protocolPath,
+      recordId     : this.id,
+      schema       : this.schema,
+    });
     updateMessage.dataFormat = encoded.dataFormat;
     return encoded.data;
   }

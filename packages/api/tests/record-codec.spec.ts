@@ -1,13 +1,35 @@
 import type { RecordData } from '../src/record-data.js';
-import type { EncodedRecordData, RecordCodec } from '../src/record-codec.js';
+import type {
+  EncodedRecordData,
+  RecordCodec,
+  RecordValidationFailure,
+  RecordValidator,
+} from '../src/record-codec.js';
 
 import { describe, expect, it } from 'bun:test';
 
 import { createRecordData } from '../src/record-data.js';
-import { encodeRecordValue, recordCodecs } from '../src/record-codec.js';
+import { encodeRecordValue, recordCodecs, RecordValidationError } from '../src/record-codec.js';
 
 function dataFor(encoded: EncodedRecordData): RecordData {
   return createRecordData(async (): Promise<ReadableStream> => encoded.data.stream(), encoded.dataFormat);
+}
+
+function titleValidator(onValue?: (value: unknown) => void): RecordValidator {
+  const failure: RecordValidationFailure = {
+    instancePath : '/title',
+    keyword      : 'type',
+    message      : 'must be string',
+    params       : { type: 'string' },
+  };
+  const validator = ((value: unknown): boolean => {
+    onValue?.(value);
+    const valid = typeof (value as { title?: unknown } | null)?.title === 'string';
+    validator.errors = valid ? null : [failure];
+    return valid;
+  }) as ((value: unknown) => boolean) & { errors: readonly RecordValidationFailure[] | null };
+  validator.errors = null;
+  return validator;
 }
 
 describe('recordCodecs', () => {
@@ -17,6 +39,69 @@ describe('recordCodecs', () => {
 
     expect(encoded.dataFormat).toBe('application/json');
     expect(await codec.decode(dataFor(encoded), encoded.dataFormat)).toEqual({ title: 'hello' });
+  });
+
+  it('round-trips JSON through a standalone validator and custom MIME type', async () => {
+    const codec = recordCodecs.json<{ title: string }>({
+      dataFormat : 'application/merge-patch+json',
+      validator  : titleValidator(),
+    });
+    const encoded = await encodeRecordValue(codec, { title: 'hello' });
+
+    expect(encoded.dataFormat).toBe('application/merge-patch+json');
+    expect(await codec.decode(dataFor(encoded), encoded.dataFormat)).toEqual({ title: 'hello' });
+  });
+
+  it('validates the serialized JSON value and reports structured failures', async () => {
+    let validatedValue: unknown;
+    const validator = titleValidator((value): void => { validatedValue = value; });
+    const codec = recordCodecs.json<{ title: string }>({ validator });
+    const input = {
+      title  : 'valid before serialization',
+      toJSON : (): { title: number } => ({ title: 42 }),
+    };
+
+    const thrown = await encodeRecordValue(codec, input, undefined, {
+      protocolPath : 'notebook/page',
+      recordId     : 'page-1',
+      schema       : 'https://example.com/schemas/page',
+    }).catch((error: unknown): unknown => error);
+
+    expect(validatedValue).toEqual({ title: 42 });
+    expect(thrown).toBeInstanceOf(RecordValidationError);
+    const error = thrown as RecordValidationError;
+    expect(error.protocolPath).toBe('notebook/page');
+    expect(error.recordId).toBe('page-1');
+    expect(error.schema).toBe('https://example.com/schemas/page');
+    expect(error.failures).toEqual([{
+      instancePath : '/title',
+      keyword      : 'type',
+      message      : 'must be string',
+      params       : { type: 'string' },
+    }]);
+  });
+
+  it('rejects asynchronous validators instead of treating their promises as success', async () => {
+    const validator = (async (): Promise<boolean> => {
+      throw new Error('async validator rejection');
+    }) as unknown as RecordValidator;
+    const codec = recordCodecs.json<{ title: string }>({ validator });
+
+    await expect(encodeRecordValue(codec, { title: 'hello' }))
+      .rejects.toThrow('validator must be synchronous');
+  });
+
+  it('reports an empty failure list when a rejecting validator provides no diagnostics', async () => {
+    const codec = recordCodecs.json<{ title: string }>({
+      validator: (() => false) as RecordValidator,
+    });
+
+    const thrown = await encodeRecordValue(codec, { title: 'hello' })
+      .catch((error: unknown): unknown => error);
+
+    expect(thrown).toBeInstanceOf(RecordValidationError);
+    expect((thrown as RecordValidationError).failures).toEqual([]);
+    expect((thrown as RecordValidationError).message).toBe('Record data failed JSON Schema validation.');
   });
 
   it('round-trips text and byte values without JSON serialization', async () => {
