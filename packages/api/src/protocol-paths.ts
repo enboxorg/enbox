@@ -1,3 +1,21 @@
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+
+import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
+
+/**
+ * @internal Classifies an audience role in an authored protocol definition.
+ *
+ * Configure injects `$keyAgreement` at every authored path when any type is encrypted,
+ * so every local `$role` becomes an encrypted audience in the installed definition.
+ */
+export function isEncryptedRoleAudiencePath(
+  definition: ProtocolDefinition,
+  protocolPath: string,
+): boolean {
+  return Object.values(definition.types).some(type => type.encryptionRequired === true)
+    && getRuleSetAtPath(protocolPath, definition.structure)?.$role === true;
+}
+
 /** @internal Collect every non-directive path in a protocol structure. */
 export function collectProtocolPaths(
   structure: globalThis.Record<string, unknown>,

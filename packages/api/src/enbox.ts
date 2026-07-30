@@ -34,18 +34,17 @@ import type {
 import { AnonymousDwnApi } from '@enbox/agent';
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
-import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { omitUndefined } from '@enbox/common';
 import { computeConnectionStatus, reconcileConnectionStatusGrants } from '@enbox/auth';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
-import { collectProtocolPaths } from './protocol-paths.js';
 import { createProtocolReadinessApi } from './protocol-readiness.js';
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
 import { TypedEnbox } from './typed-enbox.js';
 import { VcApi } from './vc-api.js';
+import { collectProtocolPaths, isEncryptedRoleAudiencePath } from './protocol-paths.js';
 
 /**
  * Module-level registry of in-flight {@link Enbox.connect} calls, keyed by
@@ -334,11 +333,8 @@ export class Enbox {
       signal : this._lifetimeSignal,
       sync   : this.agent.sync,
     });
-    // Configure injects $keyAgreement at every authored path when any type is encrypted.
-    const rolePaths = Object.values(protocol.definition.types).some(type => type.encryptionRequired === true)
-      ? [...collectProtocolPaths(protocol.definition.structure)]
-        .filter(path => getRuleSetAtPath(path, protocol.definition.structure)?.$role === true)
-      : [];
+    const rolePaths = [...collectProtocolPaths(protocol.definition.structure)]
+      .filter(path => isEncryptedRoleAudiencePath(protocol.definition, path));
     if (rolePaths.length > 0) {
       this.agent.dwn.registerAudienceKeyDeliveryProtocol({
         ...deliverySession,

@@ -1408,6 +1408,11 @@ export class AgentDwnApi {
     target: string,
   ): AudienceKeyDeliveryCoordinator {
     signal.throwIfAborted();
+    if (this._audienceKeyDeliveryStore === undefined) {
+      throw new Error(
+        'AgentDwnApi: audience-key delivery state requires the \'audienceKeyDeliveryStore\' constructor option.',
+      );
+    }
     const coordinator = [...this._audienceKeyDeliveryCoordinators].find(candidate =>
       candidate.protocol === protocol && candidate.sessionSignal === signal && candidate.targetDid === target
     );

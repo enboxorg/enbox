@@ -131,6 +131,27 @@ describe('AgentDwnApi', () => {
     });
   });
 
+  describe('audience-key delivery state', () => {
+    it('reports when storage is not configured', async () => {
+      const dwnApi = new AgentDwnApi({ dwn: ({} as unknown) as Dwn });
+      const session = new AbortController();
+
+      dwnApi.registerAudienceKeyDeliveryProtocol({
+        protocol  : 'https://example.com/protocols/chat',
+        rolePaths : ['thread/member'],
+        signal    : session.signal,
+        target    : 'did:example:alice',
+      });
+
+      await expect(dwnApi.getAudienceKeyDeliveryState({
+        protocol     : 'https://example.com/protocols/chat',
+        roleRecordId : 'role-record',
+        signal       : session.signal,
+        target       : 'did:example:alice',
+      })).rejects.toThrow('requires the \'audienceKeyDeliveryStore\' constructor option');
+    });
+  });
+
   describe('get agent', () => {
     it(`returns the 'agent' instance property`, () => {
       // we are only mocking
