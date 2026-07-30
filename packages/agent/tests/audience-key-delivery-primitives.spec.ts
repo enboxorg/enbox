@@ -17,6 +17,7 @@ import {
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionControlDeliveryRecipientAuthority,
   getRuleSetAtPath,
+  Poller,
   Time,
 } from '@enbox/dwn-sdk-js';
 
@@ -204,8 +205,10 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const threadContextId = await writeThread(chat);
       const { roleContextId, roleRecordId, delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
       expect(delivery?.delivered).toBe(true);
-      expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
-        .toMatchObject({ state: 'delivered' });
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
+          .toMatchObject({ state: 'delivered' });
+      });
 
       // The role RECORD's contextId is accepted directly — normalization to the
       // role-audience context id happens inside the primitive.
