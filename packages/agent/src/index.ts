@@ -8,6 +8,7 @@ export type * from './types/sync.js';
 export {
   computeAuthorizationEpoch,
   computeProjectionId,
+  isReplicationLinkCurrent,
   normalizeSyncProtocols,
   protocolsForSyncScope,
   singleProtocolForSyncScope,

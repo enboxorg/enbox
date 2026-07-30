@@ -668,6 +668,13 @@ export type ReplicationLinkSnapshot = {
   lastActivityAt?: string;
 };
 
+/** Whether a replication link has a current, reachable local replica. */
+export function isReplicationLinkCurrent(
+  link: Pick<ReplicationLinkSnapshot, 'connectivity' | 'isPullCurrent' | 'status'>,
+): boolean {
+  return link.status === 'live' && link.connectivity === 'online' && link.isPullCurrent;
+}
+
 export interface SyncEngine {
   /**
    * The agent that the SyncEngine is attached to.
