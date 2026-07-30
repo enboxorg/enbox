@@ -6,6 +6,7 @@ import {
   AudienceControlWriteError,
   AudienceKeyDeliveryConfigurationError,
   classifyAudienceKeyDeliveryFailure,
+  projectAudienceKeyDeliveryOutcome,
 } from '../src/audience-key-delivery.js';
 
 describe('audience key delivery failure classification', () => {
@@ -32,6 +33,47 @@ describe('audience key delivery failure classification', () => {
   for (const testCase of cases) {
     it(`classifies ${testCase.name} as ${testCase.expected}`, () => {
       expect(classifyAudienceKeyDeliveryFailure(testCase.error)).toBe(testCase.expected);
+    });
+  }
+});
+
+describe('audience key delivery state projection', () => {
+  const intent = {
+    contextId    : 'workspace-id',
+    protocol     : 'https://example.com/workspace',
+    recipientDid : 'did:example:bob',
+    rolePath     : 'workspace/member',
+    roleRecordId : 'role-record-id',
+    sourceDid    : 'did:example:alice',
+  };
+
+  const cases = [
+    {
+      expected : { state: 'delivered' },
+      outcome  : { delivered: true, recipientDid: intent.recipientDid } as const,
+    },
+    {
+      expected : { reason: 'not installed', state: 'awaiting-recipient-install' },
+      outcome  : {
+        delivered    : false,
+        failure      : 'awaiting-recipient-install',
+        reason       : 'not installed',
+        recipientDid : intent.recipientDid,
+      } as const,
+    },
+    {
+      expected : { reason: 'offline', state: 'pending' },
+      outcome  : { delivered: false, failure: 'retryable', reason: 'offline', recipientDid: intent.recipientDid } as const,
+    },
+    {
+      expected : { reason: 'unauthorized', state: 'failed' },
+      outcome  : { delivered: false, failure: 'terminal', reason: 'unauthorized', recipientDid: intent.recipientDid } as const,
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    it(`projects an attempt as ${testCase.expected.state}`, () => {
+      expect(projectAudienceKeyDeliveryOutcome(intent, testCase.outcome)).toEqual({ ...intent, ...testCase.expected });
     });
   }
 });

@@ -4507,6 +4507,13 @@ describe('Role record write behavior', () => {
       .toBe('awaiting-recipient-install');
     expect(roleWrite.audienceKeyDelivery!.recipientDid).toBe(bob.did.uri);
     expect(roleWrite.audienceKeyDelivery!.reason).toContain('recipient protocol not installed');
+    expect(await testHarness.audienceKeyDeliveryStore.get(
+      alice.did.uri,
+      (roleWrite.message as RecordsWriteMessage).recordId,
+    )).toMatchObject({
+      recipientDid : bob.did.uri,
+      state        : 'awaiting-recipient-install',
+    });
     expect(roleKeyLookupStub.calledOnce).toBe(true);
   }, 10000);
 
@@ -4650,7 +4657,7 @@ describe('Role record write behavior', () => {
     })).rejects.toThrow(/store:false|non-raw, stored RecordsWrite/i);
   }, 10000);
 
-  it('delivers to the supplied recipient key on the happy path', async () => {
+  it('does not unwind an accepted role write when projection persistence fails', async () => {
     // Bob is a DWN-less recipient: no protocol is installed for him, so the owner
     // cannot resolve his role-path key. He supplies it out of band and the owner
     // wraps the delivery to it directly.
@@ -4669,6 +4676,8 @@ describe('Role record write behavior', () => {
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Supplied"}')]),
     });
+    const projectionWrite = sinon.stub(testHarness.audienceKeyDeliveryStore, 'record')
+      .rejects(new Error('projection unavailable'));
 
     const roleWrite = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4688,6 +4697,7 @@ describe('Role record write behavior', () => {
 
     expect(roleWrite.reply.status.code).toBe(202);
     expect(roleWrite.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bob.did.uri });
+    expect(projectionWrite.calledOnce).toBe(true);
 
     // Exactly one delivery record was written to the owner's DWN for the recipient.
     const deliveries = await testHarness.agent.dwn.processRequest({
@@ -4750,6 +4760,8 @@ describe('Role record write behavior', () => {
     // Proof there was NO rollback: the just-accepted $role record is still present on
     // the owner's DWN (a compensating delete would have tombstoned it).
     const roleRecordId = (roleWrite.message as RecordsWriteMessage).recordId;
+    expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
+      .toMatchObject({ state: 'pending' });
     const roleRecords = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,

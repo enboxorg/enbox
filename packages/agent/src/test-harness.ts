@@ -1,4 +1,5 @@
 import type { AbstractLevel } from 'abstract-level';
+import type { AudienceKeyDeliveryStore } from './audience-key-delivery-store.js';
 import type { BearerIdentity } from './bearer-identity.js';
 import type { DidResolverCache } from '@enbox/dids';
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -18,6 +19,7 @@ import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { AgentDwnApi } from './dwn-api.js';
 import { AgentIdentityApi } from './identity-api.js';
 import { AgentPermissionsApi } from './permissions-api.js';
+import { AudienceKeyDeliveryStoreLevel } from './audience-key-delivery-store-level.js';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { HdIdentityVault } from './hd-identity-vault.js';
 import { LocalKeyManager } from './local-key-manager.js';
@@ -50,6 +52,7 @@ type PlatformAgentTestHarnessParams = {
   agent: EnboxPlatformAgent<LocalKeyManager>
 
   agentStores: 'dwn' | 'memory';
+  audienceKeyDeliveryStore: AudienceKeyDeliveryStore;
   didResolverCache: DidResolverCache;
   dwn: Dwn;
   dwnDataStore: DataStoreLevel;
@@ -69,9 +72,12 @@ type PlatformAgentTestHarnessParams = {
 };
 
 export class PlatformAgentTestHarness {
+  private readonly _dwnApi: AgentDwnApi;
+
   public agent: EnboxPlatformAgent<LocalKeyManager>;
 
   public agentStores: 'dwn' | 'memory';
+  public audienceKeyDeliveryStore: AudienceKeyDeliveryStore;
   public didResolverCache: DidResolverCache;
   public dwn: Dwn;
   public dwnDataStore: DataStoreLevel;
@@ -95,8 +101,10 @@ export class PlatformAgentTestHarness {
   };
 
   constructor(params: PlatformAgentTestHarnessParams) {
+    this._dwnApi = params.agent.dwn;
     this.agent = params.agent;
     this.agentStores = params.agentStores;
+    this.audienceKeyDeliveryStore = params.audienceKeyDeliveryStore;
     this.didResolverCache = params.didResolverCache;
     this.dwn = params.dwn;
     this.dwnDataStore = params.dwnDataStore;
@@ -120,6 +128,7 @@ export class PlatformAgentTestHarness {
     await this.dwnDataStore.clear();
     await this.dwnMessageStore.clear();
     await this.dwnResumableTaskStore.clear();
+    await this.audienceKeyDeliveryStore.clear();
     await this.clearSyncStore();
     await this.vaultStore.clear();
     if (this.secretStore) { await this.secretStore.clear(); }
@@ -162,16 +171,14 @@ export class PlatformAgentTestHarness {
     await this.dwnDataStore.clear();
     await this.dwnMessageStore.clear();
     await this.dwnResumableTaskStore.clear();
+    await this.audienceKeyDeliveryStore.clear();
     await this.agent.permissions.clear();
     this.dwnStores.clear();
   }
 
   public async closeStorage(): Promise<void> {
+    await this._dwnApi.close();
     await this.didResolverCache.close();
-    await this.dwnDataStore.close();
-    await this.dwnMessageStore.close();
-    await this.dwnResumableTaskStore.close();
-    await this.dwnEventLog.close();
     if (this.secretStore) { await this.secretStore.close(); }
     await this.syncStore.close();
     await this.vaultStore.close();
@@ -332,7 +339,8 @@ export class PlatformAgentTestHarness {
 
     // Instantiate Agent's DWN API using the custom DWN instance.
     // Disable local DWN discovery so tests don't accidentally probe localhost.
-    const dwnApi = new AgentDwnApi({ dwn, localDwnStrategy: 'off' });
+    const audienceKeyDeliveryStore = new AudienceKeyDeliveryStoreLevel(testDataPath('AUDIENCE_DELIVERY_STORE'));
+    const dwnApi = new AgentDwnApi({ audienceKeyDeliveryStore, dwn, localDwnStrategy: 'off' });
 
     // Instantiate Agent's Sync API using a custom LevelDB-backed store.
     const syncStore = new Level(testDataPath('SYNC_STORE'));
@@ -355,6 +363,7 @@ export class PlatformAgentTestHarness {
     return new PlatformAgentTestHarness({
       agent,
       agentStores,
+      audienceKeyDeliveryStore,
       didResolverCache,
       dwn,
       dwnDataStore,

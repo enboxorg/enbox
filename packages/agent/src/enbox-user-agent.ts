@@ -192,10 +192,14 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     }
 
     if (!dwnApi) {
+      const { AudienceKeyDeliveryStoreLevel } = await import('./audience-key-delivery-store-level.js');
+      const audienceKeyDeliveryStore = new AudienceKeyDeliveryStoreLevel(`${dataPath}/AUDIENCE_DELIVERY_STORE`);
+
       if (localDwnEndpoint) {
         // Remote mode: no in-process DWN. All operations route through
         // RPC to the local DWN server.
         dwnApi = new AgentDwnApi({
+          audienceKeyDeliveryStore,
           localDwnEndpoint,
           localDwnStrategy: localDwnStrategy ?? DEFAULT_LOCAL_DWN_STRATEGY,
         });
@@ -205,6 +209,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
         // its BroadcastChannel with the stores.
         const messageLog = await AgentDwnApi.createDefaultMessageLog(dataPath);
         dwnApi = new AgentDwnApi({
+          audienceKeyDeliveryStore,
           dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi, messageLog }),
           wakePublisher    : messageLog.wakePublisher,
           localDwnStrategy : localDwnStrategy ?? DEFAULT_LOCAL_DWN_STRATEGY,
