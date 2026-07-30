@@ -24,9 +24,10 @@ export class MessagesQueryHandler implements MethodHandler {
       return messageReplyFromError(e, 400);
     }
 
+    let metadataOnly: boolean;
     try {
       await authenticate(message.authorization, this.deps.didResolver);
-      await this.authorizeMessagesQuery(tenant, messagesQuery);
+      metadataOnly = await this.authorizeMessagesQuery(tenant, messagesQuery);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -42,7 +43,7 @@ export class MessagesQueryHandler implements MethodHandler {
     }
 
     try {
-      const filters = MessagesQueryHandler.convertFilters(message.descriptor.filters, this.deps);
+      const filters = MessagesQueryHandler.convertFilters(message.descriptor.filters, this.deps, !metadataOnly);
       const result = await replicationFeedReader.logRead(tenant, {
         cursor : message.descriptor.cursor,
         filters,
@@ -51,7 +52,11 @@ export class MessagesQueryHandler implements MethodHandler {
 
       const reply: MessagesQueryReply = {
         status  : { code: 200, detail: 'OK' },
-        entries : await MessagesQueryHandler.buildEntries(result.events, message.descriptor.cidsOnly ?? false),
+        entries : await MessagesQueryHandler.buildEntries(
+          result.events,
+          message.descriptor.cidsOnly ?? false,
+          !metadataOnly,
+        ),
         cursor  : result.cursor,
         drained : result.drained,
       };
@@ -78,31 +83,37 @@ export class MessagesQueryHandler implements MethodHandler {
   private async authorizeMessagesQuery(
     tenant: string,
     messagesQuery: MessagesQuery,
-  ): Promise<void> {
-    await MessagesGrantAuthorization.authorizeQueryOrSubscribeInvocation({
+  ): Promise<boolean> {
+    const grantSet = await MessagesGrantAuthorization.authorizeQueryOrSubscribeInvocation({
       tenant                : tenant,
       incomingMessage       : messagesQuery.message,
       validationStateReader : this.deps.validationStateReader,
       failureCode           : DwnErrorCode.MessagesQueryAuthorizationFailed,
     });
+    return grantSet?.metadataOnly ?? false;
   }
 
-  private static convertFilters(filters: MessagesFilter[], deps: HandlerDependencies): Filter[] | undefined {
+  private static convertFilters(
+    filters: MessagesFilter[],
+    deps: HandlerDependencies,
+    includeShadowFilters: boolean,
+  ): Filter[] | undefined {
     if (filters.length === 0) {
       return undefined;
     }
 
-    return Messages.convertFilters(filters, deps.coreProtocols);
+    return Messages.convertFilters(filters, deps.coreProtocols, includeShadowFilters);
   }
 
   private static async buildEntries(
     events: EventLogEntry[],
     cidsOnly: boolean,
+    includeEncodedData: boolean,
   ): Promise<MessagesQueryReplyEntry[]> {
     const entries: MessagesQueryReplyEntry[] = [];
 
     for (const event of events) {
-      entries.push(await MessagesQueryHandler.buildEntry(event, cidsOnly));
+      entries.push(await MessagesQueryHandler.buildEntry(event, cidsOnly, includeEncodedData));
     }
 
     return entries;
@@ -111,6 +122,7 @@ export class MessagesQueryHandler implements MethodHandler {
   private static async buildEntry(
     event: EventLogEntry,
     cidsOnly: boolean,
+    includeEncodedData: boolean,
   ): Promise<MessagesQueryReplyEntry> {
     const messageCid = event.messageCid ?? await Message.getCid(event.event.message);
     const protocol = MessagesQueryHandler.getStringIndex(event.indexes, 'protocol');
@@ -127,7 +139,7 @@ export class MessagesQueryHandler implements MethodHandler {
 
     const { message, encodedData } = Messages.detachEncodedData(event.event.message);
     entry.message = message;
-    if (encodedData !== undefined) {
+    if (includeEncodedData && encodedData !== undefined) {
       entry.encodedData = encodedData;
     }
 

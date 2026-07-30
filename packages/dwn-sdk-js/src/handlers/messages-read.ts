@@ -1,5 +1,4 @@
 import type { GenericMessage } from '../types/message-types.js';
-import type { RecordsQueryReplyEntry } from '../types/records-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry } from '../types/messages-types.js';
 
@@ -8,6 +7,7 @@ import { DataStream } from '../utils/data-stream.js';
 import { Encoder } from '../utils/encoder.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
+import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesRead } from '../interfaces/messages-read.js';
 import { Records } from '../utils/records.js';
@@ -39,28 +39,29 @@ export class MessagesReadHandler implements MethodHandler {
       return { status: { code: 404, detail: 'Not Found' } };
     }
 
+    let metadataOnly: boolean;
     try {
-      await MessagesReadHandler.authorizeMessagesRead(tenant, messagesRead, messageResult, this.deps);
+      metadataOnly = await MessagesReadHandler.authorizeMessagesRead(tenant, messagesRead, messageResult, this.deps);
     } catch (error) {
       return messageReplyFromError(error, 401);
     }
 
-    // If the message is a RecordsWrite, we include the data in the response if it is available
-    const entry: MessagesReadReplyEntry = { message: messageResult, messageCid: message.descriptor.messageCid };
-    if (Records.isRecordsWrite(messageResult)) {
-      const recordsWrite = entry.message as RecordsQueryReplyEntry;
+    // Owner and protocol-wide RecordsWrite reads include data when available.
+    // Subtree grants receive only the signed message and its metadata.
+    const { message: replyMessage, encodedData } = Messages.detachEncodedData(messageResult);
+    const entry: MessagesReadReplyEntry = { message: replyMessage, messageCid: message.descriptor.messageCid };
+    if (!metadataOnly && Records.isRecordsWrite(messageResult)) {
       // RecordsWrite specific handling, if MessageStore has embedded `encodedData` return it with the entry.
       // we store `encodedData` along with the message if the data is below a certain threshold.
-      if (recordsWrite.encodedData === undefined) {
+      if (encodedData === undefined) {
         // check the data store for the associated data
-        const result = await this.deps.dataStore!.get(tenant, recordsWrite.recordId, recordsWrite.descriptor.dataCid);
+        const result = await this.deps.dataStore!.get(tenant, messageResult.recordId, messageResult.descriptor.dataCid);
         if (result?.dataStream !== undefined) {
           entry.data = result.dataStream;
         }
       } else {
-        const dataBytes = Encoder.base64UrlToBytes(recordsWrite.encodedData);
+        const dataBytes = Encoder.base64UrlToBytes(encodedData);
         entry.data = DataStream.fromBytes(dataBytes);
-        delete recordsWrite.encodedData;
       }
     }
 
@@ -78,18 +79,18 @@ export class MessagesReadHandler implements MethodHandler {
     messagesRead: MessagesRead,
     matchedMessage: GenericMessage,
     deps: HandlerDependencies
-  ): Promise<void> {
+  ): Promise<boolean> {
 
     const requester = Message.getRequester(messagesRead.message);
     if (messagesRead.author === tenant && requester === tenant) {
       // If the author is the tenant, no further authorization is needed
-      return;
+      return false;
     }
 
     const permissionGrantIds = Message.getPermissionGrantIds(messagesRead.signaturePayload!);
     if (requester !== undefined && permissionGrantIds.length > 0) {
       const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
-      await MessagesGrantAuthorization.authorizeMessagesRead({
+      return MessagesGrantAuthorization.authorizeMessagesRead({
         messagesReadMessage   : messagesRead.message,
         messageToRead         : matchedMessage,
         expectedGrantor       : tenant,
@@ -97,8 +98,8 @@ export class MessagesReadHandler implements MethodHandler {
         permissionGrants,
         validationStateReader : deps.validationStateReader
       });
-    } else {
-      throw new DwnError(DwnErrorCode.MessagesReadAuthorizationFailed, 'protocol message failed authorization');
     }
+
+    throw new DwnError(DwnErrorCode.MessagesReadAuthorizationFailed, 'protocol message failed authorization');
   }
 }

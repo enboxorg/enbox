@@ -20,6 +20,7 @@ type MessagesSubscribeAuthorization =
     expectedGrantor: string;
     expectedGrantee: string;
     permissionGrants: PermissionGrant[];
+    metadataOnly: boolean;
   };
 
 type GuardedSubscriptionHandler = {
@@ -70,7 +71,8 @@ export class MessagesSubscribeHandler implements MethodHandler {
     });
 
     const { filters, cursor: eventLogCursor } = message.descriptor;
-    const messagesFilters = Messages.convertFilters(filters, this.deps.coreProtocols);
+    const includeShadowFilters = authorization.kind === 'owner' || !authorization.metadataOnly;
+    const messagesFilters = Messages.convertFilters(filters, this.deps.coreProtocols, includeShadowFilters);
     const messageCid = await Message.getCid(message);
 
     try {
@@ -179,6 +181,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
       expectedGrantor  : tenant,
       expectedGrantee  : grantSet.requester,
       permissionGrants : grantSet.permissionGrants,
+      metadataOnly     : grantSet.metadataOnly,
     };
   }
 
@@ -259,7 +262,9 @@ export class MessagesSubscribeHandler implements MethodHandler {
       }
 
       if (!closeRequested) {
-        subscriptionHandler(subMessage);
+        subscriptionHandler(authorization.metadataOnly
+          ? MessagesSubscribeHandler.toMetadataOnlyEvent(subMessage)
+          : subMessage);
       }
     };
 
@@ -295,5 +300,20 @@ export class MessagesSubscribeHandler implements MethodHandler {
         }
       },
     };
+  }
+
+  private static toMetadataOnlyEvent(event: SubscriptionEvent): SubscriptionEvent {
+    const metadataOnlyEvent: SubscriptionEvent = {
+      ...event,
+      event: {
+        ...event.event,
+        message      : Messages.detachEncodedData(event.event.message).message,
+        initialWrite : event.event.initialWrite === undefined
+          ? undefined
+          : Messages.detachEncodedData(event.event.initialWrite).message as typeof event.event.initialWrite,
+      },
+    };
+    delete metadataOnlyEvent.encodedData;
+    return metadataOnlyEvent;
   }
 }

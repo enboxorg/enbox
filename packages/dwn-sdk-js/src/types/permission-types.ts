@@ -139,6 +139,8 @@ export type ProtocolPermissionScope = {
  *
  * `Read` is the only valid method and acts as a unified scope that authorizes
  * `MessagesRead`, `MessagesQuery`, and `MessagesSubscribe` operations.
+ * Context- and path-scoped grants expose matching signed messages and metadata,
+ * but not record payload bytes or protocol-support messages.
  */
 export type MessagesPermissionScope = {
   interface: DwnInterfaceName.Messages;
