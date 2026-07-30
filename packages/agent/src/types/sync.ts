@@ -27,6 +27,15 @@ export type SyncIdentityOptions = {
   protocols: 'all' | [string, ...string[]];
 };
 
+/** Whether an identity's sync registration includes a protocol. */
+export function syncRegistrationCoversProtocol(
+  registration: SyncIdentityOptions | undefined,
+  protocol: string,
+): boolean {
+  return registration !== undefined
+    && (registration.protocols === 'all' || registration.protocols.includes(protocol));
+}
+
 /**
  * Connectivity state of the sync engine.
  */
@@ -112,6 +121,11 @@ export function protocolsForSyncScope(scope: SyncScope): NonEmptyStringArray | u
     return undefined;
   }
   return scope.protocols;
+}
+
+/** Whether a replication scope includes a protocol. */
+export function syncScopeCoversProtocol(scope: SyncScope, protocol: string): boolean {
+  return scope.kind === 'full' || scope.protocols.includes(protocol);
 }
 
 /** Returns the single protocol root covered by a protocol-set scope, if any. */
@@ -489,6 +503,14 @@ export function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
     : { protocols };
 }
 
+/** Whether sync-event scope metadata includes a protocol; a protocol set is authoritative when both labels exist. */
+export function syncEventCoversProtocol(scope: SyncEventScope, protocol: string): boolean {
+  if (scope.protocols !== undefined) {
+    return scope.protocols.includes(protocol);
+  }
+  return scope.protocol === undefined || scope.protocol === protocol;
+}
+
 type SyncEventBase = {
   tenantDid: string;
   remoteEndpoint: string;
@@ -667,6 +689,14 @@ export type ReplicationLinkSnapshot = {
   /** ISO-8601 timestamp of last successful sync activity. */
   lastActivityAt?: string;
 };
+
+/** Whether every link in a non-empty set has a current, reachable local replica. */
+export function areReplicationLinksCurrent(
+  links: readonly Pick<ReplicationLinkSnapshot, 'connectivity' | 'isPullCurrent' | 'status'>[],
+): boolean {
+  return links.length > 0 && links.every(link =>
+    link.status === 'live' && link.connectivity === 'online' && link.isPullCurrent);
+}
 
 export interface SyncEngine {
   /**

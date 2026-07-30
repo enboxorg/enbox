@@ -3,6 +3,7 @@ import type { AbstractLevel } from 'abstract-level';
 import type { AudienceKeyDeliveryState } from './audience-key-delivery.js';
 import type {
   AudienceKeyDeliveryStore,
+  ReconcileAudienceKeyDeliveryProtocolParams,
   RecordAudienceKeyDeliveryParams,
 } from './audience-key-delivery-store.js';
 
@@ -43,9 +44,45 @@ export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
     return this.getEntry(audienceKeyDeliveryProjectionKey(sourceDid, roleRecordId));
   }
 
+  public async reconcileProtocol(
+    params: ReconcileAudienceKeyDeliveryProtocolParams,
+  ): Promise<AudienceKeyDeliveryState[]> {
+    return this.runForScope(params.sourceDid, params.protocol, async (): Promise<AudienceKeyDeliveryState[]> => {
+      // Keep the scan inside the scope lock so it cannot erase an outcome recorded after an older scan.
+      const intents = await params.scan();
+      const existing = await this.getForProtocol(params.sourceDid, params.protocol);
+      const activeIds = new Set(intents.map(intent => intent.roleRecordId));
+      const states = new Map(existing.map(state => [state.roleRecordId, state]));
+      const operations: Array<{ type: 'put'; key: string; value: string } | { type: 'del'; key: string }> = [];
+
+      for (const intent of intents) {
+        if (!states.has(intent.roleRecordId)) {
+          const state = { ...intent, state: 'pending' as const };
+          states.set(intent.roleRecordId, state);
+          operations.push({ type: 'put', key: audienceKeyDeliveryProjectionKey(params.sourceDid, intent.roleRecordId), value: JSON.stringify(state) });
+        }
+      }
+
+      for (const state of existing) {
+        if (!activeIds.has(state.roleRecordId)) {
+          states.delete(state.roleRecordId);
+          operations.push({
+            type : 'del',
+            key  : audienceKeyDeliveryProjectionKey(params.sourceDid, state.roleRecordId),
+          });
+        }
+      }
+
+      if (operations.length > 0) {
+        await this._states.batch(operations);
+      }
+      return [...states.values()];
+    });
+  }
+
   public async record(params: RecordAudienceKeyDeliveryParams): Promise<void> {
     const key = audienceKeyDeliveryProjectionKey(params.intent.sourceDid, params.intent.roleRecordId);
-    await this.runForRole(key, async (): Promise<void> => {
+    await this.runForScope(params.intent.sourceDid, params.intent.protocol, async (): Promise<void> => {
       const next = recordAudienceKeyDeliveryProjection(await this.getEntry(key), params);
       if (next !== undefined) {
         await this._states.put(key, JSON.stringify(next));
@@ -55,16 +92,37 @@ export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
 
   private async getEntry(key: string): Promise<AudienceKeyDeliveryState | undefined> {
     try {
-      return JSON.parse(await this._states.get(key)) as AudienceKeyDeliveryState;
+      return AudienceKeyDeliveryStoreLevel.parseEntry(await this._states.get(key));
     } catch (error: unknown) {
-      if ((error as { code?: string }).code === 'LEVEL_NOT_FOUND' || error instanceof SyntaxError) {
+      if ((error as { code?: string }).code === 'LEVEL_NOT_FOUND') {
         return undefined;
       }
       throw error;
     }
   }
 
-  private runForRole<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  private async getForProtocol(sourceDid: string, protocol: string): Promise<AudienceKeyDeliveryState[]> {
+    const states: AudienceKeyDeliveryState[] = [];
+    const prefix = `${JSON.stringify([sourceDid]).slice(0, -1)},`;
+    for await (const [, value] of this._states.iterator({ gte: prefix, lt: `${prefix}\uffff` })) {
+      const state = AudienceKeyDeliveryStoreLevel.parseEntry(value);
+      if (state?.sourceDid === sourceDid && state.protocol === protocol) {
+        states.push(state);
+      }
+    }
+    return states;
+  }
+
+  private static parseEntry(value: string): AudienceKeyDeliveryState | undefined {
+    try {
+      return JSON.parse(value) as AudienceKeyDeliveryState;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private runForScope<T>(sourceDid: string, protocol: string, operation: () => Promise<T>): Promise<T> {
+    const key = JSON.stringify([sourceDid, protocol]);
     return runSerializedByKey(
       this._pendingOperations,
       key,

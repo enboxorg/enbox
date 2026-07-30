@@ -4,11 +4,12 @@ import type { Record } from './record.js';
 import type { ReplicationCurrentness } from './replication-currentness.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
-import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent, SyncIdentityOptions } from '@enbox/agent';
+import type { SyncEngine, SyncEvent } from '@enbox/agent';
 
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
+import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
 
 /** Currentness of one locally materialized records view. */
 export type RecordViewState = ReplicationCurrentness;
@@ -253,7 +254,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       return;
     }
 
-    if (!eventCoversProtocol(event, this._query.filter.protocol)) {
+    if (!syncEventCoversProtocol(event, this._query.filter.protocol)) {
       return;
     }
 
@@ -272,7 +273,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
   /** A changed registration defines a new baseline for its selected protocols. */
   private handleRegistrationChange(event: RegistrationChangeEvent): void {
-    if (registrationCoversProtocol(event.options, this._query.filter.protocol)) {
+    if (syncRegistrationCoversProtocol(event.options, this._query.filter.protocol)) {
       this._hasPublishedReady = false;
       this.publish(immutableSnapshot({
         state   : 'loading',
@@ -389,12 +390,12 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     }
 
     const registration = await this._sync.getIdentityOptions(this._dwn.connectedDid);
-    if (!registrationCoversProtocol(registration, this._query.filter.protocol)) {
+    if (!syncRegistrationCoversProtocol(registration, this._query.filter.protocol)) {
       return { state: 'ready' };
     }
 
     const links = (await this._sync.getReplicationLinks(this._dwn.connectedDid))
-      .filter((link): boolean => linkCoversProtocol(link, this._query.filter.protocol));
+      .filter((link): boolean => syncScopeCoversProtocol(link.scope, this._query.filter.protocol));
     const state = projectReplicationCurrentness(links, this._hasPublishedReady);
     if (state === 'error') {
       return this.resolveUnavailableCurrentness(true);
@@ -497,28 +498,6 @@ function recordLimitWakeContextId(
 
   contextSegments.pop();
   return contextSegments.length === 0 ? undefined : contextSegments.join('/');
-}
-
-function registrationCoversProtocol(
-  registration: SyncIdentityOptions | undefined,
-  protocol: string,
-): boolean {
-  return registration !== undefined
-    && (registration.protocols === 'all' || registration.protocols.includes(protocol));
-}
-
-function linkCoversProtocol(link: ReplicationLinkSnapshot, protocol: string): boolean {
-  return link.scope.kind === 'full' || link.scope.protocols.includes(protocol);
-}
-
-function eventCoversProtocol(
-  event: Exclude<SyncEvent, { type: 'identity:registration-change' }>,
-  protocol: string,
-): boolean {
-  if (event.protocols !== undefined) {
-    return event.protocols.includes(protocol);
-  }
-  return event.protocol === undefined || event.protocol === protocol;
 }
 
 function toError(error: unknown): Error {

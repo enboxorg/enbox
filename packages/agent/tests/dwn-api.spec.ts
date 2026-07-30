@@ -13,6 +13,7 @@ import {
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyDerivationScheme,
   Message,
+  Poller,
   RecordsWrite,
   TestDataGenerator,
   Time
@@ -4507,12 +4508,14 @@ describe('Role record write behavior', () => {
       .toBe('awaiting-recipient-install');
     expect(roleWrite.audienceKeyDelivery!.recipientDid).toBe(bob.did.uri);
     expect(roleWrite.audienceKeyDelivery!.reason).toContain('recipient protocol not installed');
-    expect(await testHarness.audienceKeyDeliveryStore.get(
-      alice.did.uri,
-      (roleWrite.message as RecordsWriteMessage).recordId,
-    )).toMatchObject({
-      recipientDid : bob.did.uri,
-      state        : 'awaiting-recipient-install',
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(await testHarness.audienceKeyDeliveryStore.get(
+        alice.did.uri,
+        (roleWrite.message as RecordsWriteMessage).recordId,
+      )).toMatchObject({
+        recipientDid : bob.did.uri,
+        state        : 'awaiting-recipient-install',
+      });
     });
     expect(roleKeyLookupStub.calledOnce).toBe(true);
   }, 10000);
@@ -4657,7 +4660,7 @@ describe('Role record write behavior', () => {
     })).rejects.toThrow(/store:false|non-raw, stored RecordsWrite/i);
   }, 10000);
 
-  it('does not unwind an accepted role write when projection persistence fails', async () => {
+  it('does not delay or unwind an accepted role write when projection persistence stalls', async () => {
     // Bob is a DWN-less recipient: no protocol is installed for him, so the owner
     // cannot resolve his role-path key. He supplies it out of band and the owner
     // wraps the delivery to it directly.
@@ -4676,10 +4679,11 @@ describe('Role record write behavior', () => {
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Supplied"}')]),
     });
+    let releaseProjection!: () => void;
     const projectionWrite = sinon.stub(testHarness.audienceKeyDeliveryStore, 'record')
-      .rejects(new Error('projection unavailable'));
+      .returns(new Promise<void>(resolve => { releaseProjection = resolve; }));
 
-    const roleWrite = await testHarness.agent.dwn.processRequest({
+    const roleWritePromise = testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
@@ -4694,6 +4698,18 @@ describe('Role record write behavior', () => {
       dataStream             : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
       recipientRolePublicKey : VALID_X25519_KEY,
     });
+    while (!projectionWrite.called) {
+      await new Promise<void>(resolve => setTimeout(resolve, 1));
+    }
+    try {
+      expect(await Promise.race([
+        roleWritePromise.then(() => true),
+        new Promise<false>(resolve => setTimeout(() => resolve(false), 50)),
+      ])).toBe(true);
+    } finally {
+      releaseProjection();
+    }
+    const roleWrite = await roleWritePromise;
 
     expect(roleWrite.reply.status.code).toBe(202);
     expect(roleWrite.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bob.did.uri });
@@ -4760,8 +4776,10 @@ describe('Role record write behavior', () => {
     // Proof there was NO rollback: the just-accepted $role record is still present on
     // the owner's DWN (a compensating delete would have tombstoned it).
     const roleRecordId = (roleWrite.message as RecordsWriteMessage).recordId;
-    expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
-      .toMatchObject({ state: 'pending' });
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
+        .toMatchObject({ state: 'pending' });
+    });
     const roleRecords = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
