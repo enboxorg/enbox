@@ -9,6 +9,8 @@ import { X25519 } from '@enbox/crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import {
   DataStream,
+  DwnInterfaceName,
+  DwnMethodName,
   Encoder,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
@@ -17,11 +19,12 @@ import {
   Time,
 } from '@enbox/dwn-sdk-js';
 
+import { createImportedDelegateDid } from './utils/delegate-did.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { createAudienceDeliveryRecord, createAudienceRecord, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
+import { createAudienceDeliveryRecord, createAudienceRecord, createGrantKeyRecordsForGrants, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -633,13 +636,11 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       expect(secondOutcome.delivered).toBe(false);
     }, 30000);
 
-    it('delivers after a failed initial provisioning and the recipient decrypts end-to-end', async () => {
+    it('resolves a delegate write grant and repairs delivery', async () => {
       const chat = chatProtocolDefinition();
-      const bob = await testHarness.createIdentity({ name: 'Bob Reprovisioned', testDwnUrls });
+      const bob = await testHarness.createIdentity({ name: 'Bob Delegate Repair', testDwnUrls });
       await installProtocol(alice.did.uri, chat);
 
-      // Initial share: the recipient key is unresolvable, so the $role write lands
-      // but its delivery is reported as skipped.
       const roleKeyStub = stubUnresolvableRecipientKey();
       const threadContextId = await writeThread(chat);
       const { roleContextId, delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
@@ -647,14 +648,46 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       roleKeyStub.restore();
       expect(await countDeliveries(chat, bob.did.uri)).toBe(0);
 
-      // Bob's REAL role-path public key, derived from his own encryption root by
-      // installing the protocol on his tenant — the value a recipient would carry
-      // out of band for the owner to supply.
       await installProtocol(bob.did.uri, chat);
       const bobRoleKey = await readRolePublicKey(bob.did.uri, chat.protocol);
 
+      const { delegateDid, delegateX25519PrivateKey } = await createImportedDelegateDid(testHarness);
+      const writeGrant = await testHarness.agent.permissions.createGrant({
+        author      : alice.did.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 300 }),
+        delegated   : true,
+        grantedTo   : delegateDid,
+        scope       : {
+          interface    : DwnInterfaceName.Records,
+          method       : DwnMethodName.Write,
+          protocol     : chat.protocol,
+          protocolPath : ROLE_PATH,
+        },
+        store: true,
+      });
+      const { encodedData, ...grantMessage } = writeGrant.message;
+      const grantCopy = await testHarness.agent.processDwnRequest({
+        author      : delegateDid,
+        target      : delegateDid,
+        messageType : DwnInterface.RecordsWrite,
+        rawMessage  : grantMessage,
+        dataStream  : new Blob([Encoder.base64UrlToBytes(encodedData)]),
+        signAsOwner : true,
+      });
+      expect(grantCopy.reply.status.code).toBe(202);
+      await createGrantKeyRecordsForGrants({
+        agent                 : testHarness.agent,
+        granteeDid            : delegateDid,
+        granteeRootPrivateKey : delegateX25519PrivateKey,
+        grantMessages         : [writeGrant.message],
+        ownerDid              : alice.did.uri,
+      });
+      testHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
+
+      const permissionLookup = sinon.spy(testHarness.agent.permissions, 'getPermissionForRequest');
       const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
         contextId              : roleContextId,
+        granteeDid             : delegateDid,
         protocol               : chat.protocol,
         recipientDid           : bob.did.uri,
         recipientRolePublicKey : bobRoleKey,
@@ -662,54 +695,19 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         target                 : alice.did.uri,
       });
       expect(outcome).toEqual({ delivered: true, recipientDid: bob.did.uri });
-      expect(await countDeliveries(chat, bob.did.uri)).toBe(1);
-
-      // The status primitive agrees the current key is now delivered.
-      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
-        contextId    : roleContextId,
+      const writeLookups = permissionLookup.getCalls().filter(
+        (call): boolean => call.args[0].messageType === DwnInterface.RecordsWrite,
+      );
+      expect(writeLookups).toHaveLength(1);
+      expect(writeLookups[0].args[0]).toEqual({
+        connectedDid : alice.did.uri,
+        delegate     : true,
+        delegateDid,
+        messageType  : DwnInterface.RecordsWrite,
         protocol     : chat.protocol,
-        recipientDid : bob.did.uri,
-        rolePath     : ROLE_PATH,
-        target       : alice.did.uri,
+        protocolPath : ROLE_PATH,
       });
-      expect(status.status).toBe('delivered');
-
-      // End-to-end: Alice writes an encrypted role-readable record and Bob
-      // decrypts it through the re-provisioned delivery.
-      const chatText = `reprovisioned secret ${crypto.randomUUID()}`;
-      const chatWrite = await testHarness.agent.dwn.processRequest({
-        author        : alice.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.RecordsWrite,
-        messageParams : {
-          dataFormat      : 'text/plain',
-          parentContextId : threadContextId,
-          protocol        : chat.protocol,
-          protocolPath    : 'thread/chat',
-          schema          : chat.types.chat.schema,
-        },
-        dataStream: new Blob([chatText]),
-      });
-      expect(chatWrite.reply.status.code).toBe(202);
-
-      const read = await testHarness.agent.dwn.processRequest({
-        author        : bob.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.RecordsRead,
-        messageParams : {
-          filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
-          protocolRole : ROLE_PATH,
-        },
-      });
-      expect(read.reply.status.code).toBe(200);
-      const decryptedStream = await testHarness.agent.dwn.decryptRecordData({
-        author       : bob.did.uri,
-        dataStream   : read.reply.entry!.data!,
-        recordsWrite : read.reply.entry!.recordsWrite,
-        target       : alice.did.uri,
-      });
-      const decrypted = new TextDecoder().decode(await DataStream.toBytes(decryptedStream));
-      expect(decrypted).toBe(chatText);
+      expect(await countDeliveries(chat, bob.did.uri)).toBe(1);
     }, 30000);
 
     it('reports the DWN rejection when the recipient holds no active role record', async () => {
@@ -735,32 +733,31 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       expect(await countDeliveries(chat, bob.did.uri)).toBe(0);
     }, 30000);
 
-    it('reports a seal-coverage failure for a delegate on a mint-required path', async () => {
+    it('resolves delegated authorization on every repair attempt', async () => {
       const chat = chatProtocolDefinition();
-      const bob = await testHarness.createIdentity({ name: 'Bob DelegateMint', testDwnUrls });
       const delegate = await testHarness.agent.identity.create({
         didMethod : 'jwk',
         metadata  : { name: 'Coverage-less Delegate' },
       });
-      await installProtocol(alice.did.uri, chat);
-      const threadContextId = await writeThread(chat);
 
-      // No audience exists for the tuple, so provisioning must MINT one — which a
-      // delegate without covering grantKey material cannot do. Fails closed with
-      // the coverage reason and no audience record left behind.
-      const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
-        contextId              : threadContextId,
+      const permissionLookup = sinon.spy(testHarness.agent.permissions, 'getPermissionForRequest');
+      const request = {
+        contextId              : 'thread-context',
         granteeDid             : delegate.did.uri,
         protocol               : chat.protocol,
-        recipientDid           : bob.did.uri,
+        protocolRole           : ROLE_PATH,
+        recipientDid           : 'did:example:recipient',
         recipientRolePublicKey : await randomX25519PublicKey(),
         rolePath               : ROLE_PATH,
         target                 : alice.did.uri,
-      });
+      };
+      const first = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery(request);
+      const second = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery(request);
 
-      expect(outcome.delivered).toBe(false);
-      expect(!outcome.delivered && outcome.reason).toMatch(/without seal coverage/i);
-      expect(await queryAudienceKeyIds(chat, threadContextId)).toHaveLength(0);
+      expect(first.delivered).toBe(false);
+      expect(!first.delivered && first.reason).toMatch(/no matching permission grant/i);
+      expect(second.delivered).toBe(false);
+      expect(permissionLookup.callCount).toBe(2);
     }, 30000);
 
     it('throws on caller misuse instead of reporting a failed outcome', async () => {

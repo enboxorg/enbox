@@ -480,7 +480,11 @@ export type ReprovisionAudienceKeyDeliveryParams = {
    */
   recipientRolePublicKey?: PublicKeyJwk;
 
-  /** The delegate the caller operates as, when not the tenant itself. */
+  /**
+   * The delegate the caller operates as, when not the tenant itself. When no
+   * explicit grant is supplied, the agent resolves the active
+   * delegated Records.Write grant covering `rolePath` for this delegate.
+   */
   granteeDid?: string;
 
   /** Grant id authorizing a delegated call's writes (alternative to `delegatedGrant`). */
