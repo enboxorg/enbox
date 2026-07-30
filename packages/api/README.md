@@ -237,7 +237,8 @@ const selection = { pagination: { limit: 20 } };
 
 // Query
 const page = await notes.records.query('note', selection);
-const { records, cursor } = page;
+const { records } = page;
+const nextPage = await page.next(); // undefined after the final page
 
 // Observe one bounded local materialization
 const view = await notes.records.observe('note', selection);
@@ -376,7 +377,7 @@ coordinates writes across browser contexts.
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
-| `RecordPage<Item>` | One page of selected record items and its optional continuation cursor. |
+| `RecordPage<Item>` | One page of selected record items with `next()` and its optional raw continuation cursor. |
 | `RecordView<Item>` | Closeable bounded local query view with immutable snapshots. |
 | `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |

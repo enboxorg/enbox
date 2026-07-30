@@ -258,11 +258,11 @@ describe('typed api parity batch', () => {
       expect(firstPage.records).toHaveLength(2);
       expect(firstPage.cursor).toBeDefined();
 
-      const secondPage = await typed.records.query('list', {
-        ...selection,
-        pagination: { ...selection.pagination, cursor: firstPage.cursor },
-      });
+      const secondPage = await firstPage.next();
+      expect(secondPage).toBeDefined();
+      if (secondPage === undefined) { throw new Error('Expected a second page.'); }
       expect(secondPage.records).toHaveLength(1);
+      expect(await secondPage.next()).toBeUndefined();
 
       const recordIds = [...firstPage.records, ...secondPage.records].map(record => record.id);
       expect(new Set(recordIds).size).toBe(3);

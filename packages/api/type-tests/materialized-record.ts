@@ -58,8 +58,11 @@ async function assertTypedMaterialization(): Promise<void> {
     pagination  : { limit: 20 },
   });
   const valueOnly: MaterializedRecord<LibraryData> | undefined = values.records[0];
+  const nextValues = await values.next();
+  const nextValueOnly: MaterializedRecord<LibraryData> | undefined = nextValues?.records[0];
   const library: LibraryData | undefined = valueOnly?.value;
   void library;
+  void nextValueOnly;
   // @ts-expect-error value-only materialization has no children property.
   void valueOnly?.children;
 

@@ -80,6 +80,9 @@ export type RecordPage<Item = Record> = {
 
   /** Cursor for the next page, when another page exists. */
   cursor?: DwnPaginationCursor;
+
+  /** Fetch the next page of the same canonical query, or `undefined` at the end. */
+  next(): Promise<RecordPage<Item> | undefined>;
 };
 
 /** Materialization requested from a typed records query or observed view. */
@@ -1378,8 +1381,8 @@ export class TypedEnbox<
       /**
        * Query records at the given protocol path.
        *
-       * Returns all matching records as an array of typed records, with
-       * an optional pagination cursor for fetching additional pages. Set
+       * Returns matching records as one page of typed records. Call `next()`
+       * to continue the same captured query when another page exists. Set
        * `materialize` to eagerly decode one explicitly bounded page while
        * retaining each canonical record handle. Selected direct children must
        * declare `$recordLimit.max: 1` and are fetched once per child path.
@@ -1389,7 +1392,7 @@ export class TypedEnbox<
        * @param request - Optional filter, sort, and pagination options.
        *   Omit entirely to return all records at the path.
        * @returns A page containing typed {@link Record} instances and an
-       *   optional `cursor` for pagination.
+       *   optional continuation available through `next()` and `cursor`.
        *
        * @example
        * ```ts
@@ -1406,10 +1409,11 @@ export class TypedEnbox<
        * }
        *
        * // Paginated query
-       * const { records: batch, cursor } = await proto.records.query('notebook', {
+       * const firstPage = await proto.records.query('notebook', {
        *   pagination: { limit: 10 },
        *   dateSort: DateSort.CreatedDescending,
        * });
+       * const secondPage = await firstPage.next();
        * ```
        */
       query: async <
@@ -1419,28 +1423,59 @@ export class TypedEnbox<
         RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>>
       > => {
         const [path, request] = args;
+        const capturedRequest = request === undefined ? undefined : structuredClone(request);
         const normalizedPath = normalizePath(path);
-        const materialize = request?.materialize;
+        const materialize = capturedRequest?.materialize;
         const childPaths = this.resolveMaterializedChildPaths<Path>(
           normalizedPath,
           materialize,
-          request?.pagination?.limit,
+          capturedRequest?.pagination?.limit,
         );
         await this._ensureReady(normalizedPath);
-        const compiled = compileRecordQuery(this._definition, normalizedPath, request);
-        const result = await this._dwn.records.query(compiled);
-        requireDwnSuccess('TypedEnbox.records.query', result);
+        const canonicalQuery = compileRecordQuery(this._definition, normalizedPath, capturedRequest);
+        const initialCursors = new Set<string>();
+        if (canonicalQuery.pagination?.cursor !== undefined) {
+          initialCursors.add(paginationCursorKey(canonicalQuery.pagination.cursor));
+        }
 
-        return {
-          records: [...await this.representRecords<Path, Materialization>(
-            normalizedPath,
-            result.records,
-            materialize,
-            childPaths,
-            { from: compiled.from, protocolRole: compiled.protocolRole, within: request?.within },
-          )],
-          cursor: result.cursor,
+        const queryPage = async (
+          compiledQuery : typeof canonicalQuery,
+          priorCursors : ReadonlySet<string>,
+        ): Promise<RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
+          const result = await this._dwn.records.query(compiledQuery);
+          requireDwnSuccess('TypedEnbox.records.query', result);
+
+          const continuation = result.cursor === undefined ? undefined : { ...result.cursor };
+          const pageCursors = new Set(priorCursors);
+          if (continuation !== undefined) {
+            const key = paginationCursorKey(continuation);
+            if (pageCursors.has(key)) {
+              throw new Error('RecordPage: query returned a repeated pagination cursor.');
+            }
+            pageCursors.add(key);
+          }
+
+          return {
+            records: [...await this.representRecords<Path, Materialization>(
+              normalizedPath,
+              result.records,
+              materialize,
+              childPaths,
+              { from: canonicalQuery.from, protocolRole: canonicalQuery.protocolRole, within: capturedRequest?.within },
+            )],
+            cursor : continuation === undefined ? undefined : { ...continuation },
+            next   : async (): Promise<RecordPage<
+              SelectedRecordRepresentation<D, C, Path, Materialization>
+            > | undefined> => continuation === undefined
+              ? undefined
+              : queryPage({
+                ...canonicalQuery,
+                pagination: { ...canonicalQuery.pagination, cursor: continuation },
+              }, pageCursors),
+          };
         };
+
+        return queryPage(canonicalQuery, initialCursors);
       },
 
       /**
@@ -1790,4 +1825,9 @@ function normalizePath(path: string): string {
   let end = path.length;
   while (end > start && path.codePointAt(end - 1) === 47) { end--; }
   return path.slice(start, end);
+}
+
+/** Stable identity for one validated DWN keyset cursor. */
+function paginationCursorKey(cursor: DwnPaginationCursor): string {
+  return JSON.stringify([cursor.messageCid, cursor.value]);
 }
