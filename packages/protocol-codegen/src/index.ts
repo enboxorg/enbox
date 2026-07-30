@@ -28,6 +28,12 @@
  */
 
 export { generateProtocolModule } from './codegen.js';
-export type { CodegenOptions, CodegenResult, ProtocolDefinitionInput, ProtocolTypeInput } from './codegen.js';
+export type {
+  CodegenOptions,
+  CodegenResult,
+  CodegenTarget,
+  ProtocolDefinitionInput,
+  ProtocolTypeInput,
+} from './codegen.js';
 export { resolveAllSchemas, resolveSchema } from './schema-resolver.js';
 export type { JsonSchema, SchemaResolution } from './schema-resolver.js';

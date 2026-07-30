@@ -1,7 +1,9 @@
 import type { CliIo } from '../src/cli.js';
 
 import { generateProtocolModule } from '../src/codegen.js';
+import { generateStandaloneValidators } from '../src/standalone-validator.js';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { CliCheckError, CliUsageError, main, parseCheckArgs, parseGenerateArgs, runCheck, runGenerate } from '../src/cli.js';
 import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -76,6 +78,34 @@ async function runCli(args: string[]): Promise<CliResult> {
   return { exitCode, stderr, stdout };
 }
 
+type RuntimeValidator = ((value: unknown) => boolean) & {
+  errors?: readonly { keyword: string }[] | null;
+};
+
+async function loadStandaloneValidators(source: string): Promise<Record<string, RuntimeValidator>> {
+  await mkdir(TMP_DIR, { recursive: true });
+  const modulePath = join(TMP_DIR, 'standalone-validators.ts');
+  await writeFile(modulePath, `${source}\nexport { protocolValidators };\n`, 'utf-8');
+  const module = await import(pathToFileURL(modulePath).href) as {
+    protocolValidators: Record<string, RuntimeValidator>;
+  };
+  return module.protocolValidators;
+}
+
+async function expectGeneratedModuleToTypecheck(path: string): Promise<void> {
+  const typecheck = Bun.spawn([
+    'bun', 'tsc', '--noEmit', '--strict', '--skipLibCheck',
+    '--module', 'ESNext', '--moduleResolution', 'Bundler', '--target', 'ES2022',
+    '--lib', 'ES2022,DOM,DOM.Iterable', path,
+  ], { cwd: PACKAGE_DIR, stderr: 'pipe', stdout: 'pipe' });
+  const [stderr, stdout, exitCode] = await Promise.all([
+    new Response(typecheck.stderr).text(),
+    new Response(typecheck.stdout).text(),
+    typecheck.exited,
+  ]);
+  expect(exitCode, stdout + stderr).toBe(0);
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -100,6 +130,7 @@ describe('protocol-codegen CLI', () => {
       '--schemas', SCHEMAS_DIR,
       '--name', 'Todo',
       '--output', join(TMP_DIR, 'todo.generated.ts'),
+      '--target', 'browser',
     ], createMemoryIo().io);
 
     expect(result).toEqual({
@@ -107,6 +138,7 @@ describe('protocol-codegen CLI', () => {
       name       : 'Todo',
       output     : join(TMP_DIR, 'todo.generated.ts'),
       schemas    : SCHEMAS_DIR,
+      target     : 'browser',
     });
   });
 
@@ -147,6 +179,9 @@ describe('protocol-codegen CLI', () => {
     const memory = createMemoryIo();
 
     expect(() => parseGenerateArgs(['--invalid'], memory.io)).toThrow(CliUsageError);
+    expect(() => parseGenerateArgs(['--target', 'worker'], memory.io)).toThrow(
+      'Invalid target \'worker\': expected \'api\' or \'browser\'.',
+    );
   });
 
   it('should throw on missing generate options', () => {
@@ -430,10 +465,14 @@ describe('protocol-codegen CLI', () => {
       '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
       '--schemas', SCHEMAS_DIR,
       '--name', 'Todo',
+      '--target', 'browser',
     ]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('export interface ListData');
+    expect(result.stdout).toContain(`from '@enbox/browser';`);
+    expect(result.stdout).not.toContain(`from '@enbox/api';`);
+    expect(result.stdout).not.toContain(`from '@enbox/dwn-sdk-js';`);
     expect(result.stderr).toContain('+ list: local-type-name');
   });
 
@@ -605,6 +644,90 @@ describe('resolveAllSchemas()', () => {
 // Code generation
 // ---------------------------------------------------------------------------
 
+describe('generateStandaloneValidators()', () => {
+  afterEach(async (): Promise<void> => {
+    await rm(TMP_DIR, { force: true, recursive: true });
+  });
+
+  const schema = {
+    $id     : 'https://example.com/schemas/event',
+    $schema : 'http://json-schema.org/draft-07/schema#',
+    $defs   : {
+      detail: {
+        type                 : 'object',
+        properties           : { label: { type: 'string' } },
+        required             : ['label'],
+        additionalProperties : false,
+      },
+    },
+    type       : 'object',
+    properties : {
+      detail     : { $ref: '#/$defs/detail' },
+      occurredAt : { type: 'string', format: 'date-time' },
+      title      : { type: 'string', maxLength: 5 },
+    },
+    required             : ['detail', 'occurredAt', 'title'],
+    additionalProperties : false,
+  };
+
+  it('should emit self-contained synchronous validators', async () => {
+    const source = await generateStandaloneValidators([
+      { name: 'validateEventData', schema },
+      { name: 'validateSharedEventData', schema: { ...schema } },
+    ]);
+
+    expect(source).not.toContain(`from 'ajv`);
+    expect(source).not.toContain('esbuild');
+    expect(source).not.toContain('new Function');
+    expect(source).not.toContain('eval(');
+
+    const validators = await loadStandaloneValidators(source);
+    for (const validator of [validators.validateEventData, validators.validateSharedEventData]) {
+      expect(validator({
+        detail     : { label: 'ok' },
+        occurredAt : '2026-07-30T12:00:00Z',
+        title      : 'valid',
+      })).toBe(true);
+      expect(validator({
+        detail     : { label: 'ok' },
+        occurredAt : '2026-07-30T12:00:00Z',
+        title      : 'too long',
+      })).toBe(false);
+      expect(validator.errors?.[0]?.keyword).toBe('maxLength');
+      expect(validator({
+        detail     : { label: 'ok' },
+        occurredAt : 'not-a-date',
+        title      : 'valid',
+      })).toBe(false);
+      expect(validator.errors?.[0]?.keyword).toBe('format');
+      expect(validator({
+        detail     : { label: 42 },
+        occurredAt : '2026-07-30T12:00:00Z',
+        title      : 'valid',
+      })).toBe(false);
+      expect(validator.errors?.[0]?.keyword).toBe('type');
+    }
+  });
+
+  it('should reject asynchronous and unsupported-dialect schemas', async () => {
+    await expect(generateStandaloneValidators([{
+      name   : 'validateAsync',
+      schema : { ...schema, $async: true },
+    }])).rejects.toThrow('cannot use $async');
+
+    await expect(generateStandaloneValidators([{
+      name   : 'validateModern',
+      schema : { ...schema, $schema: 'https://json-schema.org/draft/2020-12/schema' },
+    }])).rejects.toThrow('must use JSON Schema Draft-07');
+
+    const { type: _, ...untypedObjectSchema } = schema;
+    await expect(generateStandaloneValidators([{
+      name   : 'validateUntypedObject',
+      schema : untypedObjectSchema,
+    }])).rejects.toThrow('strict mode: missing type "object"');
+  });
+});
+
 describe('generateProtocolModule()', () => {
   afterEach(async (): Promise<void> => {
     await rm(TMP_DIR, { force: true, recursive: true });
@@ -629,11 +752,11 @@ describe('generateProtocolModule()', () => {
     expect(code).toContain('export type AttachmentData = Blob;');
 
     // The complete module wires runtime codecs to the emitted definition.
-    expect(code).toContain(`import { defineProtocol, recordCodecs } from '@enbox/api';`);
+    expect(code).toContain(`import { defineProtocol, recordCodecs, type RecordValidator } from '@enbox/api';`);
     expect(code).toContain('export const TodoDefinition = {');
     expect(code).toContain('export const TodoCodecs = {');
-    expect(code).toContain('list       : recordCodecs.json<ListData>(),');
-    expect(code).toContain('task       : recordCodecs.json<TaskData>(),');
+    expect(code).toContain('list       : recordCodecs.json<ListData>({ validator: protocolValidators.validateListData }),');
+    expect(code).toContain('task       : recordCodecs.json<TaskData>({ validator: protocolValidators.validateTaskData }),');
     expect(code).toContain('attachment : recordCodecs.blob(),');
     expect(code).toContain('export const TodoProtocol = defineProtocol(TodoDefinition, TodoCodecs);');
     expect(() => new Bun.Transpiler({ loader: 'ts' }).transformSync(code)).not.toThrow();
@@ -641,19 +764,30 @@ describe('generateProtocolModule()', () => {
     const generatedPath = join(TMP_DIR, 'todo.generated.ts');
     await mkdir(TMP_DIR, { recursive: true });
     await Bun.write(generatedPath, code);
-    const typecheck = Bun.spawn([
-      'bun', 'tsc', '--noEmit', '--strict', '--skipLibCheck',
-      '--module', 'ESNext', '--moduleResolution', 'Bundler', '--target', 'ES2022',
-      '--lib', 'ES2022,DOM,DOM.Iterable', generatedPath,
-    ], { cwd: PACKAGE_DIR, stderr: 'pipe', stdout: 'pipe' });
-    const [typecheckOutput, typecheckExitCode] = await Promise.all([
-      new Response(typecheck.stderr).text(),
-      typecheck.exited,
-    ]);
-    expect(typecheckExitCode, typecheckOutput).toBe(0);
+    await expectGeneratedModuleToTypecheck(generatedPath);
     // Resolution metadata should be populated
     expect(resolutions.get('list')!.source).toBe('local-type-name');
     expect(resolutions.get('task')!.source).toBe('local-type-name');
+  });
+
+  it('should generate modules against the browser runtime surface', async () => {
+    const definition = await loadDefinition();
+
+    const { code } = await generateProtocolModule(definition as any, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'Todo',
+      target       : 'browser',
+    });
+
+    expect(code).toContain(`import type { ProtocolDefinition } from '@enbox/browser';`);
+    expect(code).toContain(`import { defineProtocol, recordCodecs, type RecordValidator } from '@enbox/browser';`);
+    expect(code).not.toContain(`from '@enbox/api';`);
+    expect(code).not.toContain(`from '@enbox/dwn-sdk-js';`);
+
+    const generatedPath = join(TMP_DIR, 'todo.browser.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await Bun.write(generatedPath, code);
+    await expectGeneratedModuleToTypecheck(generatedPath);
   });
 
   it('should generate correct interface properties from schema', async () => {
@@ -672,6 +806,38 @@ describe('generateProtocolModule()', () => {
     expect(code).toContain('title: string');
     expect(code).toContain('completed: boolean');
     expect(code).toContain('dueDate?: string');
+  });
+
+  it('should retain a custom JSON MIME type on validated codecs', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'event.json'), JSON.stringify({
+      $id                  : 'https://example.com/schemas/event',
+      type                 : 'object',
+      properties           : { title: { type: 'string' } },
+      required             : ['title'],
+      additionalProperties : false,
+    }), 'utf-8');
+
+    const { code } = await generateProtocolModule({
+      protocol  : 'https://example.com/protocols/events',
+      published : true,
+      types     : {
+        event: {
+          schema      : 'https://example.com/schemas/event',
+          dataFormats : ['application/activity+json'],
+        },
+      },
+      structure: { event: {} },
+    }, {
+      schemasDir,
+      protocolName: 'Events',
+    });
+
+    expect(code).toContain(
+      'event: recordCodecs.json<EventData>({ dataFormat: "application/activity+json", ' +
+      'validator: protocolValidators.validateEventData })',
+    );
   });
 
   it('should require the local schema $id to match even when unresolved schemas are allowed', async () => {
@@ -1122,6 +1288,7 @@ describe('generateProtocolModule()', () => {
 
     expect(code).toContain('export type AvatarData = Blob;');
     expect(code).toContain('avatar: recordCodecs.blob(),');
+    expect(code).not.toContain('RecordValidator');
   });
 
   it('should select built-in codecs from declared data formats', async () => {

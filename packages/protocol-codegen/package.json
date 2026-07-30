@@ -11,7 +11,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist",
-    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.build.json",
     "build": "bun run clean && bun run build:esm",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -50,10 +50,14 @@
     "bun": ">=1.0.0"
   },
   "dependencies": {
+    "ajv": "8.18.0",
+    "ajv-formats": "3.0.1",
+    "esbuild": "0.28.1",
     "json-schema-to-typescript": "15.0.0"
   },
   "devDependencies": {
     "@enbox/api": "workspace:*",
+    "@enbox/browser": "workspace:*",
     "@enbox/dwn-sdk-js": "workspace:*",
     "@types/json-schema": "7.0.15",
     "@typescript-eslint/eslint-plugin": "8.32.1",
