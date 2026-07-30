@@ -1,4 +1,10 @@
-import type { GenericMessage, ProgressToken, ProtocolDefinition, RecordsDeleteMessage } from '@enbox/dwn-sdk-js';
+import type {
+  GenericMessage,
+  MessagesQueryReplyEntry,
+  ProgressToken,
+  ProtocolDefinition,
+  RecordsDeleteMessage,
+} from '@enbox/dwn-sdk-js';
 
 import type { AudienceKeyDeliveryIntent } from './audience-key-delivery.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -72,39 +78,53 @@ export async function scanActiveAudienceKeyDeliveryIntents({
       );
     }
 
-    for (const entry of reply.entries) {
-      if (entry.message === undefined) {
-        throw new Error(`AgentDwnApi: role delivery reconciliation received message metadata without the message.`);
-      }
-      if (isRecordsDelete(entry.message)) {
-        intents.delete(entry.message.descriptor.recordId);
-        continue;
-      }
-      if (!entry.isLatestBaseState) {
-        continue;
-      }
-
-      const intent = roleDeliveryIntent(entry.message, sourceDid, protocol, rolePaths);
-      if (intent !== undefined) {
-        intents.set(intent.roleRecordId, intent);
-      }
-    }
+    applyFeedEntries(reply.entries, intents, sourceDid, protocol, rolePaths);
 
     if (reply.drained === true) {
       return [...intents.values()];
     }
-    if (reply.cursor === undefined || !isValidProgressToken(reply.cursor)) {
-      throw new Error(`AgentDwnApi: role delivery reconciliation returned no valid cursor before drain.`);
-    }
-    if (cursor !== undefined && (
-      cursor.streamId !== reply.cursor.streamId ||
-      cursor.epoch !== reply.cursor.epoch ||
-      SyncCheckpoint.comparePosition(reply.cursor, cursor) <= 0
-    )) {
-      throw new Error(`AgentDwnApi: role delivery reconciliation cursor did not advance.`);
-    }
-    cursor = reply.cursor;
+    cursor = advancingCursor(cursor, reply.cursor);
   }
+}
+
+function applyFeedEntries(
+  entries: readonly MessagesQueryReplyEntry[],
+  intents: Map<string, AudienceKeyDeliveryIntent>,
+  sourceDid: string,
+  protocol: string,
+  rolePaths: ReadonlySet<string>,
+): void {
+  for (const entry of entries) {
+    if (entry.message === undefined) {
+      throw new Error(`AgentDwnApi: role delivery reconciliation received message metadata without the message.`);
+    }
+    if (isRecordsDelete(entry.message)) {
+      intents.delete(entry.message.descriptor.recordId);
+      continue;
+    }
+    if (!entry.isLatestBaseState) {
+      continue;
+    }
+
+    const intent = roleDeliveryIntent(entry.message, sourceDid, protocol, rolePaths);
+    if (intent !== undefined) {
+      intents.set(intent.roleRecordId, intent);
+    }
+  }
+}
+
+function advancingCursor(previous: ProgressToken | undefined, next: ProgressToken | undefined): ProgressToken {
+  if (next === undefined || !isValidProgressToken(next)) {
+    throw new Error(`AgentDwnApi: role delivery reconciliation returned no valid cursor before drain.`);
+  }
+  if (previous !== undefined && (
+    previous.streamId !== next.streamId ||
+    previous.epoch !== next.epoch ||
+    SyncCheckpoint.comparePosition(next, previous) <= 0
+  )) {
+    throw new Error(`AgentDwnApi: role delivery reconciliation cursor did not advance.`);
+  }
+  return next;
 }
 
 function roleDeliveryIntent(
