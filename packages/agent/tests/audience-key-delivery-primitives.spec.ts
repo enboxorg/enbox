@@ -1,7 +1,8 @@
 import type { PublicKeyJwk } from '@enbox/crypto';
-import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, ProtocolsConfigureMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import type { AudienceKeyDeliveryOutcome } from '../src/types/dwn.js';
+import type { AudienceKeyDeliveryState } from '../src/audience-key-delivery.js';
 import type { BearerIdentity } from '../src/bearer-identity.js';
 
 import sinon from 'sinon';
@@ -23,6 +24,7 @@ import { createImportedDelegateDid } from './utils/delegate-did.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { RemoteProtocolDefinitionError } from '../src/dwn-protocol-cache.js';
+import { scanActiveAudienceKeyDeliveryIntents } from '../src/audience-key-delivery-reconciliation.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { createAudienceDeliveryRecord, createAudienceRecord, createGrantKeyRecordsForGrants, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
@@ -54,14 +56,15 @@ describe('AgentDwnApi audience key delivery primitives', () => {
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
 
-  async function installProtocol(tenantDid: string, definition: ProtocolDefinition): Promise<void> {
-    const { reply } = await testHarness.agent.dwn.processRequest({
+  async function installProtocol(tenantDid: string, definition: ProtocolDefinition): Promise<ProtocolDefinition> {
+    const { message, reply } = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition },
     });
     expect(reply.status.code).toBe(202);
+    return (message as ProtocolsConfigureMessage).descriptor.definition;
   }
 
   async function writeThread(definition: ProtocolDefinition): Promise<string> {
@@ -415,6 +418,47 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         target       : alice.did.uri,
       })).rejects.toThrow(/contextId that reaches the parent context/i);
     });
+  });
+
+  describe('audience-key delivery reconciliation', () => {
+    it('rebuilds active role intent and removes it after the role is deleted', async () => {
+      const chat = chatProtocolDefinition();
+      const bob = await testHarness.createIdentity({ name: 'Bob Reconciled', testDwnUrls });
+      const installedChat = await installProtocol(alice.did.uri, chat);
+      await installProtocol(bob.did.uri, chat);
+      const threadContextId = await writeThread(chat);
+      const { roleRecordId } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
+      await testHarness.audienceKeyDeliveryStore.clear();
+
+      const reconcile = async (): Promise<AudienceKeyDeliveryState[]> => testHarness.audienceKeyDeliveryStore.reconcileProtocol({
+        protocol  : chat.protocol,
+        sourceDid : alice.did.uri,
+        scan      : () => scanActiveAudienceKeyDeliveryIntents({
+          agent              : testHarness.agent,
+          protocolDefinition : installedChat,
+          sourceDid          : alice.did.uri,
+        }),
+      });
+
+      expect(await reconcile()).toEqual([{
+        contextId    : threadContextId,
+        protocol     : chat.protocol,
+        recipientDid : bob.did.uri,
+        rolePath     : ROLE_PATH,
+        roleRecordId,
+        sourceDid    : alice.did.uri,
+        state        : 'pending',
+      }]);
+
+      const { reply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsDelete,
+        messageParams : { recordId: roleRecordId },
+      });
+      expect(reply.status.code).toBe(202);
+      expect(await reconcile()).toEqual([]);
+    }, 30000);
   });
 
   describe('reprovisionAudienceKeyDelivery()', () => {
