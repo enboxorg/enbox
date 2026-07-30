@@ -1,5 +1,7 @@
 import type { ReplicationLinkSnapshot } from '@enbox/agent';
 
+import { areReplicationLinksCurrent } from '@enbox/agent';
+
 export type ReplicationCurrentness = 'loading' | 'ready' | 'stale' | 'error';
 type ReplicationCurrentnessLink = Pick<ReplicationLinkSnapshot, 'connectivity' | 'isPullCurrent' | 'status'>;
 
@@ -11,8 +13,7 @@ export function projectReplicationCurrentness(
   if (links.some((link): boolean => link.status === 'paused')) {
     return 'error';
   }
-  if (links.length > 0 && links.every((link): boolean =>
-    link.status === 'live' && link.connectivity === 'online' && link.isPullCurrent)) {
+  if (areReplicationLinksCurrent(links)) {
     return 'ready';
   }
   return hasBeenReady ? 'stale' : 'loading';

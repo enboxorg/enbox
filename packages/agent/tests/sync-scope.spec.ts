@@ -2,12 +2,16 @@ import { describe, expect, it } from 'bun:test';
 
 import { getProtocolClosureEdges } from '../src/sync-scope-closure.js';
 import {
+  areReplicationLinksCurrent,
   computeAuthorizationEpoch,
   computeProjectionId,
   normalizeSyncProtocols,
   protocolsForSyncScope,
   singleProtocolForSyncScope,
   SYNC_PROJECTION_ROOT_VERSION,
+  syncEventCoversProtocol,
+  syncRegistrationCoversProtocol,
+  syncScopeCoversProtocol,
   syncScopeFromProtocols,
 } from '../src/types/sync.js';
 
@@ -49,6 +53,33 @@ describe('sync scope identity', () => {
   it('returns a single protocol label only for one-protocol scopes', () => {
     const scope = syncScopeFromProtocols(['https://example.com/profile']);
     expect(singleProtocolForSyncScope(scope)).toBe('https://example.com/profile');
+  });
+
+  it('shares protocol coverage across registrations, links, and event scopes', () => {
+    const protocol = 'https://example.com/profile';
+    expect(syncRegistrationCoversProtocol(undefined, protocol)).toBe(false);
+    expect(syncRegistrationCoversProtocol({ protocols: 'all' }, protocol)).toBe(true);
+    expect(syncRegistrationCoversProtocol({ protocols: [protocol] }, protocol)).toBe(true);
+    expect(syncRegistrationCoversProtocol({ protocols: ['https://example.com/other'] }, protocol)).toBe(false);
+
+    expect(syncScopeCoversProtocol({ kind: 'full' }, protocol)).toBe(true);
+    expect(syncScopeCoversProtocol({ kind: 'protocolSet', protocols: [protocol] }, protocol)).toBe(true);
+    expect(syncScopeCoversProtocol({ kind: 'protocolSet', protocols: ['https://example.com/other'] }, protocol))
+      .toBe(false);
+
+    expect(syncEventCoversProtocol({}, protocol)).toBe(true);
+    expect(syncEventCoversProtocol({ protocol }, protocol)).toBe(true);
+    expect(syncEventCoversProtocol({ protocol: 'https://example.com/other', protocols: [protocol] }, protocol)).toBe(true);
+    expect(syncEventCoversProtocol({ protocol, protocols: ['https://example.com/other'] }, protocol)).toBe(false);
+  });
+
+  it('requires every replication link to be live, online, and pull-current', () => {
+    const current = { connectivity: 'online', isPullCurrent: true, status: 'live' } as const;
+    expect(areReplicationLinksCurrent([])).toBe(false);
+    expect(areReplicationLinksCurrent([current])).toBe(true);
+    expect(areReplicationLinksCurrent([current, { ...current, isPullCurrent: false }])).toBe(false);
+    expect(areReplicationLinksCurrent([{ ...current, connectivity: 'offline' }])).toBe(false);
+    expect(areReplicationLinksCurrent([{ ...current, status: 'initializing' }])).toBe(false);
   });
 
   it('computes projection IDs from tenant and normalized scope', async () => {

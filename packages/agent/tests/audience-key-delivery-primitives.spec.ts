@@ -1,5 +1,5 @@
 import type { PublicKeyJwk } from '@enbox/crypto';
-import type { ProtocolDefinition, ProtocolsConfigureMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import type { AudienceKeyDeliveryOutcome } from '../src/types/dwn.js';
 import type { AudienceKeyDeliveryState } from '../src/audience-key-delivery.js';
@@ -461,6 +461,110 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       });
       expect(reply.status.code).toBe(202);
       expect(await reconcile()).toEqual([]);
+    }, 30000);
+  });
+
+  describe('automatic audience-key delivery', () => {
+    it('does not reconcile an installed-only retired role audience', async () => {
+      const chat = chatProtocolDefinition();
+      chat.types.retired = { dataFormats: ['application/json'] };
+      (chat.structure.thread as ProtocolRuleSet).retired = { $role: true };
+      await installProtocol(alice.did.uri, chat);
+      const reconcile = sinon.spy(testHarness.audienceKeyDeliveryStore, 'reconcileProtocol');
+
+      const retry = await (testHarness.agent.dwn as any).runAudienceKeyDeliveryPass({
+        protocol  : chat.protocol,
+        rolePaths : new Set([ROLE_PATH]),
+        signal    : new AbortController().signal,
+        target    : alice.did.uri,
+      }, true);
+
+      expect(retry).toBe(false);
+      expect(reconcile.notCalled).toBe(true);
+    }, 30000);
+
+    it('waits for a current replica, repairs after recipient install, and removes deleted roles', async () => {
+      const chat = chatProtocolDefinition();
+      const bob = await testHarness.createIdentity({ name: 'Bob Automatic Repair', testDwnUrls });
+      await installProtocol(alice.did.uri, chat);
+      const threadContextId = await writeThread(chat);
+      const { delivery, roleRecordId } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
+      expect(delivery).toMatchObject({ delivered: false, failure: 'awaiting-recipient-install' });
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
+          .toMatchObject({ state: 'awaiting-recipient-install' });
+      });
+
+      sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves({ protocols: [chat.protocol] });
+      const link = {
+        tenantDid      : alice.did.uri,
+        remoteEndpoint : testDwnUrls[0],
+        scope          : { kind: 'protocolSet' as const, protocols: [chat.protocol] as [string] },
+        status         : 'live' as const,
+      };
+      let connectivity: 'offline' | 'online' = 'offline';
+      const currentReads: boolean[] = [];
+      const getLinks = sinon.stub(testHarness.agent.sync, 'getReplicationLinks').callsFake(async () => [
+        { ...link, connectivity, isPullCurrent: currentReads.shift() ?? true },
+      ]);
+      const reprovision = sinon.spy(testHarness.agent.dwn, 'reprovisionAudienceKeyDelivery');
+      const pullCurrentEvent = {
+        type           : 'pull:currentness-change',
+        tenantDid      : alice.did.uri,
+        remoteEndpoint : testDwnUrls[0],
+        protocol       : chat.protocol,
+        from           : false,
+        to             : true,
+      } as const;
+
+      const session = new AbortController();
+      testHarness.agent.dwn.registerAudienceKeyDeliveryProtocol({
+        protocol  : chat.protocol,
+        rolePaths : [ROLE_PATH],
+        signal    : session.signal,
+        target    : alice.did.uri,
+      });
+      await Poller.pollUntilSuccessOrTimeout(async () => { expect(getLinks.called).toBe(true); });
+      expect(reprovision.notCalled).toBe(true);
+
+      connectivity = 'online';
+      currentReads.push(true, false);
+      (testHarness.agent.sync as any).emitEvent(pullCurrentEvent);
+      await Poller.pollUntilSuccessOrTimeout(async () => { expect(currentReads).toHaveLength(0); });
+      expect(reprovision.notCalled).toBe(true);
+
+      currentReads.push(false);
+      (testHarness.agent.sync as any).emitEvent({
+        ...pullCurrentEvent,
+        type : 'link:connectivity-change',
+        from : 'offline',
+        to   : 'online',
+      });
+      await Poller.pollUntilSuccessOrTimeout(async () => { expect(currentReads).toHaveLength(0); });
+      (testHarness.agent.sync as any).emitEvent(pullCurrentEvent);
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(reprovision.calledOnce).toBe(true);
+      });
+      expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
+        .toMatchObject({ state: 'awaiting-recipient-install' });
+
+      await installProtocol(bob.did.uri, chat);
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
+          .toMatchObject({ state: 'delivered' });
+      });
+
+      const { reply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsDelete,
+        messageParams : { recordId: roleRecordId },
+      });
+      expect(reply.status.code).toBe(202);
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId)).toBeUndefined();
+      });
+      session.abort();
     }, 30000);
   });
 

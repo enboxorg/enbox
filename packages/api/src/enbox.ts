@@ -33,10 +33,12 @@ import type {
 import { AnonymousDwnApi } from '@enbox/agent';
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
+import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { omitUndefined } from '@enbox/common';
 import { computeConnectionStatus, reconcileConnectionStatusGrants } from '@enbox/auth';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
+import { collectProtocolPaths } from './protocol-paths.js';
 import { createProtocolReadinessApi } from './protocol-readiness.js';
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
@@ -316,6 +318,20 @@ export class Enbox {
       signal : this._lifetimeSignal,
       sync   : this.agent.sync,
     });
+    // Configure injects $keyAgreement at every authored path when any type is encrypted.
+    const rolePaths = Object.values(protocol.definition.types).some(type => type.encryptionRequired === true)
+      ? [...collectProtocolPaths(protocol.definition.structure)]
+        .filter(path => getRuleSetAtPath(path, protocol.definition.structure)?.$role === true)
+      : [];
+    if (rolePaths.length > 0) {
+      this.agent.dwn.registerAudienceKeyDeliveryProtocol({
+        granteeDid : this._delegateDid,
+        protocol   : protocol.definition.protocol,
+        rolePaths,
+        signal     : this._lifetimeSignal,
+        target     : this._connectedDid,
+      });
+    }
     this._typedInstances.set(protocol, instance);
     return instance;
   }

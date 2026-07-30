@@ -143,7 +143,25 @@ describe('Enbox API', () => {
         item: recordCodecs.json<{ name: string }>(),
       });
 
-      it('should return the same TypedEnbox instance for repeated calls with the same protocol', async () => {
+      const RoleProtocolDef = {
+        protocol  : 'https://example.com/protocols/roles',
+        published : true,
+        types     : {
+          member : { dataFormats: ['application/json'] },
+          secret : { dataFormats: ['application/json'], encryptionRequired: true },
+        },
+        structure: {
+          member : { $role: true },
+          secret : {},
+        },
+      } as const satisfies ProtocolDefinition;
+
+      const RoleProtocol = defineProtocol(RoleProtocolDef, {
+        member : recordCodecs.json<{ name: string }>(),
+        secret : recordCodecs.json<{ value: string }>(),
+      });
+
+      it('should cache typed instances and register authored role paths for delivery', async () => {
         const identity = await testHarness.agent.identity.create({
           metadata  : { name: 'CacheTest' },
           didMethod : 'jwk',
@@ -153,12 +171,25 @@ describe('Enbox API', () => {
           agent        : testHarness.agent,
           connectedDid : identity.did.uri,
         });
+        const registerDelivery = sinon.stub(testHarness.agent.dwn, 'registerAudienceKeyDeliveryProtocol');
 
         const first = enbox.using(TestProtocol);
         const second = enbox.using(TestProtocol);
 
         expect(first).toBeInstanceOf(TypedEnbox);
         expect(first).toBe(second); // same reference
+        expect(registerDelivery.notCalled).toBe(true);
+
+        enbox.using(RoleProtocol);
+
+        expect(registerDelivery.calledOnce).toBe(true);
+        expect(registerDelivery.firstCall.args[0]).toMatchObject({
+          granteeDid : undefined,
+          protocol   : RoleProtocolDef.protocol,
+          rolePaths  : ['member'],
+          target     : identity.did.uri,
+        });
+        expect(registerDelivery.firstCall.args[0].signal).toBeInstanceOf(AbortSignal);
       });
 
       it('should return different TypedEnbox instances for different protocols', async () => {

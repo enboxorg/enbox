@@ -6,11 +6,15 @@ export type * from './types/key-manager.js';
 export type * from './types/permissions.js';
 export type * from './types/sync.js';
 export {
+  areReplicationLinksCurrent,
   computeAuthorizationEpoch,
   computeProjectionId,
   normalizeSyncProtocols,
   protocolsForSyncScope,
   singleProtocolForSyncScope,
+  syncEventCoversProtocol,
+  syncRegistrationCoversProtocol,
+  syncScopeCoversProtocol,
   syncScopeFromProtocols,
 } from './types/sync.js';
 export { SyncRunCancelledError } from './sync-runtime-errors.js';
