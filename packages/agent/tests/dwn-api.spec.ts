@@ -13,6 +13,7 @@ import {
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyDerivationScheme,
   Message,
+  Poller,
   RecordsWrite,
   TestDataGenerator,
   Time
@@ -4507,12 +4508,14 @@ describe('Role record write behavior', () => {
       .toBe('awaiting-recipient-install');
     expect(roleWrite.audienceKeyDelivery!.recipientDid).toBe(bob.did.uri);
     expect(roleWrite.audienceKeyDelivery!.reason).toContain('recipient protocol not installed');
-    expect(await testHarness.audienceKeyDeliveryStore.get(
-      alice.did.uri,
-      (roleWrite.message as RecordsWriteMessage).recordId,
-    )).toMatchObject({
-      recipientDid : bob.did.uri,
-      state        : 'awaiting-recipient-install',
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(await testHarness.audienceKeyDeliveryStore.get(
+        alice.did.uri,
+        (roleWrite.message as RecordsWriteMessage).recordId,
+      )).toMatchObject({
+        recipientDid : bob.did.uri,
+        state        : 'awaiting-recipient-install',
+      });
     });
     expect(roleKeyLookupStub.calledOnce).toBe(true);
   }, 10000);
@@ -4773,8 +4776,10 @@ describe('Role record write behavior', () => {
     // Proof there was NO rollback: the just-accepted $role record is still present on
     // the owner's DWN (a compensating delete would have tombstoned it).
     const roleRecordId = (roleWrite.message as RecordsWriteMessage).recordId;
-    expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
-      .toMatchObject({ state: 'pending' });
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
+        .toMatchObject({ state: 'pending' });
+    });
     const roleRecords = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
