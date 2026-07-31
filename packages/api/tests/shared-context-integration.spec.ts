@@ -16,6 +16,10 @@ const protocolDefinition = {
   protocol  : `https://example.com/shared-context-integration/${crypto.randomUUID()}` as string,
   published : true,
   types     : {
+    change: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+    },
     member: {
       dataFormats: ['application/json'],
     },
@@ -26,28 +30,40 @@ const protocolDefinition = {
       dataFormats        : ['application/json'],
       encryptionRequired : true,
     },
+    title: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+    },
   },
   structure: {
     notebook: {
-      $actions : [{ role: 'notebook/member', can: ['read'] }],
-      member   : {
-        $actions : [{ who: 'recipient', can: ['co-delete'] }],
-        $role    : true,
-      },
       page: {
-        $actions: [{
-          role : 'notebook/member',
-          can  : ['create', 'read', 'update', 'delete', 'co-update', 'co-delete'],
-        }],
+        $actions : [{ role: 'notebook/page/member', can: ['read'] }],
+        change   : {
+          $actions: [{
+            role : 'notebook/page/member',
+            can  : ['create', 'read', 'update', 'delete', 'co-update', 'co-delete'],
+          }],
+        },
+        member: {
+          $actions : [{ who: 'recipient', can: ['co-delete'] }],
+          $role    : true,
+        },
+        title: {
+          $actions     : [{ role: 'notebook/page/member', can: ['read'] }],
+          $recordLimit : { max: 1 },
+        },
       },
     },
   },
 } as const satisfies ProtocolDefinition;
 
 const SharedNotebookProtocol = defineProtocol(protocolDefinition, {
+  change   : recordCodecs.json<{ body: string }>(),
   member   : recordCodecs.json<{ name: string }>(),
   notebook : recordCodecs.json<{ title: string }>(),
   page     : recordCodecs.json<{ body: string }>(),
+  title    : recordCodecs.json<{ title: string }>(),
 });
 
 async function waitForView<Item>(
@@ -122,31 +138,37 @@ describe('shared context public API integration', () => {
       expect((await configured.protocol!.send(did)).status.code).toBe(202);
     }
 
-    const notebookA = await owner.records.create('notebook', { data: { title: 'A' } });
-    const notebookB = await owner.records.create('notebook', { data: { title: 'B' } });
-    contextIds = [notebookA.contextId, notebookB.contextId];
-    for (const notebook of [notebookA, notebookB]) {
-      await owner.records.create('notebook/member', {
+    const notebook = await owner.records.create('notebook', { data: { title: 'Shared contexts' } });
+    const pageA = await owner.records.create('notebook/page', {
+      data            : largePage,
+      parentContextId : notebook.contextId,
+    });
+    const pageB = await owner.records.create('notebook/page', {
+      data            : { body: 'sibling page' },
+      parentContextId : notebook.contextId,
+    });
+    await owner.records.set('notebook/page/title', {
+      data   : { title: 'Page A' },
+      within : pageA.contextId,
+    });
+    await owner.records.set('notebook/page/title', {
+      data   : { title: 'Page B' },
+      within : pageB.contextId,
+    });
+    contextIds = [pageA.contextId, pageB.contextId];
+    for (const page of [pageA, pageB]) {
+      await owner.records.create('notebook/page/member', {
         data            : { name: 'member' },
-        parentContextId : notebook.contextId,
+        parentContextId : page.contextId,
         recipient       : memberDid,
       });
     }
-    const largePageRecord = await owner.records.create('notebook/page', {
-      data            : { body: 'initial private page' },
-      parentContextId : notebookA.contextId,
-    });
-    largePageRecordId = largePageRecord.id;
-    await largePageRecord.update({ data: largePage });
-    const removedPage = await owner.records.create('notebook/page', {
+    largePageRecordId = pageA.id;
+    const removedChange = await owner.records.create('notebook/page/change', {
       data            : { body: 'removed before follow' },
-      parentContextId : notebookA.contextId,
+      parentContextId : pageA.contextId,
     });
-    await removedPage.delete();
-    await owner.records.create('notebook/page', {
-      data            : { body: 'sibling page' },
-      parentContextId : notebookB.contextId,
-    });
+    await removedChange.delete();
 
     await ownerHarness.agent.sync.registerIdentity({
       did     : ownerDid,
@@ -177,7 +199,7 @@ describe('shared context public API integration', () => {
 
     const [contextA, contextB] = await Promise.all(contextIds.map((contextId) => typed.contexts.follow({
       contextId,
-      role      : 'notebook/member',
+      role      : 'notebook/page/member',
       sourceDid : ownerDid,
     })));
 
@@ -186,11 +208,16 @@ describe('shared context public API integration', () => {
     await memberHarness.agent.sync.stopSync();
     const localRequests = sinon.spy(memberHarness.agent, 'processDwnRequest');
     const offline = sinon.stub(memberHarness.agent, 'sendDwnRequest').rejects(new Error('offline'));
-    const localPage = await contextA.records.query('notebook/page', { pagination: { limit: 10 } });
+    const localPage = await contextA.records.query('notebook/page', {
+      materialize : { children: ['notebook/page/title'] as const },
+      pagination  : { limit: 10 },
+    });
     expect(localPage.records).toHaveLength(1);
-    expect(localPage.records[0].id).toBe(largePageRecordId);
-    expect(await localPage.records[0].value()).toEqual(largePage);
-    expect(await localPage.records[0].value()).toEqual(largePage);
+    expect(localPage.records[0]).toMatchObject({
+      children : { title: { value: { title: 'Page A' } } },
+      record   : { id: largePageRecordId },
+      value    : largePage,
+    });
     expect(offline.notCalled).toBe(true);
     expect(localRequests.getCalls().some((call): boolean =>
       call.args[0].messageType === DwnInterface.RecordsRead
@@ -207,7 +234,7 @@ describe('shared context public API integration', () => {
     > = [];
     const seenRecordIds = new Set<string>();
     let subscriptionError: Error | undefined;
-    const subscription = await contextA.records.subscribe('notebook/page', async (event): Promise<void> => {
+    const subscription = await contextA.records.subscribe('notebook/page/change', async (event): Promise<void> => {
       if (event.type === 'error') {
         subscriptionError = event.error;
         return;
@@ -218,17 +245,17 @@ describe('shared context public API integration', () => {
         : { id: event.record.id, type: event.type, value: await event.record.value() });
     });
     const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
-    const siblingChange = await owner.records.create('notebook/page', {
+    const siblingChange = await owner.records.create('notebook/page/change', {
       data            : { body: 'live sibling change' },
       parentContextId : contextIds[1],
     });
-    const ownerChange = await owner.records.create('notebook/page', {
+    const ownerChange = await owner.records.create('notebook/page/change', {
       data            : { body: 'live owner change' },
       parentContextId : contextIds[0],
     });
     await ownerHarness.agent.sync.sync('push');
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      const siblingPages = await contextB.records.query('notebook/page', { pagination: { limit: 10 } });
+      const siblingPages = await contextB.records.query('notebook/page/change', { pagination: { limit: 10 } });
       expect(siblingPages.records.some((record): boolean => record.id === siblingChange.id)).toBe(true);
     }, Poller.pollRetrySleep, 30_000);
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
@@ -261,8 +288,8 @@ describe('shared context public API integration', () => {
     expect(seenRecordIds.has(siblingChange.id)).toBe(false);
     await subscription.close();
 
-    const view = await contextA.records.observe('notebook/page', { pagination: { limit: 10 } });
-    const created = await contextA.records.create('notebook/page', { data: { body: 'created by member' } });
+    const view = await contextA.records.observe('notebook/page/change', { pagination: { limit: 10 } });
+    const created = await contextA.records.create('notebook/page/change', { data: { body: 'created by member' } });
     await waitForView(view, (snapshot): boolean => snapshot.records.some((record): boolean => record.id === created.id));
 
     await created.update({
@@ -308,7 +335,7 @@ describe('shared context public API integration', () => {
 
     const followedAgain = await reopened.contexts.follow({
       contextId : contextIds[0],
-      role      : 'notebook/member',
+      role      : 'notebook/page/member',
       sourceDid : ownerDid,
     });
     await followedAgain.leave();
