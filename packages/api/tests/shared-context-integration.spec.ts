@@ -6,7 +6,8 @@ import sinon from 'sinon';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { PlatformAgentTestHarness as AgentHarness } from '@enbox/agent/test';
-import { EnboxUserAgent } from '@enbox/agent';
+import { DwnConstant, Poller } from '@enbox/dwn-sdk-js';
+import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 import { testDwnUrl } from './utils/test-config.js';
 import { defineProtocol, Enbox, recordCodecs } from '../src/index.js';
@@ -86,6 +87,7 @@ describe('shared context public API integration', () => {
   const largePage = { body: 'private page '.repeat(4_000) };
 
   let contextIds: [string, string];
+  let largePageRecordId: string;
   let memberDid: string;
   let memberHarness: PlatformAgentTestHarness;
   let ownerDid: string;
@@ -130,10 +132,17 @@ describe('shared context public API integration', () => {
         recipient       : memberDid,
       });
     }
-    await owner.records.create('notebook/page', {
-      data            : largePage,
+    const largePageRecord = await owner.records.create('notebook/page', {
+      data            : { body: 'initial private page' },
       parentContextId : notebookA.contextId,
     });
+    largePageRecordId = largePageRecord.id;
+    await largePageRecord.update({ data: largePage });
+    const removedPage = await owner.records.create('notebook/page', {
+      data            : { body: 'removed before follow' },
+      parentContextId : notebookA.contextId,
+    });
+    await removedPage.delete();
     await owner.records.create('notebook/page', {
       data            : { body: 'sibling page' },
       parentContextId : notebookB.contextId,
@@ -161,6 +170,11 @@ describe('shared context public API integration', () => {
 
   it('follows, replicates, mutates, reopens, and retires exact encrypted contexts', async () => {
     const typed = new Enbox({ agent: memberHarness.agent, connectedDid: memberDid }).using(SharedNotebookProtocol);
+    expect(await typed.contexts.list()).toEqual([]);
+    expect(await memberHarness.agent.sync.getReplicationLinks(ownerDid)).toEqual([]);
+    expect(new TextEncoder().encode(JSON.stringify(largePage)).byteLength)
+      .toBeGreaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
+
     const [contextA, contextB] = await Promise.all(contextIds.map((contextId) => typed.contexts.follow({
       contextId,
       role      : 'notebook/member',
@@ -169,13 +183,83 @@ describe('shared context public API integration', () => {
 
     await Promise.all([contextA.whenCurrent(), contextB.whenCurrent()]);
 
+    await memberHarness.agent.sync.stopSync();
+    const localRequests = sinon.spy(memberHarness.agent, 'processDwnRequest');
     const offline = sinon.stub(memberHarness.agent, 'sendDwnRequest').rejects(new Error('offline'));
     const localPage = await contextA.records.query('notebook/page', { pagination: { limit: 10 } });
     expect(localPage.records).toHaveLength(1);
+    expect(localPage.records[0].id).toBe(largePageRecordId);
     expect(await localPage.records[0].value()).toEqual(largePage);
     expect(await localPage.records[0].value()).toEqual(largePage);
     expect(offline.notCalled).toBe(true);
+    expect(localRequests.getCalls().some((call): boolean =>
+      call.args[0].messageType === DwnInterface.RecordsRead
+      && call.args[0].target === ownerDid
+      && call.args[0].messageParams.filter.recordId === largePageRecordId
+    )).toBe(true);
     offline.restore();
+    localRequests.restore();
+    await memberHarness.agent.sync.startSync();
+
+    const changes: Array<
+      { id: string; type: 'delete' } |
+      { id: string; type: 'write'; value: { body: string } }
+    > = [];
+    const seenRecordIds = new Set<string>();
+    let subscriptionError: Error | undefined;
+    const subscription = await contextA.records.subscribe('notebook/page', async (event): Promise<void> => {
+      if (event.type === 'error') {
+        subscriptionError = event.error;
+        return;
+      }
+      seenRecordIds.add(event.record.id);
+      changes.push(event.type === 'delete'
+        ? { id: event.record.id, type: event.type }
+        : { id: event.record.id, type: event.type, value: await event.record.value() });
+    });
+    const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
+    const siblingChange = await owner.records.create('notebook/page', {
+      data            : { body: 'live sibling change' },
+      parentContextId : contextIds[1],
+    });
+    const ownerChange = await owner.records.create('notebook/page', {
+      data            : { body: 'live owner change' },
+      parentContextId : contextIds[0],
+    });
+    await ownerHarness.agent.sync.sync('push');
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      const siblingPages = await contextB.records.query('notebook/page', { pagination: { limit: 10 } });
+      expect(siblingPages.records.some((record): boolean => record.id === siblingChange.id)).toBe(true);
+    }, Poller.pollRetrySleep, 30_000);
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(subscriptionError).toBeUndefined();
+      expect(changes).toContainEqual({
+        id    : ownerChange.id,
+        type  : 'write',
+        value : { body: 'live owner change' },
+      });
+    }, Poller.pollRetrySleep, 30_000);
+    expect(seenRecordIds.has(siblingChange.id)).toBe(false);
+
+    await ownerChange.update({ data: { body: 'updated live owner change' } });
+    await ownerHarness.agent.sync.sync('push');
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(subscriptionError).toBeUndefined();
+      expect(changes).toContainEqual({
+        id    : ownerChange.id,
+        type  : 'write',
+        value : { body: 'updated live owner change' },
+      });
+    }, Poller.pollRetrySleep, 30_000);
+
+    await Promise.all([ownerChange.delete(), siblingChange.delete()]);
+    await ownerHarness.agent.sync.sync('push');
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(subscriptionError).toBeUndefined();
+      expect(changes).toContainEqual({ id: ownerChange.id, type: 'delete' });
+    }, Poller.pollRetrySleep, 30_000);
+    expect(seenRecordIds.has(siblingChange.id)).toBe(false);
+    await subscription.close();
 
     const view = await contextA.records.observe('notebook/page', { pagination: { limit: 10 } });
     const created = await contextA.records.create('notebook/page', { data: { body: 'created by member' } });
@@ -214,6 +298,11 @@ describe('shared context public API integration', () => {
     expect(restored.map((context) => context.contextId).sort()).toEqual([...contextIds].sort());
 
     const restoredA = restored.find((context) => context.contextId === contextIds[0])!;
+    await restoredA.whenCurrent();
+    const restoredPages = await restoredA.records.query('notebook/page', { pagination: { limit: 10 } });
+    expect(restoredPages.records).toHaveLength(1);
+    expect(restoredPages.records[0].id).toBe(largePageRecordId);
+    expect(await restoredPages.records[0].value()).toEqual(largePage);
     await restoredA.unfollow();
     expect((await reopened.contexts.list()).map((context) => context.contextId)).toEqual([contextIds[1]]);
 
