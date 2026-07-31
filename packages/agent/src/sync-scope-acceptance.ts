@@ -14,6 +14,7 @@ type SyncMessageScopeClassificationParams = {
 };
 
 type ProtocolSetSyncScope = Extract<SyncScope, { kind: 'protocolSet' }>;
+type ContextSyncScope = Extract<SyncScope, { kind: 'context' }>;
 
 /**
  * Classifies whether a DWN message belongs to a sync scope before local apply.
@@ -27,7 +28,34 @@ export function classifySyncMessageScope({
   scope,
 }: SyncMessageScopeClassificationParams): SyncScopeClassification {
   if (scope.kind === 'full') { return 'in-scope'; }
+  if (scope.kind === 'context') { return classifyContextScope(message, initialWrite, scope); }
   return classifyProtocolSetScope(message, initialWrite, scope);
+}
+
+function classifyContextScope(
+  message: GenericMessage,
+  initialWrite: RecordsWriteMessage | undefined,
+  scope: ContextSyncScope,
+): SyncScopeClassification {
+  const isDelete = message.descriptor.interface === DwnInterfaceName.Records &&
+    message.descriptor.method === DwnMethodName.Delete;
+  const recordsWrite = isDelete
+    ? initialWrite
+    : message.descriptor.interface === DwnInterfaceName.Records && message.descriptor.method === DwnMethodName.Write
+      ? message as RecordsWriteMessage
+      : undefined;
+  if (recordsWrite === undefined) {
+    return isDelete ? 'unknown' : 'out-of-scope';
+  }
+
+  const contextId = recordsWrite.contextId;
+  return recordsWrite.descriptor.protocol === scope.protocol &&
+    typeof recordsWrite.descriptor.protocolPath === 'string' &&
+    scope.protocolPaths.includes(recordsWrite.descriptor.protocolPath) &&
+    typeof contextId === 'string' &&
+    (contextId === scope.contextId || contextId.startsWith(`${scope.contextId}/`))
+    ? 'in-scope'
+    : 'out-of-scope';
 }
 
 function classifyProtocolSetScope(

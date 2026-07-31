@@ -1,14 +1,16 @@
 import type { DwnInterface } from './types/dwn.js';
 import type { GenericMessage, GenericSignaturePayload, MessagesPermissionScope } from '@enbox/dwn-sdk-js';
-import type { NonEmptyStringArray, SyncAuthorizationGrant, SyncScope } from './types/sync.js';
+import type { NonEmptyStringArray, SyncAuthorizationGrant, syncScopeFromProtocols } from './types/sync.js';
 import type { PermissionGrantEntry, PermissionsApi } from './types/permissions.js';
 
 import { Jws, Message } from '@enbox/dwn-sdk-js';
 
 import { lexicographicalCompare } from './types/sync.js';
 
+type IdentitySyncScope = ReturnType<typeof syncScopeFromProtocols>;
+
 export type MessagesScopeResolution = {
-  scope: SyncScope;
+  scope: IdentitySyncScope;
   permissionGrants: PermissionGrantEntry[];
 };
 
@@ -53,7 +55,7 @@ export async function getMessagesPermissionGrantsForScope({
   messageType: DwnInterface;
   permissionsApi: PermissionsApi;
 }): Promise<PermissionGrantEntry[]> {
-  const requestedScope: SyncScope = protocols === undefined
+  const requestedScope: IdentitySyncScope = protocols === undefined
     ? { kind: 'full' }
     : { kind: 'protocolSet', protocols };
   const resolutions = await resolveMessagesScopes({
@@ -83,7 +85,7 @@ export async function resolveMessagesScopes({
 }: {
   did: string;
   delegateDid?: string;
-  requestedScope: SyncScope;
+  requestedScope: IdentitySyncScope;
   messageType: DwnInterface;
   permissionsApi: PermissionsApi;
 }): Promise<MessagesScopeResolution[]> {
@@ -109,7 +111,7 @@ export async function resolveMessagesScopes({
 
 function resolveFullScope(
   permissionGrants: PermissionGrantEntry[],
-  requestedScope: Extract<SyncScope, { kind: 'full' }>,
+  requestedScope: Extract<IdentitySyncScope, { kind: 'full' }>,
   messageType: DwnInterface,
 ): MessagesScopeResolution {
   const grants = permissionGrants
@@ -124,7 +126,7 @@ function resolveFullScope(
 
 function resolveProtocolSetScope(
   permissionGrants: PermissionGrantEntry[],
-  requestedScope: Extract<SyncScope, { kind: 'protocolSet' }>,
+  requestedScope: Extract<IdentitySyncScope, { kind: 'protocolSet' }>,
   messageType: DwnInterface,
 ): MessagesScopeResolution {
   for (const protocol of requestedScope.protocols) {

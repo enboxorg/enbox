@@ -146,6 +146,7 @@ export class SyncStatusReporter {
       connectivity   : link.connectivity,
       isPullCurrent  : link.isPullCurrent,
       ...(link.delegateDid === undefined ? {} : { delegateDid: link.delegateDid }),
+      ...(link.authorization.kind === 'role' ? { followedSourceId: link.authorization.roleRecordId } : {}),
       ...(pullPosition === undefined ? {} : { pullPosition }),
       ...(pushPosition === undefined ? {} : { pushPosition }),
       ...(link.lastActivityAt === undefined ? {} : { lastActivityAt: link.lastActivityAt }),

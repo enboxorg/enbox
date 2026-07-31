@@ -62,6 +62,12 @@ export type AdmitOutcome =
   | { kind: 'deferred'; rootCid: string; detail?: string }
   | { kind: 'failed'; rootCid: string; reason: 'invalid' | 'terminal'; detail?: string };
 
+/** A hydrated closure root and its server-proven dependencies. */
+export type ReplicationSupportBatch = {
+  dependencies: SyncMessageEntry[];
+  root: SyncMessageEntry;
+};
+
 export type AdmitClosureDeps = {
   did: string;
   dwnUrl: string;
@@ -72,6 +78,8 @@ export type AdmitClosureDeps = {
   onBeforeApply?: (messageCid: string) => void;
   permissionsApi?: PermissionsApi;
   prefetched?: SyncMessageEntry[];
+  /** Role-authorized one-shot hydration used instead of owner/grant dependency fetches. */
+  fetchReplicationSupport?: (root: SyncMessageEntry) => Promise<ReplicationSupportBatch>;
   shouldContinue?: () => boolean;
 };
 
@@ -111,6 +119,7 @@ class AdmitClosureContext {
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly fetchedRefs = new Set<string>();
   private readonly prefetchedEntries: SyncMessageEntry[];
+  private replicationSupportAttempted = false;
 
   public constructor(private readonly deps: AdmitClosureDeps) {
     this.prefetchedEntries = deps.prefetched ?? [];
@@ -191,9 +200,15 @@ class AdmitClosureContext {
 
     const dataStream = await replayableDataStream(entry);
     if (entryRequiresDataBeforeApply(entry) && dataStream === undefined) {
+      const support = await this.fetchReplicationSupport(rootCid);
+      if (support !== undefined) {
+        return { kind: 'retry', entries: support };
+      }
       return {
         kind    : 'done',
-        outcome : { kind: 'failed', rootCid, reason: 'terminal', detail: 'latest records write data is unavailable' },
+        outcome : this.deps.fetchReplicationSupport === undefined
+          ? { kind: 'failed', rootCid, reason: 'terminal', detail: 'latest records write data is unavailable' }
+          : { kind: 'deferred', rootCid, detail: 'role replication support did not provide current record data' },
       };
     }
 
@@ -245,6 +260,17 @@ class AdmitClosureContext {
       };
     }
 
+    const support = await this.fetchReplicationSupport(rootCid);
+    if (support !== undefined) {
+      return { kind: 'retry', entries: support };
+    }
+    if (this.deps.fetchReplicationSupport !== undefined) {
+      return {
+        kind    : 'done',
+        outcome : { kind: 'deferred', rootCid, detail: missingDependencyDetail(missing) },
+      };
+    }
+
     const dependencies = await this.fetchMissingDependencies(missing);
     if (dependencies.length === 0) {
       return { kind: 'done', outcome: { kind: 'deferred', rootCid, detail: missingDependencyDetail(missing) } };
@@ -259,6 +285,13 @@ class AdmitClosureContext {
       return [existing];
     }
 
+    // A role source can only name messages returned by its exact authenticated
+    // feed. Its one-shot support read owns hydration; the owner-shaped
+    // MessagesRead fallback below cannot sign for a foreign tenant.
+    if (this.deps.fetchReplicationSupport !== undefined) {
+      return [];
+    }
+
     const fetched = await fetchRemoteMessages({
       did                : this.deps.did,
       dwnUrl             : this.deps.dwnUrl,
@@ -268,6 +301,28 @@ class AdmitClosureContext {
       agent              : this.deps.agent,
     });
     return fetched;
+  }
+
+  /** Hydrates a role root at most once without duplicating admission ordering. */
+  private async fetchReplicationSupport(rootCid: string): Promise<SyncMessageEntry[] | undefined> {
+    const fetch = this.deps.fetchReplicationSupport;
+    if (fetch === undefined || this.replicationSupportAttempted) {
+      return undefined;
+    }
+    this.replicationSupportAttempted = true;
+
+    const root = this.entriesByCid.get(rootCid);
+    if (root === undefined) {
+      return [];
+    }
+    const support = await fetch(root);
+    if (await getMessageCid(support.root.message) !== rootCid) {
+      throw new Error(`AdmitClosure: replication support replaced root '${rootCid}' with another message.`);
+    }
+
+    const entries = [...support.dependencies, support.root];
+    await this.rememberEntries(entries);
+    return entries;
   }
 
   private async checkRootScope(entry: SyncMessageEntry): Promise<ScopeCheckResult> {

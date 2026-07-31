@@ -298,6 +298,20 @@ function timestamp(seconds: number): string {
 }
 
 describe('SyncStatusReporter.getReplicationLinks', () => {
+  it('exposes the exact followed-source incarnation for role links', async () => {
+    const roleLink = link({
+      authorization: {
+        kind         : 'role',
+        actorDid     : 'did:example:member',
+        protocolRole : 'notebook/viewer',
+        roleRecordId : 'role-a',
+      },
+    });
+
+    await expect(createReporter({ links: [roleLink] }).getReplicationLinks())
+      .resolves.toMatchObject([{ followedSourceId: 'role-a' }]);
+  });
+
   it('projects current links with checkpoint positions and sorts by tenant and remote', async () => {
     const bobLink = link({
       tenantDid      : BOB,

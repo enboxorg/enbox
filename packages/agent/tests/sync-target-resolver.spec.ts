@@ -1,5 +1,6 @@
 import type { SinonStub } from 'sinon';
 
+import type { FollowedSyncSource } from '../src/followed-sync-source.js';
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { SyncEndpointDiscovery } from '../src/sync-target-resolver.js';
 import type { SyncEndpointStore } from '../src/sync-endpoint-store.js';
@@ -23,6 +24,7 @@ type ResolverFixtureParams = {
 
 type ResolverFixture = {
   fetchGrants: SinonStub;
+  getPermissionForRequest: SinonStub;
   getEndpointDiscovery: SinonStub;
   getSupplementalEndpoint: SinonStub;
   getRemoteDwnEndpointUrls: SinonStub;
@@ -81,11 +83,13 @@ function createResolver({
     set   : sinon.stub().resolves(),
   } satisfies SyncEndpointStore;
   const fetchGrants = sinon.stub().resolves(grants);
+  const getPermissionForRequest = sinon.stub();
   const getEndpointDiscovery = sinon.stub().returns(endpointDiscovery);
-  const permissionsApi = { fetchGrants } as unknown as PermissionsApi;
+  const permissionsApi = { fetchGrants, getPermissionForRequest } as unknown as PermissionsApi;
 
   return {
     fetchGrants,
+    getPermissionForRequest,
     getEndpointDiscovery,
     getSupplementalEndpoint,
     getRemoteDwnEndpointUrls,
@@ -180,6 +184,34 @@ describe('SyncTargetResolver', () => {
       });
     });
 
+    it('should derive a followed-source registration from role authorization', () => {
+      const link = {
+        authorization: {
+          kind         : 'role',
+          actorDid     : 'did:example:member',
+          protocolRole : 'notebook/viewer',
+          roleRecordId : 'role-a',
+        },
+        authorizationEpoch : 'role-epoch',
+        connectivity       : 'online',
+        projectionId       : 'projection',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example.com',
+        scope              : {
+          kind          : 'context',
+          protocol      : 'https://example.com/notebooks',
+          contextId     : 'notebook-a',
+          protocolPaths : ['notebook/page'],
+        },
+        status    : 'live',
+        tenantDid : 'did:example:owner',
+      } satisfies ReplicationLinkState;
+
+      const target = syncTargetFromLink(link);
+      expect(target.authorDelegatedGrant).toBeUndefined();
+    });
+
     it('should build a deterministic owner target for all protocols', async () => {
       const { getEndpointDiscovery, resolver } = createResolver();
 
@@ -264,8 +296,98 @@ describe('SyncTargetResolver', () => {
         },
       )).rejects.toThrow('No active protocol-root Messages.Read permission');
     });
+
+    it('should discover a followed source and bind its actor role authorization', async () => {
+      const source = followedSource();
+      const { getRemoteDwnEndpointUrls, resolver } = createResolver({
+        remoteEndpoints: ['https://owner.example.com/', 'https://owner.example.com'],
+      });
+
+      const [target] = await resolver.buildTargetsForSource(source);
+
+      expect(getRemoteDwnEndpointUrls.calledOnceWith(source.sourceDid)).toBe(true);
+      expect(target).toMatchObject({
+        did    : source.sourceDid,
+        dwnUrl : 'https://owner.example.com/',
+        scope  : {
+          kind          : 'context',
+          protocol      : source.protocol,
+          contextId     : source.contextId,
+          protocolPaths : source.protocolPaths,
+        },
+        authorization: {
+          kind         : 'role',
+          actorDid     : source.actorDid,
+          protocolRole : source.protocolRole,
+          roleRecordId : source.id,
+        },
+      });
+      expect(typeof target.projectionId).toBe('string');
+      expect(typeof target.authorizationEpoch).toBe('string');
+    });
+
+    it('should keep transient delegate grants out of followed-source target identity', async () => {
+      const delegateDid = 'did:example:delegate';
+      const source = followedSource();
+      const { getPermissionForRequest, resolver } = createResolver({
+        remoteEndpoints: ['https://owner.example.com'],
+      });
+
+      const [target] = await resolver.buildTargetsForSource(source, delegateDid);
+
+      expect(getPermissionForRequest.notCalled).toBe(true);
+      expect(target.delegateDid).toBe(delegateDid);
+      expect(target.authorization).toEqual({
+        kind         : 'role',
+        actorDid     : source.actorDid,
+        protocolRole : source.protocolRole,
+        roleRecordId : source.id,
+      });
+      expect(target.authorDelegatedGrant).toBeUndefined();
+      expect(target.permissionGrantIds).toBeUndefined();
+    });
+
+    it('should refresh the full role delegate grant without changing durable target identity', async () => {
+      const delegateDid = 'did:example:delegate';
+      const source = followedSource();
+      const initialGrant = createGrant('delegate-grant', source.actorDid, delegateDid, source.protocol);
+      const refreshedGrant = { ...initialGrant, message: { recordId: 'fresh-grant' } } as PermissionGrantEntry;
+      const { getPermissionForRequest, resolver } = createResolver({
+        remoteEndpoints: ['https://owner.example.com'],
+      });
+      getPermissionForRequest.resolves(initialGrant);
+      const [target] = await resolver.buildTargetsForSource(source, delegateDid);
+      getPermissionForRequest.resetHistory();
+      getPermissionForRequest.onFirstCall().resolves(initialGrant);
+      getPermissionForRequest.onSecondCall().resolves(refreshedGrant);
+
+      const first = await resolver.withCurrentRoleGrant(target);
+      const second = await resolver.withCurrentRoleGrant(target);
+
+      expect(getPermissionForRequest.callCount).toBe(2);
+      expect(getPermissionForRequest.alwaysCalledWithMatch({ forceRefresh: true })).toBe(true);
+      expect(getPermissionForRequest.firstCall.args[0].contextId).toBeUndefined();
+      expect(getPermissionForRequest.secondCall.args[0].contextId).toBeUndefined();
+      expect(first.authorDelegatedGrant).toBe(initialGrant.message);
+      expect(second.authorDelegatedGrant).toBe(refreshedGrant.message);
+      expect(second.authorization).toBe(target.authorization);
+      expect(second.authorizationEpoch).toBe(target.authorizationEpoch);
+    });
   });
 });
+
+function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource {
+  return {
+    id            : 'role-a',
+    sourceDid     : 'did:example:owner',
+    actorDid      : 'did:example:member',
+    protocol      : 'https://example.com/notebooks',
+    contextId     : 'notebook-a',
+    protocolRole  : 'notebook/viewer',
+    protocolPaths : ['notebook/page', 'notebook/page/delta'],
+    ...overrides,
+  };
+}
 
 describe('normalizeDwnEndpoint', () => {
   it('should remove query, fragment, and a trailing slash', () => {

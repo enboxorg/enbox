@@ -71,6 +71,39 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(JSON.parse(raw)).toEqual(link);
   });
 
+  it('should refresh the current delegate on an existing role link', async () => {
+    const params = {
+      tenantDid      : 'did:example:owner',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : {
+        kind          : 'context' as const,
+        protocol      : 'https://example.com/notebooks',
+        contextId     : 'notebook-a',
+        protocolPaths : ['notebook/page'] as [string],
+      },
+      authorization: {
+        kind         : 'role' as const,
+        actorDid     : 'did:example:member',
+        protocolRole : 'notebook/viewer',
+        roleRecordId : 'role-a',
+      },
+      authorizationEpoch : 'role-epoch',
+      delegateDid        : 'did:example:old-delegate',
+    };
+    const original = await store.getOrCreateLink(params);
+    original.pull.contiguousAppliedToken = token(4);
+    await store.persistCheckpoint(original, 'pull');
+
+    const resumed = await store.getOrCreateLink({
+      ...params,
+      delegateDid: 'did:example:new-delegate',
+    });
+
+    expect(resumed.delegateDid).toBe('did:example:new-delegate');
+    expect(resumed.pull.contiguousAppliedToken).toEqual(token(4));
+    expect((await store.getAllLinks())).toMatchObject([{ delegateDid: 'did:example:new-delegate' }]);
+  });
+
   it('should preserve pull and push progress from concurrent stale snapshots', async () => {
     const pullLink = await store.getOrCreateLink({
       tenantDid      : 'did:example:alice',

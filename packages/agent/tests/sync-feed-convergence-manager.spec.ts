@@ -231,6 +231,30 @@ describe('SyncFeedConvergenceManager', () => {
     expect(operations.transitionToPaused.calledOnceWithExactly(context.linkKey, context.link)).toBe(true);
   });
 
+  it('does not couple an exact-context retry signature to protocol-only dead letters', async () => {
+    const syncTarget = target({
+      scope: {
+        kind          : 'context',
+        protocol      : 'https://protocol.example/covered',
+        contextId     : 'shared-context',
+        protocolPaths : ['notebook/page'],
+      },
+    });
+    const context = contextFor(syncTarget);
+    const { manager, operations } = createFixture({ activeLink: context.link, maxAttempts: 2, syncTarget });
+    operations.getDeadLettersForTenant.onFirstCall().resolves([
+      deadLetter('cid-a', { protocol: 'https://protocol.example/covered' }),
+    ]);
+    operations.getDeadLettersForTenant.onSecondCall().resolves([
+      deadLetter('cid-b', { protocol: 'https://protocol.example/covered' }),
+    ]);
+
+    await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
+    await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
+
+    expect(operations.transitionToPaused.calledOnceWithExactly(context.linkKey, context.link)).toBe(true);
+  });
+
   it('resets the attempt count when either feed fingerprint changes', async () => {
     const syncTarget = target();
     const context = contextFor(syncTarget);

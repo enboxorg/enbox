@@ -236,6 +236,46 @@ describe('AgentDwnApi audience key delivery primitives', () => {
   });
 
   describe('automatic audience-key delivery', () => {
+    it('uses only owned replication links to establish delivery-feed currentness', async () => {
+      const protocol = 'https://protocol.test/delivery-currentness';
+      sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves({ protocols: [protocol] });
+      const getLinks = sinon.stub(testHarness.agent.sync, 'getReplicationLinks');
+      getLinks.onFirstCall().resolves([{
+        tenantDid      : alice.did.uri,
+        remoteEndpoint : testDwnUrls[0],
+        scope          : { kind: 'protocolSet', protocols: [protocol] },
+        status         : 'live',
+        connectivity   : 'online',
+        isPullCurrent  : true,
+      }, {
+        tenantDid        : alice.did.uri,
+        remoteEndpoint   : testDwnUrls[0],
+        scope            : { kind: 'context', protocol, contextId: 'sibling', protocolPaths: ['thread'] },
+        status           : 'paused',
+        connectivity     : 'offline',
+        followedSourceId : 'sibling-role',
+        isPullCurrent    : false,
+      }]);
+      getLinks.onSecondCall().resolves([{
+        tenantDid        : alice.did.uri,
+        remoteEndpoint   : testDwnUrls[0],
+        scope            : { kind: 'context', protocol, contextId: 'shared', protocolPaths: ['thread'] },
+        status           : 'live',
+        connectivity     : 'online',
+        followedSourceId : 'shared-role',
+        isPullCurrent    : true,
+      }]);
+
+      await expect((testHarness.agent.dwn as any).assertAudienceKeyDeliveryFeedCurrent(
+        alice.did.uri,
+        protocol,
+      )).resolves.toBeUndefined();
+      await expect((testHarness.agent.dwn as any).assertAudienceKeyDeliveryFeedCurrent(
+        alice.did.uri,
+        protocol,
+      )).rejects.toThrow('waiting for the local replica to become current');
+    });
+
     it('does not reconcile an installed-only retired role audience', async () => {
       const chat = chatProtocolDefinition();
       chat.types.retired = { dataFormats: ['application/json'] };

@@ -470,9 +470,15 @@ describe('SyncEngineLevel', () => {
           yield [tenantDid, JSON.stringify({ protocols: 'all' })];
         },
       };
+      const followedSyncSources = {
+        async *iterator(): AsyncGenerator<[string, string]> {
+          yield* [];
+        },
+      };
       const db = {
         sublevel(name: string): unknown {
           if (name === 'registeredIdentities') { return registeredIdentities; }
+          if (name === 'followedSyncSources') { return followedSyncSources; }
           throw new Error(`unexpected sublevel ${name}`);
         },
       };

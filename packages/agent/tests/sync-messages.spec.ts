@@ -231,6 +231,49 @@ describe('sync-messages', () => {
         message   : messagesQuery,
       });
     });
+
+    it('should authorize an exact foreign-context query as the role actor', async () => {
+      const delegatedGrant = { recordId: 'delegate-grant' } as any;
+      const filters = [{
+        interface       : 'Records' as const,
+        protocol        : 'https://example.com/notebooks',
+        protocolPath    : 'notebook/page',
+        contextIdPrefix : 'notebook-a',
+      }];
+      const processDwnRequest = sinon.stub().resolves({ message: {} });
+      const agent = {
+        processDwnRequest,
+        rpc: { sendDwnRequest: sinon.stub().resolves({ status: { code: 200 }, entries: [], drained: true }) },
+      } as any;
+
+      await queryRemoteMessageFeed({
+        did          : 'did:example:owner',
+        authorDid    : 'did:example:member',
+        dwnUrl       : 'https://owner.example.com',
+        delegateDid  : 'did:example:device',
+        delegatedGrant,
+        protocolRole : 'notebook/viewer',
+        filters,
+        agent,
+      });
+
+      expect(processDwnRequest.firstCall.args[0]).toEqual({
+        store         : false,
+        author        : 'did:example:member',
+        target        : 'did:example:owner',
+        messageType   : DwnInterface.MessagesQuery,
+        granteeDid    : 'did:example:device',
+        messageParams : {
+          filters,
+          cursor             : undefined,
+          limit              : undefined,
+          cidsOnly           : undefined,
+          permissionGrantIds : undefined,
+          protocolRole       : 'notebook/viewer',
+          delegatedGrant,
+        },
+      });
+    });
   });
 
   describe('queryLocalMessageFeed', () => {

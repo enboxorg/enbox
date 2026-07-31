@@ -358,6 +358,9 @@ export class SyncLinkRecoveryCoordinator {
       await controller.closeSubscriptions();
       return false;
     }
+    if (controller.link.authorization.kind === 'role') {
+      return true;
+    }
 
     try {
       if (!await this._operations.openPushSubscription(target, controller)) {
@@ -527,7 +530,10 @@ export class SyncLinkRecoveryCoordinator {
       if (outcome.deferredPull !== undefined) {
         return;
       }
-      if (outcome.converged) {
+      const reconciled = link.authorization.kind === 'role'
+        ? outcome.pullDrained === true
+        : outcome.converged === true;
+      if (reconciled) {
         this._feedConvergenceManager.clearLink(linkKey);
         this.restoreLinkConnectivity(link);
         this._operations.emitEvent({
@@ -536,7 +542,7 @@ export class SyncLinkRecoveryCoordinator {
           remoteEndpoint : link.remoteEndpoint,
           ...eventScope(link.scope),
         });
-      } else if (!this.isStale(controller, runtime)) {
+      } else if (link.authorization.kind !== 'role' && !this.isStale(controller, runtime)) {
         await this._feedConvergenceManager.handleVerifiedDivergence(target, outcome, { link, linkKey });
       }
     } catch (error: unknown) {

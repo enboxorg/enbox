@@ -63,6 +63,10 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
     return this.runForLink(key, async (): Promise<ReplicationLinkState> => {
       const existing = await this.getLink(key);
       if (existing !== undefined) {
+        if (params.authorization.kind === 'role' && existing.delegateDid !== params.delegateDid) {
+          existing.delegateDid = params.delegateDid;
+          await this._links.put(key, JSON.stringify(existing));
+        }
         return SyncReplicationLinkStoreLevel.normalizeResumedLink(existing);
       }
 

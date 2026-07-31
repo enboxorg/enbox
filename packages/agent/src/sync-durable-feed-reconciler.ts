@@ -324,7 +324,7 @@ export class SyncDurableFeedReconciler {
     link: ReplicationLinkState,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    if (link.pull.contiguousAppliedToken === undefined) {
+    if (link.pull.contiguousAppliedToken === undefined && target.authorization.kind !== 'role') {
       const result = await this.pullRemoteDiffWhenUseful(target, link, shouldContinue);
       if (result !== undefined) {
         return result;
@@ -349,9 +349,11 @@ export class SyncDurableFeedReconciler {
       if (await this.resetAfterProgressGap(reply, link, 'pull', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
-        const result = await this.pullRemoteDiffWhenUseful(target, link, shouldContinue);
-        if (result !== undefined) {
-          return result;
+        if (target.authorization.kind !== 'role') {
+          const result = await this.pullRemoteDiffWhenUseful(target, link, shouldContinue);
+          if (result !== undefined) {
+            return result;
+          }
         }
         continue;
       }

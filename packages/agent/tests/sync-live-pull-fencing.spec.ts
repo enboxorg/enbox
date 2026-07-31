@@ -252,6 +252,31 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await controller.dispose();
   });
 
+  it('should open only the remote half for a role link', async () => {
+    const fixture = createEngineFixture(db);
+    const roleAuthorization = {
+      kind         : 'role' as const,
+      actorDid     : 'did:example:member',
+      protocolRole : 'notebook/viewer',
+      roleRecordId : 'role-a',
+    };
+    fixture.controller.link.authorization = roleAuthorization;
+    fixture.target.authorization = roleAuthorization;
+    const pullOpen = sinon.stub(fixture.engine as any, 'openLivePullSubscription').resolves(true);
+    const localOpen = sinon.spy(fixture.engine as any, 'openLocalPushSubscription');
+
+    const result = await (fixture.engine as any).openLinkSubscriptions(
+      fixture.target,
+      fixture.controller,
+      fixture.controller.replicationGeneration,
+    );
+
+    expect(result).toBe('readyForLive');
+    expect(pullOpen.calledOnce).toBe(true);
+    expect(localOpen.notCalled).toBe(true);
+    await fixture.controller.dispose();
+  });
+
   it('should stop the pair when a pause lands between the pull and local halves', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
@@ -385,6 +410,91 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       tokenIn('durable-stream', 'durable-epoch', '9'),
     );
 
+    await fixture.controller.dispose();
+  });
+
+  it('should refresh delegated role authorization for each foreign-context subscription request', async () => {
+    const fixture = createEngineFixture(db);
+    const grantA = { recordId: 'grant-a' };
+    const grantB = { recordId: 'grant-b' };
+    const getPermissionForRequest = sinon.stub();
+    getPermissionForRequest.onFirstCall().resolves({ message: grantA });
+    getPermissionForRequest.onSecondCall().resolves({ message: grantB });
+    (fixture.engine as any)._permissionsApi = { getPermissionForRequest };
+    fixture.sendDwnRequest.resolves({
+      roleRecordId : 'role-a',
+      status       : { code: 200 },
+      subscription : { close: sinon.stub().resolves() },
+    });
+    const delegateDid = 'did:example:device';
+    const roleAuthorization = {
+      kind         : 'role' as const,
+      actorDid     : 'did:example:member',
+      protocolRole : 'notebook/viewer',
+      roleRecordId : 'role-a',
+    };
+    fixture.controller.link.authorization = roleAuthorization;
+    fixture.controller.link.delegateDid = delegateDid;
+    fixture.controller.link.scope = {
+      kind          : 'context',
+      protocol      : 'https://example.com/notebooks',
+      contextId     : 'notebook-a',
+      protocolPaths : ['notebook/page'],
+    };
+    Object.assign(fixture.target, {
+      authorization : roleAuthorization,
+      delegateDid,
+      scope         : fixture.controller.link.scope,
+    });
+
+    expect(await openSubscription(fixture)).toBe(true);
+    const factory = fixture.sendDwnRequest.firstCall.args[0].subscription.resubscribeFactory;
+    await factory();
+
+    const [initial, resumed] = fixture.processRequest.args.map(([request]) => request);
+    expect(initial).toMatchObject({
+      author        : roleAuthorization.actorDid,
+      target        : DID,
+      granteeDid    : delegateDid,
+      messageParams : {
+        filters: [{
+          interface       : 'Records',
+          protocol        : fixture.controller.link.scope.protocol,
+          protocolPath    : 'notebook/page',
+          contextIdPrefix : 'notebook-a',
+        }],
+        protocolRole   : roleAuthorization.protocolRole,
+        delegatedGrant : grantA,
+      },
+    });
+    expect(resumed.messageParams.delegatedGrant).toBe(grantB);
+    expect(getPermissionForRequest.callCount).toBe(2);
+    expect(getPermissionForRequest.alwaysCalledWithMatch({ forceRefresh: true })).toBe(true);
+    expect(fixture.sendDwnRequest.firstCall.args[0].targetDid).toBe(DID);
+    await fixture.controller.dispose();
+  });
+
+  it('should reject and close a role subscription resolved through a replacement role record', async () => {
+    const fixture = createEngineFixture(db);
+    const close = sinon.stub().resolves();
+    const roleAuthorization = {
+      kind         : 'role' as const,
+      actorDid     : 'did:example:member',
+      protocolRole : 'notebook/viewer',
+      roleRecordId : 'role-a',
+    };
+    fixture.controller.link.authorization = roleAuthorization;
+    fixture.target.authorization = roleAuthorization;
+    fixture.sendDwnRequest.resolves({
+      roleRecordId : 'role-b',
+      status       : { code: 200 },
+      subscription : { close },
+    });
+
+    await expect(openSubscription(fixture)).rejects.toThrow('changed from role-a to role-b');
+
+    expect(close.calledOnce).toBe(true);
+    expect(fixture.controller.hasLiveSubscription).toBe(false);
     await fixture.controller.dispose();
   });
 });

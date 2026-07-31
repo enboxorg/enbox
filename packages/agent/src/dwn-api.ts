@@ -1080,7 +1080,7 @@ export class AgentDwnApi {
     }
 
     const links = (await this.agent.sync.getReplicationLinks(target)).filter(link =>
-      syncScopeCoversProtocol(link.scope, protocol)
+      link.scope.kind !== 'context' && syncScopeCoversProtocol(link.scope, protocol)
     );
     if (!areReplicationLinksCurrent(links)) {
       throw new AudienceKeyDeliveryReplicaNotCurrentError();
