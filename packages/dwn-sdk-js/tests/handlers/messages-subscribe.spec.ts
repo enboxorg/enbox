@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import sinon from 'sinon';
 
+import { createMessagesRoleContext } from '../utils/messages-role-test-utils.js';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
@@ -22,7 +23,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, Replication, Time } from '../../src/index.js';
+import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, RecordsWrite, Replication, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
@@ -173,6 +174,69 @@ export function testMessagesSubscribeHandler(): void {
         // await the event
         const resolvedCid = await messageSubscriptionPromise;
         expect(resolvedCid).toBe(messageCid);
+      });
+
+      it('closes a delegated role feed when its concrete role assignment is revoked', async () => {
+        const { delegate, member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
+        const delegatedGrant = await PermissionsProtocol.createGrant({
+          dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+          delegated   : true,
+          grantedTo   : delegate.did,
+          scope       : {
+            interface : DwnInterfaceName.Messages,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+          signer: Jws.createSigner(member),
+        });
+        const received: SubscriptionMessage[] = [];
+        const subscribe = await TestDataGenerator.generateMessagesSubscribe({
+          author         : delegate,
+          delegatedGrant : delegatedGrant.dataEncodedMessage,
+          filters        : [{
+            contextIdPrefix : thread.message.contextId!,
+            interface       : DwnInterfaceName.Records,
+            protocol        : protocolDefinition.protocol,
+            protocolPath    : 'thread/chat',
+          }],
+          protocolRole: 'thread/participant',
+        });
+        const subscribeReply = await dwn.processMessage(source.did, subscribe.message, {
+          subscriptionHandler: message => { received.push(message); },
+        });
+        expect(subscribeReply.status.code).toBe(200);
+        expect(subscribeReply.roleRecordId).toBe(role.message.recordId);
+        const closeSpy = sinon.spy(subscribeReply.subscription!, 'close');
+
+        await Time.minimalSleep();
+        const roleUpdate = await RecordsWrite.createFrom({
+          data                : role.dataBytes!,
+          recordsWriteMessage : role.message,
+          signer              : Jws.createSigner(source),
+        });
+        expect((await dwn.processMessage(source.did, roleUpdate.message, {
+          dataStream: DataStream.fromBytes(role.dataBytes!),
+        })).status.code).toBe(202);
+
+        const chat = await TestDataGenerator.generateRecordsWrite({
+          author          : source,
+          parentContextId : thread.message.contextId,
+          protocol        : protocolDefinition.protocol,
+          protocolPath    : 'thread/chat',
+        });
+        expect((await dwn.processMessage(source.did, chat.message, { dataStream: chat.dataStream })).status.code).toBe(202);
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(received.filter(message => message.type === 'event')).toHaveLength(1);
+        });
+
+        const roleDelete = await TestDataGenerator.generateRecordsDelete({ author: source, recordId: role.message.recordId });
+        expect((await dwn.processMessage(source.did, roleDelete.message)).status.code).toBe(202);
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          const error = received.find(message => message.type === 'error');
+          expect(error?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
+          expect(received.filter(message => message.type === 'event')).toHaveLength(1);
+          expect(closeSpy.calledOnce).toBe(true);
+        });
       });
 
       it('should not allow non-tenant to subscribe to an event stream they are not authorized for', async () => {

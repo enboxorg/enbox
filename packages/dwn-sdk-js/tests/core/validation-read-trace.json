@@ -8,7 +8,6 @@
     "constructRecordChain",
     "fetchInitialWrite",
     "fetchProtocolDefinition",
-    "hasMatchingRoleRecord",
     "queryLatestRoleRecords"
   ],
   "live: encrypted role-audience write": [

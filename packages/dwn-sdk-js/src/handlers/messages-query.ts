@@ -9,8 +9,17 @@ import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesQuery } from '../interfaces/messages-query.js';
+import { MessagesRoleAuthorization } from '../core/messages-role-authorization.js';
 import { Replication } from '../utils/replication.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+
+type MessagesQueryAuthorization = {
+  includeDeleteInitialWrite: boolean;
+  includeEncodedData: boolean;
+  includeShadowFilters: boolean;
+  roleRecordId?: string;
+};
 
 export class MessagesQueryHandler implements MethodHandler {
 
@@ -24,10 +33,10 @@ export class MessagesQueryHandler implements MethodHandler {
       return messageReplyFromError(e, 400);
     }
 
-    let metadataOnly: boolean;
+    let authorization: MessagesQueryAuthorization;
     try {
       await authenticate(message.authorization, this.deps.didResolver);
-      metadataOnly = await this.authorizeMessagesQuery(tenant, messagesQuery);
+      authorization = await this.authorizeMessagesQuery(tenant, messagesQuery);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -43,7 +52,11 @@ export class MessagesQueryHandler implements MethodHandler {
     }
 
     try {
-      const filters = MessagesQueryHandler.convertFilters(message.descriptor.filters, this.deps, !metadataOnly);
+      const filters = MessagesQueryHandler.convertFilters(
+        message.descriptor.filters,
+        this.deps,
+        authorization.includeShadowFilters,
+      );
       const result = await replicationFeedReader.logRead(tenant, {
         cursor : message.descriptor.cursor,
         filters,
@@ -55,11 +68,17 @@ export class MessagesQueryHandler implements MethodHandler {
         entries : await MessagesQueryHandler.buildEntries(
           result.events,
           message.descriptor.cidsOnly ?? false,
-          !metadataOnly,
+          authorization.includeEncodedData,
+          authorization.includeDeleteInitialWrite,
+          tenant,
+          this.deps,
         ),
         cursor  : result.cursor,
         drained : result.drained,
       };
+      if (authorization.roleRecordId !== undefined) {
+        reply.roleRecordId = authorization.roleRecordId;
+      }
 
       const fingerprintScopes = Messages.computeFingerprintScopes(message.descriptor.filters);
       if (fingerprintScopes !== undefined) {
@@ -83,14 +102,34 @@ export class MessagesQueryHandler implements MethodHandler {
   private async authorizeMessagesQuery(
     tenant: string,
     messagesQuery: MessagesQuery,
-  ): Promise<boolean> {
+  ): Promise<MessagesQueryAuthorization> {
+    if (MessagesRoleAuthorization.isRoleInvocation(tenant, messagesQuery)) {
+      const state = await MessagesRoleAuthorization.authorize({
+        tenant,
+        request               : messagesQuery,
+        validationStateReader : this.deps.validationStateReader,
+        failureCode           : DwnErrorCode.MessagesQueryAuthorizationFailed,
+      });
+      return {
+        includeDeleteInitialWrite : true,
+        includeEncodedData        : !state.metadataOnly,
+        includeShadowFilters      : false,
+        roleRecordId              : state.resolvedRole.roleRecordId,
+      };
+    }
+
     const grantSet = await MessagesGrantAuthorization.authorizeQueryOrSubscribeInvocation({
       tenant                : tenant,
       incomingMessage       : messagesQuery.message,
       validationStateReader : this.deps.validationStateReader,
       failureCode           : DwnErrorCode.MessagesQueryAuthorizationFailed,
     });
-    return grantSet?.metadataOnly ?? false;
+    const includeFullRecords = grantSet?.metadataOnly !== true;
+    return {
+      includeDeleteInitialWrite : false,
+      includeEncodedData        : includeFullRecords,
+      includeShadowFilters      : includeFullRecords,
+    };
   }
 
   private static convertFilters(
@@ -109,11 +148,21 @@ export class MessagesQueryHandler implements MethodHandler {
     events: EventLogEntry[],
     cidsOnly: boolean,
     includeEncodedData: boolean,
+    includeDeleteInitialWrite: boolean,
+    tenant: string,
+    deps: HandlerDependencies,
   ): Promise<MessagesQueryReplyEntry[]> {
     const entries: MessagesQueryReplyEntry[] = [];
 
     for (const event of events) {
-      entries.push(await MessagesQueryHandler.buildEntry(event, cidsOnly, includeEncodedData));
+      entries.push(await MessagesQueryHandler.buildEntry(
+        event,
+        cidsOnly,
+        includeEncodedData,
+        includeDeleteInitialWrite,
+        tenant,
+        deps,
+      ));
     }
 
     return entries;
@@ -123,6 +172,9 @@ export class MessagesQueryHandler implements MethodHandler {
     event: EventLogEntry,
     cidsOnly: boolean,
     includeEncodedData: boolean,
+    includeDeleteInitialWrite: boolean,
+    tenant: string,
+    deps: HandlerDependencies,
   ): Promise<MessagesQueryReplyEntry> {
     const messageCid = event.messageCid ?? await Message.getCid(event.event.message);
     const protocol = MessagesQueryHandler.getStringIndex(event.indexes, 'protocol');
@@ -139,11 +191,37 @@ export class MessagesQueryHandler implements MethodHandler {
 
     const { message, encodedData } = Messages.detachEncodedData(event.event.message);
     entry.message = message;
+    if (includeDeleteInitialWrite) {
+      const initialWrite = await MessagesQueryHandler.fetchDeleteInitialWrite(event, tenant, deps);
+      if (initialWrite !== undefined) {
+        entry.initialWrite = Messages.detachEncodedData(initialWrite).message as typeof entry.initialWrite;
+      }
+    }
     if (includeEncodedData && encodedData !== undefined) {
       entry.encodedData = encodedData;
     }
 
     return entry;
+  }
+
+  private static async fetchDeleteInitialWrite(
+    event: EventLogEntry,
+    tenant: string,
+    deps: HandlerDependencies,
+  ): Promise<MessagesQueryReplyEntry['initialWrite']> {
+    const message = event.event.message;
+    if (message.descriptor.interface !== DwnInterfaceName.Records || message.descriptor.method !== DwnMethodName.Delete) {
+      return undefined;
+    }
+
+    if (event.event.initialWrite !== undefined) {
+      return event.event.initialWrite;
+    }
+
+    const recordId = (message.descriptor as { recordId?: unknown }).recordId;
+    return typeof recordId === 'string'
+      ? deps.validationStateReader.fetchInitialWrite(tenant, recordId)
+      : undefined;
   }
 
   private static getStringIndex(indexes: KeyValues, key: string): string | undefined {

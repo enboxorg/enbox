@@ -23,6 +23,8 @@ export type ResolvedProtocolRole = {
   contextIdPrefix?: string;
   protocol: string;
   protocolPath: string;
+  /** Concrete active role assignment, when latest state is locally available. */
+  roleRecordId?: string;
 };
 
 /**
@@ -105,7 +107,12 @@ export async function verifyInvokedRole(
     protocol     : roleProtocolUri,
     protocolPath : roleProtocolPath,
   };
-  await verifyProtocolRoleRecord(tenant, incomingMessage.author!, resolvedRole, validationStateReader);
+  resolvedRole.roleRecordId = await verifyProtocolRoleRecord(
+    tenant,
+    incomingMessage.author!,
+    resolvedRole,
+    validationStateReader,
+  );
   return resolvedRole;
 }
 
@@ -115,21 +122,43 @@ export async function verifyProtocolRoleRecord(
   recipient: string,
   resolvedRole: ResolvedProtocolRole,
   validationStateReader: ValidationStateReader,
-): Promise<void> {
-  const matchingRoleRecordExists = await validationStateReader.hasMatchingRoleRecord({
+): Promise<string | undefined> {
+  const selector = {
     tenant,
     protocol        : resolvedRole.protocol,
     protocolPath    : resolvedRole.protocolPath,
     recipient,
     contextIdPrefix : resolvedRole.contextIdPrefix,
-  });
+  };
+  const latestRoleRecords = await validationStateReader.queryLatestRoleRecords(selector);
+  const expectedRoleRecordId = resolvedRole.roleRecordId;
+  if (expectedRoleRecordId !== undefined) {
+    if (latestRoleRecords.some(record => record.recordId === expectedRoleRecordId)) {
+      return expectedRoleRecordId;
+    }
+    if (latestRoleRecords.length > 0) {
+      throw roleRecordNotFound(resolvedRole);
+    }
+  } else if (latestRoleRecords[0] !== undefined) {
+    return latestRoleRecords[0].recordId;
+  }
+
+  // A locally replicated ancestry-only copy can establish membership without
+  // exposing a latest-state role record. Preserve that existing behavior.
+  const matchingRoleRecordExists = await validationStateReader.hasMatchingRoleRecord(selector);
 
   if (!matchingRoleRecordExists) {
-    throw new DwnError(
-      DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound,
-      `No matching role record found for protocol path ${resolvedRole.protocolPath}`
-    );
+    throw roleRecordNotFound(resolvedRole);
   }
+
+  return expectedRoleRecordId;
+}
+
+function roleRecordNotFound(resolvedRole: ResolvedProtocolRole): DwnError {
+  return new DwnError(
+    DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound,
+    `No matching role record found for protocol path ${resolvedRole.protocolPath}`,
+  );
 }
 
 /**

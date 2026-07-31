@@ -24,6 +24,9 @@
     "protocol": {
       "type": "string"
     },
+    "protocolPath": {
+      "type": "string"
+    },
     "protocolPathPrefix": {
       "type": "string"
     },

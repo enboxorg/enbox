@@ -1,5 +1,5 @@
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
-import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
+import type { ProtocolAction, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
 import { KeyDerivationScheme } from '../utils/hd-key.js';
 
@@ -99,6 +99,31 @@ export function getRuleSetAtPath(protocolPath: string, structure: { [key: string
   }
 
   return current;
+}
+
+/** Returns exact local protocol paths governed by an invoked role. */
+export function getProtocolRoleActionPaths(
+  definition: ProtocolDefinition,
+  rolePath: string,
+  action?: ProtocolAction,
+): string[] {
+  const paths: string[] = [];
+
+  const visit = (ruleSet: ProtocolRuleSet, parentPath: string): void => {
+    for (const [name, value] of Object.entries(ruleSet)) {
+      if (name.startsWith('$')) {continue;}
+      const path = parentPath === '' ? name : `${parentPath}/${name}`;
+      const child = value as ProtocolRuleSet;
+      if ((child.$actions ?? []).some(rule =>
+        rule.role === rolePath && (action === undefined || rule.can.includes(action)))) {
+        paths.push(path);
+      }
+      visit(child, path);
+    }
+  };
+
+  visit(definition.structure as ProtocolRuleSet, '');
+  return paths.sort((left, right) => left.localeCompare(right));
 }
 
 /**

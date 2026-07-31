@@ -1,9 +1,11 @@
+import type { DataEncodedRecordsWriteMessage } from '../types/records-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { ProgressToken } from '../types/subscriptions.js';
 import type { MessagesFilter, MessagesQueryDescriptor, MessagesQueryMessage } from '../types/messages-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
+import { Records } from '../utils/records.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
 import { validateProtocolUrlNormalized } from '../utils/url.js';
@@ -17,12 +19,16 @@ export type MessagesQueryOptions = {
   cursor?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
+  protocolRole?: string;
+  /** Delegated grant allowing the signer to act for the logical author. */
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
 };
 
 export class MessagesQuery extends AbstractMessage<MessagesQueryMessage> {
   public static async parse(message: MessagesQueryMessage): Promise<MessagesQuery> {
     Message.validateJsonSchema(message);
-    await Message.validateSignatureStructure(message.authorization.signature, message.descriptor);
+    const signaturePayload = await Message.validateSignatureStructure(message.authorization.signature, message.descriptor);
+    await Records.validateDelegatedGrantReferentialIntegrity(message, signaturePayload);
 
     for (const filter of message.descriptor.filters) {
       if ('protocol' in filter && filter.protocol !== undefined) {
@@ -59,7 +65,9 @@ export class MessagesQuery extends AbstractMessage<MessagesQueryMessage> {
 
     const authorization = await Message.createAuthorization({
       descriptor,
-      signer: options.signer,
+      signer         : options.signer,
+      protocolRole   : options.protocolRole,
+      delegatedGrant : options.delegatedGrant,
       ...permissionGrantInvocation,
     });
 

@@ -1,3 +1,4 @@
+import type { MessagesRoleAuthorizationState } from '../core/messages-role-authorization.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { EventSubscription, ProgressGapInfo, ProgressToken, ReplicationFeedReader, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
@@ -8,6 +9,7 @@ import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
+import { MessagesRoleAuthorization } from '../core/messages-role-authorization.js';
 import { MessagesSubscribe } from '../interfaces/messages-subscribe.js';
 import { Replication } from '../utils/replication.js';
 import { Time } from '../utils/time.js';
@@ -15,6 +17,7 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 type MessagesSubscribeAuthorization =
   | { kind: 'owner' }
+  | { kind: 'role'; state: MessagesRoleAuthorizationState }
   | {
     kind: 'delegate';
     expectedGrantor: string;
@@ -68,11 +71,16 @@ export class MessagesSubscribeHandler implements MethodHandler {
       deps: this.deps,
       messagesSubscribe,
       subscriptionHandler,
+      tenant,
     });
 
     const { filters, cursor: eventLogCursor } = message.descriptor;
-    const includeShadowFilters = authorization.kind === 'owner' || !authorization.metadataOnly;
+    const includeShadowFilters = authorization.kind === 'owner'
+      || (authorization.kind === 'delegate' && !authorization.metadataOnly);
     const messagesFilters = Messages.convertFilters(filters, this.deps.coreProtocols, includeShadowFilters);
+    if (authorization.kind === 'role') {
+      messagesFilters.push(MessagesRoleAuthorization.roleWakeFilter(authorization.state));
+    }
     const messageCid = await Message.getCid(message);
 
     try {
@@ -86,6 +94,9 @@ export class MessagesSubscribeHandler implements MethodHandler {
         status: { code: 200, detail: 'OK' },
         subscription,
       };
+      if (authorization.kind === 'role') {
+        reply.roleRecordId = authorization.state.resolvedRole.roleRecordId;
+      }
       try {
         await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, this.deps);
       } catch {
@@ -166,6 +177,16 @@ export class MessagesSubscribeHandler implements MethodHandler {
     messagesSubscribe: MessagesSubscribe,
     deps: HandlerDependencies
   ): Promise<MessagesSubscribeAuthorization> {
+    if (MessagesRoleAuthorization.isRoleInvocation(tenant, messagesSubscribe)) {
+      const state = await MessagesRoleAuthorization.authorize({
+        tenant,
+        request               : messagesSubscribe,
+        validationStateReader : deps.validationStateReader,
+        failureCode           : DwnErrorCode.MessagesSubscribeAuthorizationFailed,
+      });
+      return { kind: 'role', state };
+    }
+
     const grantSet = await MessagesGrantAuthorization.authorizeQueryOrSubscribeInvocation({
       tenant                : tenant,
       incomingMessage       : messagesSubscribe.message,
@@ -190,8 +211,9 @@ export class MessagesSubscribeHandler implements MethodHandler {
     deps: HandlerDependencies;
     messagesSubscribe: MessagesSubscribe;
     subscriptionHandler: SubscriptionListener;
+    tenant: string;
   }): GuardedSubscriptionHandler {
-    const { authorization, deps, messagesSubscribe, subscriptionHandler } = input;
+    const { authorization, deps, messagesSubscribe, subscriptionHandler, tenant } = input;
     if (authorization.kind === 'owner') {
       return {
         listener        : subscriptionHandler,
@@ -235,14 +257,23 @@ export class MessagesSubscribeHandler implements MethodHandler {
     // introduced by caching revocation lookups.
     const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {
       try {
-        await MessagesGrantAuthorization.authorizeSubscribeDelivery({
-          messagesSubscribeMessage : messagesSubscribe.message,
-          expectedGrantor          : authorization.expectedGrantor,
-          expectedGrantee          : authorization.expectedGrantee,
-          permissionGrants         : authorization.permissionGrants,
-          validationStateReader    : deps.validationStateReader,
-          deliveryTimestamp        : Time.getCurrentTimestamp(),
-        });
+        if (authorization.kind === 'role') {
+          await MessagesRoleAuthorization.authorizeDelivery({
+            authorization          : authorization.state,
+            authorizationTimestamp : Time.getCurrentTimestamp(),
+            tenant,
+            validationStateReader  : deps.validationStateReader,
+          });
+        } else {
+          await MessagesGrantAuthorization.authorizeSubscribeDelivery({
+            messagesSubscribeMessage : messagesSubscribe.message,
+            expectedGrantor          : authorization.expectedGrantor,
+            expectedGrantee          : authorization.expectedGrantee,
+            permissionGrants         : authorization.permissionGrants,
+            validationStateReader    : deps.validationStateReader,
+            deliveryTimestamp        : Time.getCurrentTimestamp(),
+          });
+        }
       } catch (error) {
         if (error instanceof DwnError) {
           emitTerminalDeliveryError(
@@ -261,8 +292,15 @@ export class MessagesSubscribeHandler implements MethodHandler {
         return;
       }
 
+      if (authorization.kind === 'role' && MessagesRoleAuthorization.isRoleWakeEvent(subMessage, authorization.state)) {
+        return;
+      }
+
+      const metadataOnly = authorization.kind === 'delegate'
+        ? authorization.metadataOnly
+        : authorization.state.metadataOnly;
       if (!closeRequested) {
-        subscriptionHandler(authorization.metadataOnly
+        subscriptionHandler(metadataOnly
           ? MessagesSubscribeHandler.toMetadataOnlyEvent(subMessage)
           : subMessage);
       }

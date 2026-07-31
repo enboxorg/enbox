@@ -158,7 +158,7 @@ export class MessagesGrantAuthorization {
     for (const filter of filters) {
       const target = {
         protocol     : filter.protocol,
-        protocolPath : filter.protocolPathPrefix,
+        protocolPath : filter.protocolPath ?? filter.protocolPathPrefix,
         contextId    : filter.contextIdPrefix,
       };
       const matchingScopes = scopes.filter(scope => PermissionScopeMatcher.matches(scope, target));

@@ -1,4 +1,5 @@
 import type { RangeCriterion } from './query-types.js';
+import type { RecordsWriteMessage } from './records-types.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, MessageSubscription } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { ProgressGapInfo, ProgressToken, SubscriptionListener } from './subscriptions.js';
@@ -10,6 +11,8 @@ export type MessagesFilter = {
   interface?: string;
   method?: string;
   protocol?: string;
+  /** Exact protocol path filter. */
+  protocolPath?: string;
   /** Prefix filter for protocolPath. Matches records whose protocolPath equals
    *  the prefix or starts with the prefix followed by '/'. */
   protocolPathPrefix?: string;
@@ -64,6 +67,7 @@ export type MessagesQueryReplyEntry = {
   isLatestBaseState: boolean;
   protocol?: string;
   message?: GenericMessage;
+  initialWrite?: RecordsWriteMessage;
   encodedData?: string;
 };
 
@@ -72,6 +76,8 @@ export type MessagesQueryReply = GenericMessageReply & {
   cursor?: ProgressToken;
   drained?: boolean;
   fingerprint?: string;
+  /** Active role assignment used to authorize this feed, when role-authorized. */
+  roleRecordId?: string;
   /** Present when status.code is 410 — structured gap metadata. */
   error?: { code: 'ProgressGap' } & ProgressGapInfo;
 };
@@ -87,6 +93,8 @@ export type MessagesSubscribeMessage = {
 
 export type MessagesSubscribeReply = GenericMessageReply & {
   subscription?: MessageSubscription;
+  /** Active role assignment used to authorize this feed, when role-authorized. */
+  roleRecordId?: string;
   /**
    * Feed fingerprint over the subscription's filter scopes, observed after the
    * subscription became active. Present only when the filters map onto
