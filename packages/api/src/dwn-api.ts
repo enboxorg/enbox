@@ -23,6 +23,8 @@ import type {
 
 import type { MessagesSubscribeReply, RecordsSubscribeReply } from '@enbox/dwn-sdk-js';
 
+import type { RecordExecutionContext } from './record-types.js';
+
 import { captureRecordDataAccess } from './record-data-access.js';
 import { dataToBlob } from './utils.js';
 import { PermissionGrant } from './permission-grant.js';
@@ -394,22 +396,23 @@ export class DwnApi {
     request: RecordsQueryRequest,
     missingGrantPolicy: MissingRecordsReadGrantPolicy,
   ): Promise<RecordsQueryResponse> {
-    const { from, ...messageParams } = request;
+    const { from, ...requestedMessageParams } = request;
+    const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(from, requestedMessageParams, false);
 
     const agentRequest = await this.prepareRecordsReadRequest({
       author      : this.connectedDid,
       messageParams,
       messageType : DwnInterface.RecordsQuery,
-      target      : from || this.connectedDid,
+      target,
     }, {
       protocol     : messageParams.filter?.protocol,
       protocolPath : messageParams.filter?.protocolPath,
       contextId    : messageParams.filter?.contextId,
     }, missingGrantPolicy);
 
-    const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
+    const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
     const { entries = [], status, cursor } = agentResponse.reply;
-    const dataAccess = captureRecordDataAccess(agentRequest, from !== undefined);
+    const dataAccess = captureRecordDataAccess(agentRequest, remoteTarget !== undefined);
     const records = entries.map((entry) => {
       const { encodedData, ...recordsWrite } = entry;
       const recordOptions = {
@@ -421,7 +424,7 @@ export class DwnApi {
         storedData   : encodedData,
         ...recordsWrite as DwnMessage[DwnInterface.RecordsWrite]
       };
-      return new Record(this.agent, recordOptions, this.permissionsApi);
+      return new Record(this.agent, recordOptions, this.permissionsApi, this.recordExecutionContext);
     });
 
     return { records, status, cursor };
@@ -435,6 +438,37 @@ export class DwnApi {
     return remoteTarget
       ? this.agent.sendDwnRequest(request)
       : this.agent.processDwnRequest(request);
+  }
+
+  /** Apply the routing and role carried by an internally bound shared context. */
+  private async resolveRecordsRoute<T extends { protocolRole?: string }>(
+    from: string | undefined,
+    requestedMessageParams: T,
+    mutation: boolean,
+  ): Promise<{ messageParams: T; remoteTarget?: string; target: string }> {
+    const context = this.recordExecutionContext;
+    if (context === undefined) {
+      return {
+        messageParams : requestedMessageParams,
+        remoteTarget  : from,
+        target        : from ?? this.connectedDid,
+      };
+    }
+
+    await context.assertActive();
+    if (from !== undefined && from !== context.tenantDid) {
+      throw new TypeError('Shared context operations cannot target another tenant.');
+    }
+    if (requestedMessageParams.protocolRole !== undefined
+      && requestedMessageParams.protocolRole !== context.protocolRole) {
+      throw new TypeError('Shared context operations cannot invoke another protocol role.');
+    }
+
+    return {
+      messageParams : { ...requestedMessageParams, protocolRole: context.protocolRole },
+      remoteTarget  : mutation ? context.tenantDid : undefined,
+      target        : context.tenantDid,
+    };
   }
 
   /**
@@ -454,22 +488,58 @@ export class DwnApi {
   /** @internal — used by tests to reset state between runs. */
   set connectedDid(did: string) { this._connectedDid = did; }
 
+  /** @internal Tenant whose local replica backs this records API. */
+  public get recordTenantDid(): string {
+    return this.recordExecutionContext?.tenantDid ?? this.connectedDid;
+  }
+
+  /** @internal Exact followed context, when this records API is context-bound. */
+  public get followedContextId(): string | undefined {
+    return this.recordExecutionContext?.contextId;
+  }
+
+  /** @internal Exact role-record incarnation backing this records API. */
+  public get followedSourceId(): string | undefined {
+    return this.recordExecutionContext?.followedSourceId;
+  }
+
+  /** @internal Current delegate used to author records requests for the connected DID. */
+  public get recordDelegateDid(): string | undefined {
+    return this.delegateDid;
+  }
+
   /** (optional) The DID of the signer when signing with permissions */
   private readonly delegateDid?: string;
 
   /** Holds the instance of {@link AgentPermissionsApi} that helps when dealing with permissions protocol records */
   private readonly permissionsApi: AgentPermissionsApi;
 
+  /** Optional routing for a locally replicated foreign tenant. */
+  private readonly recordExecutionContext?: RecordExecutionContext;
+
   constructor(options: {
     agent: EnboxAgent;
     connectedDid: string;
     delegateDid?: string;
     permissionsApi?: AgentPermissionsApi;
+    recordExecutionContext?: RecordExecutionContext;
   }) {
     this.agent = options.agent;
     this._connectedDid = options.connectedDid;
     this.delegateDid = options.delegateDid;
     this.permissionsApi = options.permissionsApi ?? new AgentPermissionsApi({ agent: this.agent });
+    this.recordExecutionContext = options.recordExecutionContext;
+  }
+
+  /** @internal Bind the existing records API to one locally replicated foreign tenant. */
+  public withRecordExecutionContext(context: RecordExecutionContext): DwnApi {
+    return new DwnApi({
+      agent                  : this.agent,
+      connectedDid           : this.connectedDid,
+      delegateDid            : this.delegateDid,
+      permissionsApi         : this.permissionsApi,
+      recordExecutionContext : context,
+    });
   }
 
   /** Whether this DWN API instance is operating as a delegate. */
@@ -824,20 +894,25 @@ export class DwnApi {
        * Count records matching the given filter.
        */
       count: async (request: RecordsCountRequest): Promise<RecordsCountResponse> => {
-        const { from, ...messageParams } = request;
+        const { from, ...requestedMessageParams } = request;
+        const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
+          from,
+          requestedMessageParams,
+          false,
+        );
 
         const agentRequest = await this.prepareRecordsReadRequest({
           author      : this.connectedDid,
           messageParams,
           messageType : DwnInterface.RecordsCount,
-          target      : from || this.connectedDid,
+          target,
         }, {
           protocol     : messageParams.filter?.protocol,
           protocolPath : messageParams.filter?.protocolPath,
           contextId    : messageParams.filter?.contextId,
         });
 
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
 
         const { count, status } = agentResponse.reply;
         return { count, status };
@@ -847,7 +922,12 @@ export class DwnApi {
        * Delete a record
        */
       delete: async (request: RecordsDeleteRequest): Promise<DwnResponseStatus> => {
-        const { from, protocol, protocolPath, contextId, ...messageParams } = request;
+        const { from, protocol, protocolPath, contextId, ...requestedMessageParams } = request;
+        const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
+          from,
+          requestedMessageParams,
+          true,
+        );
 
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsDelete> = {
           /**
@@ -862,7 +942,7 @@ export class DwnApi {
            * If `from` is provided, the delete operation will be executed on a remote DWN.
            * Otherwise, the record will be deleted on the local DWN.
            */
-          target      : from || this.connectedDid,
+          target,
         };
 
         if (this.delegateDid) {
@@ -883,13 +963,8 @@ export class DwnApi {
           agentRequest.granteeDid = this.delegateDid;
         }
 
-        let agentResponse: DwnResponse<DwnInterface.RecordsDelete>;
-
-        if (from) {
-          agentResponse = await this.agent.sendDwnRequest(agentRequest);
-        } else {
-          agentResponse = await this.agent.processDwnRequest(agentRequest);
-        }
+        const agentResponse: DwnResponse<DwnInterface.RecordsDelete> =
+          await this.dispatchDwnRequest(agentRequest, remoteTarget);
 
         const { reply: { status } } = agentResponse;
 
@@ -907,7 +982,12 @@ export class DwnApi {
        * Read a single record based on the given filter
        */
       read: async (request: RecordsReadRequest): Promise<RecordsReadResponse> => {
-        const { from, ...messageParams } = request;
+        const { from, ...requestedMessageParams } = request;
+        const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
+          from,
+          requestedMessageParams,
+          false,
+        );
 
         const agentRequest = await this.prepareRecordsReadRequest({
           /**
@@ -922,20 +1002,20 @@ export class DwnApi {
            * If `from` is provided, the read operation will be executed on a remote DWN.
            * Otherwise, the read will occur on the local DWN.
           */
-          target      : from || this.connectedDid,
+          target,
         }, {
           protocol     : messageParams.filter?.protocol,
           protocolPath : messageParams.filter?.protocolPath,
           contextId    : messageParams.filter?.contextId,
         });
 
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
 
         const { reply: { entry, status } } = agentResponse;
 
         let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
-          const dataAccess = captureRecordDataAccess(agentRequest, from !== undefined);
+          const dataAccess = captureRecordDataAccess(agentRequest, remoteTarget !== undefined);
           const recordOptions = {
             /**
              * Extract the `author` DID from the record since records may be signed by the
@@ -956,7 +1036,7 @@ export class DwnApi {
             ...entry.recordsWrite,
           };
 
-          record = new Record(this.agent, recordOptions, this.permissionsApi);
+          record = new Record(this.agent, recordOptions, this.permissionsApi, this.recordExecutionContext);
         }
 
         return { record, status };
@@ -964,13 +1044,18 @@ export class DwnApi {
 
       /** Subscribe to raw record events matching the given filter. */
       subscribe: async (request: RecordsSubscribeRequest): Promise<RecordsSubscribeResponse> => {
-        const { from, subscriptionHandler, ...messageParams } = request;
+        const { from, subscriptionHandler, ...requestedMessageParams } = request;
+        const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
+          from,
+          requestedMessageParams,
+          false,
+        );
 
         const agentRequest = await this.prepareRecordsReadRequest({
           author      : this.connectedDid,
           messageParams,
           messageType : DwnInterface.RecordsSubscribe,
-          target      : from || this.connectedDid,
+          target,
           subscriptionHandler,
         }, {
           protocol     : messageParams.filter?.protocol,
@@ -978,7 +1063,7 @@ export class DwnApi {
           contextId    : messageParams.filter?.contextId,
         });
 
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
         return agentResponse.reply;
       },
 
@@ -994,8 +1079,8 @@ export class DwnApi {
       write: async (request: RecordsWriteRequest): Promise<RecordsWriteResponse> => {
         const { data, from, store, recipientRolePublicKey, ...restParams } = request;
         const { dataBlob, dataFormat } = dataToBlob(data, restParams.dataFormat);
-
-        const messageParams = { ...restParams, dataFormat };
+        const route = await this.resolveRecordsRoute(from, { ...restParams, dataFormat }, true);
+        const { messageParams, remoteTarget, target } = route;
 
         const dwnRequestParams: ProcessDwnRequest<DwnInterface.RecordsWrite> = {
           store,
@@ -1011,7 +1096,7 @@ export class DwnApi {
            * provided, the write is dispatched to that tenant's remote DWN (mirroring the remote
            * branch reads use). Otherwise, the record is written to the local DWN.
            */
-          target      : from ?? this.connectedDid,
+          target,
           dataStream  : dataBlob,
           /**
            * Forwarded verbatim on both paths: the agent REJECTS a supplied key on the remote
@@ -1050,13 +1135,8 @@ export class DwnApi {
           dwnRequestParams.granteeDid = this.delegateDid;
         }
 
-        let agentResponse: DwnResponse<DwnInterface.RecordsWrite>;
-
-        if (from) {
-          agentResponse = await this.agent.sendDwnRequest(dwnRequestParams);
-        } else {
-          agentResponse = await this.agent.processDwnRequest(dwnRequestParams);
-        }
+        const agentResponse: DwnResponse<DwnInterface.RecordsWrite> =
+          await this.dispatchDwnRequest(dwnRequestParams, remoteTarget);
 
         // NOTE: `audienceKeyDelivery` is populated by local processing only — the remote
         // (`sendDwnRequest`) branch never reports one, and none is ever fabricated for it.
@@ -1077,7 +1157,10 @@ export class DwnApi {
              * local DWN.
              */
             connectedDid : this.connectedDid,
-            dataAccess   : captureRecordDataAccess(dwnRequestParams, from !== undefined),
+            dataAccess   : captureRecordDataAccess(
+              dwnRequestParams,
+              remoteTarget !== undefined && this.recordExecutionContext === undefined,
+            ),
             /**
              * Stamp the invoked role so follow-up operations on the returned record (data
              * re-reads, updates) carry the same authorization the write used — mirroring how
@@ -1089,7 +1172,7 @@ export class DwnApi {
             ...responseMessage,
           };
 
-          record = new Record(this.agent, recordOptions, this.permissionsApi);
+          record = new Record(this.agent, recordOptions, this.permissionsApi, this.recordExecutionContext);
         }
 
         return { record, status, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };

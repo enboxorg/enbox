@@ -103,6 +103,9 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   private readonly _query: CompiledRecordQuery;
   private readonly _signal?: AbortSignal;
   private readonly _sync?: SyncEngine;
+  private readonly _tenantDid: string;
+  private readonly _followedContextId?: string;
+  private readonly _followedSourceId?: string;
 
   private _closed = false;
   private _closePromise?: Promise<void>;
@@ -131,7 +134,12 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     this._materializeRecords = options.materializeRecords;
     this._query = options.query;
     this._signal = options.signal;
-    this._sync = options.query.from === undefined ? options.sync : undefined;
+    this._sync = options.dwn.followedSourceId !== undefined || options.query.from === undefined
+      ? options.sync
+      : undefined;
+    this._tenantDid = options.dwn.recordTenantDid;
+    this._followedContextId = options.dwn.followedContextId;
+    this._followedSourceId = options.dwn.followedSourceId;
 
     this._signal?.addEventListener('abort', this._handleAbort, { once: true });
     this._syncUnsubscribe = this._sync?.on((event): void => {
@@ -246,16 +254,27 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
   /** Wake only for sync transitions that can change this local materialization. */
   private handleSyncEvent(event: SyncEvent): void {
-    if (this._closed || event.tenantDid !== this._dwn.connectedDid) {
+    if (this._closed || event.tenantDid !== this._tenantDid) {
       return;
     }
 
     if (event.type === 'identity:registration-change') {
-      this.handleRegistrationChange(event);
+      if (this._followedContextId === undefined) {
+        this.handleRegistrationChange(event);
+      }
       return;
     }
 
-    if (!syncEventCoversProtocol(event, this._query.filter.protocol)) {
+    if (!syncEventCoversProtocol(event, this._query.filter.protocol)
+      || (this._followedContextId !== undefined && event.contextId !== this._followedContextId)) {
+      return;
+    }
+
+    // Context events do not expose the role-record incarnation. Re-resolve
+    // the exact link instead of letting a superseded sibling link publish a
+    // provisional stale/error state for this handle.
+    if (this._followedSourceId !== undefined) {
+      this.requestMaterialization();
       return;
     }
 
@@ -390,13 +409,21 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       return { state: 'ready' };
     }
 
-    const registration = await this._sync.getIdentityOptions(this._dwn.connectedDid);
-    if (!syncRegistrationCoversProtocol(registration, this._query.filter.protocol)) {
-      return { state: 'ready' };
+    if (this._followedContextId === undefined) {
+      const registration = await this._sync.getIdentityOptions(this._tenantDid);
+      if (!syncRegistrationCoversProtocol(registration, this._query.filter.protocol)) {
+        return { state: 'ready' };
+      }
     }
 
-    const links = (await this._sync.getReplicationLinks(this._dwn.connectedDid))
-      .filter((link): boolean => syncScopeCoversProtocol(link.scope, this._query.filter.protocol));
+    const links = (await this._sync.getReplicationLinks(this._tenantDid))
+      .filter((link): boolean => this._followedContextId === undefined
+        ? syncScopeCoversProtocol(link.scope, this._query.filter.protocol)
+        : link.scope.kind === 'context'
+          && link.scope.protocol === this._query.filter.protocol
+          && link.scope.contextId === this._followedContextId
+          && link.followedSourceId === this._followedSourceId
+          && link.scope.protocolPaths.includes(this._query.filter.protocolPath));
     const state = projectReplicationCurrentness(links, this._hasPublishedReady);
     if (state === 'error') {
       return this.resolveUnavailableCurrentness(true);

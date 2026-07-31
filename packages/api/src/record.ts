@@ -22,6 +22,7 @@ import type {
 import type {
   RecordDataAccess,
   RecordDeleteParams,
+  RecordExecutionContext,
   RecordModel,
   RecordOptions,
   RecordUpdateParams,
@@ -144,6 +145,8 @@ export class Record<T = unknown> implements RecordModel {
   private readonly _delegateDid?: string;
   /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
   private readonly _permissionsApi: PermissionsApi;
+  /** Optional default target for mutations of a locally replicated foreign record. */
+  private readonly _executionContext?: RecordExecutionContext;
   /** Version-pinned access to the raw bytes stored for the current RecordsWrite. */
   private _storedData?: StoredRecordDataSource;
   /** Authorization and routing context used to open and decrypt the stored bytes. */
@@ -310,7 +313,12 @@ export class Record<T = unknown> implements RecordModel {
     return message;
   }
 
-  constructor(agent: EnboxAgent, options: RecordOptions, permissionsApi?: PermissionsApi) {
+  constructor(
+    agent: EnboxAgent,
+    options: RecordOptions,
+    permissionsApi?: PermissionsApi,
+    executionContext?: RecordExecutionContext,
+  ) {
 
     this._agent = agent;
 
@@ -325,6 +333,7 @@ export class Record<T = unknown> implements RecordModel {
     this._connectedDid = options.connectedDid;
     this._delegateDid = options.delegateDid;
     this._permissionsApi = permissionsApi ?? new AgentPermissionsApi({ agent });
+    this._executionContext = executionContext;
 
     this._dataAccess = options.dataAccess;
 
@@ -353,6 +362,7 @@ export class Record<T = unknown> implements RecordModel {
    */
   get data(): RecordData {
     return createRecordData(async (): Promise<ReadableStream<Uint8Array>> => {
+      await this._executionContext?.assertActive();
       if (this.deleted) {
         throw new Error('Cannot access data of a deleted record.');
       }
@@ -400,6 +410,10 @@ export class Record<T = unknown> implements RecordModel {
    * @beta
    */
   async store(importRecord: boolean = false): Promise<void> {
+    await this._executionContext?.assertActive();
+    if (this._executionContext !== undefined) {
+      throw new TypeError('Shared context records cannot be stored manually.');
+    }
     // if we are importing the record we sign it as the owner
     const result = await this.processRecord({ signAsOwner: importRecord, store: true });
     requireDwnSuccess('Record.store', result);
@@ -415,6 +429,10 @@ export class Record<T = unknown> implements RecordModel {
    * @beta
    */
   async import(store: boolean = true): Promise<void> {
+    await this._executionContext?.assertActive();
+    if (this._executionContext !== undefined) {
+      throw new TypeError('Shared context records cannot be imported.');
+    }
     const result = await this.processRecord({ store, signAsOwner: true });
     requireDwnSuccess('Record.import', result);
   }
@@ -436,6 +454,10 @@ export class Record<T = unknown> implements RecordModel {
    * @beta
    */
   async send(target?: string): Promise<void> {
+    await this._executionContext?.assertActive();
+    if (this._executionContext !== undefined) {
+      throw new TypeError('Shared context records cannot be sent manually.');
+    }
     const initialWrite = this._initialWrite;
     target ??= this._connectedDid;
 
@@ -570,6 +592,17 @@ export class Record<T = unknown> implements RecordModel {
     { timestamp, data, protocolRole, store = true, recipientRolePublicKey, from, ...params }: RecordUpdateParams<T>
   ): Promise<Record<T>> {
 
+    await this._executionContext?.assertActive();
+
+    if (this._executionContext !== undefined) {
+      if (from !== undefined && from !== this._executionContext.tenantDid) {
+        throw new TypeError('Shared context records cannot be updated on another tenant.');
+      }
+      if (protocolRole !== undefined && protocolRole !== this._executionContext.protocolRole) {
+        throw new TypeError('Shared context records cannot invoke another protocol role.');
+      }
+    }
+
     if (this.deleted) {
       throw new Error('Record: Cannot revive a deleted record.');
     }
@@ -586,7 +619,7 @@ export class Record<T = unknown> implements RecordModel {
       ...descriptor,
       ...params,
       parentContextId,
-      protocolRole     : protocolRole ?? this._protocolRole, // Use the current protocolRole if not provided.
+      protocolRole     : this._executionContext?.protocolRole ?? protocolRole ?? this._protocolRole,
       messageTimestamp : timestamp, // Map Record class `timestamp` property to DWN SDK `messageTimestamp`
       recordId         : this._recordId
     };
@@ -618,17 +651,17 @@ export class Record<T = unknown> implements RecordModel {
       delete updateMessage.datePublished;
     }
 
-    // Cross-tenant routing is strictly OPT-IN: dispatch remotely only when the
-    // caller passes `from` and it differs from the connected DID. A record that
-    // was merely read from a remote tenant still updates locally without `from`.
-    const isRemote = from !== undefined && from !== this._connectedDid;
+    // Public cross-tenant updates remain opt-in through `from`. A package-internal
+    // execution context supplies the same target for a locally replicated record.
+    const target = this._executionContext?.tenantDid ?? from ?? this._connectedDid;
+    const isRemote = target !== this._connectedDid;
 
     const requestOptions: ProcessDwnRequest<DwnInterface.RecordsWrite> = {
       author        : this._connectedDid,
       dataStream    : dataBlob,
       messageParams : { ...updateMessage },
       messageType   : DwnInterface.RecordsWrite,
-      target        : from ?? this._connectedDid,
+      target,
       store,
       recipientRolePublicKey,
     };
@@ -650,7 +683,11 @@ export class Record<T = unknown> implements RecordModel {
     // whoever signed this update, which may differ from the previous author.
     const msg = responseMessage as DwnMessage[DwnInterface.RecordsWrite];
     const updatedAuthor = getRecordAuthor(msg) ?? this._author;
-    const dataAccess = captureRecordDataAccess(requestOptions, isRemote);
+    // A mutation of a locally replicated record does not turn later data reads
+    // into network requests; the replica remains this handle's read source.
+    const dataAccess = this._executionContext !== undefined
+      ? this._dataAccess
+      : captureRecordDataAccess(requestOptions, isRemote);
     // A stored metadata-only update should re-open the accepted state from its
     // new target. A non-stored update has no target copy to reopen, so retain
     // the existing exact-CID source until the constructed message is sent.
@@ -667,7 +704,7 @@ export class Record<T = unknown> implements RecordModel {
     this._encryption = msg.encryption;
     this._contextId = msg.contextId;
     this._initialWrite = initialWrite;
-    this._protocolRole = protocolRole ?? this._protocolRole;
+    this._protocolRole = this._executionContext?.protocolRole ?? protocolRole ?? this._protocolRole;
     this._author = updatedAuthor;
     this._dataAccess = dataAccess;
     this._storedData = this.createStoredDataSource(storedData);
@@ -771,7 +808,14 @@ export class Record<T = unknown> implements RecordModel {
    * @returns A promise that resolves after this record reflects the accepted tombstone.
    */
   async delete(deleteParams?: RecordDeleteParams): Promise<void> {
-    const { store = true, signAsOwner, timestamp } = deleteParams || {};
+    await this._executionContext?.assertActive();
+    const { protocolRole, store = true, signAsOwner, timestamp } = deleteParams || {};
+    if (this._executionContext !== undefined
+      && protocolRole !== undefined
+      && protocolRole !== this._executionContext.protocolRole) {
+      throw new TypeError('Shared context records cannot invoke another protocol role.');
+    }
+    const effectiveProtocolRole = this._executionContext?.protocolRole ?? protocolRole ?? this._protocolRole;
 
     const signAsOwnerValue = signAsOwner && this._delegateDid === undefined;
     const signAsOwnerDelegate = signAsOwner && this._delegateDid !== undefined;
@@ -787,20 +831,25 @@ export class Record<T = unknown> implements RecordModel {
       this._initialWrite = { ...this.rawMessage as DwnMessage[DwnInterface.RecordsWrite] };
     }
 
-    await this.processInitialWriteIfNeeded({ store, signAsOwner });
+    const target = this._executionContext?.tenantDid ?? this._connectedDid;
+    const isRemote = target !== this._connectedDid;
+    if (!isRemote) {
+      await this.processInitialWriteIfNeeded({ store, signAsOwner });
+    }
 
     // prepare delete options
     const deleteOptions: ProcessDwnRequest<DwnInterface.RecordsDelete> = {
       messageType : DwnInterface.RecordsDelete,
       author      : this._connectedDid,
-      target      : this._connectedDid,
+      target,
       signAsOwner : signAsOwnerValue,
       signAsOwnerDelegate,
       store
     };
 
-    // Check to see if the provided protocolRole within the deleteParams is different from the current protocolRole.
-    const differentRole = deleteParams?.protocolRole ? getRecordProtocolRole(this.rawMessage) !== deleteParams.protocolRole : false;
+    // A cached tombstone can only be reused under the role that signed it.
+    const differentRole = this.deleted && effectiveProtocolRole !== undefined
+      && getRecordProtocolRole(this.rawMessage) !== effectiveProtocolRole;
     // A request that escalates a plain tombstone to a prune, or explicitly re-stamps the
     // tombstone's timestamp, must construct a new RecordsDelete: resending the cached message
     // would silently ignore the request and lose to the standing tombstone as a 409 Conflict.
@@ -823,13 +872,15 @@ export class Record<T = unknown> implements RecordModel {
         prune            : prune,
         recordId         : this._recordId,
         messageTimestamp : timestamp,
-        protocolRole     : deleteParams?.protocolRole ?? this._protocolRole // if no protocolRole is provided, use the current protocolRole
+        protocolRole     : effectiveProtocolRole,
       };
     }
 
     await this.applyDelegateGrant(deleteOptions);
 
-    const agentResponse = await this._agent.processDwnRequest(deleteOptions);
+    const agentResponse = isRemote
+      ? await this._agent.sendDwnRequest(deleteOptions)
+      : await this._agent.processDwnRequest(deleteOptions);
     const { message, reply } = agentResponse;
     requireDwnSuccess('Record.delete', reply);
 
@@ -841,7 +892,7 @@ export class Record<T = unknown> implements RecordModel {
     this._encryption = undefined;
     this._authorization = deleteMsg.authorization;
     this._contextId = undefined;
-    this._protocolRole = deleteParams?.protocolRole ?? this._protocolRole;
+    this._protocolRole = effectiveProtocolRole;
     this._storedData = undefined;
     this._rawMessageDirty = true;
   }

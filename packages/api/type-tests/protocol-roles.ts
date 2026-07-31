@@ -78,6 +78,17 @@ void typed.records.create(roleOrRecordPath, {
   recipient : 'did:example:alice',
 });
 
+const sharedContext = typed.contexts.follow({
+  contextId : 'workspace-id',
+  role      : 'workspace/member',
+  sourceDid : 'did:example:owner',
+});
+void sharedContext.then(context => context.records.query('workspace'));
+void sharedContext.then(context => context.whenCurrent());
+
+// @ts-expect-error shared contexts can only be followed through declared role paths.
+void typed.contexts.follow({ contextId: 'workspace-id', role: 'workspace', sourceDid: 'did:example:owner' });
+
 const deliveryState: Promise<RoleDeliveryState | undefined> = encryptedTyped.records.deliveryState('admin', 'role-id');
 void deliveryState;
 void encryptedTyped.records.retryDelivery('workspace/member', 'role-id');

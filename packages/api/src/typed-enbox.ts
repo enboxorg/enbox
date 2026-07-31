@@ -43,7 +43,7 @@ import type {
   TypeNameAtPath,
 } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
-import type { DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, SyncEngine } from '@enbox/agent';
+import type { DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, FollowedSyncSource, SyncEngine } from '@enbox/agent';
 import type { MaterializedRecord, Record } from './record.js';
 import type { ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
@@ -52,6 +52,7 @@ import type { RecordFilter, RecordQuery } from './record-query.js';
 import { createRecordView } from './record-view.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
 import { removeUndefinedProperties } from '@enbox/common';
+import { areReplicationLinksCurrent, syncEventCoversProtocol } from '@enbox/agent';
 import {
   assertTypedProtocolStructureSupported,
   collectProtocolPaths,
@@ -60,7 +61,7 @@ import {
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
 import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
-import { getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
+import { getProtocolRoleActionPaths, getRuleSetAtPath, getTypeName, ProtocolAction } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -184,6 +185,13 @@ type TypedObserveRequest<
 
 /** @internal Runtime resources owned by the Enbox session that created this typed API. */
 type TypedEnboxOptions = {
+  /** Scope injected by a followed foreign context. */
+  context?: {
+    contextId: string;
+    protocolPath: string;
+    protocolPaths: ReadonlySet<string>;
+  };
+
   /** Session-owned role-delivery projection and retry operations. */
   roleDelivery?: {
     get(roleRecordId: string): Promise<RoleDeliveryState | undefined>;
@@ -209,6 +217,47 @@ export type RoleDeliveryState =
   | Readonly<{ state: 'delivered' }>
   | Readonly<{ state: 'pending'; reason?: string }>
   | Readonly<{ state: 'awaiting-recipient-install' | 'failed'; reason: string }>;
+
+/** A foreign protocol context followed through one role record. */
+export type SharedContext<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  C extends RecordCodecMap = RecordCodecMap,
+> = Readonly<{
+  /** Accepted role-record ID and durable source identity. */
+  id: string;
+  /** Context ID that bounds every record operation. */
+  contextId: string;
+  /** Existing typed records API, bound to this context and role. */
+  records: TypedEnbox<D, C>['records'];
+  /** Role path authorizing access to the context. */
+  role: ProtocolRolePaths<D> & string;
+  /** DID whose DWN owns the authoritative context. */
+  sourceDid: string;
+  /** Withdraw this exact role record, stop following it, and fence retained handles. */
+  leave(): Promise<void>;
+  /** Stop following locally without changing the source-hosted role record. */
+  unfollow(): Promise<void>;
+  /** Resolve once this exact role-authorized local replica is caught up. */
+  whenCurrent(): Promise<void>;
+}>;
+
+/** Public request for following one role-authorized foreign context. */
+export type FollowSharedContextOptions<D extends ProtocolDefinition = ProtocolDefinition> = Readonly<{
+  contextId: string;
+  /** Unfollow other accepted roles for this same source context after this role is proven. */
+  replaceExisting?: boolean;
+  role: ProtocolRolePaths<D> & string;
+  sourceDid: string;
+}>;
+
+/** Protocol-scoped shared-context lifecycle. */
+export type SharedContextsApi<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  C extends RecordCodecMap = RecordCodecMap,
+> = Readonly<{
+  follow(request: FollowSharedContextOptions<D>): Promise<SharedContext<D, C>>;
+  list(): Promise<SharedContext<D, C>[]>;
+}>;
 
 /**
  * Options for {@link TypedEnbox} `records.create()`.
@@ -494,8 +543,9 @@ export type TypedReadRequest<
  */
 export type TypedDeleteRequest = {
   /**
-   * Full context ID of the target record, used only to resolve a context-scoped
-   * delegated delete grant. It is not included in the RecordsDelete message.
+   * Full context ID used to select a context-scoped grant and, for a shared
+   * context handle, confirm the record belongs to that context before delete.
+   * It is not included in the RecordsDelete message.
    */
   within?: string;
 
@@ -661,6 +711,8 @@ export class TypedEnbox<
   /** @internal */
   private _ensureReadyPromise: Promise<void> | null = null;
   /** @internal */
+  private _contexts?: SharedContextsApi<D, C>;
+  /** @internal */
   private readonly _validPaths: Set<string>;
   /** @internal */
   private _records?: TypedEnbox<D, C>['records'];
@@ -681,6 +733,7 @@ export class TypedEnbox<
     this._definition = protocol.definition;
     this._codecs = protocol.codecs;
     this._options = options;
+    this._configured = options.context !== undefined;
     this._validPaths = collectProtocolPaths(this._definition.structure);
     this._hasEncryptedTypes = Object.values(this._definition.types)
       .some((type: ProtocolType) => type.encryptionRequired === true);
@@ -785,6 +838,60 @@ export class TypedEnbox<
    */
   public get isConfigured(): boolean {
     return this._configured;
+  }
+
+  /** Role-authorized foreign contexts for this protocol. */
+  public get contexts(): SharedContextsApi<D, C> {
+    if (this._contexts !== undefined) {
+      return this._contexts;
+    }
+
+    const requireSync = (): SyncEngine => {
+      if (this._options.sync === undefined) {
+        throw new Error('TypedEnbox.contexts requires an Enbox session with shared-context storage.');
+      }
+      return this._options.sync;
+    };
+
+    this._contexts = {
+      follow: async (request): Promise<SharedContext<D, C>> => {
+        this._options.signal?.throwIfAborted();
+        const scope = this.resolveSharedContextScope(request.role);
+        const sync = requireSync();
+        const source = await sync.followSource({
+          actorDid      : this._dwn.connectedDid,
+          contextId     : request.contextId,
+          delegateDid   : this._dwn.recordDelegateDid,
+          protocol      : this._definition.protocol,
+          protocolPaths : scope.readablePaths,
+          protocolRole  : scope.role,
+          sourceDid     : request.sourceDid,
+        });
+        if (source.sourceDid !== request.sourceDid || source.contextId !== request.contextId) {
+          throw new Error('TypedEnbox.contexts.follow returned a different shared context.');
+        }
+        if (request.replaceExisting === true) {
+          for (const existing of await sync.listFollowedSources()) {
+            if (existing.id !== source.id
+              && existing.actorDid === source.actorDid
+              && existing.sourceDid === source.sourceDid
+              && existing.protocol === source.protocol
+              && existing.contextId === source.contextId) {
+              await sync.deleteFollowedSource(existing.id);
+            }
+          }
+        }
+        return this.bindSharedContext(source, scope);
+      },
+      list: async (): Promise<SharedContext<D, C>[]> => {
+        this._options.signal?.throwIfAborted();
+        const sources = (await requireSync().listFollowedSources()).filter(source =>
+          source.actorDid === this._dwn.connectedDid && source.protocol === this._definition.protocol
+        );
+        return sources.map((source): SharedContext<D, C> => this.bindSharedContext(source));
+      },
+    };
+    return this._contexts;
   }
 
   /**
@@ -988,6 +1095,7 @@ export class TypedEnbox<
 
     const directChildPrefix = `${parentPath}/`;
     for (const childPath of childPaths) {
+      this.assertContextPath(childPath);
       const childName = childPath.slice(directChildPrefix.length);
       const ruleSet = getRuleSetAtPath(childPath, this._definition.structure);
       if (!childPath.startsWith(directChildPrefix)
@@ -1145,6 +1253,7 @@ export class TypedEnbox<
       throw new TypeError(`TypedEnbox.records.create: role path '${normalizedPath}' requires a recipient.`);
     }
     await this._ensureReady(normalizedPath);
+    const parentContextId = this.resolveCreateParentContext(normalizedPath, request.parentContextId);
     const typeName = getTypeName(normalizedPath);
     const typeEntry = this._definition.types[typeName];
 
@@ -1157,7 +1266,7 @@ export class TypedEnbox<
       data                   : encoded.data,
       from                   : request.from,
       store                  : request.store,
-      parentContextId        : request.parentContextId,
+      parentContextId,
       published              : request.published,
       datePublished          : request.datePublished,
       dateCreated            : request.dateCreated,
@@ -1210,6 +1319,150 @@ export class TypedEnbox<
     return 'reason' in state ? { reason: state.reason, state: state.state } : { state: state.state };
   }
 
+  /** Resolve the exact feed and operation paths governed by one contextual role. */
+  private resolveSharedContextScope(role: string): {
+    allowedPaths: ReadonlySet<string>;
+    protocolPath: string;
+    readablePaths: [string, ...string[]];
+    role: ProtocolRolePaths<D> & string;
+  } {
+    const normalizedRole = normalizePath(role);
+    this._assertValidPath(normalizedRole);
+    if (getRuleSetAtPath(normalizedRole, this._definition.structure)?.$role !== true) {
+      throw new TypeError(`TypedEnbox.contexts: '${normalizedRole}' is not a protocol role path.`);
+    }
+
+    const protocolPath = normalizedRole.split('/').slice(0, -1).join('/');
+    if (protocolPath === '') {
+      throw new TypeError('TypedEnbox.contexts requires a role nested below a context root.');
+    }
+    const readablePaths = getProtocolRoleActionPaths(this._definition, normalizedRole, ProtocolAction.Read);
+    if (!readablePaths.includes(protocolPath)) {
+      throw new TypeError(
+        `TypedEnbox.contexts: role '${normalizedRole}' must authorize reading its parent context '${protocolPath}'.`,
+      );
+    }
+
+    return {
+      allowedPaths  : new Set(getProtocolRoleActionPaths(this._definition, normalizedRole)),
+      protocolPath,
+      readablePaths : readablePaths as [string, ...string[]],
+      role          : normalizedRole as ProtocolRolePaths<D> & string,
+    };
+  }
+
+  /** Bind the existing typed records surface to one exact durable source. */
+  private bindSharedContext(
+    source: FollowedSyncSource,
+    scope = this.resolveSharedContextScope(source.protocolRole),
+  ): SharedContext<D, C> {
+    if (source.protocol !== this._definition.protocol
+      || source.protocolRole !== scope.role
+      || !sameStrings(source.protocolPaths, scope.readablePaths)) {
+      throw new Error(`TypedEnbox.contexts: followed source '${source.id}' does not match this protocol definition.`);
+    }
+
+    const controller = new AbortController();
+    const signal = this._options.signal === undefined
+      ? controller.signal
+      : AbortSignal.any([this._options.signal, controller.signal]);
+    const sync = this._options.sync;
+    if (sync === undefined) {
+      throw new Error('TypedEnbox.contexts requires an Enbox session with shared-context storage.');
+    }
+    const assertActive = async (): Promise<void> => {
+      signal.throwIfAborted();
+      const current = await sync.getFollowedSource(source.id);
+      signal.throwIfAborted();
+      if (current?.actorDid !== this._dwn.connectedDid) {
+        throw new Error(`Shared context '${source.id}' is no longer active.`);
+      }
+    };
+    const bound = new TypedEnbox<D, C>(
+      this._dwn.withRecordExecutionContext({
+        assertActive,
+        contextId        : source.contextId,
+        followedSourceId : source.id,
+        protocolRole     : source.protocolRole,
+        tenantDid        : source.sourceDid,
+      }),
+      { codecs: this._codecs, definition: this._definition },
+      {
+        context: {
+          contextId     : source.contextId,
+          protocolPath  : scope.protocolPath,
+          protocolPaths : scope.allowedPaths,
+        },
+        signal,
+        sync: this._options.sync,
+      },
+    );
+    const retire = async (leave: boolean): Promise<void> => {
+      await assertActive();
+      if (leave) {
+        const result = await this._dwn.records.delete({
+          contextId    : source.contextId,
+          from         : source.sourceDid,
+          protocol     : source.protocol,
+          protocolPath : source.protocolRole,
+          recordId     : source.id,
+        });
+        if (result.status.code !== 404) {
+          requireDwnSuccess('SharedContext.leave', result);
+        }
+      }
+      await sync.deleteFollowedSource(source.id);
+      controller.abort();
+    };
+    const whenCurrent = async (): Promise<void> => {
+      while (true) {
+        signal.throwIfAborted();
+        let unsubscribe = (): void => {};
+        let removeAbortListener = (): void => {};
+        const wake = new Promise<void>((resolve): void => {
+          const onAbort = (): void => resolve();
+          signal.addEventListener('abort', onAbort, { once: true });
+          removeAbortListener = (): void => signal.removeEventListener('abort', onAbort);
+          unsubscribe = sync.on((event): void => {
+            if (event.type !== 'identity:registration-change'
+              && event.tenantDid === source.sourceDid
+              && event.contextId === source.contextId
+              && syncEventCoversProtocol(event, source.protocol)) {
+              resolve();
+            }
+          });
+        });
+        try {
+          await assertActive();
+          const links = (await sync.getReplicationLinks(source.sourceDid))
+            .filter((link): boolean => link.followedSourceId === source.id);
+          signal.throwIfAborted();
+          if (links.some((link): boolean => link.status === 'paused')) {
+            throw new Error(`SharedContext.whenCurrent: replication is paused for source '${source.id}'.`);
+          }
+          if (areReplicationLinksCurrent(links)) {
+            return;
+          }
+          await wake;
+        } finally {
+          unsubscribe();
+          removeAbortListener();
+        }
+      }
+    };
+
+    return Object.freeze({
+      contextId : source.contextId,
+      id        : source.id,
+      leave     : (): Promise<void> => retire(true),
+      records   : bound.records,
+      role      : scope.role,
+      sourceDid : source.sourceDid,
+      unfollow  : (): Promise<void> => retire(false),
+      whenCurrent,
+    });
+  }
+
   /**
    * Ensures the protocol is configured before performing record operations.
    *
@@ -1223,6 +1476,7 @@ export class TypedEnbox<
    * call only happens once.
    */
   private async _ensureReady(path: string): Promise<void> {
+    this.assertContextPath(path);
     if (this._configured) {
       this._assertValidPath(path);
       return;
@@ -1232,6 +1486,46 @@ export class TypedEnbox<
 
     await this._ensureReadyPromise;
     this._assertValidPath(path);
+  }
+
+  /** Require role coverage and apply the followed context's default selector. */
+  private resolveContextWithin(path: string, within: string | undefined): string | undefined {
+    const context = this._options.context;
+    if (context === undefined) {
+      return within;
+    }
+    this.assertContextPath(path);
+    const resolved = within ?? context.contextId;
+    if (resolved !== context.contextId && !resolved.startsWith(`${context.contextId}/`)) {
+      throw new TypeError('Shared context selectors cannot escape the followed context.');
+    }
+    return resolved;
+  }
+
+  /** Default direct-child writes to the followed root and reject ambiguous deeper writes. */
+  private resolveCreateParentContext(path: string, parentContextId: string | undefined): string | undefined {
+    const context = this._options.context;
+    if (context === undefined) {
+      return parentContextId;
+    }
+    if (parentContextId !== undefined) {
+      return this.resolveContextWithin(path, parentContextId);
+    }
+    if (path === context.protocolPath) {
+      throw new TypeError('Shared contexts cannot create another context root.');
+    }
+    const parentPath = path.split('/').slice(0, -1).join('/');
+    if (parentPath !== context.protocolPath) {
+      throw new TypeError(`Shared context create at '${path}' requires its direct parent context.`);
+    }
+    return context.contextId;
+  }
+
+  private assertContextPath(path: string): void {
+    const context = this._options.context;
+    if (context !== undefined && !context.protocolPaths.has(path)) {
+      throw new TypeError(`Protocol role does not authorize path '${path}' in this shared context.`);
+    }
   }
 
   /**
@@ -1498,6 +1792,7 @@ export class TypedEnbox<
         const [path, request] = args;
         const capturedRequest = request === undefined ? undefined : structuredClone(request);
         const normalizedPath = normalizePath(path);
+        const within = this.resolveContextWithin(normalizedPath, capturedRequest?.within);
         const materialize = capturedRequest?.materialize;
         const childPaths = this.resolveMaterializedChildPaths<Path>(
           normalizedPath,
@@ -1505,7 +1800,10 @@ export class TypedEnbox<
           capturedRequest?.pagination?.limit,
         );
         await this._ensureReady(normalizedPath);
-        const canonicalQuery = compileRecordQuery(this._definition, normalizedPath, capturedRequest);
+        const canonicalQuery = compileRecordQuery(this._definition, normalizedPath, {
+          ...capturedRequest,
+          within,
+        });
         const initialCursors = new Set<string>();
         if (canonicalQuery.pagination?.cursor !== undefined) {
           initialCursors.add(paginationCursorKey(canonicalQuery.pagination.cursor));
@@ -1534,7 +1832,7 @@ export class TypedEnbox<
               result.records,
               materialize,
               childPaths,
-              { from: canonicalQuery.from, protocolRole: canonicalQuery.protocolRole, within: capturedRequest?.within },
+              { from: canonicalQuery.from, protocolRole: canonicalQuery.protocolRole, within },
             )],
             cursor : continuation === undefined ? undefined : { ...continuation },
             next   : async (): Promise<RecordPage<
@@ -1575,18 +1873,19 @@ export class TypedEnbox<
           throw new TypeError('RecordView: pagination.limit is required to bound retained records.');
         }
         const { materialize, ...query } = request;
+        const within = this.resolveContextWithin(normalizedPath, query.within);
         const childPaths = this.resolveMaterializedChildPaths<Path>(
           normalizedPath,
           materialize,
           query.pagination.limit,
         );
-        const compiled = structuredClone(compileRecordQuery(this._definition, normalizedPath, query));
+        const compiled = structuredClone(compileRecordQuery(this._definition, normalizedPath, { ...query, within }));
         const additionalWakeFilters = childPaths.map((childPath): RecordsFilter => compileRecordFilter(
           this._definition,
           childPath,
           undefined,
           undefined,
-          query.within,
+          within,
         ));
         await this._ensureReady(normalizedPath);
 
@@ -1604,7 +1903,7 @@ export class TypedEnbox<
             records,
             materialize as Materialization,
             childPaths,
-            { from: compiled.from, protocolRole: compiled.protocolRole, within: query.within },
+            { from: compiled.from, protocolRole: compiled.protocolRole, within },
           ),
           query  : compiled,
           signal : this._options.signal,
@@ -1623,7 +1922,10 @@ export class TypedEnbox<
       ): Promise<number> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const compiled = compileRecordQuery(this._definition, normalizedPath, request);
+        const compiled = compileRecordQuery(this._definition, normalizedPath, {
+          ...request,
+          within: this.resolveContextWithin(normalizedPath, request?.within),
+        });
 
         const result = await this._dwn.records.count({
           from         : compiled.from,
@@ -1671,12 +1973,13 @@ export class TypedEnbox<
           ? { filter: { recordId: recordIdOrRequest } }
           : recordIdOrRequest;
         await this._ensureReady(normalizedPath);
+        const within = this.resolveContextWithin(normalizedPath, request.within);
         const readFilter = compileRecordFilter(
           this._definition,
           normalizedPath,
           request.filter,
           undefined,
-          request.within,
+          within,
         );
         const result = await this._dwn.records.read({
           from         : request.from,
@@ -1719,7 +2022,8 @@ export class TypedEnbox<
         request: TypedSetRequest<C, Path>,
       ): Promise<Record<DataForPath<C, Path>>> => {
         const normalizedPath = normalizePath(path);
-        this.assertSingletonScope(normalizedPath, request.within);
+        const within = this.resolveContextWithin(normalizedPath, request.within);
+        this.assertSingletonScope(normalizedPath, within);
         if ('from' in request && request.from !== undefined) {
           throw new TypeError('TypedEnbox.records.set: remote targets are not supported.');
         }
@@ -1728,8 +2032,8 @@ export class TypedEnbox<
         }
         await this._ensureReady(normalizedPath);
         const query = compileRecordQuery(this._definition, normalizedPath, {
-          pagination : { limit: 1 },
-          within     : request.within,
+          pagination: { limit: 1 },
+          within,
         });
         const result = await this._dwn.queryRecordsWithRequiredGrant(query);
         requireDwnSuccess('TypedEnbox.records.set query', result);
@@ -1739,7 +2043,7 @@ export class TypedEnbox<
             data             : request.data,
             datePublished    : request.datePublished,
             messageTimestamp : request.messageTimestamp,
-            parentContextId  : request.within,
+            parentContextId  : within,
             published        : request.published,
             tags             : request.tags,
           });
@@ -1786,9 +2090,23 @@ export class TypedEnbox<
         if (Object.hasOwn(request, 'contextId')) {
           throw new TypeError('TypedDeleteRequest: use within instead of contextId.');
         }
-        assertValidRecordWithin(normalizedPath, request.within, false);
+        const within = this.resolveContextWithin(normalizedPath, request.within);
+        assertValidRecordWithin(normalizedPath, within, false);
+        if (this._options.context !== undefined) {
+          const record = await cached.read(path, {
+            filter       : { recordId: request.recordId },
+            from         : request.from,
+            protocolRole : request.protocolRole,
+            within,
+          });
+          if (record === undefined) {
+            throw new DwnResponseError('TypedEnbox.records.delete', { code: 404, detail: 'Not Found' });
+          }
+          await record.delete({ prune: request.prune });
+          return;
+        }
         const result = await this._dwn.records.delete({
-          contextId    : request.within,
+          contextId    : within,
           from         : request.from,
           protocol     : this._definition.protocol,
           protocolPath : normalizedPath,
@@ -1914,4 +2232,8 @@ function normalizePath(path: string): string {
 /** Stable identity for one validated DWN keyset cursor. */
 function paginationCursorKey(cursor: DwnPaginationCursor): string {
   return JSON.stringify([cursor.messageCid, cursor.value]);
+}
+
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }

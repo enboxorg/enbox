@@ -67,4 +67,8 @@ export * from './record.js';
 export * from './typed-enbox.js';
 export * from './vc-api.js';
 
-export { AudienceDecryptError, type AudienceDecryptFailureCause } from '@enbox/agent';
+export {
+  AudienceDecryptError,
+  FollowedSourceNotReadyError,
+  type AudienceDecryptFailureCause,
+} from '@enbox/agent';

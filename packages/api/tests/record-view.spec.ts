@@ -101,7 +101,10 @@ function createHarness(query: QueryFactory): ViewHarness {
 
   const dwn = {
     connectedDid                  : TENANT_DID,
+    followedContextId             : undefined,
+    followedSourceId              : undefined,
     queryRecordsWithRequiredGrant : runQuery,
+    recordTenantDid               : TENANT_DID,
     records                       : {
       query     : runQuery,
       subscribe : async (request: RecordsSubscribeRequest) => {
@@ -933,7 +936,90 @@ describe('RecordView', () => {
       from           : true,
       to             : false,
     });
-    expect(view.getSnapshot().state).toBe('stale');
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('stale'); });
+    await view.close();
+  });
+
+  it('projects currentness from the exact followed context instead of the connected tenant', async () => {
+    const sourceDid = 'did:example:source';
+    const contextId = 'sharedRoot';
+    const harness = createHarness(async () => ok([testRecord('shared')]));
+    Object.assign(harness.dwn, {
+      followedContextId : contextId,
+      followedSourceId  : 'current-role',
+      recordTenantDid   : sourceDid,
+    });
+    const fakeSync = createSync();
+    fakeSync.options = undefined;
+    fakeSync.links = [{
+      tenantDid      : sourceDid,
+      remoteEndpoint : 'https://source-dwn.example',
+      scope          : {
+        kind          : 'context',
+        protocol      : ViewDefinition.protocol,
+        contextId,
+        protocolPaths : ['note'],
+      },
+      status           : 'live',
+      connectivity     : 'online',
+      followedSourceId : 'current-role',
+      isPullCurrent    : true,
+    }, {
+      tenantDid      : sourceDid,
+      remoteEndpoint : 'https://old-source-dwn.example',
+      scope          : {
+        kind          : 'context',
+        protocol      : ViewDefinition.protocol,
+        contextId,
+        protocolPaths : ['note'],
+      },
+      status           : 'paused',
+      connectivity     : 'offline',
+      followedSourceId : 'old-role',
+      isPullCurrent    : false,
+    }, {
+      ...link('paused', 'offline'),
+      tenantDid      : TENANT_DID,
+      remoteEndpoint : 'https://member-dwn.example',
+    }];
+    const view = await createRecordView<string>({
+      definition         : ViewDefinition,
+      dwn                : harness.dwn,
+      materializeRecords : async (records): Promise<readonly string[]> => records.map(record => record.id),
+      query              : compileRecordQuery(ViewDefinition, 'note', {
+        from       : sourceDid,
+        pagination : { limit: 10 },
+        within     : contextId,
+      }),
+      sync: fakeSync.sync,
+    });
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+
+    fakeSync.emit({
+      type           : 'pull:currentness-change',
+      tenantDid      : sourceDid,
+      remoteEndpoint : 'https://sibling-dwn.example',
+      protocol       : ViewDefinition.protocol,
+      protocols      : [ViewDefinition.protocol],
+      contextId      : 'siblingRoot',
+      from           : true,
+      to             : false,
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(harness.queryRequests).toHaveLength(1);
+
+    fakeSync.links[0] = { ...fakeSync.links[0], isPullCurrent: false };
+    fakeSync.emit({
+      type           : 'pull:currentness-change',
+      tenantDid      : sourceDid,
+      remoteEndpoint : 'https://source-dwn.example',
+      protocol       : ViewDefinition.protocol,
+      protocols      : [ViewDefinition.protocol],
+      contextId,
+      from           : true,
+      to             : false,
+    });
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('stale'); });
     await view.close();
   });
 

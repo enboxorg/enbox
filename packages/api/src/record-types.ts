@@ -14,6 +14,26 @@ import type {
   DwnPublicKeyJwk,
 } from '@enbox/agent';
 
+/**
+ * Package-internal execution context for records replicated from another
+ * tenant. Reads stay in the local DWN while mutations target that tenant's
+ * authoritative DWN.
+ *
+ * @internal
+ */
+export type RecordExecutionContext = Readonly<{
+  /** Reject operations after this context has been left or revoked. */
+  assertActive(): Promise<void>;
+  /** Root context replicated by the followed source. */
+  contextId: string;
+  /** Exact role-record incarnation backing the followed source. */
+  followedSourceId: string;
+  /** Role invoked for every operation in the shared context. */
+  protocolRole: string;
+  /** Tenant that owns the replicated context. */
+  tenantDid: string;
+}>;
+
 /** Authorization and routing context used when opening a record's raw stored bytes. */
 export type RecordDataAccess = Pick<
   DecryptRecordDataParams,

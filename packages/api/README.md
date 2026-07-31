@@ -317,6 +317,55 @@ The snapshot object and records array are immutable. Each `Record<T>` handle
 represents the queried version until the caller explicitly uses that handle's
 normal `update()` or `delete()` method; record data remains lazily read.
 
+## Shared contexts
+
+An application-specific invitation can carry a source DID, context ID, and
+role path. Accept it by following that exact role-authorized context:
+
+```ts
+const notebooks = enbox.using(NotebookProtocol);
+const shared = await notebooks.contexts.follow({
+  sourceDid : invitation.author,
+  contextId : invitation.contextId,
+  role      : 'notebook/page/collaborator',
+});
+
+// Optional before paging a complete local history. follow() itself does not
+// block on an unbounded download.
+await shared.whenCurrent();
+
+const deltas = await shared.records.query('notebook/page/delta');
+const view = await shared.records.observe('notebook/page/title', {
+  pagination: { limit: 1 },
+});
+await shared.records.create('notebook/page/delta', { data: nextDelta });
+```
+
+`shared.records` is the existing typed records API, confined to the accepted
+context and role. Reads and views use its pull-synchronized local replica;
+creates and retained-record mutations go to the source DWN. Callers do not
+pass tenant DIDs, grant IDs, `from`, or `protocolRole`. A new follow performs
+only bounded role, protocol, context-root, and audience-key bootstrap, while
+the existing sync engine catches up the exact role-readable path set.
+
+Accepted contexts survive restart and are reconstructed with
+`await notebooks.contexts.list()`. `unfollow()` removes only the local accepted
+source. `leave()` first deletes the exact source-hosted role record and is
+available only when that role path authorizes recipient `co-delete`; a failed
+remote delete leaves the local source intact. If an application treats two
+roles such as viewer and editor as mutually exclusive, pass
+`replaceExisting: true` when accepting the replacement role.
+
+Invitation discovery remains application data rather than a second generic
+inbox API. A removed source role fences future replication, but previously
+learned plaintext remains local; forward-secure member removal requires
+audience-key rotation in addition to role deletion.
+
+Include the protocol in the connection store's application manifest. The
+normal connection lifecycle then owns the actor's sync registration and its
+current wallet delegate. Raw-agent constructor users must register that actor
+and start the sync engine before waiting for a followed source to become current.
+
 ## Anonymous Reads
 
 `Enbox.anonymous()` creates a read-only API for published records and protocol

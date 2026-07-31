@@ -34,6 +34,7 @@ export {
   defineApplicationManifest,
   DwnResponseError,
   Enbox,
+  FollowedSourceNotReadyError,
   defineProtocol,
   getApplicationProtocolRequests,
   ProtocolReadinessError,
@@ -63,6 +64,7 @@ export type {
   EnboxSessionParams,
   EncodedRecordData,
   EnsureProtocolsReadyOptions,
+  FollowSharedContextOptions,
   JsonRecordCodecOptions,
   MaterializedRecord,
   ProtocolRolePaths,
@@ -80,6 +82,8 @@ export type {
   RecordValidator,
   ReplicationCurrentness,
   RoleDeliveryState,
+  SharedContext,
+  SharedContextsApi,
   SyncStatusSnapshot,
 } from '@enbox/api';
 
