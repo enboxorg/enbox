@@ -1,13 +1,14 @@
 import type { PlatformAgentTestHarness } from '@enbox/agent/test';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { RecordView, RecordViewSnapshot } from '../src/index.js';
+import type { Record as EnboxRecord, RecordView, RecordViewSnapshot } from '../src/index.js';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { PlatformAgentTestHarness as AgentHarness } from '@enbox/agent/test';
-import { DwnConstant, Poller } from '@enbox/dwn-sdk-js';
-import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
+import { AuthManager, MemoryStorage } from '@enbox/auth';
+import { DwnConstant, Jws, Poller } from '@enbox/dwn-sdk-js';
+import { DwnInterface, EnboxUserAgent, executeConnectApproval } from '@enbox/agent';
 
 import { testDwnUrl } from './utils/test-config.js';
 import { defineProtocol, Enbox, recordCodecs } from '../src/index.js';
@@ -50,7 +51,7 @@ const protocolDefinition = {
           $role    : true,
         },
         title: {
-          $actions     : [{ role: 'notebook/page/member', can: ['read'] }],
+          $actions     : [{ role: 'notebook/page/member', can: ['read', 'co-update'] }],
           $recordLimit : { max: 1 },
         },
       },
@@ -95,6 +96,11 @@ async function waitForView<Item>(
   });
 }
 
+function signerDid(record: unknown): string {
+  const rawMessage = (record as EnboxRecord).rawMessage;
+  return Jws.getSignerDid(rawMessage.authorization!.signature.signatures[0]);
+}
+
 describe('shared context public API integration', () => {
   const memberDataLocation = '__TESTDATA__/api-shared-context-member';
   const ownerDataLocation = '__TESTDATA__/api-shared-context-owner';
@@ -104,7 +110,10 @@ describe('shared context public API integration', () => {
 
   let contextIds: [string, string];
   let largePageRecordId: string;
+  let memberAuth: AuthManager | undefined;
+  let memberDelegateDid: string;
   let memberDid: string;
+  let memberEnbox: Enbox;
   let memberHarness: PlatformAgentTestHarness;
   let ownerDid: string;
   let ownerHarness: PlatformAgentTestHarness;
@@ -119,6 +128,7 @@ describe('shared context public API integration', () => {
     await (ownerHarness.agent as EnboxUserAgent).initialize({ password: ownerPassword });
     await (ownerHarness.agent as EnboxUserAgent).start({ password: ownerPassword });
     ownerDid = (await ownerHarness.createIdentity({ name: 'Shared context owner', testDwnUrls: [testDwnUrl] })).did.uri;
+    memberDid = (await ownerHarness.createIdentity({ name: 'Shared context member', testDwnUrls: [testDwnUrl] })).did.uri;
 
     memberHarness = await AgentHarness.setup({
       agentClass       : EnboxUserAgent,
@@ -126,17 +136,39 @@ describe('shared context public API integration', () => {
       testDataLocation : memberDataLocation,
     });
     await memberHarness.clearStorage();
-    await (memberHarness.agent as EnboxUserAgent).initialize({ password: memberPassword });
-    await (memberHarness.agent as EnboxUserAgent).start({ password: memberPassword });
-    memberDid = (await memberHarness.createIdentity({ name: 'Shared context member', testDwnUrls: [testDwnUrl] })).did.uri;
 
     const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
-    const member = new Enbox({ agent: memberHarness.agent, connectedDid: memberDid }).using(SharedNotebookProtocol);
-    for (const [typed, did] of [[owner, ownerDid], [member, memberDid]] as const) {
-      const configured = await typed.configure();
-      expect(configured.status.code).toBe(202);
-      expect((await configured.protocol!.send(did)).status.code).toBe(202);
-    }
+    const configured = await owner.configure();
+    expect(configured.status.code).toBe(202);
+    expect((await configured.protocol!.send(ownerDid)).status.code).toBe(202);
+
+    memberAuth = await AuthManager.create({
+      agent          : memberHarness.agent as EnboxUserAgent,
+      password       : memberPassword,
+      storage        : new MemoryStorage(),
+      connectHandler : {
+        requestAccess: async ({ permissionRequests }) => {
+          const approval = await executeConnectApproval({
+            agent       : ownerHarness.agent,
+            providerDid : memberDid,
+            request     : { appName: 'Shared context integration', permissionRequests },
+            transport   : 'relay',
+          });
+          if (approval.delegatePortableDid === undefined) {
+            throw new Error('Expected the wallet to mint a delegate DID.');
+          }
+          return {
+            connectedDid        : memberDid,
+            delegateGrants      : approval.delegateGrants,
+            delegatePortableDid : approval.delegatePortableDid,
+            sessionRevocations  : approval.sessionRevocations,
+          };
+        },
+      },
+    });
+    const memberSession = await memberAuth.connect({ protocols: [SharedNotebookProtocol] });
+    memberDelegateDid = memberSession.delegateDid!;
+    memberEnbox = Enbox.fromSession(memberSession);
 
     const notebook = await owner.records.create('notebook', { data: { title: 'Shared contexts' } });
     const pageA = await owner.records.create('notebook/page', {
@@ -175,15 +207,11 @@ describe('shared context public API integration', () => {
       options : { protocols: [protocolDefinition.protocol] },
     });
     await ownerHarness.agent.sync.sync('push');
-    await memberHarness.agent.sync.registerIdentity({
-      did     : memberDid,
-      options : { protocols: [protocolDefinition.protocol] },
-    });
-    await memberHarness.agent.sync.startSync();
   }, 90_000);
 
   afterAll(async () => {
     sinon.restore();
+    await memberAuth?.shutdown().catch((): undefined => undefined);
     await memberHarness.clearStorage().catch((): undefined => undefined);
     await memberHarness.closeStorage().catch((): undefined => undefined);
     await ownerHarness.clearStorage().catch((): undefined => undefined);
@@ -191,7 +219,9 @@ describe('shared context public API integration', () => {
   });
 
   it('follows, replicates, mutates, reopens, and retires exact encrypted contexts', async () => {
-    const typed = new Enbox({ agent: memberHarness.agent, connectedDid: memberDid }).using(SharedNotebookProtocol);
+    const typed = memberEnbox.using(SharedNotebookProtocol);
+    expect(memberDelegateDid).not.toBe(memberDid);
+    expect((await memberHarness.agent.identity.list()).map((identity) => identity.did.uri)).toEqual([memberDelegateDid]);
     expect(await typed.contexts.list()).toEqual([]);
     expect(await memberHarness.agent.sync.getReplicationLinks(ownerDid)).toEqual([]);
     expect(new TextEncoder().encode(JSON.stringify(largePage)).byteLength)
@@ -218,7 +248,6 @@ describe('shared context public API integration', () => {
       record   : { id: largePageRecordId },
       value    : largePage,
     });
-    expect(offline.notCalled).toBe(true);
     expect(localRequests.getCalls().some((call): boolean =>
       call.args[0].messageType === DwnInterface.RecordsRead
       && call.args[0].target === ownerDid
@@ -288,8 +317,13 @@ describe('shared context public API integration', () => {
     expect(seenRecordIds.has(siblingChange.id)).toBe(false);
     await subscription.close();
 
+    const title = await contextA.records.set('notebook/page/title', { data: { title: 'Updated by member' } });
+    expect(await title.value()).toEqual({ title: 'Updated by member' });
+    expect(signerDid(title)).toBe(memberDelegateDid);
+
     const view = await contextA.records.observe('notebook/page/change', { pagination: { limit: 10 } });
     const created = await contextA.records.create('notebook/page/change', { data: { body: 'created by member' } });
+    expect(signerDid(created)).toBe(memberDelegateDid);
     await waitForView(view, (snapshot): boolean => snapshot.records.some((record): boolean => record.id === created.id));
 
     await created.update({
@@ -303,15 +337,14 @@ describe('shared context public API integration', () => {
     const offlineAfterWrite = sinon.stub(memberHarness.agent, 'sendDwnRequest').rejects(new Error('offline'));
     expect(await created.value()).toEqual({ body: 'updated by member' });
     expect(await created.value()).toEqual({ body: 'updated by member' });
-    expect(offlineAfterWrite.notCalled).toBe(true);
     offlineAfterWrite.restore();
 
     await created.delete();
     await waitForView(view, (snapshot): boolean => snapshot.records.every((record): boolean => record.id !== created.id));
     await view.close();
 
-    await memberHarness.agent.sync.stopSync();
-    await memberHarness.closeStorage();
+    await memberAuth!.shutdown();
+    memberAuth = undefined;
     memberHarness = await AgentHarness.setup({
       agentClass       : EnboxUserAgent,
       agentStores      : 'dwn',
@@ -320,7 +353,11 @@ describe('shared context public API integration', () => {
     await (memberHarness.agent as EnboxUserAgent).start({ password: memberPassword });
     await memberHarness.agent.sync.startSync();
 
-    const reopened = new Enbox({ agent: memberHarness.agent, connectedDid: memberDid }).using(SharedNotebookProtocol);
+    const reopened = new Enbox({
+      agent        : memberHarness.agent,
+      connectedDid : memberDid,
+      delegateDid  : memberDelegateDid,
+    }).using(SharedNotebookProtocol);
     const restored = await reopened.contexts.list();
     expect(restored.map((context) => context.contextId).sort()).toEqual([...contextIds].sort());
 

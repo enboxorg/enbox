@@ -4,12 +4,13 @@ import sinon from 'sinon';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
-import { EncryptionProtocol } from '@enbox/dwn-sdk-js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
+
 import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
 import { Convert, logger } from '@enbox/common';
+import { DwnInterfaceName, DwnMethodName, EncryptionProtocol } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi, DwnInterface, DwnPermissionGrant } from '../src/index.js';
 import {
@@ -227,6 +228,34 @@ describe('connect approval ceremony', () => {
         expect(grant.connectSession?.id).toBe(firstSession?.id);
         expect(grant.dateExpires).toBe(firstSession!.expiresAt);
       }
+    });
+
+    it('should delegate Messages.Read but not Protocols.Query grants', async () => {
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(['https://dwn.example']);
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
+        status: { code: 202, detail: 'Accepted' },
+      } as any);
+
+      const [messageGrant, protocolGrant] = await createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        [
+          {
+            interface : DwnInterfaceName.Messages,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+          {
+            interface : DwnInterfaceName.Protocols,
+            method    : DwnMethodName.Query,
+            protocol  : protocolDefinition.protocol,
+          },
+        ],
+      );
+
+      expect(DwnPermissionGrant.parse(messageGrant).delegated).toBe(true);
+      expect(DwnPermissionGrant.parse(protocolGrant).delegated).not.toBe(true);
     });
 
     it('should serialize permission grant writes per endpoint while sending to independent endpoints concurrently', async () => {

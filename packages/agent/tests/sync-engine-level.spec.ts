@@ -2692,8 +2692,12 @@ describe('SyncEngineLevel', () => {
         const openSubscriptions = sinon.stub(syncEngine as any, 'openLinkSubscriptions');
 
         const result = await (syncEngine as any).initializeLinkTarget({
-          did    : alice.did.uri,
-          dwnUrl : 'https://dwn.example.com',
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+          did                : alice.did.uri,
+          dwnUrl             : 'https://dwn.example.com',
+          projectionId       : 'projection-id',
+          scope              : { kind: 'full' },
         });
 
         // An ACTIVE controller means live/repair/pause ownership already
