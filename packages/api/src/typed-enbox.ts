@@ -152,6 +152,23 @@ export type RecordPage<Item = Record> = {
   next(): Promise<RecordPage<Item> | undefined>;
 };
 
+/** One typed record change or terminal subscription error. */
+export type RecordSubscriptionEvent<Item = Record> = Readonly<
+  | { type: 'write' | 'delete'; record: Item }
+  | { type: 'error'; error: Error }
+>;
+
+/** Callback invoked for one typed record subscription. */
+export type RecordSubscriptionListener<Item = Record> = (
+  event: RecordSubscriptionEvent<Item>,
+) => void | Promise<void>;
+
+/** Closeable typed record change subscription. */
+export interface RecordSubscription {
+  /** Stop future delivery. */
+  close(): Promise<void>;
+}
+
 /** Materialization requested from a typed records query or observed view. */
 type RecordMaterialization<
   D extends ProtocolDefinition,
@@ -256,6 +273,12 @@ type TypedObserveRequest<
   Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
 > = ObserveRequest<D, Path, Materialization, RecordQuery<D, Path>>;
+
+/** Selection for one exact-path typed change subscription. */
+export type TypedSubscribeOptions<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+> = Pick<RecordQuery<D, Path>, 'filter' | 'from' | 'protocolRole' | 'within'>;
 
 /** @internal Runtime resources owned by the Enbox session that created this typed API. */
 type TypedEnboxOptions = {
@@ -686,6 +709,11 @@ type ContextObserveRequest<
   Materialization extends RecordMaterialization<D, Path> | undefined,
 > = ObserveRequest<D, Path, Materialization, ContextRecordQuery<D, Path>>;
 
+type ContextSubscribeOptions<
+  D extends ProtocolDefinition,
+  Path extends ContextRecordPaths<D>,
+> = Omit<TypedSubscribeOptions<D, Path>, 'from' | 'protocolRole'>;
+
 type ContextReadRequest<
   D extends ProtocolDefinition,
   Path extends ContextRecordPaths<D>,
@@ -726,6 +754,12 @@ export type ContextRecordsApi<
     path: Path,
     request: ContextObserveRequest<D, Path, Materialization>,
   ) => Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization, true>>>;
+
+  subscribe: <Path extends ContextRecordPaths<D>>(
+    path: Path,
+    listener: RecordSubscriptionListener<ContextRecord<DataForPath<C, Path>>>,
+    options?: ContextSubscribeOptions<D, Path>,
+  ) => Promise<RecordSubscription>;
 
   count: <Path extends ContextRecordPaths<D>>(
     path: Path,
@@ -1394,6 +1428,97 @@ export class TypedEnbox<
     }));
   }
 
+  /** Open one exact-path typed change stream over the canonical records subscription. */
+  private async subscribeToRecordPath<Path extends ProtocolPaths<D> & string>(
+    path: Path,
+    listener: RecordSubscriptionListener<Record<DataForPath<C, Path>>>,
+    request?: TypedSubscribeOptions<D, Path>,
+  ): Promise<RecordSubscription> {
+    const capturedRequest = request === undefined ? undefined : structuredClone(request);
+    this._options.signal?.throwIfAborted();
+    const normalizedPath = normalizePath(path);
+    await this._ensureReady(normalizedPath);
+    this._options.signal?.throwIfAborted();
+    const within = this.resolveContextWithin(normalizedPath, capturedRequest?.within);
+    const filter = compileRecordFilter(
+      this._definition,
+      normalizedPath,
+      capturedRequest?.filter,
+      undefined,
+      within,
+    );
+
+    let closed = false;
+    const signal = this._options.signal;
+    let detachAbort = (): void => {};
+
+    const reply = await this._dwn.subscribeRecordFrames({
+      filter,
+      from         : capturedRequest?.from,
+      pagination   : { limit: 1 },
+      protocolRole : capturedRequest?.protocolRole,
+    }, async (message, record): Promise<void> => {
+      if (closed || signal?.aborted === true) {
+        return;
+      }
+      if (message.type === 'event') {
+        if (record === undefined) {
+          throw new Error('TypedEnbox.records.subscribe: record event is missing its record handle.');
+        }
+        await listener({
+          type   : record.deleted ? 'delete' : 'write',
+          record : this.bindCodec<Path>(normalizedPath, record),
+        });
+        return;
+      }
+      if (message.type === 'error') {
+        closed = true;
+        detachAbort();
+        await listener({
+          type  : 'error',
+          error : new Error(`Record subscription failed (${message.error.code}): ${message.error.detail}`),
+        });
+      }
+    });
+
+    try {
+      requireDwnSuccess('TypedEnbox.records.subscribe', reply);
+    } catch (error: unknown) {
+      closed = true;
+      await reply.subscription?.close();
+      throw error;
+    }
+    if (reply.subscription === undefined) {
+      closed = true;
+      throw new Error('TypedEnbox.records.subscribe: DWN returned success without a subscription.');
+    }
+    const subscription = reply.subscription;
+    if (closed || signal?.aborted === true) {
+      await subscription.close();
+      signal?.throwIfAborted();
+      throw new Error('TypedEnbox.records.subscribe: closed while opening the subscription.');
+    }
+    const handleAbort = (): void => {
+      closed = true;
+      detachAbort();
+      void subscription.close().catch((): void => {});
+    };
+    signal?.addEventListener('abort', handleAbort, { once: true });
+    detachAbort = (): void => signal?.removeEventListener('abort', handleAbort);
+
+    let closePromise: Promise<void> | undefined;
+    return {
+      close: (): Promise<void> => {
+        closePromise ??= (async (): Promise<void> => {
+          closed = true;
+          detachAbort();
+          await subscription.close();
+        })();
+        return closePromise;
+      },
+    };
+  }
+
   /** Require the protocol fact that gives `set()` one unambiguous target. */
   private assertSingletonScope(path: string, within: string | undefined): void {
     this._assertValidPath(path);
@@ -1816,6 +1941,7 @@ export class TypedEnbox<
    * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
    * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
    * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable query snapshots
+   * - `subscribe(path, listener, options?)` — Consume ordered append/change events
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
    * - {@link TypedEnbox.records.read | read(path, recordId or request)} — Read a single record
    * - {@link TypedEnbox.records.deliveryState | deliveryState(path, recordId)} — Read an encrypted role's delivery state
@@ -1843,6 +1969,12 @@ export class TypedEnbox<
       path: Path,
       request: TypedObserveRequest<D, Path, Materialization>,
     ) => Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>>;
+
+    subscribe: <Path extends ProtocolPaths<D> & string>(
+      path: Path,
+      listener: RecordSubscriptionListener<Record<DataForPath<C, Path>>>,
+      options?: TypedSubscribeOptions<D, Path>,
+    ) => Promise<RecordSubscription>;
 
     count: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -2082,6 +2214,12 @@ export class TypedEnbox<
           sync   : this._options.sync,
         });
       },
+
+      subscribe: async <Path extends ProtocolPaths<D> & string>(
+        path: Path,
+        listener: RecordSubscriptionListener<Record<DataForPath<C, Path>>>,
+        options?: TypedSubscribeOptions<D, Path>,
+      ): Promise<RecordSubscription> => this.subscribeToRecordPath(path, listener, options),
 
       /**
        * Count the complete population selected by the same specification as

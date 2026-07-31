@@ -80,6 +80,9 @@ export type {
   RecordPage,
   RecordPatch,
   RecordQuery,
+  RecordSubscription,
+  RecordSubscriptionEvent,
+  RecordSubscriptionListener,
   RecordView,
   RecordViewListener,
   RecordViewSnapshot,
@@ -91,6 +94,7 @@ export type {
   SharedContext,
   SharedContextsApi,
   SyncStatusSnapshot,
+  TypedSubscribeOptions,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────

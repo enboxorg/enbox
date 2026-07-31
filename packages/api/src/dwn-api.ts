@@ -4,7 +4,7 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
-import type { DwnSubscriptionHandler } from '@enbox/dwn-clients';
+import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
 
 import type {
   AudienceKeyDeliveryOutcome,
@@ -23,7 +23,7 @@ import type {
 
 import type { MessagesSubscribeReply, RecordsSubscribeReply } from '@enbox/dwn-sdk-js';
 
-import type { RecordExecutionContext } from './record-types.js';
+import type { RecordDataAccess, RecordExecutionContext, RecordOptions, StoredRecordData } from './record-types.js';
 
 import { captureRecordDataAccess } from './record-data-access.js';
 import { dataToBlob } from './utils.js';
@@ -46,6 +46,11 @@ type RecordsReadScope = {
 };
 
 type MissingRecordsReadGrantPolicy = 'fallback' | 'reject';
+
+type RecordSubscriptionContext = {
+  dataAccess: RecordDataAccess;
+  protocolRole?: string;
+};
 
 /**
  * Represents the request payload for fetching permission requests from a Decentralized Web Node (DWN).
@@ -414,17 +419,14 @@ export class DwnApi {
     const { entries = [], status, cursor } = agentResponse.reply;
     const dataAccess = captureRecordDataAccess(agentRequest, remoteTarget !== undefined);
     const records = entries.map((entry) => {
-      const { encodedData, ...recordsWrite } = entry;
-      const recordOptions = {
-        author       : getRecordAuthor(entry),
-        connectedDid : this.connectedDid,
-        delegateDid  : this.delegateDid,
+      const { encodedData, initialWrite, ...recordsWrite } = entry;
+      return this.createRecordHandle({
         dataAccess,
+        initialWrite,
+        message      : recordsWrite as DwnMessage[DwnInterface.RecordsWrite],
         protocolRole : agentRequest.messageParams.protocolRole,
         storedData   : encodedData,
-        ...recordsWrite as DwnMessage[DwnInterface.RecordsWrite]
-      };
-      return new Record(this.agent, recordOptions, this.permissionsApi, this.recordExecutionContext);
+      });
     });
 
     return { records, status, cursor };
@@ -438,6 +440,85 @@ export class DwnApi {
     return remoteTarget
       ? this.agent.sendDwnRequest(request)
       : this.agent.processDwnRequest(request);
+  }
+
+  /** Construct the canonical record handle shared by query, read, and subscription frames. */
+  private createRecordHandle(params: {
+    dataAccess: RecordDataAccess;
+    initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
+    message: DwnMessage[DwnInterface.RecordsWrite | DwnInterface.RecordsDelete];
+    protocolRole?: string;
+    storedData?: StoredRecordData;
+  }): Record {
+    const options = {
+      author       : getRecordAuthor(params.message),
+      connectedDid : this.connectedDid,
+      dataAccess   : params.dataAccess,
+      delegateDid  : this.delegateDid,
+      protocolRole : params.protocolRole,
+      ...params.message,
+      ...(params.initialWrite === undefined ? {} : { initialWrite: params.initialWrite }),
+      ...(params.storedData === undefined ? {} : { storedData: params.storedData }),
+    } as RecordOptions;
+
+    return new Record(this.agent, options, this.permissionsApi, this.recordExecutionContext);
+  }
+
+  /** Open one RecordsSubscribe after its authorization context is fully resolved. */
+  private async openRecordsSubscription(
+    request: Omit<RecordsSubscribeRequest, 'subscriptionHandler'>,
+    subscriptionHandler: DwnSubscriptionHandler,
+    onPrepared?: (context: RecordSubscriptionContext) => void,
+  ): Promise<RecordsSubscribeResponse> {
+    const { from, ...requestedMessageParams } = request;
+    const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
+      from,
+      requestedMessageParams,
+      false,
+    );
+
+    const agentRequest = await this.prepareRecordsReadRequest({
+      author      : this.connectedDid,
+      messageParams,
+      messageType : DwnInterface.RecordsSubscribe,
+      target,
+      subscriptionHandler,
+    }, {
+      protocol     : messageParams.filter?.protocol,
+      protocolPath : messageParams.filter?.protocolPath,
+      contextId    : messageParams.filter?.contextId,
+    });
+
+    onPrepared?.({
+      dataAccess   : captureRecordDataAccess(agentRequest, remoteTarget !== undefined),
+      protocolRole : agentRequest.messageParams.protocolRole,
+    });
+
+    return (await this.dispatchDwnRequest(agentRequest, remoteTarget)).reply;
+  }
+
+  /** @internal Subscribe to raw lifecycle messages with canonical write-frame records attached. */
+  public subscribeRecordFrames(
+    request: Omit<RecordsSubscribeRequest, 'subscriptionHandler'>,
+    subscriptionHandler: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>,
+  ): Promise<RecordsSubscribeResponse> {
+    let context!: RecordSubscriptionContext;
+    return this.openRecordsSubscription(request, (message) => {
+      if (message.type !== 'event') {
+        return subscriptionHandler(message);
+      }
+
+      const record = this.createRecordHandle({
+        dataAccess   : context.dataAccess,
+        initialWrite : message.event.initialWrite,
+        message      : message.event.message as DwnMessage[DwnInterface.RecordsWrite | DwnInterface.RecordsDelete],
+        protocolRole : context.protocolRole,
+        storedData   : message.encodedData,
+      });
+      return subscriptionHandler(message, record);
+    }, (prepared): void => {
+      context = prepared;
+    });
   }
 
   /** Apply the routing and role carried by an internally bound shared context. */
@@ -1015,28 +1096,13 @@ export class DwnApi {
 
         let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
-          const dataAccess = captureRecordDataAccess(agentRequest, remoteTarget !== undefined);
-          const recordOptions = {
-            /**
-             * Extract the `author` DID from the record since records may be signed by the
-             * tenant owner or any other entity.
-             */
-            author       : getRecordAuthor(entry.recordsWrite),
-            /**
-             * Set the `connectedDid` to currently connected DID so that subsequent calls to
-             * {@link Record} instance methods, such as `record.update()` are executed on the
-             * local DWN even if the record was read from a remote DWN.
-             */
-            connectedDid : this.connectedDid,
-            delegateDid  : this.delegateDid,
-            dataAccess,
+          record = this.createRecordHandle({
+            dataAccess   : captureRecordDataAccess(agentRequest, remoteTarget !== undefined),
+            initialWrite : entry.initialWrite,
+            message      : entry.recordsWrite,
             protocolRole : agentRequest.messageParams.protocolRole,
             storedData   : entry.data,
-            initialWrite : entry.initialWrite,
-            ...entry.recordsWrite,
-          };
-
-          record = new Record(this.agent, recordOptions, this.permissionsApi, this.recordExecutionContext);
+          });
         }
 
         return { record, status };
@@ -1044,27 +1110,8 @@ export class DwnApi {
 
       /** Subscribe to raw record events matching the given filter. */
       subscribe: async (request: RecordsSubscribeRequest): Promise<RecordsSubscribeResponse> => {
-        const { from, subscriptionHandler, ...requestedMessageParams } = request;
-        const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
-          from,
-          requestedMessageParams,
-          false,
-        );
-
-        const agentRequest = await this.prepareRecordsReadRequest({
-          author      : this.connectedDid,
-          messageParams,
-          messageType : DwnInterface.RecordsSubscribe,
-          target,
-          subscriptionHandler,
-        }, {
-          protocol     : messageParams.filter?.protocol,
-          protocolPath : messageParams.filter?.protocolPath,
-          contextId    : messageParams.filter?.contextId,
-        });
-
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
-        return agentResponse.reply;
+        const { subscriptionHandler, ...requestedMessageParams } = request;
+        return this.openRecordsSubscription(requestedMessageParams, subscriptionHandler);
       },
 
       /**

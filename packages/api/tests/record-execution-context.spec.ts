@@ -119,9 +119,11 @@ describe('foreign record execution context', () => {
     await dwn.records.query({ from: tenantDid, filter });
     await dwn.records.read({ from: tenantDid, filter: { recordId } });
     await dwn.records.subscribe({ from: tenantDid, filter, subscriptionHandler });
+    await dwn.subscribeRecordFrames({ filter }, subscriptionHandler);
 
     expect(agent.sendDwnRequest.notCalled).toBe(true);
-    expect(agent.processDwnRequest.callCount).toBe(4);
+    expect(agent.processDwnRequest.callCount).toBe(5);
+    expect(agent.processDwnRequest.getCall(3).args[0].subscriptionHandler).toBe(subscriptionHandler);
     for (const call of agent.processDwnRequest.getCalls()) {
       expect(call.args[0].target).toBe(tenantDid);
       expect(call.args[0].messageParams.protocolRole).toBe(protocolRole);

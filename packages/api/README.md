@@ -246,6 +246,13 @@ const unsubscribe = view.subscribe((snapshot) => {
   console.log(snapshot.state, snapshot.records, snapshot.hasMore);
 });
 
+// Consume later writes/deletes without re-querying an append-only value
+const changes = await notes.records.subscribe('note', async (event) => {
+  if (event.type === 'write') {
+    console.log(await event.record.value());
+  }
+});
+
 // Count the same selection before pagination
 const count = await notes.records.count('note', selection);
 
@@ -266,6 +273,7 @@ await found.delete();
 
 unsubscribe();
 await view.close();
+await changes.close();
 ```
 
 Typed record operations return application values directly: `create()` returns
@@ -317,6 +325,12 @@ The snapshot object and records array are immutable. Each `Record<T>` handle
 represents the queried version until the caller explicitly uses that handle's
 normal `update()` or `delete()` method; record data remains lazily read.
 
+`subscribe()` delivers later exact-path writes and deletes as codec-bound
+records, reusing inline frame data when present. It does not emit an initial
+collection; use `query()` for a baseline or `observe()` when the application
+needs current collection truth. Change delivery is at least once, so
+append-only consumers should tolerate duplicates.
+
 ## Shared contexts
 
 An application-specific invitation can carry a source DID, context ID, and
@@ -337,6 +351,9 @@ await shared.whenCurrent();
 const deltas = await shared.records.query('notebook/page/delta');
 const view = await shared.records.observe('notebook/page/title', {
   pagination: { limit: 1 },
+});
+const changes = await shared.records.subscribe('notebook/page/delta', async (event) => {
+  if (event.type === 'write') applyDelta(await event.record.value());
 });
 await shared.records.create('notebook/page/delta', { data: nextDelta });
 await shared.records.set('notebook/page/title', { data: { title: 'Shared title' } });

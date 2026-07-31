@@ -4,6 +4,7 @@ import type {
   RecordData,
   RecordPage,
   RecordPatch,
+  RecordSubscription,
   RecordUpdateParams,
   RecordView,
   TypedEnbox,
@@ -132,6 +133,15 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   });
   const observedRecord: Record<TaskData> | undefined = view.getSnapshot().records[0];
   void observedRecord;
+
+  const subscription: RecordSubscription = await typed.records.subscribe('task', async (event): Promise<void> => {
+    if (event.type === 'write') {
+      const changed: Record<TaskData> = event.record;
+      const value: TaskData = await changed.value();
+      void value;
+    }
+  });
+  await subscription.close();
 
   // @ts-expect-error typed operations do not expose raw DWN response envelopes.
   created.status;
