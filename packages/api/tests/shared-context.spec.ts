@@ -34,6 +34,7 @@ const SharedDefinition = {
     member      : { dataFormats: ['application/json'] },
     note        : { dataFormats: ['application/json'] },
     outside     : { dataFormats: ['application/json'] },
+    title       : { dataFormats: ['application/json'] },
     workspace   : { dataFormats: ['application/json'] },
     writeOnly   : { dataFormats: ['application/json'] },
   },
@@ -48,6 +49,10 @@ const SharedDefinition = {
       },
       note: {
         $actions: [{ role: protocolRole, can: ['create', 'read', 'update', 'delete'] }],
+      },
+      title: {
+        $actions     : [{ role: protocolRole, can: ['create', 'read', 'update'] }],
+        $recordLimit : { max: 1 },
       },
       writeOnly: {
         $actions: [{ role: protocolRole, can: ['create'] }],
@@ -64,6 +69,7 @@ const SharedProtocol = defineProtocol(SharedDefinition, {
   member      : recordCodecs.json<unknown>(),
   note        : recordCodecs.json<{ title: string }>(),
   outside     : recordCodecs.json<unknown>(),
+  title       : recordCodecs.json<string>(),
   workspace   : recordCodecs.json<unknown>(),
   writeOnly   : recordCodecs.json<unknown>(),
 });
@@ -91,7 +97,7 @@ function source(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource
     contextId,
     id            : 'role-record',
     protocol      : SharedDefinition.protocol,
-    protocolPaths : ['workspace', 'workspace/note'],
+    protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
     protocolRole,
     sourceDid,
     ...overrides,
@@ -108,7 +114,7 @@ function replicationLink(overrides: Partial<ReplicationLinkSnapshot> = {}): Repl
       contextId,
       kind          : 'context',
       protocol      : SharedDefinition.protocol,
-      protocolPaths : ['workspace', 'workspace/note'],
+      protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
     },
     status    : 'live',
     tenantDid : sourceDid,
@@ -208,7 +214,7 @@ describe('TypedEnbox shared contexts', () => {
       contextId,
       delegateDid   : undefined,
       protocol      : SharedDefinition.protocol,
-      protocolPaths : ['workspace', 'workspace/note'],
+      protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
       protocolRole,
       sourceDid,
     });
@@ -245,6 +251,54 @@ describe('TypedEnbox shared contexts', () => {
         parentContextId : contextId,
         protocolPath    : 'workspace/writeOnly',
         protocolRole,
+      },
+      target: sourceDid,
+    });
+  });
+
+  it('creates and updates a direct singleton through the bound root', async () => {
+    const shared = await typed.contexts.follow({ sourceDid, contextId, role: protocolRole });
+
+    await shared.records.set('workspace/title', { data: 'First title' });
+
+    expect(agent.processDwnRequest.calledOnce).toBe(true);
+    expect(agent.processDwnRequest.firstCall.args[0]).toMatchObject({
+      messageParams: {
+        filter: {
+          contextId,
+          protocol     : SharedDefinition.protocol,
+          protocolPath : 'workspace/title',
+        },
+        protocolRole,
+      },
+      target: sourceDid,
+    });
+    expect(agent.sendDwnRequest.calledOnce).toBe(true);
+    expect(agent.sendDwnRequest.firstCall.args[0]).toMatchObject({
+      messageParams: {
+        parentContextId : contextId,
+        protocol        : SharedDefinition.protocol,
+        protocolPath    : 'workspace/title',
+        protocolRole,
+      },
+      target: sourceDid,
+    });
+
+    const existing = writeFrom(agent.sendDwnRequest.firstCall.args[0]);
+    agent.processDwnRequest.resolves({
+      reply: { entries: [existing], status: { code: 200, detail: 'OK' } },
+    });
+
+    await shared.records.set('workspace/title', { data: 'Updated title' });
+
+    expect(agent.processDwnRequest.callCount).toBe(2);
+    expect(agent.sendDwnRequest.callCount).toBe(2);
+    expect(agent.sendDwnRequest.secondCall.args[0]).toMatchObject({
+      messageParams: {
+        protocol     : SharedDefinition.protocol,
+        protocolPath : 'workspace/title',
+        protocolRole,
+        recordId     : existing.recordId,
       },
       target: sourceDid,
     });

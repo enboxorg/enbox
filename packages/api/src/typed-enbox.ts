@@ -32,7 +32,6 @@
  */
 
 import type { Protocol } from './protocol.js';
-import type { RecordUpdateParams } from './record-types.js';
 import type { RecordView } from './record-view.js';
 import type {
   DirectSingletonChildPaths,
@@ -44,9 +43,10 @@ import type {
 } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, FollowedSyncSource, SyncEngine } from '@enbox/agent';
-import type { MaterializedRecord, Record } from './record.js';
+import type { MaterializedRecord, Record, RecordPatch } from './record.js';
 import type { ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
+import type { RecordDeleteParams, RecordUpdateParams } from './record-types.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createRecordView } from './record-view.js';
@@ -77,6 +77,63 @@ export type DataForPath<
   C extends RecordCodecMap,
   Path extends string,
 > = TypeNameAtPath<Path> extends keyof C ? RecordCodecValue<C[TypeNameAtPath<Path>]> : never;
+
+/** Update fields available on a record whose context, role, and target are already bound. */
+export type ContextRecordUpdateParams<T = unknown> = Pick<
+  RecordUpdateParams<T>,
+  'data' | 'datePublished' | 'published' | 'tags' | 'timestamp'
+>;
+
+/** Delete fields available on a record whose context, role, and target are already bound. */
+export type ContextRecordDeleteParams = Pick<RecordDeleteParams, 'prune' | 'timestamp'>;
+
+/**
+ * Application-facing record handle for one bound context.
+ *
+ * The runtime remains the canonical {@link Record}; routing, import, signing,
+ * and raw-message controls are hidden because the context owns them.
+ */
+export type ContextRecord<T = unknown> = Pick<
+  Record<T>,
+  | 'author'
+  | 'contextId'
+  | 'creator'
+  | 'data'
+  | 'dataCid'
+  | 'dataFormat'
+  | 'dataSize'
+  | 'dateCreated'
+  | 'datePublished'
+  | 'deleted'
+  | 'id'
+  | 'parentId'
+  | 'published'
+  | 'recipient'
+  | 'tags'
+  | 'timestamp'
+  | 'value'
+> & {
+  delete(params?: ContextRecordDeleteParams): Promise<void>;
+  patch(
+    data: RecordPatch<T>,
+    options?: Omit<ContextRecordUpdateParams<T>, 'data'>,
+  ): Promise<ContextRecord<T>>;
+  update(params: ContextRecordUpdateParams<T>): Promise<ContextRecord<T>>;
+};
+
+/** A context-bound record handle paired with its decoded application value. */
+export type ContextMaterializedRecord<T = unknown> = Readonly<{
+  record: ContextRecord<T>;
+  value: T;
+}>;
+
+type RecordHandle<T, ContextBound extends boolean> = ContextBound extends true
+  ? ContextRecord<T>
+  : Record<T>;
+
+type MaterializedRecordHandle<T, ContextBound extends boolean> = ContextBound extends true
+  ? ContextMaterializedRecord<T>
+  : MaterializedRecord<T>;
 
 /** Role paths that receive audience keys under the protocol's global encryption policy. */
 type ProtocolDeliveryRolePaths<D extends ProtocolDefinition> = {
@@ -118,9 +175,10 @@ type MaterializedChildren<
   C extends RecordCodecMap,
   Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> = true,
+  ContextBound extends boolean = false,
 > = {
   readonly [ChildPath in SelectedMaterializedChildPaths<D, Path, Materialization>
-    as TypeNameAtPath<ChildPath>]: MaterializedRecord<DataForPath<C, ChildPath>> | undefined;
+    as TypeNameAtPath<ChildPath>]: MaterializedRecordHandle<DataForPath<C, ChildPath>, ContextBound> | undefined;
 };
 
 /** Materialized representation of one typed protocol record. */
@@ -129,10 +187,11 @@ type MaterializedRecordForPath<
   C extends RecordCodecMap,
   Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> = true,
+  ContextBound extends boolean = false,
 > = Materialization extends true
-  ? MaterializedRecord<DataForPath<C, Path>>
-  : MaterializedRecord<DataForPath<C, Path>> & Readonly<{
-    children: Readonly<MaterializedChildren<D, C, Path, Materialization>>;
+  ? MaterializedRecordHandle<DataForPath<C, Path>, ContextBound>
+  : MaterializedRecordHandle<DataForPath<C, Path>, ContextBound> & Readonly<{
+    children: Readonly<MaterializedChildren<D, C, Path, Materialization, ContextBound>>;
   }>;
 
 type SelectedRecordRepresentation<
@@ -140,9 +199,10 @@ type SelectedRecordRepresentation<
   C extends RecordCodecMap,
   Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
+  ContextBound extends boolean = false,
 > = Materialization extends undefined
-  ? Record<DataForPath<C, Path>>
-  : MaterializedRecordForPath<D, C, Path, Materialization>;
+  ? RecordHandle<DataForPath<C, Path>, ContextBound>
+  : MaterializedRecordForPath<D, C, Path, Materialization, ContextBound>;
 
 type MaterializedRecordWithChildren<T> = MaterializedRecord<T> & Readonly<{
   children: Readonly<globalThis.Record<string, MaterializedRecord<unknown> | undefined>>;
@@ -154,16 +214,23 @@ type MaterializationSource = {
   within?: string;
 };
 
+type QueryRequest<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+  Materialization extends RecordMaterialization<D, Path> | undefined,
+  Query extends RecordQuery<D, Path>,
+> = [Materialization] extends [undefined]
+  ? Query & { materialize?: undefined }
+  : Omit<Query, 'pagination'> & {
+    materialize: Materialization;
+    pagination: { limit: number; cursor?: DwnPaginationCursor };
+  };
+
 type TypedQueryRequest<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
-> = [Materialization] extends [undefined]
-  ? RecordQuery<D, Path> & { materialize?: undefined }
-  : Omit<RecordQuery<D, Path>, 'pagination'> & {
-    materialize: Materialization;
-    pagination: { limit: number; cursor?: DwnPaginationCursor };
-  };
+> = QueryRequest<D, Path, Materialization, RecordQuery<D, Path>>;
 
 type TypedQueryArguments<
   D extends ProtocolDefinition,
@@ -173,15 +240,22 @@ type TypedQueryArguments<
   ? [path: Path, request?: TypedQueryRequest<D, Path, Materialization>]
   : [path: Path, request: TypedQueryRequest<D, Path, Materialization>];
 
-type TypedObserveRequest<
+type ObserveRequest<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
-> = Omit<RecordQuery<D, Path>, 'pagination'> & {
+  Query extends RecordQuery<D, Path>,
+> = Omit<Query, 'pagination'> & {
   pagination: { limit: number; cursor?: DwnPaginationCursor };
 } & ([Materialization] extends [undefined]
   ? { materialize?: undefined }
   : { materialize: Materialization });
+
+type TypedObserveRequest<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+  Materialization extends RecordMaterialization<D, Path> | undefined,
+> = ObserveRequest<D, Path, Materialization, RecordQuery<D, Path>>;
 
 /** @internal Runtime resources owned by the Enbox session that created this typed API. */
 type TypedEnboxOptions = {
@@ -227,8 +301,8 @@ export type SharedContext<
   id: string;
   /** Context ID that bounds every record operation. */
   contextId: string;
-  /** Existing typed records API, bound to this context and role. */
-  records: TypedEnbox<D, C>['records'];
+  /** Typed records API with this context's source, role, and root scope already bound. */
+  records: ContextRecordsApi<D, C>;
   /** Role path authorizing access to the context. */
   role: ProtocolRolePaths<D> & string;
   /** DID whose DWN owns the authoritative context. */
@@ -575,6 +649,104 @@ export type TypedDeleteRequest = {
    */
   prune?: boolean;
 };
+
+type ContextRecordPaths<D extends ProtocolDefinition> = ProtocolPaths<D> & string;
+
+type ContextCreateRequest<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  Path extends ContextRecordPaths<D>,
+> = Omit<
+  TypedCreateRequest<D, C, Path>,
+  'from' | 'protocolRole' | 'recipientRolePublicKey' | 'store'
+>;
+
+type ContextRecordQuery<
+  D extends ProtocolDefinition,
+  Path extends ContextRecordPaths<D>,
+> = Omit<RecordQuery<D, Path>, 'from' | 'protocolRole'>;
+
+type ContextQueryRequest<
+  D extends ProtocolDefinition,
+  Path extends ContextRecordPaths<D>,
+  Materialization extends RecordMaterialization<D, Path> | undefined,
+> = QueryRequest<D, Path, Materialization, ContextRecordQuery<D, Path>>;
+
+type ContextQueryArguments<
+  D extends ProtocolDefinition,
+  Path extends ContextRecordPaths<D>,
+  Materialization extends RecordMaterialization<D, Path> | undefined,
+> = [Materialization] extends [undefined]
+  ? [path: Path, request?: ContextQueryRequest<D, Path, Materialization>]
+  : [path: Path, request: ContextQueryRequest<D, Path, Materialization>];
+
+type ContextObserveRequest<
+  D extends ProtocolDefinition,
+  Path extends ContextRecordPaths<D>,
+  Materialization extends RecordMaterialization<D, Path> | undefined,
+> = ObserveRequest<D, Path, Materialization, ContextRecordQuery<D, Path>>;
+
+type ContextReadRequest<
+  D extends ProtocolDefinition,
+  Path extends ContextRecordPaths<D>,
+> = Omit<TypedReadRequest<D, Path>, 'from' | 'protocolRole'>;
+
+type ContextSetRequest<
+  C extends RecordCodecMap,
+  Path extends string,
+> = Omit<TypedSetRequest<C, Path>, 'within'> & { within?: string };
+
+type ContextDeleteRequest = Omit<TypedDeleteRequest, 'from' | 'protocolRole'>;
+
+/**
+ * Existing typed records operations confined to one application context.
+ * Source routing, authorization roles, key delivery, and root scope are owned
+ * by the context rather than supplied by each call.
+ */
+export type ContextRecordsApi<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  C extends RecordCodecMap = RecordCodecMap,
+> = Readonly<{
+  create: <Path extends ContextRecordPaths<D>>(
+    path: Path,
+    request: ContextCreateRequest<D, C, Path>,
+  ) => Promise<ContextRecord<DataForPath<C, Path>>>;
+
+  query: <
+    Path extends ContextRecordPaths<D>,
+    Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
+  >(...args: ContextQueryArguments<D, Path, Materialization>) => Promise<
+    RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization, true>>
+  >;
+
+  observe: <
+    Path extends ContextRecordPaths<D>,
+    Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
+  >(
+    path: Path,
+    request: ContextObserveRequest<D, Path, Materialization>,
+  ) => Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization, true>>>;
+
+  count: <Path extends ContextRecordPaths<D>>(
+    path: Path,
+    request?: ContextRecordQuery<D, Path>,
+  ) => Promise<number>;
+
+  read: <Path extends ContextRecordPaths<D>>(
+    path: Path,
+    recordIdOrRequest: string | ContextReadRequest<D, Path>,
+  ) => Promise<ContextRecord<DataForPath<C, Path>> | undefined>;
+
+  set: <Path extends SingletonProtocolPaths<D> & string>(
+    path: Path,
+    request: ContextSetRequest<C, Path>,
+  ) => Promise<ContextRecord<DataForPath<C, Path>>>;
+
+  delete: <Path extends ContextRecordPaths<D>>(
+    path: Path,
+    request: ContextDeleteRequest,
+  ) => Promise<void>;
+}>;
 
 /**
  * Thrown/returned by {@link TypedEnbox.verifyInstalled} when a DELEGATE
@@ -1455,7 +1627,7 @@ export class TypedEnbox<
       contextId : source.contextId,
       id        : source.id,
       leave     : (): Promise<void> => retire(true),
-      records   : bound.records,
+      records   : bound.records as ContextRecordsApi<D, C>,
       role      : scope.role,
       sourceDid : source.sourceDid,
       unfollow  : (): Promise<void> => retire(false),

@@ -339,14 +339,17 @@ const view = await shared.records.observe('notebook/page/title', {
   pagination: { limit: 1 },
 });
 await shared.records.create('notebook/page/delta', { data: nextDelta });
+await shared.records.set('notebook/page/title', { data: { title: 'Shared title' } });
 ```
 
-`shared.records` is the existing typed records API, confined to the accepted
-context and role. Reads and views use its pull-synchronized local replica;
+`shared.records` is the existing typed records implementation projected as a
+context-bound API. Reads and views use its pull-synchronized local replica;
 creates and retained-record mutations go to the source DWN. Callers do not
-pass tenant DIDs, grant IDs, `from`, or `protocolRole`. A new follow performs
-only bounded role, protocol, context-root, and audience-key bootstrap, while
-the existing sync engine catches up the exact role-readable path set.
+pass tenant DIDs, grant IDs, `from`, `protocolRole`, root `within` selectors,
+or raw DWN storage controls. Deeper descendants can still name their direct
+parent inside the shared context. A new follow performs only bounded role,
+protocol, context-root, and audience-key bootstrap, while the existing sync
+engine catches up the exact role-readable path set.
 
 Accepted contexts survive restart and are reconstructed with
 `await notebooks.contexts.list()`. `unfollow()` removes only the local accepted
