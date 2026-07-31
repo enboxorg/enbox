@@ -225,6 +225,27 @@ export type RecordsReadReply = GenericMessageReply & {
    * `undefined` if no data needs to be returned.
    */
   entry?: RecordsReadReplyEntry;
+
+  /** @internal Server-proven dependencies for seeding a role-holder replica. */
+  support?: RecordsReadReplicationSupportEntry[];
+
+  /** @internal Active role assignment that authorized `support`. */
+  roleRecordId?: string;
+};
+
+/**
+ * A dependency envelope shaped like a full Messages feed entry, but without a
+ * feed position because bootstrap dependencies are response-local rather than
+ * cursor events.
+ * @internal
+ */
+export type RecordsReadReplicationSupportEntry = {
+  messageCid: string;
+  isLatestBaseState?: boolean;
+  protocol?: string;
+  message: GenericMessage;
+  initialWrite?: RecordsWriteMessage;
+  encodedData?: string;
 };
 
 /**
@@ -258,6 +279,8 @@ export type RecordsReadDescriptor = {
   filter: RecordsFilter;
   messageTimestamp: string;
   permissionGrantId?: string;
+  /** @internal Requests a bounded role-replication dependency closure. */
+  includeReplicationSupport?: boolean;
   dateSort?: DateSort;
 };
 

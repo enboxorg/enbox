@@ -41,6 +41,9 @@
         "permissionGrantId": {
           "type": "string"
         },
+        "includeReplicationSupport": {
+          "type": "boolean"
+        },
         "dateSort": {
           "enum": [
             "createdAscending",

@@ -209,7 +209,7 @@ export class ProtocolAuthorization {
     incomingMessage: RecordsRead,
     newestRecordsWrite: RecordsWrite,
     validationStateReader: ValidationStateReader,
-  ): Promise<void> {
+  ): Promise<ResolvedProtocolRole | undefined> {
     // fetch record chain
     const recordChain: RecordsWriteMessage[] =
       await validationStateReader.constructRecordChain(tenant, newestRecordsWrite.message.recordId);
@@ -230,7 +230,7 @@ export class ProtocolAuthorization {
     );
 
     // If the incoming message has `protocolRole` in the descriptor, validate the invoked role
-    await verifyInvokedRole(
+    const resolvedRole = await verifyInvokedRole(
       tenant,
       incomingMessage,
       newestRecordsWrite.message.descriptor.protocol,
@@ -249,6 +249,8 @@ export class ProtocolAuthorization {
       validationStateReader,
       protocolDefinition,
     );
+
+    return resolvedRole;
   }
 
   public static async authorizeQueryOrSubscribe(

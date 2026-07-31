@@ -242,6 +242,7 @@ export enum DwnErrorCode {
 
   RecordsReadCreateFilterPublishedSortInvalid = 'RecordsReadCreateFilterPublishedSortInvalid',
   RecordsReadParseFilterPublishedSortInvalid = 'RecordsReadParseFilterPublishedSortInvalid',
+  RecordsReadReplicationSupportUnsupported = 'RecordsReadReplicationSupportUnsupported',
   /**
    * Terminal subscription delivery error indicating that a grant or protocol role no longer authorizes delivery.
    * Subscribers should not resubscribe with the same authority.

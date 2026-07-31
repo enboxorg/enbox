@@ -1,4 +1,5 @@
 import type { Filter } from '../types/query-types.js';
+import type { ResolvedProtocolRole } from '../core/protocol-authorization-action.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply } from '../types/records-types.js';
 
@@ -14,6 +15,7 @@ import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsRead } from '../interfaces/records-read.js';
+import { RecordsReadReplicationSupport } from '../core/records-read-replication-support.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -79,9 +81,10 @@ export class RecordsReadHandler implements MethodHandler {
       };
     }
 
+    let resolvedRole: ResolvedProtocolRole | undefined;
     try {
       const parsedWrite = await RecordsWrite.parse(matchedRecordsWrite);
-      await RecordsReadHandler.authorizeRecordsRead(
+      resolvedRole = await RecordsReadHandler.authorizeRecordsRead(
         tenant, recordsRead, parsedWrite, this.deps,
       );
     } catch (error) {
@@ -138,6 +141,22 @@ export class RecordsReadHandler implements MethodHandler {
       return messageReplyFromError(error, 500);
     }
 
+    if (message.descriptor.includeReplicationSupport === true) {
+      try {
+        const support = await RecordsReadReplicationSupport.build({
+          deps         : this.deps,
+          matchedRecordsWrite,
+          requester    : recordsRead.author!,
+          resolvedRole : resolvedRole!,
+          tenant,
+        });
+        recordsReadReply.support = support.entries;
+        recordsReadReply.roleRecordId = support.roleRecordId;
+      } catch (error) {
+        return messageReplyFromError(error, 400);
+      }
+    }
+
     return recordsReadReply;
   };
 
@@ -191,7 +210,7 @@ export class RecordsReadHandler implements MethodHandler {
     recordsRead: RecordsRead,
     matchedRecordsWrite: RecordsWrite,
     deps: HandlerDependencies,
-  ): Promise<void> {
+  ): Promise<ResolvedProtocolRole | undefined> {
     const { descriptor } = matchedRecordsWrite.message;
 
     if (EncryptionControl.isControlMessage(matchedRecordsWrite.message)) {
@@ -208,24 +227,34 @@ export class RecordsReadHandler implements MethodHandler {
         recordsWriteMessage   : matchedRecordsWrite.message,
         validationStateReader : deps.validationStateReader,
       });
-      return;
+      return undefined;
     }
 
     if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
       await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.validationStateReader);
     }
 
+    if (recordsRead.message.descriptor.includeReplicationSupport === true) {
+      if (recordsRead.author === undefined || recordsRead.signaturePayload?.protocolRole === undefined) {
+        throw new DwnError(
+          DwnErrorCode.RecordsReadReplicationSupportUnsupported,
+          'replication support requires an authenticated protocol-role invocation.'
+        );
+      }
+      return ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
+    }
+
     if (recordsRead.author === tenant) {
       // if author is the same as the target tenant, we can directly grant access
-      return;
+      return undefined;
     } else if (descriptor.published === true) {
       // authentication is not required for published data
-      return;
+      return undefined;
     } else if (recordsRead.author !== undefined &&
       (recordsRead.author === descriptor.recipient || recordsRead.author === matchedRecordsWrite.author)
     ) {
       // The recipient or author of a message may always read it
-      return;
+      return undefined;
     } else if (recordsRead.author !== undefined && Message.getPermissionGrantId(recordsRead.signaturePayload!) !== undefined) {
       const permissionGrantId = Message.getPermissionGrantId(recordsRead.signaturePayload!)!;
       const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
@@ -237,8 +266,9 @@ export class RecordsReadHandler implements MethodHandler {
         permissionGrant,
         validationStateReader       : deps.validationStateReader
       });
+      return undefined;
     } else {
-      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
+      return ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
     }
   }
 }
