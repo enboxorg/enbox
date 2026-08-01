@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsDeleteMessage, RecordsQueryReply, Wake } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsDeleteMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
@@ -149,8 +149,8 @@ type FollowedSourceResolution =
   | { kind: 'unknown'; error: Error };
 
 type FollowedSourceCommit = {
-  existing: FollowedSyncSource | undefined;
   replaced: FollowedSyncSource[];
+  wasExisting: boolean;
 };
 
 type FollowedSourceChangeEvent = Extract<SyncEvent, { type: 'followed-context:change' }>;
@@ -271,7 +271,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Cross-context durable-catalog wake, present for path-addressed stores. */
   private readonly _followedSourceWakePublisher?: BroadcastChannelWakePublisher;
-  private _followedSourceWakeUnsubscribe?: () => void;
 
   /** Serializes public Retry-now operations with each other before they acquire the sync lock. */
   private _retryRemoteQueue: Promise<void> = Promise.resolve();
@@ -317,8 +316,8 @@ export class SyncEngineLevel implements SyncEngine {
       this._followedSourceWakePublisher = new BroadcastChannelWakePublisher(
         `enbox:sync-followed-source:${this._lockNamespace}`,
       );
-      this._followedSourceWakeUnsubscribe = this._followedSourceWakePublisher.subscribe(
-        (wake): void => { this.handleFollowedSourceWake(wake); },
+      this._followedSourceWakePublisher.subscribe(
+        (): void => { this.scheduleFollowedSourceReconciliation(); },
       );
     }
   }
@@ -812,8 +811,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Stop cross-context catalog wakes before closing their shared store. */
   private closeFollowedSourceWakePublisher(): void {
-    this._followedSourceWakeUnsubscribe?.();
-    this._followedSourceWakeUnsubscribe = undefined;
+    this._followedSourceWakePublisher?.clear();
     this._followedSourceWakePublisher?.close();
   }
 
@@ -1177,7 +1175,7 @@ export class SyncEngineLevel implements SyncEngine {
         }
       }
     });
-    this.activateFollowedSource(source, normalized.delegateDid, activation.existing !== undefined);
+    this.activateFollowedSource(source, normalized.delegateDid, activation.wasExisting);
     return source;
   }
 
@@ -1326,7 +1324,7 @@ export class SyncEngineLevel implements SyncEngine {
       this.invalidateSyncTargetsCache();
       this.emitFollowedSourceChange(source, source.id);
     }
-    return { existing, replaced };
+    return { replaced, wasExisting: existing !== undefined };
   }
 
   /** Remove links for followed sources replaced by a durable commit. */
@@ -1443,13 +1441,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._followedSourceWakePublisher?.publish({ tenant: source.sourceDid, seq: source.acceptanceId });
   }
 
-  /** A cross-context wake is only a hint; durable catalog state remains authoritative. */
-  private handleFollowedSourceWake(wake: Wake): void {
-    if (wake.tenant.length > 0 && wake.seq.length > 0) {
-      this.scheduleFollowedSourceReconciliation();
-    }
-  }
-
   private async removeFollowedSourceLinks(id: string, sourceDid: string): Promise<void> {
     const linkKeys = new Set<string>();
     for (const [linkKey, controller] of this._linkControllers) {
@@ -1495,7 +1486,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Apply durable catalog changes to this engine's events and replication sessions. */
-  private async refreshFollowedSourceState(): Promise<boolean> {
+  private async refreshFollowedSourceState(): Promise<FollowedSyncSource[]> {
     await this._lifecycle.acquireSync();
     try {
       await this.removeObsoleteFollowedSourceLinks(await this.readFollowedSources());
@@ -1518,15 +1509,13 @@ export class SyncEngineLevel implements SyncEngine {
         this._followedSourceSnapshot.set(key, source);
       }
       this._followedSourceSnapshotInitialized = true;
-      if (changes.length === 0) {
-        return false;
+      if (changes.length > 0) {
+        this.invalidateSyncTargetsCache();
+        for (const change of changes) {
+          this.emitFollowedSourceChange(change.source, change.followedSourceId);
+        }
       }
-
-      this.invalidateSyncTargetsCache();
-      for (const change of changes) {
-        this.emitFollowedSourceChange(change.source, change.followedSourceId);
-      }
-      return true;
+      return sources;
     } finally {
       this._lifecycle.releaseSync();
     }
@@ -1600,11 +1589,11 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Re-evaluate each durable role group without adding another retry scheduler. */
   private async reconcileFollowedSources(runtime: SyncRuntime): Promise<void> {
-    await this.refreshFollowedSourceState();
+    const sources = await this.refreshFollowedSourceState();
     if (!runtime.live) {
       return;
     }
-    for (const source of await this.readFollowedSources()) {
+    for (const source of sources) {
       if (runtime.disposed) {
         return;
       }
@@ -1689,7 +1678,7 @@ export class SyncEngineLevel implements SyncEngine {
           await this.commitFollowedSourceRemoval(current);
           await this.removeFollowedSourceLinksForSources([current]);
         } else if (followedSyncSourceEqual(current, resolution.source)) {
-          activation = { existing: current, replaced: [] };
+          activation = { replaced: [], wasExisting: true };
         } else {
           const commit = await this.commitFollowedSource(resolution.source);
           await this.removeFollowedSourceLinksForSources(commit.replaced);
@@ -1703,7 +1692,7 @@ export class SyncEngineLevel implements SyncEngine {
       this.activateFollowedSource(
         resolution.source,
         identity.delegateDid,
-        activation.existing !== undefined,
+        activation.wasExisting,
       );
     }
   }

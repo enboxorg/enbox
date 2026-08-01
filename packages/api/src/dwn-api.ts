@@ -485,14 +485,6 @@ export class DwnApi {
     return { agentRequest, remoteTarget };
   }
 
-  /** Build and dispatch one ordinary RecordsDelete. */
-  private async deleteRecord(request: RecordsDeleteRequest): Promise<DwnResponseStatus> {
-    const { agentRequest, remoteTarget } = await this.prepareDeleteRecord(request);
-    const agentResponse: DwnResponse<DwnInterface.RecordsDelete> =
-      await this.dispatchDwnRequest(agentRequest, remoteTarget);
-    return { status: agentResponse.reply.status };
-  }
-
   /** Construct the canonical record handle shared by query, read, and subscription frames. */
   private createRecordHandle(params: {
     dataAccess: RecordDataAccess;
@@ -1160,7 +1152,9 @@ export class DwnApi {
        * Delete a record
        */
       delete: async (request: RecordsDeleteRequest): Promise<DwnResponseStatus> => {
-        return this.deleteRecord(request);
+        const { agentRequest, remoteTarget } = await this.prepareDeleteRecord(request);
+        const response = await this.dispatchDwnRequest(agentRequest, remoteTarget);
+        return { status: response.reply.status };
       },
 
       /**

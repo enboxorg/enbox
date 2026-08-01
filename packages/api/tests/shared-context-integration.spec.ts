@@ -492,7 +492,7 @@ describe('shared context public API integration', () => {
     expect(restoredPages.records[0].id).toBe(largePageRecordId);
     expect(await restoredPages.records[0].value()).toEqual(largePage);
 
-    const catalog = await reopened.contexts.observe();
+    const catalog = reopened.contexts.observe();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(catalog.getSnapshot()).toMatchObject({ state: 'ready', contexts: [{}, {}] });
     }, Poller.pollRetrySleep, 30_000);
@@ -518,7 +518,7 @@ describe('shared context public API integration', () => {
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(catalog.getSnapshot().contexts.every(context => context.id !== contextIds[0])).toBe(true);
     }, Poller.pollRetrySleep, 30_000);
-    await catalog.close();
+    catalog.close();
 
     const [sibling] = await reopened.contexts.list();
     expect(sibling.id).toBe(contextIds[1]);

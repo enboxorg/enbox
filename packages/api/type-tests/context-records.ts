@@ -100,10 +100,12 @@ if (catalogContext.role === 'workspace/member') {
 const owned = typed.contexts.open('workspace', 'workspace-id');
 const listed: Promise<MemberContext<typeof ContextDefinition, typeof ContextProtocol.codecs>[]> =
   typed.contexts.list();
-const observed: Promise<ContextView<MemberContext<typeof ContextDefinition, typeof ContextProtocol.codecs>>> =
+const observed: ContextView<MemberContext<typeof ContextDefinition, typeof ContextProtocol.codecs>> =
   typed.contexts.observe();
+const closed: void = observed.close();
 void listed;
 void observed;
+void closed;
 // @ts-expect-error role records are membership, not contexts.
 void typed.contexts.open('workspace/member', 'workspace-id/member-id');
 void owned.then((value): void => {

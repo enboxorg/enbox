@@ -18,8 +18,6 @@ import {
   authenticate,
   DwnConstant,
   DwnErrorCode,
-  DwnInterfaceName,
-  DwnMethodName,
   Encoder,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
@@ -33,6 +31,7 @@ import {
 } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
+import { isTenantProtocolConfig } from './sync-fetch-helpers.js';
 import { resolveDwnSubscriptionUrl as resolveDwnWebSocketUrl } from './utils.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import { capRecordsWriteDataStream, SyncPullAbortedError } from './sync-messages.js';
@@ -46,7 +45,7 @@ export type RoleReplicationSupportBatch = {
 };
 
 /** Verified current state of one previously accepted role assignment. */
-export type FollowedRoleState =
+type FollowedRoleState =
   | { kind: 'active' }
   | { kind: 'absent'; tombstone: RecordsDeleteMessage };
 
@@ -306,7 +305,6 @@ export async function readRoleReplicationSupport(params: {
     }
 
     const support = reply.support ?? [];
-    await verifyRootInitialWrite(reply.entry?.initialWrite, rootMessage);
     const roleContextId = getRoleContextPrefix(params.protocolRole, params.contextId);
     const { protocolDefinition, roleRecordId } = await validateSupport({
       actorDid     : params.actorDid,
@@ -387,24 +385,6 @@ function assertRoot(
   }
 }
 
-async function verifyRootInitialWrite(
-  initialWrite: RecordsWriteMessage | undefined,
-  root: RecordsWriteMessage,
-): Promise<void> {
-  if (initialWrite === undefined) {
-    return;
-  }
-  assertRoot(initialWrite, {
-    contextId    : root.contextId,
-    protocol     : root.descriptor.protocol,
-    protocolPath : root.descriptor.protocolPath,
-    recordId     : root.recordId,
-  });
-  if (!await RecordsWrite.isInitialWrite(initialWrite)) {
-    throw new Error('Role replication support root initialWrite is not an initial write.');
-  }
-}
-
 async function validateSupport(params: {
   actorDid: string;
   agent: EnboxPlatformAgent;
@@ -433,13 +413,14 @@ async function validateSupport(params: {
   let currentProtocolConfigure: ProtocolsConfigureMessage | undefined;
   let currentProtocolConfigureMatches = 0;
   let unrelated: RecordsReadReplicationSupportEntry | undefined;
+  const isExpectedProtocolConfigure = isTenantProtocolConfig(params.sourceDid, params.protocol);
 
   for (const entry of params.support) {
     const actualCid = await Message.getCid(entry.message);
     if (actualCid !== entry.messageCid) {
       throw new Error(`Role replication support entry CID '${entry.messageCid}' does not match '${actualCid}'.`);
     }
-    if (isExactProtocolConfigure(entry.message, params.protocol, params.sourceDid)) {
+    if (isExpectedProtocolConfigure(entry.message)) {
       if (
         typeof entry.isLatestBaseState !== 'boolean' ||
         entry.initialWrite !== undefined ||
@@ -536,21 +517,6 @@ async function validateSupport(params: {
     protocolDefinition : currentProtocolConfigure.descriptor.definition,
     roleRecordId       : params.replyRoleId,
   };
-}
-
-function isExactProtocolConfigure(
-  message: RecordsReadReplicationSupportEntry['message'],
-  protocol: string,
-  sourceDid: string,
-): message is ProtocolsConfigureMessage {
-  if (
-    message.descriptor.interface !== DwnInterfaceName.Protocols ||
-    message.descriptor.method !== DwnMethodName.Configure
-  ) {
-    return false;
-  }
-  const definition = (message.descriptor as { definition?: { protocol?: unknown } }).definition;
-  return definition?.protocol === protocol && Message.getAuthor(message) === sourceDid;
 }
 
 function isTaggedEncryptionControl(

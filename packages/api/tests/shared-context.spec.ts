@@ -546,7 +546,9 @@ describe('TypedEnbox contexts', () => {
     }).then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
-    expect(error?.message).toBe('The requested context is not ready. Retry after its owner DWNs converge.');
+    expect(error?.message).toBe(
+      'The requested context is not ready. Retry after membership and encryption are ready.',
+    );
     expect(error?.cause).toBe(cause);
   });
 
@@ -703,7 +705,7 @@ describe('TypedEnbox contexts', () => {
 
   it('observes one stable accepted-context catalog across role replacement and removal', async () => {
     current = source();
-    const view = await typed.contexts.observe();
+    const view = typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
     const initial = view.getSnapshot();
     expect(initial.state).toBe('ready');
@@ -745,13 +747,13 @@ describe('TypedEnbox contexts', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(view.getSnapshot()).toMatchObject({ state: 'ready', contexts: [] });
 
-    await view.close();
+    view.close();
     expect(listeners.size).toBe(0);
   });
 
   it('permanently retires a retained context when external removal and same-source re-follow coalesce', async () => {
     current = source();
-    const view = await typed.contexts.observe();
+    const view = typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
     const first = view.getSnapshot().contexts[0];
     let finishRemovalRead!: (sources: FollowedSyncSource[]) => void;
@@ -774,7 +776,7 @@ describe('TypedEnbox contexts', () => {
     await expect(first.records.query('workspace/note'))
       .rejects.toThrow(`Member context '${contextId}' is no longer active.`);
     expect(agent.processDwnRequest.callCount).toBe(localRequests);
-    await view.close();
+    view.close();
   });
 
   it('waits for the exact followed-source replica to become current', async () => {

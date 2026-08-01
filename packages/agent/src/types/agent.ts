@@ -13,8 +13,6 @@ import type { AgentDidApi, DidInterface, DidRequest, DidResponse } from '../did-
 import type {
   DecryptRecordDataParams,
   DwnInterface,
-  DwnMessage,
-  DwnMessageReply,
   DwnResponse,
   ProcessDwnRequest,
   SendDwnRequest,
@@ -112,13 +110,7 @@ export interface EnboxAgent {
   /** @internal Sends one signed RecordsDelete to every endpoint advertised by the target DID. */
   sendDwnDeleteToAllRemoteEndpoints(
     request: ProcessDwnRequest<DwnInterface.RecordsDelete>,
-  ): Promise<{
-    message: DwnMessage[DwnInterface.RecordsDelete];
-    replies: Array<{
-      dwnUrl: string;
-      reply: DwnMessageReply[DwnInterface.RecordsDelete];
-    }>;
-  }>;
+  ): ReturnType<AgentDwnApi['sendDeleteToAllRemoteEndpoints']>;
 
   /**
    * Processes a request for handling Verifiable Credentials (VCs), such as issuing or verifying

@@ -383,7 +383,7 @@ describe('DwnApi record requests', () => {
     expect(agent.processDwnRequest.notCalled).toBe(true);
   });
 
-  it('should retain failure when all-endpoint delivery or verification fails', async () => {
+  it('should retain failure when all-endpoint delivery fails', async () => {
     agent.sendDwnDeleteToAllRemoteEndpoints.rejects(new Error('endpoint unavailable'));
     const dwn = createDwnApi(agent, permissions);
 

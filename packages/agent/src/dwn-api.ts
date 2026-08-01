@@ -1261,12 +1261,6 @@ export class AgentDwnApi {
         targetDid: request.target,
         message,
       }) as DwnMessageReply[DwnInterface.RecordsDelete];
-      await verifyRemoteDwnResponse({
-        didResolver : this.agent.did,
-        message,
-        reply,
-        targetDid   : request.target,
-      });
       return { dwnUrl, reply };
     }));
     const replies: Array<{

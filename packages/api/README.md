@@ -388,9 +388,9 @@ await shared.records.create('notebook/page/delta', { data: nextDelta });
 await shared.records.set('notebook/page/title', { data: { title: 'Shared title' } });
 ```
 
-`contexts.follow()` throws `ContextNotReadyError` when the owner's DWNs have
-not yet converged on one authoritative role state. The condition is retryable;
-other establishment failures remain sanitized as a generic context error.
+`contexts.follow()` throws `ContextNotReadyError` while the context's membership
+or encryption state is not ready. The condition is retryable; other
+establishment failures remain sanitized as a generic context error.
 
 `shared.records` is the existing typed records implementation projected as a
 context-bound API—the same contract returned by `notebooks.contexts.open()`.
@@ -423,7 +423,7 @@ Accepted contexts survive restart and are reconstructed with
 durable truth:
 
 ```ts
-const contexts = await notebooks.contexts.observe();
+const contexts = notebooks.contexts.observe();
 const renderSnapshot = ({ state, contexts, error }) => {
   if (state === 'error') report(error);
   else render(contexts);
@@ -433,7 +433,7 @@ const unsubscribe = contexts.subscribe(renderSnapshot);
 
 // When the consuming component is released:
 unsubscribe();
-await contexts.close();
+contexts.close();
 ```
 
 The catalog's `ready` state means the local accepted-context list has loaded;

@@ -63,13 +63,8 @@ import { createRecordView } from './record-view.js';
 import { Did } from '@enbox/dids';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
+import { projectReplicationCurrentness } from './replication-currentness.js';
 import { removeUndefinedProperties } from '@enbox/common';
-import {
-  areReplicationLinksCurrent,
-  FollowedSourceNotReadyError,
-  followedSyncSourceActiveEqual,
-  syncEventCoversProtocol,
-} from '@enbox/agent';
 import {
   assertTypedProtocolStructureSupported,
   collectProtocolPaths,
@@ -79,6 +74,11 @@ import {
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
 import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
+import {
+  FollowedSourceNotReadyError,
+  followedSyncSourceActiveEqual,
+  syncEventCoversProtocol,
+} from '@enbox/agent';
 import {
   getProtocolRoleActionPaths,
   getRuleSetAtPath,
@@ -370,10 +370,10 @@ export type RoleDeliveryState =
   | Readonly<{ state: 'pending'; reason?: string }>
   | Readonly<{ state: 'awaiting-recipient-install' | 'failed'; reason: string }>;
 
-/** Retryable failure because owner DWNs do not yet expose one authoritative context role state. */
+/** Retryable failure while a context's membership or encryption state is not ready. */
 export class ContextNotReadyError extends Error {
   public constructor(cause?: unknown) {
-    super('The requested context is not ready. Retry after its owner DWNs converge.', { cause });
+    super('The requested context is not ready. Retry after membership and encryption are ready.', { cause });
     this.name = 'ContextNotReadyError';
   }
 }
@@ -523,7 +523,7 @@ export type ContextsApi<
   /** List locally accepted member contexts for this protocol. */
   list(): Promise<MemberContext<D, C>[]>;
   /** Observe the locally accepted member-context catalog for this protocol. */
-  observe(): Promise<ContextView<MemberContext<D, C>>>;
+  observe(): ContextView<MemberContext<D, C>>;
 }>;
 
 /**
@@ -862,7 +862,7 @@ type ContextDescendantPaths<
   D extends ProtocolDefinition,
   Root extends ProtocolPaths<D> & string,
 > = Root extends string
-  ? Exclude<Extract<ProtocolPaths<D> & string, `${Root}/${string}`>, ProtocolRolePaths<D>>
+  ? Exclude<ContextRecordPaths<D, Root>, Root>
   : never;
 
 type ContextCreateRequest<
@@ -1352,7 +1352,7 @@ export class TypedEnbox<
       },
       list: async (): Promise<MemberContext<D, C>[]> =>
         (await listSources()).map((source): MemberContext<D, C> => this.bindMemberContext(source)),
-      observe: (): Promise<ContextView<MemberContext<D, C>>> => createContextView({
+      observe: (): ContextView<MemberContext<D, C>> => createContextView({
         actorDid    : this._dwn.connectedDid,
         bind        : (source): MemberContext<D, C> => this.bindMemberContext(source),
         listSources : listSources,
@@ -1981,22 +1981,15 @@ export class TypedEnbox<
       rolePaths.push(role);
     }
 
-    const membershipRecords = this.records as unknown as {
-      query(
-        path: string,
-        request: { filter?: { recipient?: string }; within: string },
-      ): Promise<RecordPage<Record<unknown>>>;
-    };
-
     const load = async (did?: string): Promise<ActiveMemberRecord[]> => {
       const perRole = await Promise.all(rolePaths.map(async (role): Promise<ActiveMemberRecord[]> => {
-        const page = await membershipRecords.query(
+        const page = await this.records.query(
           role,
           { within: contextId, ...(did === undefined ? {} : { filter: { recipient: did } }) },
         );
         return page.records.map((record): ActiveMemberRecord => ({
-          did: record.recipient!,
-          record,
+          did    : record.recipient!,
+          record : record as Record<unknown>,
           role,
         }));
       }));
@@ -2143,10 +2136,6 @@ export class TypedEnbox<
     const retire = async (leave: boolean): Promise<void> => {
       if (leave) {
         await assertActive();
-      } else {
-        this._options.signal?.throwIfAborted();
-      }
-      if (leave) {
         await this._dwn.deleteRemoteRecordAndStoreLocal({
           contextId    : source.contextId,
           from         : source.sourceDid,
@@ -2154,10 +2143,9 @@ export class TypedEnbox<
           protocolPath : source.protocolRole,
           recordId     : source.id,
         });
-      }
-      if (leave) {
         await sync.deleteFollowedSource(source);
       } else {
+        this._options.signal?.throwIfAborted();
         await sync.forgetFollowedContext(source);
       }
       controller.abort(new Error(`Member context '${source.contextId}' is no longer active.`));
@@ -2185,13 +2173,14 @@ export class TypedEnbox<
           const links = (await sync.getReplicationLinks(source.sourceDid))
             .filter((link): boolean => link.followedSourceId === source.id);
           signal.throwIfAborted();
-          if (links.some((link): boolean => link.status === 'paused')) {
+          const currentness = projectReplicationCurrentness(links, false);
+          if (currentness === 'error') {
             throw new Error(
               `MemberContext.whenCurrent: replication is paused for context '${source.contextId}' ` +
               `owned by '${source.sourceDid}'.`,
             );
           }
-          if (areReplicationLinksCurrent(links)) {
+          if (currentness === 'ready') {
             return;
           }
           await wake;
@@ -2213,7 +2202,7 @@ export class TypedEnbox<
         contextId     : source.contextId,
         protocolPath  : scope.protocolPath,
         protocolPaths : scope.allowedPaths,
-      }, { signal }),
+      }, signal),
       role: scope.role,
       whenCurrent,
     }) as unknown as MemberContext<D, C>;
@@ -2223,15 +2212,15 @@ export class TypedEnbox<
   private bindContextRecords<Root extends ProtocolPaths<D> & string>(
     dwn: DwnApi,
     context: NonNullable<TypedEnboxOptions['context']> & { protocolPath: Root },
-    options: Pick<TypedEnboxOptions, 'signal'> = {},
+    signal: AbortSignal | undefined = this._options.signal,
   ): ContextRecordsApi<D, C, Root> {
     return new TypedEnbox<D, C>(
       dwn,
       { codecs: this._codecs, definition: this._definition },
       {
         context,
-        signal : options.signal ?? this._options.signal,
-        sync   : this._options.sync,
+        signal,
+        sync: this._options.sync,
       },
     ).records as unknown as ContextRecordsApi<D, C, Root>;
   }
