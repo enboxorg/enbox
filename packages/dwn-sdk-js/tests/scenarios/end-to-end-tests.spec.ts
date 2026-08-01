@@ -14,7 +14,6 @@ import type {
   RoleAudienceKeyMaterial,
 } from '../../src/index.js';
 
-import { createAudienceControlWrite } from '../utils/encryption-control-test-utils.js';
 import { Encoder } from '../../src/index.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import sinon from 'sinon';
@@ -41,6 +40,7 @@ import {
   RecordsWrite,
   ROLE_AUDIENCE_DERIVATION_SCHEME
 } from '../../src/index.js';
+import { createAudienceControlWrite, createDeliveryControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 export function testEndToEndScenarios(): void {
@@ -294,15 +294,26 @@ export function testEndToEndScenarios(): void {
       });
       expect((await dwn.processMessage(alice.did, notebook.message, { dataStream: notebook.dataStream })).status.code).toBe(202);
 
+      const adminRolePath = 'community/admin';
       const admin = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
         data            : Encoder.objectToBytes({ role: 'admin' }),
         parentContextId : notebook.message.contextId,
         protocol        : definition.protocol,
-        protocolPath    : 'community/admin',
+        protocolPath    : adminRolePath,
         recipient       : alice.did,
       });
       expect((await dwn.processMessage(alice.did, admin.message, { dataStream: admin.dataStream })).status.code).toBe(202);
+
+      const bobAdmin = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        data            : Encoder.objectToBytes({ role: 'admin' }),
+        parentContextId : notebook.message.contextId,
+        protocol        : definition.protocol,
+        protocolPath    : adminRolePath,
+        recipient       : bob.did,
+      });
+      expect((await dwn.processMessage(alice.did, bobAdmin.message, { dataStream: bobAdmin.dataStream })).status.code).toBe(202);
 
       const page = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
@@ -336,6 +347,31 @@ export function testEndToEndScenarios(): void {
       });
       expect((await dwn.processMessage(alice.did, audience.recordsWrite.message, {
         dataStream: DataStream.fromBytes(audience.dataBytes),
+      })).status.code).toBe(202);
+
+      const adminRuleSet = (aliceDefinition.structure.community as ProtocolRuleSet).admin as ProtocolRuleSet;
+      const adminAudience = await createAudienceControlWrite({
+        author      : alice,
+        contextId   : notebook.message.contextId,
+        protocol    : definition.protocol,
+        rolePath    : adminRolePath,
+        roleRuleSet : adminRuleSet,
+      });
+      expect((await dwn.processMessage(alice.did, adminAudience.recordsWrite.message, {
+        dataStream: DataStream.fromBytes(adminAudience.dataBytes),
+      })).status.code).toBe(202);
+      const adminDelivery = await createDeliveryControlWrite({
+        author             : alice,
+        contextId          : notebook.message.contextId,
+        keyId              : adminAudience.keyId,
+        protocol           : definition.protocol,
+        recipient          : bob.did,
+        recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+        rolePath           : adminRolePath,
+        roleRuleSet        : adminRuleSet,
+      });
+      expect((await dwn.processMessage(alice.did, adminDelivery.recordsWrite.message, {
+        dataStream: DataStream.fromBytes(adminDelivery.dataBytes),
       })).status.code).toBe(202);
 
       const bobRoleRuleSet = ((bobDefinition.structure.community as ProtocolRuleSet)
@@ -414,6 +450,13 @@ export function testEndToEndScenarios(): void {
             protocol         : definition.protocol,
             publicKey        : alice.encryptionKeyPair.publicJwk,
             rolePath,
+          }, {
+            algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+            derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+            keyId            : adminAudience.keyId,
+            protocol         : definition.protocol,
+            publicKey        : alice.encryptionKeyPair.publicJwk,
+            rolePath         : adminRolePath,
           }],
         },
         parentContextId : page.message.contextId,
@@ -444,6 +487,20 @@ export function testEndToEndScenarios(): void {
       expect((await dwn.processMessage(alice.did, delivery.message, {
         dataStream: DataStream.fromBytes(deliveryCiphertext),
       })).status.code).toBe(202);
+
+      const plaintextBootstrap = await RecordsRead.create({
+        filter                    : { recordId: page.message.recordId },
+        includeReplicationSupport : true,
+        protocolRole              : rolePath,
+        signer                    : Jws.createSigner(bob),
+      });
+      const plaintextReply = await dwn.processMessage(alice.did, plaintextBootstrap.message) as RecordsReadReply;
+      expect(plaintextReply.status.code).toBe(200);
+      expect(plaintextReply.support?.filter((entry): boolean => {
+        const path = (entry.message.descriptor as { protocolPath?: string }).protocolPath;
+        return path === '$encryption/audience' || path === '$encryption/delivery';
+      }).map((entry): unknown => (entry.message.descriptor as { tags?: { rolePath?: unknown } }).tags?.rolePath))
+        .toEqual([rolePath, rolePath]);
 
       const upgradedDefinition = structuredClone(aliceDefinition);
       upgradedDefinition.types.message.dataFormats = ['text/plain'];
@@ -483,6 +540,18 @@ export function testEndToEndScenarios(): void {
         rolePath,
         '$encryption/audience',
         '$encryption/delivery',
+        '$encryption/audience',
+      ]);
+      expect(bootstrapReply.support?.filter((entry): boolean => {
+        return (entry.message.descriptor as { protocolPath?: string }).protocolPath === '$encryption/audience';
+      }).map((entry): unknown => (entry.message.descriptor as { tags?: { rolePath?: unknown } }).tags?.rolePath)).toEqual([
+        rolePath,
+        adminRolePath,
+      ]);
+      expect(bootstrapReply.support?.filter((entry): boolean => {
+        return (entry.message.descriptor as { protocolPath?: string }).protocolPath === '$encryption/delivery';
+      }).map((entry): unknown => (entry.message.descriptor as { tags?: { rolePath?: unknown } }).tags?.rolePath)).toEqual([
+        rolePath,
       ]);
       expect(bootstrapReply.support?.slice(0, 2).map((entry): boolean | undefined => entry.isLatestBaseState)).toEqual([
         false,

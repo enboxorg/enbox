@@ -152,6 +152,7 @@ export async function readRoleReplicationSupport(params: {
     protocolRole : params.protocolRole,
     replyRoleId  : reply.roleRecordId,
     roleContextId,
+    root         : rootMessage,
     sourceDid    : params.sourceDid,
     support,
   });
@@ -233,6 +234,7 @@ async function validateSupport(params: {
   protocolRole: string;
   replyRoleId: string | undefined;
   roleContextId: string | undefined;
+  root: RecordsWriteMessage;
   sourceDid: string;
   support: readonly RecordsReadReplicationSupportEntry[];
 }): Promise<{ protocolDefinition: ProtocolDefinition; roleRecordId: string }> {
@@ -301,7 +303,9 @@ async function validateSupport(params: {
       params.protocol,
       params.protocolRole,
       audienceContextId,
-    ) && entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
+    ) || isRootAudienceControl(message, params.root, params.protocol);
+    const isUsableAudience = isAudience &&
+      entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
     const isDelivery = isTaggedEncryptionControl(
       message,
       ENCRYPTION_CONTROL_DELIVERY_PATH,
@@ -311,7 +315,7 @@ async function validateSupport(params: {
     ) && message.descriptor.recipient === params.actorDid &&
       entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
 
-    if (!isAncestor && !isRole && !isAudience && !isDelivery) {
+    if (!isAncestor && !isRole && !isUsableAudience && !isDelivery) {
       unrelated ??= entry;
       continue;
     }
@@ -384,6 +388,33 @@ function isTaggedEncryptionControl(
     tags.rolePath === rolePath &&
     tags.contextId === contextId &&
     typeof tags.keyId === 'string';
+}
+
+function isRootAudienceControl(
+  message: RecordsWriteMessage,
+  root: RecordsWriteMessage,
+  protocol: string,
+): boolean {
+  const tags = message.descriptor.tags;
+  if (
+    message.descriptor.protocol !== protocol ||
+    message.descriptor.protocolPath !== ENCRYPTION_CONTROL_AUDIENCE_PATH ||
+    tags?.protocol !== protocol ||
+    typeof tags.rolePath !== 'string' ||
+    typeof tags.contextId !== 'string' ||
+    typeof tags.keyId !== 'string'
+  ) {
+    return false;
+  }
+
+  return root.encryption?.keyEncryption.some((entry): boolean =>
+    entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+    'protocol' in entry &&
+    entry.protocol === protocol &&
+    entry.rolePath === tags.rolePath &&
+    entry.keyId === tags.keyId &&
+    getRoleAudienceContextId(entry.rolePath, root.contextId) === tags.contextId
+  ) === true;
 }
 
 function unsupportedEntry(entry: RecordsReadReplicationSupportEntry): Error {

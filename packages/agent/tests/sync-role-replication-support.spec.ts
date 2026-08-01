@@ -1,17 +1,26 @@
 import type { BearerDid } from '@enbox/dids';
-import type { MessageSigner, RecordsReadReplicationSupportEntry } from '@enbox/dwn-sdk-js';
+import type {
+  DwnEncryption,
+  MessageSigner,
+  RecordsReadReplicationSupportEntry,
+  SourceRoleAudienceKeyEncryption,
+} from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
 import { beforeAll, describe, expect, it } from 'bun:test';
 import {
+  ContentEncryptionAlgorithm,
   DataStream,
   Encoder,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
+  KeyAgreementAlgorithm,
   Message,
   ProtocolsConfigure,
   RecordsRead,
   RecordsWrite,
+  ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
 import { DidJwk, UniversalResolver } from '@enbox/dids';
 
@@ -180,6 +189,55 @@ describe('readRoleReplicationSupport', () => {
     await expect(readFixture(fixture)).rejects.toBeInstanceOf(FollowedSourceNotReadyError);
   });
 
+  it('accepts every audience referenced by a multi-role root and only the invoked-role delivery', async () => {
+    const viewerKeyId = 'A'.repeat(43);
+    const editorKeyId = 'B'.repeat(43);
+    const fixture = await createFixture({
+      encryption: {
+        algorithm            : ContentEncryptionAlgorithm.A256CTR,
+        initializationVector : Encoder.bytesToBase64Url(new Uint8Array(16)),
+        keyEncryption        : [
+          roleAudienceEncryption(ROLE_PATH, viewerKeyId),
+          roleAudienceEncryption('notebook/editor', editorKeyId),
+        ],
+      },
+    });
+    const viewerAudience = await controlRecord({
+      contextId    : fixture.root.message.contextId,
+      keyId        : viewerKeyId,
+      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      rolePath     : ROLE_PATH,
+    });
+    const editorAudience = await controlRecord({
+      contextId    : fixture.root.message.contextId,
+      keyId        : editorKeyId,
+      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      rolePath     : 'notebook/editor',
+    });
+    const viewerDelivery = await controlRecord({
+      contextId    : fixture.root.message.contextId,
+      keyId        : viewerKeyId,
+      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      recipient    : actor.uri,
+      rolePath     : ROLE_PATH,
+    });
+    fixture.support.push(
+      await supportEntry(viewerAudience, true),
+      await supportEntry(editorAudience, true),
+      await supportEntry(viewerDelivery, true),
+    );
+
+    const result = await readFixture(fixture);
+
+    expect(result.dependencies.map(entry => entry.message)).toEqual([
+      fixture.configure.message,
+      fixture.role.message,
+      viewerAudience.message,
+      editorAudience.message,
+      viewerDelivery.message,
+    ]);
+  });
+
   it('requires a current audience delivery for a deliverable role even when the root is unencrypted', async () => {
     const fixture = await createFixture();
     const publicKeyJwk = {
@@ -219,7 +277,9 @@ describe('readRoleReplicationSupport', () => {
     await expect(readFixture(fixture)).rejects.toBeInstanceOf(FollowedSourceNotReadyError);
   });
 
-  async function createFixture(): Promise<{
+  async function createFixture(options: {
+    encryption?: DwnEncryption;
+  } = {}): Promise<{
     configure: ProtocolsConfigure;
     read: RecordsRead;
     role: RecordsWrite;
@@ -232,6 +292,7 @@ describe('readRoleReplicationSupport', () => {
     const root = await RecordsWrite.create({
       data         : rootData,
       dataFormat   : 'text/plain',
+      encryption   : options.encryption,
       protocol     : PROTOCOL,
       protocolPath : 'notebook',
       signer       : ownerSigner,
@@ -314,7 +375,49 @@ describe('readRoleReplicationSupport', () => {
       },
     };
   }
+
+  async function controlRecord(input: {
+    contextId: string;
+    keyId: string;
+    protocolPath: string;
+    recipient?: string;
+    rolePath: string;
+  }): Promise<RecordsWrite> {
+    return RecordsWrite.create({
+      data         : new TextEncoder().encode('audience'),
+      dataFormat   : 'application/json',
+      protocol     : PROTOCOL,
+      protocolPath : input.protocolPath,
+      recipient    : input.recipient,
+      signer       : ownerSigner,
+      tags         : {
+        contextId : input.contextId,
+        keyId     : input.keyId,
+        protocol  : PROTOCOL,
+        rolePath  : input.rolePath,
+      },
+    });
+  }
 });
+
+function roleAudienceEncryption(
+  rolePath: string,
+  keyId: string,
+): SourceRoleAudienceKeyEncryption {
+  return {
+    algorithm          : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+    derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+    encryptedKey       : 'AA',
+    ephemeralPublicKey : {
+      crv : 'X25519',
+      kty : 'OKP',
+      x   : 'A'.repeat(43),
+    },
+    keyId,
+    protocol: PROTOCOL,
+    rolePath,
+  };
+}
 
 async function signerForDid(did: BearerDid): Promise<MessageSigner> {
   const signer = await did.getSigner();

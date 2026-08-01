@@ -6,6 +6,7 @@ import type { RecordsReadReplicationSupportEntry, RecordsWriteMessage } from '..
 
 import { ENCRYPTION_CONTROL_DELIVERY_PATH } from './constants.js';
 import { EncryptionControl } from './encryption-control.js';
+import { getRoleAudienceContextId } from '../utils/protocols.js';
 import { Message } from './message.js';
 import { Messages } from '../utils/messages.js';
 import { Records } from '../utils/records.js';
@@ -57,20 +58,22 @@ export class RecordsReadReplicationSupport {
 
     const roleInitialWrite = await RecordsReadReplicationSupport.initialWrite(deps, tenant, roleRecord);
     const audienceDependencies = await Promise.all(audienceRecords.map(async (audienceRecord) => {
-      const keyId = audienceRecord.descriptor.tags?.keyId;
-      if (typeof keyId !== 'string') {
-        throw RecordsReadReplicationSupport.unsupported('the current audience record has no keyId tag.');
+      const { contextId: audienceContextId, keyId, rolePath } = audienceRecord.descriptor.tags ?? {};
+      if (typeof audienceContextId !== 'string' || typeof keyId !== 'string' || typeof rolePath !== 'string') {
+        throw RecordsReadReplicationSupport.unsupported('the current audience record has incomplete role-audience tags.');
       }
 
-      const delivery = await RecordsReadReplicationSupport.fetchDelivery({
-        deps,
-        tenant,
-        requester,
-        protocol,
-        rolePath: resolvedRole.protocolPath,
-        contextId,
-        keyId,
-      });
+      const delivery = rolePath === resolvedRole.protocolPath && audienceContextId === contextId
+        ? await RecordsReadReplicationSupport.fetchDelivery({
+          deps,
+          tenant,
+          requester,
+          protocol,
+          rolePath,
+          contextId: audienceContextId,
+          keyId,
+        })
+        : undefined;
       return { audienceRecord, delivery };
     }));
     const protocolConfigures = await RecordsReadReplicationSupport.fetchProtocolConfigures(
@@ -123,11 +126,11 @@ export class RecordsReadReplicationSupport {
     rolePath: string;
     contextId: string;
   }): Promise<RecordsWriteMessage[]> {
-    const rootAudienceKeyIds = input.matchedRecordsWrite.encryption?.keyEncryption
+    const rootAudienceEntries = input.matchedRecordsWrite.encryption?.keyEncryption
       .filter((entry): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-        'protocol' in entry && entry.protocol === input.protocol && entry.rolePath === input.rolePath)
-      .map((entry): string => entry.keyId) ?? [];
-    if (input.matchedRecordsWrite.encryption !== undefined && rootAudienceKeyIds.length === 0) {
+        'protocol' in entry && entry.protocol === input.protocol) ?? [];
+    if (input.matchedRecordsWrite.encryption !== undefined &&
+      !rootAudienceEntries.some((entry): boolean => 'rolePath' in entry && entry.rolePath === input.rolePath)) {
       throw RecordsReadReplicationSupport.unsupported('the encrypted record is not wrapped for the invoked role.');
     }
 
@@ -140,23 +143,45 @@ export class RecordsReadReplicationSupport {
     });
     const records = current === undefined ? [] : [current];
     const seen = new Set(records.map((record): string => record.recordId));
-    for (const keyId of new Set(rootAudienceKeyIds)) {
+    const queried = new Set<string>();
+    for (const entry of rootAudienceEntries) {
+      if (!('rolePath' in entry)) {
+        continue;
+      }
+      const audienceContextId = getRoleAudienceContextId(
+        entry.rolePath,
+        input.matchedRecordsWrite.contextId,
+      );
+      if (audienceContextId === undefined) {
+        throw RecordsReadReplicationSupport.unsupported(
+          `the encrypted record has no audience context for role '${entry.rolePath}'.`
+        );
+      }
+      const reference = JSON.stringify([entry.rolePath, audienceContextId, entry.keyId]);
+      if (queried.has(reference)) {
+        continue;
+      }
+      queried.add(reference);
       const exact = await input.deps.validationStateReader.queryAudienceRecords({
-        contextId : input.contextId,
-        keyId,
+        contextId : audienceContextId,
+        keyId     : entry.keyId,
         protocol  : input.protocol,
-        rolePath  : input.rolePath,
+        rolePath  : entry.rolePath,
         tenant    : input.tenant,
       });
-      for (const record of exact) {
-        if (!seen.has(record.recordId)) {
-          records.push(record);
-          seen.add(record.recordId);
-        }
+      const record = exact[0];
+      if (record !== undefined && !seen.has(record.recordId)) {
+        records.push(record);
+        seen.add(record.recordId);
       }
     }
 
-    return records.slice(0, MAX_SUPPORT_RECORDS_PER_KIND);
+    if (records.length > MAX_SUPPORT_RECORDS_PER_KIND) {
+      throw RecordsReadReplicationSupport.unsupported(
+        `replication support requires more than ${MAX_SUPPORT_RECORDS_PER_KIND} audience records.`
+      );
+    }
+    return records;
   }
 
   private static async fetchProtocolConfigures(
