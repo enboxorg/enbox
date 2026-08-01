@@ -34,6 +34,14 @@
 import type { Protocol } from './protocol.js';
 import type { RecordView } from './record-view.js';
 import type {
+  AudienceKeyDeliveryOutcome,
+  DwnPaginationCursor,
+  DwnPublicKeyJwk,
+  DwnResponseStatus,
+  FollowedSyncSource,
+  SyncEngine,
+} from '@enbox/agent';
+import type {
   DirectSingletonChildPaths,
   ProtocolPaths,
   ProtocolRolePaths,
@@ -42,7 +50,6 @@ import type {
   TypeNameAtPath,
 } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
-import type { DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, FollowedSyncSource, SyncEngine } from '@enbox/agent';
 import type { MaterializedRecord, Record, RecordPatch } from './record.js';
 import type { ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
@@ -50,6 +57,7 @@ import type { RecordDeleteParams, RecordUpdateParams } from './record-types.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createRecordView } from './record-view.js';
+import { Did } from '@enbox/dids';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { areReplicationLinksCurrent, syncEventCoversProtocol } from '@enbox/agent';
@@ -366,6 +374,55 @@ type ContextRolePaths<D extends ProtocolDefinition> = Extract<
   `${string}/${string}`
 >;
 
+type DirectChildPath<Root extends string, Path extends string> = Path extends `${Root}/${infer Child}`
+  ? Child extends `${string}/${string}` ? never : Path
+  : never;
+
+type NonEmptyReadonlyArray<T> = readonly [T, ...T[]];
+
+/** Encrypted role paths that are direct children of one context root. */
+type ContextMemberRolePaths<
+  D extends ProtocolDefinition,
+  Root extends ProtocolPaths<D> & string,
+> = DirectChildPath<Root, ProtocolDeliveryRolePaths<D> & string>;
+
+/** One application-facing member of an owned context. */
+export type ContextMember<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  C extends RecordCodecMap = RecordCodecMap,
+  Role extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
+> = Role extends string ? Readonly<{
+  data: DataForPath<C, Role>;
+  delivery: RoleDeliveryState;
+  did: string;
+  role: Role;
+}> : never;
+
+type ContextMemberSetRequest<
+  C extends RecordCodecMap,
+  Role extends string,
+> = Role extends string ? Readonly<{
+  data: DataForPath<C, Role>;
+  role: Role;
+}> : never;
+
+/** Owner operations for one ordered, mutually-exclusive context role group. */
+export type ContextMembersApi<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  C extends RecordCodecMap = RecordCodecMap,
+  Role extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
+> = Readonly<{
+  get(did: string): Promise<ContextMember<D, C, Role> | undefined>;
+  list(): Promise<ContextMember<D, C, Role>[]>;
+  remove(did: string): Promise<void>;
+  /** Reconcile protocol-wide delivery, then return this member's current row. */
+  retryDelivery(did: string): Promise<ContextMember<D, C, Role> | undefined>;
+  set<SelectedRole extends Role>(
+    did: string,
+    request: ContextMemberSetRequest<C, SelectedRole>,
+  ): Promise<ContextMember<D, C, SelectedRole>>;
+}>;
+
 type ContextBase<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
@@ -388,6 +445,10 @@ export type OwnedContext<
   Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
 > = ContextBase<D, C, Root> & Readonly<{
   access: 'owner';
+  /** Manage direct encrypted roles, ordered strongest first, that can read this context root. */
+  members<const Roles extends NonEmptyReadonlyArray<ContextMemberRolePaths<D, Root>>>(
+    roles: Roles,
+  ): ContextMembersApi<D, C, Roles[number]>;
 }>;
 
 /** A member context authorized through one exact role record. */
@@ -412,7 +473,15 @@ export type ProtocolContext<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
 > = ContextBase<D, C> & Readonly<
-  | { access: 'owner' }
+  | {
+    access: 'owner';
+    members<const Roles extends NonEmptyReadonlyArray<Extract<
+      ProtocolDeliveryRolePaths<D>,
+      ContextRolePaths<D>
+    >>>(
+      roles: Roles,
+    ): ContextMembersApi<D, C, Roles[number]>;
+  }
   | {
     access: 'member';
     role: ContextRolePaths<D>;
@@ -562,8 +631,8 @@ type TypedCreateOptions<
    * their DWN (e.g. a bare `did:jwk` publishing no resolvable DWN
    * endpoint); the recipient computes the key locally and carries it out
    * of band for the writer to supply here. When omitted, role-audience
-   * key delivery is best-effort and its persisted state is available through
-   * `records.deliveryState()`.
+   * key delivery is best-effort. Owned contexts expose its lifecycle through
+   * `context.members(...)`.
    *
    * Enbox validates only that the supplied key is a usable X25519 public
    * key — it does NOT verify that the key belongs to the recipient. That
@@ -1171,15 +1240,20 @@ export class TypedEnbox<
           contextId    : id,
           tenantDid    : this._dwn.connectedDid,
         });
+        const records = this.bindContextRecords(
+          dwn,
+          { contextId: id, protocolPath: normalizedPath, protocolPaths },
+        );
         return Object.freeze({
-          access   : 'owner',
+          access  : 'owner',
           id,
+          members : <const Roles extends NonEmptyReadonlyArray<ContextMemberRolePaths<D, Root>>>(roles: Roles) =>
+            this.bindContextMembers(dwn, records, id, normalizedPath, roles) as ContextMembersApi<
+              D, C, Roles[number]
+            >,
           ownerDid : this._dwn.connectedDid,
           path     : normalizedPath,
-          records  : this.bindContextRecords(
-            dwn,
-            { contextId: id, protocolPath: normalizedPath, protocolPaths },
-          ),
+          records,
         });
       },
       follow: async <Role extends ContextRolePaths<D>>(
@@ -1652,7 +1726,11 @@ export class TypedEnbox<
   private async createRecord<Path extends ProtocolPaths<D> & string>(
     path: Path,
     request: TypedCreateOptions<C, Path>,
-  ): Promise<Record<DataForPath<C, Path>>> {
+    dwn: DwnApi = this._dwn,
+  ): Promise<{
+    audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
+    record: Record<DataForPath<C, Path>>;
+  }> {
     const normalizedPath = normalizePath(path);
     if (getRuleSetAtPath(normalizedPath, this._definition.structure)?.$role === true
       && request.recipient === undefined) {
@@ -1668,7 +1746,7 @@ export class TypedEnbox<
       protocolPath : normalizedPath,
       schema       : typeEntry?.schema,
     });
-    const result = await this._dwn.records.write({
+    const result = await dwn.records.write({
       data                   : encoded.data,
       from                   : request.from,
       store                  : request.store,
@@ -1693,31 +1771,26 @@ export class TypedEnbox<
       throw new Error('TypedEnbox.records.create: DWN returned success without a record.');
     }
 
-    return this.bindCodec<Path>(normalizedPath, result.record);
+    return {
+      ...(result.audienceKeyDelivery === undefined ? {} : { audienceKeyDelivery: result.audienceKeyDelivery }),
+      record: this.bindCodec<Path>(normalizedPath, result.record),
+    };
   }
 
-  /** Resolve one active role's state, optionally after reconciling the protocol. */
-  private async resolveRoleDeliveryState<Path extends ProtocolDeliveryRolePaths<D> & string>(
-    path: Path,
+  /** Project delivery for a role record whose active membership is already established. */
+  private async resolveRoleDeliveryState(
     roleRecordId: string,
     retry: boolean,
-  ): Promise<RoleDeliveryState | undefined> {
-    const normalizedPath = normalizePath(path);
-    this._assertValidPath(normalizedPath);
-    if (!isEncryptedRoleAudiencePath(this._definition, normalizedPath)) {
-      throw new TypeError(`TypedEnbox.records: path '${normalizedPath}' does not have an encrypted role audience.`);
+    outcome?: AudienceKeyDeliveryOutcome,
+  ): Promise<RoleDeliveryState> {
+    if (outcome !== undefined) {
+      return projectRoleDeliveryOutcome(outcome);
     }
     const roleDelivery = this._options.roleDelivery;
     if (roleDelivery === undefined) {
-      throw new Error('TypedEnbox.records: role delivery state requires an Enbox session.');
+      throw new Error('OwnedContext.members requires an Enbox session.');
     }
     this._options.signal?.throwIfAborted();
-    const role = await this.records.read(path, roleRecordId);
-    this._options.signal?.throwIfAborted();
-    if (role === undefined) {
-      return undefined;
-    }
-
     const state = await (retry ? roleDelivery.retry(roleRecordId) : roleDelivery.get(roleRecordId));
     if (state === undefined) {
       return { state: 'pending' };
@@ -1755,6 +1828,154 @@ export class TypedEnbox<
       readablePaths : readablePaths as [string, ...string[]],
       role          : normalizedRole as ContextRolePaths<D>,
     };
+  }
+
+  /** Bind owner membership tasks to one context and one explicit role-precedence group. */
+  private bindContextMembers<
+    Root extends ProtocolPaths<D> & string,
+  >(
+    dwn: DwnApi,
+    records: ContextRecordsApi<D, C, Root>,
+    contextId: string,
+    contextPath: Root,
+    selectedRoles: readonly string[],
+  ): ContextMembersApi<D, C, ContextMemberRolePaths<D, Root>> {
+    type Role = ContextMemberRolePaths<D, Root>;
+    type ActiveMemberRecord = { did: string; record: Record<unknown>; role: Role };
+
+    if (selectedRoles.length === 0) {
+      throw new TypeError('OwnedContext.members requires at least one role path.');
+    }
+
+    const rolePaths: Role[] = [];
+    for (const selectedRole of selectedRoles) {
+      const role = normalizePath(selectedRole) as Role;
+      if (rolePaths.includes(role)) {
+        continue;
+      }
+      const scope = this.resolveMemberContextScope(role);
+      if (scope.protocolPath !== contextPath) {
+        throw new TypeError(`OwnedContext.members: role '${role}' is not a direct role of '${contextPath}'.`);
+      }
+      if (!isEncryptedRoleAudiencePath(this._definition, role)) {
+        throw new TypeError(`OwnedContext.members: role '${role}' is not an encrypted audience.`);
+      }
+      rolePaths.push(role);
+    }
+
+    const untypedRecords = records as unknown as {
+      query(
+        path: string,
+        request?: { filter?: { recipient?: string } },
+      ): Promise<RecordPage<Record<unknown>>>;
+    };
+
+    const load = async (did?: string): Promise<ActiveMemberRecord[]> => {
+      const perRole = await Promise.all(rolePaths.map(async (role): Promise<ActiveMemberRecord[]> => {
+        const page = await untypedRecords.query(
+          role,
+          did === undefined ? undefined : { filter: { recipient: did } },
+        );
+        return page.records.map((record): ActiveMemberRecord => ({
+          did: record.recipient!,
+          record,
+          role,
+        }));
+      }));
+      return perRole.flat();
+    };
+
+    const preferred = (candidates: readonly ActiveMemberRecord[]): ActiveMemberRecord | undefined =>
+      candidates.reduce<ActiveMemberRecord | undefined>((current, candidate) => {
+        if (current === undefined) {
+          return candidate;
+        }
+        const precedence = rolePaths.indexOf(candidate.role) - rolePaths.indexOf(current.role);
+        if (precedence !== 0) {
+          return precedence < 0 ? candidate : current;
+        }
+        if (candidate.record.timestamp !== current.record.timestamp) {
+          return candidate.record.timestamp > current.record.timestamp ? candidate : current;
+        }
+        return candidate.record.id > current.record.id ? candidate : current;
+      }, undefined);
+
+    const project = async (
+      member: ActiveMemberRecord,
+      retry: boolean = false,
+      outcome?: AudienceKeyDeliveryOutcome,
+    ): Promise<ContextMember<D, C, Role>> => {
+      const [data, delivery] = await Promise.all([
+        member.record.value(),
+        this.resolveRoleDeliveryState(member.record.id, retry, outcome),
+      ]);
+      return Object.freeze({ data, delivery, did: member.did, role: member.role }) as ContextMember<D, C, Role>;
+    };
+
+    const get = async (did: string): Promise<ContextMember<D, C, Role> | undefined> => {
+      const member = preferred(await load(normalizeMemberDid(did)));
+      return member === undefined ? undefined : project(member);
+    };
+
+    const deleteAssignments = async (assignments: readonly ActiveMemberRecord[]): Promise<void> => {
+      const results = await Promise.allSettled(assignments.map(member => member.record.delete()));
+      const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failure !== undefined) {
+        throw failure.reason;
+      }
+    };
+
+    return Object.freeze({
+      get,
+      list: async (): Promise<ContextMember<D, C, Role>[]> => {
+        const byDid = new Map<string, ActiveMemberRecord[]>();
+        for (const member of await load()) {
+          const candidates = byDid.get(member.did) ?? [];
+          candidates.push(member);
+          byDid.set(member.did, candidates);
+        }
+        const selected = [...byDid.entries()]
+          .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+          .map(([, candidates]) => preferred(candidates)!);
+        return Promise.all(selected.map(member => project(member)));
+      },
+      remove: async (did: string): Promise<void> => {
+        await deleteAssignments(await load(normalizeMemberDid(did)));
+      },
+      retryDelivery: async (did: string): Promise<ContextMember<D, C, Role> | undefined> => {
+        const member = preferred(await load(normalizeMemberDid(did)));
+        return member === undefined ? undefined : project(member, true);
+      },
+      set: async (
+        did: string,
+        request: { data: unknown; role: string },
+      ): Promise<ContextMember<D, C, Role>> => {
+        const recipient = normalizeMemberDid(did);
+        const role = normalizePath(request.role) as Role;
+        if (!rolePaths.includes(role)) {
+          throw new TypeError(`OwnedContext.members.set: role '${role}' is not in this membership group.`);
+        }
+
+        const existing = await load(recipient);
+        const current = preferred(existing.filter(member => member.role === role));
+        let accepted: ActiveMemberRecord;
+        let outcome: AudienceKeyDeliveryOutcome | undefined;
+        if (current === undefined) {
+          const created = await this.createRecord(role as ProtocolPaths<D> & string, {
+            data            : request.data,
+            parentContextId : contextId,
+            recipient,
+          } as unknown as TypedCreateOptions<C, ProtocolPaths<D> & string>, dwn);
+          accepted = { did: recipient, record: created.record as unknown as Record<unknown>, role };
+          outcome = created.audienceKeyDelivery;
+        } else {
+          accepted = { did: recipient, record: await current.record.update({ data: request.data }), role };
+        }
+
+        await deleteAssignments(existing.filter(member => member.record.id !== accepted.record.id));
+        return project(accepted, false, outcome);
+      },
+    }) as unknown as ContextMembersApi<D, C, Role>;
   }
 
   /** Bind the existing typed records surface to one exact durable source. */
@@ -2063,8 +2284,6 @@ export class TypedEnbox<
    * - `subscribe(pathOrPaths, listener)` — Consume path-discriminated committed changes
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
    * - {@link TypedEnbox.records.read | read(path, recordId or request)} — Read a single record
-   * - {@link TypedEnbox.records.deliveryState | deliveryState(path, recordId)} — Read an encrypted role's delivery state
-   * - {@link TypedEnbox.records.retryDelivery | retryDelivery(path, recordId)} — Reconcile protocol delivery and return one role's state
    * - {@link TypedEnbox.records.set | set(path, request)} — Replace one protocol-declared singleton
    * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
    */
@@ -2100,21 +2319,6 @@ export class TypedEnbox<
       path: Path,
       recordIdOrRequest: string | TypedReadRequest<D, Path>,
     ) => Promise<Record<DataForPath<C, Path>> | undefined>;
-
-    /** Read an active encrypted role's delivery state, or `undefined` when the role is inactive. */
-    deliveryState: <Path extends ProtocolDeliveryRolePaths<D> & string>(
-      path: Path,
-      roleRecordId: string,
-    ) => Promise<RoleDeliveryState | undefined>;
-
-    /**
-     * Wake protocol-wide delivery repair, then return the requested active role's state.
-     * One call retries every undelivered active role; refresh other rows with `deliveryState()`.
-     */
-    retryDelivery: <Path extends ProtocolDeliveryRolePaths<D> & string>(
-      path: Path,
-      roleRecordId: string,
-    ) => Promise<RoleDeliveryState | undefined>;
 
     set: <Path extends SingletonProtocolPaths<D> & string>(
       path: Path,
@@ -2160,7 +2364,7 @@ export class TypedEnbox<
       create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedCreateRequest<D, C, Path>,
-      ): Promise<Record<DataForPath<C, Path>>> => this.createRecord(path, request),
+      ): Promise<Record<DataForPath<C, Path>>> => (await this.createRecord(path, request)).record,
 
       /**
        * Query records at the given protocol path.
@@ -2420,16 +2624,6 @@ export class TypedEnbox<
           : this.bindCodec<Path>(normalizedPath, result.record);
       },
 
-      deliveryState: async <Path extends ProtocolDeliveryRolePaths<D> & string>(
-        path: Path,
-        roleRecordId: string,
-      ): Promise<RoleDeliveryState | undefined> => this.resolveRoleDeliveryState(path, roleRecordId, false),
-
-      retryDelivery: async <Path extends ProtocolDeliveryRolePaths<D> & string>(
-        path: Path,
-        roleRecordId: string,
-      ): Promise<RoleDeliveryState | undefined> => this.resolveRoleDeliveryState(path, roleRecordId, true),
-
       /**
        * Replace the visible value at a protocol-declared singleton path.
        *
@@ -2463,14 +2657,14 @@ export class TypedEnbox<
         requireDwnSuccess('TypedEnbox.records.set query', result);
         const existing = result.records[0];
         if (existing === undefined) {
-          return this.createRecord(path, {
+          return (await this.createRecord(path, {
             data             : request.data,
             datePublished    : request.datePublished,
             messageTimestamp : request.messageTimestamp,
             parentContextId  : within,
             published        : request.published,
             tags             : request.tags,
-          });
+          })).record;
         }
 
         const record = this.bindCodec<Path>(normalizedPath, existing);
@@ -2651,6 +2845,28 @@ function normalizePath(path: string): string {
   let end = path.length;
   while (end > start && path.codePointAt(end - 1) === 47) { end--; }
   return path.slice(start, end);
+}
+
+function normalizeMemberDid(did: string): string {
+  const normalized = did.trim();
+  if (Did.parse(normalized)?.uri !== normalized) {
+    throw new TypeError(`OwnedContext.members: '${did}' is not a DID.`);
+  }
+  return normalized;
+}
+
+function projectRoleDeliveryOutcome(outcome: AudienceKeyDeliveryOutcome): RoleDeliveryState {
+  if (outcome.delivered === true) {
+    return { state: 'delivered' };
+  }
+  switch (outcome.failure) {
+    case 'awaiting-recipient-install':
+      return { reason: outcome.reason, state: 'awaiting-recipient-install' };
+    case 'retryable':
+      return { reason: outcome.reason, state: 'pending' };
+    case 'terminal':
+      return { reason: outcome.reason, state: 'failed' };
+  }
 }
 
 /** Stable identity for one validated DWN keyset cursor. */

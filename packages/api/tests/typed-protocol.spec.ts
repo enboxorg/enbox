@@ -683,43 +683,104 @@ describe('TypedProtocol API', () => {
         expect(reassigned.recipient).toBe(recipient);
       });
 
-      it('reads and retries persisted delivery state for active encrypted role records', async () => {
+      it('manages encrypted context membership without exposing role records', async () => {
         const DeliveryDefinition = {
           ...RoleDefinition,
           protocol : `${RoleDefinition.protocol}/delivery`,
           types    : {
             ...RoleDefinition.types,
-            member: { ...RoleDefinition.types.member, encryptionRequired: true },
+            blind  : { dataFormats: ['application/json'] },
+            member : { ...RoleDefinition.types.member, encryptionRequired: true },
+            viewer : { dataFormats: ['application/json'] },
+          },
+          structure: {
+            workspace: {
+              $actions: [
+                { role: 'workspace/member', can: ['read'] },
+                { role: 'workspace/viewer', can: ['read'] },
+              ],
+              blind  : { $role: true },
+              member : { $role: true },
+              viewer : { $role: true },
+            },
           },
         } as const satisfies ProtocolDefinition;
         const get = sinon.stub().resolves(undefined);
         const retry = sinon.stub().resolves({ state: 'delivered' as const });
-        const roles = new TypedEnbox(dwnAlice, defineProtocol(DeliveryDefinition, RoleProtocol.codecs), {
+        const roles = new TypedEnbox(dwnAlice, defineProtocol(DeliveryDefinition, {
+          ...RoleProtocol.codecs,
+          blind  : recordCodecs.json<{ note: string }>(),
+          viewer : recordCodecs.json<{ readonly: boolean }>(),
+        }), {
           roleDelivery: { get, retry },
         });
         await roles.configure();
-        sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-          .rejects(new Error('recipient protocol not installed'));
 
         const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
-        const assignment = await roles.records.create('workspace/member', {
-          data            : { label: 'maintainer' },
-          parentContextId : workspace.contextId,
-          recipient       : 'did:example:bob',
+        const owned = await roles.contexts.open('workspace', workspace.contextId);
+        const members = owned.members(['workspace/member', 'workspace/viewer']);
+        const recipient = 'did:example:bob';
+        sinon.stub(testHarness.agent.dwn as any, 'provisionAudienceKeyDeliveryForReply').resolves({
+          delivered    : false,
+          failure      : 'awaiting-recipient-install',
+          recipientDid : recipient,
+          reason       : 'recipient protocol not installed',
         });
 
-        expect(await roles.records.deliveryState('workspace/member', assignment.id)).toEqual({ state: 'pending' });
-        expect(get.calledOnceWith(assignment.id)).toBe(true);
-        expect(await roles.records.retryDelivery('workspace/member', assignment.id)).toEqual({ state: 'delivered' });
-        expect(retry.calledOnceWith(assignment.id)).toBe(true);
+        const assigned = await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+        expect(assigned).toMatchObject({
+          data     : { label: 'maintainer' },
+          did      : recipient,
+          role     : 'workspace/member',
+          delivery : {
+            reason : 'recipient protocol not installed',
+            state  : 'awaiting-recipient-install',
+          },
+        });
+        expect(Object.keys(assigned).sort()).toEqual(['data', 'delivery', 'did', 'role']);
+        expect(get.notCalled).toBe(true);
 
-        await roles.records.delete('workspace/member', { recordId: assignment.id });
-        expect(await roles.records.deliveryState('workspace/member', assignment.id)).toBeUndefined();
-        expect(get.calledOnce).toBe(true);
+        await roles.records.create('workspace/viewer', {
+          data            : { readonly: true },
+          parentContextId : workspace.contextId,
+          recipient,
+        });
+        expect((await members.get(recipient))?.role).toBe('workspace/member');
 
-        await expect((roles.records.deliveryState as (path: string, id: string) => Promise<unknown>)(
-          'workspace', workspace.id,
-        )).rejects.toThrow('does not have an encrypted role audience');
+        const changed = await members.set(recipient, {
+          data : { readonly: true },
+          role : 'workspace/viewer',
+        });
+        expect(changed).toMatchObject({
+          data     : { readonly: true },
+          did      : recipient,
+          role     : 'workspace/viewer',
+          delivery : { state: 'pending' },
+        });
+        expect((await owned.records.query('workspace/member', {
+          filter: { recipient },
+        })).records).toHaveLength(0);
+        expect((await owned.records.query('workspace/viewer', {
+          filter: { recipient },
+        })).records).toHaveLength(1);
+        expect((await members.list()).map(member => member.did)).toEqual([recipient]);
+
+        expect(await members.retryDelivery(recipient)).toMatchObject({ delivery: { state: 'delivered' } });
+        expect(retry.calledOnce).toBe(true);
+
+        await members.remove(recipient);
+        await members.remove(recipient);
+        expect(await members.get(recipient)).toBeUndefined();
+        await expect(members.set('not-a-did', {
+          data : { label: 'invalid' },
+          role : 'workspace/member',
+        })).rejects.toThrow('is not a DID');
+        expect(() => owned.members(['workspace/blind'])).toThrow(
+          'role \'workspace/blind\' must authorize reading its parent context \'workspace\'',
+        );
       }, 15000);
     });
 

@@ -206,11 +206,18 @@ describe('shared context public API integration', () => {
     localOwnerRequests.restore();
     remoteOwnerRequests.restore();
     for (const page of [pageA, pageB]) {
-      await owner.records.create('notebook/page/member', {
-        data            : { name: 'member' },
-        parentContextId : page.contextId,
-        recipient       : memberDid,
+      const members = (await owner.contexts.open('notebook/page', page.contextId))
+        .members(['notebook/page/member']);
+      const member = await members.set(memberDid, {
+        data : { name: 'member' },
+        role : 'notebook/page/member',
       });
+      expect(member).toMatchObject({
+        delivery : { state: 'delivered' },
+        did      : memberDid,
+        role     : 'notebook/page/member',
+      });
+      expect((await members.list()).map(({ did }) => did)).toEqual([memberDid]);
     }
     largePageRecordId = pageA.id;
     const removedChange = await owner.records.create('notebook/page/change', {

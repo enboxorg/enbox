@@ -1,5 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { ContextRecord, ProtocolContext, TypedEnbox } from '@enbox/api';
+import type { ContextMember, ContextRecord, ProtocolContext, TypedEnbox } from '@enbox/api';
 
 import { defineProtocol, recordCodecs } from '@enbox/api';
 
@@ -10,17 +10,27 @@ const ContextDefinition = {
     invite    : { dataFormats: ['application/json'] },
     live      : { dataFormats: ['application/json'] },
     member    : { dataFormats: ['application/json'] },
-    note      : { dataFormats: ['application/json'] },
+    note      : { dataFormats: ['application/json'], encryptionRequired: true },
+    outsider  : { dataFormats: ['application/json'] },
+    project   : { dataFormats: ['application/json'] },
     session   : { dataFormats: ['application/json'] },
     title     : { dataFormats: ['application/json'] },
+    viewer    : { dataFormats: ['application/json'] },
     workspace : { dataFormats: ['application/json'] },
   },
   structure: {
-    invite    : {},
-    workspace : {
-      $actions : [{ role: 'workspace/member', can: ['read'] }],
-      member   : { $role: true },
-      live     : {
+    invite  : {},
+    project : {
+      outsider: { $role: true },
+    },
+    workspace: {
+      $actions: [
+        { role: 'workspace/member', can: ['read'] },
+        { role: 'workspace/viewer', can: ['read'] },
+      ],
+      member : { $role: true },
+      viewer : { $role: true },
+      live   : {
         $actions : [{ role: 'workspace/member', can: ['create', 'read'] }],
         session  : {
           $actions: [{ role: 'workspace/member', can: ['create', 'read', 'delete'] }],
@@ -43,8 +53,11 @@ const ContextProtocol = defineProtocol(ContextDefinition, {
   live      : recordCodecs.json<{ active: boolean }>(),
   member    : recordCodecs.json<{ label: string }>(),
   note      : recordCodecs.json<{ text: string }>(),
+  outsider  : recordCodecs.json<{ label: string }>(),
+  project   : recordCodecs.json<{ name: string }>(),
   session   : recordCodecs.json<{ peer: string }>(),
   title     : recordCodecs.json<{ text: string }>(),
+  viewer    : recordCodecs.json<{ expires: boolean }>(),
   workspace : recordCodecs.json<{ name: string }>(),
 });
 void ContextProtocol;
@@ -61,6 +74,42 @@ void owned.then((value): void => {
   void ownerDid;
   void path;
   void value.records.query('workspace/note');
+  const members = value.members(['workspace/member', 'workspace/viewer']);
+  const assigned: Promise<ContextMember<
+    typeof ContextDefinition,
+    typeof ContextProtocol.codecs,
+    'workspace/member'
+  >> = members.set('did:example:alice', {
+    data : { label: 'editor' },
+    role : 'workspace/member',
+  });
+  void assigned;
+  void members.set('did:example:bob', {
+    data : { expires: true },
+    role : 'workspace/viewer',
+  });
+  void members.list().then(async (listed): Promise<void> => {
+    const member = listed[0];
+    if (member?.role === 'workspace/member') {
+      const label: string = member.data.label;
+      void label;
+    } else if (member?.role === 'workspace/viewer') {
+      const expires: boolean = member.data.expires;
+      void expires;
+    }
+    // @ts-expect-error member rows do not expose role-record IDs.
+    void member?.recordId;
+  });
+  // @ts-expect-error role data is correlated with the selected path.
+  void members.set('did:example:bob', { data: { label: 'wrong' }, role: 'workspace/viewer' });
+  // @ts-expect-error a role outside the declared group cannot be assigned.
+  void members.set('did:example:bob', { data: {}, role: 'workspace/other' });
+  // @ts-expect-error non-role paths cannot form a membership group.
+  value.members(['workspace/note']);
+  // @ts-expect-error a membership group cannot be empty.
+  value.members([]);
+  // @ts-expect-error roles outside the owned root cannot form a membership group.
+  value.members(['project/outsider']);
   // @ts-expect-error a bound context cannot create a second copy of its root.
   void value.records.create('workspace', { data: { name: 'duplicate' } });
   // @ts-expect-error context records expose only their root and descendants.
@@ -78,6 +127,8 @@ void singleton.then((value): void => {
 if (context.access === 'member') {
   void context.role;
   void context.whenCurrent();
+  // @ts-expect-error only owners manage context membership.
+  context.members(['workspace/member']);
 }
 
 const created: Promise<ContextRecord<{ text: string }>> = context.records.create('workspace/note', {
@@ -235,3 +286,9 @@ void context.records.delete('workspace/note', { from: 'did:example:other', recor
 void context.records.delete('workspace/note', { protocolRole: 'workspace/other', recordId: 'note-id' });
 // @ts-expect-error delivery repair belongs to the owner-side membership API.
 void context.records.retryDelivery('workspace/member', 'role-id');
+// @ts-expect-error delivery state belongs to the owner-side membership API.
+void context.records.deliveryState('workspace/member', 'role-id');
+// @ts-expect-error record-ID delivery repair was removed in favor of owned-context membership.
+void typed.records.retryDelivery('workspace/member', 'role-id');
+// @ts-expect-error record-ID delivery lookup was removed in favor of owned-context membership.
+void typed.records.deliveryState('workspace/member', 'role-id');

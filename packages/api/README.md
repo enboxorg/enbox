@@ -343,6 +343,15 @@ const page = await notebooks.contexts.open('notebook/page', pageContextId);
 
 await page.records.set('notebook/page/title', { data: { title: 'Local title' } });
 await page.records.query('notebook/page/delta');
+
+const members = page.members([
+  'notebook/page/collaborator',
+  'notebook/page/viewer',
+]);
+await members.set(collaboratorDid, {
+  role : 'notebook/page/viewer',
+  data : {},
+});
 ```
 
 `open()` binds a handle; it does not read the root record. An
@@ -385,6 +394,18 @@ or raw DWN storage controls. Deeper descendants can still name their direct
 parent inside the shared context. A new follow performs only bounded role,
 protocol, context-root, and audience-key bootstrap, while the existing sync
 engine catches up the exact role-readable path set.
+
+`members()` defines one ordered, mutually-exclusive group of direct encrypted
+roles. `set()`, `get()`, `list()`, `remove()`, and `retryDelivery()` expose only
+the member DID, role, typed role data, and key-delivery state; role-record IDs,
+queries, duplicate cleanup, and delivery repair stay inside Enbox. Put the
+strongest role first: earlier paths have precedence if an interrupted role
+change temporarily leaves more than one assignment, so Enbox never reports
+less authority than the member still holds. Each role must authorize reading
+the context root so its recipient can follow the shared context. `remove()`
+deletes those role assignments but does not claim cryptographic revocation:
+audience re-keying is required before a former member is unable to decrypt
+future content.
 
 Accepted contexts survive restart and are reconstructed with
 `await notebooks.contexts.followed()`. `forget()` removes only the local

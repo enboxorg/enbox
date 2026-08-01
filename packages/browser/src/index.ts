@@ -56,6 +56,8 @@ export type {
   ConnectionSnapshotListener,
   ConnectionStore,
   ConnectionStoreOptions,
+  ContextMember,
+  ContextMembersApi,
   ContextMaterializedRecord,
   ContextRecord,
   ContextRecordDeleteParams,
