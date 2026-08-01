@@ -70,6 +70,5 @@ export * from './vc-api.js';
 
 export {
   AudienceDecryptError,
-  FollowedSourceNotReadyError,
   type AudienceDecryptFailureCause,
 } from '@enbox/agent';

@@ -31,10 +31,10 @@
 export {
   AudienceDecryptError,
   createConnectionStore,
+  ContextNotReadyError,
   defineApplicationManifest,
   DwnResponseError,
   Enbox,
-  FollowedSourceNotReadyError,
   defineProtocol,
   getApplicationProtocolRequests,
   ProtocolReadinessError,

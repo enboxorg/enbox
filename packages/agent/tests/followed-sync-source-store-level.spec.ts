@@ -129,7 +129,7 @@ describe('FollowedSyncSourceStoreLevel', () => {
     expect(await store.get('role-a')).toEqual(followedSource());
   });
 
-  it('should atomically replace former incarnations', async () => {
+  it('should atomically replace former followed sources', async () => {
     const former = followedSource();
     const replacement = followedSource({ id: 'role-b', protocolRole: 'notebook/collaborator' });
     await store.replace(former);

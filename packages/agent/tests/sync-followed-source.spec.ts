@@ -258,7 +258,7 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(schedule.calledOnce).toBe(true);
   });
 
-  it('should require every endpoint to agree on one exact role incarnation', async () => {
+  it('should require every endpoint to agree on one exact role authorization', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
     const endpoints = ['https://one.example', 'https://two.example'];
@@ -636,7 +636,7 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(converge.calledTwice).toBe(true);
   });
 
-  it('should let forget remove a role incarnation installed after its handle was checked', async () => {
+  it('should let forget remove a followed source installed after its handle was checked', async () => {
     const engine = new SyncEngineLevel({ db });
     const previous = source('role-a');
     const replacement = source('role-b', previous.contextId, 'notebook/collaborator');
@@ -709,7 +709,7 @@ describe('SyncEngineLevel — followed sources', () => {
     (engine as any)._runtime.dispose();
   });
 
-  it('should replace an older role-record incarnation for the same followed context', async () => {
+  it('should replace an older role authorization for the same followed context', async () => {
     const engine = new SyncEngineLevel({ db });
     const previous = source('role-a');
     const replacement = source('role-b', 'notebook-a', 'notebook/collaborator');
@@ -727,7 +727,7 @@ describe('SyncEngineLevel — followed sources', () => {
     )).toBe(true);
   });
 
-  it('should update a role group without restarting an unchanged active incarnation', async () => {
+  it('should update a role group without restarting an unchanged acceptance', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const target = targetFor(followed);

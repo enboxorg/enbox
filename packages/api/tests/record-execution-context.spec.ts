@@ -179,7 +179,7 @@ describe('context record execution', () => {
     }
   });
 
-  it('rejects a subscription opened under a different role incarnation', async () => {
+  it('rejects a subscription opened under a different role authorization', async () => {
     const subscription = { close: sinon.stub().resolves() };
     const leakedFrame = sinon.stub();
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {

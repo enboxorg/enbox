@@ -2,7 +2,7 @@ import type { FollowedSyncSource, SyncEvent } from '@enbox/agent';
 
 type FollowedContextChange = Extract<SyncEvent, { type: 'followed-context:change' }>;
 
-/** Whether a catalog transition permanently retires one accepted source incarnation. */
+/** Whether a catalog transition permanently retires one followed-source acceptance. */
 export function followedContextChangeRetiresSource(
   source: Pick<FollowedSyncSource, 'acceptanceId' | 'id'>,
   event: FollowedContextChange,

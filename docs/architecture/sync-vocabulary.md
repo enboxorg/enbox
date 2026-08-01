@@ -23,6 +23,10 @@ the code, not an entry missing from this table.
 | Per-link subscription and reconciliation fence — ONE generation for the subscription pair and link executor | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Deterministic identity of one tenant-and-scope projection, independent of endpoint and authorization | **`projectionId`** — `computeProjectionId` | endpoint identity, authorization identity |
+| One logical foreign context followed by an actor, independent of its current role | **followed context** — exact `(sourceDid, actorDid, protocol, contextId)` tuple | followed source |
+| Durable local catalog row for a followed context, combining its acceptance, active role authorization, and role group | **followed source** — `FollowedSyncSource` | source incarnation, role incarnation |
+| One local handle-fencing lifetime for a followed context | **acceptance** — `acceptanceId`; re-following after removal creates a new acceptance even when the role-record ID is unchanged | acceptance incarnation, source incarnation |
+| Mutually-exclusive candidate role authorizations for one context root, ordered strongest to weakest; only verified absence permits fallback | **role group** — `FollowedSyncSource.roles` | unordered role set, every direct role under a root |
 | Sole serializer for work owned by one active replication session | **link executor** — `SyncLinkExecutor` | link mailbox, direction reconciliation queue, `enqueueDirection`, `enqueueShared` |
 | Runtime-owned scheduling for one active replication session | **link scheduler** — `SyncRuntime.armTimeout` / `armTimeoutIfEarlier`, keyed by `syncRepairRetry:<linkKey>` or `syncReconcile:<linkKey>` | controller timer handles, due-time fields, `set*Timer` / `consume*Timer` pairs |
 | Runtime-owned Retry-After scheduling before a replication session exists | **link initialization retry** — `scheduleLinkInitRetry`, keyed by `linkInitRetry:<linkKey>` | link scheduler, which requires an active replication session |
@@ -63,6 +67,7 @@ the code, not an entry missing from this table.
 | **closure** | One root message plus the transitive dependency set required to make it applicable | Scope closure — always spelled out as *scope closure* |
 | **scope** | Always qualified data selection: *sync scope* (`SyncScope`) or emitted *event scope* (`SyncEventScope`) | The runtime or lock namespace (`_lockNamespace`) |
 | **shared** | One execution and result joined by several callers, such as the queued `sync()` follow-up in `joinPendingSyncRun` | A work mark or distinct caller-specific executor call |
+| **incarnation** | Retired: name the exact concept as an *acceptance*, *followed source*, or *role authorization* | A generic synonym for any of those lifetimes |
 
 ## Verb conventions
 

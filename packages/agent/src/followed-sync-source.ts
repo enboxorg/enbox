@@ -6,7 +6,7 @@ export type FollowedSyncRole = {
 
 /** Durable description of one foreign context accepted through a role record. */
 export type FollowedSyncSource = {
-  /** Opaque local acceptance incarnation. A re-follow never revives handles from a former acceptance. */
+  /** Opaque local acceptance ID. A re-follow never revives handles from a former acceptance. */
   acceptanceId: string;
   /** The accepted role record ID used for role authorization and replication links. */
   id: string;
@@ -48,7 +48,7 @@ export interface FollowedSyncSourceStore {
   delete(id: string): Promise<void>;
   get(id: string): Promise<FollowedSyncSource | undefined>;
   list(): Promise<FollowedSyncSourceStoreEntry[]>;
-  /** Atomically save one active incarnation and remove the supplied former incarnations. */
+  /** Atomically save one active followed source and remove the supplied former sources. */
   replace(source: FollowedSyncSource, replacedIds?: readonly string[]): Promise<void>;
 }
 
@@ -124,7 +124,7 @@ export function followedSyncSourceAuthorizationEqual(a: FollowedSyncSource, b: F
     followedSyncRolesEqual(a, b);
 }
 
-/** Exact equality for one locally accepted role-record incarnation; recovery policy is intentionally ignored. */
+/** Equality for one acceptance and its active role authorization; recovery policy is intentionally ignored. */
 export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
   return a.acceptanceId === b.acceptanceId && followedSyncSourceAuthorizationEqual(a, b);
 }

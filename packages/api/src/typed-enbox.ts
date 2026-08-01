@@ -370,6 +370,14 @@ export type RoleDeliveryState =
   | Readonly<{ state: 'pending'; reason?: string }>
   | Readonly<{ state: 'awaiting-recipient-install' | 'failed'; reason: string }>;
 
+/** Retryable failure because owner DWNs do not yet expose one authoritative context role state. */
+export class ContextNotReadyError extends Error {
+  public constructor(cause?: unknown) {
+    super('The requested context is not ready. Retry after its owner DWNs converge.', { cause });
+    this.name = 'ContextNotReadyError';
+  }
+}
+
 type ParentProtocolPath<Path extends string> = Path extends `${infer Head}/${infer Tail}`
   ? Tail extends `${string}/${string}`
     ? `${Head}/${ParentProtocolPath<Tail>}`
@@ -1324,7 +1332,7 @@ export class TypedEnbox<
             sourceDid   : request.ownerDid,
           });
         } catch (error) {
-          if (error instanceof FollowedSourceNotReadyError) { throw error; }
+          if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
           throw new Error('TypedEnbox.contexts.follow could not establish the requested context.');
         }
         if (

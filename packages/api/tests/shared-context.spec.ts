@@ -16,12 +16,12 @@ import type {
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-import { DwnInterface } from '@enbox/agent';
+import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { recordCodecs } from '../src/record-codec.js';
-import { TypedEnbox } from '../src/typed-enbox.js';
+import { ContextNotReadyError, TypedEnbox } from '../src/typed-enbox.js';
 
 const connectedDid = 'did:example:member';
 const contextId = 'workspaceRecord';
@@ -533,6 +533,21 @@ describe('TypedEnbox contexts', () => {
     expect(error?.message).toBe('TypedEnbox.contexts.follow could not establish the requested context.');
     expect(error?.message).not.toContain('secret-role-record-id');
     expect(error?.message).not.toContain('secret-source-record-id');
+  });
+
+  it('maps retryable sync readiness to the context API error', async () => {
+    const cause = new FollowedSourceNotReadyError('internal followed-source detail');
+    follow.rejects(cause);
+
+    const error = await typed.contexts.follow({
+      ownerDid : sourceDid,
+      id       : contextId,
+      roles    : [protocolRole],
+    }).then(() => undefined, reason => reason as Error);
+
+    expect(error).toBeInstanceOf(ContextNotReadyError);
+    expect(error?.message).toBe('The requested context is not ready. Retry after its owner DWNs converge.');
+    expect(error?.cause).toBe(cause);
   });
 
   it('preserves declared role precedence in one follow request', async () => {

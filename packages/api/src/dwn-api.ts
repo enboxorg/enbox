@@ -703,7 +703,7 @@ export class DwnApi {
       : this.recordExecutionContext.contextId;
   }
 
-  /** @internal Opaque local acceptance incarnation backing this records API. */
+  /** @internal Opaque local acceptance backing this records API. */
   public get followedSourceAcceptanceId(): string | undefined {
     return this.recordExecutionContext?.followedSourceAcceptanceId;
   }

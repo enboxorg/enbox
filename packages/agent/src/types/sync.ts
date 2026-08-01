@@ -617,7 +617,7 @@ export type SyncEvent =
     type: 'followed-context:change';
     actorDid: string;
     contextId: string;
-    /** Opaque local acceptance incarnation carried by this transition. */
+    /** Opaque local acceptance carried by this transition. */
     followedSourceAcceptanceId: string;
     followedSourceId: string | undefined;
     protocol: string;
@@ -756,7 +756,7 @@ export type ReplicationLinkSnapshot = {
   isPullCurrent: boolean;
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;
-  /** Exact followed-source incarnation represented by a role-authorized link. */
+  /** Role-record ID represented by this role-authorized link. */
   followedSourceId?: string;
   /** Durable pull checkpoint position (remote → local), when advanced past the stream start. */
   pullPosition?: string;
@@ -843,9 +843,9 @@ export interface SyncEngine {
   getFollowedSource(id: string): Promise<FollowedSyncSource | undefined>;
   /** List followed foreign contexts, excluding corrupt private store entries. */
   listFollowedSources(): Promise<FollowedSyncSource[]>;
-  /** Stop following one exact foreign-context role incarnation. */
+  /** Stop following one exact followed source. */
   deleteFollowedSource(source: FollowedSyncSource): Promise<void>;
-  /** Forget the logical foreign context, including a concurrently replaced role incarnation. */
+  /** Forget the logical foreign context, including a concurrently replaced followed source. */
   forgetFollowedContext(source: FollowedSyncSource): Promise<void>;
   /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.

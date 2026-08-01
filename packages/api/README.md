@@ -388,6 +388,10 @@ await shared.records.create('notebook/page/delta', { data: nextDelta });
 await shared.records.set('notebook/page/title', { data: { title: 'Shared title' } });
 ```
 
+`contexts.follow()` throws `ContextNotReadyError` when the owner's DWNs have
+not yet converged on one authoritative role state. The condition is retryable;
+other establishment failures remain sanitized as a generic context error.
+
 `shared.records` is the existing typed records implementation projected as a
 context-bound API—the same contract returned by `notebooks.contexts.open()`.
 Reads and views use a member context's pull-synchronized local replica;
@@ -404,11 +408,12 @@ the member DID, role, typed role data, and key-delivery state; role-record IDs,
 queries, duplicate cleanup, and delivery repair stay inside Enbox. Put the
 strongest role first: earlier paths have precedence if an interrupted role
 change temporarily leaves more than one assignment, so Enbox never reports
-less authority than the member still holds. Each role must authorize reading
-the context root so its recipient can follow the shared context. `remove()`
-deletes those role assignments but does not claim cryptographic revocation:
-audience re-keying is required before a former member is unable to decrypt
-future content.
+less authority than the member still holds. Role order is explicit; protocol
+definition property order does not define authority precedence. Each role must
+authorize reading the context root so its recipient can follow the shared
+context. `remove()` deletes those role assignments but does not claim
+cryptographic revocation: audience re-keying is required before a former member
+is unable to decrypt future content.
 
 Role-record paths are not exposed through `context.records`; membership has one
 surface, `ownedContext.members(...)`.

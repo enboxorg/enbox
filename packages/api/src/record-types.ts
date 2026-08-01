@@ -26,7 +26,7 @@ export type RecordExecutionContext = Readonly<{
   assertActive(): Promise<void>;
   /** Root context that bounds every operation. */
   contextId: string;
-  /** Opaque local acceptance incarnation when this is a followed context. */
+  /** Opaque local acceptance when this is a followed context. */
   followedSourceAcceptanceId?: string;
   /** Role record backing this followed context. */
   followedSourceId?: string;

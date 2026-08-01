@@ -68,6 +68,7 @@ describe('@enbox/browser exports', () => {
       getBrowserExports(),
       import('@enbox/api'),
     ]);
+    expect(browser.ContextNotReadyError).toBe(api.ContextNotReadyError);
     expect(browser.DwnResponseError).toBe(api.DwnResponseError);
     expect(browser.RecordValidationError).toBe(api.RecordValidationError);
   });

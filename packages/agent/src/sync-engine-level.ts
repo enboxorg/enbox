@@ -1307,7 +1307,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  /** Commit one source incarnation without coupling durable truth to link cleanup. */
+  /** Commit one followed source without coupling durable truth to link cleanup. */
   private async commitFollowedSource(source: FollowedSyncSource): Promise<FollowedSourceCommit> {
     const sources = await this.readFollowedSources();
     this.initializeFollowedSourceSnapshot(sources);
@@ -1329,7 +1329,7 @@ export class SyncEngineLevel implements SyncEngine {
     return { existing, replaced };
   }
 
-  /** Remove links for source incarnations retired by a durable commit. */
+  /** Remove links for followed sources replaced by a durable commit. */
   private async removeFollowedSourceLinksForSources(sources: readonly FollowedSyncSource[]): Promise<void> {
     await Promise.allSettled(sources.map(previous => this.removeFollowedSourceLinks(
       previous.id,

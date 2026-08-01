@@ -298,7 +298,7 @@ function timestamp(seconds: number): string {
 }
 
 describe('SyncStatusReporter.getReplicationLinks', () => {
-  it('exposes the exact followed-source incarnation for role links', async () => {
+  it('exposes the exact followed source for role links', async () => {
     const roleLink = link({
       authorization: {
         kind         : 'role',
