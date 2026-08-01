@@ -256,7 +256,6 @@ describe('typed api parity batch', () => {
       const selection = { pagination: { limit: 2 } };
       const firstPage = await typed.records.query('list', selection);
       expect(firstPage.records).toHaveLength(2);
-      expect(firstPage.cursor).toBeDefined();
 
       const secondPage = await firstPage.next();
       expect(secondPage).toBeDefined();

@@ -18,6 +18,7 @@ import {
   KeyAgreementAlgorithm,
   Message,
   ProtocolsConfigure,
+  RecordsDelete,
   RecordsRead,
   RecordsWrite,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
@@ -26,6 +27,8 @@ import { DidJwk, UniversalResolver } from '@enbox/dids';
 
 import {
   FollowedSourceNotReadyError,
+  FollowedSourceRoleAbsentError,
+  readFollowedRoleState,
   readRoleReplicationSupport,
 } from '../src/sync-role-replication-support.js';
 
@@ -57,10 +60,216 @@ describe('readRoleReplicationSupport', () => {
     ]);
   });
 
+  it('splits support metadata over WebSocket from record data over HTTP', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    agent.rpc.getServerInfo = sinon.stub().resolves({ webSocketSupport: true });
+    agent.dwn.processRequest.callsFake(async ({ messageParams }: any) => ({
+      message: (await RecordsRead.create({ ...messageParams, signer: actorSigner })).message,
+    }));
+    agent.rpc.sendDwnRequest.callsFake(({ dwnUrl }: { dwnUrl: string }) => Promise.resolve({
+      entry: {
+        ...(dwnUrl.startsWith('http') ? { data: DataStream.fromBytes(fixture.rootData) } : {}),
+        recordsWrite: fixture.root.message,
+      },
+      roleRecordId : fixture.role.message.recordId,
+      status       : { code: 200 },
+      support      : fixture.support,
+    }));
+
+    await readFixture(fixture, agent);
+
+    expect(agent.rpc.sendDwnRequest.firstCall.args[0].dwnUrl).toBe('wss://owner.example.com/');
+    expect(agent.rpc.sendDwnRequest.firstCall.args[0].message.descriptor.includeReplicationSupport).toBe(true);
+    expect(agent.rpc.sendDwnRequest.secondCall.args[0].dwnUrl).toBe('https://owner.example.com');
+    expect(agent.rpc.sendDwnRequest.secondCall.args[0].message.descriptor.includeReplicationSupport).toBe(false);
+  });
+
+  it('cancels the HTTP record body when the WebSocket support request fails', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    const cancel = sinon.spy();
+    const data = new ReadableStream<Uint8Array>({ cancel });
+    agent.rpc.getServerInfo = sinon.stub().resolves({ webSocketSupport: true });
+    agent.rpc.sendDwnRequest.callsFake(({ dwnUrl }: { dwnUrl: string }) => {
+      if (dwnUrl.startsWith('ws')) {
+        return Promise.reject(new Error('WebSocket request failed'));
+      }
+      return Promise.resolve({ entry: { data }, status: { code: 200 } });
+    });
+
+    await expect(readFixture(fixture, agent)).rejects.toThrow('WebSocket request failed');
+    expect(cancel.calledOnce).toBe(true);
+  });
+
+  it('cancels the HTTP record body when the support reply cannot accept it', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    const cancel = sinon.spy();
+    const data = new ReadableStream<Uint8Array>({ cancel });
+    agent.rpc.getServerInfo = sinon.stub().resolves({ webSocketSupport: true });
+    agent.rpc.sendDwnRequest.callsFake(({ dwnUrl }: { dwnUrl: string }) => Promise.resolve(
+      dwnUrl.startsWith('ws')
+        ? { status: { code: 200 } }
+        : { entry: { data }, status: { code: 200 } }
+    ));
+
+    await expect(readFixture(fixture, agent)).rejects.toThrow(
+      'did not contain a readable root record'
+    );
+    expect(cancel.calledOnce).toBe(true);
+  });
+
+  it('cancels the HTTP record body when support validation fails', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    const cancel = sinon.spy();
+    const data = new ReadableStream<Uint8Array>({ cancel });
+    agent.rpc.getServerInfo = sinon.stub().resolves({ webSocketSupport: true });
+    agent.dwn.processRequest.callsFake(async ({ messageParams }: any) => ({
+      message: (await RecordsRead.create({ ...messageParams, signer: actorSigner })).message,
+    }));
+    agent.rpc.sendDwnRequest.callsFake(({ dwnUrl }: { dwnUrl: string }) => Promise.resolve(
+      dwnUrl.startsWith('ws')
+        ? {
+          entry        : { recordsWrite: fixture.root.message },
+          roleRecordId : 'unrelated-role',
+          status       : { code: 200 },
+          support      : fixture.support,
+        }
+        : { entry: { data }, status: { code: 200 } }
+    ));
+
+    await expect(readFixture(fixture, agent)).rejects.toThrow('not bound to exactly one signed active assignment');
+    expect(cancel.calledOnce).toBe(true);
+  });
+
+  it('types only a verified 401 matching-role response as definite absence', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    agent.rpc.sendDwnRequest.resolves({
+      status: {
+        code   : 401,
+        detail : 'ProtocolAuthorizationMatchingRoleRecordNotFound: no matching role record',
+      },
+    });
+
+    await expect(readRoleReplicationSupport({
+      actorDid       : actor.uri,
+      agent,
+      contextId      : fixture.root.message.contextId,
+      dwnUrl         : 'https://owner.example.com',
+      permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+      protocol       : PROTOCOL,
+      protocolPath   : 'notebook',
+      protocolRole   : ROLE_PATH,
+      recordId       : fixture.root.message.recordId,
+      sourceDid      : owner.uri,
+    })).rejects.toBeInstanceOf(FollowedSourceRoleAbsentError);
+
+    agent.rpc.sendDwnRequest.resolves({
+      status: {
+        code   : 500,
+        detail : 'ProtocolAuthorizationMatchingRoleRecordNotFound: misleading server failure',
+      },
+    });
+    await expect(readRoleReplicationSupport({
+      actorDid       : actor.uri,
+      agent,
+      contextId      : fixture.root.message.contextId,
+      dwnUrl         : 'https://owner.example.com',
+      permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+      protocol       : PROTOCOL,
+      protocolPath   : 'notebook',
+      protocolRole   : ROLE_PATH,
+      recordId       : fixture.root.message.recordId,
+      sourceDid      : owner.uri,
+    })).rejects.not.toBeInstanceOf(FollowedSourceRoleAbsentError);
+  });
+
+  it('reads the exact active state of a previously accepted role', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    agent.dwn.processRequest.callsFake(async ({ messageParams }: any) => ({
+      message: (await RecordsRead.create({ ...messageParams, signer: actorSigner })).message,
+    }));
+    agent.rpc.sendDwnRequest.resolves({
+      entry: {
+        data         : DataStream.fromBytes(fixture.roleData),
+        recordsWrite : fixture.role.message,
+      },
+      status: { code: 200, detail: 'OK' },
+    });
+
+    await expect(readFollowedRoleState({
+      actorDid       : actor.uri,
+      agent,
+      contextId      : fixture.root.message.contextId,
+      dwnUrl         : 'https://owner.example.com',
+      permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+      protocol       : PROTOCOL,
+      protocolRole   : ROLE_PATH,
+      roleRecordId   : fixture.role.message.recordId,
+      sourceDid      : owner.uri,
+    })).resolves.toEqual({ kind: 'active' });
+  });
+
+  it('returns a verified tombstone for a deleted accepted role', async () => {
+    const fixture = await createFixture();
+    const deleted = await RecordsDelete.create({
+      recordId : fixture.role.message.recordId,
+      signer   : ownerSigner,
+    });
+    const agent = responseAgent(fixture) as any;
+    agent.dwn.processRequest.callsFake(async ({ messageParams }: any) => ({
+      message: (await RecordsRead.create({ ...messageParams, signer: actorSigner })).message,
+    }));
+    agent.rpc.sendDwnRequest.resolves({
+      entry: {
+        initialWrite  : fixture.role.message,
+        recordsDelete : deleted.message,
+      },
+      status: { code: 404, detail: 'Not Found' },
+    });
+
+    await expect(readFollowedRoleState({
+      actorDid       : actor.uri,
+      agent,
+      contextId      : fixture.root.message.contextId,
+      dwnUrl         : 'https://owner.example.com',
+      permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+      protocol       : PROTOCOL,
+      protocolRole   : ROLE_PATH,
+      roleRecordId   : fixture.role.message.recordId,
+      sourceDid      : owner.uri,
+    })).resolves.toEqual({ kind: 'absent', tombstone: deleted.message });
+  });
+
+  it('does not treat an endpoint without a role tombstone as durable absence', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    agent.dwn.processRequest.callsFake(async ({ messageParams }: any) => ({
+      message: (await RecordsRead.create({ ...messageParams, signer: actorSigner })).message,
+    }));
+    agent.rpc.sendDwnRequest.resolves({ status: { code: 404, detail: 'Not Found' } });
+
+    await expect(readFollowedRoleState({
+      actorDid       : actor.uri,
+      agent,
+      contextId      : fixture.root.message.contextId,
+      dwnUrl         : 'https://owner.example.com',
+      permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+      protocol       : PROTOCOL,
+      protocolRole   : ROLE_PATH,
+      roleRecordId   : fixture.role.message.recordId,
+      sourceDid      : owner.uri,
+    })).rejects.toBeInstanceOf(FollowedSourceNotReadyError);
+  });
+
   it('accepts historical protocol configurations alongside exactly one current version', async () => {
     const fixture = await createFixture();
     const current = await ProtocolsConfigure.create({
-      definition : { protocol: PROTOCOL, published: true, structure: {}, types: {} },
+      definition : { protocol: PROTOCOL, published: false, structure: {}, types: {} },
       signer     : ownerSigner,
     });
     fixture.support[0].isLatestBaseState = false;
@@ -343,10 +552,11 @@ describe('readRoleReplicationSupport', () => {
 
   async function readFixture(
     fixture: Awaited<ReturnType<typeof createFixture>>,
+    agent: any = responseAgent(fixture),
   ): ReturnType<typeof readRoleReplicationSupport> {
     return readRoleReplicationSupport({
       actorDid       : actor.uri,
-      agent          : responseAgent(fixture) as any,
+      agent,
       contextId      : fixture.root.message.contextId,
       dwnUrl         : 'https://owner.example.com',
       permissionsApi : { getPermissionForRequest: sinon.stub() } as any,

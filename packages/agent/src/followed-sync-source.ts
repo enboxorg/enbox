@@ -6,7 +6,9 @@ export type FollowedSyncRole = {
 
 /** Durable description of one foreign context accepted through a role record. */
 export type FollowedSyncSource = {
-  /** The accepted role record ID. It is also the source lifecycle identifier. */
+  /** Opaque local acceptance incarnation. A re-follow never revives handles from a former acceptance. */
+  acceptanceId: string;
+  /** The accepted role record ID used for role authorization and replication links. */
   id: string;
   /** DID whose hosted DWN owns the shared context. */
   sourceDid: string;
@@ -23,7 +25,10 @@ export type FollowedSyncSource = {
 };
 
 /** Foreign context details supplied before its active role record is resolved. */
-export type FollowedSyncSourceInput = Omit<FollowedSyncSource, 'id' | 'protocolPaths' | 'protocolRole'> & {
+export type FollowedSyncSourceInput = Omit<
+  FollowedSyncSource,
+  'acceptanceId' | 'id' | 'protocolPaths' | 'protocolRole'
+> & {
   /** Current delegate used only to bootstrap this follow operation. */
   delegateDid?: string;
 };
@@ -88,6 +93,9 @@ export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput
 
 /** Validates a source and canonicalizes its exact protocol-path set. */
 export function normalizeFollowedSyncSource(source: FollowedSyncSource): FollowedSyncSource {
+  if (typeof source.acceptanceId !== 'string' || source.acceptanceId.length === 0) {
+    throw new TypeError('FollowedSyncSource: \'acceptanceId\' must be a non-empty string.');
+  }
   if (typeof source.id !== 'string' || source.id.length === 0) {
     throw new TypeError('FollowedSyncSource: \'id\' must be a non-empty string.');
   }
@@ -103,17 +111,29 @@ export function normalizeFollowedSyncSource(source: FollowedSyncSource): Followe
   if (!details.roles.some(role => followedSyncRolesEqual(role, activeRole))) {
     throw new TypeError('FollowedSyncSource: the active role must belong to \'roles\'.');
   }
-  return { id: source.id, ...details, ...activeRole };
+  return { acceptanceId: source.acceptanceId, id: source.id, ...details, ...activeRole };
 }
 
-/** Exact equality for the active role-record incarnation; recovery policy is intentionally ignored. */
-export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+/** Equality for the remote role authorization; local acceptance and recovery policy are intentionally ignored. */
+export function followedSyncSourceAuthorizationEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
   return a.id === b.id &&
     a.sourceDid === b.sourceDid &&
     a.actorDid === b.actorDid &&
     a.protocol === b.protocol &&
     a.contextId === b.contextId &&
     followedSyncRolesEqual(a, b);
+}
+
+/** Exact equality for one locally accepted role-record incarnation; recovery policy is intentionally ignored. */
+export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+  return a.acceptanceId === b.acceptanceId && followedSyncSourceAuthorizationEqual(a, b);
+}
+
+/** Exact equality for an active source and its ordered role policy. */
+export function followedSyncSourceEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+  return followedSyncSourceActiveEqual(a, b) &&
+    a.roles.length === b.roles.length &&
+    a.roles.every((role, index) => followedSyncRolesEqual(role, b.roles[index]));
 }
 
 /** Resolve and validate the context root addressed by one role candidate. */

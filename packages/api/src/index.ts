@@ -24,6 +24,7 @@
 
 export * from './application-manifest.js';
 export * from './connection-store.js';
+export type { ContextView, ContextViewListener, ContextViewSnapshot } from './context-view.js';
 export { defineProtocol } from './define-protocol.js';
 export * from './did-api.js';
 export { DwnResponseError } from './dwn-response-error.js';
@@ -61,7 +62,7 @@ export {
   type RecordValidator,
 } from './record-codec.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
-export type { RecordView, RecordViewListener, RecordViewSnapshot, RecordViewState } from './record-view.js';
+export type { RecordView, RecordViewListener, RecordViewSnapshot } from './record-view.js';
 export type { ReplicationCurrentness } from './replication-currentness.js';
 export * from './record.js';
 export * from './typed-enbox.js';

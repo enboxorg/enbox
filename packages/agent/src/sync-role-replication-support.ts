@@ -1,12 +1,15 @@
 import type {
   ProtocolDefinition,
   ProtocolsConfigureMessage,
+  RecordsDeleteMessage,
   RecordsFilter,
+  RecordsReadMessage,
   RecordsReadReplicationSupportEntry,
   RecordsReadReply,
   RecordsWriteMessage,
 } from '@enbox/dwn-sdk-js';
 
+import type { DwnDataEncodedRecordsWriteMessage } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncMessageEntry } from './sync-messages.js';
@@ -14,6 +17,7 @@ import type { SyncMessageEntry } from './sync-messages.js';
 import {
   authenticate,
   DwnConstant,
+  DwnErrorCode,
   DwnInterfaceName,
   DwnMethodName,
   Encoder,
@@ -29,6 +33,7 @@ import {
 } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
+import { resolveDwnSubscriptionUrl as resolveDwnWebSocketUrl } from './utils.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import { capRecordsWriteDataStream, SyncPullAbortedError } from './sync-messages.js';
 
@@ -40,11 +45,119 @@ export type RoleReplicationSupportBatch = {
   rootCid: string;
 };
 
+/** Verified current state of one previously accepted role assignment. */
+export type FollowedRoleState =
+  | { kind: 'active' }
+  | { kind: 'absent'; tombstone: RecordsDeleteMessage };
+
 /** The role is valid, but its audience key material is not ready for this member. */
 export class FollowedSourceNotReadyError extends Error {
   public constructor(detail: string) {
     super(`Followed source is not ready: ${detail}`);
     this.name = 'FollowedSourceNotReadyError';
+  }
+}
+
+/** Every matching role record is absent from one verified remote response. */
+export class FollowedSourceRoleAbsentError extends Error {
+  public constructor(detail: string) {
+    super(`Followed source role is absent: ${detail}`);
+    this.name = 'FollowedSourceRoleAbsentError';
+  }
+}
+
+/**
+ * Reads one previously accepted role record without invoking that role. A
+ * deleted read carries the signed tombstone needed to retire the same role in
+ * the local foreign-tenant replica.
+ */
+export async function readFollowedRoleState(params: {
+  actorDid: string;
+  agent: EnboxPlatformAgent;
+  contextId: string;
+  delegateDid?: string;
+  dwnUrl: string;
+  permissionsApi: PermissionsApi;
+  protocol: string;
+  protocolRole: string;
+  roleRecordId: string;
+  shouldContinue?: () => boolean;
+  sourceDid: string;
+}): Promise<FollowedRoleState> {
+  assertCurrent(params.shouldContinue);
+  const roleContextId = `${params.contextId}/${params.roleRecordId}`;
+  let delegatedGrant: DwnDataEncodedRecordsWriteMessage | undefined;
+  if (params.delegateDid !== undefined) {
+    ({ message: delegatedGrant } = await params.permissionsApi.getPermissionForRequest({
+      connectedDid : params.actorDid,
+      contextId    : roleContextId,
+      delegate     : true,
+      delegateDid  : params.delegateDid,
+      forceRefresh : true,
+      messageType  : DwnInterface.RecordsRead,
+      protocol     : params.protocol,
+      protocolPath : params.protocolRole,
+    }));
+  }
+
+  const { message } = await params.agent.dwn.processRequest({
+    author        : params.actorDid,
+    granteeDid    : params.delegateDid,
+    messageParams : {
+      filter: {
+        contextId    : roleContextId,
+        protocol     : params.protocol,
+        protocolPath : params.protocolRole,
+        recordId     : params.roleRecordId,
+      },
+      ...(delegatedGrant === undefined ? {} : { delegatedGrant }),
+    },
+    messageType : DwnInterface.RecordsRead,
+    store       : false,
+    target      : params.sourceDid,
+  });
+  if (message === undefined) {
+    throw new Error('Followed role state read did not produce a signed request.');
+  }
+
+  assertCurrent(params.shouldContinue);
+  const reply = await params.agent.rpc.sendDwnRequest({
+    dwnUrl    : params.dwnUrl,
+    message,
+    targetDid : params.sourceDid,
+  }) as RecordsReadReply;
+  try {
+    assertCurrent(params.shouldContinue);
+    await verifyRemoteDwnResponse({
+      didResolver : params.agent.did,
+      message,
+      reply,
+      targetDid   : params.sourceDid,
+    });
+
+    if (reply.status.code === 200) {
+      if (reply.entry?.recordsWrite?.descriptor.recipient !== params.actorDid) {
+        throw new Error('Followed role state response is not assigned to the expected member.');
+      }
+      return { kind: 'active' };
+    }
+    if (reply.status.code !== 404) {
+      throw new Error(
+        `Followed role state read failed (${reply.status.code}): ${reply.status.detail ?? 'Unknown error'}`,
+      );
+    }
+
+    const tombstone = reply.entry?.recordsDelete;
+    const initialWrite = reply.entry?.initialWrite;
+    if (tombstone === undefined) {
+      throw new FollowedSourceNotReadyError('source endpoint has no durable role deletion');
+    }
+    if (initialWrite?.descriptor.recipient !== params.actorDid) {
+      throw new Error('Followed role deletion is not assigned to the expected member.');
+    }
+    return { kind: 'absent', tombstone };
+  } finally {
+    await reply.entry?.data?.cancel().catch((): void => {});
   }
 }
 
@@ -70,7 +183,7 @@ export async function readRoleReplicationSupport(params: {
 }): Promise<RoleReplicationSupportBatch> {
   assertCurrent(params.shouldContinue);
 
-  let delegatedGrant;
+  let delegatedGrant: DwnDataEncodedRecordsWriteMessage | undefined;
   if (params.delegateDid !== undefined) {
     ({ message: delegatedGrant } = await params.permissionsApi.getPermissionForRequest({
       connectedDid : params.actorDid,
@@ -90,107 +203,174 @@ export async function readRoleReplicationSupport(params: {
     protocolPath : params.protocolPath,
     recordId     : params.recordId,
   };
-  const { message } = await params.agent.dwn.processRequest({
-    author        : params.actorDid,
-    granteeDid    : params.delegateDid,
-    messageParams : {
-      filter,
-      includeReplicationSupport : true,
-      protocolRole              : params.protocolRole,
-      ...(delegatedGrant === undefined ? {} : { delegatedGrant }),
-    },
-    messageType : DwnInterface.RecordsRead,
-    store       : false,
-    target      : params.sourceDid,
-  });
-  if (message === undefined) {
-    throw new Error('Role replication support read did not produce a signed request.');
-  }
+  const createReadMessage = async (includeReplicationSupport: boolean): Promise<RecordsReadMessage> => {
+    const { message } = await params.agent.dwn.processRequest({
+      author        : params.actorDid,
+      granteeDid    : params.delegateDid,
+      messageParams : {
+        filter,
+        includeReplicationSupport,
+        protocolRole: params.protocolRole,
+        ...(delegatedGrant === undefined ? {} : { delegatedGrant }),
+      },
+      messageType : DwnInterface.RecordsRead,
+      store       : false,
+      target      : params.sourceDid,
+    });
+    if (message === undefined) {
+      throw new Error('Role replication support read did not produce a signed request.');
+    }
+    return message;
+  };
+  const message = await createReadMessage(true);
 
   assertCurrent(params.shouldContinue);
-  const reply = await params.agent.rpc.sendDwnRequest({
-    dwnUrl    : params.dwnUrl,
-    message,
-    targetDid : params.sourceDid,
-  }) as RecordsReadReply;
-  assertCurrent(params.shouldContinue);
-  await verifyRemoteDwnResponse({
-    didResolver : params.agent.did,
-    message,
-    reply,
-    targetDid   : params.sourceDid,
-  });
-
-  if (reply.status.code !== 200) {
-    throw new Error(
-      `Role replication support read failed (${reply.status.code}): ${reply.status.detail ?? 'Unknown error'}`,
-    );
+  let requestDwnUrl = params.dwnUrl;
+  try {
+    requestDwnUrl = await resolveDwnWebSocketUrl(params.dwnUrl, params.agent.rpc);
+  } catch {
+    // HTTP remains valid when the endpoint does not advertise WebSockets.
   }
-  const rootMessage = reply.entry?.recordsWrite;
-  const rootData = reply.entry?.data;
-  if (rootMessage === undefined || rootData === undefined) {
-    throw new Error('Role replication support response did not contain a readable root record.');
-  }
-  assertRoot(rootMessage, params);
+  let reply: RecordsReadReply;
+  if (requestDwnUrl === params.dwnUrl) {
+    reply = await params.agent.rpc.sendDwnRequest({
+      dwnUrl    : params.dwnUrl,
+      message,
+      targetDid : params.sourceDid,
+    }) as RecordsReadReply;
+  } else {
+    const dataMessage = await createReadMessage(false);
+    const [supportResult, dataResult] = await Promise.allSettled([
+      params.agent.rpc.sendDwnRequest({
+        dwnUrl    : requestDwnUrl,
+        message,
+        targetDid : params.sourceDid,
+      }) as Promise<RecordsReadReply>,
+      params.agent.rpc.sendDwnRequest({
+        dwnUrl    : params.dwnUrl,
+        message   : dataMessage,
+        targetDid : params.sourceDid,
+      }) as Promise<RecordsReadReply>,
+    ]);
 
-  const rootCid = await Message.getCid(rootMessage);
-  if (params.expectedRootCid !== undefined && rootCid !== params.expectedRootCid) {
-    throw new Error(
-      `Role replication support returned root CID '${rootCid}' instead of '${params.expectedRootCid}'.`,
-    );
-  }
-
-  const support = reply.support ?? [];
-  await verifyRootInitialWrite(reply.entry?.initialWrite, rootMessage);
-  const roleContextId = getRoleContextPrefix(params.protocolRole, params.contextId);
-  const { protocolDefinition, roleRecordId } = await validateSupport({
-    actorDid     : params.actorDid,
-    agent        : params.agent,
-    contextId    : params.contextId,
-    protocol     : params.protocol,
-    protocolPath : params.protocolPath,
-    protocolRole : params.protocolRole,
-    replyRoleId  : reply.roleRecordId,
-    roleContextId,
-    root         : rootMessage,
-    sourceDid    : params.sourceDid,
-    support,
-  });
-  const roleRuleSet = getRuleSetAtPath(params.protocolRole, protocolDefinition.structure);
-  assertAudienceDeliveryReady(
-    rootMessage,
-    support,
-    params,
-    roleRuleSet?.$role === true && roleRuleSet.$keyAgreement !== undefined,
-  );
-
-  const dependencies = new Map<string, SyncMessageEntry>();
-  const append = async (entry: SyncMessageEntry): Promise<void> => {
-    const cid = await Message.getCid(entry.message);
-    if (cid !== rootCid) {
-      dependencies.set(cid, entry);
+    if (supportResult.status === 'rejected') {
+      if (dataResult.status === 'fulfilled') {
+        await dataResult.value.entry?.data?.cancel().catch((): void => {});
+      }
+      throw supportResult.reason;
     }
-  };
-  if (reply.entry?.initialWrite !== undefined) {
-    await append({ message: reply.entry.initialWrite, isLatestBaseState: false });
-  }
-  for (const entry of support) {
-    if (entry.initialWrite !== undefined) {
-      await append({ message: entry.initialWrite, isLatestBaseState: false });
+    if (dataResult.status === 'rejected') {
+      throw dataResult.reason;
     }
-    await append(toSyncEntry(entry));
-  }
 
-  return {
-    dependencies : [...dependencies.values()],
-    roleRecordId,
-    root         : {
-      message           : rootMessage,
-      dataStream        : capRecordsWriteDataStream(rootMessage, rootData),
-      isLatestBaseState : true,
-    },
-    rootCid,
-  };
+    const supportReply = supportResult.value;
+    const dataReply = dataResult.value;
+    const data = dataReply.entry?.data;
+    if (
+      supportReply.status.code === 200 &&
+      supportReply.entry !== undefined &&
+      dataReply.status.code === 200 &&
+      data !== undefined
+    ) {
+      supportReply.entry.data = data;
+    } else {
+      await data?.cancel().catch((): void => {});
+    }
+    reply = supportReply;
+  }
+  const responseData = reply.entry?.data;
+  try {
+    assertCurrent(params.shouldContinue);
+    if (reply.status.code !== 200) {
+      const detail = reply.status.detail ?? 'Unknown error';
+      const missingRole = DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound;
+      if (reply.status.code === 401 && (detail === missingRole || detail.startsWith(`${missingRole}:`))) {
+        throw new FollowedSourceRoleAbsentError(detail);
+      }
+      throw new Error(
+        `Role replication support read failed (${reply.status.code}): ${detail}`,
+      );
+    }
+    const rootMessage = reply.entry?.recordsWrite;
+    const rootData = reply.entry?.data;
+    if (rootMessage === undefined || rootData === undefined) {
+      throw new Error('Role replication support response did not contain a readable root record.');
+    }
+    assertRoot(rootMessage, params);
+
+    const rootCid = await Message.getCid(rootMessage);
+    if (params.expectedRootCid !== undefined && rootCid !== params.expectedRootCid) {
+      throw new Error(
+        `Role replication support returned root CID '${rootCid}' instead of '${params.expectedRootCid}'.`,
+      );
+    }
+
+    const support = reply.support ?? [];
+    await verifyRootInitialWrite(reply.entry?.initialWrite, rootMessage);
+    const roleContextId = getRoleContextPrefix(params.protocolRole, params.contextId);
+    const { protocolDefinition, roleRecordId } = await validateSupport({
+      actorDid     : params.actorDid,
+      agent        : params.agent,
+      contextId    : params.contextId,
+      protocol     : params.protocol,
+      protocolPath : params.protocolPath,
+      protocolRole : params.protocolRole,
+      replyRoleId  : reply.roleRecordId,
+      roleContextId,
+      root         : rootMessage,
+      sourceDid    : params.sourceDid,
+      support,
+    });
+    const roleRuleSet = getRuleSetAtPath(params.protocolRole, protocolDefinition.structure);
+    assertAudienceDeliveryReady(
+      rootMessage,
+      support,
+      params,
+      roleRuleSet?.$role === true && roleRuleSet.$keyAgreement !== undefined,
+    );
+
+    const dependencies = new Map<string, SyncMessageEntry>();
+    const append = async (entry: SyncMessageEntry): Promise<void> => {
+      const cid = await Message.getCid(entry.message);
+      if (cid !== rootCid) {
+        dependencies.set(cid, entry);
+      }
+    };
+    if (reply.entry?.initialWrite !== undefined) {
+      await append({ message: reply.entry.initialWrite, isLatestBaseState: false });
+    }
+    for (const entry of support) {
+      if (entry.initialWrite !== undefined) {
+        await append({ message: entry.initialWrite, isLatestBaseState: false });
+      }
+      await append(toSyncEntry(entry));
+    }
+
+    await verifyRemoteDwnResponse({
+      didResolver : params.agent.did,
+      message,
+      reply,
+      targetDid   : params.sourceDid,
+    });
+    const verifiedRootData = reply.entry?.data;
+    if (verifiedRootData === undefined) {
+      throw new Error('Verified role replication support omitted the root record data.');
+    }
+
+    return {
+      dependencies : [...dependencies.values()],
+      roleRecordId,
+      root         : {
+        message           : rootMessage,
+        dataStream        : capRecordsWriteDataStream(rootMessage, verifiedRootData),
+        isLatestBaseState : true,
+      },
+      rootCid,
+    };
+  } catch (error: unknown) {
+    await responseData?.cancel().catch((): void => {});
+    throw error;
+  }
 }
 
 function assertRoot(

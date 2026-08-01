@@ -13,7 +13,15 @@ export function isEncryptedRoleAudiencePath(
   protocolPath: string,
 ): boolean {
   return Object.values(definition.types).some(type => type.encryptionRequired === true)
-    && getRuleSetAtPath(protocolPath, definition.structure)?.$role === true;
+    && isProtocolRolePath(definition, protocolPath);
+}
+
+/** @internal Whether one authored protocol path is a role record. */
+export function isProtocolRolePath(
+  definition: ProtocolDefinition,
+  protocolPath: string,
+): boolean {
+  return getRuleSetAtPath(protocolPath, definition.structure)?.$role === true;
 }
 
 /** @internal Collect every non-directive path in a protocol structure. */

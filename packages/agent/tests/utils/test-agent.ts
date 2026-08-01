@@ -117,6 +117,12 @@ export class TestAgent<TKeyManager extends AgentKeyManager> implements EnboxPlat
     return this.dwn.sendRequest(request);
   }
 
+  public sendDwnDeleteToAllRemoteEndpoints(
+    request: ProcessDwnRequest<DwnInterface.RecordsDelete>,
+  ): ReturnType<AgentDwnApi['sendDeleteToAllRemoteEndpoints']> {
+    return this.dwn.sendDeleteToAllRemoteEndpoints(request);
+  }
+
   public async sendVcRequest(_request: SendVcRequest): Promise<VcResponse> {
     throw new Error('Not implemented');
   }

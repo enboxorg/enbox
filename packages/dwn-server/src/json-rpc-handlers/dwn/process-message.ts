@@ -130,8 +130,8 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
 
 
     const { entry } = reply;
-    // RecordsRead or MessagesRead messages optionally return data as a stream to accommodate large amounts of data
-    // we remove the data stream from the reply that will be serialized and return it as a separate property in the response payload.
+    // RecordsRead or MessagesRead messages optionally return data as a stream to accommodate large amounts of data.
+    // Remove it from the serialized reply; HTTP returns it as the response body, while WebSocket releases it below.
     let recordDataStream: ReadableStream<Uint8Array>;
     if (entry !== undefined && entry.data !== undefined) {
       recordDataStream = entry.data;
@@ -153,7 +153,11 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
 
     const jsonRpcResponse = createJsonRpcSuccessResponse(requestId, { reply });
     const responsePayload: HandlerResponse = { jsonRpcResponse };
-    if (recordDataStream) {
+    if (recordDataStream && transport === 'ws') {
+      await recordDataStream.cancel().catch((): void => {
+        // WebSocket responses carry JSON only; release the unused record body.
+      });
+    } else if (recordDataStream) {
       responsePayload.dataStream = recordDataStream;
     }
 

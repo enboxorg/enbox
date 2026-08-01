@@ -264,7 +264,7 @@ describe('shared context public API integration', () => {
     const typed = memberEnbox.using(SharedNotebookProtocol);
     expect(memberDelegateDid).not.toBe(memberDid);
     expect((await memberHarness.agent.identity.list()).map((identity) => identity.did.uri)).toEqual([memberDelegateDid]);
-    expect(await typed.contexts.followed()).toEqual([]);
+    expect(await typed.contexts.list()).toEqual([]);
     expect(await memberHarness.agent.sync.getReplicationLinks(ownerDid)).toEqual([]);
     expect(new TextEncoder().encode(JSON.stringify(largePage)).byteLength)
       .toBeGreaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
@@ -482,7 +482,7 @@ describe('shared context public API integration', () => {
       connectedDid : memberDid,
       delegateDid  : memberDelegateDid,
     }).using(SharedNotebookProtocol);
-    const restored = await reopened.contexts.followed();
+    const restored = await reopened.contexts.list();
     expect(restored.map((context) => context.id).sort()).toEqual([...contextIds].sort());
 
     const restoredA = restored.find((context) => context.id === contextIds[0])!;
@@ -491,17 +491,36 @@ describe('shared context public API integration', () => {
     expect(restoredPages.records).toHaveLength(1);
     expect(restoredPages.records[0].id).toBe(largePageRecordId);
     expect(await restoredPages.records[0].value()).toEqual(largePage);
-    await restoredA.forget();
-    expect((await reopened.contexts.followed()).map((context) => context.id)).toEqual([contextIds[1]]);
 
-    const followedAgain = await reopened.contexts.follow({
-      id    : contextIds[0],
-      ownerDid,
-      roles : ['notebook/page/member', 'notebook/page/viewer'],
+    const catalog = await reopened.contexts.observe();
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(catalog.getSnapshot()).toMatchObject({ state: 'ready', contexts: [{}, {}] });
+    }, Poller.pollRetrySleep, 30_000);
+    const members = (await owner.contexts.open('notebook/page', contextIds[0]))
+      .members(['notebook/page/member', 'notebook/page/viewer']);
+    await members.set(memberDid, {
+      data : { name: 'member' },
+      role : 'notebook/page/viewer',
     });
-    await followedAgain.leave();
+    await ownerHarness.agent.sync.sync('push');
+    await memberHarness.agent.sync.stopSync();
+    await memberHarness.agent.sync.startSync({ interval: '1s' });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      const changed = catalog.getSnapshot().contexts.find(context => context.id === contextIds[0]);
+      expect(changed).toMatchObject({ role: 'notebook/page/viewer' });
+    }, Poller.pollRetrySleep, 30_000);
+    await expect(restoredA.records.query('notebook/page')).rejects.toThrow('is no longer active');
+    const downgraded = catalog.getSnapshot().contexts.find(context => context.id === contextIds[0])!;
+    await downgraded.whenCurrent();
 
-    const [sibling] = await reopened.contexts.followed();
+    await members.remove(memberDid);
+    await ownerHarness.agent.sync.sync('push');
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(catalog.getSnapshot().contexts.every(context => context.id !== contextIds[0])).toBe(true);
+    }, Poller.pollRetrySleep, 30_000);
+    await catalog.close();
+
+    const [sibling] = await reopened.contexts.list();
     expect(sibling.id).toBe(contextIds[1]);
     await sibling.whenCurrent();
     const siblingPages = await sibling.records.query('notebook/page', { pagination: { limit: 10 } });

@@ -27,6 +27,7 @@ import type { RecordDataAccess, RecordExecutionContext, RecordOptions, StoredRec
 
 import { captureRecordDataAccess } from './record-data-access.js';
 import { dataToBlob } from './utils.js';
+import { DwnResponseError } from './dwn-response-error.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
 import { Protocol } from './protocol.js';
@@ -48,6 +49,11 @@ type ReadScope = {
 };
 
 type MissingReadGrantPolicy = 'fallback' | 'reject';
+
+/** A delete converged only when this tombstone was stored or another tombstone already wins. */
+function isDurableRecordsDeleteStatus(code: number): boolean {
+  return (code >= 200 && code < 300) || code === 409;
+}
 
 /**
  * Represents the request payload for fetching permission requests from a Decentralized Web Node (DWN).
@@ -439,6 +445,54 @@ export class DwnApi {
       : this.agent.processDwnRequest(request);
   }
 
+  /** Build a RecordsDelete request with its routing and delegated authority resolved once. */
+  private async prepareDeleteRecord(request: RecordsDeleteRequest): Promise<{
+    agentRequest: ProcessDwnRequest<DwnInterface.RecordsDelete>;
+    remoteTarget?: string;
+  }> {
+    const { from, protocol, protocolPath, contextId, ...requestedMessageParams } = request;
+    const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
+      from,
+      requestedMessageParams,
+      true,
+    );
+
+    const agentRequest: ProcessDwnRequest<DwnInterface.RecordsDelete> = {
+      author      : this.connectedDid,
+      messageParams,
+      messageType : DwnInterface.RecordsDelete,
+      target,
+    };
+
+    if (this.delegateDid) {
+      const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
+        connectedDid : this.connectedDid,
+        delegateDid  : this.delegateDid,
+        protocol,
+        protocolPath,
+        contextId,
+        delegate     : true,
+        messageType  : agentRequest.messageType
+      });
+
+      agentRequest.messageParams = {
+        ...agentRequest.messageParams,
+        delegatedGrant
+      };
+      agentRequest.granteeDid = this.delegateDid;
+    }
+
+    return { agentRequest, remoteTarget };
+  }
+
+  /** Build and dispatch one ordinary RecordsDelete. */
+  private async deleteRecord(request: RecordsDeleteRequest): Promise<DwnResponseStatus> {
+    const { agentRequest, remoteTarget } = await this.prepareDeleteRecord(request);
+    const agentResponse: DwnResponse<DwnInterface.RecordsDelete> =
+      await this.dispatchDwnRequest(agentRequest, remoteTarget);
+    return { status: agentResponse.reply.status };
+  }
+
   /** Construct the canonical record handle shared by query, read, and subscription frames. */
   private createRecordHandle(params: {
     dataAccess: RecordDataAccess;
@@ -649,7 +703,12 @@ export class DwnApi {
       : this.recordExecutionContext.contextId;
   }
 
-  /** @internal Exact role-record incarnation backing this records API. */
+  /** @internal Opaque local acceptance incarnation backing this records API. */
+  public get followedSourceAcceptanceId(): string | undefined {
+    return this.recordExecutionContext?.followedSourceAcceptanceId;
+  }
+
+  /** @internal Role record backing this followed-context records API. */
   public get followedSourceId(): string | undefined {
     return this.recordExecutionContext?.followedSourceId;
   }
@@ -705,6 +764,34 @@ export class DwnApi {
    */
   public queryRecordsWithRequiredGrant(request: RecordsQueryRequest): Promise<RecordsQueryResponse> {
     return this.queryRecords(request, 'reject');
+  }
+
+  /** @internal Delete at every hosted endpoint, then apply the exact signed tombstone locally. */
+  public async deleteRemoteRecordAndStoreLocal(
+    request: RecordsDeleteRequest & { from: string },
+  ): Promise<void> {
+    const { agentRequest, remoteTarget } = await this.prepareDeleteRecord(request);
+    if (remoteTarget === undefined) {
+      throw new TypeError('DwnApi: deleteRemoteRecordAndStoreLocal requires a remote target.');
+    }
+
+    const { message, replies } = await this.agent.sendDwnDeleteToAllRemoteEndpoints(agentRequest);
+    for (const { dwnUrl, reply } of replies) {
+      if (!isDurableRecordsDeleteStatus(reply.status.code)) {
+        throw new DwnResponseError(`Delete record at remote DWN '${dwnUrl}'`, reply.status);
+      }
+    }
+
+    const localResponse = await this.agent.processDwnRequest({
+      author      : this.connectedDid,
+      messageType : DwnInterface.RecordsDelete,
+      rawMessage  : message,
+      store       : true,
+      target      : agentRequest.target,
+    });
+    if (!isDurableRecordsDeleteStatus(localResponse.reply.status.code)) {
+      throw new DwnResponseError('Store remote RecordsDelete locally', localResponse.reply.status);
+    }
   }
 
   /**
@@ -1073,53 +1160,7 @@ export class DwnApi {
        * Delete a record
        */
       delete: async (request: RecordsDeleteRequest): Promise<DwnResponseStatus> => {
-        const { from, protocol, protocolPath, contextId, ...requestedMessageParams } = request;
-        const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
-          from,
-          requestedMessageParams,
-          true,
-        );
-
-        const agentRequest: ProcessDwnRequest<DwnInterface.RecordsDelete> = {
-          /**
-           * The `author` is the DID that will sign the message and must be the DID the Enbox app is
-           * connected with and is authorized to access the signing private key of.
-           */
-          author      : this.connectedDid,
-          messageParams,
-          messageType : DwnInterface.RecordsDelete,
-          /**
-           * The `target` is the DID of the DWN tenant under which the delete will be executed.
-           * If `from` is provided, the delete operation will be executed on a remote DWN.
-           * Otherwise, the record will be deleted on the local DWN.
-           */
-          target,
-        };
-
-        if (this.delegateDid) {
-          const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
-            connectedDid : this.connectedDid,
-            delegateDid  : this.delegateDid,
-            protocol,
-            protocolPath,
-            contextId,
-            delegate     : true,
-            messageType  : agentRequest.messageType
-          });
-
-          agentRequest.messageParams = {
-            ...agentRequest.messageParams,
-            delegatedGrant
-          };
-          agentRequest.granteeDid = this.delegateDid;
-        }
-
-        const agentResponse: DwnResponse<DwnInterface.RecordsDelete> =
-          await this.dispatchDwnRequest(agentRequest, remoteTarget);
-
-        const { reply: { status } } = agentResponse;
-
-        return { status };
+        return this.deleteRecord(request);
       },
 
       /**

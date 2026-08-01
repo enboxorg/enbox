@@ -625,15 +625,13 @@ describe('RecordView', () => {
         tags: { status: 'draft' as 'draft' | 'published' },
       },
       pagination: {
-        limit  : 1,
-        cursor : { messageCid: 'bafy-original', value: 'original-position' },
+        limit: 1,
       },
     };
 
     const opening = createTyped(harness).records.observe('note', request);
     request.filter.tags.status = 'published';
     request.pagination.limit = 100;
-    request.pagination.cursor.messageCid = 'bafy-mutated';
     const view = await opening;
     await waitFor(() => { expect(harness.queryRequests).toHaveLength(1); });
 
@@ -642,13 +640,11 @@ describe('RecordView', () => {
         tags: { status: 'draft' },
       },
       pagination: {
-        limit  : 1,
-        cursor : { messageCid: 'bafy-original', value: 'original-position' },
+        limit: 1,
       },
     });
 
     request.filter.tags.status = 'draft';
-    request.pagination.cursor.value = 'another-position';
     harness.emit(recordEvent());
     await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
     expect(harness.queryRequests[1]).toEqual(harness.queryRequests[0]);

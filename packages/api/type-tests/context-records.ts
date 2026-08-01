@@ -1,5 +1,12 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { ContextMember, ContextRecord, ProtocolContext, TypedEnbox } from '@enbox/api';
+import type {
+  ContextMember,
+  ContextRecord,
+  ContextView,
+  MemberContext,
+  OwnedContext,
+  TypedEnbox,
+} from '@enbox/api';
 
 import { defineProtocol, recordCodecs } from '@enbox/api';
 
@@ -28,7 +35,7 @@ const ContextDefinition = {
         { role: 'workspace/member', can: ['read'] },
         { role: 'workspace/viewer', can: ['read'] },
       ],
-      member : { $role: true },
+      member : { $recordLimit: { max: 1 }, $role: true },
       viewer : { $role: true },
       live   : {
         $actions : [{ role: 'workspace/member', can: ['create', 'read'] }],
@@ -62,10 +69,43 @@ const ContextProtocol = defineProtocol(ContextDefinition, {
 });
 void ContextProtocol;
 
-declare const context: ProtocolContext<typeof ContextDefinition, typeof ContextProtocol.codecs>;
+declare const context:
+  | OwnedContext<typeof ContextDefinition, typeof ContextProtocol.codecs, 'workspace'>
+  | MemberContext<
+    typeof ContextDefinition,
+    typeof ContextProtocol.codecs,
+    'workspace/member' | 'workspace/viewer'
+  >;
+declare const catalogContext: MemberContext<
+  typeof ContextDefinition,
+  typeof ContextProtocol.codecs,
+  'workspace/member' | 'project/outsider'
+>;
 declare const typed: TypedEnbox<typeof ContextDefinition, typeof ContextProtocol.codecs>;
 
+if (catalogContext.role === 'workspace/member') {
+  const root: 'workspace' = catalogContext.path;
+  void root;
+  void catalogContext.records.query('workspace/note');
+  // @ts-expect-error narrowing a catalog entry also confines its record paths to that role's root.
+  void catalogContext.records.query('project');
+} else {
+  const root: 'project' = catalogContext.path;
+  void root;
+  void catalogContext.records.query('project');
+  // @ts-expect-error narrowing a catalog entry also confines its record paths to that role's root.
+  void catalogContext.records.query('workspace/note');
+}
+
 const owned = typed.contexts.open('workspace', 'workspace-id');
+const listed: Promise<MemberContext<typeof ContextDefinition, typeof ContextProtocol.codecs>[]> =
+  typed.contexts.list();
+const observed: Promise<ContextView<MemberContext<typeof ContextDefinition, typeof ContextProtocol.codecs>>> =
+  typed.contexts.observe();
+void listed;
+void observed;
+// @ts-expect-error role records are membership, not contexts.
+void typed.contexts.open('workspace/member', 'workspace-id/member-id');
 void owned.then((value): void => {
   const access: 'owner' = value.access;
   const ownerDid: string = value.ownerDid;
@@ -116,6 +156,20 @@ void owned.then((value): void => {
   void value.records.query('invite');
   // @ts-expect-error every subscribed path must belong to the bound context.
   void value.records.subscribe(['workspace/note', 'invite'], (): void => {});
+  void value.records.query('workspace', {
+    materialize: {
+      // @ts-expect-error role records cannot be materialized through context queries.
+      children: ['workspace/member'] as const,
+    },
+    pagination: { limit: 1 },
+  });
+  void value.records.observe('workspace', {
+    materialize: {
+      // @ts-expect-error role records cannot be materialized through context views.
+      children: ['workspace/member'] as const,
+    },
+    pagination: { limit: 1 },
+  });
 });
 
 const singleton = typed.contexts.open('workspace/title', 'workspace-id/title-id');
@@ -126,6 +180,8 @@ void singleton.then((value): void => {
 
 if (context.access === 'member') {
   void context.role;
+  void context.forget();
+  void context.leave();
   void context.whenCurrent();
   // @ts-expect-error only owners manage context membership.
   context.members(['workspace/member']);
@@ -141,6 +197,8 @@ void created;
 void read;
 void set;
 void context.records.delete('workspace/note', { recordId: 'note-id' });
+const count: Promise<number> = context.records.count('workspace/note');
+void count;
 
 void queried.then(async (page): Promise<void> => {
   const current: ContextRecord<{ text: string }> | undefined = page.records[0];
@@ -268,7 +326,10 @@ void context.records.create('workspace/live/session', {
   data            : { peer: 'peer-key' },
   parentContextId : 'workspace/live-context',
 });
+// @ts-expect-error membership is available only through ownedContext.members().
 void context.records.create('workspace/member', { data: { label: 'member' }, recipient: 'did:example:member' });
+// @ts-expect-error role records are not part of context content.
+void context.records.query('workspace/member');
 
 // @ts-expect-error context queries cannot override their source tenant.
 void context.records.query('workspace/note', { from: 'did:example:other' });

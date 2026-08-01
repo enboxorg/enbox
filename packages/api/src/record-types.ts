@@ -22,11 +22,13 @@ import type {
  * @internal
  */
 export type RecordExecutionContext = Readonly<{
-  /** Reject operations after this context has been left or revoked. */
+  /** Reject operations after this context has been left or removed. */
   assertActive(): Promise<void>;
   /** Root context that bounds every operation. */
   contextId: string;
-  /** Exact role-record incarnation when this is a followed context. */
+  /** Opaque local acceptance incarnation when this is a followed context. */
+  followedSourceAcceptanceId?: string;
+  /** Role record backing this followed context. */
   followedSourceId?: string;
   /** Role invoked for every operation when this is a followed context. */
   protocolRole?: string;

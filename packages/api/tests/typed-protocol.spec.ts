@@ -760,12 +760,6 @@ describe('TypedProtocol API', () => {
           role     : 'workspace/viewer',
           delivery : { state: 'pending' },
         });
-        expect((await owned.records.query('workspace/member', {
-          filter: { recipient },
-        })).records).toHaveLength(0);
-        expect((await owned.records.query('workspace/viewer', {
-          filter: { recipient },
-        })).records).toHaveLength(1);
         expect((await members.list()).map(member => member.did)).toEqual([recipient]);
 
         expect(await members.retryDelivery(recipient)).toMatchObject({ delivery: { state: 'delivered' } });

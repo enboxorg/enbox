@@ -147,14 +147,15 @@ function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSy
     ? ['notebook', 'notebook/page', 'notebook/page/delta']
     : ['notebook', 'notebook/page']);
   return {
-    id        : 'role-a',
-    sourceDid : 'did:example:owner',
-    actorDid  : 'did:example:member',
-    protocol  : 'https://example.com/notebooks',
-    contextId : 'notebook-a',
+    acceptanceId : 'acceptance-a',
+    id           : 'role-a',
+    sourceDid    : 'did:example:owner',
+    actorDid     : 'did:example:member',
+    protocol     : 'https://example.com/notebooks',
+    contextId    : 'notebook-a',
     protocolRole,
     protocolPaths,
-    roles     : [
+    roles        : [
       {
         protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
         protocolRole  : 'notebook/collaborator',

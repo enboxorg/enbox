@@ -595,6 +595,48 @@ describe('AgentDwnApi', () => {
       expect(remoteEndpoints.calledOnce).toBe(true);
     });
 
+    it('sends one signed RecordsDelete to every hosted endpoint', async () => {
+      const sendDwnRequest = sinon.stub();
+      sendDwnRequest.onFirstCall().resolves({ status: { code: 202, detail: 'Accepted' } });
+      sendDwnRequest.onSecondCall().resolves({ status: { code: 404, detail: 'Not Found' } });
+      const dwnApi = new AgentDwnApi({
+        agent: {
+          rpc: { sendDwnRequest },
+        } as any,
+      });
+      const endpoints = ['https://one.example', 'https://two.example'];
+      sinon.stub(dwnApi, 'getRemoteDwnEndpointUrls').resolves(endpoints);
+      const message = { descriptor: { interface: 'Records', method: 'Delete', recordId: 'role' } } as any;
+      const construct = sinon.stub(dwnApi as any, 'constructDwnMessage').resolves({ message });
+
+      const result = await dwnApi.sendDeleteToAllRemoteEndpoints({
+        author        : 'did:example:member',
+        messageParams : { recordId: 'role' },
+        messageType   : DwnInterface.RecordsDelete,
+        target        : 'did:example:owner',
+      });
+
+      expect(construct.calledOnce).toBe(true);
+      expect(sendDwnRequest.callCount).toBe(2);
+      expect(sendDwnRequest.firstCall.args[0]).toEqual({
+        dwnUrl    : endpoints[0],
+        message,
+        targetDid : 'did:example:owner',
+      });
+      expect(sendDwnRequest.secondCall.args[0]).toEqual({
+        dwnUrl    : endpoints[1],
+        message,
+        targetDid : 'did:example:owner',
+      });
+      expect(result).toEqual({
+        message,
+        replies: [
+          { dwnUrl: endpoints[0], reply: { status: { code: 202, detail: 'Accepted' } } },
+          { dwnUrl: endpoints[1], reply: { status: { code: 404, detail: 'Not Found' } } },
+        ],
+      });
+    });
+
     it('sendRequest streams existing message data through RPC when using messageCid', async () => {
       const mockAgent: any = {
         rpc: {

@@ -612,6 +612,17 @@ export type SyncMessageDescriptor = {
 export type SyncEvent =
   /** Durable sync registration was added, changed, or removed for one identity. */
   | { type: 'identity:registration-change'; tenantDid: string; options?: SyncIdentityOptions }
+  /** The durable accepted-context catalog changed for one actor. */
+  | {
+    type: 'followed-context:change';
+    actorDid: string;
+    contextId: string;
+    /** Opaque local acceptance incarnation carried by this transition. */
+    followedSourceAcceptanceId: string;
+    followedSourceId: string | undefined;
+    protocol: string;
+    tenantDid: string;
+  }
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
   /** Whether accepted remote-feed wakes are covered by a completed durable pull pass. */
@@ -832,8 +843,10 @@ export interface SyncEngine {
   getFollowedSource(id: string): Promise<FollowedSyncSource | undefined>;
   /** List followed foreign contexts, excluding corrupt private store entries. */
   listFollowedSources(): Promise<FollowedSyncSource[]>;
-  /** Stop following one foreign context without disturbing sibling contexts. */
-  deleteFollowedSource(id: string): Promise<void>;
+  /** Stop following one exact foreign-context role incarnation. */
+  deleteFollowedSource(source: FollowedSyncSource): Promise<void>;
+  /** Forget the logical foreign context, including a concurrently replaced role incarnation. */
+  forgetFollowedContext(source: FollowedSyncSource): Promise<void>;
   /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *

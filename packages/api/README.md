@@ -319,7 +319,7 @@ After a local view has been ready, an offline or catching-up source makes it
 offline writes remain visible. Query, authorization, and terminal sync failures
 publish `error` while retaining the latest successful records.
 `hasMore` is always present: it is `false` before the first query and whenever
-the latest bounded result has no continuation cursor.
+the latest bounded result has no next page.
 
 The snapshot object and records array are immutable. Each `Record<T>` handle
 represents the queried version until the caller explicitly uses that handle's
@@ -410,15 +410,41 @@ deletes those role assignments but does not claim cryptographic revocation:
 audience re-keying is required before a former member is unable to decrypt
 future content.
 
+Role-record paths are not exposed through `context.records`; membership has one
+surface, `ownedContext.members(...)`.
+
 Accepted contexts survive restart and are reconstructed with
-`await notebooks.contexts.followed()`. Enbox selects the first role it can
-verify and persists the complete group so a subsequent `follow()` can replace
-the active role.
-`forget()` removes only the local accepted source. `leave()` first deletes the
-exact owner-hosted role record and is available only when that role path
-authorizes recipient `co-delete`; a failed remote delete leaves the local
-source intact. Following the same owner context again atomically replaces its
-former role incarnation, including a change to another role in the group.
+`await notebooks.contexts.list()`. For a live catalog, subscribe to the same
+durable truth:
+
+```ts
+const contexts = await notebooks.contexts.observe();
+const renderSnapshot = ({ state, contexts, error }) => {
+  if (state === 'error') report(error);
+  else render(contexts);
+};
+renderSnapshot(contexts.getSnapshot());
+const unsubscribe = contexts.subscribe(renderSnapshot);
+
+// When the consuming component is released:
+unsubscribe();
+await contexts.close();
+```
+
+The catalog's `ready` state means the local accepted-context list has loaded;
+use each context's `whenCurrent()` or record views for replication currentness.
+Enbox persists the complete ordered role group and automatically replaces the
+active role when every advertised owner endpoint proves the same new role
+record. It removes the accepted context only when every endpoint proves every
+candidate role absent. An unreachable, lagging, malformed, or disagreeing
+endpoint retains the last local context and never implies removal.
+`forget()` removes the current local context even if its role changes during
+the operation. `leave()` sends one signed deletion to every advertised owner
+DWN, stores the tombstone in the local replica, and then retires only that
+acceptance; an endpoint without a durable tombstone leaves the local source
+intact for retry. It is available only when that role path authorizes recipient
+`co-delete`. Following the same owner context again after removal creates a
+fresh local acceptance, even when the remote role-record ID is unchanged.
 
 Invitation discovery remains application data rather than a second generic
 inbox API. A removed source role fences future replication, but previously
@@ -490,8 +516,11 @@ coordinates writes across browser contexts.
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
-| `RecordPage<Item>` | One page of selected record items with `next()` and its optional raw continuation cursor. |
+| `RecordPage<Item>` | One page of selected record items with cursor-free `next()` pagination. |
 | `RecordView<Item>` | Closeable bounded query view with immutable snapshots. |
+| `ContextView` | Closeable live catalog of accepted member contexts. |
+| `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
+| `ContextMember` | One owner-managed member and its audience-key delivery state. |
 | `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |

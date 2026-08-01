@@ -47,6 +47,7 @@ function ownerTarget(did: string, dwnUrl: string): SyncTarget {
 
 function followedSource(id = 'role-a'): FollowedSyncSource {
   return {
+    acceptanceId  : `acceptance-${id}`,
     id,
     sourceDid     : 'did:example:owner',
     actorDid      : 'did:example:member',

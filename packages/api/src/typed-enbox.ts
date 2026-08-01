@@ -31,6 +31,7 @@
  * ```
  */
 
+import type { ContextView } from './context-view.js';
 import type { Protocol } from './protocol.js';
 import type { RecordView } from './record-view.js';
 import type {
@@ -57,15 +58,23 @@ import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-cod
 import type { RecordDeleteParams, RecordUpdateParams } from './record-types.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
+import { createContextView } from './context-view.js';
 import { createRecordView } from './record-view.js';
 import { Did } from '@enbox/dids';
+import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
 import { removeUndefinedProperties } from '@enbox/common';
-import { areReplicationLinksCurrent, followedSyncSourceActiveEqual, syncEventCoversProtocol } from '@enbox/agent';
+import {
+  areReplicationLinksCurrent,
+  FollowedSourceNotReadyError,
+  followedSyncSourceActiveEqual,
+  syncEventCoversProtocol,
+} from '@enbox/agent';
 import {
   assertTypedProtocolStructureSupported,
   collectProtocolPaths,
   isEncryptedRoleAudiencePath,
+  isProtocolRolePath,
 } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
@@ -158,9 +167,6 @@ type ProtocolDeliveryRolePaths<D extends ProtocolDefinition> = {
 export type RecordPage<Item = Record> = {
   /** Matching records in the representation selected by the query. */
   records: Item[];
-
-  /** Cursor for the next page, when another page exists. */
-  cursor?: DwnPaginationCursor;
 
   /** Fetch the next page of the same canonical query, or `undefined` at the end. */
   next(): Promise<RecordPage<Item> | undefined>;
@@ -295,7 +301,7 @@ type QueryRequest<
   ? Query & { materialize?: undefined }
   : Omit<Query, 'pagination'> & {
     materialize: Materialization;
-    pagination: { limit: number; cursor?: DwnPaginationCursor };
+    pagination: { limit: number };
   };
 
 type TypedQueryRequest<
@@ -318,7 +324,7 @@ type ObserveRequest<
   Materialization extends RecordMaterialization<D, Path> | undefined,
   Query extends RecordQuery<D, Path>,
 > = Omit<Query, 'pagination'> & {
-  pagination: { limit: number; cursor?: DwnPaginationCursor };
+  pagination: { limit: number };
 } & ([Materialization] extends [undefined]
   ? { materialize?: undefined }
   : { materialize: Materialization });
@@ -428,7 +434,7 @@ type ContextBase<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
   Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
-> = Readonly<{
+> = {
   /** Context ID that bounds every record operation. */
   id: string;
   /** DID whose DWN owns the authoritative context. */
@@ -437,14 +443,33 @@ type ContextBase<
   path: Root;
   /** Typed records API with this context's tenant and root scope already bound. */
   records: ContextRecordsApi<D, C, Root>;
-}>;
+};
+
+type MemberContextForRoot<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  Role extends ContextRolePaths<D>,
+  Root extends ProtocolPaths<D> & string,
+> = Root extends unknown
+  ? Readonly<ContextBase<D, C, Root> & {
+    access: 'member';
+    /** Role path authorizing access to the context. */
+    role: Role extends string ? ParentProtocolPath<Role> extends Root ? Role : never : never;
+    /** Withdraw this exact role record, stop following it, and fence retained handles. */
+    leave(): Promise<void>;
+    /** Forget this context locally without changing the owner-hosted role record. */
+    forget(): Promise<void>;
+    /** Resolve once this exact role-authorized local replica is caught up. */
+    whenCurrent(): Promise<void>;
+  }>
+  : never;
 
 /** A context owned by the connected identity. */
 export type OwnedContext<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
   Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
-> = ContextBase<D, C, Root> & Readonly<{
+> = Readonly<ContextBase<D, C, Root> & {
   access: 'owner';
   /** Manage direct encrypted roles, ordered strongest first, that can read this context root. */
   members<const Roles extends NonEmptyReadonlyArray<ContextMemberRolePaths<D, Root>>>(
@@ -457,39 +482,11 @@ export type MemberContext<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
   Role extends ContextRolePaths<D> = ContextRolePaths<D>,
-> = ContextBase<D, C, Extract<ParentProtocolPath<Role>, ProtocolPaths<D> & string>> & Readonly<{
-  access: 'member';
-  /** Role path authorizing access to the context. */
-  role: Role;
-  /** Withdraw this exact role record, stop following it, and fence retained handles. */
-  leave(): Promise<void>;
-  /** Forget this context locally without changing the owner-hosted role record. */
-  forget(): Promise<void>;
-  /** Resolve once this exact role-authorized local replica is caught up. */
-  whenCurrent(): Promise<void>;
-}>;
-
-/** An owned or member context, discriminated by `access`. */
-export type ProtocolContext<
-  D extends ProtocolDefinition = ProtocolDefinition,
-  C extends RecordCodecMap = RecordCodecMap,
-> = ContextBase<D, C> & Readonly<
-  | {
-    access: 'owner';
-    members<const Roles extends NonEmptyReadonlyArray<Extract<
-      ProtocolDeliveryRolePaths<D>,
-      ContextRolePaths<D>
-    >>>(
-      roles: Roles,
-    ): ContextMembersApi<D, C, Roles[number]>;
-  }
-  | {
-    access: 'member';
-    role: ContextRolePaths<D>;
-    leave(): Promise<void>;
-    forget(): Promise<void>;
-    whenCurrent(): Promise<void>;
-  }
+> = MemberContextForRoot<
+  D,
+  C,
+  Role,
+  Extract<ParentProtocolPath<Role>, ProtocolPaths<D> & string>
 >;
 
 /** Public request for following one foreign context through an ordered role group. */
@@ -503,19 +500,22 @@ export type FollowContextOptions<
   roles: Roles;
 }>;
 
-/** Protocol-scoped owner and member context lifecycle. */
+/** Protocol-scoped owned-context access and accepted member-context lifecycle. */
 export type ContextsApi<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
 > = Readonly<{
-  open<Root extends ProtocolPaths<D> & string>(
+  open<Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
     path: Root,
     id: string,
   ): Promise<OwnedContext<D, C, Root>>;
   follow<const Roles extends NonEmptyReadonlyArray<ContextRolePaths<D>>>(
     request: FollowContextOptions<D, Roles>,
   ): Promise<MemberContext<D, C, Roles[number]>>;
-  followed(): Promise<MemberContext<D, C>[]>;
+  /** List locally accepted member contexts for this protocol. */
+  list(): Promise<MemberContext<D, C>[]>;
+  /** Observe the locally accepted member-context catalog for this protocol. */
+  observe(): Promise<ContextView<MemberContext<D, C>>>;
 }>;
 
 /**
@@ -838,12 +838,24 @@ export type TypedDeleteRequest = {
 type ContextRecordPaths<
   D extends ProtocolDefinition,
   Root extends ProtocolPaths<D> & string,
-> = Extract<ProtocolPaths<D> & string, Root | `${Root}/${string}`>;
+> = Exclude<
+  Extract<ProtocolPaths<D> & string, Root | `${Root}/${string}`>,
+  ProtocolRolePaths<D>
+>;
+
+type ContextRecordMaterialization<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+> = true | {
+  children: readonly Exclude<DirectSingletonChildPaths<D, Path>, ProtocolRolePaths<D>>[];
+};
 
 type ContextDescendantPaths<
   D extends ProtocolDefinition,
   Root extends ProtocolPaths<D> & string,
-> = Root extends string ? Extract<ProtocolPaths<D> & string, `${Root}/${string}`> : never;
+> = Root extends string
+  ? Exclude<Extract<ProtocolPaths<D> & string, `${Root}/${string}`>, ProtocolRolePaths<D>>
+  : never;
 
 type ContextCreateRequest<
   D extends ProtocolDefinition,
@@ -862,21 +874,21 @@ type ContextRecordQuery<
 type ContextQueryRequest<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
-  Materialization extends RecordMaterialization<D, Path> | undefined,
+  Materialization extends ContextRecordMaterialization<D, Path> | undefined,
 > = QueryRequest<D, Path, Materialization, ContextRecordQuery<D, Path>>;
 
 type ContextQueryArguments<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
-  Materialization extends RecordMaterialization<D, Path> | undefined,
+  Materialization extends ContextRecordMaterialization<D, Path> | undefined,
 > = [Materialization] extends [undefined]
-  ? [path: Path, request?: ContextQueryRequest<D, Path, Materialization>]
-  : [path: Path, request: ContextQueryRequest<D, Path, Materialization>];
+  ? [path: Path, request?: ContextQueryRequest<D, NoInfer<Path>, Materialization>]
+  : [path: Path, request: ContextQueryRequest<D, NoInfer<Path>, Materialization>];
 
 type ContextObserveRequest<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
-  Materialization extends RecordMaterialization<D, Path> | undefined,
+  Materialization extends ContextRecordMaterialization<D, Path> | undefined,
 > = ObserveRequest<D, Path, Materialization, ContextRecordQuery<D, Path>>;
 
 type ContextReadRequest<
@@ -908,17 +920,17 @@ export type ContextRecordsApi<
 
   query: <
     Path extends ContextRecordPaths<D, Root>,
-    Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
+    Materialization extends ContextRecordMaterialization<D, NoInfer<Path>> | undefined = undefined,
   >(...args: ContextQueryArguments<D, Path, Materialization>) => Promise<
     RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization, true>>
   >;
 
   observe: <
     Path extends ContextRecordPaths<D, Root>,
-    Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
+    Materialization extends ContextRecordMaterialization<D, NoInfer<Path>> | undefined = undefined,
   >(
     path: Path,
-    request: ContextObserveRequest<D, Path, Materialization>,
+    request: ContextObserveRequest<D, NoInfer<Path>, Materialization>,
   ) => Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization, true>>>;
 
   subscribe: TypedRecordsSubscribe<C, ContextRecordPaths<D, Root>, true>;
@@ -1221,21 +1233,36 @@ export class TypedEnbox<
       return this._options.sync;
     };
 
+    const listSources = async (): Promise<FollowedSyncSource[]> => {
+      this._options.signal?.throwIfAborted();
+      return (await requireSync().listFollowedSources())
+        .filter(source =>
+          source.actorDid === this._dwn.connectedDid && source.protocol === this._definition.protocol
+        )
+        .sort(compareFollowedContexts);
+    };
+
     this._contexts = {
-      open: async <Root extends ProtocolPaths<D> & string>(
+      open: async <Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
         path: Root,
         id: string,
       ): Promise<OwnedContext<D, C, Root>> => {
         const normalizedPath = normalizePath(path) as Root;
-        assertValidRecordWithin(normalizedPath, id, true);
+        if (isProtocolRolePath(this._definition, normalizedPath)) {
+          throw new TypeError('TypedEnbox.contexts.open cannot open a role record as a context.');
+        }
         if (id.split('/').length !== normalizedPath.split('/').length) {
           throw new TypeError(`TypedEnbox.contexts.open: id must identify a '${normalizedPath}' context.`);
         }
+        assertValidRecordWithin(normalizedPath, id, true);
         await this._ensureReady(normalizedPath);
 
         const protocolPaths = new Set(
           [...this._validPaths]
-            .filter((candidate): boolean => candidate === normalizedPath || candidate.startsWith(`${normalizedPath}/`)),
+            .filter((candidate): boolean =>
+              (candidate === normalizedPath || candidate.startsWith(`${normalizedPath}/`)) &&
+              !isProtocolRolePath(this._definition, candidate)
+            ),
         );
         const dwn = this._dwn.withRecordExecutionContext({
           assertActive : async (): Promise<void> => this._options.signal?.throwIfAborted(),
@@ -1250,7 +1277,7 @@ export class TypedEnbox<
           access  : 'owner',
           id,
           members : <const Roles extends NonEmptyReadonlyArray<ContextMemberRolePaths<D, Root>>>(roles: Roles) =>
-            this.bindContextMembers(dwn, records, id, normalizedPath, roles) as ContextMembersApi<
+            this.bindContextMembers(dwn, id, normalizedPath, roles) as ContextMembersApi<
               D, C, Roles[number]
             >,
           ownerDid : this._dwn.connectedDid,
@@ -1269,6 +1296,14 @@ export class TypedEnbox<
         if (new Set(scopes.map(scope => scope.role)).size !== scopes.length) {
           throw new TypeError('TypedEnbox.contexts.follow: roles must not contain duplicates.');
         }
+        if (scopes.some(scope => scope.protocolPath !== scopes[0].protocolPath)) {
+          throw new TypeError('TypedEnbox.contexts.follow: every role must belong to the same context root.');
+        }
+        const contextPath = scopes[0].protocolPath;
+        if (request.id.split('/').length !== contextPath.split('/').length) {
+          throw new TypeError(`TypedEnbox.contexts.follow: id must identify a '${contextPath}' context.`);
+        }
+        assertValidRecordWithin(contextPath, request.id, true);
         const toRole = (scope: typeof scopes[number]): FollowedSyncRole => ({
           protocolPaths : scope.readablePaths,
           protocolRole  : scope.role,
@@ -1278,14 +1313,20 @@ export class TypedEnbox<
           ...scopes.slice(1).map(toRole),
         ];
         const sync = requireSync();
-        const source = await sync.followSource({
-          actorDid    : this._dwn.connectedDid,
-          contextId   : request.id,
-          delegateDid : this._dwn.recordDelegateDid,
-          protocol    : this._definition.protocol,
-          roles,
-          sourceDid   : request.ownerDid,
-        });
+        let source: FollowedSyncSource;
+        try {
+          source = await sync.followSource({
+            actorDid    : this._dwn.connectedDid,
+            contextId   : request.id,
+            delegateDid : this._dwn.recordDelegateDid,
+            protocol    : this._definition.protocol,
+            roles,
+            sourceDid   : request.ownerDid,
+          });
+        } catch (error) {
+          if (error instanceof FollowedSourceNotReadyError) { throw error; }
+          throw new Error('TypedEnbox.contexts.follow could not establish the requested context.');
+        }
         if (
           source.sourceDid !== request.ownerDid ||
           source.actorDid !== this._dwn.connectedDid ||
@@ -1301,13 +1342,16 @@ export class TypedEnbox<
         }
         return this.bindMemberContext(source) as MemberContext<D, C, Roles[number]>;
       },
-      followed: async (): Promise<MemberContext<D, C>[]> => {
-        this._options.signal?.throwIfAborted();
-        const sources = (await requireSync().listFollowedSources()).filter(source =>
-          source.actorDid === this._dwn.connectedDid && source.protocol === this._definition.protocol
-        );
-        return sources.map((source): MemberContext<D, C> => this.bindMemberContext(source));
-      },
+      list: async (): Promise<MemberContext<D, C>[]> =>
+        (await listSources()).map((source): MemberContext<D, C> => this.bindMemberContext(source)),
+      observe: (): Promise<ContextView<MemberContext<D, C>>> => createContextView({
+        actorDid    : this._dwn.connectedDid,
+        bind        : (source): MemberContext<D, C> => this.bindMemberContext(source),
+        listSources : listSources,
+        protocol    : this._definition.protocol,
+        signal      : this._options.signal,
+        sync        : requireSync(),
+      }),
     };
     return this._contexts;
   }
@@ -1659,6 +1703,35 @@ export class TypedEnbox<
     let closed = false;
     const signal = this._options.signal;
     let detachAbort = (): void => {};
+    let detachSync = (): void => {};
+    let closeSubscription = (): Promise<void> => Promise.resolve();
+    const followedSourceAcceptanceId = this._dwn.followedSourceAcceptanceId;
+    const followedSourceId = this._dwn.followedSourceId;
+    const contextId = this._options.context?.contextId;
+    if (followedSourceId !== undefined && contextId !== undefined && this._options.sync !== undefined) {
+      detachSync = this._options.sync.on((event): void => {
+        if (
+          event.type === 'followed-context:change' &&
+          event.actorDid === this._dwn.connectedDid &&
+          event.contextId === contextId &&
+          event.protocol === this.protocol &&
+          event.tenantDid === this._dwn.recordTenantDid &&
+          followedContextChangeRetiresSource({
+            acceptanceId : followedSourceAcceptanceId!,
+            id           : followedSourceId,
+          }, event)
+        ) {
+          closed = true;
+          detachAbort();
+          detachSync();
+          void Promise.resolve().then(() => listener({
+            type  : 'error',
+            error : new Error(`Member context '${contextId}' is no longer active.`),
+          })).catch((): void => {});
+          void closeSubscription().catch((): void => {});
+        }
+      });
+    }
 
     const reply = await this._dwn.subscribeRecordFrames({
       paths,
@@ -1682,49 +1755,55 @@ export class TypedEnbox<
       if (message.type === 'error') {
         closed = true;
         detachAbort();
+        detachSync();
         await listener({
           type  : 'error',
           error : new Error(`Record subscription failed (${message.error.code}): ${message.error.detail}`),
         });
       }
+    }).catch((error: unknown): never => {
+      closed = true;
+      detachSync();
+      throw error;
     });
 
     try {
       requireDwnSuccess('TypedEnbox.records.subscribe', reply);
     } catch (error: unknown) {
       closed = true;
+      detachSync();
       await reply.subscription?.close();
       throw error;
     }
     if (reply.subscription === undefined) {
       closed = true;
+      detachSync();
       throw new Error('TypedEnbox.records.subscribe: DWN returned success without a subscription.');
     }
     const subscription = reply.subscription;
+    let closePromise: Promise<void> | undefined;
+    closeSubscription = (): Promise<void> => {
+      closePromise ??= (async (): Promise<void> => {
+        closed = true;
+        detachAbort();
+        detachSync();
+        await subscription.close();
+      })();
+      return closePromise;
+    };
     if (closed || signal?.aborted === true) {
-      await subscription.close();
+      detachSync();
+      await closeSubscription();
       signal?.throwIfAborted();
       throw new Error('TypedEnbox.records.subscribe: closed while opening the subscription.');
     }
     const handleAbort = (): void => {
-      closed = true;
-      detachAbort();
-      void subscription.close().catch((): void => {});
+      void closeSubscription().catch((): void => {});
     };
     signal?.addEventListener('abort', handleAbort, { once: true });
     detachAbort = (): void => signal?.removeEventListener('abort', handleAbort);
 
-    let closePromise: Promise<void> | undefined;
-    return {
-      close: (): Promise<void> => {
-        closePromise ??= (async (): Promise<void> => {
-          closed = true;
-          detachAbort();
-          await subscription.close();
-        })();
-        return closePromise;
-      },
-    };
+    return { close: closeSubscription };
   }
 
   /** Require the protocol fact that gives `set()` one unambiguous target. */
@@ -1840,7 +1919,11 @@ export class TypedEnbox<
     if (protocolPath === '') {
       throw new TypeError('TypedEnbox.contexts requires a role nested below a context root.');
     }
-    const readablePaths = getProtocolRoleActionPaths(this._definition, normalizedRole, ProtocolAction.Read);
+    const isContextContentPath = (path: string): boolean =>
+      (path === protocolPath || path.startsWith(`${protocolPath}/`)) &&
+      !isProtocolRolePath(this._definition, path);
+    const readablePaths = getProtocolRoleActionPaths(this._definition, normalizedRole, ProtocolAction.Read)
+      .filter(isContextContentPath);
     if (!readablePaths.includes(protocolPath)) {
       throw new TypeError(
         `TypedEnbox.contexts: role '${normalizedRole}' must authorize reading its parent context '${protocolPath}'.`,
@@ -1848,7 +1931,10 @@ export class TypedEnbox<
     }
 
     return {
-      allowedPaths  : new Set(getProtocolRoleActionPaths(this._definition, normalizedRole)),
+      allowedPaths: new Set(
+        getProtocolRoleActionPaths(this._definition, normalizedRole)
+          .filter(isContextContentPath),
+      ),
       protocolPath,
       readablePaths : readablePaths as [string, ...string[]],
       role          : normalizedRole as ContextRolePaths<D>,
@@ -1860,7 +1946,6 @@ export class TypedEnbox<
     Root extends ProtocolPaths<D> & string,
   >(
     dwn: DwnApi,
-    records: ContextRecordsApi<D, C, Root>,
     contextId: string,
     contextPath: Root,
     selectedRoles: readonly string[],
@@ -1888,18 +1973,18 @@ export class TypedEnbox<
       rolePaths.push(role);
     }
 
-    const untypedRecords = records as unknown as {
+    const membershipRecords = this.records as unknown as {
       query(
         path: string,
-        request?: { filter?: { recipient?: string } },
+        request: { filter?: { recipient?: string }; within: string },
       ): Promise<RecordPage<Record<unknown>>>;
     };
 
     const load = async (did?: string): Promise<ActiveMemberRecord[]> => {
       const perRole = await Promise.all(rolePaths.map(async (role): Promise<ActiveMemberRecord[]> => {
-        const page = await untypedRecords.query(
+        const page = await membershipRecords.query(
           role,
-          did === undefined ? undefined : { filter: { recipient: did } },
+          { within: contextId, ...(did === undefined ? {} : { filter: { recipient: did } }) },
         );
         return page.records.map((record): ActiveMemberRecord => ({
           did: record.recipient!,
@@ -2017,17 +2102,20 @@ export class TypedEnbox<
       || scope === undefined
       || scopes.some(candidate => candidate.protocolPath !== scope.protocolPath)
       || !sameStrings(source.protocolPaths, scope.readablePaths)) {
-      throw new Error(`TypedEnbox.contexts: followed source '${source.id}' does not match this protocol definition.`);
+      throw new Error(
+        `TypedEnbox.contexts: context '${source.contextId}' owned by '${source.sourceDid}' ` +
+        'does not match this protocol definition.',
+      );
     }
 
-    const controller = new AbortController();
-    const signal = this._options.signal === undefined
-      ? controller.signal
-      : AbortSignal.any([this._options.signal, controller.signal]);
     const sync = this._options.sync;
     if (sync === undefined) {
       throw new Error('TypedEnbox.contexts requires an Enbox session with shared-context storage.');
     }
+    const controller = new AbortController();
+    const signal = this._options.signal === undefined
+      ? controller.signal
+      : AbortSignal.any([this._options.signal, controller.signal]);
     const assertActive = async (): Promise<void> => {
       signal.throwIfAborted();
       const current = await sync.getFollowedSource(source.id);
@@ -2038,27 +2126,33 @@ export class TypedEnbox<
     };
     const dwn = this._dwn.withRecordExecutionContext({
       assertActive,
-      contextId        : source.contextId,
-      followedSourceId : source.id,
-      protocolRole     : source.protocolRole,
-      tenantDid        : source.sourceDid,
+      contextId                  : source.contextId,
+      followedSourceAcceptanceId : source.acceptanceId,
+      followedSourceId           : source.id,
+      protocolRole               : source.protocolRole,
+      tenantDid                  : source.sourceDid,
     });
     const retire = async (leave: boolean): Promise<void> => {
-      await assertActive();
       if (leave) {
-        const result = await this._dwn.records.delete({
+        await assertActive();
+      } else {
+        this._options.signal?.throwIfAborted();
+      }
+      if (leave) {
+        await this._dwn.deleteRemoteRecordAndStoreLocal({
           contextId    : source.contextId,
           from         : source.sourceDid,
           protocol     : source.protocol,
           protocolPath : source.protocolRole,
           recordId     : source.id,
         });
-        if (result.status.code !== 404) {
-          requireDwnSuccess('MemberContext.leave', result);
-        }
       }
-      await sync.deleteFollowedSource(source.id);
-      controller.abort();
+      if (leave) {
+        await sync.deleteFollowedSource(source);
+      } else {
+        await sync.forgetFollowedContext(source);
+      }
+      controller.abort(new Error(`Member context '${source.contextId}' is no longer active.`));
     };
     const whenCurrent = async (): Promise<void> => {
       while (true) {
@@ -2084,7 +2178,10 @@ export class TypedEnbox<
             .filter((link): boolean => link.followedSourceId === source.id);
           signal.throwIfAborted();
           if (links.some((link): boolean => link.status === 'paused')) {
-            throw new Error(`MemberContext.whenCurrent: replication is paused for source '${source.id}'.`);
+            throw new Error(
+              `MemberContext.whenCurrent: replication is paused for context '${source.contextId}' ` +
+              `owned by '${source.sourceDid}'.`,
+            );
           }
           if (areReplicationLinksCurrent(links)) {
             return;
@@ -2413,7 +2510,7 @@ export class TypedEnbox<
        * @param request - Optional filter, sort, and pagination options.
        *   Omit entirely to return all records at the path.
        * @returns A page containing typed {@link Record} instances and an
-       *   optional continuation available through `next()` and `cursor`.
+       *   optional continuation available through `next()`.
        *
        * @example
        * ```ts
@@ -2458,11 +2555,6 @@ export class TypedEnbox<
           ...capturedRequest,
           within,
         });
-        const initialCursors = new Set<string>();
-        if (canonicalQuery.pagination?.cursor !== undefined) {
-          initialCursors.add(paginationCursorKey(canonicalQuery.pagination.cursor));
-        }
-
         const queryPage = async (
           compiledQuery : typeof canonicalQuery,
           priorCursors : ReadonlySet<string>,
@@ -2488,8 +2580,7 @@ export class TypedEnbox<
               childPaths,
               { from: canonicalQuery.from, protocolRole: canonicalQuery.protocolRole, within },
             )],
-            cursor : continuation === undefined ? undefined : { ...continuation },
-            next   : async (): Promise<RecordPage<
+            next: async (): Promise<RecordPage<
               SelectedRecordRepresentation<D, C, Path, Materialization>
             > | undefined> => continuation === undefined
               ? undefined
@@ -2500,7 +2591,7 @@ export class TypedEnbox<
           };
         };
 
-        return queryPage(canonicalQuery, initialCursors);
+        return queryPage(canonicalQuery, new Set());
       },
 
       /**
@@ -2907,4 +2998,11 @@ function paginationCursorKey(cursor: DwnPaginationCursor): string {
 
 function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function compareFollowedContexts(a: FollowedSyncSource, b: FollowedSyncSource): number {
+  if (a.sourceDid !== b.sourceDid) {
+    return a.sourceDid < b.sourceDid ? -1 : 1;
+  }
+  return a.contextId === b.contextId ? 0 : a.contextId < b.contextId ? -1 : 1;
 }

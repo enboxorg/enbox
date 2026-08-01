@@ -1,5 +1,5 @@
 import { DataStream, Jws, Message, MessagesRead, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { describe, expect, it, spyOn } from 'bun:test';
+import { describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { AdminStore } from '../src/admin/admin-store.js';
 import type { RegistrationStore } from '../src/registration/registration-store.js';
@@ -115,6 +115,20 @@ describe('handleDwnProcessMessage', () => {
     // Compare the data stream bytes to ensure they are the same
     const responseDataBytes = await DataStream.toBytes(responseDataStream!);
     expect(responseDataBytes).toEqual(dataBytes);
+
+    const cancel = mock(() => {});
+    const websocketData = new ReadableStream<Uint8Array>({ cancel });
+    spyOn(dwn, 'processMessage').mockResolvedValue({
+      entry: {
+        data         : websocketData,
+        recordsWrite : recordsWrite.message,
+      },
+      status: { code: 200, detail: 'OK' },
+    });
+    const websocketResponse = await handleDwnProcessMessage(readRequest, { dwn, transport: 'ws' });
+    expect(websocketResponse.jsonRpcResponse.result.reply.status.code).toBe(200);
+    expect(websocketResponse.dataStream).toBeUndefined();
+    expect(cancel).toHaveBeenCalledTimes(1);
     await dwn.close();
   });
 

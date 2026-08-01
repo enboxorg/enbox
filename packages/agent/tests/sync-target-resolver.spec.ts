@@ -378,6 +378,7 @@ describe('SyncTargetResolver', () => {
 
 function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource {
   return {
+    acceptanceId  : 'acceptance-a',
     id            : 'role-a',
     sourceDid     : 'did:example:owner',
     actorDid      : 'did:example:member',

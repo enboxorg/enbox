@@ -5,7 +5,13 @@ import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
 import type { SecretStore } from './secret-store.js';
 import type { SyncEngine } from './types/sync.js';
-import type { DecryptRecordDataParams, DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
+import type {
+  DecryptRecordDataParams,
+  DwnInterface,
+  DwnResponse,
+  ProcessDwnRequest,
+  SendDwnRequest,
+} from './types/dwn.js';
 import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js';
 
@@ -302,6 +308,13 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     request: SendDwnRequest<T>
   ): Promise<DwnResponse<T>> {
     return this.dwn.sendRequest(request);
+  }
+
+  /** @internal */
+  public sendDwnDeleteToAllRemoteEndpoints(
+    request: ProcessDwnRequest<DwnInterface.RecordsDelete>,
+  ): ReturnType<AgentDwnApi['sendDeleteToAllRemoteEndpoints']> {
+    return this.dwn.sendDeleteToAllRemoteEndpoints(request);
   }
 
   public async sendVcRequest(_request: SendVcRequest): Promise<VcResponse> {

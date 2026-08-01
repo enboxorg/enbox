@@ -499,6 +499,20 @@ export class AgentDwnApi {
     return getDwnServiceEndpointUrls(targetDid, this.agent.did);
   }
 
+  /** Resolve hosted endpoints for an operation that must not fall back to a local DWN. */
+  private async requireRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
+    if (this._localDwnStrategy === 'only') {
+      throw new Error(
+        `AgentDwnApi: remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'.`
+      );
+    }
+    const endpoints = await this.getRemoteDwnEndpointUrls(targetDid);
+    if (endpoints.length === 0) {
+      throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${targetDid}#dwn`);
+    }
+    return endpoints;
+  }
+
   /** Lazily retrieves the local DWN server endpoint via discovery. */
   private async getLocalDwnEndpoint(): Promise<string | undefined> {
     // In remote mode, the endpoint is always known.
@@ -1166,15 +1180,9 @@ export class AgentDwnApi {
       );
     }
 
-    if (request.remoteEndpointsOnly && this._localDwnStrategy === 'only') {
-      throw new Error(
-        `AgentDwnApi: remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'.`
-      );
-    }
-
     // Bypass local discovery when the caller needs the hosted DWN's state.
     const dwnEndpointUrls = request.remoteEndpointsOnly
-      ? await this.getRemoteDwnEndpointUrls(request.target)
+      ? await this.requireRemoteDwnEndpointUrls(request.target)
       : await this.getDwnEndpointUrlsForTarget(request.target);
     if (dwnEndpointUrls.length === 0) {
       throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${request.target}#dwn`);
@@ -1230,6 +1238,48 @@ export class AgentDwnApi {
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
     return { reply, message, messageCid, ...(responseData ? { data: responseData } : {}) };
+  }
+
+  /** @internal Construct one RecordsDelete and send it to every hosted endpoint. */
+  public async sendDeleteToAllRemoteEndpoints(
+    request: ProcessDwnRequest<DwnInterface.RecordsDelete>,
+  ): Promise<{
+    message: DwnMessage[DwnInterface.RecordsDelete];
+    replies: Array<{
+      dwnUrl: string;
+      reply: DwnMessageReply[DwnInterface.RecordsDelete];
+    }>;
+  }> {
+    const dwnEndpointUrls = await this.requireRemoteDwnEndpointUrls(request.target);
+    const { message } = await this.constructDwnMessage({
+      request,
+      protocolDefinitionSource: 'remote',
+    });
+    const outcomes = await Promise.allSettled(dwnEndpointUrls.map(async (dwnUrl) => {
+      const reply = await this.agent.rpc.sendDwnRequest({
+        dwnUrl,
+        targetDid: request.target,
+        message,
+      }) as DwnMessageReply[DwnInterface.RecordsDelete];
+      await verifyRemoteDwnResponse({
+        didResolver : this.agent.did,
+        message,
+        reply,
+        targetDid   : request.target,
+      });
+      return { dwnUrl, reply };
+    }));
+    const replies: Array<{
+      dwnUrl: string;
+      reply: DwnMessageReply[DwnInterface.RecordsDelete];
+    }> = [];
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') {
+        throw outcome.reason;
+      }
+      replies.push(outcome.value);
+    }
+    return { message, replies };
   }
 
   /** Reconstruct and re-sign a subscription at its last transport cursor. */

@@ -6,13 +6,11 @@ import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { SyncEngine, SyncEvent } from '@enbox/agent';
 
+import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
-
-/** Currentness of one materialized records view. */
-export type RecordViewState = ReplicationCurrentness;
 
 type RecordViewContents<Item> = Readonly<{
   /**
@@ -31,7 +29,7 @@ type RecordViewContents<Item> = Readonly<{
 export type RecordViewSnapshot<Item = Record> = RecordViewContents<Item> & Readonly<
   | {
     /** Whether the materialization is current with its source. */
-    state: Exclude<RecordViewState, 'error'>;
+    state: Exclude<ReplicationCurrentness, 'error'>;
     error?: never;
   }
   | {
@@ -75,7 +73,7 @@ type RecordViewOptions<Item> = {
 };
 
 type RecordViewCurrentness =
-  | { state: Exclude<RecordViewState, 'error'> }
+  | { state: Exclude<ReplicationCurrentness, 'error'> }
   | { state: 'error'; error: Error };
 
 type RegistrationChangeEvent = Extract<SyncEvent, { type: 'identity:registration-change' }>;
@@ -105,6 +103,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   private readonly _sync?: SyncEngine;
   private readonly _tenantDid: string;
   private readonly _followedContextId?: string;
+  private readonly _followedSourceAcceptanceId?: string;
   private readonly _followedSourceId?: string;
 
   private _closed = false;
@@ -139,6 +138,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       : undefined;
     this._tenantDid = options.dwn.recordTenantDid;
     this._followedContextId = options.dwn.followedContextId;
+    this._followedSourceAcceptanceId = options.dwn.followedSourceAcceptanceId;
     this._followedSourceId = options.dwn.followedSourceId;
 
     this._signal?.addEventListener('abort', this._handleAbort, { once: true });
@@ -270,10 +270,20 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       return;
     }
 
-    // Context events do not expose the role-record incarnation. Re-resolve
-    // the exact link instead of letting a superseded sibling link publish a
-    // provisional stale/error state for this handle.
+    // An exact source change retires this view; other context changes requery.
     if (this._followedSourceId !== undefined) {
+      if (
+        event.type === 'followed-context:change' &&
+        event.actorDid === this._dwn.connectedDid &&
+        followedContextChangeRetiresSource({
+          acceptanceId : this._followedSourceAcceptanceId!,
+          id           : this._followedSourceId,
+        }, event)
+      ) {
+        this.publishError(new Error(`Member context '${this._followedContextId}' is no longer active.`));
+        void this.close().catch((): void => {});
+        return;
+      }
       this.requestMaterialization();
       return;
     }
