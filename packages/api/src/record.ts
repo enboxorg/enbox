@@ -412,7 +412,7 @@ export class Record<T = unknown> implements RecordModel {
   async store(importRecord: boolean = false): Promise<void> {
     await this._executionContext?.assertActive();
     if (this._executionContext !== undefined) {
-      throw new TypeError('Shared context records cannot be stored manually.');
+      throw new TypeError('Context-bound records cannot be stored manually.');
     }
     // if we are importing the record we sign it as the owner
     const result = await this.processRecord({ signAsOwner: importRecord, store: true });
@@ -431,7 +431,7 @@ export class Record<T = unknown> implements RecordModel {
   async import(store: boolean = true): Promise<void> {
     await this._executionContext?.assertActive();
     if (this._executionContext !== undefined) {
-      throw new TypeError('Shared context records cannot be imported.');
+      throw new TypeError('Context-bound records cannot be imported.');
     }
     const result = await this.processRecord({ store, signAsOwner: true });
     requireDwnSuccess('Record.import', result);
@@ -456,7 +456,7 @@ export class Record<T = unknown> implements RecordModel {
   async send(target?: string): Promise<void> {
     await this._executionContext?.assertActive();
     if (this._executionContext !== undefined) {
-      throw new TypeError('Shared context records cannot be sent manually.');
+      throw new TypeError('Context-bound records cannot be sent manually.');
     }
     const initialWrite = this._initialWrite;
     target ??= this._connectedDid;
@@ -596,12 +596,10 @@ export class Record<T = unknown> implements RecordModel {
 
     if (this._executionContext !== undefined) {
       if (from !== undefined && from !== this._executionContext.tenantDid) {
-        throw new TypeError('Shared context records cannot be updated on another tenant.');
-      }
-      if (protocolRole !== undefined && protocolRole !== this._executionContext.protocolRole) {
-        throw new TypeError('Shared context records cannot invoke another protocol role.');
+        throw new TypeError('Context-bound records cannot be updated on another tenant.');
       }
     }
+    const effectiveProtocolRole = this.resolveProtocolRole(protocolRole);
 
     if (this.deleted) {
       throw new Error('Record: Cannot revive a deleted record.');
@@ -619,7 +617,7 @@ export class Record<T = unknown> implements RecordModel {
       ...descriptor,
       ...params,
       parentContextId,
-      protocolRole     : this._executionContext?.protocolRole ?? protocolRole ?? this._protocolRole,
+      protocolRole     : effectiveProtocolRole,
       messageTimestamp : timestamp, // Map Record class `timestamp` property to DWN SDK `messageTimestamp`
       recordId         : this._recordId
     };
@@ -704,13 +702,24 @@ export class Record<T = unknown> implements RecordModel {
     this._encryption = msg.encryption;
     this._contextId = msg.contextId;
     this._initialWrite = initialWrite;
-    this._protocolRole = this._executionContext?.protocolRole ?? protocolRole ?? this._protocolRole;
+    this._protocolRole = effectiveProtocolRole;
     this._author = updatedAuthor;
     this._dataAccess = dataAccess;
     this._storedData = this.createStoredDataSource(storedData);
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
 
     return this;
+  }
+
+  /** Resolve the role fixed by a bound context or retain normal record behavior. */
+  private resolveProtocolRole(protocolRole: string | undefined): string | undefined {
+    if (this._executionContext === undefined) {
+      return protocolRole ?? this._protocolRole;
+    }
+    if (protocolRole !== undefined && protocolRole !== this._executionContext.protocolRole) {
+      throw new TypeError('Context-bound records cannot invoke another protocol role.');
+    }
+    return this._executionContext.protocolRole;
   }
 
   /** Encode replacement data and remove descriptor fields recomputed by RecordsWrite. */
@@ -810,12 +819,7 @@ export class Record<T = unknown> implements RecordModel {
   async delete(deleteParams?: RecordDeleteParams): Promise<void> {
     await this._executionContext?.assertActive();
     const { protocolRole, store = true, signAsOwner, timestamp } = deleteParams || {};
-    if (this._executionContext !== undefined
-      && protocolRole !== undefined
-      && protocolRole !== this._executionContext.protocolRole) {
-      throw new TypeError('Shared context records cannot invoke another protocol role.');
-    }
-    const effectiveProtocolRole = this._executionContext?.protocolRole ?? protocolRole ?? this._protocolRole;
+    const effectiveProtocolRole = this.resolveProtocolRole(protocolRole);
 
     const signAsOwnerValue = signAsOwner && this._delegateDid === undefined;
     const signAsOwnerDelegate = signAsOwner && this._delegateDid !== undefined;

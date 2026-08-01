@@ -331,17 +331,28 @@ collection; use `query()` for a baseline or `observe()` when the application
 needs current collection truth. Change delivery is at least once, so
 append-only consumers should tolerate duplicates.
 
-## Shared contexts
+## Contexts
 
-An application-specific invitation can carry a source DID, context ID, and
-role path. Accept it by following that exact role-authorized context:
+Open an owned context once when several operations share the same root. Owner
+and member contexts expose the same confined records contract:
 
 ```ts
 const notebooks = enbox.using(NotebookProtocol);
+const page = await notebooks.contexts.open('notebook/page', pageContextId);
+
+await page.records.set('notebook/page/title', { data: { title: 'Local title' } });
+await page.records.query('notebook/page/delta');
+```
+
+`open()` binds a handle; it does not read the root record. An
+application-specific invitation can carry an owner DID, context ID, and
+role path. Accept it by following that exact role-authorized context:
+
+```ts
 const shared = await notebooks.contexts.follow({
-  sourceDid : invitation.author,
-  contextId : invitation.contextId,
-  role      : 'notebook/page/collaborator',
+  id       : invitation.contextId,
+  ownerDid : invitation.author,
+  role     : 'notebook/page/collaborator',
 });
 
 // Optional before paging a complete local history. follow() itself does not
@@ -360,7 +371,8 @@ await shared.records.set('notebook/page/title', { data: { title: 'Shared title' 
 ```
 
 `shared.records` is the existing typed records implementation projected as a
-context-bound API. Reads and views use its pull-synchronized local replica;
+context-bound API—the same contract returned by `notebooks.contexts.open()`.
+Reads and views use a member context's pull-synchronized local replica;
 creates and retained-record mutations go to the source DWN. Callers do not
 pass tenant DIDs, grant IDs, `from`, `protocolRole`, root `within` selectors,
 or raw DWN storage controls. Deeper descendants can still name their direct
@@ -369,12 +381,12 @@ protocol, context-root, and audience-key bootstrap, while the existing sync
 engine catches up the exact role-readable path set.
 
 Accepted contexts survive restart and are reconstructed with
-`await notebooks.contexts.list()`. `unfollow()` removes only the local accepted
-source. `leave()` first deletes the exact source-hosted role record and is
+`await notebooks.contexts.followed()`. `forget()` removes only the local
+accepted source. `leave()` first deletes the exact owner-hosted role record and is
 available only when that role path authorizes recipient `co-delete`; a failed
-remote delete leaves the local source intact. If an application treats two
-roles such as viewer and editor as mutually exclusive, pass
-`replaceExisting: true` when accepting the replacement role.
+remote delete leaves the local source intact. The sync engine replaces an
+older incarnation of the same role without assuming that different roles are
+mutually exclusive.
 
 Invitation discovery remains application data rather than a second generic
 inbox API. A removed source role fences future replication, but previously

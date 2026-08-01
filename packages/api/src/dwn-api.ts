@@ -521,7 +521,7 @@ export class DwnApi {
     });
   }
 
-  /** Apply the routing and role carried by an internally bound shared context. */
+  /** Apply the routing and role carried by an internally bound context. */
   private async resolveRecordsRoute<T extends { protocolRole?: string }>(
     from: string | undefined,
     requestedMessageParams: T,
@@ -538,17 +538,19 @@ export class DwnApi {
 
     await context.assertActive();
     if (from !== undefined && from !== context.tenantDid) {
-      throw new TypeError('Shared context operations cannot target another tenant.');
+      throw new TypeError('Context-bound operations cannot target another tenant.');
     }
     if (requestedMessageParams.protocolRole !== undefined
       && requestedMessageParams.protocolRole !== context.protocolRole) {
-      throw new TypeError('Shared context operations cannot invoke another protocol role.');
+      throw new TypeError('Context-bound operations cannot invoke another protocol role.');
     }
 
     return {
-      messageParams : { ...requestedMessageParams, protocolRole: context.protocolRole },
-      remoteTarget  : mutation ? context.tenantDid : undefined,
-      target        : context.tenantDid,
+      messageParams: context.protocolRole === undefined
+        ? requestedMessageParams
+        : { ...requestedMessageParams, protocolRole: context.protocolRole },
+      remoteTarget : mutation && context.tenantDid !== this.connectedDid ? context.tenantDid : undefined,
+      target       : context.tenantDid,
     };
   }
 
@@ -576,7 +578,9 @@ export class DwnApi {
 
   /** @internal Exact followed context, when this records API is context-bound. */
   public get followedContextId(): string | undefined {
-    return this.recordExecutionContext?.contextId;
+    return this.recordExecutionContext?.followedSourceId === undefined
+      ? undefined
+      : this.recordExecutionContext.contextId;
   }
 
   /** @internal Exact role-record incarnation backing this records API. */

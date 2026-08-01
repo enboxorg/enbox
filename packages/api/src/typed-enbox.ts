@@ -282,7 +282,7 @@ export type TypedSubscribeOptions<
 
 /** @internal Runtime resources owned by the Enbox session that created this typed API. */
 type TypedEnboxOptions = {
-  /** Scope injected by a followed foreign context. */
+  /** Tenant and root scope injected by an owner or member context. */
   context?: {
     contextId: string;
     protocolPath: string;
@@ -315,45 +315,96 @@ export type RoleDeliveryState =
   | Readonly<{ state: 'pending'; reason?: string }>
   | Readonly<{ state: 'awaiting-recipient-install' | 'failed'; reason: string }>;
 
-/** A foreign protocol context followed through one role record. */
-export type SharedContext<
+type ParentProtocolPath<Path extends string> = Path extends `${infer Head}/${infer Tail}`
+  ? Tail extends `${string}/${string}`
+    ? `${Head}/${ParentProtocolPath<Tail>}`
+    : Head
+  : never;
+
+type ContextRolePaths<D extends ProtocolDefinition> = Extract<
+  ProtocolRolePaths<D> & string,
+  `${string}/${string}`
+>;
+
+type ContextBase<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
+  Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
 > = Readonly<{
-  /** Accepted role-record ID and durable source identity. */
-  id: string;
   /** Context ID that bounds every record operation. */
-  contextId: string;
-  /** Typed records API with this context's source, role, and root scope already bound. */
-  records: ContextRecordsApi<D, C>;
-  /** Role path authorizing access to the context. */
-  role: ProtocolRolePaths<D> & string;
+  id: string;
   /** DID whose DWN owns the authoritative context. */
-  sourceDid: string;
+  ownerDid: string;
+  /** Protocol path of this context's root record. */
+  path: Root;
+  /** Typed records API with this context's tenant and root scope already bound. */
+  records: ContextRecordsApi<D, C, Root>;
+}>;
+
+/** A context owned by the connected identity. */
+export type OwnedContext<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  C extends RecordCodecMap = RecordCodecMap,
+  Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
+> = ContextBase<D, C, Root> & Readonly<{
+  access: 'owner';
+}>;
+
+/** A member context authorized through one exact role record. */
+export type MemberContext<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  C extends RecordCodecMap = RecordCodecMap,
+  Role extends ContextRolePaths<D> = ContextRolePaths<D>,
+> = ContextBase<D, C, Extract<ParentProtocolPath<Role>, ProtocolPaths<D> & string>> & Readonly<{
+  access: 'member';
+  /** Role path authorizing access to the context. */
+  role: Role;
   /** Withdraw this exact role record, stop following it, and fence retained handles. */
   leave(): Promise<void>;
-  /** Stop following locally without changing the source-hosted role record. */
-  unfollow(): Promise<void>;
+  /** Forget this context locally without changing the owner-hosted role record. */
+  forget(): Promise<void>;
   /** Resolve once this exact role-authorized local replica is caught up. */
   whenCurrent(): Promise<void>;
 }>;
 
+/** An owned or member context, discriminated by `access`. */
+export type ProtocolContext<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  C extends RecordCodecMap = RecordCodecMap,
+> = ContextBase<D, C> & Readonly<
+  | { access: 'owner' }
+  | {
+    access: 'member';
+    role: ContextRolePaths<D>;
+    leave(): Promise<void>;
+    forget(): Promise<void>;
+    whenCurrent(): Promise<void>;
+  }
+>;
+
 /** Public request for following one role-authorized foreign context. */
-export type FollowSharedContextOptions<D extends ProtocolDefinition = ProtocolDefinition> = Readonly<{
-  contextId: string;
-  /** Unfollow other accepted roles for this same source context after this role is proven. */
-  replaceExisting?: boolean;
-  role: ProtocolRolePaths<D> & string;
-  sourceDid: string;
+export type FollowContextOptions<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  Role extends ContextRolePaths<D> = ContextRolePaths<D>,
+> = Readonly<{
+  id: string;
+  ownerDid: string;
+  role: Role;
 }>;
 
-/** Protocol-scoped shared-context lifecycle. */
-export type SharedContextsApi<
+/** Protocol-scoped owner and member context lifecycle. */
+export type ContextsApi<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
 > = Readonly<{
-  follow(request: FollowSharedContextOptions<D>): Promise<SharedContext<D, C>>;
-  list(): Promise<SharedContext<D, C>[]>;
+  open<Root extends ProtocolPaths<D> & string>(
+    path: Root,
+    id: string,
+  ): Promise<OwnedContext<D, C, Root>>;
+  follow<Role extends ContextRolePaths<D>>(
+    request: FollowContextOptions<D, Role>,
+  ): Promise<MemberContext<D, C, Role>>;
+  followed(): Promise<MemberContext<D, C>[]>;
 }>;
 
 /**
@@ -640,7 +691,7 @@ export type TypedReadRequest<
  */
 export type TypedDeleteRequest = {
   /**
-   * Full context ID used to select a context-scoped grant and, for a shared
+   * Full context ID used to select a context-scoped grant and, for a bound
    * context handle, confirm the record belongs to that context before delete.
    * It is not included in the RecordsDelete message.
    */
@@ -673,12 +724,20 @@ export type TypedDeleteRequest = {
   prune?: boolean;
 };
 
-type ContextRecordPaths<D extends ProtocolDefinition> = ProtocolPaths<D> & string;
+type ContextRecordPaths<
+  D extends ProtocolDefinition,
+  Root extends ProtocolPaths<D> & string,
+> = Extract<ProtocolPaths<D> & string, Root | `${Root}/${string}`>;
+
+type ContextDescendantPaths<
+  D extends ProtocolDefinition,
+  Root extends ProtocolPaths<D> & string,
+> = Root extends string ? Extract<ProtocolPaths<D> & string, `${Root}/${string}`> : never;
 
 type ContextCreateRequest<
   D extends ProtocolDefinition,
   C extends RecordCodecMap,
-  Path extends ContextRecordPaths<D>,
+  Path extends ProtocolPaths<D> & string,
 > = Omit<
   TypedCreateRequest<D, C, Path>,
   'from' | 'protocolRole' | 'recipientRolePublicKey' | 'store'
@@ -686,18 +745,18 @@ type ContextCreateRequest<
 
 type ContextRecordQuery<
   D extends ProtocolDefinition,
-  Path extends ContextRecordPaths<D>,
+  Path extends ProtocolPaths<D> & string,
 > = Omit<RecordQuery<D, Path>, 'from' | 'protocolRole'>;
 
 type ContextQueryRequest<
   D extends ProtocolDefinition,
-  Path extends ContextRecordPaths<D>,
+  Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
 > = QueryRequest<D, Path, Materialization, ContextRecordQuery<D, Path>>;
 
 type ContextQueryArguments<
   D extends ProtocolDefinition,
-  Path extends ContextRecordPaths<D>,
+  Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
 > = [Materialization] extends [undefined]
   ? [path: Path, request?: ContextQueryRequest<D, Path, Materialization>]
@@ -705,18 +764,18 @@ type ContextQueryArguments<
 
 type ContextObserveRequest<
   D extends ProtocolDefinition,
-  Path extends ContextRecordPaths<D>,
+  Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
 > = ObserveRequest<D, Path, Materialization, ContextRecordQuery<D, Path>>;
 
 type ContextSubscribeOptions<
   D extends ProtocolDefinition,
-  Path extends ContextRecordPaths<D>,
+  Path extends ProtocolPaths<D> & string,
 > = Omit<TypedSubscribeOptions<D, Path>, 'from' | 'protocolRole'>;
 
 type ContextReadRequest<
   D extends ProtocolDefinition,
-  Path extends ContextRecordPaths<D>,
+  Path extends ProtocolPaths<D> & string,
 > = Omit<TypedReadRequest<D, Path>, 'from' | 'protocolRole'>;
 
 type ContextSetRequest<
@@ -734,49 +793,50 @@ type ContextDeleteRequest = Omit<TypedDeleteRequest, 'from' | 'protocolRole'>;
 export type ContextRecordsApi<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
+  Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
 > = Readonly<{
-  create: <Path extends ContextRecordPaths<D>>(
+  create: <Path extends ContextDescendantPaths<D, Root>>(
     path: Path,
     request: ContextCreateRequest<D, C, Path>,
   ) => Promise<ContextRecord<DataForPath<C, Path>>>;
 
   query: <
-    Path extends ContextRecordPaths<D>,
+    Path extends ContextRecordPaths<D, Root>,
     Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
   >(...args: ContextQueryArguments<D, Path, Materialization>) => Promise<
     RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization, true>>
   >;
 
   observe: <
-    Path extends ContextRecordPaths<D>,
+    Path extends ContextRecordPaths<D, Root>,
     Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
   >(
     path: Path,
     request: ContextObserveRequest<D, Path, Materialization>,
   ) => Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization, true>>>;
 
-  subscribe: <Path extends ContextRecordPaths<D>>(
+  subscribe: <Path extends ContextRecordPaths<D, Root>>(
     path: Path,
     listener: RecordSubscriptionListener<ContextRecord<DataForPath<C, Path>>>,
     options?: ContextSubscribeOptions<D, Path>,
   ) => Promise<RecordSubscription>;
 
-  count: <Path extends ContextRecordPaths<D>>(
+  count: <Path extends ContextRecordPaths<D, Root>>(
     path: Path,
     request?: ContextRecordQuery<D, Path>,
   ) => Promise<number>;
 
-  read: <Path extends ContextRecordPaths<D>>(
+  read: <Path extends ContextRecordPaths<D, Root>>(
     path: Path,
     recordIdOrRequest: string | ContextReadRequest<D, Path>,
   ) => Promise<ContextRecord<DataForPath<C, Path>> | undefined>;
 
-  set: <Path extends SingletonProtocolPaths<D> & string>(
+  set: <Path extends SingletonProtocolPaths<D> & ContextDescendantPaths<D, Root> & string>(
     path: Path,
     request: ContextSetRequest<C, Path>,
   ) => Promise<ContextRecord<DataForPath<C, Path>>>;
 
-  delete: <Path extends ContextRecordPaths<D>>(
+  delete: <Path extends ContextRecordPaths<D, Root>>(
     path: Path,
     request: ContextDeleteRequest,
   ) => Promise<void>;
@@ -917,7 +977,7 @@ export class TypedEnbox<
   /** @internal */
   private _ensureReadyPromise: Promise<void> | null = null;
   /** @internal */
-  private _contexts?: SharedContextsApi<D, C>;
+  private _contexts?: ContextsApi<D, C>;
   /** @internal */
   private readonly _validPaths: Set<string>;
   /** @internal */
@@ -1046,8 +1106,8 @@ export class TypedEnbox<
     return this._configured;
   }
 
-  /** Role-authorized foreign contexts for this protocol. */
-  public get contexts(): SharedContextsApi<D, C> {
+  /** Owned and role-authorized member contexts for this protocol. */
+  public get contexts(): ContextsApi<D, C> {
     if (this._contexts !== undefined) {
       return this._contexts;
     }
@@ -1060,41 +1120,63 @@ export class TypedEnbox<
     };
 
     this._contexts = {
-      follow: async (request): Promise<SharedContext<D, C>> => {
+      open: async <Root extends ProtocolPaths<D> & string>(
+        path: Root,
+        id: string,
+      ): Promise<OwnedContext<D, C, Root>> => {
+        const normalizedPath = normalizePath(path) as Root;
+        assertValidRecordWithin(normalizedPath, id, true);
+        if (id.split('/').length !== normalizedPath.split('/').length) {
+          throw new TypeError(`TypedEnbox.contexts.open: id must identify a '${normalizedPath}' context.`);
+        }
+        await this._ensureReady(normalizedPath);
+
+        const protocolPaths = new Set(
+          [...this._validPaths]
+            .filter((candidate): boolean => candidate === normalizedPath || candidate.startsWith(`${normalizedPath}/`)),
+        );
+        const dwn = this._dwn.withRecordExecutionContext({
+          assertActive : async (): Promise<void> => this._options.signal?.throwIfAborted(),
+          contextId    : id,
+          tenantDid    : this._dwn.connectedDid,
+        });
+        return Object.freeze({
+          access   : 'owner',
+          id,
+          ownerDid : this._dwn.connectedDid,
+          path     : normalizedPath,
+          records  : this.bindContextRecords(
+            dwn,
+            { contextId: id, protocolPath: normalizedPath, protocolPaths },
+          ),
+        });
+      },
+      follow: async <Role extends ContextRolePaths<D>>(
+        request: FollowContextOptions<D, Role>,
+      ): Promise<MemberContext<D, C, Role>> => {
         this._options.signal?.throwIfAborted();
-        const scope = this.resolveSharedContextScope(request.role);
+        const scope = this.resolveMemberContextScope(request.role);
         const sync = requireSync();
         const source = await sync.followSource({
           actorDid      : this._dwn.connectedDid,
-          contextId     : request.contextId,
+          contextId     : request.id,
           delegateDid   : this._dwn.recordDelegateDid,
           protocol      : this._definition.protocol,
           protocolPaths : scope.readablePaths,
           protocolRole  : scope.role,
-          sourceDid     : request.sourceDid,
+          sourceDid     : request.ownerDid,
         });
-        if (source.sourceDid !== request.sourceDid || source.contextId !== request.contextId) {
-          throw new Error('TypedEnbox.contexts.follow returned a different shared context.');
+        if (source.sourceDid !== request.ownerDid || source.contextId !== request.id) {
+          throw new Error('TypedEnbox.contexts.follow returned a different context.');
         }
-        if (request.replaceExisting === true) {
-          for (const existing of await sync.listFollowedSources()) {
-            if (existing.id !== source.id
-              && existing.actorDid === source.actorDid
-              && existing.sourceDid === source.sourceDid
-              && existing.protocol === source.protocol
-              && existing.contextId === source.contextId) {
-              await sync.deleteFollowedSource(existing.id);
-            }
-          }
-        }
-        return this.bindSharedContext(source, scope);
+        return this.bindMemberContext(source, scope) as MemberContext<D, C, Role>;
       },
-      list: async (): Promise<SharedContext<D, C>[]> => {
+      followed: async (): Promise<MemberContext<D, C>[]> => {
         this._options.signal?.throwIfAborted();
         const sources = (await requireSync().listFollowedSources()).filter(source =>
           source.actorDid === this._dwn.connectedDid && source.protocol === this._definition.protocol
         );
-        return sources.map((source): SharedContext<D, C> => this.bindSharedContext(source));
+        return sources.map((source): MemberContext<D, C> => this.bindMemberContext(source));
       },
     };
     return this._contexts;
@@ -1617,11 +1699,11 @@ export class TypedEnbox<
   }
 
   /** Resolve the exact feed and operation paths governed by one contextual role. */
-  private resolveSharedContextScope(role: string): {
+  private resolveMemberContextScope(role: string): {
     allowedPaths: ReadonlySet<string>;
     protocolPath: string;
     readablePaths: [string, ...string[]];
-    role: ProtocolRolePaths<D> & string;
+    role: ContextRolePaths<D>;
   } {
     const normalizedRole = normalizePath(role);
     this._assertValidPath(normalizedRole);
@@ -1644,15 +1726,15 @@ export class TypedEnbox<
       allowedPaths  : new Set(getProtocolRoleActionPaths(this._definition, normalizedRole)),
       protocolPath,
       readablePaths : readablePaths as [string, ...string[]],
-      role          : normalizedRole as ProtocolRolePaths<D> & string,
+      role          : normalizedRole as ContextRolePaths<D>,
     };
   }
 
   /** Bind the existing typed records surface to one exact durable source. */
-  private bindSharedContext(
+  private bindMemberContext(
     source: FollowedSyncSource,
-    scope = this.resolveSharedContextScope(source.protocolRole),
-  ): SharedContext<D, C> {
+    scope = this.resolveMemberContextScope(source.protocolRole),
+  ): MemberContext<D, C> {
     if (source.protocol !== this._definition.protocol
       || source.protocolRole !== scope.role
       || !sameStrings(source.protocolPaths, scope.readablePaths)) {
@@ -1672,28 +1754,16 @@ export class TypedEnbox<
       const current = await sync.getFollowedSource(source.id);
       signal.throwIfAborted();
       if (current?.actorDid !== this._dwn.connectedDid) {
-        throw new Error(`Shared context '${source.id}' is no longer active.`);
+        throw new Error(`Member context '${source.contextId}' is no longer active.`);
       }
     };
-    const bound = new TypedEnbox<D, C>(
-      this._dwn.withRecordExecutionContext({
-        assertActive,
-        contextId        : source.contextId,
-        followedSourceId : source.id,
-        protocolRole     : source.protocolRole,
-        tenantDid        : source.sourceDid,
-      }),
-      { codecs: this._codecs, definition: this._definition },
-      {
-        context: {
-          contextId     : source.contextId,
-          protocolPath  : scope.protocolPath,
-          protocolPaths : scope.allowedPaths,
-        },
-        signal,
-        sync: this._options.sync,
-      },
-    );
+    const dwn = this._dwn.withRecordExecutionContext({
+      assertActive,
+      contextId        : source.contextId,
+      followedSourceId : source.id,
+      protocolRole     : source.protocolRole,
+      tenantDid        : source.sourceDid,
+    });
     const retire = async (leave: boolean): Promise<void> => {
       await assertActive();
       if (leave) {
@@ -1705,7 +1775,7 @@ export class TypedEnbox<
           recordId     : source.id,
         });
         if (result.status.code !== 404) {
-          requireDwnSuccess('SharedContext.leave', result);
+          requireDwnSuccess('MemberContext.leave', result);
         }
       }
       await sync.deleteFollowedSource(source.id);
@@ -1735,7 +1805,7 @@ export class TypedEnbox<
             .filter((link): boolean => link.followedSourceId === source.id);
           signal.throwIfAborted();
           if (links.some((link): boolean => link.status === 'paused')) {
-            throw new Error(`SharedContext.whenCurrent: replication is paused for source '${source.id}'.`);
+            throw new Error(`MemberContext.whenCurrent: replication is paused for source '${source.id}'.`);
           }
           if (areReplicationLinksCurrent(links)) {
             return;
@@ -1749,15 +1819,37 @@ export class TypedEnbox<
     };
 
     return Object.freeze({
-      contextId : source.contextId,
-      id        : source.id,
-      leave     : (): Promise<void> => retire(true),
-      records   : bound.records as ContextRecordsApi<D, C>,
-      role      : scope.role,
-      sourceDid : source.sourceDid,
-      unfollow  : (): Promise<void> => retire(false),
+      access   : 'member',
+      forget   : (): Promise<void> => retire(false),
+      id       : source.contextId,
+      leave    : (): Promise<void> => retire(true),
+      ownerDid : source.sourceDid,
+      path     : scope.protocolPath,
+      records  : this.bindContextRecords(dwn, {
+        contextId     : source.contextId,
+        protocolPath  : scope.protocolPath,
+        protocolPaths : scope.allowedPaths,
+      }, { signal }),
+      role: scope.role,
       whenCurrent,
-    });
+    }) as unknown as MemberContext<D, C>;
+  }
+
+  /** Reuse one typed records implementation with tenant and root routing already bound. */
+  private bindContextRecords(
+    dwn: DwnApi,
+    context: NonNullable<TypedEnboxOptions['context']>,
+    options: Pick<TypedEnboxOptions, 'signal'> = {},
+  ): ContextRecordsApi<D, C> {
+    return new TypedEnbox<D, C>(
+      dwn,
+      { codecs: this._codecs, definition: this._definition },
+      {
+        context,
+        signal : options.signal ?? this._options.signal,
+        sync   : this._options.sync,
+      },
+    ).records as ContextRecordsApi<D, C>;
   }
 
   /**
@@ -1785,7 +1877,7 @@ export class TypedEnbox<
     this._assertValidPath(path);
   }
 
-  /** Require role coverage and apply the followed context's default selector. */
+  /** Require bound-root coverage and apply the context's default selector. */
   private resolveContextWithin(path: string, within: string | undefined): string | undefined {
     const context = this._options.context;
     if (context === undefined) {
@@ -1794,12 +1886,12 @@ export class TypedEnbox<
     this.assertContextPath(path);
     const resolved = within ?? context.contextId;
     if (resolved !== context.contextId && !resolved.startsWith(`${context.contextId}/`)) {
-      throw new TypeError('Shared context selectors cannot escape the followed context.');
+      throw new TypeError('Context-bound selectors cannot escape their context.');
     }
     return resolved;
   }
 
-  /** Default direct-child writes to the followed root and reject ambiguous deeper writes. */
+  /** Default direct-child writes to the bound root and reject ambiguous deeper writes. */
   private resolveCreateParentContext(path: string, parentContextId: string | undefined): string | undefined {
     const context = this._options.context;
     if (context === undefined) {
@@ -1809,11 +1901,11 @@ export class TypedEnbox<
       return this.resolveContextWithin(path, parentContextId);
     }
     if (path === context.protocolPath) {
-      throw new TypeError('Shared contexts cannot create another context root.');
+      throw new TypeError('Context-bound records cannot create another context root.');
     }
     const parentPath = path.split('/').slice(0, -1).join('/');
     if (parentPath !== context.protocolPath) {
-      throw new TypeError(`Shared context create at '${path}' requires its direct parent context.`);
+      throw new TypeError(`Context-bound create at '${path}' requires its direct parent context.`);
     }
     return context.contextId;
   }
@@ -1821,7 +1913,7 @@ export class TypedEnbox<
   private assertContextPath(path: string): void {
     const context = this._options.context;
     if (context !== undefined && !context.protocolPaths.has(path)) {
-      throw new TypeError(`Protocol role does not authorize path '${path}' in this shared context.`);
+      throw new TypeError(`Context-bound records do not expose path '${path}'.`);
     }
   }
 

@@ -188,6 +188,23 @@ describe('shared context public API integration', () => {
       within : pageB.contextId,
     });
     contextIds = [pageA.contextId, pageB.contextId];
+    const ownedContext = await owner.contexts.open('notebook/page', pageA.contextId);
+    const ownedPage = await ownedContext.records.query('notebook/page', { pagination: { limit: 1 } });
+    expect(ownedContext).toMatchObject({ access: 'owner', id: pageA.contextId, ownerDid });
+    expect(ownedPage.records[0].id).toBe(pageA.id);
+    const localOwnerRequests = sinon.spy(ownerHarness.agent, 'processDwnRequest');
+    const remoteOwnerRequests = sinon.spy(ownerHarness.agent, 'sendDwnRequest');
+    const ownedTitle = await ownedContext.records.set('notebook/page/title', {
+      data: { title: 'Page A' },
+    });
+    const ownerWrite = localOwnerRequests.getCalls().find(
+      (call): boolean => call.args[0].messageType === DwnInterface.RecordsWrite,
+    );
+    expect(await ownedTitle.value()).toEqual({ title: 'Page A' });
+    expect(ownerWrite?.args[0].messageParams.protocolRole).toBeUndefined();
+    expect(remoteOwnerRequests.notCalled).toBe(true);
+    localOwnerRequests.restore();
+    remoteOwnerRequests.restore();
     for (const page of [pageA, pageB]) {
       await owner.records.create('notebook/page/member', {
         data            : { name: 'member' },
@@ -222,16 +239,17 @@ describe('shared context public API integration', () => {
     const typed = memberEnbox.using(SharedNotebookProtocol);
     expect(memberDelegateDid).not.toBe(memberDid);
     expect((await memberHarness.agent.identity.list()).map((identity) => identity.did.uri)).toEqual([memberDelegateDid]);
-    expect(await typed.contexts.list()).toEqual([]);
+    expect(await typed.contexts.followed()).toEqual([]);
     expect(await memberHarness.agent.sync.getReplicationLinks(ownerDid)).toEqual([]);
     expect(new TextEncoder().encode(JSON.stringify(largePage)).byteLength)
       .toBeGreaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
 
-    const [contextA, contextB] = await Promise.all(contextIds.map((contextId) => typed.contexts.follow({
-      contextId,
-      role      : 'notebook/page/member',
-      sourceDid : ownerDid,
+    const [contextA, contextB] = await Promise.all(contextIds.map((id) => typed.contexts.follow({
+      id,
+      ownerDid,
+      role: 'notebook/page/member',
     })));
+    expect(contextA).toMatchObject({ access: 'member', id: contextIds[0], ownerDid });
 
     await Promise.all([contextA.whenCurrent(), contextB.whenCurrent()]);
 
@@ -358,27 +376,27 @@ describe('shared context public API integration', () => {
       connectedDid : memberDid,
       delegateDid  : memberDelegateDid,
     }).using(SharedNotebookProtocol);
-    const restored = await reopened.contexts.list();
-    expect(restored.map((context) => context.contextId).sort()).toEqual([...contextIds].sort());
+    const restored = await reopened.contexts.followed();
+    expect(restored.map((context) => context.id).sort()).toEqual([...contextIds].sort());
 
-    const restoredA = restored.find((context) => context.contextId === contextIds[0])!;
+    const restoredA = restored.find((context) => context.id === contextIds[0])!;
     await restoredA.whenCurrent();
     const restoredPages = await restoredA.records.query('notebook/page', { pagination: { limit: 10 } });
     expect(restoredPages.records).toHaveLength(1);
     expect(restoredPages.records[0].id).toBe(largePageRecordId);
     expect(await restoredPages.records[0].value()).toEqual(largePage);
-    await restoredA.unfollow();
-    expect((await reopened.contexts.list()).map((context) => context.contextId)).toEqual([contextIds[1]]);
+    await restoredA.forget();
+    expect((await reopened.contexts.followed()).map((context) => context.id)).toEqual([contextIds[1]]);
 
     const followedAgain = await reopened.contexts.follow({
-      contextId : contextIds[0],
-      role      : 'notebook/page/member',
-      sourceDid : ownerDid,
+      id   : contextIds[0],
+      ownerDid,
+      role : 'notebook/page/member',
     });
     await followedAgain.leave();
 
-    const [sibling] = await reopened.contexts.list();
-    expect(sibling.contextId).toBe(contextIds[1]);
+    const [sibling] = await reopened.contexts.followed();
+    expect(sibling.id).toBe(contextIds[1]);
     await sibling.whenCurrent();
     const siblingPages = await sibling.records.query('notebook/page', { pagination: { limit: 10 } });
     expect(await siblingPages.records[0].value()).toEqual({ body: 'sibling page' });

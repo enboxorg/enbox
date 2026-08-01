@@ -15,22 +15,22 @@ import type {
 } from '@enbox/agent';
 
 /**
- * Package-internal execution context for records replicated from another
- * tenant. Reads stay in the local DWN while mutations target that tenant's
- * authoritative DWN.
+ * Package-internal execution context for records bound to one tenant and
+ * application context. Foreign-context reads stay in the local replica while
+ * their mutations target the authoritative tenant.
  *
  * @internal
  */
 export type RecordExecutionContext = Readonly<{
   /** Reject operations after this context has been left or revoked. */
   assertActive(): Promise<void>;
-  /** Root context replicated by the followed source. */
+  /** Root context that bounds every operation. */
   contextId: string;
-  /** Exact role-record incarnation backing the followed source. */
-  followedSourceId: string;
-  /** Role invoked for every operation in the shared context. */
-  protocolRole: string;
-  /** Tenant that owns the replicated context. */
+  /** Exact role-record incarnation when this is a followed context. */
+  followedSourceId?: string;
+  /** Role invoked for every operation when this is a followed context. */
+  protocolRole?: string;
+  /** Tenant that owns the context. */
   tenantDid: string;
 }>;
 

@@ -84,7 +84,21 @@ function createApi(agent: AgentStub, assertActive: () => Promise<void> = async (
   });
 }
 
-describe('foreign record execution context', () => {
+function createOwnerApi(agent: AgentStub): DwnApi {
+  const permissionsApi = { getPermissionForRequest: sinon.stub() };
+  const dwn = new DwnApi({
+    agent          : agent as unknown as EnboxAgent,
+    connectedDid,
+    permissionsApi : permissionsApi as unknown as AgentPermissionsApi,
+  });
+  return dwn.withRecordExecutionContext({
+    assertActive : async (): Promise<void> => {},
+    contextId    : 'workspace',
+    tenantDid    : connectedDid,
+  });
+}
+
+describe('context record execution', () => {
   let agent: AgentStub;
 
   beforeEach(() => {
@@ -93,6 +107,29 @@ describe('foreign record execution context', () => {
       processDwnRequest : sinon.stub(),
       sendDwnRequest    : sinon.stub(),
     };
+  });
+
+  it('confines owner context routing and retained handles at runtime', async () => {
+    agent.processDwnRequest.resolves({
+      reply: {
+        entry  : { recordsWrite: createRecordsWrite(), encodedData: btoa('{}') },
+        status : { code: 200, detail: 'OK' },
+      },
+    });
+    const dwn = createOwnerApi(agent);
+
+    await expect(dwn.records.read({ from: tenantDid, filter: { recordId } })).rejects.toThrow(
+      'Context-bound operations cannot target another tenant.',
+    );
+    await expect(dwn.records.read({ filter: { recordId }, protocolRole })).rejects.toThrow(
+      'Context-bound operations cannot invoke another protocol role.',
+    );
+
+    const { record } = await dwn.records.read({ filter: { recordId } });
+    await expect(record!.send()).rejects.toThrow('Context-bound records cannot be sent manually.');
+    await expect(record!.store()).rejects.toThrow('Context-bound records cannot be stored manually.');
+    await expect(record!.import()).rejects.toThrow('Context-bound records cannot be imported.');
+    expect(agent.sendDwnRequest.notCalled).toBe(true);
   });
 
   it('processes count, query, read, and subscribe against the foreign tenant locally', async () => {
@@ -292,7 +329,7 @@ describe('foreign record execution context', () => {
     expect(await record!.data.json()).toEqual({ title: 'before' });
     await record!.patch({ title: 'after' });
     await expect(record!.delete({ protocolRole: 'note/owner' }))
-      .rejects.toThrow('Shared context records cannot invoke another protocol role.');
+      .rejects.toThrow('Context-bound records cannot invoke another protocol role.');
     await record!.delete();
     expect(record!.protocolRole).toBe(protocolRole);
 

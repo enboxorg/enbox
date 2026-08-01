@@ -1,5 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { ContextRecord, SharedContext } from '@enbox/api';
+import type { ContextRecord, ProtocolContext, TypedEnbox } from '@enbox/api';
 
 import { defineProtocol, recordCodecs } from '@enbox/api';
 
@@ -7,6 +7,7 @@ const ContextDefinition = {
   protocol  : 'https://example.com/protocols/context-records',
   published : true,
   types     : {
+    invite    : { dataFormats: ['application/json'] },
     live      : { dataFormats: ['application/json'] },
     member    : { dataFormats: ['application/json'] },
     note      : { dataFormats: ['application/json'] },
@@ -15,7 +16,8 @@ const ContextDefinition = {
     workspace : { dataFormats: ['application/json'] },
   },
   structure: {
-    workspace: {
+    invite    : {},
+    workspace : {
       $actions : [{ role: 'workspace/member', can: ['read'] }],
       member   : { $role: true },
       live     : {
@@ -37,6 +39,7 @@ const ContextDefinition = {
 } as const satisfies ProtocolDefinition;
 
 const ContextProtocol = defineProtocol(ContextDefinition, {
+  invite    : recordCodecs.json<{ code: string }>(),
   live      : recordCodecs.json<{ active: boolean }>(),
   member    : recordCodecs.json<{ label: string }>(),
   note      : recordCodecs.json<{ text: string }>(),
@@ -46,7 +49,34 @@ const ContextProtocol = defineProtocol(ContextDefinition, {
 });
 void ContextProtocol;
 
-declare const context: SharedContext<typeof ContextDefinition, typeof ContextProtocol.codecs>;
+declare const context: ProtocolContext<typeof ContextDefinition, typeof ContextProtocol.codecs>;
+declare const typed: TypedEnbox<typeof ContextDefinition, typeof ContextProtocol.codecs>;
+
+const owned = typed.contexts.open('workspace', 'workspace-id');
+void owned.then((value): void => {
+  const access: 'owner' = value.access;
+  const ownerDid: string = value.ownerDid;
+  const path: 'workspace' = value.path;
+  void access;
+  void ownerDid;
+  void path;
+  void value.records.query('workspace/note');
+  // @ts-expect-error a bound context cannot create a second copy of its root.
+  void value.records.create('workspace', { data: { name: 'duplicate' } });
+  // @ts-expect-error context records expose only their root and descendants.
+  void value.records.query('invite');
+});
+
+const singleton = typed.contexts.open('workspace/title', 'workspace-id/title-id');
+void singleton.then((value): void => {
+  // @ts-expect-error a bound context cannot set its own root record.
+  void value.records.set('workspace/title', { data: { text: 'replacement' } });
+});
+
+if (context.access === 'member') {
+  void context.role;
+  void context.whenCurrent();
+}
 
 const created: Promise<ContextRecord<{ text: string }>> = context.records.create('workspace/note', {
   data: { text: 'hello' },

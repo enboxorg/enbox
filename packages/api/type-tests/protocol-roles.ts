@@ -79,15 +79,26 @@ void typed.records.create(roleOrRecordPath, {
 });
 
 const sharedContext = typed.contexts.follow({
-  contextId : 'workspace-id',
-  role      : 'workspace/member',
-  sourceDid : 'did:example:owner',
+  id       : 'workspace-id',
+  ownerDid : 'did:example:owner',
+  role     : 'workspace/member',
 });
 void sharedContext.then(context => context.records.query('workspace'));
-void sharedContext.then(context => context.whenCurrent());
+void sharedContext.then(context => {
+  const access: 'member' = context.access;
+  const path: 'workspace' = context.path;
+  void access;
+  void path;
+  // @ts-expect-error member contexts expose only their root and descendants.
+  void context.records.query('admin');
+  return context.whenCurrent();
+});
 
 // @ts-expect-error shared contexts can only be followed through declared role paths.
-void typed.contexts.follow({ contextId: 'workspace-id', role: 'workspace', sourceDid: 'did:example:owner' });
+void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', role: 'workspace' });
+
+// @ts-expect-error context roles must be nested below the context they authorize.
+void typed.contexts.follow({ id: 'admin-id', ownerDid: 'did:example:owner', role: 'admin' });
 
 const deliveryState: Promise<RoleDeliveryState | undefined> = encryptedTyped.records.deliveryState('admin', 'role-id');
 void deliveryState;
