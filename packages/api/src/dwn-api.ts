@@ -21,7 +21,7 @@ import type {
   FetchPermissionsParams,
   ProcessDwnRequest } from '@enbox/agent';
 
-import type { MessagesSubscribeReply, RecordsSubscribeReply } from '@enbox/dwn-sdk-js';
+import type { MessagesFilter, MessagesSubscribeReply, RecordsSubscribeReply } from '@enbox/dwn-sdk-js';
 
 import type { RecordDataAccess, RecordExecutionContext, RecordOptions, StoredRecordData } from './record-types.js';
 
@@ -31,26 +31,23 @@ import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
 import { Protocol } from './protocol.js';
 import { Record } from './record.js';
+import { Records } from '@enbox/dwn-sdk-js';
 import { AgentPermissionsApi, DwnInterface, getRecordAuthor, PermissionGrantNotFoundError } from '@enbox/agent';
 
-type ReadLikeRecordsInterface =
+type ReadInterface =
+  | DwnInterface.MessagesSubscribe
   | DwnInterface.RecordsCount
   | DwnInterface.RecordsQuery
   | DwnInterface.RecordsRead
   | DwnInterface.RecordsSubscribe;
 
-type RecordsReadScope = {
+type ReadScope = {
   protocol?: string;
   protocolPath?: string;
   contextId?: string;
 };
 
-type MissingRecordsReadGrantPolicy = 'fallback' | 'reject';
-
-type RecordSubscriptionContext = {
-  dataAccess: RecordDataAccess;
-  protocolRole?: string;
-};
+type MissingReadGrantPolicy = 'fallback' | 'reject';
 
 /**
  * Represents the request payload for fetching permission requests from a Decentralized Web Node (DWN).
@@ -355,13 +352,13 @@ export type RecordsWriteResponse<T = unknown> = DwnResponseStatus & {
  */
 export class DwnApi {
   /**
-   * Applies the delegate authorization policy shared by authenticated
-   * record count, query, read, and subscription requests.
+   * Applies delegated authorization shared by read-shaped records requests
+   * and context-bound message subscriptions.
    */
-  private async prepareRecordsReadRequest<T extends ReadLikeRecordsInterface>(
+  private async prepareReadRequest<T extends ReadInterface>(
     request: ProcessDwnRequest<T>,
-    scope: RecordsReadScope,
-    missingGrantPolicy: MissingRecordsReadGrantPolicy = 'fallback',
+    scope: ReadScope,
+    missingGrantPolicy: MissingReadGrantPolicy = 'fallback',
   ): Promise<ProcessDwnRequest<T>> {
     if (this.delegateDid === undefined) {
       return request;
@@ -399,12 +396,12 @@ export class DwnApi {
   /** Execute one RecordsQuery with the selected delegated-grant policy. */
   private async queryRecords(
     request: RecordsQueryRequest,
-    missingGrantPolicy: MissingRecordsReadGrantPolicy,
+    missingGrantPolicy: MissingReadGrantPolicy,
   ): Promise<RecordsQueryResponse> {
     const { from, ...requestedMessageParams } = request;
     const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(from, requestedMessageParams, false);
 
-    const agentRequest = await this.prepareRecordsReadRequest({
+    const agentRequest = await this.prepareReadRequest({
       author      : this.connectedDid,
       messageParams,
       messageType : DwnInterface.RecordsQuery,
@@ -468,7 +465,6 @@ export class DwnApi {
   private async openRecordsSubscription(
     request: Omit<RecordsSubscribeRequest, 'subscriptionHandler'>,
     subscriptionHandler: DwnSubscriptionHandler,
-    onPrepared?: (context: RecordSubscriptionContext) => void,
   ): Promise<RecordsSubscribeResponse> {
     const { from, ...requestedMessageParams } = request;
     const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
@@ -477,7 +473,7 @@ export class DwnApi {
       false,
     );
 
-    const agentRequest = await this.prepareRecordsReadRequest({
+    const agentRequest = await this.prepareReadRequest({
       author      : this.connectedDid,
       messageParams,
       messageType : DwnInterface.RecordsSubscribe,
@@ -489,36 +485,106 @@ export class DwnApi {
       contextId    : messageParams.filter?.contextId,
     });
 
-    onPrepared?.({
-      dataAccess   : captureRecordDataAccess(agentRequest, remoteTarget !== undefined),
-      protocolRole : agentRequest.messageParams.protocolRole,
-    });
-
     return (await this.dispatchDwnRequest(agentRequest, remoteTarget)).reply;
   }
 
-  /** @internal Subscribe to raw lifecycle messages with canonical write-frame records attached. */
-  public subscribeRecordFrames(
-    request: Omit<RecordsSubscribeRequest, 'subscriptionHandler'>,
+  /** @internal Subscribe to exact record paths with canonical frame records attached. */
+  public async subscribeRecordFrames(
+    request: { paths: readonly string[]; protocol: string },
     subscriptionHandler: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>,
-  ): Promise<RecordsSubscribeResponse> {
-    let context!: RecordSubscriptionContext;
-    return this.openRecordsSubscription(request, (message) => {
+  ): Promise<MessagesSubscribeResponse> {
+    const contextId = this.recordExecutionContext?.contextId;
+    const filters: MessagesFilter[] = request.paths.map(protocolPath => ({
+      interface : 'Records',
+      protocol  : request.protocol,
+      protocolPath,
+      ...(contextId === undefined ? {} : { contextIdPrefix: contextId }),
+    }));
+    const requestedMessageParams: { filters: MessagesFilter[]; protocolRole?: string } = {
+      filters,
+    };
+    const { messageParams, target } = await this.resolveRecordsRoute(
+      undefined,
+      requestedMessageParams,
+      false,
+    );
+    const dataRequest = await this.prepareReadRequest({
+      author        : this.connectedDid,
+      messageParams : {
+        filter       : { protocol: request.protocol, ...(contextId === undefined ? {} : { contextId }) },
+        protocolRole : messageParams.protocolRole,
+      },
+      messageType: DwnInterface.RecordsRead,
+      target,
+    }, { contextId, protocol: request.protocol }, 'reject');
+    const dataAccess = captureRecordDataAccess(dataRequest, false);
+    const handleFrame = (message: DwnSubscriptionMessage): void | Promise<void> => {
       if (message.type !== 'event') {
         return subscriptionHandler(message);
       }
 
+      const descriptor = message.event.message.descriptor;
+      if (descriptor.interface !== 'Records'
+        || (descriptor.method !== 'Write' && descriptor.method !== 'Delete')) {
+        return;
+      }
+      const recordsWrite = Records.isRecordsWrite(message.event.message)
+        ? message.event.message
+        : message.event.initialWrite;
+      if (recordsWrite === undefined
+        || recordsWrite.descriptor.protocol !== request.protocol
+        || !request.paths.includes(recordsWrite.descriptor.protocolPath ?? '')) {
+        return;
+      }
       const record = this.createRecordHandle({
-        dataAccess   : context.dataAccess,
+        dataAccess,
         initialWrite : message.event.initialWrite,
         message      : message.event.message as DwnMessage[DwnInterface.RecordsWrite | DwnInterface.RecordsDelete],
-        protocolRole : context.protocolRole,
+        protocolRole : messageParams.protocolRole,
         storedData   : message.encodedData,
       });
       return subscriptionHandler(message, record);
-    }, (prepared): void => {
-      context = prepared;
-    });
+    };
+
+    if (messageParams.protocolRole === undefined) {
+      return this.messages.subscribe({ filters, subscriptionHandler: handleFrame });
+    }
+
+    const pendingFrames: DwnSubscriptionMessage[] = [];
+    let roleVerified = false;
+    const agentRequest = await this.prepareReadRequest({
+      author              : this.connectedDid,
+      messageParams,
+      messageType         : DwnInterface.MessagesSubscribe,
+      target,
+      subscriptionHandler : (message): void | Promise<void> => {
+        if (!roleVerified) {
+          pendingFrames.push(message);
+          return;
+        }
+        return handleFrame(message);
+      },
+    }, { contextId, protocol: request.protocol }, 'reject');
+    const reply = (await this.dispatchDwnRequest(agentRequest)).reply;
+    if (reply.status.code < 200 || reply.status.code >= 300 || reply.subscription === undefined) {
+      return reply;
+    }
+    const followedSourceId = this.recordExecutionContext?.followedSourceId;
+    if (followedSourceId !== undefined && reply.roleRecordId !== followedSourceId) {
+      await reply.subscription.close();
+      throw new Error('DwnApi: the active context role changed while opening the record subscription.');
+    }
+    try {
+      for (let index = 0; index < pendingFrames.length; index++) {
+        await handleFrame(pendingFrames[index]);
+      }
+    } catch (error: unknown) {
+      await reply.subscription.close();
+      throw error;
+    }
+    pendingFrames.length = 0;
+    roleVerified = true;
+    return reply;
   }
 
   /** Apply the routing and role carried by an internally bound context. */
@@ -986,7 +1052,7 @@ export class DwnApi {
           false,
         );
 
-        const agentRequest = await this.prepareRecordsReadRequest({
+        const agentRequest = await this.prepareReadRequest({
           author      : this.connectedDid,
           messageParams,
           messageType : DwnInterface.RecordsCount,
@@ -1074,7 +1140,7 @@ export class DwnApi {
           false,
         );
 
-        const agentRequest = await this.prepareRecordsReadRequest({
+        const agentRequest = await this.prepareReadRequest({
           /**
            * The `author` is the DID that will sign the message and must be the DID the Enbox app is
            * connected with and is authorized to access the signing private key of.

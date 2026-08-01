@@ -246,9 +246,9 @@ const unsubscribe = view.subscribe((snapshot) => {
   console.log(snapshot.state, snapshot.records, snapshot.hasMore);
 });
 
-// Consume later writes/deletes without re-querying an append-only value
-const changes = await notes.records.subscribe('note', async (event) => {
-  if (event.type === 'write') {
+// Consume later writes/deletes from one stream, discriminated by path
+const changes = await notes.records.subscribe(['note', 'attachment'], async (event) => {
+  if (event.type === 'write' && event.path === 'note') {
     console.log(await event.record.value());
   }
 });
@@ -325,11 +325,12 @@ The snapshot object and records array are immutable. Each `Record<T>` handle
 represents the queried version until the caller explicitly uses that handle's
 normal `update()` or `delete()` method; record data remains lazily read.
 
-`subscribe()` delivers later exact-path writes and deletes as codec-bound
-records, reusing inline frame data when present. It does not emit an initial
-collection; use `query()` for a baseline or `observe()` when the application
-needs current collection truth. Change delivery is at least once, so
-append-only consumers should tolerate duplicates.
+`subscribe()` delivers later writes and deletes for one exact path or one
+non-empty path set as codec-bound, path-discriminated events. A path set uses
+one underlying stream, and inline frame data is reused when present. It does
+not emit an initial collection; use `query()` for a baseline or `observe()`
+when the application needs current collection truth. Change delivery is at
+least once, so append-only consumers should tolerate duplicates.
 
 ## Contexts
 
@@ -363,8 +364,13 @@ const deltas = await shared.records.query('notebook/page/delta');
 const view = await shared.records.observe('notebook/page/title', {
   pagination: { limit: 1 },
 });
-const changes = await shared.records.subscribe('notebook/page/delta', async (event) => {
-  if (event.type === 'write') applyDelta(await event.record.value());
+const changes = await shared.records.subscribe([
+  'notebook/page/delta',
+  'notebook/page/title',
+], async (event) => {
+  if (event.type === 'write' && event.path === 'notebook/page/delta') {
+    applyDelta(await event.record.value());
+  }
 });
 await shared.records.create('notebook/page/delta', { data: nextDelta });
 await shared.records.set('notebook/page/title', { data: { title: 'Shared title' } });

@@ -276,30 +276,74 @@ describe('shared context public API integration', () => {
     await memberHarness.agent.sync.startSync();
 
     const changes: Array<
-      { id: string; type: 'delete' } |
-      { id: string; type: 'write'; value: { body: string } }
+      { id: string; path: 'notebook/page/change' | 'notebook/page/title'; type: 'delete' } |
+      {
+        id: string;
+        path: 'notebook/page/change' | 'notebook/page/title';
+        type: 'write';
+        value: { body: string } | { title: string };
+      }
     > = [];
     const seenRecordIds = new Set<string>();
     let subscriptionError: Error | undefined;
-    const subscription = await contextA.records.subscribe('notebook/page/change', async (event): Promise<void> => {
+    const localSubscriptionRequests = sinon.spy(memberHarness.agent, 'processDwnRequest');
+    const remoteSubscriptionRequests = sinon.spy(memberHarness.agent, 'sendDwnRequest');
+    const subscription = await contextA.records.subscribe([
+      'notebook/page/change',
+      'notebook/page/title',
+    ], async (event): Promise<void> => {
       if (event.type === 'error') {
         subscriptionError = event.error;
         return;
       }
       seenRecordIds.add(event.record.id);
       changes.push(event.type === 'delete'
-        ? { id: event.record.id, type: event.type }
-        : { id: event.record.id, type: event.type, value: await event.record.value() });
+        ? { id: event.record.id, path: event.path, type: event.type }
+        : { id: event.record.id, path: event.path, type: event.type, value: await event.record.value() });
     });
+    const subscribeRequest = localSubscriptionRequests.getCalls().find(
+      (call): boolean => call.args[0].messageType === DwnInterface.MessagesSubscribe,
+    )!.args[0];
+    expect(subscribeRequest).toMatchObject({
+      author        : memberDid,
+      granteeDid    : memberDelegateDid,
+      messageParams : {
+        filters: [
+          {
+            contextIdPrefix : contextIds[0],
+            interface       : 'Records',
+            protocol        : protocolDefinition.protocol,
+            protocolPath    : 'notebook/page/change',
+          },
+          {
+            contextIdPrefix : contextIds[0],
+            interface       : 'Records',
+            protocol        : protocolDefinition.protocol,
+            protocolPath    : 'notebook/page/title',
+          },
+        ],
+        protocolRole: 'notebook/page/member',
+      },
+      target: ownerDid,
+    });
+    expect(subscribeRequest.messageParams.delegatedGrant).toBeDefined();
+    expect(subscribeRequest.messageParams.permissionGrantIds).toBeUndefined();
     const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
     const siblingChange = await owner.records.create('notebook/page/change', {
       data            : { body: 'live sibling change' },
       parentContextId : contextIds[1],
     });
+    const largeLiveBody = 'large live change '.repeat(4_000);
     const ownerChange = await owner.records.create('notebook/page/change', {
-      data            : { body: 'live owner change' },
+      data            : { body: largeLiveBody },
       parentContextId : contextIds[0],
     });
+    const ownerTitle = await owner.records.set('notebook/page/title', {
+      data   : { title: 'Live owner title' },
+      within : contextIds[0],
+    });
+    expect(new TextEncoder().encode(JSON.stringify({ body: largeLiveBody })).byteLength)
+      .toBeGreaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
     await ownerHarness.agent.sync.sync('push');
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       const siblingPages = await contextB.records.query('notebook/page/change', { pagination: { limit: 10 } });
@@ -309,11 +353,39 @@ describe('shared context public API integration', () => {
       expect(subscriptionError).toBeUndefined();
       expect(changes).toContainEqual({
         id    : ownerChange.id,
+        path  : 'notebook/page/change',
         type  : 'write',
-        value : { body: 'live owner change' },
+        value : { body: largeLiveBody },
+      });
+      expect(changes).toContainEqual({
+        id    : ownerTitle.id,
+        path  : 'notebook/page/title',
+        type  : 'write',
+        value : { title: 'Live owner title' },
       });
     }, Poller.pollRetrySleep, 30_000);
     expect(seenRecordIds.has(siblingChange.id)).toBe(false);
+    const largeDataRead = localSubscriptionRequests.getCalls().find((call): boolean =>
+      call.args[0].messageType === DwnInterface.RecordsRead
+      && call.args[0].messageParams.filter.recordId === ownerChange.id
+    )!.args[0];
+    expect(largeDataRead).toMatchObject({
+      author        : memberDid,
+      granteeDid    : memberDelegateDid,
+      messageParams : { protocolRole: 'notebook/page/member' },
+      target        : ownerDid,
+    });
+    expect(largeDataRead.messageParams.delegatedGrant).toBeDefined();
+    expect(largeDataRead.messageParams.delegatedGrant.recordId)
+      .not.toBe(subscribeRequest.messageParams.delegatedGrant.recordId);
+    expect(remoteSubscriptionRequests.getCalls().some((call): boolean =>
+      call.args[0].messageType === DwnInterface.RecordsRead
+      && call.args[0].messageParams.filter.recordId === ownerChange.id
+    )).toBe(false);
+    expect(localSubscriptionRequests.getCalls().some((call): boolean =>
+      call.args[0].messageType === DwnInterface.RecordsRead
+      && call.args[0].messageParams.filter.recordId === ownerTitle.id
+    )).toBe(false);
 
     await ownerChange.update({ data: { body: 'updated live owner change' } });
     await ownerHarness.agent.sync.sync('push');
@@ -321,6 +393,7 @@ describe('shared context public API integration', () => {
       expect(subscriptionError).toBeUndefined();
       expect(changes).toContainEqual({
         id    : ownerChange.id,
+        path  : 'notebook/page/change',
         type  : 'write',
         value : { body: 'updated live owner change' },
       });
@@ -330,10 +403,16 @@ describe('shared context public API integration', () => {
     await ownerHarness.agent.sync.sync('push');
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(subscriptionError).toBeUndefined();
-      expect(changes).toContainEqual({ id: ownerChange.id, type: 'delete' });
+      expect(changes).toContainEqual({
+        id   : ownerChange.id,
+        path : 'notebook/page/change',
+        type : 'delete',
+      });
     }, Poller.pollRetrySleep, 30_000);
     expect(seenRecordIds.has(siblingChange.id)).toBe(false);
     await subscription.close();
+    localSubscriptionRequests.restore();
+    remoteSubscriptionRequests.restore();
 
     const title = await contextA.records.set('notebook/page/title', { data: { title: 'Updated by member' } });
     expect(await title.value()).toEqual({ title: 'Updated by member' });

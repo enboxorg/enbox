@@ -136,12 +136,29 @@ async function assertCanonicalRecordFlow(): Promise<void> {
 
   const subscription: RecordSubscription = await typed.records.subscribe('task', async (event): Promise<void> => {
     if (event.type === 'write') {
+      const path: 'task' = event.path;
       const changed: Record<TaskData> = event.record;
       const value: TaskData = await changed.value();
+      void path;
       void value;
     }
   });
   await subscription.close();
+
+  const selectedPaths: Array<'attachment' | 'task'> = ['task', 'attachment'];
+  await typed.records.subscribe(selectedPaths, async (event): Promise<void> => {
+    if (event.type === 'error') { return; }
+    if (event.path === 'task') {
+      const task: TaskData = await event.record.value();
+      void task;
+      return;
+    }
+    const attachment: Blob = await event.record.value();
+    void attachment;
+  });
+
+  // @ts-expect-error subscribe has no query/routing options; use observe for filtered state.
+  await typed.records.subscribe('task', (): void => {}, { from: 'did:example:other' });
 
   // @ts-expect-error typed operations do not expose raw DWN response envelopes.
   created.status;

@@ -96,7 +96,6 @@ export type {
   ReplicationCurrentness,
   RoleDeliveryState,
   SyncStatusSnapshot,
-  TypedSubscribeOptions,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────

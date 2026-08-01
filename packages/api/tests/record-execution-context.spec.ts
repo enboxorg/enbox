@@ -68,6 +68,13 @@ function dataStream(value: unknown): ReadableStream<Uint8Array> {
   });
 }
 
+function eose(position: string): DwnSubscriptionMessage {
+  return {
+    cursor : { epoch: 'epoch', position, streamId: 'stream' },
+    type   : 'eose',
+  };
+}
+
 function createApi(agent: AgentStub, assertActive: () => Promise<void> = async (): Promise<void> => {}): DwnApi {
   const permissionsApi = { getPermissionForRequest: sinon.stub() };
   const dwn = new DwnApi({
@@ -144,6 +151,8 @@ describe('context record execution', () => {
           return { reply: { status: { code: 404, detail: 'Not Found' } } };
         case DwnInterface.RecordsSubscribe:
           return { reply: { status: { code: 200, detail: 'OK' }, subscription } };
+        case DwnInterface.MessagesSubscribe:
+          return { reply: { roleRecordId: 'role-record', status: { code: 200, detail: 'OK' }, subscription } };
         default:
           throw new Error(`Unexpected request: ${request.messageType}`);
       }
@@ -156,7 +165,10 @@ describe('context record execution', () => {
     await dwn.records.query({ from: tenantDid, filter });
     await dwn.records.read({ from: tenantDid, filter: { recordId } });
     await dwn.records.subscribe({ from: tenantDid, filter, subscriptionHandler });
-    await dwn.subscribeRecordFrames({ filter }, subscriptionHandler);
+    await dwn.subscribeRecordFrames({
+      paths: ['note'],
+      protocol,
+    }, subscriptionHandler);
 
     expect(agent.sendDwnRequest.notCalled).toBe(true);
     expect(agent.processDwnRequest.callCount).toBe(5);
@@ -165,6 +177,115 @@ describe('context record execution', () => {
       expect(call.args[0].target).toBe(tenantDid);
       expect(call.args[0].messageParams.protocolRole).toBe(protocolRole);
     }
+  });
+
+  it('rejects a subscription opened under a different role incarnation', async () => {
+    const subscription = { close: sinon.stub().resolves() };
+    const leakedFrame = sinon.stub();
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      await request.subscriptionHandler?.(eose('1'));
+      return {
+        reply: {
+          roleRecordId : 'replacement-role-record',
+          status       : { code: 200, detail: 'OK' },
+          subscription,
+        },
+      };
+    });
+    const dwn = createApi(agent);
+
+    await expect(dwn.subscribeRecordFrames({
+      paths: ['note'],
+      protocol,
+    }, leakedFrame)).rejects.toThrow('active context role changed');
+    expect(leakedFrame.notCalled).toBe(true);
+    expect(subscription.close.calledOnce).toBe(true);
+  });
+
+  it('preserves frames that arrive while the accepted role is being verified', async () => {
+    const subscription = { close: sinon.stub().resolves() };
+    let deliver!: (message: DwnSubscriptionMessage) => void | Promise<void>;
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      deliver = request.subscriptionHandler!;
+      await deliver(eose('1'));
+      await deliver(eose('2'));
+      return {
+        reply: {
+          roleRecordId : 'role-record',
+          status       : { code: 200, detail: 'OK' },
+          subscription,
+        },
+      };
+    });
+    const positions: string[] = [];
+    const dwn = createApi(agent);
+
+    await dwn.subscribeRecordFrames({ paths: ['note'], protocol }, async (message): Promise<void> => {
+      if (message.type !== 'eose') { return; }
+      if (message.cursor.position === '1') {
+        await deliver(eose('3'));
+      }
+      positions.push(message.cursor.position);
+    });
+
+    expect(positions).toEqual(['1', '2', '3']);
+  });
+
+  it('suppresses owner-feed shadow messages outside the selected record paths', async () => {
+    const subscription = { close: sinon.stub().resolves() };
+    const baseWrite = createRecordsWrite();
+    const supportWrite = {
+      ...baseWrite,
+      descriptor: {
+        ...baseWrite.descriptor,
+        protocol     : 'https://example.com/permissions',
+        protocolPath : 'grant',
+      },
+    } as DwnMessage[DwnInterface.RecordsWrite];
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      await request.subscriptionHandler?.({
+        cursor : { epoch: 'epoch', position: '1', streamId: 'stream' },
+        event  : {
+          message: {
+            descriptor: { interface: 'Protocols', method: 'Configure' },
+          } as DwnMessage[DwnInterface.ProtocolsConfigure],
+        },
+        type: 'event',
+      });
+      await request.subscriptionHandler?.({
+        cursor : { epoch: 'epoch', position: '2', streamId: 'stream' },
+        event  : { message: supportWrite },
+        type   : 'event',
+      });
+      await request.subscriptionHandler?.({
+        cursor      : { epoch: 'epoch', position: '3', streamId: 'stream' },
+        encodedData : btoa('{}'),
+        event       : { message: baseWrite },
+        type        : 'event',
+      });
+      return { reply: { status: { code: 200, detail: 'OK' }, subscription } };
+    });
+    const listener = sinon.stub();
+    const dwn = createOwnerApi(agent);
+
+    await dwn.subscribeRecordFrames({ paths: ['note'], protocol }, listener);
+
+    expect(listener.calledOnce).toBe(true);
+    expect(listener.firstCall.args[1].id).toBe(recordId);
+  });
+
+  it('drops buffered frames when the subscription request is rejected', async () => {
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      await request.subscriptionHandler?.(eose('1'));
+      return { reply: { status: { code: 401, detail: 'Unauthorized' } } };
+    });
+    const listener = sinon.stub();
+    const dwn = createApi(agent);
+
+    const reply = await dwn.subscribeRecordFrames({ paths: ['note'], protocol }, listener);
+
+    expect(reply.status.code).toBe(401);
+    expect(listener.notCalled).toBe(true);
   });
 
   it('routes creates and deletes to the authority without caller routing arguments', async () => {

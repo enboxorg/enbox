@@ -65,6 +65,8 @@ void owned.then((value): void => {
   void value.records.create('workspace', { data: { name: 'duplicate' } });
   // @ts-expect-error context records expose only their root and descendants.
   void value.records.query('invite');
+  // @ts-expect-error every subscribed path must belong to the bound context.
+  void value.records.subscribe(['workspace/note', 'invite'], (): void => {});
 });
 
 const singleton = typed.contexts.open('workspace/title', 'workspace-id/title-id');
@@ -138,12 +140,25 @@ void context.records.subscribe('workspace/note', async (event): Promise<void> =>
     void error;
     return;
   }
+  const path: 'workspace/note' = event.path;
   const note: ContextRecord<{ text: string }> = event.record;
   const value: { text: string } = await note.value();
+  void path;
   void value;
   // @ts-expect-error subscribed context records hide raw DWN messages.
   void note.rawMessage;
-}, { within: 'workspace-context' });
+});
+
+void context.records.subscribe(['workspace/note', 'workspace/live'], async (event): Promise<void> => {
+  if (event.type === 'error') { return; }
+  if (event.path === 'workspace/note') {
+    const note: { text: string } = await event.record.value();
+    void note;
+    return;
+  }
+  const live: { active: boolean } = await event.record.value();
+  void live;
+});
 
 void context.records.observe('workspace', {
   materialize : { children: ['workspace/title'] as const },
@@ -210,10 +225,8 @@ void context.records.query('workspace/note', { from: 'did:example:other' });
 void context.records.query('workspace/note', { protocolRole: 'workspace/other' });
 // @ts-expect-error context views cannot override their source tenant.
 void context.records.observe('workspace/note', { from: 'did:example:other', pagination: { limit: 20 } });
-// @ts-expect-error context subscriptions cannot override their source tenant.
+// @ts-expect-error context subscriptions accept no routing or query options.
 void context.records.subscribe('workspace/note', (): void => {}, { from: 'did:example:other' });
-// @ts-expect-error context subscriptions cannot override their role.
-void context.records.subscribe('workspace/note', (): void => {}, { protocolRole: 'workspace/other' });
 // @ts-expect-error context reads cannot override their source tenant.
 void context.records.read('workspace/note', { filter: { recordId: 'note-id' }, from: 'did:example:other' });
 // @ts-expect-error context deletes cannot override their source tenant.
