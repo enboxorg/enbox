@@ -16,11 +16,15 @@ const RoleDefinition = {
     member: {
       dataFormats: ['application/json'],
     },
+    viewer: {
+      dataFormats: ['application/json'],
+    },
   },
   structure: {
     admin     : { $role: true },
     workspace : {
-      member: { $role: true },
+      member : { $role: true },
+      viewer : { $role: true },
     },
   },
 } as const satisfies ProtocolDefinition;
@@ -28,6 +32,7 @@ const RoleDefinition = {
 const RoleProtocol = defineProtocol(RoleDefinition, {
   admin     : recordCodecs.json<{ label: string }>(),
   member    : recordCodecs.json<{ label: string }>(),
+  viewer    : recordCodecs.json<{ label: string }>(),
   workspace : recordCodecs.json<{ name: string }>(),
 });
 void RoleProtocol;
@@ -71,24 +76,32 @@ void typed.records.create(roleOrRecordPath, {
 const sharedContext = typed.contexts.follow({
   id       : 'workspace-id',
   ownerDid : 'did:example:owner',
-  role     : 'workspace/member',
+  roles    : ['workspace/member', 'workspace/viewer'],
 });
 void sharedContext.then(context => context.records.query('workspace'));
 void sharedContext.then(context => {
   const access: 'member' = context.access;
   const path: 'workspace' = context.path;
+  const role: 'workspace/member' | 'workspace/viewer' = context.role;
   void access;
   void path;
+  void role;
   // @ts-expect-error member contexts expose only their root and descendants.
   void context.records.query('admin');
   return context.whenCurrent();
 });
 
 // @ts-expect-error shared contexts can only be followed through declared role paths.
-void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', role: 'workspace' });
+void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', roles: ['workspace'] });
 
 // @ts-expect-error context roles must be nested below the context they authorize.
-void typed.contexts.follow({ id: 'admin-id', ownerDid: 'did:example:owner', role: 'admin' });
+void typed.contexts.follow({ id: 'admin-id', ownerDid: 'did:example:owner', roles: ['admin'] });
+
+// @ts-expect-error followed contexts require at least one candidate role.
+void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', roles: [] });
+
+// @ts-expect-error the singular role contract was removed.
+void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', role: 'workspace/member' });
 
 // @ts-expect-error role-record creates require a recipient.
 void typed.records.create('admin', { data: { label: 'administrator' } });

@@ -24,31 +24,85 @@ describe('FollowedSyncSourceStoreLevel', () => {
 
   it('should persist a source under its role record ID with canonical paths', async () => {
     const source = followedSource({
-      protocolPaths: ['notebook/page/delta', 'notebook/page', 'notebook/page'] as [string, ...string[]],
+      protocolPaths : ['notebook/page/delta', 'notebook', 'notebook/page'] as [string, ...string[]],
+      roles         : [{
+        protocolPaths : ['notebook/page/delta', 'notebook', 'notebook/page'],
+        protocolRole  : 'notebook/viewer',
+      }],
     });
 
-    await store.set(source);
+    await store.replace(source);
 
     expect(await store.get(source.id)).toEqual({
       ...source,
-      protocolPaths: ['notebook/page', 'notebook/page/delta'],
+      protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+      roles         : [{
+        protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+        protocolRole  : 'notebook/viewer',
+      }],
     });
     expect((await store.list())[0]).toEqual({
       status : 'valid',
-      source : { ...source, protocolPaths: ['notebook/page', 'notebook/page/delta'] },
+      source : {
+        ...source,
+        protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+        roles         : [{
+          protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+          protocolRole  : 'notebook/viewer',
+        }],
+      },
     });
   });
 
   it('should reject an empty path set', async () => {
-    await expect(store.set(followedSource({ protocolPaths: [] as unknown as [string, ...string[]] })))
+    await expect(store.replace(followedSource({
+      protocolPaths : [] as unknown as [string, ...string[]],
+      roles         : [{ protocolPaths: [] as unknown as [string, ...string[]], protocolRole: 'notebook/viewer' }],
+    })))
       .rejects.toThrow('\'protocolPaths\' must contain non-empty paths');
+  });
+
+  it('should reject an empty or duplicate role group', async () => {
+    await expect(store.replace(followedSource({
+      roles: [] as unknown as FollowedSyncSource['roles'],
+    }))).rejects.toThrow('\'roles\' must contain at least one role');
+    await expect(store.replace(followedSource({
+      roles: [
+        { protocolPaths: ['notebook/page'], protocolRole: 'notebook/viewer' },
+        { protocolPaths: ['notebook/page'], protocolRole: 'notebook/viewer' },
+      ],
+    }))).rejects.toThrow('\'roles\' must not contain duplicate roles');
+  });
+
+  it('should preserve role priority and require the active role to belong to the group', async () => {
+    const source = followedSource();
+
+    await store.replace(source);
+
+    expect((await store.get(source.id))?.roles.map(role => role.protocolRole)).toEqual([
+      'notebook/collaborator',
+      'notebook/viewer',
+    ]);
+    await expect(store.replace(followedSource({
+      protocolPaths : ['notebook'],
+      protocolRole  : 'notebook/outsider',
+    }))).rejects.toThrow('active role must belong to \'roles\'');
+  });
+
+  it('should reject role candidates for different context roots', async () => {
+    await expect(store.replace(followedSource({
+      roles: [
+        { protocolPaths: ['notebook'], protocolRole: 'notebook/viewer' },
+        { protocolPaths: ['project'], protocolRole: 'project/viewer' },
+      ],
+    }))).rejects.toThrow('every role must authorize the same context root');
   });
 
   it('should return undefined for a missing source and delete one source', async () => {
     const source = followedSource();
 
     expect(await store.get(source.id)).toBeUndefined();
-    await store.set(source);
+    await store.replace(source);
     await store.delete(source.id);
     expect(await store.get(source.id)).toBeUndefined();
   });
@@ -57,7 +111,7 @@ describe('FollowedSyncSourceStoreLevel', () => {
     const sources = db.sublevel('followedSyncSources');
     const source = followedSource({ id: 'role-b' });
     await sources.put('role-a', '{');
-    await store.set(source);
+    await store.replace(source);
 
     const entries = await store.list();
 
@@ -71,20 +125,42 @@ describe('FollowedSyncSourceStoreLevel', () => {
     await sources.put('role-a', JSON.stringify(followedSource({ id: 'role-b' })));
 
     expect(await store.get('role-a')).toBeUndefined();
-    await store.set(followedSource());
+    await store.replace(followedSource());
     expect(await store.get('role-a')).toEqual(followedSource());
+  });
+
+  it('should atomically replace former incarnations', async () => {
+    const former = followedSource();
+    const replacement = followedSource({ id: 'role-b', protocolRole: 'notebook/collaborator' });
+    await store.replace(former);
+
+    await store.replace(replacement, [former.id]);
+
+    expect(await store.get(former.id)).toBeUndefined();
+    expect(await store.list()).toEqual([{ status: 'valid', source: replacement }]);
   });
 });
 
 function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource {
+  const protocolRole = overrides.protocolRole ?? 'notebook/viewer';
+  const protocolPaths = overrides.protocolPaths ?? (protocolRole === 'notebook/collaborator'
+    ? ['notebook', 'notebook/page', 'notebook/page/delta']
+    : ['notebook', 'notebook/page']);
   return {
-    id            : 'role-a',
-    sourceDid     : 'did:example:owner',
-    actorDid      : 'did:example:member',
-    protocol      : 'https://example.com/notebooks',
-    contextId     : 'notebook-a',
-    protocolRole  : 'notebook/viewer',
-    protocolPaths : ['notebook/page'],
+    id        : 'role-a',
+    sourceDid : 'did:example:owner',
+    actorDid  : 'did:example:member',
+    protocol  : 'https://example.com/notebooks',
+    contextId : 'notebook-a',
+    protocolRole,
+    protocolPaths,
+    roles     : [
+      {
+        protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+        protocolRole  : 'notebook/collaborator',
+      },
+      { protocolPaths: ['notebook', 'notebook/page'], protocolRole: 'notebook/viewer' },
+    ],
     ...overrides,
   };
 }

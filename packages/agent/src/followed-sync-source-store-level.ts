@@ -56,9 +56,15 @@ export class FollowedSyncSourceStoreLevel implements FollowedSyncSourceStore {
     return entries;
   }
 
-  public async set(source: FollowedSyncSource): Promise<void> {
+  public async replace(source: FollowedSyncSource, replacedIds: readonly string[] = []): Promise<void> {
     const normalized = normalizeFollowedSyncSource(source);
-    await this.sources.put(normalized.id, JSON.stringify(normalized));
+    const batch = this.sources.batch().put(normalized.id, JSON.stringify(normalized));
+    for (const id of new Set(replacedIds)) {
+      if (id !== normalized.id) {
+        batch.del(id);
+      }
+    }
+    await batch.write();
   }
 
   private static parse(id: string, value: string): FollowedSyncSource {

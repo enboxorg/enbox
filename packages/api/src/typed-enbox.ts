@@ -38,6 +38,7 @@ import type {
   DwnPaginationCursor,
   DwnPublicKeyJwk,
   DwnResponseStatus,
+  FollowedSyncRole,
   FollowedSyncSource,
   SyncEngine,
 } from '@enbox/agent';
@@ -60,7 +61,7 @@ import { createRecordView } from './record-view.js';
 import { Did } from '@enbox/dids';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
 import { removeUndefinedProperties } from '@enbox/common';
-import { areReplicationLinksCurrent, syncEventCoversProtocol } from '@enbox/agent';
+import { areReplicationLinksCurrent, followedSyncSourceActiveEqual, syncEventCoversProtocol } from '@enbox/agent';
 import {
   assertTypedProtocolStructureSupported,
   collectProtocolPaths,
@@ -491,14 +492,15 @@ export type ProtocolContext<
   }
 >;
 
-/** Public request for following one role-authorized foreign context. */
+/** Public request for following one foreign context through an ordered role group. */
 export type FollowContextOptions<
   D extends ProtocolDefinition = ProtocolDefinition,
-  Role extends ContextRolePaths<D> = ContextRolePaths<D>,
+  Roles extends NonEmptyReadonlyArray<ContextRolePaths<D>> = NonEmptyReadonlyArray<ContextRolePaths<D>>,
 > = Readonly<{
   id: string;
   ownerDid: string;
-  role: Role;
+  /** Mutually-exclusive roles, ordered from strongest to weakest. */
+  roles: Roles;
 }>;
 
 /** Protocol-scoped owner and member context lifecycle. */
@@ -510,9 +512,9 @@ export type ContextsApi<
     path: Root,
     id: string,
   ): Promise<OwnedContext<D, C, Root>>;
-  follow<Role extends ContextRolePaths<D>>(
-    request: FollowContextOptions<D, Role>,
-  ): Promise<MemberContext<D, C, Role>>;
+  follow<const Roles extends NonEmptyReadonlyArray<ContextRolePaths<D>>>(
+    request: FollowContextOptions<D, Roles>,
+  ): Promise<MemberContext<D, C, Roles[number]>>;
   followed(): Promise<MemberContext<D, C>[]>;
 }>;
 
@@ -1256,25 +1258,48 @@ export class TypedEnbox<
           records,
         });
       },
-      follow: async <Role extends ContextRolePaths<D>>(
-        request: FollowContextOptions<D, Role>,
-      ): Promise<MemberContext<D, C, Role>> => {
+      follow: async <const Roles extends NonEmptyReadonlyArray<ContextRolePaths<D>>>(
+        request: FollowContextOptions<D, Roles>,
+      ): Promise<MemberContext<D, C, Roles[number]>> => {
         this._options.signal?.throwIfAborted();
-        const scope = this.resolveMemberContextScope(request.role);
-        const sync = requireSync();
-        const source = await sync.followSource({
-          actorDid      : this._dwn.connectedDid,
-          contextId     : request.id,
-          delegateDid   : this._dwn.recordDelegateDid,
-          protocol      : this._definition.protocol,
+        if (!Array.isArray(request.roles) || request.roles.length === 0) {
+          throw new TypeError('TypedEnbox.contexts.follow: roles must contain at least one role path.');
+        }
+        const scopes = request.roles.map(role => this.resolveMemberContextScope(role));
+        if (new Set(scopes.map(scope => scope.role)).size !== scopes.length) {
+          throw new TypeError('TypedEnbox.contexts.follow: roles must not contain duplicates.');
+        }
+        const toRole = (scope: typeof scopes[number]): FollowedSyncRole => ({
           protocolPaths : scope.readablePaths,
           protocolRole  : scope.role,
-          sourceDid     : request.ownerDid,
         });
-        if (source.sourceDid !== request.ownerDid || source.contextId !== request.id) {
+        const roles: [FollowedSyncRole, ...FollowedSyncRole[]] = [
+          toRole(scopes[0]),
+          ...scopes.slice(1).map(toRole),
+        ];
+        const sync = requireSync();
+        const source = await sync.followSource({
+          actorDid    : this._dwn.connectedDid,
+          contextId   : request.id,
+          delegateDid : this._dwn.recordDelegateDid,
+          protocol    : this._definition.protocol,
+          roles,
+          sourceDid   : request.ownerDid,
+        });
+        if (
+          source.sourceDid !== request.ownerDid ||
+          source.actorDid !== this._dwn.connectedDid ||
+          source.protocol !== this._definition.protocol ||
+          source.contextId !== request.id ||
+          source.roles.length !== roles.length ||
+          source.roles.some((role, index) =>
+            role.protocolRole !== roles[index].protocolRole ||
+            !sameStrings(role.protocolPaths, roles[index].protocolPaths)
+          )
+        ) {
           throw new Error('TypedEnbox.contexts.follow returned a different context.');
         }
-        return this.bindMemberContext(source, scope) as MemberContext<D, C, Role>;
+        return this.bindMemberContext(source) as MemberContext<D, C, Roles[number]>;
       },
       followed: async (): Promise<MemberContext<D, C>[]> => {
         this._options.signal?.throwIfAborted();
@@ -1979,12 +2004,18 @@ export class TypedEnbox<
   }
 
   /** Bind the existing typed records surface to one exact durable source. */
-  private bindMemberContext(
-    source: FollowedSyncSource,
-    scope = this.resolveMemberContextScope(source.protocolRole),
-  ): MemberContext<D, C> {
+  private bindMemberContext(source: FollowedSyncSource): MemberContext<D, C> {
+    const scopes = source.roles.map(role => {
+      const scope = this.resolveMemberContextScope(role.protocolRole);
+      if (!sameStrings(role.protocolPaths, scope.readablePaths)) {
+        throw new Error(`TypedEnbox.contexts: followed role '${role.protocolRole}' does not match this protocol definition.`);
+      }
+      return scope;
+    });
+    const scope = scopes.find(candidate => candidate.role === source.protocolRole);
     if (source.protocol !== this._definition.protocol
-      || source.protocolRole !== scope.role
+      || scope === undefined
+      || scopes.some(candidate => candidate.protocolPath !== scope.protocolPath)
       || !sameStrings(source.protocolPaths, scope.readablePaths)) {
       throw new Error(`TypedEnbox.contexts: followed source '${source.id}' does not match this protocol definition.`);
     }
@@ -2001,7 +2032,7 @@ export class TypedEnbox<
       signal.throwIfAborted();
       const current = await sync.getFollowedSource(source.id);
       signal.throwIfAborted();
-      if (current?.actorDid !== this._dwn.connectedDid) {
+      if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
         throw new Error(`Member context '${source.contextId}' is no longer active.`);
       }
     };

@@ -4,6 +4,7 @@ import type {
   DwnMessage,
   EnboxAgent,
   FollowedSyncSource,
+  FollowedSyncSourceInput,
   ProcessDwnRequest,
   ReplicationLinkSnapshot,
   SyncEngine,
@@ -25,6 +26,7 @@ const connectedDid = 'did:example:member';
 const contextId = 'workspaceRecord';
 const sourceDid = 'did:example:host';
 const protocolRole = 'workspace/member';
+const viewerRole = 'workspace/viewer';
 
 const SharedDefinition = {
   protocol  : 'https://example.com/protocols/shared-context',
@@ -35,24 +37,37 @@ const SharedDefinition = {
     note        : { dataFormats: ['application/json'] },
     outside     : { dataFormats: ['application/json'] },
     title       : { dataFormats: ['application/json'] },
+    viewer      : { dataFormats: ['application/json'] },
     workspace   : { dataFormats: ['application/json'] },
     writeOnly   : { dataFormats: ['application/json'] },
   },
   structure: {
     workspace: {
-      $actions    : [{ role: protocolRole, can: ['read'] }],
-      blindMember : {
+      $actions: [
+        { role: protocolRole, can: ['read'] },
+        { role: viewerRole, can: ['read'] },
+      ],
+      blindMember: {
         $role: true,
       },
       member: {
         $role: true,
       },
       note: {
-        $actions: [{ role: protocolRole, can: ['create', 'read', 'update', 'delete'] }],
+        $actions: [
+          { role: protocolRole, can: ['create', 'read', 'update', 'delete'] },
+          { role: viewerRole, can: ['read'] },
+        ],
       },
       title: {
-        $actions     : [{ role: protocolRole, can: ['create', 'read', 'update'] }],
-        $recordLimit : { max: 1 },
+        $actions: [
+          { role: protocolRole, can: ['create', 'read', 'update'] },
+          { role: viewerRole, can: ['read'] },
+        ],
+        $recordLimit: { max: 1 },
+      },
+      viewer: {
+        $role: true,
       },
       writeOnly: {
         $actions: [{ role: protocolRole, can: ['create'] }],
@@ -70,6 +85,7 @@ const SharedProtocol = defineProtocol(SharedDefinition, {
   note        : recordCodecs.json<{ title: string }>(),
   outside     : recordCodecs.json<unknown>(),
   title       : recordCodecs.json<string>(),
+  viewer      : recordCodecs.json<unknown>(),
   workspace   : recordCodecs.json<unknown>(),
   writeOnly   : recordCodecs.json<unknown>(),
 });
@@ -99,6 +115,10 @@ function source(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource
     protocol      : SharedDefinition.protocol,
     protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
     protocolRole,
+    roles         : [{
+      protocolPaths: ['workspace', 'workspace/note', 'workspace/title'],
+      protocolRole,
+    }],
     sourceDid,
     ...overrides,
   };
@@ -189,8 +209,13 @@ describe('TypedEnbox contexts', () => {
         };
       }),
     };
-    follow = sinon.stub().callsFake(async (): Promise<FollowedSyncSource> => {
-      current = source();
+    follow = sinon.stub().callsFake(async (input: FollowedSyncSourceInput): Promise<FollowedSyncSource> => {
+      const active = input.roles[0];
+      current = source({
+        protocolPaths : active.protocolPaths,
+        protocolRole  : active.protocolRole,
+        roles         : input.roles,
+      });
       return current;
     });
     get = sinon.stub().callsFake(async (id: string): Promise<FollowedSyncSource | undefined> =>
@@ -249,7 +274,7 @@ describe('TypedEnbox contexts', () => {
       'Context-bound operations cannot invoke another protocol role.',
     );
 
-    const followed = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, role: protocolRole });
+    const followed = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
     const contexts: Array<{ records: typeof owned.records }> = [owned, followed];
     expect(contexts).toHaveLength(2);
   });
@@ -261,15 +286,17 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('derives the exact readable feed and inherits local-read and authority-write routing', async () => {
-    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, role: protocolRole });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
 
     expect(follow.firstCall.args[0]).toEqual({
-      actorDid      : connectedDid,
+      actorDid    : connectedDid,
       contextId,
-      delegateDid   : undefined,
-      protocol      : SharedDefinition.protocol,
-      protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
-      protocolRole,
+      delegateDid : undefined,
+      protocol    : SharedDefinition.protocol,
+      roles       : [{
+        protocolPaths: ['workspace', 'workspace/note', 'workspace/title'],
+        protocolRole,
+      }],
       sourceDid,
     });
     expect(shared).toMatchObject({
@@ -317,7 +344,7 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('creates and updates a direct singleton through the bound root', async () => {
-    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, role: protocolRole });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
 
     await shared.records.set('workspace/title', { data: 'First title' });
 
@@ -365,19 +392,29 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('rejects non-role, unreadable-root, and uncovered paths before dispatch', async () => {
+    await expect((typed.contexts.follow as (request: object) => Promise<unknown>)({
+      ownerDid : sourceDid,
+      id       : contextId,
+      roles    : [],
+    })).rejects.toThrow('roles must contain at least one role path');
     await expect(typed.contexts.follow({
       ownerDid : sourceDid,
       id       : contextId,
-      role     : 'workspace/note' as typeof protocolRole,
+      roles    : ['workspace/note' as typeof protocolRole],
     })).rejects.toThrow('is not a protocol role path');
     await expect(typed.contexts.follow({
       ownerDid : sourceDid,
       id       : contextId,
-      role     : 'workspace/blindMember',
+      roles    : ['workspace/blindMember'],
     })).rejects.toThrow('must authorize reading its parent context \'workspace\'');
+    await expect(typed.contexts.follow({
+      ownerDid : sourceDid,
+      id       : contextId,
+      roles    : [protocolRole, protocolRole],
+    })).rejects.toThrow('roles must not contain duplicates');
     expect(follow.notCalled).toBe(true);
 
-    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, role: protocolRole });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
     const untypedRecords = shared.records as unknown as {
       query(path: string): Promise<unknown>;
     };
@@ -385,15 +422,16 @@ describe('TypedEnbox contexts', () => {
     expect(agent.processDwnRequest.notCalled).toBe(true);
   });
 
-  it('does not assume different roles on one context are mutually exclusive', async () => {
-    await typed.contexts.follow({
+  it('preserves declared role precedence in one follow request', async () => {
+    const shared = await typed.contexts.follow({
       ownerDid : sourceDid,
       id       : contextId,
-      role     : protocolRole,
+      roles    : [protocolRole, viewerRole],
     });
 
-    expect(deleteFollowedSource.notCalled).toBe(true);
-    expect(list.notCalled).toBe(true);
+    expect(follow.firstCall.args[0].roles.map((role: { protocolRole: string }) => role.protocolRole))
+      .toEqual([protocolRole, viewerRole]);
+    expect(shared.role).toBe(protocolRole);
   });
 
   it('does not delete a record outside the followed context by id', async () => {
@@ -413,7 +451,7 @@ describe('TypedEnbox contexts', () => {
       return { reply: { status: { code: 404, detail: 'Not Found' } } };
     });
 
-    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, role: protocolRole });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
 
     await expect(shared.records.delete('workspace/note', {
       recordId: 'sibling-note',
@@ -431,6 +469,15 @@ describe('TypedEnbox contexts', () => {
     await shared.records.query('workspace/note');
 
     current = source({ id: 'replacement-role' });
+    await expect(shared.records.query('workspace/note')).rejects.toThrow(`Member context '${contextId}' is no longer active.`);
+
+    current = source({
+      protocolRole : viewerRole,
+      roles        : [{
+        protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
+        protocolRole  : viewerRole,
+      }],
+    });
     await expect(shared.records.query('workspace/note')).rejects.toThrow(`Member context '${contextId}' is no longer active.`);
 
     current = source();

@@ -53,7 +53,8 @@ function followedSource(id = 'role-a'): FollowedSyncSource {
     protocol      : 'https://example.com/notebooks',
     contextId     : 'notebook-a',
     protocolRole  : 'notebook/viewer',
-    protocolPaths : ['notebook/page'],
+    protocolPaths : ['notebook', 'notebook/page'],
+    roles         : [{ protocolPaths: ['notebook', 'notebook/page'], protocolRole: 'notebook/viewer' }],
   };
 }
 
@@ -80,10 +81,10 @@ function createPlanner({
     set    : sinon.stub().resolves(),
   } satisfies SyncIdentityStore;
   const sourceStore = {
-    delete : sinon.stub().resolves(),
-    get    : sinon.stub().resolves(undefined),
-    list   : sinon.stub().resolves(sourceEntries),
-    set    : sinon.stub().resolves(),
+    delete  : sinon.stub().resolves(),
+    get     : sinon.stub().resolves(undefined),
+    list    : sinon.stub().resolves(sourceEntries),
+    replace : sinon.stub().resolves(),
   } satisfies FollowedSyncSourceStore;
 
   const getEndpointUrls = sinon.stub().callsFake(async (did: string): Promise<string[]> => [

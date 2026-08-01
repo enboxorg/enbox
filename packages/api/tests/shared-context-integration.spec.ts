@@ -35,24 +35,40 @@ const protocolDefinition = {
       dataFormats        : ['application/json'],
       encryptionRequired : true,
     },
+    viewer: {
+      dataFormats: ['application/json'],
+    },
   },
   structure: {
     notebook: {
       page: {
-        $actions : [{ role: 'notebook/page/member', can: ['read'] }],
-        change   : {
-          $actions: [{
-            role : 'notebook/page/member',
-            can  : ['create', 'read', 'update', 'delete', 'co-update', 'co-delete'],
-          }],
+        $actions: [
+          { role: 'notebook/page/member', can: ['read'] },
+          { role: 'notebook/page/viewer', can: ['read'] },
+        ],
+        change: {
+          $actions: [
+            {
+              role : 'notebook/page/member',
+              can  : ['create', 'read', 'update', 'delete', 'co-update', 'co-delete'],
+            },
+            { role: 'notebook/page/viewer', can: ['read'] },
+          ],
         },
         member: {
           $actions : [{ who: 'recipient', can: ['co-delete'] }],
           $role    : true,
         },
         title: {
-          $actions     : [{ role: 'notebook/page/member', can: ['read', 'co-update'] }],
-          $recordLimit : { max: 1 },
+          $actions: [
+            { role: 'notebook/page/member', can: ['read', 'co-update'] },
+            { role: 'notebook/page/viewer', can: ['read'] },
+          ],
+          $recordLimit: { max: 1 },
+        },
+        viewer: {
+          $actions : [{ who: 'recipient', can: ['co-delete'] }],
+          $role    : true,
         },
       },
     },
@@ -65,6 +81,7 @@ const SharedNotebookProtocol = defineProtocol(protocolDefinition, {
   notebook : recordCodecs.json<{ title: string }>(),
   page     : recordCodecs.json<{ body: string }>(),
   title    : recordCodecs.json<{ title: string }>(),
+  viewer   : recordCodecs.json<{ name: string }>(),
 });
 
 async function waitForView<Item>(
@@ -205,17 +222,18 @@ describe('shared context public API integration', () => {
     expect(remoteOwnerRequests.notCalled).toBe(true);
     localOwnerRequests.restore();
     remoteOwnerRequests.restore();
-    for (const page of [pageA, pageB]) {
+    for (const [index, page] of [pageA, pageB].entries()) {
       const members = (await owner.contexts.open('notebook/page', page.contextId))
-        .members(['notebook/page/member']);
+        .members(['notebook/page/member', 'notebook/page/viewer']);
+      const role = index === 0 ? 'notebook/page/member' : 'notebook/page/viewer';
       const member = await members.set(memberDid, {
-        data : { name: 'member' },
-        role : 'notebook/page/member',
+        data: { name: 'member' },
+        role,
       });
       expect(member).toMatchObject({
         delivery : { state: 'delivered' },
         did      : memberDid,
-        role     : 'notebook/page/member',
+        role,
       });
       expect((await members.list()).map(({ did }) => did)).toEqual([memberDid]);
     }
@@ -254,9 +272,11 @@ describe('shared context public API integration', () => {
     const [contextA, contextB] = await Promise.all(contextIds.map((id) => typed.contexts.follow({
       id,
       ownerDid,
-      role: 'notebook/page/member',
+      roles: ['notebook/page/member', 'notebook/page/viewer'],
     })));
     expect(contextA).toMatchObject({ access: 'member', id: contextIds[0], ownerDid });
+    expect(contextA.role).toBe('notebook/page/member');
+    expect(contextB.role).toBe('notebook/page/viewer');
 
     await Promise.all([contextA.whenCurrent(), contextB.whenCurrent()]);
 
@@ -475,9 +495,9 @@ describe('shared context public API integration', () => {
     expect((await reopened.contexts.followed()).map((context) => context.id)).toEqual([contextIds[1]]);
 
     const followedAgain = await reopened.contexts.follow({
-      id   : contextIds[0],
+      id    : contextIds[0],
       ownerDid,
-      role : 'notebook/page/member',
+      roles : ['notebook/page/member', 'notebook/page/viewer'],
     });
     await followedAgain.leave();
 

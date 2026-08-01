@@ -46,7 +46,11 @@ import type {
   SyncDurableFeedReconcileOptions as SyncReconcileOptions,
   SyncDurableFeedReconcileResult as SyncReconcileResult,
 } from './sync-durable-feed-reconciler.js';
-import type { FollowedSyncSource, FollowedSyncSourceInput, FollowedSyncSourceStore } from './followed-sync-source.js';
+import type {
+  FollowedSyncSource,
+  FollowedSyncSourceInput,
+  FollowedSyncSourceStore,
+} from './followed-sync-source.js';
 import type { SyncDeferredPullState, SyncDeferredPullStore } from './sync-deferred-pull-store.js';
 import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.js';
 import type { SyncIdentityTaskRunner, SyncLifecycleDeadline } from './sync-lifecycle-coordinator.js';
@@ -86,7 +90,7 @@ import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, mes
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor } from './sync-messages.js';
 import { FollowedSourceNotReadyError, readRoleReplicationSupport } from './sync-role-replication-support.js';
-import { followedSyncSourcesEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput } from './followed-sync-source.js';
+import { followedSyncSourceActiveEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import { isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
@@ -1065,89 +1069,98 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Bootstrap the local authority closure before the ordinary role feed starts. */
   private async doFollowSource(input: FollowedSyncSourceInput): Promise<FollowedSyncSource> {
-    const { protocolPath, recordId } = SyncEngineLevel.followedSourceRoot(input);
+    const { delegateDid, roles, ...context } = input;
     const endpoints = await this.targetResolver.getRemoteEndpointUrls(input.sourceDid);
     if (endpoints.length === 0) {
       throw new Error(`SyncEngineLevel: Followed source ${input.sourceDid} has no remote DWN endpoint.`);
     }
 
     const failures: string[] = [];
-    let notReady: FollowedSourceNotReadyError | undefined;
-    for (const dwnUrl of endpoints) {
-      let batch;
-      try {
-        batch = await readRoleReplicationSupport({
-          ...input,
-          dwnUrl,
-          permissionsApi : this._permissionsApi,
-          protocolPath,
-          recordId,
-          agent          : this.agent,
-        });
-      } catch (error: unknown) {
-        if (error instanceof FollowedSourceNotReadyError) {
-          notReady = error;
+    for (const role of roles) {
+      let notReady: FollowedSourceNotReadyError | undefined;
+      let provenFailure: Error | undefined;
+      const { protocolPath, recordId } = resolveFollowedSyncRoleRoot(input.contextId, role);
+      for (const dwnUrl of endpoints) {
+        let batch;
+        try {
+          batch = await readRoleReplicationSupport({
+            ...context,
+            ...role,
+            agent          : this.agent,
+            delegateDid,
+            dwnUrl,
+            permissionsApi : this._permissionsApi,
+            protocolPath,
+            recordId,
+          });
+        } catch (error: unknown) {
+          if (error instanceof FollowedSourceNotReadyError) {
+            notReady = error;
+          }
+          failures.push(`${role.protocolRole} at ${dwnUrl}: ${syncErrorMessage(error)}`);
+          continue;
         }
-        failures.push(`${dwnUrl}: ${syncErrorMessage(error)}`);
-        continue;
-      }
 
-      const source = normalizeFollowedSyncSource({ id: batch.roleRecordId, ...input });
-      const support = { dependencies: batch.dependencies, root: batch.root };
-      const outcome = await admitClosure(batch.rootCid, {
-        agent                   : this.agent,
-        did                     : input.sourceDid,
-        dwnUrl,
-        fetchReplicationSupport : async () => support,
-        prefetched              : [...batch.dependencies, batch.root],
-        scope                   : {
-          kind          : 'context',
-          contextId     : input.contextId,
-          protocol      : input.protocol,
-          protocolPaths : input.protocolPaths,
-        },
-      });
-      if (outcome.kind !== 'admitted') {
-        const detail = outcome.detail ?? (outcome.kind === 'failed' ? outcome.reason : 'incomplete bootstrap');
-        failures.push(`${dwnUrl}: ${detail}`);
-        continue;
-      }
+        const source = normalizeFollowedSyncSource({ id: batch.roleRecordId, ...context, ...role, roles });
+        const support = { dependencies: batch.dependencies, root: batch.root };
+        const outcome = await admitClosure(batch.rootCid, {
+          agent                   : this.agent,
+          did                     : input.sourceDid,
+          dwnUrl,
+          fetchReplicationSupport : async () => support,
+          prefetched              : [...batch.dependencies, batch.root],
+          scope                   : {
+            kind          : 'context',
+            contextId     : input.contextId,
+            protocol      : input.protocol,
+            protocolPaths : role.protocolPaths,
+          },
+        });
+        if (outcome.kind !== 'admitted') {
+          const detail = outcome.detail ?? (outcome.kind === 'failed' ? outcome.reason : 'incomplete bootstrap');
+          failures.push(`${role.protocolRole} at ${dwnUrl}: ${detail}`);
+          provenFailure = new Error(detail);
+          continue;
+        }
 
-      try {
-        await this.doSetFollowedSource(source, input.delegateDid);
-        return source;
-      } catch (error: unknown) {
-        failures.push(`${dwnUrl}: ${syncErrorMessage(error)}`);
+        try {
+          await this.doSetFollowedSource(source, delegateDid);
+          return source;
+        } catch (error: unknown) {
+          failures.push(`${role.protocolRole} at ${dwnUrl}: ${syncErrorMessage(error)}`);
+          provenFailure = error instanceof Error ? error : new Error(syncErrorMessage(error));
+        }
+      }
+      if (notReady !== undefined) {
+        throw notReady;
+      }
+      if (provenFailure !== undefined) {
+        throw provenFailure;
       }
     }
 
-    if (notReady !== undefined) {
-      throw notReady;
-    }
     throw new Error(`SyncEngineLevel: Unable to bootstrap followed source: ${failures.join('; ')}`);
   }
 
   private async doSetFollowedSource(source: FollowedSyncSource, delegateDid?: string): Promise<void> {
     const existing = await this._followedSourceStore.get(source.id);
-    if (existing !== undefined) {
-      if (!followedSyncSourcesEqual(existing, source)) {
-        throw new Error(`SyncEngineLevel: Followed source ${source.id} is already registered with different details.`);
-      }
+    if (existing !== undefined && !followedSyncSourceActiveEqual(existing, source)) {
+      throw new Error(`SyncEngineLevel: Followed source ${source.id} is already registered with different details.`);
     }
 
-    if (existing === undefined) {
-      await this._followedSourceStore.set(source);
-    }
-    this.invalidateSyncTargetsCache();
+    const replaced: FollowedSyncSource[] = [];
     for (const entry of await this._followedSourceStore.list()) {
       if (
         entry.status === 'valid' &&
         entry.source.id !== source.id &&
-        SyncEngineLevel.sameFollowedSourceAuthority(entry.source, source)
+        SyncEngineLevel.sameFollowedContext(entry.source, source)
       ) {
-        await this.removeFollowedSourceState(entry.source.id, entry.source.sourceDid);
+        replaced.push(entry.source);
       }
     }
+    await this._followedSourceStore.replace(source, replaced.map(previous => previous.id));
+    this.invalidateSyncTargetsCache();
+    await Promise.allSettled(replaced.map(previous => this.removeFollowedSourceLinks(previous.id, previous.sourceDid)));
     if (this._runtime.live) {
       const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(source.sourceDid);
       void runIdentityTask(async (): Promise<void> => {
@@ -1188,7 +1201,10 @@ export class SyncEngineLevel implements SyncEngine {
   private async removeFollowedSourceState(id: string, sourceDid: string): Promise<void> {
     await this._followedSourceStore.delete(id);
     this.invalidateSyncTargetsCache();
+    await this.removeFollowedSourceLinks(id, sourceDid);
+  }
 
+  private async removeFollowedSourceLinks(id: string, sourceDid: string): Promise<void> {
     const linkKeys = new Set<string>();
     for (const [linkKey, controller] of this._linkControllers) {
       if (
@@ -1218,34 +1234,11 @@ export class SyncEngineLevel implements SyncEngine {
     )));
   }
 
-  /** Resolve the role parent's exact context record without caller routing IDs. */
-  private static followedSourceRoot(source: FollowedSyncSourceInput): { protocolPath: string; recordId: string } {
-    const roleSegments = source.protocolRole.split('/');
-    const contextSegments = source.contextId.split('/');
-    if (
-      roleSegments.length < 2 ||
-      roleSegments.some(segment => segment.length === 0) ||
-      contextSegments.length !== roleSegments.length - 1 ||
-      contextSegments.some(segment => segment.length === 0)
-    ) {
-      throw new TypeError('SyncEngineLevel: followed contexts require a nested role and its exact parent context ID.');
-    }
-
-    const protocolPath = roleSegments.slice(0, -1).join('/');
-    if (!source.protocolPaths.includes(protocolPath)) {
-      throw new TypeError(
-        `SyncEngineLevel: role '${source.protocolRole}' does not authorize its context root '${protocolPath}'.`,
-      );
-    }
-    return { protocolPath, recordId: contextSegments.at(-1)! };
-  }
-
-  private static sameFollowedSourceAuthority(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+  private static sameFollowedContext(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
     return a.sourceDid === b.sourceDid &&
       a.actorDid === b.actorDid &&
       a.protocol === b.protocol &&
-      a.contextId === b.contextId &&
-      a.protocolRole === b.protocolRole;
+      a.contextId === b.contextId;
   }
 
   // ---------------------------------------------------------------------------

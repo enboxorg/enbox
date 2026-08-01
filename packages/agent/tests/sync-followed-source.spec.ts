@@ -10,21 +10,36 @@ import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
+import { resolveFollowedSyncRoleRoot } from '../src/followed-sync-source.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 
 const SOURCE_DID = 'did:example:owner';
 const PROTOCOL = 'https://example.com/notebooks';
 
-function source(id = 'role-a', contextId = 'notebook-a'): FollowedSyncSource {
+const ROLES: FollowedSyncSource['roles'] = [
+  {
+    protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+    protocolRole  : 'notebook/collaborator',
+  },
+  { protocolPaths: ['notebook', 'notebook/page'], protocolRole: 'notebook/viewer' },
+];
+
+function source(
+  id = 'role-a',
+  contextId = 'notebook-a',
+  protocolRole: FollowedSyncSource['protocolRole'] = 'notebook/viewer',
+): FollowedSyncSource {
+  const role = ROLES.find(candidate => candidate.protocolRole === protocolRole)!;
   return {
     id,
     sourceDid     : SOURCE_DID,
     actorDid      : 'did:example:member',
     protocol      : PROTOCOL,
     contextId,
-    protocolRole  : 'notebook/viewer',
-    protocolPaths : ['notebook/page'],
+    protocolRole,
+    protocolPaths : role.protocolPaths,
+    roles         : ROLES,
   };
 }
 
@@ -66,10 +81,7 @@ describe('SyncEngineLevel — followed sources', () => {
   });
 
   it('should derive the context root record from the final compound context segment', () => {
-    expect((SyncEngineLevel as any).followedSourceRoot({
-      ...source(),
-      id            : undefined,
-      contextId     : 'notebook-a/page-a',
+    expect(resolveFollowedSyncRoleRoot('notebook-a/page-a', {
       protocolRole  : 'notebook/page/viewer',
       protocolPaths : ['notebook/page'],
     })).toEqual({ protocolPath: 'notebook/page', recordId: 'page-a' });
@@ -95,10 +107,10 @@ describe('SyncEngineLevel — followed sources', () => {
     const order: string[] = [];
     sinon.stub((engine as any).targetResolver, 'buildTargetsForSource').resolves([target]);
     const sourceStore = (engine as any)._followedSourceStore;
-    const persist = sourceStore.set.bind(sourceStore);
-    sinon.stub(sourceStore, 'set').callsFake(async (value: FollowedSyncSource) => {
+    const persist = sourceStore.replace.bind(sourceStore);
+    sinon.stub(sourceStore, 'replace').callsFake(async (value: FollowedSyncSource, replacedIds: string[]) => {
       order.push('persist');
-      await persist(value);
+      await persist(value, replacedIds);
     });
     (engine as any)._runtime = new SyncRuntime(true);
     let finishInitialization!: () => void;
@@ -129,9 +141,9 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should replace an older role-record incarnation for the same followed context', async () => {
     const engine = new SyncEngineLevel({ db });
     const previous = source('role-a');
-    const replacement = source('role-b');
+    const replacement = source('role-b', 'notebook-a', 'notebook/collaborator');
     const target = targetFor(replacement);
-    await (engine as any)._followedSourceStore.set(previous);
+    await (engine as any)._followedSourceStore.replace(previous);
     await createRoleLink(engine, targetFor(previous));
     sinon.stub((engine as any).targetResolver, 'buildTargetsForSource').resolves([target]);
 
@@ -144,11 +156,42 @@ describe('SyncEngineLevel — followed sources', () => {
     )).toBe(true);
   });
 
+  it('should update a role group without restarting an unchanged active incarnation', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    const target = targetFor(followed);
+    await (engine as any)._followedSourceStore.replace(followed);
+    await createRoleLink(engine, target);
+    const updated: FollowedSyncSource = { ...followed, roles: [followed.roles[1], followed.roles[0]] };
+
+    await (engine as any).doSetFollowedSource(updated);
+
+    expect(await engine.getFollowedSource(followed.id)).toEqual(updated);
+    expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toHaveLength(1);
+  });
+
+  it('should reject a changed active authorization under the same role-record ID', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    await (engine as any)._followedSourceStore.replace(followed);
+    const changed: FollowedSyncSource = {
+      ...followed,
+      protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+      roles         : [
+        followed.roles[0],
+        { ...followed.roles[1], protocolPaths: ['notebook', 'notebook/page', 'notebook/page/delta'] },
+      ],
+    };
+
+    await expect((engine as any).doSetFollowedSource(changed)).rejects.toThrow('different details');
+    expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+  });
+
   it('should pause only the lagging endpoint when a query reports a replacement role record', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const target = targetFor(followed);
-    await (engine as any)._followedSourceStore.set(followed);
+    await (engine as any)._followedSourceStore.replace(followed);
     stubRemoteQuery(engine, {
       roleRecordId : 'role-b',
       status       : { code: 200 },
@@ -169,7 +212,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const target = targetFor(followed);
-    await (engine as any)._followedSourceStore.set(followed);
+    await (engine as any)._followedSourceStore.replace(followed);
     stubRemoteQuery(engine, {
       status: {
         code   : 401,
@@ -190,7 +233,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const target = targetFor(followed);
-    await (engine as any)._followedSourceStore.set(followed);
+    await (engine as any)._followedSourceStore.replace(followed);
     const reconcile = sinon.stub((engine as any)._durableFeedReconciler, 'reconcile').resolves({ pullDrained: true });
 
     await (engine as any).reconcileTarget(target, { verifyConvergence: true });
@@ -217,7 +260,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const options = { delegateDid, protocols: [PROTOCOL] as [string] };
     const followed = source();
     const target = { ...targetFor(followed), delegateDid };
-    await (engine as any)._followedSourceStore.set(followed);
+    await (engine as any)._followedSourceStore.replace(followed);
     await (engine as any)._identityStore.set(actorDid, options);
     stubRemoteQuery(engine, {
       status: { code: 401, detail: 'GrantAuthorizationGrantExpired: refresh the delegate grant' },
@@ -270,7 +313,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const followed = source();
     const target = { ...targetFor(followed), delegateDid: previousDelegate };
     const checkpoint = { epoch: 'epoch', position: '7', streamId: 'stream', messageCid: 'cid-7' };
-    await (engine as any)._followedSourceStore.set(followed);
+    await (engine as any)._followedSourceStore.replace(followed);
     await (engine as any)._identityStore.set(actorDid, {
       delegateDid : previousDelegate,
       protocols   : [PROTOCOL],
@@ -320,7 +363,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const target = targetFor(followed);
     const checkpoint = { epoch: 'epoch', position: '9', streamId: 'stream', messageCid: 'cid-9' };
     await (engine as any)._identityStore.set(actorDid, { protocols: 'all' });
-    await (engine as any)._followedSourceStore.set(followed);
+    await (engine as any)._followedSourceStore.replace(followed);
     const link = await createRoleLink(engine, target);
     link.pull.contiguousAppliedToken = checkpoint;
     await (engine as any).replicationLinkStore.persistCheckpoint(link, 'pull');
@@ -354,7 +397,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const target = targetFor(followed);
-    await (engine as any)._followedSourceStore.set(followed);
+    await (engine as any)._followedSourceStore.replace(followed);
 
     const retired = await (engine as any).tryRetireDeferredPull(target, {
       messageCid : 'deferred-role-message',
@@ -393,8 +436,8 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const sourceA = source('role-a', 'notebook-a');
     const sourceB = source('role-b', 'notebook-b');
-    await (engine as any)._followedSourceStore.set(sourceA);
-    await (engine as any)._followedSourceStore.set(sourceB);
+    await (engine as any)._followedSourceStore.replace(sourceA);
+    await (engine as any)._followedSourceStore.replace(sourceB);
     const linkA = await createRoleLink(engine, targetFor(sourceA));
     const linkB = await createRoleLink(engine, targetFor(sourceB));
     const keyA = linkKey(linkA);

@@ -384,7 +384,11 @@ function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSy
     protocol      : 'https://example.com/notebooks',
     contextId     : 'notebook-a',
     protocolRole  : 'notebook/viewer',
-    protocolPaths : ['notebook/page', 'notebook/page/delta'],
+    protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+    roles         : [{
+      protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+      protocolRole  : 'notebook/viewer',
+    }],
     ...overrides,
   };
 }

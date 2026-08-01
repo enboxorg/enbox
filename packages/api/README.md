@@ -355,14 +355,17 @@ await members.set(collaboratorDid, {
 ```
 
 `open()` binds a handle; it does not read the root record. An
-application-specific invitation can carry an owner DID, context ID, and
-role path. Accept it by following that exact role-authorized context:
+application-specific invitation can carry an owner DID and context ID. Accept
+it with the application's ordered role group:
 
 ```ts
 const shared = await notebooks.contexts.follow({
   id       : invitation.contextId,
   ownerDid : invitation.author,
-  role     : 'notebook/page/collaborator',
+  roles    : [
+    'notebook/page/collaborator',
+    'notebook/page/viewer',
+  ],
 });
 
 // Optional before paging a complete local history. follow() itself does not
@@ -408,12 +411,14 @@ audience re-keying is required before a former member is unable to decrypt
 future content.
 
 Accepted contexts survive restart and are reconstructed with
-`await notebooks.contexts.followed()`. `forget()` removes only the local
-accepted source. `leave()` first deletes the exact owner-hosted role record and is
-available only when that role path authorizes recipient `co-delete`; a failed
-remote delete leaves the local source intact. The sync engine replaces an
-older incarnation of the same role without assuming that different roles are
-mutually exclusive.
+`await notebooks.contexts.followed()`. Enbox selects the first role it can
+verify and persists the complete group so a subsequent `follow()` can replace
+the active role.
+`forget()` removes only the local accepted source. `leave()` first deletes the
+exact owner-hosted role record and is available only when that role path
+authorizes recipient `co-delete`; a failed remote delete leaves the local
+source intact. Following the same owner context again atomically replaces its
+former role incarnation, including a change to another role in the group.
 
 Invitation discovery remains application data rather than a second generic
 inbox API. A removed source role fences future replication, but previously
