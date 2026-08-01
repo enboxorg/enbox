@@ -1130,9 +1130,8 @@ export class SyncEngineLevel implements SyncEngine {
     const normalized = normalizeFollowedSyncSourceInput(input);
     let source!: FollowedSyncSource;
     let activation!: FollowedSourceCommit;
-    await this.runExclusiveIdentityMutation(
-      normalized.sourceDid,
-      async (): Promise<void> => {
+    await this._lifecycle.runTransition(async (): Promise<void> => {
+      for (;;) {
         const previous = (await this.readFollowedSources()).filter(candidate =>
           SyncEngineLevel.sameFollowedContext(candidate, normalized)
         );
@@ -1151,12 +1150,33 @@ export class SyncEngineLevel implements SyncEngine {
           normalized.delegateDid,
         );
         await this.admitFollowedSource(resolution);
-        source = resolution.source;
-        activation = await this.commitFollowedSource(source);
-        await this.removeFollowedSourceLinksForSources(activation.replaced);
-      },
-      {},
-    );
+
+        let commit: FollowedSourceCommit | undefined;
+        await this._lifecycle.acquireSync();
+        try {
+          await this.runIdentityLifecycle(normalized.sourceDid, async (): Promise<void> => {
+            const current = (await this.readFollowedSources()).filter(candidate =>
+              SyncEngineLevel.sameFollowedContext(candidate, normalized)
+            );
+            if (
+              current.length !== previous.length ||
+              current.some(candidate => !previous.some(entry => followedSyncSourceEqual(candidate, entry)))
+            ) {
+              return;
+            }
+            commit = await this.commitFollowedSource(resolution.source);
+            await this.removeFollowedSourceLinksForSources(commit.replaced);
+          });
+        } finally {
+          this._lifecycle.releaseSync();
+        }
+        if (commit !== undefined) {
+          source = resolution.source;
+          activation = commit;
+          return;
+        }
+      }
+    });
     this.activateFollowedSource(source, normalized.delegateDid, activation.existing !== undefined);
     return source;
   }

@@ -143,11 +143,17 @@ export class RecordsReadHandler implements MethodHandler {
 
     if (message.descriptor.includeReplicationSupport === true) {
       try {
+        if (recordsRead.author === undefined || resolvedRole === undefined) {
+          throw new DwnError(
+            DwnErrorCode.RecordsReadReplicationSupportUnsupported,
+            'replication support requires an authenticated protocol-role invocation.'
+          );
+        }
         const support = await RecordsReadReplicationSupport.build({
-          deps         : this.deps,
+          deps      : this.deps,
           matchedRecordsWrite,
-          requester    : recordsRead.author!,
-          resolvedRole : resolvedRole!,
+          requester : recordsRead.author,
+          resolvedRole,
           tenant,
         });
         recordsReadReply.support = support.entries;

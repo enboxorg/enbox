@@ -11,6 +11,7 @@ import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
+import { deferred } from './utils/deferred.js';
 import { resolveFollowedSyncRoleRoot } from '../src/followed-sync-source.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
@@ -123,6 +124,93 @@ describe('SyncEngineLevel — followed sources', () => {
       protocolRole  : 'notebook/page/viewer',
       protocolPaths : ['notebook/page'],
     })).toEqual({ protocolPath: 'notebook/page', recordId: 'page-a' });
+  });
+
+  it('should prepare a followed source without holding the sync lock', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    sinon.stub(internal, 'resolveFollowedSource').callsFake(async () => {
+      expect(internal._lifecycle.isSyncInProgress).toBe(false);
+      return {
+        kind    : 'active',
+        batch   : supportBatch(followed.id),
+        dwnUrl  : 'https://owner.example.com',
+        dwnUrls : ['https://owner.example.com'],
+        source  : followed,
+      };
+    });
+    sinon.stub(internal, 'convergeRetiredFollowedSources').callsFake(async () => {
+      expect(internal._lifecycle.isSyncInProgress).toBe(false);
+    });
+    sinon.stub(internal, 'admitFollowedSource').callsFake(async () => {
+      expect(internal._lifecycle.isSyncInProgress).toBe(false);
+    });
+
+    await expect(engine.followSource(sourceInput(followed))).resolves.toEqual(followed);
+    expect(await engine.listFollowedSources()).toEqual([followed]);
+  });
+
+  it('should re-prepare when the followed-source catalog changes before commit', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const initial = source();
+    const concurrent = source('role-b', initial.contextId, 'notebook/collaborator');
+    const resolve = sinon.stub(internal, 'resolveFollowedSource').callsFake(
+      async (_input: FollowedSyncSourceInput, _shouldContinue: undefined, previous: FollowedSyncSource[]) => {
+        const followed = previous[0] ?? initial;
+        return {
+          kind    : 'active',
+          batch   : supportBatch(followed.id),
+          dwnUrl  : 'https://owner.example.com',
+          dwnUrls : ['https://owner.example.com'],
+          source  : followed,
+        };
+      }
+    );
+    sinon.stub(internal, 'convergeRetiredFollowedSources').resolves();
+    sinon.stub(internal, 'admitFollowedSource').callsFake(async () => {
+      if (resolve.callCount === 1) {
+        await internal._followedSourceStore.replace(concurrent);
+      }
+    });
+
+    await expect(engine.followSource(sourceInput(initial))).resolves.toEqual(concurrent);
+    expect(resolve.callCount).toBe(2);
+    expect(await engine.listFollowedSources()).toEqual([concurrent]);
+  });
+
+  it('should serialize a destructive lifecycle transition behind followed-source preparation', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const resolutionStarted = deferred();
+    const releaseResolution = deferred();
+    sinon.stub(internal, 'resolveFollowedSource').callsFake(async () => {
+      resolutionStarted.resolve();
+      await releaseResolution.promise;
+      return {
+        kind    : 'active',
+        batch   : supportBatch(followed.id),
+        dwnUrl  : 'https://owner.example.com',
+        dwnUrls : ['https://owner.example.com'],
+        source  : followed,
+      };
+    });
+    sinon.stub(internal, 'convergeRetiredFollowedSources').resolves();
+    sinon.stub(internal, 'admitFollowedSource').resolves();
+
+    const following = engine.followSource(sourceInput(followed));
+    await resolutionStarted.promise;
+    let clearCompleted = false;
+    const clearing = engine.clear().then((): void => { clearCompleted = true; });
+    await Promise.resolve();
+    expect(clearCompleted).toBe(false);
+    releaseResolution.resolve();
+
+    await expect(following).resolves.toEqual(followed);
+    await clearing;
+    expect(await engine.listFollowedSources()).toEqual([]);
   });
 
   it('should wake followed-context maintenance after live-sync startup', async () => {

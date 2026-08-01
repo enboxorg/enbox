@@ -161,6 +161,16 @@ export function testRecordsReadHandler(): void {
         });
         const anonymousReply = await dwn.processMessage(alice.did, anonymousRead.message);
         expect(anonymousReply.status.code).toBe(401);
+
+        const replicationRead = await RecordsRead.create({
+          filter                    : { recordId: audience.recordsWrite.message.recordId },
+          includeReplicationSupport : true,
+          protocolRole              : 'member',
+          signer                    : Jws.createSigner(bob),
+        });
+        const replicationReply = await dwn.processMessage(alice.did, replicationRead.message);
+        expect(replicationReply.status.code).toBe(400);
+        expect(replicationReply.status.detail).toContain(DwnErrorCode.RecordsReadReplicationSupportUnsupported);
       });
 
       it('should only allow delivery control reads by the recipient or writer', async () => {
