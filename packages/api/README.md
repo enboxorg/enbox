@@ -440,11 +440,14 @@ bounded to 1,000 changes; exceeding that bound closes and rejects the stream
 instead of retaining an unbounded backlog. Use this mode for append-only
 histories, and `observe()` for mutable collection truth.
 
-Any protocol declaring `roleGroups` automatically carries one protocol-isolated
-invitation inbox; dapps do not define another record type or register another
-protocol. `invite()` requires an existing member in the selected group and
-writes a signed offer to that member's own tenant. The offer contains only the
-context ID, declared group name, and small string-valued `preview` metadata.
+Every typed protocol containing an encrypted role audience carries the same
+protocol-isolated invitation inbox, derived only from its DWN definition.
+`roleGroups` remains application-only metadata and enables the typed invitation
+API without changing the installed definition. Dapps do not define another
+record type or register another protocol. `invite()` requires an existing member
+in the selected group and writes a signed offer to that member's own tenant. The
+offer contains only the context ID, declared group name, and small string-valued
+`preview` metadata.
 The authenticated owner comes from the record creator and the protocol comes
 from its signed descriptor; preview values are untrusted, non-sensitive UI
 text. The recipient's ordinary own-tenant sync makes the bounded inbox

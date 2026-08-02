@@ -243,6 +243,23 @@ describe('TypedProtocol API', () => {
         .not.toBe(protocol.definition.structure[CONTEXT_INVITATION_PATH]);
     });
 
+    it('derives the managed invitation inbox from the protocol definition instead of role groups', () => {
+      const withoutRoleGroups = defineProtocol(RoleGroupDefinition, RoleGroupCodecs);
+      const withRoleGroups = defineRoleGroups({ default: ['workspace/member'] });
+
+      expect(withoutRoleGroups.definition).toEqual(withRoleGroups.definition);
+      expect(withoutRoleGroups.codecs).toEqual(withRoleGroups.codecs);
+      expect(withoutRoleGroups.roleGroups).toEqual({});
+      expect(isTypedProtocol(withoutRoleGroups)).toBe(true);
+      expect(new TypedEnbox(dwnAlice, withoutRoleGroups).contexts).not.toHaveProperty('invitations');
+      expect(new TypedEnbox(dwnAlice, withRoleGroups).contexts).toHaveProperty('invitations');
+      expect(isTypedProtocol({
+        definition : RoleGroupDefinition,
+        codecs     : RoleGroupCodecs,
+        roleGroups : {},
+      })).toBe(false);
+    });
+
     it('rejects managed invitation fragments with altered semantics', () => {
       const protocol = defineRoleGroups({ default: ['workspace/member'] });
       const type = protocol.definition.types[CONTEXT_INVITATION_PATH];

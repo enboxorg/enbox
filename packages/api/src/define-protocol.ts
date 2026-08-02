@@ -86,7 +86,7 @@ export function defineProtocol<
     options === undefined ? {} : options.roleGroups,
   ) as RoleGroupsFromOptions<O>;
 
-  if (Object.keys(roleGroups).length === 0) {
+  if (!hasEncryptedRoleAudience(definition)) {
     return { definition, codecs, roleGroups } as TypedProtocol<D, C, RoleGroupsFromOptions<O>>;
   }
 
@@ -106,12 +106,12 @@ export function isTypedProtocol(value: unknown): value is TypedProtocol {
 
   try {
     assertTypedProtocolComponents(value.definition, value.codecs);
-    const roleGroups = prepareRoleGroups(value.definition as ProtocolDefinition, value.roleGroups);
+    prepareRoleGroups(value.definition as ProtocolDefinition, value.roleGroups);
     const carriesInvitations = hasContextInvitationProtocol(
       value.definition as ProtocolDefinition,
       value.codecs as RecordCodecMap,
     );
-    if (Object.keys(roleGroups).length > 0) {
+    if (hasEncryptedRoleAudience(value.definition as ProtocolDefinition)) {
       return carriesInvitations;
     }
     assertContextInvitationNameAvailable(value.definition as ProtocolDefinition);
@@ -119,6 +119,12 @@ export function isTypedProtocol(value: unknown): value is TypedProtocol {
   } catch {
     return false;
   }
+}
+
+/** Whether protocol semantics require the deterministic managed invitation path. */
+function hasEncryptedRoleAudience(definition: ProtocolDefinition): boolean {
+  return [...collectProtocolPaths(definition.structure)]
+    .some(protocolPath => isEncryptedRoleAudiencePath(definition, protocolPath));
 }
 
 /** Validate and freeze application role precedence without changing the DWN definition. */
