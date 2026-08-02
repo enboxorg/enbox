@@ -616,29 +616,6 @@ describe('TypedProtocol API', () => {
         expect(decodeCalls).toBe(3);
       });
 
-      it('should not treat class values from a custom codec as patchable records', async () => {
-        const definition = {
-          protocol  : 'https://example.com/protocols/date-codec',
-          published : true,
-          types     : {
-            event: { dataFormats: ['text/plain'] },
-          },
-          structure: { event: {} },
-        } as const satisfies ProtocolDefinition;
-        const codec: RecordCodec<Date> = {
-          encode(value: Date): EncodedRecordData {
-            return { data: new Blob([value.toISOString()]), dataFormat: 'text/plain' };
-          },
-          async decode(data): Promise<Date> {
-            return new Date(await data.text());
-          },
-        };
-        const calendar = new TypedEnbox(dwnAlice, defineProtocol(definition, { event: codec }));
-        const event = await calendar.records.create('event', { data: new Date('2026-07-24T00:00:00.000Z') });
-
-        await expect(event.patch({})).rejects.toThrow('current value to be a plain object');
-      });
-
     });
 
     describe('create() with $squash (#972)', () => {

@@ -92,9 +92,9 @@ function supportBatch(roleRecordId: string): RoleReplicationSupportBatch {
 
 async function storeFollowedSource(engine: SyncEngineLevel, followed: FollowedSyncSource): Promise<void> {
   const internal = engine as any;
-  const commit = await internal.commitFollowedSource(followed);
-  await internal.removeFollowedSourceLinksForSources(commit.replaced);
-  internal.activateFollowedSource(followed, undefined, commit.wasExisting);
+  const replaced = await internal.commitFollowedSource(followed);
+  await internal.removeFollowedSourceLinksForSources(replaced);
+  internal.activateFollowedSource(followed, undefined);
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeout = 1000): Promise<void> {
@@ -218,8 +218,14 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
     const followed = source();
-    sinon.stub(internal, 'resolveFollowedSource').callsFake(async () => {
+    const delegateDid = 'did:example:delegate';
+    await internal._identityStore.set(followed.actorDid, { delegateDid, protocols: 'all' });
+    sinon.stub(internal, 'resolveFollowedSource').callsFake(async (
+      _input: FollowedSyncSourceInput,
+      resolvedDelegateDid: string | undefined,
+    ) => {
       expect(internal._lifecycle.isSyncInProgress).toBe(false);
+      expect(resolvedDelegateDid).toBe(delegateDid);
       return {
         kind    : 'active',
         batch   : supportBatch(followed.id),
@@ -239,13 +245,29 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(await engine.listFollowedSources()).toEqual([followed]);
   });
 
+  it('should reject a followed source whose actor is not registered for sync', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const resolve = sinon.stub(engine as any, 'resolveFollowedSource');
+
+    await expect(engine.followSource(sourceInput())).rejects.toBeInstanceOf(FollowedSourceNotReadyError);
+
+    expect(resolve.notCalled).toBe(true);
+    expect(await engine.listFollowedSources()).toEqual([]);
+  });
+
   it('should re-prepare when the followed-source catalog changes before commit', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
     const initial = source();
     const concurrent = source('role-b', initial.contextId, 'notebook/collaborator');
+    await internal._identityStore.set(initial.actorDid, { protocols: 'all' });
     const resolve = sinon.stub(internal, 'resolveFollowedSource').callsFake(
-      async (_input: FollowedSyncSourceInput, _shouldContinue: undefined, previous: FollowedSyncSource[]) => {
+      async (
+        _input: FollowedSyncSourceInput,
+        _delegateDid: undefined,
+        _shouldContinue: undefined,
+        previous: FollowedSyncSource[],
+      ) => {
         const followed = previous[0] ?? initial;
         return {
           kind    : 'active',
@@ -272,6 +294,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
     const followed = source();
+    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
     const resolutionStarted = deferred();
     const releaseResolution = deferred();
     sinon.stub(internal, 'resolveFollowedSource').callsFake(async () => {
@@ -367,7 +390,7 @@ describe('SyncEngineLevel — followed sources', () => {
       role          : ROLES[0],
     });
 
-    await expect(internal.resolveFollowedSource(sourceInput())).resolves.toMatchObject({
+    await expect(internal.resolveFollowedSource(sourceInput(), undefined)).resolves.toMatchObject({
       kind   : 'active',
       source : { id: 'role-b', protocolRole: ROLES[0] },
     });
@@ -387,7 +410,7 @@ describe('SyncEngineLevel — followed sources', () => {
       protocolPaths : protocolPathsFor(ROLES[0]),
       role          : ROLES[0],
     });
-    await expect(internal.resolveFollowedSource(sourceInput())).resolves.toMatchObject({ kind: 'unknown' });
+    await expect(internal.resolveFollowedSource(sourceInput(), undefined)).resolves.toMatchObject({ kind: 'unknown' });
 
     resolveEndpoint.reset();
     resolveEndpoint.onFirstCall().resolves({
@@ -404,7 +427,7 @@ describe('SyncEngineLevel — followed sources', () => {
       protocolPaths : [...protocolPathsFor(ROLES[0]), 'notebook/page/comment'],
       role          : ROLES[0],
     });
-    await expect(internal.resolveFollowedSource(sourceInput())).resolves.toMatchObject({ kind: 'unknown' });
+    await expect(internal.resolveFollowedSource(sourceInput(), undefined)).resolves.toMatchObject({ kind: 'unknown' });
 
     resolveEndpoint.reset();
     resolveEndpoint.onFirstCall().resolves({
@@ -421,7 +444,7 @@ describe('SyncEngineLevel — followed sources', () => {
       protocolPaths : protocolPathsFor(ROLES[1]),
       role          : ROLES[1],
     });
-    await expect(internal.resolveFollowedSource(sourceInput())).resolves.toMatchObject({ kind: 'unknown' });
+    await expect(internal.resolveFollowedSource(sourceInput(), undefined)).resolves.toMatchObject({ kind: 'unknown' });
 
     resolveEndpoint.reset();
     resolveEndpoint.onFirstCall().resolves({ kind: 'absent', dwnUrl: endpoints[0] });
@@ -432,14 +455,14 @@ describe('SyncEngineLevel — followed sources', () => {
       protocolPaths : protocolPathsFor(ROLES[0]),
       role          : ROLES[0],
     });
-    const mixed = await internal.resolveFollowedSource(sourceInput());
+    const mixed = await internal.resolveFollowedSource(sourceInput(), undefined);
     expect(mixed).toMatchObject({ kind: 'unknown' });
     expect(mixed.error).toBeInstanceOf(FollowedSourceNotReadyError);
 
     resolveEndpoint.reset();
     resolveEndpoint.onFirstCall().resolves({ kind: 'absent', dwnUrl: endpoints[0] });
     resolveEndpoint.onSecondCall().resolves({ kind: 'absent', dwnUrl: endpoints[1] });
-    await expect(internal.resolveFollowedSource(sourceInput())).resolves.toEqual({ kind: 'absent', dwnUrls: endpoints });
+    await expect(internal.resolveFollowedSource(sourceInput(), undefined)).resolves.toEqual({ kind: 'absent', dwnUrls: endpoints });
   });
 
   it('should start a new acceptance when the current protocol changes an active role scope', async () => {
@@ -455,7 +478,7 @@ describe('SyncEngineLevel — followed sources', () => {
       role          : previous.protocolRole,
     });
 
-    const resolution = await internal.resolveFollowedSource(sourceInput(previous), undefined, [previous]);
+    const resolution = await internal.resolveFollowedSource(sourceInput(previous), undefined, undefined, [previous]);
 
     expect(resolution).toMatchObject({
       kind   : 'active',
@@ -527,7 +550,7 @@ describe('SyncEngineLevel — followed sources', () => {
       const replacementLink = (await secondInternal.replicationLinkStore.getLinksForTenant(SOURCE_DID))[0];
       const replacementLinkKey = linkKey(replacementLink);
 
-      await first.forgetFollowedContext(replacement);
+      await first.deleteFollowedSource(replacement);
       await waitFor(async () => events.includes(undefined) &&
         !secondInternal._linkControllers.has(replacementLinkKey) &&
         (await secondInternal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).length === 0);
@@ -558,7 +581,7 @@ describe('SyncEngineLevel — followed sources', () => {
           events.push(event.followedSourceId);
         }
       });
-      await first.forgetFollowedContext(followed);
+      await first.deleteFollowedSource(followed);
       expect((second as any)._linkControllers.has(key)).toBe(true);
 
       await (second as any).reconcileFollowedSources(new SyncRuntime());
@@ -670,9 +693,29 @@ describe('SyncEngineLevel — followed sources', () => {
       await operation();
     });
 
-    await internal.removeObsoleteFollowedSourceLinks([]);
+    await internal.removeObsoleteFollowedSourceLinks();
 
     expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toHaveLength(1);
+  });
+
+  it('should remove only the obsolete scope when one role record has two durable links', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const currentTarget = targetFor(followed);
+    const obsoleteTarget: SyncTarget = {
+      ...currentTarget,
+      scope: { ...currentTarget.scope, protocolPaths: ['notebook'] },
+    };
+    await internal._followedSourceStore.replace(followed);
+    await createRoleLink(engine, currentTarget);
+    await createRoleLink(engine, obsoleteTarget);
+
+    await internal.removeObsoleteFollowedSourceLinks();
+
+    expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
+      scope: currentTarget.scope,
+    }]);
   });
 
   it('should publish the durable source that wins while catalog cleanup is pending', async () => {
@@ -811,17 +854,6 @@ describe('SyncEngineLevel — followed sources', () => {
     runtime.dispose();
   });
 
-  it('should let forget remove a followed source installed after its handle was checked', async () => {
-    const engine = new SyncEngineLevel({ db });
-    const previous = source('role-a');
-    const replacement = source('role-b', previous.contextId, 'notebook/collaborator');
-    await (engine as any)._followedSourceStore.replace(replacement);
-
-    await engine.forgetFollowedContext(previous);
-
-    expect(await engine.listFollowedSources()).toEqual([]);
-  });
-
   it('should not let an exact stale-source deletion remove its replacement', async () => {
     const engine = new SyncEngineLevel({ db });
     const previous = source('role-a');
@@ -928,9 +960,9 @@ describe('SyncEngineLevel — followed sources', () => {
       protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
     };
 
-    const commit = await internal.commitFollowedSource(changed);
-    expect(commit.replaced).toEqual([followed]);
-    await internal.removeFollowedSourceLinksForSources(commit.replaced);
+    const replaced = await internal.commitFollowedSource(changed);
+    expect(replaced).toEqual([followed]);
+    await internal.removeFollowedSourceLinksForSources(replaced);
 
     expect(await engine.getFollowedSource(followed.id)).toEqual(changed);
     expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toHaveLength(0);
@@ -992,10 +1024,18 @@ describe('SyncEngineLevel — followed sources', () => {
     ]);
   });
 
-  it('should pause before advancing past a newly dead-lettered role-feed entry', async () => {
+  it('should pause before advancing past a role-feed entry that cannot be admitted', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const target = targetFor(followed);
+    const message = {
+      descriptor: {
+        interface        : 'Protocols',
+        method           : 'Configure',
+        messageTimestamp : '2026-07-21T00:00:00.000000Z',
+      },
+    } as any;
+    const messageCid = await Message.getCid(message);
     const previousCheckpoint = { epoch: 'epoch', position: '1', streamId: 'stream', messageCid: 'cid-before' };
     await (engine as any)._followedSourceStore.replace(followed);
     const link = await createRoleLink(engine, target);
@@ -1003,52 +1043,23 @@ describe('SyncEngineLevel — followed sources', () => {
     await (engine as any).replicationLinkStore.persistCheckpoint(link, 'pull');
     stubRemoteQuery(engine, {
       status       : { code: 200 },
-      entries      : [{ messageCid: 'cid-dead-lettered' }],
-      cursor       : { epoch: 'epoch', position: '2', streamId: 'stream', messageCid: 'cid-dead-lettered' },
-      drained      : true,
-      roleRecordId : followed.id,
-    });
-    sinon.stub(engine as any, 'admitRemoteFeedEntry').resolves({ kind: 'dead-lettered' });
-
-    await expect((engine as any).reconcileTarget(target, { direction: 'pull' }))
-      .rejects.toThrow('role feed message cid-dead-lettered is dead-lettered');
-
-    expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
-      pull   : { contiguousAppliedToken: previousCheckpoint },
-      status : 'paused',
-    }]);
-  });
-
-  it('should pause before advancing past an already-known role-feed dead letter', async () => {
-    const engine = new SyncEngineLevel({ db });
-    const followed = source();
-    const target = targetFor(followed);
-    const previousCheckpoint = { epoch: 'epoch', position: '1', streamId: 'stream', messageCid: 'cid-before' };
-    const messageCid = 'cid-known-dead-letter';
-    await (engine as any)._followedSourceStore.replace(followed);
-    const link = await createRoleLink(engine, target);
-    link.pull.contiguousAppliedToken = previousCheckpoint;
-    await (engine as any).replicationLinkStore.persistCheckpoint(link, 'pull');
-    await (engine as any)._deadLetterStore.put({
-      errorDetail    : 'admission failed',
-      failedAt       : '2026-08-02T00:00:00.000Z',
-      messageCid,
-      remoteEndpoint : target.dwnUrl,
-      tenantDid      : target.did,
-    });
-    stubRemoteQuery(engine, {
-      status       : { code: 200 },
-      entries      : [{ messageCid }],
+      entries      : [{ isLatestBaseState: true, message, messageCid }],
       cursor       : { epoch: 'epoch', position: '2', streamId: 'stream', messageCid },
       drained      : true,
       roleRecordId : followed.id,
     });
-    const admit = sinon.stub(engine as any, 'admitRemoteFeedEntry').rejects(new Error('must not retry a dead letter'));
+    (engine as any)._agent.dwn = {
+      applyReplicatedMessage: sinon.stub().resolves({ kind: 'Invalid', reason: 'bad signature' }),
+    };
 
     await expect((engine as any).reconcileTarget(target, { direction: 'pull' }))
-      .rejects.toThrow(`role feed message ${messageCid} is dead-lettered`);
+      .rejects.toThrow(`role feed message ${messageCid} could not be admitted`);
 
-    expect(admit.notCalled).toBe(true);
+    expect(await (engine as any)._deadLetterStore.get(
+      target.did,
+      messageCid,
+      target.dwnUrl,
+    )).toBeUndefined();
     expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
       pull   : { contiguousAppliedToken: previousCheckpoint },
       status : 'paused',

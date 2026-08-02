@@ -178,8 +178,7 @@ export class SyncFeedConvergenceManager {
   }
 
   private static deadLetterMatchesScope(entry: DeadLetterEntry, scope: SyncScope): boolean {
-    return scope.kind !== 'context' &&
-      (entry.protocol === undefined || syncScopeCoversProtocol(scope, entry.protocol));
+    return entry.protocol === undefined || syncScopeCoversProtocol(scope, entry.protocol);
   }
 
   private static failureSignature(

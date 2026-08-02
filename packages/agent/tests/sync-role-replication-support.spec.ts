@@ -16,7 +16,6 @@ import {
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyAgreementAlgorithm,
-  Message,
   ProtocolsConfigure,
   RecordsDelete,
   RecordsRead,
@@ -58,6 +57,32 @@ describe('readRoleReplicationSupport', () => {
     expect(result.dependencies.map(entry => entry.message)).toEqual([
       fixture.configure.message,
       fixture.role.message,
+    ]);
+  });
+
+  it('represents an updated role initial write as an ordinary support entry', async () => {
+    const fixture = await createFixture();
+    const initialRole = fixture.role;
+    const updatedData = new TextEncoder().encode('updated viewer');
+    fixture.role = await RecordsWrite.createFrom({
+      data                : updatedData,
+      recordsWriteMessage : initialRole.message,
+      signer              : ownerSigner,
+    });
+    fixture.support[1].isLatestBaseState = false;
+    delete fixture.support[1].encodedData;
+    fixture.support.push(await supportEntry(fixture.role, true, updatedData));
+
+    const result = await readFixture(fixture);
+
+    expect(result.dependencies.map(entry => entry.message)).toEqual([
+      fixture.configure.message,
+      initialRole.message,
+      fixture.role.message,
+    ]);
+    expect(result.dependencies.slice(1).map(entry => entry.bufferedData)).toEqual([
+      undefined,
+      updatedData,
     ]);
   });
 
@@ -164,7 +189,6 @@ describe('readRoleReplicationSupport', () => {
       protocol       : PROTOCOL,
       protocolPath   : 'notebook',
       protocolRole   : ROLE_PATH,
-      recordId       : fixture.root.message.recordId,
       sourceDid      : owner.uri,
     })).rejects.toBeInstanceOf(FollowedSourceRoleAbsentError);
 
@@ -183,7 +207,6 @@ describe('readRoleReplicationSupport', () => {
       protocol       : PROTOCOL,
       protocolPath   : 'notebook',
       protocolRole   : ROLE_PATH,
-      recordId       : fixture.root.message.recordId,
       sourceDid      : owner.uri,
     })).rejects.not.toBeInstanceOf(FollowedSourceRoleAbsentError);
   });
@@ -277,7 +300,6 @@ describe('readRoleReplicationSupport', () => {
     fixture.support.splice(1, 0, {
       isLatestBaseState : true,
       message           : current.message,
-      messageCid        : await Message.getCid(current.message),
     });
 
     const result = await readFixture(fixture);
@@ -298,7 +320,6 @@ describe('readRoleReplicationSupport', () => {
     fixture.support.splice(1, 0, {
       isLatestBaseState : true,
       message           : extra.message,
-      messageCid        : await Message.getCid(extra.message),
     });
 
     await expect(readFixture(fixture)).rejects.toThrow('exactly one current protocol configuration');
@@ -332,7 +353,6 @@ describe('readRoleReplicationSupport', () => {
     fixture.support.splice(1, 0, {
       isLatestBaseState : false,
       message           : contextRoot.message,
-      messageCid        : await Message.getCid(contextRoot.message),
     });
 
     const result = await readRoleReplicationSupport({
@@ -342,9 +362,8 @@ describe('readRoleReplicationSupport', () => {
       dwnUrl         : 'https://owner.example.com',
       permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
       protocol       : PROTOCOL,
-      protocolPath   : 'notebook/page',
+      protocolPath   : fixture.root.message.descriptor.protocolPath!,
       protocolRole   : ROLE_PATH,
-      recordId       : page.message.recordId,
       sourceDid      : owner.uri,
     });
 
@@ -477,7 +496,6 @@ describe('readRoleReplicationSupport', () => {
     fixture.support[0] = {
       isLatestBaseState : true,
       message           : configure.message,
-      messageCid        : await Message.getCid(configure.message),
     };
 
     await expect(readFixture(fixture)).rejects.toBeInstanceOf(FollowedSourceNotReadyError);
@@ -539,7 +557,6 @@ describe('readRoleReplicationSupport', () => {
         {
           isLatestBaseState : true,
           message           : configure.message,
-          messageCid        : await Message.getCid(configure.message),
         },
         await supportEntry(role, true, roleData),
       ],
@@ -557,9 +574,8 @@ describe('readRoleReplicationSupport', () => {
       dwnUrl         : 'https://owner.example.com',
       permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
       protocol       : PROTOCOL,
-      protocolPath   : 'notebook',
+      protocolPath   : fixture.root.message.descriptor.protocolPath!,
       protocolRole   : ROLE_PATH,
-      recordId       : fixture.root.message.recordId,
       sourceDid      : owner.uri,
     });
   }
@@ -643,6 +659,5 @@ async function supportEntry(
     encodedData : Encoder.bytesToBase64Url(data),
     isLatestBaseState,
     message     : record.message,
-    messageCid  : await Message.getCid(record.message),
   };
 }

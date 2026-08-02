@@ -239,10 +239,8 @@ export type RecordsReadReply = GenericMessageReply & {
  * @internal
  */
 export type RecordsReadReplicationSupportEntry = {
-  messageCid: string;
-  isLatestBaseState?: boolean;
+  isLatestBaseState: boolean;
   message: GenericMessage;
-  initialWrite?: RecordsWriteMessage;
   encodedData?: string;
 };
 

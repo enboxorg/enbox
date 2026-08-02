@@ -335,6 +335,14 @@ export function testEndToEndScenarios(): void {
         recipient       : bob.did,
       });
       expect((await dwn.processMessage(alice.did, participant.message, { dataStream: participant.dataStream })).status.code).toBe(202);
+      const updatedParticipant = await TestDataGenerator.generateFromRecordsWrite({
+        author        : alice,
+        data          : Encoder.objectToBytes({ role: 'collaborator', revision: 2 }),
+        existingWrite : participant.recordsWrite,
+      });
+      expect((await dwn.processMessage(alice.did, updatedParticipant.message, {
+        dataStream: updatedParticipant.dataStream,
+      })).status.code).toBe(202);
 
       const roleRuleSet = ((aliceDefinition.structure.community as ProtocolRuleSet)
         .gatedChannel as ProtocolRuleSet).participant as ProtocolRuleSet;
@@ -538,6 +546,7 @@ export function testEndToEndScenarios(): void {
         'community',
         'community/gatedChannel',
         rolePath,
+        rolePath,
         '$encryption/audience',
         '$encryption/delivery',
         '$encryption/audience',
@@ -558,7 +567,8 @@ export function testEndToEndScenarios(): void {
         true,
       ]);
       expect(bootstrapReply.support?.slice(2, 4).every((entry): boolean => entry.encodedData === undefined)).toBe(true);
-      expect(bootstrapReply.support?.slice(4).every((entry): boolean => entry.encodedData !== undefined)).toBe(true);
+      expect(bootstrapReply.support?.[4].encodedData).toBeUndefined();
+      expect(bootstrapReply.support?.slice(5).every((entry): boolean => entry.encodedData !== undefined)).toBe(true);
       const rootBytes = await DataStream.toBytes(bootstrapReply.entry!.data!);
 
       await messageStore.clear();
@@ -566,9 +576,6 @@ export function testEndToEndScenarios(): void {
       await resumableTaskStore.clear();
 
       for (const entry of bootstrapReply.support!) {
-        if (entry.initialWrite !== undefined) {
-          expect((await dwn.applyReplicatedMessage(alice.did, entry.initialWrite)).kind).toBe('Applied');
-        }
         const dataStream = entry.encodedData === undefined
           ? undefined
           : DataStream.fromBytes(Encoder.base64UrlToBytes(entry.encodedData));

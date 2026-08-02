@@ -84,6 +84,17 @@ describe('TypedEnbox.records.patch()', () => {
     expect(current.value.calledOnce).toBe(true);
   });
 
+  it('rejects a decoded class value instead of treating it as a patchable object', async () => {
+    const current = fakeRecord({ title: 'before' });
+    current.value.resolves(new Date('2026-07-24T00:00:00.000Z'));
+    const readRecordForMutation = sinon.stub().resolves(readReply(current.record));
+    const typed = typedWithReads(readRecordForMutation);
+
+    await expect(typed.records.patch('note', 'note-id', { title: 'after' }))
+      .rejects.toThrow('current value to be a plain object');
+    expect(current.update.called).toBe(false);
+  });
+
   it('re-reads once and re-evaluates a producer against the fresh value after a canonical conflict', async () => {
     const conflict = new DwnResponseError('Record.update', { code: 409, detail: 'Conflict' });
     const stale = fakeRecord({ title: 'stale' });

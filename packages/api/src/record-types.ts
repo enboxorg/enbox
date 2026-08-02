@@ -157,8 +157,9 @@ export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.
  */
 export type RecordUpdateParams<T = unknown> = {
   /**
-   * The complete replacement payload for the record. Use {@link Record.patch}
-   * when changing only part of a JSON object.
+   * The complete replacement payload for the record. Use
+   * `TypedEnbox.records.patch(path, recordId, patch)` when changing only part
+   * of a JSON object.
    */
   data?: T;
 

@@ -693,7 +693,7 @@ class RemoteApplyPushContext {
             return { kind: 'failed', failure: result.failure };
         }
       }
-      pending = await dedupeEntries(retry);
+      pending = await dedupeSyncMessageEntries(retry);
     }
 
     if (pending.length > 0) {
@@ -1143,7 +1143,7 @@ class RemoteApplyPushContext {
       entries.push(await this.entryForRecordsQueryMessage(message, encodedData));
     }
 
-    const dedupedEntries = await dedupeEntries(entries);
+    const dedupedEntries = await dedupeSyncMessageEntries(entries);
     await this.rememberEntries(dedupedEntries);
     return dedupedEntries;
   }
@@ -1246,7 +1246,7 @@ async function resolvePushPayload(entry: SyncMessageEntry): Promise<Blob | Reada
   return entry.dataStream;
 }
 
-async function dedupeEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {
+export async function dedupeSyncMessageEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {
   const byCid = new Map<string, SyncMessageEntry>();
   for (const entry of entries) {
     byCid.set(await getMessageCid(entry.message), entry);

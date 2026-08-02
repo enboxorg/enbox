@@ -5,7 +5,6 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type { RecordData } from './record-data.js';
-import type { RecordPatch } from './record-patch.js';
 
 import type {
   DwnDateSort,
@@ -43,7 +42,6 @@ import { Convert, isEmptyObject, removeUndefinedProperties, Stream } from '@enbo
 
 import { captureRecordDataAccess } from './record-data-access.js';
 import { createRecordData } from './record-data.js';
-import { mergeRecordPatch } from './record-patch.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { dataToBlob, SendCache } from './utils.js';
 import { encodeRecordValue, getRecordCodecBinding } from './record-codec.js';
@@ -100,7 +98,7 @@ export type MaterializedRecord<T = unknown> = Readonly<{
  *       message (create, update, or delete) for this logical record.
  *
  * @typeParam T - The application value decoded by {@link Record.value} and
- *   preserved by update and patch operations.
+ *   preserved by update operations.
  *
  * @beta
  */
@@ -721,52 +719,6 @@ export class Record<T = unknown> implements RecordModel {
     });
     updateMessage.dataFormat = encoded.dataFormat;
     return encoded.data;
-  }
-
-  /**
-   * Partially update the record's plain-object value with a read-merge-write cycle.
-   *
-   * {@link Record.update} REPLACES the record's data wholesale — for encrypted
-   * records the agent requires full payloads, so passing a partial object to
-   * `update({ data })` silently drops every omitted field. `patch()` is the
-   * supported partial-update idiom: it decodes typed records through their
-   * protocol codec (and raw records as JSON), shallow-merges the given fields
-   * over that value, and writes the FULL merged payload back through
-   * `update()`.
-   *
-   * Merge semantics (shallow, top-level keys only):
-   * - a key with a non-`null` value replaces the current value — nested
-   *   objects are replaced wholesale, not deep-merged;
-   * - a key with an explicit `null` value DELETES the field from the payload
-   *   (for optional fields);
-   * - a key with an `undefined` value is ignored (no change).
-   *
-   * CAUTION — read-merge-write race: there is no compare-and-swap primitive.
-   * Another writer landing an update between this method's read and its write
-   * is overwritten by the merged payload (last-writer-wins at the DWN layer).
-   *
-   * @param data - The partial fields to merge over the current JSON payload.
-   * @param options - Optional {@link RecordUpdateParams} (minus `data`)
-   *   forwarded to the underlying `update()` call — e.g. `tags`, `from`,
-   *   `protocolRole`.
-   * @returns This record with its accepted state applied.
-   * @throws `Error` if the record has been deleted, or if the decoded value
-   *   is not a plain object (arrays, primitives, and class instances cannot
-   *   be merged).
-   *
-   * @beta
-   */
-  async patch(
-    data: RecordPatch<T>,
-    options: Omit<RecordUpdateParams<T>, 'data'> = {},
-  ): Promise<Record<T>> {
-    if (this.deleted) {
-      throw new Error('Record: Cannot patch a deleted record.');
-    }
-
-    const binding = getRecordCodecBinding(this);
-    const currentData: unknown = binding === undefined ? await this.data.json() : await this.value();
-    return this.update({ ...options, data: mergeRecordPatch(currentData, data) });
   }
 
   /**

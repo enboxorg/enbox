@@ -17,7 +17,7 @@ export type RecordPatch<T = unknown> = unknown extends T
 /** @internal Apply the canonical shallow patch semantics to one decoded value. */
 export function mergeRecordPatch<T>(current: unknown, patch: RecordPatch<T>): T {
   if (!isPlainRecord(current)) {
-    throw new Error('Record: patch() requires the record\'s current value to be a plain object.');
+    throw new Error('TypedEnbox.records.patch requires the current value to be a plain object.');
   }
 
   const merged: globalThis.Record<string, unknown> = { ...current };

@@ -64,7 +64,6 @@ declare const typed: TypedEnbox<
 const recordData: RecordData = record.data;
 const payload: Promise<TaskData> = record.value();
 const rawPayload: Promise<unknown> = untypedRecord.data.json();
-const rawPatch: Promise<Record<unknown>> = untypedRecord.patch({ arbitrary: true });
 // @ts-expect-error record handles preserve their existing representation.
 untypedRecord.update({ dataFormat: 'text/plain' });
 const replacement: RecordUpdateParams<TaskData> = {
@@ -74,7 +73,6 @@ const patch: RecordPatch<TaskData> = { note: null };
 void recordData;
 void payload;
 void rawPayload;
-void rawPatch;
 void replacement;
 void patch;
 
@@ -83,20 +81,10 @@ record.value<{ wrong: true }>();
 
 // @ts-expect-error update data is a complete replacement payload.
 record.update({ data: { title: 'missing required completed field' } });
-
-// @ts-expect-error required fields cannot be deleted by a patch.
-record.patch({ title: null });
-
-// @ts-expect-error patches cannot introduce fields outside the payload type.
-record.patch({ missing: true });
-
-declare const attachment: Record<Blob>;
-// @ts-expect-error known binary payloads cannot use the JSON-object patch operation.
-attachment.patch({});
+// @ts-expect-error partial updates belong to TypedEnbox.records.patch().
+record.patch({ completed: true });
 
 declare const nullableRecord: Record<{ value: string | null }>;
-// @ts-expect-error null is the patch deletion sentinel and cannot delete a required field.
-nullableRecord.patch({ value: null });
 nullableRecord.update({ data: { value: null } });
 
 async function assertCanonicalRecordFlow(): Promise<void> {

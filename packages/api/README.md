@@ -286,9 +286,10 @@ await changes.close();
 
 Typed record operations return application values directly: `create()` returns
 a `Record`, `query()` returns a `RecordPage`, `count()` returns a number, and
-`read()` returns a `Record` or `undefined`. `Record.update()` and `patch()`
-return the same updated handle; successful delete, store, import, and send
-operations resolve without a value. Other non-success DWN statuses throw a
+`read()` returns a `Record` or `undefined`. `Record.update()` mutates and returns
+the same handle, while `TypedEnbox.records.patch()` returns the freshly read and
+updated record. Successful delete, store, import, and send operations resolve
+without a value. Other non-success DWN statuses throw a
 `DwnResponseError` with the original status:
 
 ```ts
@@ -307,7 +308,8 @@ Returned records are canonical `Record<T>` instances. `value()` decodes the
 typed application value through the protocol codec, while `data.json()`,
 `data.text()`, `data.bytes()`, `data.blob()`, and `data.stream()` expose the
 raw representation without wrapping a second record object. `update({ data })`
-replaces the full payload; use `patch()` for a shallow partial object update.
+replaces the full payload; use `records.patch(path, recordId, patch)` for
+a shallow partial object update with one bounded conflict retry.
 
 `observe()` watches the connected tenant by default; pass `from` and, when
 required, `protocolRole` to watch a foreign tenant. Subscription events are
@@ -544,13 +546,14 @@ it. Enbox removes the accepted context only when every endpoint proves every
 candidate role absent.
 An unreachable, lagging, malformed, or disagreeing endpoint retains the last
 local context and never implies removal.
-`forget()` removes the current local context even if its role changes during
-the operation. `leave()` sends one signed deletion to every advertised owner
-DWN, stores the tombstone in the local replica, and then retires only that
-acceptance; an endpoint without a durable tombstone leaves the local source
-intact for retry. It is available only when that role path authorizes recipient
-`co-delete`. Following the same owner context again after removal creates a
-fresh local acceptance, even when the remote role-record ID is unchanged.
+`forget()` removes only this exact accepted source locally; a retained handle
+cannot remove a replacement acceptance. `leave()` sends one signed deletion to
+every advertised owner DWN, stores the tombstone in the local replica, and then
+retires only that acceptance; an endpoint without a durable tombstone leaves the
+local source intact for retry. It is available only when that role path authorizes
+recipient `co-delete`. Following the same owner context again after removal
+creates a fresh local acceptance, even when the remote role-record ID is
+unchanged.
 
 A removed source role fences future replication, but previously learned
 plaintext remains local; forward-secure member removal requires audience-key

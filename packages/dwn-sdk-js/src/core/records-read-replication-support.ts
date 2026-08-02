@@ -106,7 +106,10 @@ export class RecordsReadReplicationSupport {
       }
     }
 
-    await RecordsReadReplicationSupport.append(entries, roleRecord, true, true, roleInitialWrite);
+    if (roleInitialWrite !== undefined) {
+      await RecordsReadReplicationSupport.append(entries, roleInitialWrite, false, false);
+    }
+    await RecordsReadReplicationSupport.append(entries, roleRecord, true, true);
 
     for (const { audienceRecord, delivery } of audienceDependencies) {
       await RecordsReadReplicationSupport.append(entries, audienceRecord, true, true);
@@ -304,7 +307,6 @@ export class RecordsReadReplicationSupport {
     storedMessage: GenericMessage,
     isLatestBaseState: boolean,
     includeData: boolean,
-    initialWrite?: RecordsWriteMessage,
   ): Promise<void> {
     const { message, encodedData } = Messages.detachEncodedData(storedMessage);
     if (includeData && Records.isRecordsWrite(storedMessage) && encodedData === undefined) {
@@ -313,17 +315,9 @@ export class RecordsReadReplicationSupport {
       );
     }
 
-    const messageCid = await Message.getCid(message);
-    if (entries.some((entry): boolean => entry.messageCid === messageCid)) {
-      return;
-    }
     entries.push({
-      messageCid,
       isLatestBaseState,
       message,
-      initialWrite: initialWrite === undefined
-        ? undefined
-        : Messages.detachEncodedData(initialWrite).message as RecordsWriteMessage,
       encodedData: includeData ? encodedData : undefined,
     });
   }

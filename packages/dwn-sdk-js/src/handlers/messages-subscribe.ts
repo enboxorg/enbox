@@ -1,10 +1,12 @@
+import type { GuardedSubscriptionHandler } from './guarded-subscription.js';
 import type { MessagesRoleAuthorizationState } from '../core/messages-role-authorization.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
-import type { EventSubscription, ProgressGapInfo, ProgressToken, ReplicationFeedReader, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesFilter, MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
+import type { ProgressGapInfo, ProgressToken, ReplicationFeedReader, SubscriptionEvent, SubscriptionListener } from '../types/subscriptions.js';
 
 import { authenticate } from '../core/auth.js';
+import { createGuardedSubscriptionHandler } from './guarded-subscription.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
@@ -25,11 +27,6 @@ type MessagesSubscribeAuthorization =
     permissionGrants: PermissionGrant[];
     metadataOnly: boolean;
   };
-
-type GuardedSubscriptionHandler = {
-  listener: SubscriptionListener;
-  setSubscription(subscription: EventSubscription): Promise<void>;
-};
 
 export class MessagesSubscribeHandler implements MethodHandler {
 
@@ -221,123 +218,60 @@ export class MessagesSubscribeHandler implements MethodHandler {
       };
     }
 
-    let subscription: EventSubscription | undefined;
-    let closeRequested = false;
-    let terminalErrorEmitted = false;
-    let deliveryQueue: Promise<void> = Promise.resolve();
-
-    const closeSubscription = (): void => {
-      if (closeRequested) {
-        return;
-      }
-      closeRequested = true;
-      Promise.resolve(subscription?.close()).catch(() => {});
-    };
-
-    const emitTerminalDeliveryError = (cursor: SubscriptionEvent['cursor'], code: DwnErrorCode, detail: string): void => {
-      if (terminalErrorEmitted) {
-        return;
-      }
-      terminalErrorEmitted = true;
-      subscriptionHandler({
-        type  : 'error',
-        cursor,
-        error : {
-          code,
-          detail,
-        },
-      });
-    };
-
     // Deliberately do not cache delivery authorization here. Subscribe-open
     // authorization validates static grant shape and filter scope; this per-event
     // check revalidates dynamic grant state so expiry or revocation stops delivery
     // before the next event is forwarded. Future throughput optimizations should
     // split static and dynamic checks explicitly and document any bounded staleness
     // introduced by caching revocation lookups.
-    const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {
-      try {
-        if (authorization.kind === 'role') {
-          await MessagesRoleAuthorization.authorizeDelivery({
-            authorization          : authorization.state,
-            authorizationTimestamp : Time.getCurrentTimestamp(),
-            tenant,
-            validationStateReader  : deps.validationStateReader,
-          });
-        } else {
-          await MessagesGrantAuthorization.authorizeSubscribeDelivery({
-            messagesSubscribeMessage : messagesSubscribe.message,
-            expectedGrantor          : authorization.expectedGrantor,
-            expectedGrantee          : authorization.expectedGrantee,
-            permissionGrants         : authorization.permissionGrants,
-            validationStateReader    : deps.validationStateReader,
-            deliveryTimestamp        : Time.getCurrentTimestamp(),
-          });
+    return createGuardedSubscriptionHandler({
+      listener     : subscriptionHandler,
+      processEvent : async (subMessage, fail): Promise<SubscriptionEvent | undefined> => {
+        try {
+          if (authorization.kind === 'role') {
+            await MessagesRoleAuthorization.authorizeDelivery({
+              authorization          : authorization.state,
+              authorizationTimestamp : Time.getCurrentTimestamp(),
+              tenant,
+              validationStateReader  : deps.validationStateReader,
+            });
+          } else {
+            await MessagesGrantAuthorization.authorizeSubscribeDelivery({
+              messagesSubscribeMessage : messagesSubscribe.message,
+              expectedGrantor          : authorization.expectedGrantor,
+              expectedGrantee          : authorization.expectedGrantee,
+              permissionGrants         : authorization.permissionGrants,
+              validationStateReader    : deps.validationStateReader,
+              deliveryTimestamp        : Time.getCurrentTimestamp(),
+            });
+          }
+        } catch (error) {
+          if (error instanceof DwnError) {
+            fail(
+              DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
+              'subscription authorization failed during delivery',
+            );
+          } else {
+            fail(
+              DwnErrorCode.MessagesSubscribeDeliveryFailed,
+              'subscription delivery failed',
+            );
+          }
+          return undefined;
         }
-      } catch (error) {
-        if (error instanceof DwnError) {
-          emitTerminalDeliveryError(
-            subMessage.cursor,
-            DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
-            'subscription authorization failed during delivery',
-          );
-        } else {
-          emitTerminalDeliveryError(
-            subMessage.cursor,
-            DwnErrorCode.MessagesSubscribeDeliveryFailed,
-            'subscription delivery failed',
-          );
+
+        if (authorization.kind === 'role' && MessagesRoleAuthorization.isRoleWakeEvent(subMessage, authorization.state)) {
+          return undefined;
         }
-        closeSubscription();
-        return;
-      }
 
-      if (authorization.kind === 'role' && MessagesRoleAuthorization.isRoleWakeEvent(subMessage, authorization.state)) {
-        return;
-      }
-
-      const metadataOnly = authorization.kind === 'delegate'
-        ? authorization.metadataOnly
-        : authorization.state.metadataOnly;
-      if (!closeRequested) {
-        subscriptionHandler(metadataOnly
+        const metadataOnly = authorization.kind === 'delegate'
+          ? authorization.metadataOnly
+          : authorization.state.metadataOnly;
+        return metadataOnly
           ? MessagesSubscribeHandler.toMetadataOnlyEvent(subMessage)
-          : subMessage);
-      }
-    };
-
-    const deliverQueuedMessage = async (subMessage: SubscriptionMessage): Promise<void> => {
-      if (closeRequested) {
-        return;
-      }
-
-      if (subMessage.type !== 'event') {
-        subscriptionHandler(subMessage);
-        return;
-      }
-
-      await authorizeAndDeliverEvent(subMessage);
-    };
-
-    const enqueueDelivery = (subMessage: SubscriptionMessage): void => {
-      deliveryQueue = deliveryQueue
-        .then(() => deliverQueuedMessage(subMessage))
-        .catch(() => {});
-    };
-
-    const listener: SubscriptionListener = (subMessage: SubscriptionMessage): void => {
-      enqueueDelivery(subMessage);
-    };
-
-    return {
-      listener,
-      setSubscription: async (eventSubscription: EventSubscription): Promise<void> => {
-        subscription = eventSubscription;
-        if (closeRequested) {
-          await eventSubscription.close();
-        }
+          : subMessage;
       },
-    };
+    });
   }
 
   private static toMetadataOnlyEvent(event: SubscriptionEvent): SubscriptionEvent {

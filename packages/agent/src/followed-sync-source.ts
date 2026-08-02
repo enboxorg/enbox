@@ -22,10 +22,7 @@ export type FollowedSyncSource = {
 export type FollowedSyncSourceInput = Omit<
   FollowedSyncSource,
   'acceptanceId' | 'id' | 'protocolPaths' | 'protocolRole'
-> & {
-  /** Current delegate used only to bootstrap this follow operation. */
-  delegateDid?: string;
-};
+>;
 
 /** One independently decoded entry returned by a {@link FollowedSyncSourceStore}. */
 export type FollowedSyncSourceStoreEntry = {
@@ -59,9 +56,6 @@ export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput
     }
   }
 
-  if (source.delegateDid !== undefined && (typeof source.delegateDid !== 'string' || source.delegateDid.length === 0)) {
-    throw new TypeError('FollowedSyncSource: \'delegateDid\' must be a non-empty string when supplied.');
-  }
   if (!Array.isArray(source.roles) || source.roles.length === 0) {
     throw new TypeError('FollowedSyncSource: \'roles\' must contain at least one role.');
   }
@@ -76,11 +70,10 @@ export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput
   }
 
   return {
-    sourceDid   : source.sourceDid,
-    actorDid    : source.actorDid,
-    delegateDid : source.delegateDid,
-    protocol    : source.protocol,
-    contextId   : source.contextId,
+    sourceDid : source.sourceDid,
+    actorDid  : source.actorDid,
+    protocol  : source.protocol,
+    contextId : source.contextId,
     roles,
   };
 }
@@ -94,7 +87,7 @@ export function normalizeFollowedSyncSource(source: FollowedSyncSource): Followe
     throw new TypeError('FollowedSyncSource: \'id\' must be a non-empty string.');
   }
 
-  const { delegateDid: _delegateDid, ...details } = normalizeFollowedSyncSourceInput({
+  const details = normalizeFollowedSyncSourceInput({
     actorDid  : source.actorDid,
     contextId : source.contextId,
     protocol  : source.protocol,

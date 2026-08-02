@@ -463,7 +463,7 @@ describe('context record execution', () => {
     await expect(record!.delete()).rejects.toThrow('Shared context is no longer active.');
   });
 
-  it('keeps lazy data reads local while update, patch, and delete default remote', async () => {
+  it('keeps lazy data reads local while updates and deletes default remote', async () => {
     let currentData: unknown = { title: 'before' };
     let currentWrite = createRecordsWrite();
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
@@ -540,7 +540,7 @@ describe('context record execution', () => {
     await record!.update({ from: tenantDid, tags: { pinned: true } });
     expect(record!.protocolRole).toBe(protocolRole);
     expect(await record!.data.json()).toEqual({ title: 'before' });
-    await record!.patch({ title: 'after' });
+    await record!.update({ data: { title: 'after' } });
     await expect(record!.delete({ protocolRole: 'note/owner' }))
       .rejects.toThrow('Context-bound records cannot invoke another protocol role.');
     await record!.delete();

@@ -394,12 +394,9 @@ void context.records.observe('workspace', {
 
 void created.then(async (record): Promise<void> => {
   const updated = await record.update({ data: { text: 'updated' } });
-  const patched = await record.patch({ text: 'patched' });
   await record.delete({ prune: true });
   // @ts-expect-error updates retain context-bound handles.
   void updated.rawMessage;
-  // @ts-expect-error patches retain context-bound handles.
-  void patched.rawMessage;
 
   // @ts-expect-error context updates cannot override their source tenant.
   await record.update({ data: { text: 'wrong tenant' }, from: 'did:example:other' });
@@ -407,8 +404,8 @@ void created.then(async (record): Promise<void> => {
   await record.update({ data: { text: 'wrong role' }, protocolRole: 'workspace/other' });
   // @ts-expect-error context updates cannot control DWN storage.
   await record.update({ data: { text: 'not stored' }, store: false });
-  // @ts-expect-error context patches cannot override their source tenant.
-  await record.patch({ text: 'wrong tenant' }, { from: 'did:example:other' });
+  // @ts-expect-error partial updates belong to context.records.patch().
+  await record.patch({ text: 'patched' });
   // @ts-expect-error context deletes cannot sign as the source owner.
   await record.delete({ signAsOwner: true });
   // @ts-expect-error context records cannot be sent manually.

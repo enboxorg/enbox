@@ -124,8 +124,9 @@ All record methods auto-inject `protocol`, `protocolPath`, and `schema` — you 
 Typed record methods return application values instead of raw DWN response
 envelopes. `create()` returns a `Record`, `query()` returns a `RecordPage`,
 `count()` returns a number, and `read()` returns a `Record` or `undefined`.
-`Record.update()` and `patch()` return the same updated handle; successful
-delete, store, import, and send operations resolve without a value. A
+`Record.update()` mutates and returns the same handle, while
+`TypedEnbox.records.patch()` returns the freshly read and updated record.
+Successful delete, store, import, and send operations resolve without a value. A
 non-success DWN status throws `DwnResponseError` (except a missing read, which
 returns `undefined`):
 
@@ -477,23 +478,8 @@ returned value and the original variable reference the same updated `Record`.
 
 #### patch
 
-Use `patch()` when only part of a JSON object should change:
-
-```ts
-const updated = await record.patch({
-  done: true,
-});
-```
-
-`patch()` reads the current JSON object, performs a shallow merge, and writes
-the complete merged payload. Nested objects are replaced rather than
-deep-merged, `undefined` leaves a field unchanged, and `null` deletes an
-optional field. Set a required nullable field to `null` with a complete
-`update()` instead. Like any read-merge-write operation, `patch()` can overwrite
-a concurrent update that lands between its read and write.
-
-For an application-level mutation, use the typed records API. It reads a fresh
-value and retries once when the DWN rejects an out-of-order write:
+Use the typed records API when only part of a JSON object should change. It
+reads a fresh value and retries once when the DWN rejects an out-of-order write:
 
 ```ts
 const updated = await tasks.records.patch('task', taskId, (current) =>
@@ -501,6 +487,9 @@ const updated = await tasks.records.patch('task', taskId, (current) =>
 );
 ```
 
+The patch is shallow: nested objects are replaced rather than deep-merged,
+`undefined` leaves a field unchanged, and `null` deletes an optional field. Set
+a required nullable field to `null` with a complete `Record.update()` instead.
 The producer may run twice and must be side-effect-free. Returning `undefined`
 skips the write. This bounded retry is not a transaction or compare-and-swap;
 normal DWN last-writer-wins ordering still applies to a write accepted after

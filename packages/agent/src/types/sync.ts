@@ -848,8 +848,6 @@ export interface SyncEngine {
   listFollowedSources(): Promise<FollowedSyncSource[]>;
   /** Stop following one exact followed source. */
   deleteFollowedSource(source: FollowedSyncSource): Promise<void>;
-  /** Forget the logical foreign context, including a concurrently replaced followed source. */
-  forgetFollowedContext(source: FollowedSyncSource): Promise<void>;
   /**
    * Pull one exact accepted foreign context from every endpoint advertised by
    * its source DID. Returns `true` only when every endpoint reached its feed

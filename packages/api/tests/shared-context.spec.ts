@@ -283,7 +283,6 @@ describe('TypedEnbox contexts', () => {
   let deleteFollowedSource: sinon.SinonStub;
   let deliveryListeners: Set<() => void>;
   let follow: sinon.SinonStub;
-  let forgetFollowedContext: sinon.SinonStub;
   let get: sinon.SinonStub;
   let getRoleDelivery: sinon.SinonStub;
   let links: ReplicationLinkSnapshot[];
@@ -351,11 +350,6 @@ describe('TypedEnbox contexts', () => {
     getRoleDelivery = sinon.stub().resolves({ state: 'delivered' });
     retryRoleDelivery = sinon.stub().resolves({ state: 'delivered' });
     list = sinon.stub().callsFake(async (): Promise<FollowedSyncSource[]> => current === undefined ? [] : [current]);
-    forgetFollowedContext = sinon.stub().callsFake(async (followed: FollowedSyncSource): Promise<void> => {
-      if (current?.sourceDid === followed.sourceDid && current.contextId === followed.contextId) {
-        current = undefined;
-      }
-    });
     deleteFollowedSource = sinon.stub().callsFake(async (followed: FollowedSyncSource): Promise<void> => {
       if (current?.id === followed.id) {
         current = undefined;
@@ -379,7 +373,6 @@ describe('TypedEnbox contexts', () => {
       sync: {
         deleteFollowedSource,
         followSource       : follow,
-        forgetFollowedContext,
         getIdentityOptions : async (did: string): Promise<SyncIdentityOptions | undefined> =>
           did === connectedDid ? registration : undefined,
         getFollowedSource   : get,
@@ -594,11 +587,10 @@ describe('TypedEnbox contexts', () => {
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 
     expect(follow.firstCall.args[0]).toEqual({
-      actorDid    : connectedDid,
+      actorDid : connectedDid,
       contextId,
-      delegateDid : undefined,
-      protocol    : SharedDefinition.protocol,
-      roles       : [protocolRole, viewerRole],
+      protocol : SharedDefinition.protocol,
+      roles    : [protocolRole, viewerRole],
       sourceDid,
     });
     expect(shared).toMatchObject({
@@ -940,7 +932,6 @@ describe('TypedEnbox contexts', () => {
       id       : 'invite-current',
       ownerDid : sourceDid,
       preview  : { title: 'Current title' },
-      protocol : SharedDefinition.protocol,
     });
     await invitations[0].dismiss();
     await invitations[0].dismiss();
@@ -1038,7 +1029,7 @@ describe('TypedEnbox contexts', () => {
 
     current = source();
     await shared.forget();
-    expect(forgetFollowedContext.calledOnceWith(source())).toBe(true);
+    expect(deleteFollowedSource.calledOnceWith(source())).toBe(true);
     await expect(shared.records.query('workspace/note')).rejects.toThrow();
   });
 
@@ -1500,7 +1491,7 @@ describe('TypedEnbox contexts', () => {
 
     await shared.forget();
 
-    expect(forgetFollowedContext.calledOnceWith(source())).toBe(true);
+    expect(deleteFollowedSource.calledOnceWith(source())).toBe(true);
     expect(agent.sendDwnRequest.notCalled).toBe(true);
     await expect(shared.records.query('workspace/note')).rejects.toThrow();
   });
@@ -1538,7 +1529,6 @@ describe('TypedEnbox contexts', () => {
       'Delete record at remote DWN \'https://dwn.example\' failed (503): Unavailable',
     );
     expect(deleteFollowedSource.notCalled).toBe(true);
-    expect(forgetFollowedContext.notCalled).toBe(true);
 
     await shared.leave();
 

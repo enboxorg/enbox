@@ -149,6 +149,15 @@ type PreparedDwnData = {
 
 type ProtocolDefinitionSource = 'local' | 'remote';
 
+function audienceKeyDeliveryFailure(error: unknown, recipientDid: string): AudienceKeyDeliveryOutcome {
+  return {
+    delivered : false,
+    failure   : classifyAudienceKeyDeliveryFailure(error),
+    reason    : error instanceof Error ? error.message : String(error),
+    recipientDid,
+  };
+}
+
 /** Re-provision inputs after normalization: the audience context id and the resolved recipient wrap target. */
 type ExecuteAudienceKeyDeliveryReprovisionInput = Omit<ReprovisionAudienceKeyDeliveryParams, 'contextId' | 'recipientRolePublicKey'> & {
   contextId: string;
@@ -926,13 +935,7 @@ export class AgentDwnApi {
       // is reported here; the already-accepted `$role` write is never unwound. A caller
       // that treats delivery as required inspects this outcome and compensates with the
       // authority it holds (e.g. deleting the record with its own delete grant).
-      const detail = error instanceof Error ? error.message : String(error);
-      return {
-        delivered    : false,
-        failure      : classifyAudienceKeyDeliveryFailure(error),
-        recipientDid : recordsWrite.descriptor.recipient ?? '',
-        reason       : detail,
-      };
+      return audienceKeyDeliveryFailure(error, recordsWrite.descriptor.recipient ?? '');
     }
   }
 
@@ -1529,8 +1532,7 @@ export class AgentDwnApi {
         ?? await this.getRecipientRolePublicKey({ protocol, recipientDid, rolePath });
       recipientRoleKeyId = await Encryption.getKeyId(recipientRolePublicKey);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      return { delivered: false, failure: classifyAudienceKeyDeliveryFailure(error), reason: detail, recipientDid };
+      return audienceKeyDeliveryFailure(error, recipientDid);
     }
     const executionInput = { ...params, contextId, recipientRoleKeyId, recipientRolePublicKey };
     const hasExplicitAuthorizationContext = params.granteeDid !== undefined ||
@@ -1617,8 +1619,7 @@ export class AgentDwnApi {
       });
       return { delivered: true, recipientDid };
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      return { delivered: false, failure: classifyAudienceKeyDeliveryFailure(error), reason: detail, recipientDid };
+      return audienceKeyDeliveryFailure(error, recipientDid);
     }
   }
 

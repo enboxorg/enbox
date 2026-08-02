@@ -102,31 +102,6 @@ export function getRuleSetAtPath(protocolPath: string, structure: { [key: string
   return current;
 }
 
-/** Returns exact local protocol paths governed by an invoked role. */
-export function getProtocolRoleActionPaths(
-  definition: ProtocolDefinition,
-  rolePath: string,
-  action?: ProtocolAction,
-): string[] {
-  const paths: string[] = [];
-
-  const visit = (ruleSet: ProtocolRuleSet, parentPath: string): void => {
-    for (const [name, value] of Object.entries(ruleSet)) {
-      if (name.startsWith('$')) {continue;}
-      const path = parentPath === '' ? name : `${parentPath}/${name}`;
-      const child = value as ProtocolRuleSet;
-      if ((child.$actions ?? []).some(rule =>
-        rule.role === rolePath && (action === undefined || rule.can.includes(action)))) {
-        paths.push(path);
-      }
-      visit(child, path);
-    }
-  };
-
-  visit(definition.structure as ProtocolRuleSet, '');
-  return paths.sort();
-}
-
 /** Resolve the non-role content scope governed by one nested protocol role. */
 export function resolveProtocolRoleContextScope(
   definition: ProtocolDefinition,
@@ -144,17 +119,36 @@ export function resolveProtocolRoleContextScope(
   if (protocolPath === '') {
     throw new TypeError('Context roles must be nested below a context root.');
   }
-  const isContentPath = (path: string): boolean =>
-    (path === protocolPath || path.startsWith(`${protocolPath}/`)) &&
-    getRuleSetAtPath(path, definition.structure)?.$role !== true;
-  const readablePaths = getProtocolRoleActionPaths(definition, rolePath, ProtocolAction.Read)
-    .filter(isContentPath);
+  const allowedPaths: string[] = [];
+  const readablePaths: string[] = [];
+  const visit = (ruleSet: ProtocolRuleSet, parentPath: string): void => {
+    for (const [name, value] of Object.entries(ruleSet)) {
+      if (name.startsWith('$')) {continue;}
+      const path = parentPath === '' ? name : `${parentPath}/${name}`;
+      const child = value as ProtocolRuleSet;
+      const contentPath = child.$role !== true &&
+        (path === protocolPath || path.startsWith(`${protocolPath}/`));
+      if (contentPath) {
+        const actions = (child.$actions ?? []).filter(rule => rule.role === rolePath);
+        if (actions.length > 0) {
+          allowedPaths.push(path);
+        }
+        if (actions.some(rule => rule.can.includes(ProtocolAction.Read))) {
+          readablePaths.push(path);
+        }
+      }
+      visit(child, path);
+    }
+  };
+  visit(definition.structure as ProtocolRuleSet, '');
+  allowedPaths.sort();
+  readablePaths.sort();
   if (!readablePaths.includes(protocolPath)) {
     throw new TypeError(`Context role '${rolePath}' must authorize reading its parent context '${protocolPath}'.`);
   }
 
   return {
-    allowedPaths  : new Set(getProtocolRoleActionPaths(definition, rolePath).filter(isContentPath)),
+    allowedPaths  : new Set(allowedPaths),
     protocolPath,
     readablePaths : readablePaths as [string, ...string[]],
   };

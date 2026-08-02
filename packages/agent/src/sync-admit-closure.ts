@@ -5,6 +5,7 @@ import type {
   ProgressToken,
   ProtocolsConfigureMessage,
   ProtocolsQueryReply,
+  RecordsFilter,
   RecordsQueryReply,
   RecordsReadReply,
   RecordsWriteMessage,
@@ -22,6 +23,7 @@ import { orderMessagesForAdmission } from './sync-admission-order.js';
 
 import {
   capRecordsWriteDataStream,
+  dedupeSyncMessageEntries,
   fetchRemoteMessages,
   getMessageCid,
   MAX_ADMISSION_PASSES,
@@ -140,7 +142,7 @@ class AdmitClosureContext {
 
       appliedCids.push(...passResult.appliedCids);
       freshEntries.push(...passResult.freshEntries);
-      pending = await dedupeEntries(passResult.retry);
+      pending = await dedupeSyncMessageEntries(passResult.retry);
     }
 
     return pending.length === 0
@@ -410,9 +412,14 @@ class AdmitClosureContext {
       case 'CrossProtocolRef':
         return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
       case 'Role':
-        return this.fetchRoleRecord(ref);
+        return this.fetchRecords({
+          protocol     : ref.protocol,
+          protocolPath : ref.protocolPath,
+          recipient    : ref.recipient,
+          ...(ref.contextPrefix === undefined ? {} : { contextId: ref.contextPrefix }),
+        });
       case 'Grant':
-        return this.fetchGrantRecord(ref.permissionGrantId);
+        return this.fetchRecordsByRecordId(ref.permissionGrantId);
       case 'EncryptionControl':
         return this.fetchEncryptionControlRecord(ref);
       case 'RecordData':
@@ -446,11 +453,12 @@ class AdmitClosureContext {
     return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
   }
 
-  private async fetchGrantRecord(permissionGrantId: string): Promise<SyncMessageEntry[]> {
-    return this.fetchRecordsByRecordId(permissionGrantId);
+  private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<SyncMessageEntry[]> {
+    return this.fetchRecords({ recordId, ...(protocol === undefined ? {} : { protocol }) });
   }
 
-  private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<SyncMessageEntry[]> {
+  private async fetchRecords(filter: RecordsFilter): Promise<SyncMessageEntry[]> {
+    const protocol = filter.protocol;
     const permissionGrantId = protocol === undefined
       ? undefined
       : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, protocol);
@@ -459,35 +467,7 @@ class AdmitClosureContext {
       author        : this.deps.delegateDid ?? this.deps.did,
       granteeDid,
       messageParams : {
-        filter: { recordId, ...(protocol === undefined ? {} : { protocol }) },
-        ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
-      },
-      messageType : DwnInterface.RecordsQuery,
-      store       : false,
-      target      : this.deps.did,
-    });
-
-    const reply = await this.deps.agent.rpc.sendDwnRequest({
-      dwnUrl    : this.deps.dwnUrl,
-      message,
-      targetDid : this.deps.did,
-    }) as RecordsQueryReply;
-    return this.entriesFromRecordsQueryReply(reply);
-  }
-
-  private async fetchRoleRecord(ref: Extract<DependencyRef, { type: 'Role' }>): Promise<SyncMessageEntry[]> {
-    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, ref.protocol);
-    const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
-    const { message } = await this.deps.agent.dwn.processRequest({
-      author        : this.deps.delegateDid ?? this.deps.did,
-      granteeDid,
-      messageParams : {
-        filter: {
-          protocol     : ref.protocol,
-          protocolPath : ref.protocolPath,
-          recipient    : ref.recipient,
-          ...(ref.contextPrefix === undefined ? {} : { contextId: ref.contextPrefix }),
-        },
+        filter,
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.RecordsQuery,
@@ -534,7 +514,7 @@ class AdmitClosureContext {
       cursor = reply.cursor;
     }
 
-    const dedupedEntries = await dedupeEntries(entries);
+    const dedupedEntries = await dedupeSyncMessageEntries(entries);
     await this.rememberEntries(dedupedEntries);
     return dedupedEntries;
   }
@@ -559,7 +539,7 @@ class AdmitClosureContext {
       syncEntries.push(syncEntry);
       return syncEntries;
     });
-    const dedupedEntries = await dedupeEntries(entries);
+    const dedupedEntries = await dedupeSyncMessageEntries(entries);
     await this.rememberEntries(dedupedEntries);
     return dedupedEntries;
   }
@@ -720,14 +700,6 @@ function recordsWriteRequiresData(message: GenericMessage): boolean {
   }
 
   return typeof (message.descriptor as { dataCid?: unknown }).dataCid === 'string';
-}
-
-async function dedupeEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {
-  const byCid = new Map<string, SyncMessageEntry>();
-  for (const entry of entries) {
-    byCid.set(await getMessageCid(entry.message), entry);
-  }
-  return [...byCid.values()];
 }
 
 /**

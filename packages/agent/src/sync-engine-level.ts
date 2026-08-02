@@ -129,10 +129,10 @@ class FollowedSourceRoleRecordMismatchError extends Error {
   }
 }
 
-class RoleFeedDeadLetterError extends Error {
+class RoleFeedAdmissionError extends Error {
   public constructor(messageCid: string) {
-    super(`SyncEngineLevel: role feed message ${messageCid} is dead-lettered; the replica cannot become current.`);
-    this.name = 'RoleFeedDeadLetterError';
+    super(`SyncEngineLevel: role feed message ${messageCid} could not be admitted; the replica cannot become current.`);
+    this.name = 'RoleFeedAdmissionError';
   }
 }
 
@@ -155,11 +155,6 @@ type FollowedSourceResolution =
   | { kind: 'active'; batch: RoleReplicationSupportBatch; dwnUrl: string; dwnUrls: string[]; source: FollowedSyncSource }
   | { kind: 'absent'; dwnUrls: string[] }
   | { kind: 'unknown'; error: Error };
-
-type FollowedSourceCommit = {
-  replaced: FollowedSyncSource[];
-  wasExisting: boolean;
-};
 
 type FollowedSourceChangeEvent = Extract<SyncEvent, { type: 'followed-context:change' }>;
 
@@ -433,7 +428,7 @@ export class SyncEngineLevel implements SyncEngine {
           messageCids,
         }),
         recordTerminalFailure: (target, failure): Promise<void> =>
-          this.recordTerminalQuotaFailure(target, failure),
+          this.recordTerminalPushFailure(target, failure),
       },
     });
   }
@@ -1139,13 +1134,18 @@ export class SyncEngineLevel implements SyncEngine {
   public async followSource(input: FollowedSyncSourceInput): Promise<FollowedSyncSource> {
     const normalized = normalizeFollowedSyncSourceInput(input);
     let source!: FollowedSyncSource;
-    let activation!: FollowedSourceCommit;
+    let delegateDid: string | undefined;
     await this._lifecycle.runTransition(async (): Promise<void> => {
+      const identity = await this._identityStore.get(normalized.actorDid);
+      if (identity === undefined) {
+        throw new FollowedSourceNotReadyError(`actor '${normalized.actorDid}' is not registered for sync`);
+      }
+      delegateDid = identity.delegateDid;
       for (;;) {
         const previous = (await this.readFollowedSources()).filter(candidate =>
           SyncEngineLevel.sameFollowedContext(candidate, normalized)
         );
-        const resolution = await this.resolveFollowedSource(normalized, undefined, previous);
+        const resolution = await this.resolveFollowedSource(normalized, delegateDid, undefined, previous);
         if (resolution.kind === 'absent') {
           throw new Error('SyncEngineLevel: None of the requested roles currently authorizes this context.');
         }
@@ -1157,11 +1157,11 @@ export class SyncEngineLevel implements SyncEngine {
           previous,
           resolution.dwnUrls,
           resolution.source.id,
-          normalized.delegateDid,
+          delegateDid,
         );
         await this.admitFollowedSource(resolution);
 
-        let commit: FollowedSourceCommit | undefined;
+        let replaced: FollowedSyncSource[] | undefined;
         await this._lifecycle.acquireSync();
         try {
           await this.runIdentityLifecycle(normalized.sourceDid, async (): Promise<void> => {
@@ -1174,26 +1174,26 @@ export class SyncEngineLevel implements SyncEngine {
             ) {
               return;
             }
-            commit = await this.commitFollowedSource(resolution.source);
-            await this.removeFollowedSourceLinksForSources(commit.replaced);
+            replaced = await this.commitFollowedSource(resolution.source);
+            await this.removeFollowedSourceLinksForSources(replaced);
           });
         } finally {
           this._lifecycle.releaseSync();
         }
-        if (commit !== undefined) {
+        if (replaced !== undefined) {
           source = resolution.source;
-          activation = commit;
           return;
         }
       }
     });
-    this.activateFollowedSource(source, normalized.delegateDid, activation.wasExisting);
+    this.activateFollowedSource(source, delegateDid);
     return source;
   }
 
   /** Resolve one role only when every advertised endpoint agrees on its exact record. */
   private async resolveFollowedSource(
     input: FollowedSyncSourceInput,
+    delegateDid: string | undefined,
     shouldContinue?: () => boolean,
     previousSources: readonly FollowedSyncSource[] = [],
   ): Promise<FollowedSourceResolution> {
@@ -1206,7 +1206,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const endpointResults = await Promise.all(endpoints.map(dwnUrl =>
-      this.resolveFollowedEndpoint(input, dwnUrl, shouldContinue)
+      this.resolveFollowedEndpoint(input, delegateDid, dwnUrl, shouldContinue)
     ));
     if (endpointResults.every(result => result.kind === 'absent')) {
       return { kind: 'absent', dwnUrls: endpoints };
@@ -1254,11 +1254,10 @@ export class SyncEngineLevel implements SyncEngine {
       };
     }
 
-    const { delegateDid: _delegateDid, ...context } = input;
     let source = normalizeFollowedSyncSource({
       acceptanceId  : CryptoUtils.randomUuid(),
       id            : first.batch.roleRecordId,
-      ...context,
+      ...input,
       protocolPaths : first.protocolPaths,
       protocolRole  : first.role,
     });
@@ -1272,20 +1271,21 @@ export class SyncEngineLevel implements SyncEngine {
   /** Select the strongest role proven by one endpoint; only verified absence permits fallback. */
   private async resolveFollowedEndpoint(
     input: FollowedSyncSourceInput,
+    delegateDid: string | undefined,
     dwnUrl: string,
     shouldContinue?: () => boolean,
   ): Promise<FollowedEndpointResolution> {
     for (const role of input.roles) {
-      const { protocolPath, recordId } = resolveFollowedSyncRoleRoot(input.contextId, role);
+      const { protocolPath } = resolveFollowedSyncRoleRoot(input.contextId, role);
       try {
         const batch = await readRoleReplicationSupport({
           ...input,
           agent          : this.agent,
+          delegateDid,
           dwnUrl,
           permissionsApi : this._permissionsApi,
           protocolPath,
           protocolRole   : role,
-          recordId,
           shouldContinue,
         });
         const protocolPaths = resolveProtocolRoleContextScope(batch.protocolDefinition, role).readablePaths;
@@ -1328,7 +1328,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Commit one followed source without coupling durable truth to link cleanup. */
-  private async commitFollowedSource(source: FollowedSyncSource): Promise<FollowedSourceCommit> {
+  private async commitFollowedSource(source: FollowedSyncSource): Promise<FollowedSyncSource[]> {
     const sources = await this.readFollowedSources();
     this.initializeFollowedSourceSnapshot(sources);
     const existing = sources.find(candidate => candidate.id === source.id);
@@ -1349,7 +1349,7 @@ export class SyncEngineLevel implements SyncEngine {
       this.invalidateSyncTargetsCache();
       this.emitFollowedSourceChange(source, source.id);
     }
-    return { replaced, wasExisting: existing !== undefined };
+    return replaced;
   }
 
   /** Remove links for followed sources replaced by a durable commit. */
@@ -1364,7 +1364,6 @@ export class SyncEngineLevel implements SyncEngine {
   private activateFollowedSource(
     source: FollowedSyncSource,
     delegateDid: string | undefined,
-    existing: boolean,
   ): void {
     if (!this._runtime.live) {
       return;
@@ -1372,9 +1371,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(source.actorDid);
     void runIdentityTask(async (): Promise<void> => {
-      if (existing) {
-        await this.refreshRoleLinksForActor(source.actorDid, delegateDid, source.id);
-      }
+      await this.refreshRoleLinksForActor(source.actorDid, delegateDid, source.id);
       const targets = await this.targetResolver.buildTargetsForSource(source, delegateDid);
       await Promise.all(targets.map(target => this.initializeLinkTargetWithRetry(target)));
     });
@@ -1414,12 +1411,20 @@ export class SyncEngineLevel implements SyncEngine {
     return sources;
   }
 
-  public deleteFollowedSource(source: FollowedSyncSource): Promise<void> {
-    return this.removeFollowedSource(source, false);
-  }
-
-  public forgetFollowedContext(source: FollowedSyncSource): Promise<void> {
-    return this.removeFollowedSource(source, true);
+  public async deleteFollowedSource(source: FollowedSyncSource): Promise<void> {
+    const normalized = normalizeFollowedSyncSource(source);
+    await this.runExclusiveIdentityMutation(
+      normalized.sourceDid,
+      async (): Promise<void> => {
+        const current = await this._followedSourceStore.get(normalized.id);
+        if (current === undefined || !followedSyncSourceActiveEqual(current, normalized)) {
+          return;
+        }
+        await this.commitFollowedSourceRemoval(current);
+        await this.removeFollowedSourceLinksForSources([current]);
+      },
+      {},
+    );
   }
 
   /** Pull only one active followed source and prove that every advertised endpoint drained. */
@@ -1465,28 +1470,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async removeFollowedSource(source: FollowedSyncSource, logicalContext: boolean): Promise<void> {
-    const normalized = normalizeFollowedSyncSource(source);
-    await this.runExclusiveIdentityMutation(
-      normalized.sourceDid,
-      async (): Promise<void> => {
-        const current = logicalContext
-          ? (await this.listFollowedSources()).find(candidate =>
-            SyncEngineLevel.sameFollowedContext(candidate, normalized)
-          )
-          : await this._followedSourceStore.get(normalized.id);
-        if (current !== undefined) {
-          if (!logicalContext && !followedSyncSourceActiveEqual(current, normalized)) {
-            return;
-          }
-          await this.commitFollowedSourceRemoval(current);
-          await this.removeFollowedSourceLinksForSources([current]);
-        }
-      },
-      {},
-    );
-  }
-
   private async commitFollowedSourceRemoval(source: FollowedSyncSource): Promise<void> {
     this.initializeFollowedSourceSnapshot(await this.readFollowedSources());
     await this._followedSourceStore.delete(source.id);
@@ -1510,33 +1493,39 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async removeFollowedSourceLinks(id: string, sourceDid: string): Promise<void> {
-    const linkKeys = new Set<string>();
+    const targets = new Map<string, SyncTarget>();
     for (const [linkKey, controller] of this._linkControllers) {
       if (
         controller.link.tenantDid === sourceDid &&
         controller.link.authorization.kind === 'role' &&
         controller.link.authorization.roleRecordId === id
       ) {
-        linkKeys.add(linkKey);
-        this.removeLinkController(linkKey, controller);
+        targets.set(linkKey, syncTargetFromLink(controller.link));
       }
     }
     const links = (await this.replicationLinkStore.getLinksForTenant(sourceDid)).filter(link =>
       link.authorization.kind === 'role' && link.authorization.roleRecordId === id
     );
     for (const link of links) {
-      linkKeys.add(buildLinkKey(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch));
+      targets.set(
+        buildLinkKey(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch),
+        syncTargetFromLink(link),
+      );
     }
-    for (const linkKey of linkKeys) {
-      this._runtime.cancelTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
-      this._feedConvergenceManager.clearLink(linkKey);
-    }
-    await Promise.all(links.map(link => this.replicationLinkStore.deleteLink(
-      link.tenantDid,
-      link.remoteEndpoint,
-      link.projectionId,
-      link.authorizationEpoch,
-    )));
+    await Promise.all([...targets.values()].map(target => this.removeFollowedSourceLink(target)));
+  }
+
+  private async removeFollowedSourceLink(target: SyncTarget): Promise<void> {
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    this.removeLinkController(linkKey);
+    this._runtime.cancelTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
+    this._feedConvergenceManager.clearLink(linkKey);
+    await this.replicationLinkStore.deleteLink(
+      target.did,
+      target.dwnUrl,
+      target.projectionId,
+      target.authorizationEpoch,
+    );
   }
 
   private static sameFollowedContext(
@@ -1556,7 +1545,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async refreshFollowedSourceState(): Promise<FollowedSyncSource[]> {
     await this._lifecycle.acquireSync();
     try {
-      await this.removeObsoleteFollowedSourceLinks(await this.readFollowedSources());
+      await this.removeObsoleteFollowedSourceLinks();
       const sources = await this.readFollowedSources();
       const current = new Map(sources.map(source => [SyncEngineLevel.followedContextKey(source), source]));
       const changes: Array<{ source: FollowedSyncSource; followedSourceId: string | undefined }> = [];
@@ -1589,22 +1578,18 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Remove durable role links whose exact accepted source is no longer current. */
-  private async removeObsoleteFollowedSourceLinks(sources: readonly FollowedSyncSource[]): Promise<void> {
-    const sourceById = new Map(sources.map(source => [JSON.stringify([source.sourceDid, source.id]), source]));
-    const obsolete = new Map<string, { id: string; sourceDid: string; target: SyncTarget }>();
+  private async removeObsoleteFollowedSourceLinks(): Promise<void> {
+    const candidates = new Map<string, { id: string; sourceDid: string; target: SyncTarget }>();
     const collect = (link: ReplicationLinkState): void => {
       if (link.authorization.kind !== 'role') {
         return;
       }
-      const source = sourceById.get(JSON.stringify([link.tenantDid, link.authorization.roleRecordId]));
-      if (source !== undefined && SyncEngineLevel.followedSourceCoversTarget(source, syncTargetFromLink(link))) {
-        return;
-      }
-      const key = JSON.stringify([link.tenantDid, link.authorization.roleRecordId]);
-      obsolete.set(key, {
+      const target = syncTargetFromLink(link);
+      const key = buildLinkKey(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
+      candidates.set(key, {
         id        : link.authorization.roleRecordId,
         sourceDid : link.tenantDid,
-        target    : syncTargetFromLink(link),
+        target,
       });
     };
     for (const controller of this._linkControllers.values()) {
@@ -1613,11 +1598,11 @@ export class SyncEngineLevel implements SyncEngine {
     for (const link of await this.replicationLinkStore.getAllLinks()) {
       collect(link);
     }
-    await Promise.all([...obsolete.values()].map(({ id, sourceDid, target }) =>
+    await Promise.all([...candidates.values()].map(({ id, sourceDid, target }) =>
       this.runIdentityLifecycle(sourceDid, async (): Promise<void> => {
         const current = await this._followedSourceStore.get(id);
         if (current === undefined || !SyncEngineLevel.followedSourceCoversTarget(current, target)) {
-          await this.removeFollowedSourceLinks(id, sourceDid);
+          await this.removeFollowedSourceLink(target);
         }
       })
     ));
@@ -1688,13 +1673,12 @@ export class SyncEngineLevel implements SyncEngine {
     }
     const shouldContinue = (): boolean => !runtime.disposed;
     const resolution = await this.resolveFollowedSource({
-      actorDid    : expected.actorDid,
-      contextId   : expected.contextId,
-      delegateDid : identity.delegateDid,
-      protocol    : expected.protocol,
-      roles       : expected.roles,
-      sourceDid   : expected.sourceDid,
-    }, shouldContinue, [expected]);
+      actorDid  : expected.actorDid,
+      contextId : expected.contextId,
+      protocol  : expected.protocol,
+      roles     : expected.roles,
+      sourceDid : expected.sourceDid,
+    }, identity.delegateDid, shouldContinue, [expected]);
     if (runtime.disposed || resolution.kind === 'unknown') {
       return;
     }
@@ -1722,7 +1706,7 @@ export class SyncEngineLevel implements SyncEngine {
       );
     }
 
-    let activation: FollowedSourceCommit | undefined;
+    let activation: FollowedSyncSource[] | undefined;
     await this._lifecycle.acquireSync();
     try {
       if (runtime.disposed) {
@@ -1745,11 +1729,10 @@ export class SyncEngineLevel implements SyncEngine {
           await this.commitFollowedSourceRemoval(current);
           await this.removeFollowedSourceLinksForSources([current]);
         } else if (followedSyncSourceEqual(current, resolution.source)) {
-          activation = { replaced: [], wasExisting: true };
+          activation = [];
         } else {
-          const commit = await this.commitFollowedSource(resolution.source);
-          await this.removeFollowedSourceLinksForSources(commit.replaced);
-          activation = commit;
+          activation = await this.commitFollowedSource(resolution.source);
+          await this.removeFollowedSourceLinksForSources(activation);
         }
       });
     } finally {
@@ -1759,7 +1742,6 @@ export class SyncEngineLevel implements SyncEngine {
       this.activateFollowedSource(
         resolution.source,
         identity.delegateDid,
-        activation.wasExisting,
       );
     }
   }
@@ -3553,20 +3535,13 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       await this._quotaManager.clearBlock(target, failure.cid);
-      await this.recordDeadLetter({
-        messageCid     : failure.cid,
-        tenantDid      : target.did,
-        remoteEndpoint : target.dwnUrl,
-        protocol       : failure.protocol ?? singleProtocolForSyncScope(target.scope),
-        errorCode      : failure.kind ?? 'Invalid',
-        errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
-      });
+      await this.recordTerminalPushFailure(target, failure);
     }
 
     return retryableFailures;
   }
 
-  private recordTerminalQuotaFailure(target: SyncTarget, failure: PushFailure): Promise<void> {
+  private recordTerminalPushFailure(target: SyncTarget, failure: PushFailure): Promise<void> {
     return this.recordDeadLetter({
       messageCid     : failure.cid,
       tenantDid      : target.did,
@@ -3702,7 +3677,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private static isRoleLinkPauseError(error: unknown): boolean {
-    if (error instanceof FollowedSourceRoleRecordMismatchError || error instanceof RoleFeedDeadLetterError) {
+    if (error instanceof FollowedSourceRoleRecordMismatchError || error instanceof RoleFeedAdmissionError) {
       return true;
     }
     const detail = syncErrorMessage(error);
@@ -4164,8 +4139,8 @@ export class SyncEngineLevel implements SyncEngine {
     const admittedCids: string[] = [];
 
     for (const entry of entries) {
-      if (await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
-        SyncEngineLevel.throwIfRoleFeedDeadLetter(target, entry.messageCid);
+      if (target.authorization.kind !== 'role' &&
+          await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
         continue;
       }
 
@@ -4184,7 +4159,6 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
       if (outcome.kind === 'dead-lettered') {
-        SyncEngineLevel.throwIfRoleFeedDeadLetter(target, entry.messageCid);
         continue;
       }
 
@@ -4262,13 +4236,6 @@ export class SyncEngineLevel implements SyncEngine {
       await this.clearDeferredPull(target.did, target.dwnUrl, entry.messageCid);
       return true;
     });
-  }
-
-  /** Role currentness is pull-drain based, so it cannot advance past an omitted dead letter. */
-  private static throwIfRoleFeedDeadLetter(target: SyncTarget, messageCid: string): void {
-    if (target.authorization.kind === 'role') {
-      throw new RoleFeedDeadLetterError(messageCid);
-    }
   }
 
   private async recordDeferredPull(
@@ -4447,6 +4414,10 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'deferred', detail: outcome.detail };
     }
 
+    if (target.authorization.kind === 'role') {
+      throw new RoleFeedAdmissionError(entry.messageCid);
+    }
+
     await this.recordDeadLetter({
       messageCid     : entry.messageCid,
       tenantDid      : target.did,
@@ -4584,7 +4555,6 @@ export class SyncEngineLevel implements SyncEngine {
       protocol,
       protocolPath,
       protocolRole    : role.protocolRole,
-      recordId,
       shouldContinue,
       sourceDid       : target.did,
     });

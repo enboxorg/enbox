@@ -1,5 +1,7 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordCodecMap } from './record-codec.js';
+
+import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
 import { recordCodecs } from './record-codec.js';
 
 /** Reserved record type used by the shared-context invitation inbox. */
@@ -25,24 +27,16 @@ export function addContextInvitationProtocol(
   definition : ProtocolDefinition,
   codecs : RecordCodecMap,
 ): { definition: ProtocolDefinition; codecs: RecordCodecMap } {
-  assertContextInvitationNameAvailable(definition);
   return {
     definition: {
       ...definition,
       types: {
         ...definition.types,
-        [CONTEXT_INVITATION_PATH]: {
-          schema      : CONTEXT_INVITATION_SCHEMA,
-          dataFormats : [CONTEXT_INVITATION_DATA_FORMAT],
-        },
+        [CONTEXT_INVITATION_PATH]: contextInvitationType(),
       },
       structure: {
         ...definition.structure,
-        [CONTEXT_INVITATION_PATH]: {
-          $immutable : true,
-          $size      : { max: 8_192 },
-          $actions   : [{ who: 'anyone', can: ['create'] }],
-        },
+        [CONTEXT_INVITATION_PATH]: contextInvitationRule(),
       },
     },
     codecs: {
@@ -59,20 +53,8 @@ export function hasContextInvitationProtocol(
 ): boolean {
   const type = definition.types[CONTEXT_INVITATION_PATH];
   const rule = definition.structure[CONTEXT_INVITATION_PATH];
-  const action = rule?.$actions?.[0];
-  return hasExactKeys(type, ['schema', 'dataFormats'])
-    && type.schema === CONTEXT_INVITATION_SCHEMA
-    && type.dataFormats?.length === 1
-    && type.dataFormats[0] === CONTEXT_INVITATION_DATA_FORMAT
-    && hasExactKeys(rule, ['$immutable', '$size', '$actions'])
-    && rule.$immutable === true
-    && hasExactKeys(rule.$size, ['max'])
-    && rule.$size?.max === 8_192
-    && rule.$actions?.length === 1
-    && hasExactKeys(action, ['who', 'can'])
-    && action.who === 'anyone'
-    && action.can.length === 1
-    && action.can[0] === 'create'
+  return installedProtocolDefinitionsEqual(type, contextInvitationType())
+    && installedProtocolDefinitionsEqual(rule, contextInvitationRule())
     && codecs[CONTEXT_INVITATION_PATH] === contextInvitationCodec;
 }
 
@@ -104,10 +86,17 @@ function isObject(value: unknown): value is globalThis.Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function hasExactKeys(value: unknown, keys: readonly string[]): value is globalThis.Record<string, unknown> {
-  if (!isObject(value)) {
-    return false;
-  }
-  const actual = Object.keys(value);
-  return actual.length === keys.length && keys.every(key => Object.hasOwn(value, key));
+function contextInvitationType(): ProtocolDefinition['types'][string] {
+  return {
+    schema      : CONTEXT_INVITATION_SCHEMA,
+    dataFormats : [CONTEXT_INVITATION_DATA_FORMAT],
+  };
+}
+
+function contextInvitationRule(): ProtocolDefinition['structure'][string] {
+  return {
+    $immutable : true,
+    $size      : { max: 8_192 },
+    $actions   : [{ who: 'anyone', can: ['create'] }],
+  };
 }

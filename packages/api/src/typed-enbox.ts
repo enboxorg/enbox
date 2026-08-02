@@ -161,10 +161,6 @@ export type ContextRecord<T = unknown> = Pick<
   | 'value'
 > & {
   delete(params?: ContextRecordDeleteParams): Promise<void>;
-  patch(
-    data: RecordPatch<T>,
-    options?: Omit<ContextRecordUpdateParams<T>, 'data'>,
-  ): Promise<ContextRecord<T>>;
   update(params: ContextRecordUpdateParams<T>): Promise<ContextRecord<T>>;
 };
 
@@ -446,8 +442,6 @@ export type ContextInvitation<
   id: string;
   /** Authenticated creator of the invitation and expected context owner. */
   ownerDid: string;
-  /** Signed application protocol containing the invitation and shared context. */
-  protocol: string;
   /** Shared context ID on the owner's tenant. */
   contextId: string;
   /** Declared role-precedence group used when accepting. */
@@ -558,7 +552,7 @@ type MemberContextForRoot<
     role: Role extends string ? ParentProtocolPath<Role> extends Root ? Role : never : never;
     /** Withdraw this exact role record, stop following it, and fence retained handles. */
     leave(): Promise<void>;
-    /** Forget this context locally without changing the owner-hosted role record. */
+    /** Forget this exact accepted source locally without changing the owner-hosted role record. */
     forget(): Promise<void>;
     /**
      * Resolve once this exact role-authorized local replica is caught up.
@@ -1389,12 +1383,11 @@ export class TypedEnbox<
       let source: FollowedSyncSource;
       try {
         source = await sync.followSource({
-          actorDid    : this._dwn.connectedDid,
-          contextId   : request.id,
-          delegateDid : this._dwn.recordDelegateDid,
-          protocol    : this._definition.protocol,
-          roles       : [...selected.roles] as [string, ...string[]],
-          sourceDid   : request.ownerDid,
+          actorDid  : this._dwn.connectedDid,
+          contextId : request.id,
+          protocol  : this._definition.protocol,
+          roles     : [...selected.roles] as [string, ...string[]],
+          sourceDid : request.ownerDid,
         });
       } catch (error) {
         if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
@@ -1637,7 +1630,7 @@ export class TypedEnbox<
    */
   private _assertValidPath(path: string): void {
     if (!this._validPaths.has(path)) {
-      throw new Error(
+      throw new TypeError(
         `TypedEnbox: invalid protocol path '${path}'. ` +
         `Valid paths are: ${[...this._validPaths].join(', ')}.`,
       );
@@ -2367,7 +2360,6 @@ export class TypedEnbox<
           id        : candidate.selected.id,
           ownerDid  : candidate.ownerDid,
           preview   : candidate.preview,
-          protocol  : this._definition.protocol,
           timestamp : candidate.selected.timestamp,
         }) as ProtocolContextInvitation<D, C, G>;
       });
@@ -2588,11 +2580,10 @@ export class TypedEnbox<
           protocolPath : source.protocolRole,
           recordId     : source.id,
         });
-        await sync.deleteFollowedSource(source);
       } else {
         this._options.signal?.throwIfAborted();
-        await sync.forgetFollowedContext(source);
       }
+      await sync.deleteFollowedSource(source);
       controller.abort(new ContextRetiredError(source.contextId));
     };
     const whenCurrent = async (): Promise<void> => {
@@ -2747,9 +2738,6 @@ export class TypedEnbox<
 
   /** Whether the current application definition can represent one stored active role. */
   private supportsMemberContextSource(source: FollowedSyncSource): boolean {
-    if (!this._validPaths.has(source.protocolRole)) {
-      return false;
-    }
     try {
       this.resolveMemberContextScope(source.protocolRole);
       return true;
