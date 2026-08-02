@@ -39,8 +39,8 @@ import type {
   DwnPaginationCursor,
   DwnPublicKeyJwk,
   DwnResponseStatus,
-  FollowedSyncRole,
   FollowedSyncSource,
+  ReplicationLinkSnapshot,
   SyncEngine,
 } from '@enbox/agent';
 import type {
@@ -63,7 +63,6 @@ import { createRecordView } from './record-view.js';
 import { Did } from '@enbox/dids';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
-import { projectReplicationCurrentness } from './replication-currentness.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import {
   assertTypedProtocolStructureSupported,
@@ -73,6 +72,7 @@ import {
 } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
+import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
 import {
   FollowedSourceNotReadyError,
@@ -85,6 +85,12 @@ import {
   getTypeName,
   ProtocolAction,
 } from '@enbox/dwn-sdk-js';
+import {
+  projectReplicationCurrentness,
+  type ReplicationCurrentness,
+} from './replication-currentness.js';
+
+const DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -370,14 +376,6 @@ export type RoleDeliveryState =
   | Readonly<{ state: 'pending'; reason?: string }>
   | Readonly<{ state: 'awaiting-recipient-install' | 'failed'; reason: string }>;
 
-/** Retryable failure while a context's membership or encryption state is not ready. */
-export class ContextNotReadyError extends Error {
-  public constructor(cause?: unknown) {
-    super('The requested context is not ready. Retry after membership and encryption are ready.', { cause });
-    this.name = 'ContextNotReadyError';
-  }
-}
-
 type ParentProtocolPath<Path extends string> = Path extends `${infer Head}/${infer Tail}`
   ? Tail extends `${string}/${string}`
     ? `${Head}/${ParentProtocolPath<Tail>}`
@@ -467,7 +465,12 @@ type MemberContextForRoot<
     leave(): Promise<void>;
     /** Forget this context locally without changing the owner-hosted role record. */
     forget(): Promise<void>;
-    /** Resolve once this exact role-authorized local replica is caught up. */
+    /**
+     * Resolve once this exact role-authorized local replica is caught up.
+     * Runs at most one scoped pull, gives in-flight live initialization a
+     * bounded wait, and throws {@link ContextNotReadyError} if the replica
+     * remains unavailable, behind, or paused.
+     */
     whenCurrent(): Promise<void>;
   }>
   : never;
@@ -1245,7 +1248,9 @@ export class TypedEnbox<
       this._options.signal?.throwIfAborted();
       return (await requireSync().listFollowedSources())
         .filter(source =>
-          source.actorDid === this._dwn.connectedDid && source.protocol === this._definition.protocol
+          source.actorDid === this._dwn.connectedDid &&
+          source.protocol === this._definition.protocol &&
+          this.supportsMemberContextSource(source)
         )
         .sort(compareFollowedContexts);
     };
@@ -1312,13 +1317,9 @@ export class TypedEnbox<
           throw new TypeError(`TypedEnbox.contexts.follow: id must identify a '${contextPath}' context.`);
         }
         assertValidRecordWithin(contextPath, request.id, true);
-        const toRole = (scope: typeof scopes[number]): FollowedSyncRole => ({
-          protocolPaths : scope.readablePaths,
-          protocolRole  : scope.role,
-        });
-        const roles: [FollowedSyncRole, ...FollowedSyncRole[]] = [
-          toRole(scopes[0]),
-          ...scopes.slice(1).map(toRole),
+        const roles: [string, ...string[]] = [
+          scopes[0].role,
+          ...scopes.slice(1).map(scope => scope.role),
         ];
         const sync = requireSync();
         let source: FollowedSyncSource;
@@ -1334,19 +1335,6 @@ export class TypedEnbox<
         } catch (error) {
           if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
           throw new Error('TypedEnbox.contexts.follow could not establish the requested context.');
-        }
-        if (
-          source.sourceDid !== request.ownerDid ||
-          source.actorDid !== this._dwn.connectedDid ||
-          source.protocol !== this._definition.protocol ||
-          source.contextId !== request.id ||
-          source.roles.length !== roles.length ||
-          source.roles.some((role, index) =>
-            role.protocolRole !== roles[index].protocolRole ||
-            !sameStrings(role.protocolPaths, roles[index].protocolPaths)
-          )
-        ) {
-          throw new Error('TypedEnbox.contexts.follow returned a different context.');
         }
         return this.bindMemberContext(source) as MemberContext<D, C, Roles[number]>;
       },
@@ -1734,7 +1722,7 @@ export class TypedEnbox<
           detachSync();
           void Promise.resolve().then(() => listener({
             type  : 'error',
-            error : new Error(`Member context '${contextId}' is no longer active.`),
+            error : new ContextRetiredError(contextId),
           })).catch((): void => {});
           void closeSubscription().catch((): void => {});
         }
@@ -2091,23 +2079,18 @@ export class TypedEnbox<
 
   /** Bind the existing typed records surface to one exact durable source. */
   private bindMemberContext(source: FollowedSyncSource): MemberContext<D, C> {
-    const scopes = source.roles.map(role => {
-      const scope = this.resolveMemberContextScope(role.protocolRole);
-      if (!sameStrings(role.protocolPaths, scope.readablePaths)) {
-        throw new Error(`TypedEnbox.contexts: followed role '${role.protocolRole}' does not match this protocol definition.`);
-      }
-      return scope;
-    });
-    const scope = scopes.find(candidate => candidate.role === source.protocolRole);
-    if (source.protocol !== this._definition.protocol
-      || scope === undefined
-      || scopes.some(candidate => candidate.protocolPath !== scope.protocolPath)
-      || !sameStrings(source.protocolPaths, scope.readablePaths)) {
+    if (source.protocol !== this._definition.protocol) {
       throw new Error(
         `TypedEnbox.contexts: context '${source.contextId}' owned by '${source.sourceDid}' ` +
         'does not match this protocol definition.',
       );
     }
+    const scope = this.resolveMemberContextScope(source.protocolRole);
+    const replicatedPaths = new Set(source.protocolPaths);
+    const readablePaths = new Set(scope.readablePaths);
+    const protocolPaths = new Set([...scope.allowedPaths].filter(path =>
+      !readablePaths.has(path) || replicatedPaths.has(path)
+    ));
 
     const sync = this._options.sync;
     if (sync === undefined) {
@@ -2122,7 +2105,7 @@ export class TypedEnbox<
       const current = await sync.getFollowedSource(source.id);
       signal.throwIfAborted();
       if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
-        throw new Error(`Member context '${source.contextId}' is no longer active.`);
+        throw new ContextRetiredError(source.contextId);
       }
     };
     const dwn = this._dwn.withRecordExecutionContext({
@@ -2148,45 +2131,131 @@ export class TypedEnbox<
         this._options.signal?.throwIfAborted();
         await sync.forgetFollowedContext(source);
       }
-      controller.abort(new Error(`Member context '${source.contextId}' is no longer active.`));
+      controller.abort(new ContextRetiredError(source.contextId));
     };
     const whenCurrent = async (): Promise<void> => {
-      while (true) {
+      const readCurrentness = async (): Promise<{
+        links: ReplicationLinkSnapshot[];
+        state: ReplicationCurrentness;
+      }> => {
+        const links = (await sync.getReplicationLinks(source.sourceDid))
+          .filter((link): boolean => link.followedSourceId === source.id
+            && link.scope.kind === 'context'
+            && link.scope.protocol === source.protocol
+            && link.scope.contextId === source.contextId
+            && sameStrings(link.scope.protocolPaths, source.protocolPaths));
         signal.throwIfAborted();
-        let unsubscribe = (): void => {};
-        let removeAbortListener = (): void => {};
+        return { links, state: projectReplicationCurrentness(links, false) };
+      };
+      const assertRegistered = async (): Promise<void> => {
+        if (await sync.getIdentityOptions(source.actorDid) === undefined) {
+          throw new ContextNotReadyError(
+            new Error(`MemberContext.whenCurrent: actor '${source.actorDid}' is not registered for sync.`),
+          );
+        }
+      };
+      const assertNotPaused = (state: ReplicationCurrentness): void => {
+        if (state !== 'error') {
+          return;
+        }
+        throw new ContextNotReadyError(
+          new Error(
+            `MemberContext.whenCurrent: replication is paused for context '${source.contextId}' ` +
+            `owned by '${source.sourceDid}'.`,
+          ),
+        );
+      };
+
+      await assertActive();
+      await assertRegistered();
+      let currentness = await readCurrentness();
+      assertNotPaused(currentness.state);
+      if (currentness.state === 'ready') {
+        return;
+      }
+
+      let pullFailure: unknown;
+      try {
+        await sync.sync('pull', { did: source.actorDid });
+      } catch (error: unknown) {
+        pullFailure = error;
+      }
+
+      await assertActive();
+      await assertRegistered();
+      currentness = await readCurrentness();
+      assertNotPaused(currentness.state);
+      if (currentness.state === 'ready') {
+        return;
+      }
+      if (currentness.links.length === 0) {
+        throw new ContextNotReadyError(
+          pullFailure ?? new Error(
+            `MemberContext.whenCurrent: no replication link is available for context '${source.contextId}' ` +
+            `owned by '${source.sourceDid}'.`,
+          ),
+        );
+      }
+      // A stopped live runtime reconciles the durable link directly. It has
+      // no controller snapshot to mark ready, so the completed pull is the
+      // point-in-time currentness proof.
+      if (!sync.isLiveSyncRunning) {
+        if (pullFailure === undefined) {
+          return;
+        }
+        throw new ContextNotReadyError(pullFailure);
+      }
+
+      const deadline = Date.now() + DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS;
+      while (true) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          throw new ContextNotReadyError(
+            pullFailure ?? new Error(
+              `MemberContext.whenCurrent: replication did not become current within ` +
+              `${DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS} milliseconds.`,
+            ),
+          );
+        }
+
+        let detachSync = (): void => {};
+        let detachAbort = (): void => {};
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const wake = new Promise<void>((resolve): void => {
-          const onAbort = (): void => resolve();
-          signal.addEventListener('abort', onAbort, { once: true });
-          removeAbortListener = (): void => signal.removeEventListener('abort', onAbort);
-          unsubscribe = sync.on((event): void => {
-            if (event.type !== 'identity:registration-change'
-              && event.tenantDid === source.sourceDid
-              && event.contextId === source.contextId
-              && syncEventCoversProtocol(event, source.protocol)) {
-              resolve();
+          const onWake = (): void => { resolve(); };
+          const onAbort = (): void => { resolve(); };
+          detachSync = sync.on((event): void => {
+            if (
+              (event.type === 'identity:registration-change' && event.tenantDid === source.actorDid) ||
+              (
+                event.type !== 'identity:registration-change' &&
+                event.tenantDid === source.sourceDid &&
+                event.contextId === source.contextId &&
+                syncEventCoversProtocol(event, source.protocol)
+              )
+            ) {
+              onWake();
             }
           });
+          signal.addEventListener('abort', onAbort, { once: true });
+          detachAbort = (): void => { signal.removeEventListener('abort', onAbort); };
+          timer = setTimeout(onWake, remaining);
         });
         try {
           await assertActive();
-          const links = (await sync.getReplicationLinks(source.sourceDid))
-            .filter((link): boolean => link.followedSourceId === source.id);
-          signal.throwIfAborted();
-          const currentness = projectReplicationCurrentness(links, false);
-          if (currentness === 'error') {
-            throw new Error(
-              `MemberContext.whenCurrent: replication is paused for context '${source.contextId}' ` +
-              `owned by '${source.sourceDid}'.`,
-            );
-          }
-          if (currentness === 'ready') {
+          await assertRegistered();
+          currentness = await readCurrentness();
+          assertNotPaused(currentness.state);
+          if (currentness.state === 'ready') {
             return;
           }
           await wake;
         } finally {
-          unsubscribe();
-          removeAbortListener();
+          detachSync();
+          detachAbort();
+          if (timer !== undefined) {
+            clearTimeout(timer);
+          }
         }
       }
     };
@@ -2199,13 +2268,29 @@ export class TypedEnbox<
       ownerDid : source.sourceDid,
       path     : scope.protocolPath,
       records  : this.bindContextRecords(dwn, {
-        contextId     : source.contextId,
-        protocolPath  : scope.protocolPath,
-        protocolPaths : scope.allowedPaths,
+        contextId    : source.contextId,
+        protocolPath : scope.protocolPath,
+        protocolPaths,
       }, signal),
       role: scope.role,
       whenCurrent,
     }) as unknown as MemberContext<D, C>;
+  }
+
+  /** Whether the current application definition can represent one stored active role. */
+  private supportsMemberContextSource(source: FollowedSyncSource): boolean {
+    if (!this._validPaths.has(source.protocolRole)) {
+      return false;
+    }
+    try {
+      this.resolveMemberContextScope(source.protocolRole);
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof TypeError) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   /** Reuse one typed records implementation with tenant and root routing already bound. */

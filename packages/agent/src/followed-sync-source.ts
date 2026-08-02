@@ -1,9 +1,3 @@
-/** One candidate role and the exact context paths it can replicate. */
-export type FollowedSyncRole = {
-  protocolRole: string;
-  protocolPaths: [string, ...string[]];
-};
-
 /** Durable description of one foreign context accepted through a role record. */
 export type FollowedSyncSource = {
   /** Opaque local acceptance ID. A re-follow never revives handles from a former acceptance. */
@@ -18,10 +12,10 @@ export type FollowedSyncSource = {
   contextId: string;
   /** Currently active role from `roles`. */
   protocolRole: string;
-  /** Exact role-readable paths replicated from the source context. */
+  /** Exact role-readable paths derived from the accepted hosted protocol definition. */
   protocolPaths: [string, ...string[]];
-  /** Mutually-exclusive roles, ordered from strongest to weakest. */
-  roles: [FollowedSyncRole, ...FollowedSyncRole[]];
+  /** Mutually-exclusive role paths, ordered from strongest to weakest. */
+  roles: [string, ...string[]];
 };
 
 /** Foreign context details supplied before its active role record is resolved. */
@@ -52,7 +46,7 @@ export interface FollowedSyncSourceStore {
   replace(source: FollowedSyncSource, replacedIds?: readonly string[]): Promise<void>;
 }
 
-/** Validates source details and canonicalizes each candidate's exact protocol-path set. */
+/** Validates source details and its ordered role policy. */
 export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput): FollowedSyncSourceInput {
   for (const [field, value] of Object.entries({
     actorDid  : source.actorDid,
@@ -72,8 +66,8 @@ export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput
     throw new TypeError('FollowedSyncSource: \'roles\' must contain at least one role.');
   }
 
-  const roles = source.roles.map(normalizeFollowedSyncRole) as [FollowedSyncRole, ...FollowedSyncRole[]];
-  if (new Set(roles.map(role => role.protocolRole)).size !== roles.length) {
+  const roles = source.roles.map(normalizeFollowedSyncRole) as [string, ...string[]];
+  if (new Set(roles).size !== roles.length) {
     throw new TypeError('FollowedSyncSource: \'roles\' must not contain duplicate roles.');
   }
   const contextRoot = resolveFollowedSyncRoleRoot(source.contextId, roles[0]).protocolPath;
@@ -107,24 +101,36 @@ export function normalizeFollowedSyncSource(source: FollowedSyncSource): Followe
     roles     : source.roles,
     sourceDid : source.sourceDid,
   });
-  const activeRole = normalizeFollowedSyncRole(source);
-  if (!details.roles.some(role => followedSyncRolesEqual(role, activeRole))) {
+  const protocolRole = normalizeFollowedSyncRole(source.protocolRole);
+  if (!details.roles.includes(protocolRole)) {
     throw new TypeError('FollowedSyncSource: the active role must belong to \'roles\'.');
   }
-  return { acceptanceId: source.acceptanceId, id: source.id, ...details, ...activeRole };
+  const protocolPaths = normalizeProtocolPaths(source.protocolPaths);
+  const { protocolPath } = resolveFollowedSyncRoleRoot(source.contextId, protocolRole);
+  if (!protocolPaths.includes(protocolPath)) {
+    throw new TypeError(
+      `FollowedSyncSource: role '${protocolRole}' does not authorize its context root '${protocolPath}'.`,
+    );
+  }
+  return { acceptanceId: source.acceptanceId, id: source.id, ...details, protocolPaths, protocolRole };
 }
 
-/** Equality for the remote role authorization; local acceptance and recovery policy are intentionally ignored. */
-export function followedSyncSourceAuthorizationEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+/** Equality for the immutable signed role-record tuple, excluding its protocol-derived path policy. */
+export function followedSyncSourceRoleRecordEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
   return a.id === b.id &&
     a.sourceDid === b.sourceDid &&
     a.actorDid === b.actorDid &&
     a.protocol === b.protocol &&
     a.contextId === b.contextId &&
-    followedSyncRolesEqual(a, b);
+    a.protocolRole === b.protocolRole;
 }
 
-/** Equality for one acceptance and its active role authorization; recovery policy is intentionally ignored. */
+/** Equality for the signed role authorization and its exact protocol-derived path policy. */
+export function followedSyncSourceAuthorizationEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+  return followedSyncSourceRoleRecordEqual(a, b) && sameStrings(a.protocolPaths, b.protocolPaths);
+}
+
+/** Equality for one acceptance and its exact active replication scope; fallback policy is intentionally ignored. */
 export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
   return a.acceptanceId === b.acceptanceId && followedSyncSourceAuthorizationEqual(a, b);
 }
@@ -132,16 +138,15 @@ export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: Followed
 /** Exact equality for an active source and its ordered role policy. */
 export function followedSyncSourceEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
   return followedSyncSourceActiveEqual(a, b) &&
-    a.roles.length === b.roles.length &&
-    a.roles.every((role, index) => followedSyncRolesEqual(role, b.roles[index]));
+    sameStrings(a.roles, b.roles);
 }
 
 /** Resolve and validate the context root addressed by one role candidate. */
 export function resolveFollowedSyncRoleRoot(
   contextId: string,
-  role: FollowedSyncRole,
+  role: string,
 ): { protocolPath: string; recordId: string } {
-  const roleSegments = role.protocolRole.split('/');
+  const roleSegments = role.split('/');
   const contextSegments = contextId.split('/');
   if (
     roleSegments.length < 2 ||
@@ -153,31 +158,28 @@ export function resolveFollowedSyncRoleRoot(
   }
 
   const protocolPath = roleSegments.slice(0, -1).join('/');
-  if (!role.protocolPaths.includes(protocolPath)) {
-    throw new TypeError(
-      `FollowedSyncSource: role '${role.protocolRole}' does not authorize its context root '${protocolPath}'.`,
-    );
-  }
   return { protocolPath, recordId: contextSegments.at(-1)! };
 }
 
-function normalizeFollowedSyncRole(role: FollowedSyncRole): FollowedSyncRole {
-  if (typeof role?.protocolRole !== 'string' || role.protocolRole.length === 0) {
+function normalizeFollowedSyncRole(role: string): string {
+  if (typeof role !== 'string' || role.length === 0) {
     throw new TypeError('FollowedSyncSource: \'protocolRole\' must be a non-empty string.');
   }
-  if (!Array.isArray(role.protocolPaths)) {
+  return role;
+}
+
+function normalizeProtocolPaths(protocolPaths: readonly string[]): [string, ...string[]] {
+  if (!Array.isArray(protocolPaths)) {
     throw new TypeError('FollowedSyncSource: \'protocolPaths\' must contain at least one path.');
   }
 
-  const protocolPaths = [...new Set(role.protocolPaths)].sort();
-  if (protocolPaths.length === 0 || protocolPaths.some(path => typeof path !== 'string' || path.length === 0)) {
+  const normalized = [...new Set(protocolPaths)].sort();
+  if (normalized.length === 0 || normalized.some(path => typeof path !== 'string' || path.length === 0)) {
     throw new TypeError('FollowedSyncSource: \'protocolPaths\' must contain non-empty paths.');
   }
-  return { protocolRole: role.protocolRole, protocolPaths: protocolPaths as [string, ...string[]] };
+  return normalized as [string, ...string[]];
 }
 
-function followedSyncRolesEqual(a: FollowedSyncRole, b: FollowedSyncRole): boolean {
-  return a.protocolRole === b.protocolRole &&
-    a.protocolPaths.length === b.protocolPaths.length &&
-    a.protocolPaths.every((path, index) => path === b.protocolPaths[index]);
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }

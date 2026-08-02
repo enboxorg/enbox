@@ -123,7 +123,7 @@ export function getProtocolRoleActionPaths(
   };
 
   visit(definition.structure as ProtocolRuleSet, '');
-  return paths.sort((left, right) => left.localeCompare(right));
+  return paths.sort();
 }
 
 /**

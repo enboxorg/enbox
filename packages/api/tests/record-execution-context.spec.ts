@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { DwnInterface } from '@enbox/agent';
 
+import { ContextNotReadyError } from '../src/context-errors.js';
 import { DwnApi } from '../src/dwn-api.js';
 
 type AgentStub = {
@@ -194,10 +195,12 @@ describe('context record execution', () => {
     });
     const dwn = createApi(agent);
 
-    await expect(dwn.subscribeRecordFrames({
+    const error = await dwn.subscribeRecordFrames({
       paths: ['note'],
       protocol,
-    }, leakedFrame)).rejects.toThrow('active context role changed');
+    }, leakedFrame).then(() => undefined, reason => reason as Error);
+    expect(error).toBeInstanceOf(ContextNotReadyError);
+    expect((error?.cause as Error).message).toContain('active context role changed');
     expect(leakedFrame.notCalled).toBe(true);
     expect(subscription.close.calledOnce).toBe(true);
   });

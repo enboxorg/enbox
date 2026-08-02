@@ -13,6 +13,7 @@ import { AuthManager, MemoryStorage } from '@enbox/auth';
 import { describe, expect, it } from 'bun:test';
 
 import { compileRecordQuery } from '../src/record-query.js';
+import { ContextRetiredError } from '../src/context-errors.js';
 import { createRecordView } from '../src/record-view.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
@@ -1016,6 +1017,59 @@ describe('RecordView', () => {
       to             : false,
     });
     await waitFor(() => { expect(view.getSnapshot().state).toBe('stale'); });
+    await view.close();
+  });
+
+  it('publishes ContextRetiredError when a followed-context acceptance changes', async () => {
+    const sourceDid = 'did:example:source';
+    const contextId = 'sharedRoot';
+    const harness = createHarness(async () => ok([testRecord('shared')]));
+    Object.assign(harness.dwn, {
+      followedContextId          : contextId,
+      followedSourceAcceptanceId : 'acceptance-a',
+      followedSourceId           : 'current-role',
+      recordTenantDid            : sourceDid,
+    });
+    const fakeSync = createSync();
+    fakeSync.links = [{
+      connectivity     : 'online',
+      followedSourceId : 'current-role',
+      isPullCurrent    : true,
+      remoteEndpoint   : 'https://source-dwn.example',
+      scope            : {
+        kind          : 'context',
+        contextId,
+        protocol      : ViewDefinition.protocol,
+        protocolPaths : ['note'],
+      },
+      status    : 'live',
+      tenantDid : sourceDid,
+    }];
+    const view = await createRecordView<string>({
+      definition         : ViewDefinition,
+      dwn                : harness.dwn,
+      materializeRecords : async (records): Promise<readonly string[]> => records.map(record => record.id),
+      query              : compileRecordQuery(ViewDefinition, 'note', {
+        from       : sourceDid,
+        pagination : { limit: 10 },
+        within     : contextId,
+      }),
+      sync: fakeSync.sync,
+    });
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+
+    fakeSync.emit({
+      type                       : 'followed-context:change',
+      actorDid                   : TENANT_DID,
+      contextId,
+      followedSourceAcceptanceId : 'acceptance-b',
+      followedSourceId           : 'current-role',
+      protocol                   : ViewDefinition.protocol,
+      tenantDid                  : sourceDid,
+    });
+
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
+    expect(view.getSnapshot().error).toBeInstanceOf(ContextRetiredError);
     await view.close();
   });
 

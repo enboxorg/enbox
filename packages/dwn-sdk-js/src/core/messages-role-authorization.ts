@@ -114,7 +114,7 @@ export class MessagesRoleAuthorization {
     return { author, authorDelegate, metadataOnly, resolvedRole };
   }
 
-  /** Rechecks only dynamic delegation and membership state at delivery time. */
+  /** Rechecks membership and delegation state visible to the serving DWN at delivery time. */
   public static async authorizeDelivery(input: {
     authorization: MessagesRoleAuthorizationState;
     authorizationTimestamp: string;

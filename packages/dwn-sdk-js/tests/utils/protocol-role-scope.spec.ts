@@ -13,6 +13,7 @@ const definition = {
     member  : { dataFormats: ['application/json'] },
     note    : { dataFormats: ['application/json'] },
     secret  : { dataFormats: ['application/json'] },
+    Zebra   : { dataFormats: ['application/json'] },
   },
   structure: {
     context: {
@@ -21,15 +22,19 @@ const definition = {
       note     : {
         $actions: [{ role: 'context/member', can: [ProtocolAction.Create, ProtocolAction.Read] }],
       },
-      secret: {},
+      secret : {},
+      Zebra  : {
+        $actions: [{ role: 'context/member', can: [ProtocolAction.Read] }],
+      },
     },
   },
 } as const satisfies ProtocolDefinition;
 
 describe('getProtocolRoleActionPaths', () => {
-  it('returns exact paths for all or one role action', () => {
+  it('returns exact paths in canonical code-unit order for all or one role action', () => {
     expect(getProtocolRoleActionPaths(definition, 'context/member')).toEqual([
       'context',
+      'context/Zebra',
       'context/note',
     ]);
     expect(getProtocolRoleActionPaths(definition, 'context/member', ProtocolAction.Create)).toEqual([
@@ -37,6 +42,7 @@ describe('getProtocolRoleActionPaths', () => {
     ]);
     expect(getProtocolRoleActionPaths(definition, 'context/member', ProtocolAction.Read)).toEqual([
       'context',
+      'context/Zebra',
       'context/note',
     ]);
   });

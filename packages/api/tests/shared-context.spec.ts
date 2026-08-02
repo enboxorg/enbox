@@ -11,17 +11,17 @@ import type {
   SyncEngine,
   SyncEvent,
   SyncEventListener,
+  SyncIdentityOptions,
 } from '@enbox/agent';
-
-import sinon from 'sinon';
-import { beforeEach, describe, expect, it } from 'bun:test';
-
-import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { recordCodecs } from '../src/record-codec.js';
-import { ContextNotReadyError, TypedEnbox } from '../src/typed-enbox.js';
+import sinon from 'sinon';
+import { TypedEnbox } from '../src/typed-enbox.js';
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
+import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
 
 const connectedDid = 'did:example:member';
 const contextId = 'workspaceRecord';
@@ -136,10 +136,7 @@ function source(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource
     protocol      : SharedDefinition.protocol,
     protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
     protocolRole,
-    roles         : [{
-      protocolPaths: ['workspace', 'workspace/note', 'workspace/title'],
-      protocolRole,
-    }],
+    roles         : [protocolRole],
     sourceDid,
     ...overrides,
   };
@@ -215,12 +212,18 @@ describe('TypedEnbox contexts', () => {
   let links: ReplicationLinkSnapshot[];
   let list: sinon.SinonStub;
   let listeners: Set<SyncEventListener>;
+  let liveSyncRunning: boolean;
+  let registration: SyncIdentityOptions | undefined;
+  let syncOnce: sinon.SinonStub;
   let typed: TypedEnbox<typeof SharedDefinition, typeof SharedProtocol.codecs>;
 
   beforeEach(() => {
     current = undefined;
     links = [];
     listeners = new Set();
+    liveSyncRunning = false;
+    registration = { protocols: [SharedDefinition.protocol] };
+    syncOnce = sinon.stub().resolves();
     agent = {
       decryptRecordData : sinon.stub().callsFake(async ({ dataStream }) => dataStream),
       processDwnRequest : sinon.stub().callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
@@ -250,8 +253,8 @@ describe('TypedEnbox contexts', () => {
     follow = sinon.stub().callsFake(async (input: FollowedSyncSourceInput): Promise<FollowedSyncSource> => {
       const active = input.roles[0];
       current = source({
-        protocolPaths : active.protocolPaths,
-        protocolRole  : active.protocolRole,
+        protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
+        protocolRole  : active,
         roles         : input.roles,
       });
       return current;
@@ -279,15 +282,19 @@ describe('TypedEnbox contexts', () => {
     typed = new TypedEnbox(dwn, SharedProtocol, {
       sync: {
         deleteFollowedSource,
-        followSource        : follow,
+        followSource       : follow,
         forgetFollowedContext,
+        getIdentityOptions : async (did: string): Promise<SyncIdentityOptions | undefined> =>
+          did === connectedDid ? registration : undefined,
         getFollowedSource   : get,
         getReplicationLinks : async (): Promise<ReplicationLinkSnapshot[]> => links,
+        get isLiveSyncRunning(): boolean { return liveSyncRunning; },
         listFollowedSources : list,
         on                  : (listener: SyncEventListener): (() => void) => {
           listeners.add(listener);
           return (): void => { listeners.delete(listener); };
         },
+        sync: syncOnce,
       } as unknown as SyncEngine,
     });
   });
@@ -355,10 +362,7 @@ describe('TypedEnbox contexts', () => {
       contextId,
       delegateDid : undefined,
       protocol    : SharedDefinition.protocol,
-      roles       : [{
-        protocolPaths: ['workspace', 'workspace/note', 'workspace/title'],
-        protocolRole,
-      }],
+      roles       : [protocolRole],
       sourceDid,
     });
     expect(shared).toMatchObject({
@@ -547,7 +551,7 @@ describe('TypedEnbox contexts', () => {
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect(error?.message).toBe(
-      'The requested context is not ready. Retry after membership and encryption are ready.',
+      'The requested context is not ready. Retry after membership, encryption, and replication are ready.',
     );
     expect(error?.cause).toBe(cause);
   });
@@ -559,8 +563,7 @@ describe('TypedEnbox contexts', () => {
       roles    : [protocolRole, viewerRole],
     });
 
-    expect(follow.firstCall.args[0].roles.map((role: { protocolRole: string }) => role.protocolRole))
-      .toEqual([protocolRole, viewerRole]);
+    expect(follow.firstCall.args[0].roles).toEqual([protocolRole, viewerRole]);
     expect(shared.role).toBe(protocolRole);
   });
 
@@ -599,16 +602,13 @@ describe('TypedEnbox contexts', () => {
     await shared.records.query('workspace/note');
 
     current = source({ id: 'replacement-role' });
-    await expect(shared.records.query('workspace/note')).rejects.toThrow(`Member context '${contextId}' is no longer active.`);
+    await expect(shared.records.query('workspace/note')).rejects.toBeInstanceOf(ContextRetiredError);
 
     current = source({
       protocolRole : viewerRole,
-      roles        : [{
-        protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
-        protocolRole  : viewerRole,
-      }],
+      roles        : [viewerRole],
     });
-    await expect(shared.records.query('workspace/note')).rejects.toThrow(`Member context '${contextId}' is no longer active.`);
+    await expect(shared.records.query('workspace/note')).rejects.toBeInstanceOf(ContextRetiredError);
 
     current = source();
     await shared.forget();
@@ -616,7 +616,39 @@ describe('TypedEnbox contexts', () => {
     await expect(shared.records.query('workspace/note')).rejects.toThrow();
   });
 
-  it('closes an open member stream when its exact role source changes', async () => {
+  it('binds the active role without requiring retired fallback roles in the current definition', async () => {
+    current = source({ roles: [protocolRole, 'workspace/retired'] });
+
+    const [shared] = await typed.contexts.list();
+
+    expect(shared.role).toBe(protocolRole);
+    await shared.records.query('workspace/note');
+  });
+
+  it('omits an accepted source whose active role is absent from the current definition', async () => {
+    current = source({
+      protocolRole : 'workspace/retired',
+      roles        : ['workspace/retired'],
+    });
+
+    expect(await typed.contexts.list()).toEqual([]);
+    const view = typed.contexts.observe();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(view.getSnapshot()).toMatchObject({ state: 'ready', contexts: [] });
+    view.close();
+  });
+
+  it('limits a pre-maintenance context to readable paths stored under its accepted definition', async () => {
+    current = source({ protocolPaths: ['workspace', 'workspace/note'] });
+    const [shared] = await typed.contexts.list();
+
+    await shared.records.query('workspace/note');
+    await shared.records.create('workspace/writeOnly', { data: {} });
+    await expect(shared.records.set('workspace/title', { data: 'not replicated yet' }))
+      .rejects.toThrow('Context-bound records do not expose path \'workspace/title\'.');
+  });
+
+  it('closes an old-scope member stream when protocol evolution starts a new acceptance', async () => {
     current = source();
     const transport = { close: sinon.stub().resolves() };
     let deliver!: (message: DwnSubscriptionMessage) => void | Promise<void>;
@@ -640,7 +672,10 @@ describe('TypedEnbox contexts', () => {
     const received = sinon.stub();
     const subscription = await shared.records.subscribe('workspace/note', received);
 
-    current = source({ acceptanceId: 'acceptance-b' });
+    current = source({
+      acceptanceId  : 'acceptance-b',
+      protocolPaths : ['workspace', 'workspace/note'],
+    });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await deliver({
       type   : 'error',
@@ -651,9 +686,9 @@ describe('TypedEnbox contexts', () => {
     expect(transport.close.calledOnce).toBe(true);
     expect(received.calledOnce).toBe(true);
     expect(received.firstCall.args[0]).toMatchObject({
-      type  : 'error',
-      error : expect.objectContaining({ message: `Member context '${contextId}' is no longer active.` }),
+      type: 'error',
     });
+    expect(received.firstCall.args[0].error).toBeInstanceOf(ContextRetiredError);
     expect(listeners.size).toBe(0);
     await subscription.close();
     expect(transport.close.calledOnce).toBe(true);
@@ -727,10 +762,7 @@ describe('TypedEnbox contexts', () => {
       id            : 'viewer-role-record',
       protocolRole  : viewerRole,
       protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
-      roles         : [{
-        protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
-        protocolRole  : viewerRole,
-      }],
+      roles         : [viewerRole],
     });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -779,34 +811,187 @@ describe('TypedEnbox contexts', () => {
     view.close();
   });
 
-  it('waits for the exact followed-source replica to become current', async () => {
+  it('runs one actor-scoped pull when the exact followed-source replica is not current', async () => {
     current = source();
-    links = [replicationLink({ followedSourceId: 'sibling-role' })];
+    links = [
+      replicationLink({ followedSourceId: 'sibling-role' }),
+      replicationLink({ isPullCurrent: false }),
+    ];
+    syncOnce.callsFake(async (): Promise<void> => { links = [replicationLink()]; });
     const [shared] = await typed.contexts.list();
-    const lifecycleListeners = listeners.size;
+
+    await shared.whenCurrent();
+
+    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+  });
+
+  it('accepts a completed one-shot pull when live replication remains stopped', async () => {
+    current = source();
+    links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
+    const [shared] = await typed.contexts.list();
+
+    await shared.whenCurrent();
+
+    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+  });
+
+  it('waits for an in-flight live link to publish exact currentness', async () => {
+    current = source();
+    liveSyncRunning = true;
+    links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
+    const [shared] = await typed.contexts.list();
     let resolved = false;
     const ready = shared.whenCurrent().then((): void => { resolved = true; });
 
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(resolved).toBe(false);
     links = [replicationLink()];
-    const event: SyncEvent = {
-      contextId,
-      from           : false,
-      protocol       : SharedDefinition.protocol,
-      protocols      : [SharedDefinition.protocol],
-      remoteEndpoint : 'https://dwn.example',
-      tenantDid      : sourceDid,
-      to             : true,
-      type           : 'pull:currentness-change',
-    };
     for (const listener of [...listeners]) {
-      listener(event);
+      listener({
+        contextId,
+        from           : false,
+        protocol       : SharedDefinition.protocol,
+        protocols      : [SharedDefinition.protocol],
+        remoteEndpoint : 'https://dwn.example',
+        tenantDid      : sourceDid,
+        to             : true,
+        type           : 'pull:currentness-change',
+      });
     }
 
     await ready;
+    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+    expect(listeners.size).toBe(0);
+  });
+
+  it('bounds the wait for a live link that never becomes current', async () => {
+    current = source();
+    liveSyncRunning = true;
+    links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
+    const [shared] = await typed.contexts.list();
+    const clock = sinon.useFakeTimers();
+    try {
+      const pending = shared.whenCurrent().then(() => undefined, reason => reason as Error);
+
+      await clock.tickAsync(10_001);
+      const error = await pending;
+
+      expect(error).toBeInstanceOf(ContextNotReadyError);
+      expect((error?.cause as Error).message).toContain('within 10000 milliseconds');
+      expect(listeners.size).toBe(0);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('rejects currentness when the member identity is not registered for sync', async () => {
+    current = source();
+    registration = undefined;
+    const [shared] = await typed.contexts.list();
+
+    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+
+    expect(error).toBeInstanceOf(ContextNotReadyError);
+    expect((error?.cause as Error).message)
+      .toBe(`MemberContext.whenCurrent: actor '${connectedDid}' is not registered for sync.`);
+    expect(syncOnce.notCalled).toBe(true);
+  });
+
+  it('runs one actor-scoped pull when the followed source has no replication link', async () => {
+    current = source();
+    syncOnce.callsFake(async (): Promise<void> => { links = [replicationLink()]; });
+    const [shared] = await typed.contexts.list();
+
+    await shared.whenCurrent();
+
+    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+  });
+
+  it('rechecks the exact context when another actor-scoped target makes the pull reject', async () => {
+    current = source();
+    syncOnce.callsFake(async (): Promise<void> => {
+      links = [replicationLink()];
+      throw new Error('an unrelated actor target failed');
+    });
+    const [shared] = await typed.contexts.list();
+
+    await shared.whenCurrent();
+
+    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+  });
+
+  it('maps a failed actor-scoped pull with no context link to readiness', async () => {
+    const pullError = new Error('pull failed');
+    current = source();
+    syncOnce.rejects(pullError);
+    const [shared] = await typed.contexts.list();
+
+    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+
+    expect(error).toBeInstanceOf(ContextNotReadyError);
+    expect(error?.cause).toBe(pullError);
+  });
+
+  it('does not treat an old same-role link as current after the readable scope changes', async () => {
+    current = source();
+    let resolved = false;
+    links = [replicationLink({
+      scope: {
+        kind          : 'context',
+        contextId,
+        protocol      : SharedDefinition.protocol,
+        protocolPaths : ['workspace', 'workspace/note'],
+      },
+    })];
+    syncOnce.callsFake(async (): Promise<void> => {
+      expect(resolved).toBe(false);
+      links = [replicationLink()];
+    });
+    const [shared] = await typed.contexts.list();
+    const ready = shared.whenCurrent().then((): void => { resolved = true; });
+
+    await ready;
     expect(resolved).toBe(true);
-    expect(listeners.size).toBe(lifecycleListeners);
+    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+  });
+
+  it('rejects when one actor-scoped pull cannot establish a replication link', async () => {
+    current = source();
+    const [shared] = await typed.contexts.list();
+
+    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+
+    expect(error).toBeInstanceOf(ContextNotReadyError);
+    expect((error?.cause as Error).message).toBe(
+      `MemberContext.whenCurrent: no replication link is available for context '${contextId}' owned by '${sourceDid}'.`,
+    );
+    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+  });
+
+  it('reports paused context replication as retryable readiness', async () => {
+    current = source();
+    links = [replicationLink({ status: 'paused' })];
+    const [shared] = await typed.contexts.list();
+
+    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+
+    expect(error).toBeInstanceOf(ContextNotReadyError);
+    expect((error?.cause as Error).message).toContain('replication is paused');
+    expect(syncOnce.notCalled).toBe(true);
+  });
+
+  it('rechecks registration after the bounded pull', async () => {
+    current = source();
+    links = [replicationLink({ isPullCurrent: false })];
+    syncOnce.callsFake(async (): Promise<void> => { registration = undefined; });
+    const [shared] = await typed.contexts.list();
+
+    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+
+    expect(error).toBeInstanceOf(ContextNotReadyError);
+    expect((error?.cause as Error).message)
+      .toBe(`MemberContext.whenCurrent: actor '${connectedDid}' is not registered for sync.`);
+    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
   });
 
   it('can stop following locally without withdrawing the role', async () => {

@@ -36,6 +36,24 @@ function ownerTarget(did: string, dwnUrl: string): SyncTarget {
   };
 }
 
+function roleTarget(actorDid: string, sourceDid = 'did:example:owner'): SyncTarget {
+  return {
+    ...ownerTarget(sourceDid, 'https://owner.example'),
+    authorization: {
+      kind         : 'role',
+      actorDid,
+      protocolRole : 'notebook/member',
+      roleRecordId : `role-${actorDid}`,
+    },
+    scope: {
+      kind          : 'context',
+      contextId     : 'notebook-a',
+      protocol      : 'https://example.com/notebooks',
+      protocolPaths : ['notebook'],
+    },
+  };
+}
+
 function reconciled(converged = true): SyncDurableFeedReconcileResult {
   return {
     converged,
@@ -96,6 +114,30 @@ describe('SyncRunCoordinator', () => {
       'https://a.example',
       'https://b.example',
     ]);
+  });
+
+  it('includes foreign targets authorized by the scoped identity', async () => {
+    const alice = roleTarget('did:example:alice');
+    const bob = roleTarget('did:example:bob');
+    const { coordinator, operations } = createFixture([alice, bob]);
+
+    await coordinator.run('pull', { did: 'did:example:alice' });
+
+    expect(operations.reconcileTarget.calledOnceWithExactly(alice, 'pull', undefined)).toBe(true);
+  });
+
+  it('does not select another actor role target by its foreign owner DID', async () => {
+    const aliceDid = 'did:example:alice';
+    const aliceOwned = ownerTarget(aliceDid, 'https://alice.example');
+    const aliceRole = roleTarget(aliceDid);
+    const bobRoleOnAlice = roleTarget('did:example:bob', aliceDid);
+    const { coordinator, operations } = createFixture([aliceOwned, aliceRole, bobRoleOnAlice]);
+
+    await coordinator.run('pull', { did: aliceDid });
+
+    expect(operations.reconcileTarget.calledWith(aliceOwned)).toBe(true);
+    expect(operations.reconcileTarget.calledWith(aliceRole)).toBe(true);
+    expect(operations.reconcileTarget.calledWith(bobRoleOnAlice)).toBe(false);
   });
 
   it('no-ops a scoped run whose identity matches no targets', async () => {

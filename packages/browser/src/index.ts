@@ -32,6 +32,7 @@ export {
   AudienceDecryptError,
   createConnectionStore,
   ContextNotReadyError,
+  ContextRetiredError,
   defineApplicationManifest,
   DwnResponseError,
   Enbox,

@@ -525,5 +525,7 @@ describe('shared context public API integration', () => {
     await sibling.whenCurrent();
     const siblingPages = await sibling.records.query('notebook/page', { pagination: { limit: 10 } });
     expect(await siblingPages.records[0].value()).toEqual({ body: 'sibling page' });
+    await sibling.leave();
+    expect(await reopened.contexts.list()).toEqual([]);
   }, 120_000);
 });

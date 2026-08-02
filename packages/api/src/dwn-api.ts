@@ -26,6 +26,7 @@ import type { MessagesFilter, MessagesSubscribeReply, RecordsSubscribeReply } fr
 import type { RecordDataAccess, RecordExecutionContext, RecordOptions, StoredRecordData } from './record-types.js';
 
 import { captureRecordDataAccess } from './record-data-access.js';
+import { ContextNotReadyError } from './context-errors.js';
 import { dataToBlob } from './utils.js';
 import { DwnResponseError } from './dwn-response-error.js';
 import { PermissionGrant } from './permission-grant.js';
@@ -618,7 +619,9 @@ export class DwnApi {
     const followedSourceId = this.recordExecutionContext?.followedSourceId;
     if (followedSourceId !== undefined && reply.roleRecordId !== followedSourceId) {
       await reply.subscription.close();
-      throw new Error('DwnApi: the active context role changed while opening the record subscription.');
+      throw new ContextNotReadyError(
+        new Error('DwnApi: the active context role changed while opening the record subscription.'),
+      );
     }
     try {
       for (let index = 0; index < pendingFrames.length; index++) {

@@ -26,7 +26,6 @@ import {
   DataStream,
   DurableEventLog,
   Dwn,
-  DwnInterfaceName,
   DwnMethodName,
   Encoder,
   Encryption,
@@ -34,7 +33,6 @@ import {
   EncryptionControl,
   EncryptionControlDeliveryRecipientAuthority,
   EncryptionProtocol,
-  getGrantKeyDeliveryScopes,
   getRoleAudienceContextId,
   getRuleSetAtPath,
   getTypeName,
@@ -1027,7 +1025,6 @@ export class AgentDwnApi {
     params: {
       granteeDid?: string;
       protocol: string;
-      rolePaths: ReadonlySet<string>;
       signal: AbortSignal;
       target: string;
     },
@@ -1040,15 +1037,6 @@ export class AgentDwnApi {
 
     const protocolDefinition = await this.getProtocolDefinition(params.target, params.protocol, params.granteeDid);
     if (protocolDefinition === undefined) {
-      return false;
-    }
-    const installedRolePaths = new Set(getGrantKeyDeliveryScopes({
-      interface : DwnInterfaceName.Records,
-      method    : DwnMethodName.Write,
-      protocol  : params.protocol,
-    }, protocolDefinition).flatMap(scope => scope.protocolPath === undefined ? [] : [scope.protocolPath]));
-    if (installedRolePaths.size !== params.rolePaths.size ||
-        [...params.rolePaths].some(rolePath => !installedRolePaths.has(rolePath))) {
       return false;
     }
     const states = await store.reconcileProtocol({
@@ -1470,6 +1458,7 @@ export class AgentDwnApi {
   public registerAudienceKeyDeliveryProtocol(params: {
     granteeDid?: string;
     protocol: string;
+    /** Authored role paths used only to wake on relevant local writes. */
     rolePaths: readonly string[];
     signal: AbortSignal;
     target: string;
@@ -1492,7 +1481,6 @@ export class AgentDwnApi {
       run      : (includeDormant): Promise<boolean> => this.runAudienceKeyDeliveryPass({
         granteeDid : params.granteeDid,
         protocol   : params.protocol,
-        rolePaths,
         signal     : params.signal,
         target     : params.target,
       }, includeDormant),

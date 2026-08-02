@@ -276,7 +276,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       )).rejects.toThrow('waiting for the local replica to become current');
     });
 
-    it('does not reconcile an installed-only retired role audience', async () => {
+    it('reconciles from the installed definition instead of treating authored wake paths as authority', async () => {
       const chat = chatProtocolDefinition();
       chat.types.retired = { dataFormats: ['application/json'] };
       (chat.structure.thread as ProtocolRuleSet).retired = { $role: true };
@@ -284,14 +284,13 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const reconcile = sinon.spy(testHarness.audienceKeyDeliveryStore, 'reconcileProtocol');
 
       const retry = await (testHarness.agent.dwn as any).runAudienceKeyDeliveryPass({
-        protocol  : chat.protocol,
-        rolePaths : new Set([ROLE_PATH]),
-        signal    : new AbortController().signal,
-        target    : alice.did.uri,
+        protocol : chat.protocol,
+        signal   : new AbortController().signal,
+        target   : alice.did.uri,
       }, true);
 
       expect(retry).toBe(false);
-      expect(reconcile.notCalled).toBe(true);
+      expect(reconcile.calledOnce).toBe(true);
     }, 30000);
 
     it('waits for a current replica, repairs after recipient install, and removes deleted roles', async () => {

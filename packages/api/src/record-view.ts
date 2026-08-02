@@ -6,6 +6,7 @@ import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { SyncEngine, SyncEvent } from '@enbox/agent';
 
+import { ContextRetiredError } from './context-errors.js';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
@@ -280,7 +281,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
           id           : this._followedSourceId,
         }, event)
       ) {
-        this.publishError(new Error(`Member context '${this._followedContextId}' is no longer active.`));
+        this.publishError(new ContextRetiredError(this._followedContextId!));
         void this.close().catch((): void => {});
         return;
       }

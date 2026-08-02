@@ -308,9 +308,9 @@ export type SyncDirection = 'push' | 'pull';
  */
 export type SyncRunOptions = {
   /**
-   * Restrict the run to one registered identity's replication targets. The
-   * run reconciles only that identity's endpoints; every other registered
-   * identity is untouched. Rejects when the DID is not registered.
+   * Restrict the run to one registered identity's owned and role-authorized
+   * replication targets; every other registered identity is untouched.
+   * Rejects when the DID is not registered.
    */
   did?: string;
 
@@ -798,6 +798,9 @@ export interface SyncEngine {
    */
   readonly hasActiveSubscriptions: boolean;
 
+  /** Whether the periodic live-sync runtime is active, including while its links initialize. */
+  readonly isLiveSyncRunning: boolean;
+
   /**
    * Register an identity to be managed by the SyncEngine for syncing.
    * Callers must explicitly specify which protocols to sync (`'all'` for a
@@ -863,7 +866,7 @@ export interface SyncEngine {
    *
    * @param direction which direction you'd like to perform the sync operation.
    * @param options optional scoping — `did` restricts the run to one
-   * registered identity's replication targets (its endpoints only), which
+   * registered identity's owned and role-authorized targets, which
    * keeps an app-triggered "pull my inbox now" from re-reconciling every
    * other identity.
    *

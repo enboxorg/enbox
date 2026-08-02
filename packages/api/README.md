@@ -388,9 +388,13 @@ await shared.records.create('notebook/page/delta', { data: nextDelta });
 await shared.records.set('notebook/page/title', { data: { title: 'Shared title' } });
 ```
 
-`contexts.follow()` throws `ContextNotReadyError` while the context's membership
-or encryption state is not ready. The condition is retryable; other
-establishment failures remain sanitized as a generic context error.
+`contexts.follow()` and `whenCurrent()` throw `ContextNotReadyError` while the
+context's membership, encryption, or replication state is not ready. The
+condition is retryable; other establishment failures remain sanitized as a
+generic context error. `whenCurrent()` starts one actor-scoped pull when the
+accepted context is not current, then rejects instead of waiting forever if
+that pull cannot catch it up. If live sync is already initializing the link,
+it waits for that initialization for at most ten seconds.
 
 `shared.records` is the existing typed records implementation projected as a
 context-bound API—the same contract returned by `notebooks.contexts.open()`.
@@ -438,11 +442,18 @@ contexts.close();
 
 The catalog's `ready` state means the local accepted-context list has loaded;
 use each context's `whenCurrent()` or record views for replication currentness.
-Enbox persists the complete ordered role group and automatically replaces the
-active role when every advertised owner endpoint proves the same new role
-record. It removes the accepted context only when every endpoint proves every
-candidate role absent. An unreachable, lagging, malformed, or disagreeing
-endpoint retains the last local context and never implies removal.
+Enbox persists the ordered role group and automatically replaces the active
+role when every advertised owner endpoint proves the same new role record. The
+active readable paths come from that hosted protocol definition; a definition
+change that alters them creates a new fenced acceptance. Operations, streams,
+and views on the former handle then fail with `ContextRetiredError`, so reload
+the context from `contexts.list()` or `contexts.observe()`. A stored acceptance
+whose active role no longer exists in the application's definition is omitted
+from that catalog; following the context with the current role policy replaces
+it. Enbox removes the accepted context only when every endpoint proves every
+candidate role absent.
+An unreachable, lagging, malformed, or disagreeing endpoint retains the last
+local context and never implies removal.
 `forget()` removes the current local context even if its role changes during
 the operation. `leave()` sends one signed deletion to every advertised owner
 DWN, stores the tombstone in the local replica, and then retires only that
@@ -456,10 +467,15 @@ inbox API. A removed source role fences future replication, but previously
 learned plaintext remains local; forward-secure member removal requires
 audience-key rotation in addition to role deletion.
 
+For wallet-delegated member sessions, a foreign owner's DWN can enforce the
+embedded grant's expiry but does not automatically receive revocations stored
+on the member's own DWNs. Treat revocation of a compromised delegate as
+expiry-bounded until verifier-visible foreign-context revocation is added.
+
 Include the protocol in the connection store's application manifest. The
 normal connection lifecycle then owns the actor's sync registration and its
-current wallet delegate. Raw-agent constructor users must register that actor
-and start the sync engine before waiting for a followed source to become current.
+current wallet delegate. Raw-agent constructor users must register that actor;
+start the live sync engine when ongoing background replication is desired.
 
 ## Anonymous Reads
 

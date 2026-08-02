@@ -53,6 +53,7 @@ describe('readRoleReplicationSupport', () => {
     const result = await readFixture(fixture);
 
     expect(result.roleRecordId).toBe(fixture.role.message.recordId);
+    expect(result.protocolDefinition).toEqual(fixture.configure.message.descriptor.definition);
     expect(result.root.message).toEqual(fixture.root.message);
     expect(result.dependencies.map(entry => entry.message)).toEqual([
       fixture.configure.message,

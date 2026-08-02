@@ -36,9 +36,10 @@ import { resolveDwnSubscriptionUrl as resolveDwnWebSocketUrl } from './utils.js'
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import { capRecordsWriteDataStream, SyncPullAbortedError } from './sync-messages.js';
 
-/** A role-authorized read and its server-proven local-replication prerequisites. */
+/** A role-authorized read, its current protocol definition, and its local-replication prerequisites. */
 export type RoleReplicationSupportBatch = {
   dependencies: SyncMessageEntry[];
+  protocolDefinition: ProtocolDefinition;
   roleRecordId: string;
   root: SyncMessageEntry;
   rootCid: string;
@@ -357,6 +358,7 @@ export async function readRoleReplicationSupport(params: {
 
     return {
       dependencies : [...dependencies.values()],
+      protocolDefinition,
       roleRecordId,
       root         : {
         message           : rootMessage,

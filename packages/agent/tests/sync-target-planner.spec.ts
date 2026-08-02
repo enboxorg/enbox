@@ -55,7 +55,7 @@ function followedSource(id = 'role-a'): FollowedSyncSource {
     contextId     : 'notebook-a',
     protocolRole  : 'notebook/viewer',
     protocolPaths : ['notebook', 'notebook/page'],
-    roles         : [{ protocolPaths: ['notebook', 'notebook/page'], protocolRole: 'notebook/viewer' }],
+    roles         : ['notebook/viewer'],
   };
 }
 

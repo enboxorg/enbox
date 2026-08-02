@@ -25,10 +25,7 @@ describe('FollowedSyncSourceStoreLevel', () => {
   it('should persist a source under its role record ID with canonical paths', async () => {
     const source = followedSource({
       protocolPaths : ['notebook/page/delta', 'notebook', 'notebook/page'] as [string, ...string[]],
-      roles         : [{
-        protocolPaths : ['notebook/page/delta', 'notebook', 'notebook/page'],
-        protocolRole  : 'notebook/viewer',
-      }],
+      roles         : ['notebook/viewer'],
     });
 
     await store.replace(source);
@@ -36,28 +33,21 @@ describe('FollowedSyncSourceStoreLevel', () => {
     expect(await store.get(source.id)).toEqual({
       ...source,
       protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
-      roles         : [{
-        protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
-        protocolRole  : 'notebook/viewer',
-      }],
+      roles         : ['notebook/viewer'],
     });
     expect((await store.list())[0]).toEqual({
       status : 'valid',
       source : {
         ...source,
         protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
-        roles         : [{
-          protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
-          protocolRole  : 'notebook/viewer',
-        }],
+        roles         : ['notebook/viewer'],
       },
     });
   });
 
   it('should reject an empty path set', async () => {
     await expect(store.replace(followedSource({
-      protocolPaths : [] as unknown as [string, ...string[]],
-      roles         : [{ protocolPaths: [] as unknown as [string, ...string[]], protocolRole: 'notebook/viewer' }],
+      protocolPaths: [] as unknown as [string, ...string[]],
     })))
       .rejects.toThrow('\'protocolPaths\' must contain non-empty paths');
   });
@@ -68,8 +58,8 @@ describe('FollowedSyncSourceStoreLevel', () => {
     }))).rejects.toThrow('\'roles\' must contain at least one role');
     await expect(store.replace(followedSource({
       roles: [
-        { protocolPaths: ['notebook/page'], protocolRole: 'notebook/viewer' },
-        { protocolPaths: ['notebook/page'], protocolRole: 'notebook/viewer' },
+        'notebook/viewer',
+        'notebook/viewer',
       ],
     }))).rejects.toThrow('\'roles\' must not contain duplicate roles');
   });
@@ -79,7 +69,7 @@ describe('FollowedSyncSourceStoreLevel', () => {
 
     await store.replace(source);
 
-    expect((await store.get(source.id))?.roles.map(role => role.protocolRole)).toEqual([
+    expect((await store.get(source.id))?.roles).toEqual([
       'notebook/collaborator',
       'notebook/viewer',
     ]);
@@ -92,8 +82,8 @@ describe('FollowedSyncSourceStoreLevel', () => {
   it('should reject role candidates for different context roots', async () => {
     await expect(store.replace(followedSource({
       roles: [
-        { protocolPaths: ['notebook'], protocolRole: 'notebook/viewer' },
-        { protocolPaths: ['project'], protocolRole: 'project/viewer' },
+        'notebook/viewer',
+        'project/viewer',
       ],
     }))).rejects.toThrow('every role must authorize the same context root');
   });
@@ -156,11 +146,8 @@ function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSy
     protocolRole,
     protocolPaths,
     roles        : [
-      {
-        protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
-        protocolRole  : 'notebook/collaborator',
-      },
-      { protocolPaths: ['notebook', 'notebook/page'], protocolRole: 'notebook/viewer' },
+      'notebook/collaborator',
+      'notebook/viewer',
     ],
     ...overrides,
   };

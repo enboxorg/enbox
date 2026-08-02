@@ -24,6 +24,7 @@
 
 export * from './application-manifest.js';
 export * from './connection-store.js';
+export * from './context-errors.js';
 export type { ContextView, ContextViewListener, ContextViewSnapshot } from './context-view.js';
 export { defineProtocol } from './define-protocol.js';
 export * from './did-api.js';
