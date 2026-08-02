@@ -82,6 +82,10 @@ const SharedNotebookProtocol = defineProtocol(protocolDefinition, {
   page     : recordCodecs.json<{ body: string }>(),
   title    : recordCodecs.json<{ title: string }>(),
   viewer   : recordCodecs.json<{ name: string }>(),
+}, {
+  roleGroups: {
+    default: ['notebook/page/member', 'notebook/page/viewer'],
+  },
 });
 
 async function waitForView<Item>(
@@ -223,8 +227,7 @@ describe('shared context public API integration', () => {
     localOwnerRequests.restore();
     remoteOwnerRequests.restore();
     for (const [index, page] of [pageA, pageB].entries()) {
-      const members = (await owner.contexts.open('notebook/page', page.contextId))
-        .members(['notebook/page/member', 'notebook/page/viewer']);
+      const members = (await owner.contexts.open('notebook/page', page.contextId)).members();
       const role = index === 0 ? 'notebook/page/member' : 'notebook/page/viewer';
       const member = await members.set(memberDid, {
         data: { name: 'member' },
@@ -272,7 +275,6 @@ describe('shared context public API integration', () => {
     const [contextA, contextB] = await Promise.all(contextIds.map((id) => typed.contexts.follow({
       id,
       ownerDid,
-      roles: ['notebook/page/member', 'notebook/page/viewer'],
     })));
     expect(contextA).toMatchObject({ access: 'member', id: contextIds[0], ownerDid });
     expect(contextA.role).toBe('notebook/page/member');
@@ -496,8 +498,7 @@ describe('shared context public API integration', () => {
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(catalog.getState()).toMatchObject({ status: 'ready', contexts: [{}, {}] });
     }, Poller.pollRetrySleep, 30_000);
-    const members = (await owner.contexts.open('notebook/page', contextIds[0]))
-      .members(['notebook/page/member', 'notebook/page/viewer']);
+    const members = (await owner.contexts.open('notebook/page', contextIds[0])).members();
     await members.set(memberDid, {
       data : { name: 'member' },
       role : 'notebook/page/viewer',

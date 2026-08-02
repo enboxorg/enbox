@@ -28,7 +28,8 @@ const ContextDefinition = {
   structure: {
     invite  : {},
     project : {
-      outsider: { $role: true },
+      $actions : [{ role: 'project/outsider', can: ['read'] }],
+      outsider : { $role: true },
     },
     workspace: {
       $actions: [
@@ -66,11 +67,22 @@ const ContextProtocol = defineProtocol(ContextDefinition, {
   title     : recordCodecs.json<{ text: string }>(),
   viewer    : recordCodecs.json<{ expires: boolean }>(),
   workspace : recordCodecs.json<{ name: string }>(),
+}, {
+  roleGroups: {
+    default : ['workspace/member', 'workspace/viewer'],
+    project : ['project/outsider'],
+    viewers : ['workspace/viewer'],
+  },
 });
 void ContextProtocol;
 
 declare const context:
-  | OwnedContext<typeof ContextDefinition, typeof ContextProtocol.codecs, 'workspace'>
+  | OwnedContext<
+    typeof ContextDefinition,
+    typeof ContextProtocol.codecs,
+    'workspace',
+    typeof ContextProtocol.roleGroups
+  >
   | MemberContext<
     typeof ContextDefinition,
     typeof ContextProtocol.codecs,
@@ -81,7 +93,11 @@ declare const catalogContext: MemberContext<
   typeof ContextProtocol.codecs,
   'workspace/member' | 'project/outsider'
 >;
-declare const typed: TypedEnbox<typeof ContextDefinition, typeof ContextProtocol.codecs>;
+declare const typed: TypedEnbox<
+  typeof ContextDefinition,
+  typeof ContextProtocol.codecs,
+  typeof ContextProtocol.roleGroups
+>;
 
 if (catalogContext.role === 'workspace/member') {
   const root: 'workspace' = catalogContext.path;
@@ -116,7 +132,7 @@ void owned.then((value): void => {
   void ownerDid;
   void path;
   void value.records.query('workspace/note');
-  const members = value.members(['workspace/member', 'workspace/viewer']);
+  const members = value.members();
   const assigned: Promise<ContextMember<
     typeof ContextDefinition,
     typeof ContextProtocol.codecs,
@@ -146,12 +162,12 @@ void owned.then((value): void => {
   void members.set('did:example:bob', { data: { label: 'wrong' }, role: 'workspace/viewer' });
   // @ts-expect-error a role outside the declared group cannot be assigned.
   void members.set('did:example:bob', { data: {}, role: 'workspace/other' });
-  // @ts-expect-error non-role paths cannot form a membership group.
-  value.members(['workspace/note']);
-  // @ts-expect-error a membership group cannot be empty.
-  value.members([]);
-  // @ts-expect-error roles outside the owned root cannot form a membership group.
-  value.members(['project/outsider']);
+  const viewers = value.members('viewers');
+  void viewers.set('did:example:bob', { data: { expires: true }, role: 'workspace/viewer' });
+  // @ts-expect-error only groups declared for this context root can be selected.
+  value.members('project');
+  // @ts-expect-error undeclared role groups cannot be selected.
+  value.members('missing');
   // @ts-expect-error a bound context cannot create a second copy of its root.
   void value.records.create('workspace', { data: { name: 'duplicate' } });
   // @ts-expect-error context records expose only their root and descendants.
@@ -174,6 +190,25 @@ void owned.then((value): void => {
   });
 });
 
+void typed.contexts.open('project', 'project-id').then((value): void => {
+  const members = value.members('project');
+  void members.set('did:example:alice', {
+    data : { label: 'guest' },
+    role : 'project/outsider',
+  });
+});
+
+void typed.contexts.follow({
+  group    : 'project',
+  id       : 'project-id',
+  ownerDid : 'did:example:owner',
+}).then((value): void => {
+  const path: 'project' = value.path;
+  const role: 'project/outsider' = value.role;
+  void path;
+  void role;
+});
+
 const singleton = typed.contexts.open('workspace/title', 'workspace-id/title-id');
 void singleton.then((value): void => {
   // @ts-expect-error a bound context cannot set its own root record.
@@ -186,7 +221,7 @@ if (context.access === 'member') {
   void context.leave();
   void context.whenCurrent();
   // @ts-expect-error only owners manage context membership.
-  context.members(['workspace/member']);
+  context.members();
 }
 
 const created: Promise<ContextRecord<{ text: string }>> = context.records.create('workspace/note', {

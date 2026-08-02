@@ -21,7 +21,7 @@ import type {
 import type { ProtocolReadinessApi } from './protocol-readiness.js';
 import type { RecordCodecMap } from './record-codec.js';
 import type { RoleDeliveryState } from './typed-enbox.js';
-import type { TypedProtocol } from './protocol-types.js';
+import type { ContextRoleGroups, TypedProtocol } from './protocol-types.js';
 import type {
   EnboxAnonymousApi,
   EnboxAnonymousOptions,
@@ -304,14 +304,18 @@ export class Enbox {
    * const { records } = await notes.records.query('note');
    * ```
    */
-  public using<D extends ProtocolDefinition, C extends RecordCodecMap>(
-    protocol: TypedProtocol<D, C>,
-  ): TypedEnbox<D, C> {
+  public using<
+    D extends ProtocolDefinition,
+    C extends RecordCodecMap,
+    G extends ContextRoleGroups,
+  >(
+    protocol: TypedProtocol<D, C, G>,
+  ): TypedEnbox<D, C, G> {
     const cached = this._typedInstances.get(protocol);
 
     if (cached) {
       // Object identity ties the erased cache value back to this exact typed protocol.
-      return cached as TypedEnbox<D, C>;
+      return cached as TypedEnbox<D, C, G>;
     }
 
     const deliverySession = {
@@ -319,7 +323,7 @@ export class Enbox {
       signal   : this._lifetimeSignal,
       target   : this._connectedDid,
     };
-    const instance = new TypedEnbox<D, C>(this._dwn, protocol, {
+    const instance = new TypedEnbox<D, C, G>(this._dwn, protocol, {
       roleDelivery: {
         get: (roleRecordId): Promise<RoleDeliveryState | undefined> => this.agent.dwn.getAudienceKeyDeliveryState({
           ...deliverySession,

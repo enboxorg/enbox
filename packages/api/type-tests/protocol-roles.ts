@@ -11,7 +11,8 @@ const RoleDefinition = {
       dataFormats: ['application/json'],
     },
     workspace: {
-      dataFormats: ['application/json'],
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
     },
     member: {
       dataFormats: ['application/json'],
@@ -23,6 +24,10 @@ const RoleDefinition = {
   structure: {
     admin     : { $role: true },
     workspace : {
+      $actions: [
+        { role: 'workspace/member', can: ['read'] },
+        { role: 'workspace/viewer', can: ['read'] },
+      ],
       member : { $role: true },
       viewer : { $role: true },
     },
@@ -34,13 +39,35 @@ const RoleProtocol = defineProtocol(RoleDefinition, {
   member    : recordCodecs.json<{ label: string }>(),
   viewer    : recordCodecs.json<{ label: string }>(),
   workspace : recordCodecs.json<{ name: string }>(),
+}, {
+  roleGroups: {
+    default : ['workspace/member', 'workspace/viewer'],
+    viewers : ['workspace/viewer'],
+  },
 });
 void RoleProtocol;
+
+const mutableRoles: ['workspace/member', 'workspace/viewer'] = ['workspace/member', 'workspace/viewer'];
+const MutableRoleProtocol = defineProtocol(RoleDefinition, RoleProtocol.codecs, {
+  roleGroups: { default: mutableRoles },
+});
+// @ts-expect-error defineProtocol copies and freezes mutable role-group inputs.
+MutableRoleProtocol.roleGroups.default.reverse();
+
+// @ts-expect-error role groups accept only encrypted contextual role paths.
+defineProtocol(RoleDefinition, RoleProtocol.codecs, { roleGroups: { default: ['workspace'] } });
+
+// @ts-expect-error a non-empty role-group declaration must include the protocol-global default.
+defineProtocol(RoleDefinition, RoleProtocol.codecs, { roleGroups: { viewers: ['workspace/viewer'] } });
 
 type RolePath = ProtocolRolePaths<typeof RoleDefinition>;
 type RoleCodecs = typeof RoleProtocol.codecs;
 
-declare const typed: TypedEnbox<typeof RoleDefinition, RoleCodecs>;
+declare const typed: TypedEnbox<
+  typeof RoleDefinition,
+  RoleCodecs,
+  typeof RoleProtocol.roleGroups
+>;
 declare const roleOrRecordPath: 'admin' | 'workspace';
 
 const rootRolePath: RolePath = 'admin';
@@ -76,7 +103,6 @@ void typed.records.create(roleOrRecordPath, {
 const sharedContext = typed.contexts.follow({
   id       : 'workspace-id',
   ownerDid : 'did:example:owner',
-  roles    : ['workspace/member', 'workspace/viewer'],
 });
 void sharedContext.then(context => context.records.query('workspace'));
 void sharedContext.then(context => {
@@ -91,14 +117,21 @@ void sharedContext.then(context => {
   return context.whenCurrent();
 });
 
-// @ts-expect-error shared contexts can only be followed through declared role paths.
-void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', roles: ['workspace'] });
+const viewerContext = typed.contexts.follow({
+  id       : 'workspace-id',
+  ownerDid : 'did:example:owner',
+  group    : 'viewers',
+});
+void viewerContext.then(context => {
+  const role: 'workspace/viewer' = context.role;
+  void role;
+});
 
-// @ts-expect-error context roles must be nested below the context they authorize.
-void typed.contexts.follow({ id: 'admin-id', ownerDid: 'did:example:owner', roles: ['admin'] });
+// @ts-expect-error undeclared role groups cannot be followed.
+void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', group: 'missing' });
 
-// @ts-expect-error followed contexts require at least one candidate role.
-void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', roles: [] });
+// @ts-expect-error callers no longer supply role arrays.
+void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', roles: ['workspace/member'] });
 
 // @ts-expect-error the singular role contract was removed.
 void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', role: 'workspace/member' });

@@ -39,6 +39,9 @@ export * from './protocol.js';
 export { ProtocolReadinessError } from './protocol-readiness.js';
 export type { EnsureProtocolsReadyOptions, ProtocolReadinessApi } from './protocol-readiness.js';
 export type {
+  ContextRoleGroup,
+  ContextRoleGroups,
+  ContextRolePath,
   DataFormatAtPath,
   ProtocolPaths,
   ProtocolPathTypeNames,

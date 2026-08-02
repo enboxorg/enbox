@@ -36,7 +36,7 @@ const SharedDefinition = {
   types     : {
     blindMember : { dataFormats: ['application/json'] },
     member      : { dataFormats: ['application/json'] },
-    note        : { dataFormats: ['application/json'] },
+    note        : { dataFormats: ['application/json'], encryptionRequired: true },
     outside     : { dataFormats: ['application/json'] },
     outsider    : { dataFormats: ['application/json'] },
     section     : { dataFormats: ['application/json'] },
@@ -107,6 +107,11 @@ const SharedProtocol = defineProtocol(SharedDefinition, {
   viewer      : recordCodecs.json<unknown>(),
   workspace   : recordCodecs.json<unknown>(),
   writeOnly   : recordCodecs.json<unknown>(),
+}, {
+  roleGroups: {
+    default : [protocolRole, viewerRole],
+    viewers : [viewerRole],
+  },
 });
 
 type AgentStub = {
@@ -215,7 +220,11 @@ describe('TypedEnbox contexts', () => {
   let liveSyncRunning: boolean;
   let registration: SyncIdentityOptions | undefined;
   let syncOnce: sinon.SinonStub;
-  let typed: TypedEnbox<typeof SharedDefinition, typeof SharedProtocol.codecs>;
+  let typed: TypedEnbox<
+    typeof SharedDefinition,
+    typeof SharedProtocol.codecs,
+    typeof SharedProtocol.roleGroups
+  >;
 
   beforeEach(() => {
     current = undefined;
@@ -229,6 +238,9 @@ describe('TypedEnbox contexts', () => {
       processDwnRequest : sinon.stub().callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
         if (request.messageType === DwnInterface.ProtocolsQuery) {
           return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+        }
+        if (request.messageType === DwnInterface.ProtocolsConfigure) {
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
         }
         if (request.messageType === DwnInterface.RecordsQuery) {
           return { reply: { entries: [], status: { code: 200, detail: 'OK' } } };
@@ -304,7 +316,9 @@ describe('TypedEnbox contexts', () => {
 
     expect(owned).toMatchObject({ access: 'owner', id: contextId, ownerDid: connectedDid, path: 'workspace' });
     await owned.records.query('workspace/note');
-    expect(agent.processDwnRequest.secondCall.args[0]).toMatchObject({
+    const recordsQuery = agent.processDwnRequest.getCalls()
+      .find(call => call.args[0].messageType === DwnInterface.RecordsQuery);
+    expect(recordsQuery?.args[0]).toMatchObject({
       messageParams: {
         filter: {
           contextId,
@@ -330,7 +344,7 @@ describe('TypedEnbox contexts', () => {
       'Context-bound operations cannot invoke another protocol role.',
     );
 
-    const followed = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
+    const followed = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
     const contexts: Array<{ records: typeof owned.records }> = [owned, followed];
     expect(contexts).toHaveLength(2);
   });
@@ -342,7 +356,6 @@ describe('TypedEnbox contexts', () => {
     await expect(typed.contexts.follow({
       ownerDid : sourceDid,
       id       : `${contextId}/child`,
-      roles    : [protocolRole],
     })).rejects.toThrow('id must identify a \'workspace\' context');
     expect(follow.notCalled).toBe(true);
   });
@@ -355,14 +368,14 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('derives the exact readable feed and inherits local-read and authority-write routing', async () => {
-    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 
     expect(follow.firstCall.args[0]).toEqual({
       actorDid    : connectedDid,
       contextId,
       delegateDid : undefined,
       protocol    : SharedDefinition.protocol,
-      roles       : [protocolRole],
+      roles       : [protocolRole, viewerRole],
       sourceDid,
     });
     expect(shared).toMatchObject({
@@ -423,7 +436,7 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('rejects selectors that escape the bound context before dispatch', async () => {
-    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 
     for (const within of ['siblingWorkspace', `${contextId}Sibling`]) {
       await expect(shared.records.query('workspace/note', { within }))
@@ -439,7 +452,7 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('creates and updates a direct singleton through the bound root', async () => {
-    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 
     await shared.records.set('workspace/title', { data: 'First title' });
 
@@ -486,35 +499,8 @@ describe('TypedEnbox contexts', () => {
     });
   });
 
-  it('rejects non-role, unreadable-root, and uncovered paths before dispatch', async () => {
-    await expect((typed.contexts.follow as (request: object) => Promise<unknown>)({
-      ownerDid : sourceDid,
-      id       : contextId,
-      roles    : [],
-    })).rejects.toThrow('roles must contain at least one role path');
-    await expect(typed.contexts.follow({
-      ownerDid : sourceDid,
-      id       : contextId,
-      roles    : ['workspace/note' as typeof protocolRole],
-    })).rejects.toThrow('is not a protocol role path');
-    await expect(typed.contexts.follow({
-      ownerDid : sourceDid,
-      id       : contextId,
-      roles    : ['workspace/blindMember'],
-    })).rejects.toThrow('must authorize reading its parent context \'workspace\'');
-    await expect(typed.contexts.follow({
-      ownerDid : sourceDid,
-      id       : contextId,
-      roles    : [protocolRole, protocolRole],
-    })).rejects.toThrow('roles must not contain duplicates');
-    await expect(typed.contexts.follow({
-      ownerDid : sourceDid,
-      id       : contextId,
-      roles    : [protocolRole, outsideRole],
-    })).rejects.toThrow('every role must belong to the same context root');
-    expect(follow.notCalled).toBe(true);
-
-    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
+  it('rejects paths outside the selected role scope before dispatch', async () => {
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
     const untypedRecords = shared.records as unknown as {
       query(path: string): Promise<unknown>;
     };
@@ -530,7 +516,6 @@ describe('TypedEnbox contexts', () => {
     const error = await typed.contexts.follow({
       ownerDid : sourceDid,
       id       : contextId,
-      roles    : [protocolRole],
     }).then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(Error);
@@ -546,7 +531,6 @@ describe('TypedEnbox contexts', () => {
     const error = await typed.contexts.follow({
       ownerDid : sourceDid,
       id       : contextId,
-      roles    : [protocolRole],
     }).then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
@@ -557,14 +541,16 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('preserves declared role precedence in one follow request', async () => {
-    const shared = await typed.contexts.follow({
-      ownerDid : sourceDid,
-      id       : contextId,
-      roles    : [protocolRole, viewerRole],
-    });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 
     expect(follow.firstCall.args[0].roles).toEqual([protocolRole, viewerRole]);
     expect(shared.role).toBe(protocolRole);
+  });
+
+  it('selects a named role group without exposing its roles', async () => {
+    await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, group: 'viewers' });
+
+    expect(follow.firstCall.args[0].roles).toEqual([viewerRole]);
   });
 
   it('does not delete a record outside the followed context by id', async () => {
@@ -584,7 +570,7 @@ describe('TypedEnbox contexts', () => {
       return { reply: { status: { code: 404, detail: 'Not Found' } } };
     });
 
-    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, roles: [protocolRole] });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 
     await expect(shared.records.delete('workspace/note', {
       recordId: 'sibling-note',

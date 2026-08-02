@@ -44,6 +44,8 @@ import type {
   SyncEngine,
 } from '@enbox/agent';
 import type {
+  ContextRoleGroups,
+  ContextRolePath,
   DirectSingletonChildPaths,
   ProtocolPaths,
   ProtocolRolePaths,
@@ -67,8 +69,8 @@ import { removeUndefinedProperties } from '@enbox/common';
 import {
   assertTypedProtocolStructureSupported,
   collectProtocolPaths,
-  isEncryptedRoleAudiencePath,
   isProtocolRolePath,
+  resolveContextRoleScope,
 } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
@@ -79,12 +81,7 @@ import {
   followedSyncSourceActiveEqual,
   syncEventCoversProtocol,
 } from '@enbox/agent';
-import {
-  getProtocolRoleActionPaths,
-  getRuleSetAtPath,
-  getTypeName,
-  ProtocolAction,
-} from '@enbox/dwn-sdk-js';
+import { getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
 import {
   projectReplicationCurrentness,
   type ReplicationCurrentness,
@@ -163,11 +160,6 @@ type RecordHandle<T, ContextBound extends boolean> = ContextBound extends true
 type MaterializedRecordHandle<T, ContextBound extends boolean> = ContextBound extends true
   ? ContextMaterializedRecord<T>
   : MaterializedRecord<T>;
-
-/** Role paths that receive audience keys under the protocol's global encryption policy. */
-type ProtocolDeliveryRolePaths<D extends ProtocolDefinition> = {
-  [Name in keyof D['types']]: D['types'][Name] extends { readonly encryptionRequired: true } ? Name : never;
-}[keyof D['types']] extends never ? never : ProtocolRolePaths<D>;
 
 /** One page returned by a typed records query. */
 export type RecordPage<Item = Record> = {
@@ -377,27 +369,20 @@ export type RoleDeliveryState =
   | Readonly<{ state: 'awaiting-recipient-install' | 'failed'; reason: string }>;
 
 type ParentProtocolPath<Path extends string> = Path extends `${infer Head}/${infer Tail}`
-  ? Tail extends `${string}/${string}`
-    ? `${Head}/${ParentProtocolPath<Tail>}`
-    : Head
+  ? Tail extends `${string}/${string}` ? `${Head}/${ParentProtocolPath<Tail>}` : Head
   : never;
 
-type ContextRolePaths<D extends ProtocolDefinition> = Extract<
-  ProtocolRolePaths<D> & string,
-  `${string}/${string}`
->;
+type RoleGroupName<G> = Extract<keyof G, string>;
 
-type DirectChildPath<Root extends string, Path extends string> = Path extends `${Root}/${infer Child}`
-  ? Child extends `${string}/${string}` ? never : Path
+type RoleGroupRoles<G, Group extends keyof G> = G[Group] extends readonly (infer Role extends string)[]
+  ? Role
   : never;
 
-type NonEmptyReadonlyArray<T> = readonly [T, ...T[]];
+type RoleGroupRoot<G, Group extends keyof G> = ParentProtocolPath<RoleGroupRoles<G, Group>>;
 
-/** Encrypted role paths that are direct children of one context root. */
-type ContextMemberRolePaths<
-  D extends ProtocolDefinition,
-  Root extends ProtocolPaths<D> & string,
-> = DirectChildPath<Root, ProtocolDeliveryRolePaths<D> & string>;
+type RoleGroupsForRoot<G, Root extends string> = {
+  [Group in RoleGroupName<G>]: RoleGroupRoot<G, Group> extends Root ? Group : never;
+}[RoleGroupName<G>];
 
 /** One application-facing member of an owned context. */
 export type ContextMember<
@@ -436,6 +421,15 @@ export type ContextMembersApi<
   ): Promise<ContextMember<D, C, SelectedRole>>;
 }>;
 
+type ContextMembersSelector<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  G extends ContextRoleGroups,
+  Root extends ProtocolPaths<D> & string,
+> = <Group extends RoleGroupsForRoot<G, Root> = Extract<'default', RoleGroupsForRoot<G, Root>>>(
+  ...args: Group extends 'default' ? [group?: Group] : [group: Group]
+) => ContextMembersApi<D, C, Extract<RoleGroupRoles<G, Group>, ProtocolPaths<D> & string>>;
+
 type ContextBase<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
@@ -454,7 +448,7 @@ type ContextBase<
 type MemberContextForRoot<
   D extends ProtocolDefinition,
   C extends RecordCodecMap,
-  Role extends ContextRolePaths<D>,
+  Role extends ContextRolePath<D>,
   Root extends ProtocolPaths<D> & string,
 > = Root extends unknown
   ? Readonly<ContextBase<D, C, Root> & {
@@ -480,19 +474,19 @@ export type OwnedContext<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
   Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
-> = Readonly<ContextBase<D, C, Root> & {
-  access: 'owner';
-  /** Manage direct encrypted roles, ordered strongest first, that can read this context root. */
-  members<const Roles extends NonEmptyReadonlyArray<ContextMemberRolePaths<D, Root>>>(
-    roles: Roles,
-  ): ContextMembersApi<D, C, Roles[number]>;
-}>;
+  G extends ContextRoleGroups = {},
+> = Readonly<
+  ContextBase<D, C, Root> & {
+    access: 'owner';
+    members: ContextMembersSelector<D, C, G, Root>;
+  }
+>;
 
 /** A member context authorized through one exact role record. */
 export type MemberContext<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
-  Role extends ContextRolePaths<D> = ContextRolePaths<D>,
+  Role extends ContextRolePath<D> = ContextRolePath<D>,
 > = MemberContextForRoot<
   D,
   C,
@@ -500,29 +494,33 @@ export type MemberContext<
   Extract<ParentProtocolPath<Role>, ProtocolPaths<D> & string>
 >;
 
-/** Public request for following one foreign context through an ordered role group. */
-export type FollowContextOptions<
-  D extends ProtocolDefinition = ProtocolDefinition,
-  Roles extends NonEmptyReadonlyArray<ContextRolePaths<D>> = NonEmptyReadonlyArray<ContextRolePaths<D>>,
-> = Readonly<{
+/** Public request for following one foreign context through one declared role group. */
+export type FollowContextOptions<Group extends string = 'default'> = Readonly<{
   id: string;
   ownerDid: string;
-  /** Mutually-exclusive roles, ordered from strongest to weakest. */
-  roles: Roles;
-}>;
+}> & (Group extends 'default'
+  ? Readonly<{ group?: Group }>
+  : Readonly<{ group: Group }>);
+
+type ContextFollow<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  G extends ContextRoleGroups,
+> = <Group extends RoleGroupName<G> = Extract<'default', RoleGroupName<G>>>(
+  request: FollowContextOptions<Group>,
+) => Promise<MemberContext<D, C, Extract<RoleGroupRoles<G, Group>, ContextRolePath<D>>>>;
 
 /** Protocol-scoped owned-context access and accepted member-context lifecycle. */
 export type ContextsApi<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
+  G extends ContextRoleGroups = {},
 > = Readonly<{
   open<Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
     path: Root,
     id: string,
-  ): Promise<OwnedContext<D, C, Root>>;
-  follow<const Roles extends NonEmptyReadonlyArray<ContextRolePaths<D>>>(
-    request: FollowContextOptions<D, Roles>,
-  ): Promise<MemberContext<D, C, Roles[number]>>;
+  ): Promise<OwnedContext<D, C, Root, G>>;
+  follow: ContextFollow<D, C, G>;
   /** List locally accepted member contexts for this protocol. */
   list(): Promise<MemberContext<D, C>[]>;
   /** Observe the locally accepted member-context catalog for this protocol. */
@@ -645,7 +643,7 @@ type TypedCreateOptions<
    * endpoint); the recipient computes the key locally and carries it out
    * of band for the writer to supply here. When omitted, role-audience
    * key delivery is best-effort. Owned contexts expose its lifecycle through
-   * `context.members(...)`.
+   * `context.members()`.
    *
    * Enbox validates only that the supplied key is a usable X25519 public
    * key — it does NOT verify that the key belongs to the recipient. That
@@ -1090,6 +1088,7 @@ export type VerifyInstalledResult = {
 export class TypedEnbox<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
+  G extends ContextRoleGroups = {},
 > {
   /** @internal */
   private readonly _dwn: DwnApi;
@@ -1098,15 +1097,17 @@ export class TypedEnbox<
   /** @internal */
   private readonly _codecs: C;
   /** @internal */
+  private readonly _roleGroups: G;
+  /** @internal */
   private _configured: boolean = false;
   /** @internal */
   private _ensureReadyPromise: Promise<void> | null = null;
   /** @internal */
-  private _contexts?: ContextsApi<D, C>;
+  private _contexts?: ContextsApi<D, C, G>;
   /** @internal */
   private readonly _validPaths: Set<string>;
   /** @internal */
-  private _records?: TypedEnbox<D, C>['records'];
+  private _records?: TypedEnbox<D, C, G>['records'];
   /** @internal — cached result of the `hasEncryptedTypes` scan (definition is immutable). */
   private readonly _hasEncryptedTypes: boolean;
   /** @internal */
@@ -1118,11 +1119,12 @@ export class TypedEnbox<
    * @param protocol - The typed protocol containing the definition and codecs.
    * @param options - Optional session-owned lifecycle and sync resources.
    */
-  constructor(dwn: DwnApi, protocol: TypedProtocol<D, C>, options: TypedEnboxOptions = {}) {
+  constructor(dwn: DwnApi, protocol: TypedProtocol<D, C, G>, options: TypedEnboxOptions = {}) {
     assertTypedProtocolStructureSupported(protocol.definition.structure);
     this._dwn = dwn;
     this._definition = protocol.definition;
     this._codecs = protocol.codecs;
+    this._roleGroups = protocol.roleGroups;
     this._options = options;
     this._configured = options.context !== undefined;
     this._validPaths = collectProtocolPaths(this._definition.structure);
@@ -1232,7 +1234,7 @@ export class TypedEnbox<
   }
 
   /** Owned and role-authorized member contexts for this protocol. */
-  public get contexts(): ContextsApi<D, C> {
+  public get contexts(): ContextsApi<D, C, G> {
     if (this._contexts !== undefined) {
       return this._contexts;
     }
@@ -1259,7 +1261,7 @@ export class TypedEnbox<
       open: async <Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
         path: Root,
         id: string,
-      ): Promise<OwnedContext<D, C, Root>> => {
+      ): Promise<OwnedContext<D, C, Root, G>> => {
         const normalizedPath = normalizePath(path) as Root;
         if (isProtocolRolePath(this._definition, normalizedPath)) {
           throw new TypeError('TypedEnbox.contexts.open cannot open a role record as a context.');
@@ -1289,38 +1291,29 @@ export class TypedEnbox<
         return Object.freeze({
           access  : 'owner',
           id,
-          members : <const Roles extends NonEmptyReadonlyArray<ContextMemberRolePaths<D, Root>>>(roles: Roles) =>
-            this.bindContextMembers(dwn, id, normalizedPath, roles) as ContextMembersApi<
-              D, C, Roles[number]
-            >,
+          members : ((group: string = 'default') => {
+            const selected = this.resolveContextRoleGroup(group);
+            if (selected.contextPath !== normalizedPath) {
+              throw new TypeError(
+                `OwnedContext.members: role group '${group}' belongs to '${selected.contextPath}', ` +
+                `not '${normalizedPath}'.`,
+              );
+            }
+            return this.bindContextMembers(dwn, id, selected.roles);
+          }) as ContextMembersSelector<D, C, G, Root>,
           ownerDid : this._dwn.connectedDid,
           path     : normalizedPath,
           records,
-        });
+        }) as OwnedContext<D, C, Root, G>;
       },
-      follow: async <const Roles extends NonEmptyReadonlyArray<ContextRolePaths<D>>>(
-        request: FollowContextOptions<D, Roles>,
-      ): Promise<MemberContext<D, C, Roles[number]>> => {
+      follow: (async (request: { group?: string; id: string; ownerDid: string }): Promise<MemberContext<D, C>> => {
         this._options.signal?.throwIfAborted();
-        if (!Array.isArray(request.roles) || request.roles.length === 0) {
-          throw new TypeError('TypedEnbox.contexts.follow: roles must contain at least one role path.');
-        }
-        const scopes = request.roles.map(role => this.resolveMemberContextScope(role));
-        if (new Set(scopes.map(scope => scope.role)).size !== scopes.length) {
-          throw new TypeError('TypedEnbox.contexts.follow: roles must not contain duplicates.');
-        }
-        if (scopes.some(scope => scope.protocolPath !== scopes[0].protocolPath)) {
-          throw new TypeError('TypedEnbox.contexts.follow: every role must belong to the same context root.');
-        }
-        const contextPath = scopes[0].protocolPath;
+        const selected = this.resolveContextRoleGroup(request.group ?? 'default');
+        const contextPath = selected.contextPath;
         if (request.id.split('/').length !== contextPath.split('/').length) {
           throw new TypeError(`TypedEnbox.contexts.follow: id must identify a '${contextPath}' context.`);
         }
         assertValidRecordWithin(contextPath, request.id, true);
-        const roles: [string, ...string[]] = [
-          scopes[0].role,
-          ...scopes.slice(1).map(scope => scope.role),
-        ];
         const sync = requireSync();
         let source: FollowedSyncSource;
         try {
@@ -1329,15 +1322,15 @@ export class TypedEnbox<
             contextId   : request.id,
             delegateDid : this._dwn.recordDelegateDid,
             protocol    : this._definition.protocol,
-            roles,
+            roles       : [...selected.roles] as [string, ...string[]],
             sourceDid   : request.ownerDid,
           });
         } catch (error) {
           if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
           throw new Error('TypedEnbox.contexts.follow could not establish the requested context.');
         }
-        return this.bindMemberContext(source) as MemberContext<D, C, Roles[number]>;
-      },
+        return this.bindMemberContext(source);
+      }) as ContextsApi<D, C, G>['follow'],
       list: async (): Promise<MemberContext<D, C>[]> =>
         (await listSources()).map((source): MemberContext<D, C> => this.bindMemberContext(source)),
       observe: (): ContextView<MemberContext<D, C>> => createContextView({
@@ -1903,71 +1896,45 @@ export class TypedEnbox<
     allowedPaths: ReadonlySet<string>;
     protocolPath: ProtocolPaths<D> & string;
     readablePaths: [string, ...string[]];
-    role: ContextRolePaths<D>;
+    role: ContextRolePath<D>;
   } {
     const normalizedRole = normalizePath(role);
     this._assertValidPath(normalizedRole);
-    if (getRuleSetAtPath(normalizedRole, this._definition.structure)?.$role !== true) {
-      throw new TypeError(`TypedEnbox.contexts: '${normalizedRole}' is not a protocol role path.`);
-    }
-
-    const protocolPath = normalizedRole.split('/').slice(0, -1).join('/') as ProtocolPaths<D> & string;
-    if (protocolPath === '') {
-      throw new TypeError('TypedEnbox.contexts requires a role nested below a context root.');
-    }
-    const isContextContentPath = (path: string): boolean =>
-      (path === protocolPath || path.startsWith(`${protocolPath}/`)) &&
-      !isProtocolRolePath(this._definition, path);
-    const readablePaths = getProtocolRoleActionPaths(this._definition, normalizedRole, ProtocolAction.Read)
-      .filter(isContextContentPath);
-    if (!readablePaths.includes(protocolPath)) {
-      throw new TypeError(
-        `TypedEnbox.contexts: role '${normalizedRole}' must authorize reading its parent context '${protocolPath}'.`,
-      );
-    }
+    const scope = resolveContextRoleScope(this._definition, normalizedRole);
 
     return {
-      allowedPaths: new Set(
-        getProtocolRoleActionPaths(this._definition, normalizedRole)
-          .filter(isContextContentPath),
-      ),
-      protocolPath,
-      readablePaths : readablePaths as [string, ...string[]],
-      role          : normalizedRole as ContextRolePaths<D>,
+      allowedPaths  : scope.allowedPaths,
+      protocolPath  : scope.protocolPath as ProtocolPaths<D> & string,
+      readablePaths : scope.readablePaths,
+      role          : normalizedRole as ContextRolePath<D>,
     };
   }
 
-  /** Bind owner membership tasks to one context and one explicit role-precedence group. */
-  private bindContextMembers<
-    Root extends ProtocolPaths<D> & string,
-  >(
+  /** Resolve one declaration-owned group without exposing its role tuple to callers. */
+  private resolveContextRoleGroup(group: string): {
+    contextPath: string;
+    roles: readonly [string, ...string[]];
+  } {
+    const roles = this._roleGroups[group];
+    if (!Object.hasOwn(this._roleGroups, group) || roles === undefined) {
+      throw new TypeError(`TypedEnbox.contexts: unknown role group '${group}'.`);
+    }
+    return {
+      contextPath: parentProtocolPath(roles[0]),
+      roles,
+    };
+  }
+
+  /** Bind owner membership tasks to one context and one declared role-precedence group. */
+  private bindContextMembers(
     dwn: DwnApi,
     contextId: string,
-    contextPath: Root,
     selectedRoles: readonly string[],
-  ): ContextMembersApi<D, C, ContextMemberRolePaths<D, Root>> {
-    type Role = ContextMemberRolePaths<D, Root>;
+  ): ContextMembersApi<D, C, ContextRolePath<D>> {
+    type Role = ContextRolePath<D>;
     type ActiveMemberRecord = { did: string; record: Record<unknown>; role: Role };
 
-    if (selectedRoles.length === 0) {
-      throw new TypeError('OwnedContext.members requires at least one role path.');
-    }
-
-    const rolePaths: Role[] = [];
-    for (const selectedRole of selectedRoles) {
-      const role = normalizePath(selectedRole) as Role;
-      if (rolePaths.includes(role)) {
-        continue;
-      }
-      const scope = this.resolveMemberContextScope(role);
-      if (scope.protocolPath !== contextPath) {
-        throw new TypeError(`OwnedContext.members: role '${role}' is not a direct role of '${contextPath}'.`);
-      }
-      if (!isEncryptedRoleAudiencePath(this._definition, role)) {
-        throw new TypeError(`OwnedContext.members: role '${role}' is not an encrypted audience.`);
-      }
-      rolePaths.push(role);
-    }
+    const rolePaths = [...selectedRoles] as Role[];
 
     const load = async (did?: string): Promise<ActiveMemberRecord[]> => {
       const perRole = await Promise.all(rolePaths.map(async (role): Promise<ActiveMemberRecord[]> => {
@@ -2299,9 +2266,9 @@ export class TypedEnbox<
     context: NonNullable<TypedEnboxOptions['context']> & { protocolPath: Root },
     signal: AbortSignal | undefined = this._options.signal,
   ): ContextRecordsApi<D, C, Root> {
-    return new TypedEnbox<D, C>(
+    return new TypedEnbox<D, C, G>(
       dwn,
-      { codecs: this._codecs, definition: this._definition },
+      { codecs: this._codecs, definition: this._definition, roleGroups: this._roleGroups },
       {
         context,
         signal,
@@ -3057,6 +3024,10 @@ function normalizeMemberDid(did: string): string {
     throw new TypeError(`OwnedContext.members: '${did}' is not a DID.`);
   }
   return normalized;
+}
+
+function parentProtocolPath(path: string): string {
+  return path.split('/').slice(0, -1).join('/');
 }
 
 function projectRoleDeliveryOutcome(outcome: AudienceKeyDeliveryOutcome): RoleDeliveryState {

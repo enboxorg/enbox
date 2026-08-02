@@ -113,6 +113,56 @@ describe('TypedProtocol API', () => {
   });
 
   describe('defineProtocol()', () => {
+    const RoleGroupDefinition = {
+      protocol  : 'https://example.com/protocols/role-groups',
+      published : true,
+      types     : {
+        blind     : { dataFormats: ['application/json'] },
+        member    : { dataFormats: ['application/json'] },
+        note      : { dataFormats: ['application/json'], encryptionRequired: true },
+        outsider  : { dataFormats: ['application/json'] },
+        project   : { dataFormats: ['application/json'] },
+        viewer    : { dataFormats: ['application/json'] },
+        workspace : { dataFormats: ['application/json'] },
+      },
+      structure: {
+        project: {
+          $actions : [{ role: 'project/outsider', can: ['read'] }],
+          outsider : { $role: true },
+        },
+        workspace: {
+          $actions: [
+            { role: 'workspace/member', can: ['read'] },
+            { role: 'workspace/viewer', can: ['read'] },
+          ],
+          blind  : { $role: true },
+          member : { $role: true },
+          note   : {},
+          viewer : { $role: true },
+        },
+      },
+    } as const satisfies ProtocolDefinition;
+    const RoleGroupCodecs = {
+      blind     : recordCodecs.json<unknown>(),
+      member    : recordCodecs.json<unknown>(),
+      note      : recordCodecs.json<unknown>(),
+      outsider  : recordCodecs.json<unknown>(),
+      project   : recordCodecs.json<unknown>(),
+      viewer    : recordCodecs.json<unknown>(),
+      workspace : recordCodecs.json<unknown>(),
+    };
+    const defineRoleGroups = (roleGroups: unknown): {
+      definition: ProtocolDefinition;
+      roleGroups: Readonly<globalThis.Record<string, readonly string[]>>;
+    } => (defineProtocol as unknown as (
+      definition: ProtocolDefinition,
+      codecs: typeof RoleGroupCodecs,
+      options: { roleGroups: unknown },
+    ) => {
+      definition: ProtocolDefinition;
+      roleGroups: Readonly<globalThis.Record<string, readonly string[]>>;
+    })(RoleGroupDefinition, RoleGroupCodecs, { roleGroups });
+
     it('should return a TypedProtocol with the original definition', () => {
       expect(TodoProtocol.definition).toBe(TodoProtocolDefinition);
       expect(TodoProtocol.definition.protocol).toBe('https://example.com/protocols/todo');
@@ -140,6 +190,36 @@ describe('TypedProtocol API', () => {
         TodoProtocolDefinition,
         invalid as unknown as typeof TodoProtocol.codecs,
       )).toThrow('invalid: task');
+    });
+
+    it('validates context role groups once at the protocol boundary', () => {
+      const invalid: Array<[unknown, string]> = [
+        [{ viewers: ['workspace/viewer'] }, 'must declare a \'default\' group'],
+        [{ default: [] }, 'must contain at least one role path'],
+        [{ default: ['workspace/member', 'workspace/member'] }, 'must not contain duplicate roles'],
+        [{ default: ['workspace/note'] }, 'role \'workspace/note\' is not an encrypted audience'],
+        [{ default: ['workspace/blind'] }, 'must authorize reading its parent context \'workspace\''],
+        [{ default: ['workspace/member', 'project/outsider'] }, 'roles must share one context root'],
+      ];
+
+      for (const [roleGroups, message] of invalid) {
+        expect(() => defineRoleGroups(roleGroups)).toThrow(message);
+      }
+    });
+
+    it('copies and freezes role precedence without changing the DWN definition', () => {
+      const roles = ['workspace/member', 'workspace/viewer'];
+      const input = { default: roles };
+      const protocol = defineRoleGroups(input);
+
+      roles.reverse();
+      expect(protocol.definition).toBe(RoleGroupDefinition);
+      expect(protocol.definition).not.toHaveProperty('roleGroups');
+      expect(protocol.roleGroups).not.toBe(input);
+      expect(protocol.roleGroups.default).not.toBe(roles);
+      expect(protocol.roleGroups.default).toEqual(['workspace/member', 'workspace/viewer']);
+      expect(Object.isFrozen(protocol.roleGroups)).toBe(true);
+      expect(Object.isFrozen(protocol.roleGroups.default)).toBe(true);
     });
   });
 
@@ -711,6 +791,10 @@ describe('TypedProtocol API', () => {
           ...RoleProtocol.codecs,
           blind  : recordCodecs.json<{ note: string }>(),
           viewer : recordCodecs.json<{ readonly: boolean }>(),
+        }, {
+          roleGroups: {
+            default: ['workspace/member', 'workspace/viewer'],
+          },
         }), {
           roleDelivery: { get, retry },
         });
@@ -718,7 +802,7 @@ describe('TypedProtocol API', () => {
 
         const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
         const owned = await roles.contexts.open('workspace', workspace.contextId);
-        const members = owned.members(['workspace/member', 'workspace/viewer']);
+        const members = owned.members();
         const recipient = 'did:example:bob';
         sinon.stub(testHarness.agent.dwn as any, 'provisionAudienceKeyDeliveryForReply').resolves({
           delivered    : false,
@@ -772,9 +856,6 @@ describe('TypedProtocol API', () => {
           data : { label: 'invalid' },
           role : 'workspace/member',
         })).rejects.toThrow('is not a DID');
-        expect(() => owned.members(['workspace/blind'])).toThrow(
-          'role \'workspace/blind\' must authorize reading its parent context \'workspace\'',
-        );
       }, 15000);
     });
 

@@ -338,16 +338,23 @@ Open an owned context once when several operations share the same root. Owner
 and member contexts expose the same confined records contract:
 
 ```ts
+const NotebookProtocol = defineProtocol(NotebookDefinition, notebookCodecs, {
+  roleGroups: {
+    // Strongest to weakest; used by ordinary owner and member flows.
+    default: [
+      'notebook/page/collaborator',
+      'notebook/page/viewer',
+    ],
+  },
+});
+
 const notebooks = enbox.using(NotebookProtocol);
 const page = await notebooks.contexts.open('notebook/page', pageContextId);
 
 await page.records.set('notebook/page/title', { data: { title: 'Local title' } });
 await page.records.query('notebook/page/delta');
 
-const members = page.members([
-  'notebook/page/collaborator',
-  'notebook/page/viewer',
-]);
+const members = page.members();
 await members.set(collaboratorDid, {
   role : 'notebook/page/viewer',
   data : {},
@@ -356,16 +363,12 @@ await members.set(collaboratorDid, {
 
 `open()` binds a handle; it does not read the root record. An
 application-specific invitation can carry an owner DID and context ID. Accept
-it with the application's ordered role group:
+it using the protocol's default role group:
 
 ```ts
 const shared = await notebooks.contexts.follow({
   id       : invitation.contextId,
   ownerDid : invitation.author,
-  roles    : [
-    'notebook/page/collaborator',
-    'notebook/page/viewer',
-  ],
 });
 
 // Optional before paging a complete local history. follow() itself does not
@@ -406,21 +409,26 @@ parent inside the shared context. A new follow performs only bounded role,
 protocol, context-root, and audience-key bootstrap, while the existing sync
 engine catches up the exact role-readable path set.
 
-`members()` defines one ordered, mutually-exclusive group of direct encrypted
-roles. `set()`, `get()`, `list()`, `remove()`, and `retryDelivery()` expose only
+`defineProtocol()` declares ordered, mutually-exclusive groups of direct
+encrypted roles once, then reuses them at every owner and member call site. A
+non-empty map
+must include one protocol-global `default`; `members()` and `follow()` select
+it when no group is named. Additional groups are selected explicitly with
+`members('moderators')` or `follow({ ..., group: 'moderators' })`.
+`set()`, `get()`, `list()`, `remove()`, and `retryDelivery()` expose only
 the member DID, role, typed role data, and key-delivery state; role-record IDs,
 queries, duplicate cleanup, and delivery repair stay inside Enbox. Put the
 strongest role first: earlier paths have precedence if an interrupted role
 change temporarily leaves more than one assignment, so Enbox never reports
-less authority than the member still holds. Role order is explicit; protocol
-definition property order does not define authority precedence. Each role must
-authorize reading the context root so its recipient can follow the shared
-context. `remove()` deletes those role assignments but does not claim
+less authority than the member still holds. Protocol structure property order
+does not define authority precedence. Each role must authorize reading the
+context root so its recipient can follow the shared context. `remove()` deletes
+those role assignments but does not claim
 cryptographic revocation: audience re-keying is required before a former member
 is unable to decrypt future content.
 
 Role-record paths are not exposed through `context.records`; membership has one
-surface, `ownedContext.members(...)`.
+surface, `ownedContext.members()`.
 
 Accepted contexts survive restart and are reconstructed with
 `await notebooks.contexts.list()`. For a live catalog, subscribe to the same
