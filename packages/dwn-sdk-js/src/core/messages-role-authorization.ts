@@ -9,9 +9,10 @@ import type { ResolvedProtocolRole } from './protocol-authorization-action.js';
 import type { SubscriptionEvent } from '../types/subscriptions.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { MessagesFilter, MessagesQueryMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
-import type { RecordsQueryMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../types/records-types.js';
+import type { RecordsQueryMessage, RecordsSubscribeMessage } from '../types/records-types.js';
 
 import { DwnError } from './dwn-error.js';
+import { FilterUtility } from '../utils/filter.js';
 import { Message } from './message.js';
 import { MessagesGrantAuthorization } from './messages-grant-authorization.js';
 import { PermissionGrant as PermissionGrantClass } from '../protocols/permission-grant.js';
@@ -175,16 +176,8 @@ export class MessagesRoleAuthorization {
     return recordsWrite.descriptor.protocol === resolvedRole.protocol
       && recordsWrite.descriptor.protocolPath === resolvedRole.protocolPath
       && recordsWrite.descriptor.recipient === author
-      && MessagesRoleAuthorization.contextMatches(recordsWrite, resolvedRole.contextIdPrefix);
-  }
-
-  private static contextMatches(recordsWrite: RecordsWriteMessage, contextIdPrefix?: string): boolean {
-    if (contextIdPrefix === undefined) {
-      return true;
-    }
-
-    const contextId = recordsWrite.contextId;
-    return contextId === contextIdPrefix || contextId?.startsWith(`${contextIdPrefix}/`) === true;
+      && (resolvedRole.contextIdPrefix === undefined ||
+        FilterUtility.matchesSubtree(resolvedRole.contextIdPrefix, recordsWrite.contextId));
   }
 
   private static requireExactFilters(filters: MessagesFilter[], failureCode: DwnErrorCode): ExactRoleFilter[] {

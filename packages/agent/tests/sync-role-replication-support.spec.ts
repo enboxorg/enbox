@@ -278,7 +278,6 @@ describe('readRoleReplicationSupport', () => {
       isLatestBaseState : true,
       message           : current.message,
       messageCid        : await Message.getCid(current.message),
-      protocol          : PROTOCOL,
     });
 
     const result = await readFixture(fixture);
@@ -300,7 +299,6 @@ describe('readRoleReplicationSupport', () => {
       isLatestBaseState : true,
       message           : extra.message,
       messageCid        : await Message.getCid(extra.message),
-      protocol          : PROTOCOL,
     });
 
     await expect(readFixture(fixture)).rejects.toThrow('exactly one current protocol configuration');
@@ -335,7 +333,6 @@ describe('readRoleReplicationSupport', () => {
       isLatestBaseState : false,
       message           : contextRoot.message,
       messageCid        : await Message.getCid(contextRoot.message),
-      protocol          : PROTOCOL,
     });
 
     const result = await readRoleReplicationSupport({
@@ -481,7 +478,6 @@ describe('readRoleReplicationSupport', () => {
       isLatestBaseState : true,
       message           : configure.message,
       messageCid        : await Message.getCid(configure.message),
-      protocol          : PROTOCOL,
     };
 
     await expect(readFixture(fixture)).rejects.toBeInstanceOf(FollowedSourceNotReadyError);
@@ -544,7 +540,6 @@ describe('readRoleReplicationSupport', () => {
           isLatestBaseState : true,
           message           : configure.message,
           messageCid        : await Message.getCid(configure.message),
-          protocol          : PROTOCOL,
         },
         await supportEntry(role, true, roleData),
       ],

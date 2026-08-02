@@ -152,14 +152,13 @@ export class RecordsReadHandler implements MethodHandler {
             'replication support requires an authenticated protocol-role invocation.'
           );
         }
-        const support = await RecordsReadReplicationSupport.build({
+        recordsReadReply.support = await RecordsReadReplicationSupport.build({
           deps      : this.deps,
           matchedRecordsWrite,
           requester : recordsRead.author,
           resolvedRole,
           tenant,
         });
-        recordsReadReply.support = support.entries;
       } catch (error) {
         return messageReplyFromError(error, 400);
       }

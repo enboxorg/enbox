@@ -1,12 +1,12 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProtocolDefinition, RecordsDeleteMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsDeleteMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
 import { RateLimitError } from '@enbox/dwn-clients';
-import { BroadcastChannelWakePublisher, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, getProtocolRoleActionPaths, getRuleSetAtPath, Message, ProtocolAction } from '@enbox/dwn-sdk-js';
+import { BroadcastChannelWakePublisher, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 import { parseDurationInMilliseconds, runWithCrossContextLock, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -162,23 +162,6 @@ type FollowedSourceCommit = {
 };
 
 type FollowedSourceChangeEvent = Extract<SyncEvent, { type: 'followed-context:change' }>;
-
-/** Derive the exact local context paths authorized by the endpoint's current definition. */
-function readableFollowedContextPaths(
-  definition: ProtocolDefinition,
-  role: string,
-  contextRoot: string,
-): [string, ...string[]] {
-  const paths = getProtocolRoleActionPaths(definition, role, ProtocolAction.Read)
-    .filter(path =>
-      (path === contextRoot || path.startsWith(`${contextRoot}/`)) &&
-      getRuleSetAtPath(path, definition.structure)?.$role !== true
-    );
-  if (!paths.includes(contextRoot)) {
-    throw new Error(`SyncEngineLevel: Role '${role}' does not authorize reading context root '${contextRoot}'.`);
-  }
-  return paths as [string, ...string[]];
-}
 
 /** Accumulated shape of every `sync()` request joined into one queued follow-up run. */
 type MergedSyncRunRequest = {
@@ -1305,7 +1288,7 @@ export class SyncEngineLevel implements SyncEngine {
           recordId,
           shouldContinue,
         });
-        const protocolPaths = readableFollowedContextPaths(batch.protocolDefinition, role, protocolPath);
+        const protocolPaths = resolveProtocolRoleContextScope(batch.protocolDefinition, role).readablePaths;
         return { kind: 'active', batch, dwnUrl, protocolPaths, role };
       } catch (error: unknown) {
         if (error instanceof FollowedSourceRoleAbsentError) {

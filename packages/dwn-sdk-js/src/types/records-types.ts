@@ -234,15 +234,13 @@ export type RecordsReadReply = GenericMessageReply & {
 };
 
 /**
- * A dependency envelope shaped like a full Messages feed entry, but without a
- * feed position because bootstrap dependencies are response-local rather than
- * cursor events.
+ * A response-local dependency envelope without a feed position or redundant
+ * protocol index; the signed message carries its protocol metadata.
  * @internal
  */
 export type RecordsReadReplicationSupportEntry = {
   messageCid: string;
   isLatestBaseState?: boolean;
-  protocol?: string;
   message: GenericMessage;
   initialWrite?: RecordsWriteMessage;
   encodedData?: string;

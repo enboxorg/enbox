@@ -1,11 +1,11 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
   ContextMember,
-  ContextMemberView,
   ContextRecord,
   ContextView,
   MemberContext,
   OwnedContext,
+  RecordView,
   TypedEnbox,
 } from '@enbox/api';
 
@@ -165,16 +165,14 @@ void owned.then((value): void => {
     // @ts-expect-error member rows do not expose role-record IDs.
     void member?.recordId;
   });
-  const memberView: Promise<ContextMemberView<ContextMember<
+  const memberView: Promise<RecordView<ContextMember<
     typeof ContextDefinition,
     typeof ContextProtocol.codecs,
     'workspace/member' | 'workspace/viewer'
   >>> = members.observe();
   void memberView.then((view): void => {
-    void view.getState().members;
-    // @ts-expect-error membership views use the domain name, not generic records.
     void view.getState().records;
-    const member = view.getState().members[0];
+    const member = view.getState().records[0];
     // @ts-expect-error member rows do not expose role-record IDs.
     void member?.recordId;
   });
@@ -236,10 +234,7 @@ void typed.contexts.invitations.list().then((invitations): void => {
 void typed.contexts.invitations.observe().then((view): void => {
   const status: 'loading' | 'ready' | 'stale' | 'error' = view.getState().status;
   void status;
-  void view.getState().invitations;
-  // @ts-expect-error invitation views use the domain name, not generic records.
   void view.getState().records;
-  // @ts-expect-error the inbox is a bounded state, not a paginated record query.
   void view.getState().hasMore;
 });
 

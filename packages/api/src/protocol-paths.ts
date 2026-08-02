@@ -1,13 +1,6 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { getProtocolRoleActionPaths, getRuleSetAtPath, ProtocolAction } from '@enbox/dwn-sdk-js';
-
-/** Runtime scope derived from one contextual protocol role. */
-type ContextRoleScope = {
-  allowedPaths: ReadonlySet<string>;
-  protocolPath: string;
-  readablePaths: [string, ...string[]];
-};
+import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 
 /**
  * @internal Classifies an audience role in an authored protocol definition.
@@ -29,35 +22,6 @@ export function isProtocolRolePath(
   protocolPath: string,
 ): boolean {
   return getRuleSetAtPath(protocolPath, definition.structure)?.$role === true;
-}
-
-/** @internal Resolve the content scope governed by one nested protocol role. */
-export function resolveContextRoleScope(
-  definition: ProtocolDefinition,
-  role: string,
-): ContextRoleScope {
-  if (!isProtocolRolePath(definition, role)) {
-    throw new TypeError(`Context role '${role}' is not a protocol role path.`);
-  }
-
-  const protocolPath = role.split('/').slice(0, -1).join('/');
-  if (protocolPath === '') {
-    throw new TypeError('Context roles must be nested below a context root.');
-  }
-  const isContextContentPath = (path: string): boolean =>
-    (path === protocolPath || path.startsWith(`${protocolPath}/`)) &&
-    !isProtocolRolePath(definition, path);
-  const readablePaths = getProtocolRoleActionPaths(definition, role, ProtocolAction.Read)
-    .filter(isContextContentPath);
-  if (!readablePaths.includes(protocolPath)) {
-    throw new TypeError(`Context role '${role}' must authorize reading its parent context '${protocolPath}'.`);
-  }
-
-  return {
-    allowedPaths  : new Set(getProtocolRoleActionPaths(definition, role).filter(isContextContentPath)),
-    protocolPath,
-    readablePaths : readablePaths as [string, ...string[]],
-  };
 }
 
 /** @internal Collect every non-directive path in a protocol structure. */

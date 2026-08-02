@@ -31,7 +31,7 @@
  * ```
  */
 
-import type { ContextMemberView } from './context-members.js';
+import type { ContextInvitationPreview } from './context-invitations.js';
 import type { ContextView } from './context-view.js';
 import type { Protocol } from './protocol.js';
 import type { RecordView } from './record-view.js';
@@ -44,10 +44,6 @@ import type {
   ReplicationLinkSnapshot,
   SyncEngine,
 } from '@enbox/agent';
-import type {
-  ContextInvitationPreview,
-  ContextInvitationView,
-} from './context-invitations.js';
 import type {
   ContextRoleGroups,
   ContextRolePath,
@@ -71,14 +67,12 @@ import { Did } from '@enbox/dids';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
 import { mergeRecordPatch } from './record-patch.js';
-import { projectContextMemberView } from './context-members.js';
 import { RecordConflictError } from './record-conflict-error.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import {
   assertTypedProtocolStructureSupported,
   collectProtocolPaths,
   isProtocolRolePath,
-  resolveContextRoleScope,
 } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
@@ -86,10 +80,9 @@ import {
   CONTEXT_INVITATION_PATH,
   contextInvitationCodec,
   isContextInvitationEnvelope,
-  projectContextInvitationView,
 } from './context-invitations.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
-import { DateSort, getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
+import { DateSort, getRuleSetAtPath, getTypeName, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
 import {
   FollowedSourceNotReadyError,
@@ -475,7 +468,7 @@ export type ContextInvitationsApi<
   Group extends string = string,
 > = Readonly<{
   list(options?: Readonly<{ limit?: number }>): Promise<ContextInvitation<Context, Group>[]>;
-  observe(options?: Readonly<{ limit?: number }>): Promise<ContextInvitationView<ContextInvitation<Context, Group>>>;
+  observe(options?: Readonly<{ limit?: number }>): Promise<RecordView<ContextInvitation<Context, Group>>>;
 }>;
 
 type ProtocolContextInvitation<
@@ -519,7 +512,7 @@ export type ContextMembersApi<
    * Observe the current preferred assignment for every member in this role group.
    * Delivery is sampled whenever a membership change rematerializes the view.
    */
-  observe(): Promise<ContextMemberView<ContextMember<D, C, Role>>>;
+  observe(): Promise<RecordView<ContextMember<D, C, Role>>>;
   remove(did: string): Promise<void>;
   /** Reconcile protocol-wide delivery, then return this member's current row. */
   retryDelivery(did: string): Promise<ContextMember<D, C, Role> | undefined>;
@@ -1489,7 +1482,7 @@ export class TypedEnbox<
           list: async (options?: { limit?: number }): Promise<ProtocolContextInvitation<D, C, G>[]> =>
             this.listContextInvitations(options?.limit, followContext),
           observe: async (options?: { limit?: number }): Promise<
-            ContextInvitationView<ProtocolContextInvitation<D, C, G>>
+            RecordView<ProtocolContextInvitation<D, C, G>>
           > => this.observeContextInvitations(options?.limit, followContext),
         },
       } : {}),
@@ -2185,7 +2178,7 @@ export class TypedEnbox<
   } {
     const normalizedRole = normalizePath(role);
     this._assertValidPath(normalizedRole);
-    const scope = resolveContextRoleScope(this._definition, normalizedRole);
+    const scope = resolveProtocolRoleContextScope(this._definition, normalizedRole);
 
     return {
       allowedPaths  : scope.allowedPaths,
@@ -2246,9 +2239,9 @@ export class TypedEnbox<
   private async observeContextInvitations(
     limit : number | undefined,
     follow : (request: { group?: string; id: string; ownerDid: string }) => Promise<MemberContext<D, C>>,
-  ): Promise<ContextInvitationView<ProtocolContextInvitation<D, C, G>>> {
+  ): Promise<RecordView<ProtocolContextInvitation<D, C, G>>> {
     await this._ensureReady(CONTEXT_INVITATION_PATH);
-    const view = await createRecordView<ProtocolContextInvitation<D, C, G>>({
+    return createRecordView<ProtocolContextInvitation<D, C, G>>({
       definition         : this._definition,
       dwn                : this._dwn,
       materializeRecords : records => this.projectContextInvitations(records, follow),
@@ -2256,7 +2249,6 @@ export class TypedEnbox<
       signal             : this._options.signal,
       sync               : this._options.sync,
     });
-    return projectContextInvitationView(view);
   }
 
   /** Compile the canonical own-tenant invitation selection once per operation. */
@@ -2488,10 +2480,10 @@ export class TypedEnbox<
     return Object.freeze({
       get,
       list    : async (): Promise<ContextMember<D, C, Role>[]> => projectList(await load()),
-      observe : async (): Promise<ContextMemberView<ContextMember<D, C, Role>>> => {
+      observe : async (): Promise<RecordView<ContextMember<D, C, Role>>> => {
         const [primaryRole, ...additionalRoles] = rolePaths;
         await this._ensureReady(primaryRole);
-        return projectContextMemberView(await createRecordView<ContextMember<D, C, Role>>({
+        return createRecordView<ContextMember<D, C, Role>>({
           additionalWakeFilters: additionalRoles.map(role => compileRecordFilter(
             this._definition,
             role,
@@ -2512,7 +2504,7 @@ export class TypedEnbox<
           signal           : this._options.signal,
           subscribeToWakes : this._options.roleDelivery?.subscribe,
           sync             : this._options.sync,
-        }));
+        });
       },
       remove: async (did: string): Promise<void> => {
         await deleteAssignments(await load(normalizeMemberDid(did)));
@@ -2555,12 +2547,6 @@ export class TypedEnbox<
 
   /** Bind the existing typed records surface to one exact durable source. */
   private bindMemberContext(source: FollowedSyncSource): MemberContext<D, C> {
-    if (source.protocol !== this._definition.protocol) {
-      throw new Error(
-        `TypedEnbox.contexts: context '${source.contextId}' owned by '${source.sourceDid}' ` +
-        'does not match this protocol definition.',
-      );
-    }
     const scope = this.resolveMemberContextScope(source.protocolRole);
     const replicatedPaths = new Set(source.protocolPaths);
     const readablePaths = new Set(scope.readablePaths);

@@ -375,7 +375,7 @@ await members.set(collaboratorDid, {
 const memberView = await members.observe();
 const renderMembers = (state) => {
   if (state.status === 'error') report(state.error);
-  else render(state.members);
+  else render(state.records);
 };
 renderMembers(memberView.getState());
 const unsubscribeMembers = memberView.subscribe(renderMembers);
@@ -396,7 +396,7 @@ policy directly:
 const inbox = await notebooks.contexts.invitations.observe();
 const render = (state) => {
   if (state.status === 'error') report(state.error);
-  else showInvitations(state.invitations);
+  else showInvitations(state.records);
 };
 render(inbox.getState());
 const unsubscribe = inbox.subscribe(render);
@@ -631,7 +631,6 @@ coordinates writes across browser contexts.
 | `ContextView` | Closeable live catalog of accepted member contexts. |
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
 | `ContextMember` | One owner-managed member and its audience-key delivery state. |
-| `ContextMemberView` | Closeable live membership view with immutable state. |
 | `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |

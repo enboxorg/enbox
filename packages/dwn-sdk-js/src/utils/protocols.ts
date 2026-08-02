@@ -1,7 +1,8 @@
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
-import type { ProtocolAction, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
+import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
 import { KeyDerivationScheme } from '../utils/hd-key.js';
+import { ProtocolAction } from '../types/protocols-types.js';
 
 /**
  * Result of parsing a cross-protocol reference in `alias:path` format.
@@ -124,6 +125,39 @@ export function getProtocolRoleActionPaths(
 
   visit(definition.structure as ProtocolRuleSet, '');
   return paths.sort();
+}
+
+/** Resolve the non-role content scope governed by one nested protocol role. */
+export function resolveProtocolRoleContextScope(
+  definition: ProtocolDefinition,
+  rolePath: string,
+): {
+  allowedPaths: ReadonlySet<string>;
+  protocolPath: string;
+  readablePaths: [string, ...string[]];
+} {
+  if (getRuleSetAtPath(rolePath, definition.structure)?.$role !== true) {
+    throw new TypeError(`Context role '${rolePath}' is not a protocol role path.`);
+  }
+
+  const protocolPath = rolePath.split('/').slice(0, -1).join('/');
+  if (protocolPath === '') {
+    throw new TypeError('Context roles must be nested below a context root.');
+  }
+  const isContentPath = (path: string): boolean =>
+    (path === protocolPath || path.startsWith(`${protocolPath}/`)) &&
+    getRuleSetAtPath(path, definition.structure)?.$role !== true;
+  const readablePaths = getProtocolRoleActionPaths(definition, rolePath, ProtocolAction.Read)
+    .filter(isContentPath);
+  if (!readablePaths.includes(protocolPath)) {
+    throw new TypeError(`Context role '${rolePath}' must authorize reading its parent context '${protocolPath}'.`);
+  }
+
+  return {
+    allowedPaths  : new Set(getProtocolRoleActionPaths(definition, rolePath).filter(isContentPath)),
+    protocolPath,
+    readablePaths : readablePaths as [string, ...string[]],
+  };
 }
 
 /**

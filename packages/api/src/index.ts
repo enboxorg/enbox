@@ -25,11 +25,8 @@
 export * from './application-manifest.js';
 export * from './connection-store.js';
 export * from './context-errors.js';
-export type { ContextMemberView, ContextMemberViewState } from './context-members.js';
 export type {
   ContextInvitationPreview,
-  ContextInvitationView,
-  ContextInvitationViewState,
 } from './context-invitations.js';
 export type { ContextView, ContextViewListener, ContextViewState } from './context-view.js';
 export { defineProtocol } from './define-protocol.js';

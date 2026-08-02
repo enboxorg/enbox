@@ -552,7 +552,7 @@ export class DwnApi {
     return { agentRequest, remoteTarget };
   }
 
-  /** Construct the canonical record handle shared by query, read, and subscription frames. */
+  /** Construct a canonical record handle from a DWN response message. */
   private createRecordHandle(params: {
     dataAccess: RecordDataAccess;
     initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
@@ -1323,35 +1323,15 @@ export class DwnApi {
 
         let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
-          const recordOptions = {
-            /**
-             * Assume the author is the connected DID since the record was just signed and written
-             * with the connected DID's key — for cross-tenant writes, the grantee authors the
-             * record in the owner's tenant.
-             */
-            author       : this.connectedDid,
-            /**
-             * Set the `connectedDid` to currently connected DID so that subsequent calls to
-             * {@link Record} instance methods, such as `record.update()` are executed on the
-             * local DWN.
-             */
-            connectedDid : this.connectedDid,
-            dataAccess   : captureRecordDataAccess(
+          record = this.createRecordHandle({
+            dataAccess: captureRecordDataAccess(
               dwnRequestParams,
               remoteTarget !== undefined && this.recordExecutionContext === undefined,
             ),
-            /**
-             * Stamp the invoked role so follow-up operations on the returned record (data
-             * re-reads, updates) carry the same authorization the write used — mirroring how
-             * query/read/subscribe results are stamped.
-            */
+            message      : responseMessage,
             protocolRole : messageParams.protocolRole,
             storedData   : responseData,
-            delegateDid  : this.delegateDid,
-            ...responseMessage,
-          };
-
-          record = new Record(this.agent, recordOptions, this.permissionsApi, this.recordExecutionContext);
+          });
         }
 
         return { record, status, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };

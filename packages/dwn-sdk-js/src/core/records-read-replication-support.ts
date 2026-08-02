@@ -27,7 +27,7 @@ export class RecordsReadReplicationSupport {
     requester: string;
     resolvedRole: ResolvedProtocolRole;
     tenant: string;
-  }): Promise<{ entries: RecordsReadReplicationSupportEntry[]; roleRecordId: string }> {
+  }): Promise<RecordsReadReplicationSupportEntry[]> {
     const { deps, matchedRecordsWrite, requester, resolvedRole, tenant } = input;
     const protocol = matchedRecordsWrite.descriptor.protocol;
     const contextId = resolvedRole.contextIdPrefix;
@@ -115,7 +115,7 @@ export class RecordsReadReplicationSupport {
       }
     }
 
-    return { entries, roleRecordId };
+    return entries;
   }
 
   private static async fetchAudienceRecords(input: {
@@ -313,10 +313,6 @@ export class RecordsReadReplicationSupport {
       );
     }
 
-    const descriptor = message.descriptor as GenericMessage['descriptor'] & {
-      definition?: { protocol?: string };
-      protocol?: string;
-    };
     const messageCid = await Message.getCid(message);
     if (entries.some((entry): boolean => entry.messageCid === messageCid)) {
       return;
@@ -324,9 +320,8 @@ export class RecordsReadReplicationSupport {
     entries.push({
       messageCid,
       isLatestBaseState,
-      protocol     : descriptor.protocol ?? descriptor.definition?.protocol,
       message,
-      initialWrite : initialWrite === undefined
+      initialWrite: initialWrite === undefined
         ? undefined
         : Messages.detachEncodedData(initialWrite).message as RecordsWriteMessage,
       encodedData: includeData ? encodedData : undefined,

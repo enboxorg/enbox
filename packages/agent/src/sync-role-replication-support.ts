@@ -45,6 +45,13 @@ export type RoleReplicationSupportBatch = {
   rootCid: string;
 };
 
+type DelegatedRoleReadParams = {
+  actorDid: string;
+  delegateDid?: string;
+  permissionsApi: PermissionsApi;
+  protocol: string;
+};
+
 /** Verified current state of one previously accepted role assignment. */
 type FollowedRoleState =
   | { kind: 'active' }
@@ -86,19 +93,7 @@ export async function readFollowedRoleState(params: {
 }): Promise<FollowedRoleState> {
   assertCurrent(params.shouldContinue);
   const roleContextId = `${params.contextId}/${params.roleRecordId}`;
-  let delegatedGrant: DwnDataEncodedRecordsWriteMessage | undefined;
-  if (params.delegateDid !== undefined) {
-    ({ message: delegatedGrant } = await params.permissionsApi.getPermissionForRequest({
-      connectedDid : params.actorDid,
-      contextId    : roleContextId,
-      delegate     : true,
-      delegateDid  : params.delegateDid,
-      forceRefresh : true,
-      messageType  : DwnInterface.RecordsRead,
-      protocol     : params.protocol,
-      protocolPath : params.protocolRole,
-    }));
-  }
+  const delegatedGrant = await resolveDelegatedRoleReadGrant(params, roleContextId, params.protocolRole);
 
   const { message } = await params.agent.dwn.processRequest({
     author        : params.actorDid,
@@ -183,19 +178,7 @@ export async function readRoleReplicationSupport(params: {
 }): Promise<RoleReplicationSupportBatch> {
   assertCurrent(params.shouldContinue);
 
-  let delegatedGrant: DwnDataEncodedRecordsWriteMessage | undefined;
-  if (params.delegateDid !== undefined) {
-    ({ message: delegatedGrant } = await params.permissionsApi.getPermissionForRequest({
-      connectedDid : params.actorDid,
-      contextId    : params.contextId,
-      delegate     : true,
-      delegateDid  : params.delegateDid,
-      forceRefresh : true,
-      messageType  : DwnInterface.RecordsRead,
-      protocol     : params.protocol,
-      protocolPath : params.protocolPath,
-    }));
-  }
+  const delegatedGrant = await resolveDelegatedRoleReadGrant(params, params.contextId, params.protocolPath);
 
   const filter: RecordsFilter = {
     contextId    : params.contextId,
@@ -320,13 +303,6 @@ export async function readRoleReplicationSupport(params: {
       sourceDid    : params.sourceDid,
       support,
     });
-    const roleRuleSet = getRuleSetAtPath(params.protocolRole, protocolDefinition.structure);
-    assertAudienceDeliveryReady(
-      rootMessage,
-      support,
-      params,
-      roleRuleSet?.$role === true && roleRuleSet.$keyAgreement !== undefined,
-    );
 
     const dependencies = new Map<string, SyncMessageEntry>();
     const append = async (entry: SyncMessageEntry): Promise<void> => {
@@ -410,6 +386,12 @@ async function validateSupport(params: {
     },
   ]));
   const audienceContextId = getRoleAudienceContextId(params.protocolRole, params.contextId);
+  const wrappedKeyIds = new Set(params.root.encryption?.keyEncryption
+    .filter(entry => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+      'protocol' in entry && entry.protocol === params.protocol && entry.rolePath === params.protocolRole)
+    .map(entry => entry.keyId) ?? []);
+  const audienceKeyIds = new Set<string>();
+  const deliveredKeyIds = new Set<string>();
   let role: RecordsWriteMessage | undefined;
   let roleMatches = 0;
   let currentProtocolConfigure: ProtocolsConfigureMessage | undefined;
@@ -460,13 +442,14 @@ async function validateSupport(params: {
       role = message;
       roleMatches++;
     }
-    const isAudience = isTaggedEncryptionControl(
+    const isRoleAudience = isTaggedEncryptionControl(
       message,
       ENCRYPTION_CONTROL_AUDIENCE_PATH,
       params.protocol,
       params.protocolRole,
       audienceContextId,
-    ) || isRootAudienceControl(message, params.root, params.protocol);
+    );
+    const isAudience = isRoleAudience || isRootAudienceControl(message, params.root, params.protocol);
     const isUsableAudience = isAudience &&
       entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
     const isDelivery = isTaggedEncryptionControl(
@@ -477,6 +460,13 @@ async function validateSupport(params: {
       audienceContextId,
     ) && message.descriptor.recipient === params.actorDid &&
       entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
+
+    if (isUsableAudience && isRoleAudience) {
+      audienceKeyIds.add(message.descriptor.tags!.keyId as string);
+    }
+    if (isDelivery) {
+      deliveredKeyIds.add(message.descriptor.tags!.keyId as string);
+    }
 
     if (!isAncestor && !isRole && !isUsableAudience && !isDelivery) {
       unrelated ??= entry;
@@ -515,6 +505,18 @@ async function validateSupport(params: {
 
   await RecordsWrite.parse(role);
   await authenticate(role.authorization, params.agent.did);
+  const roleRuleSet = getRuleSetAtPath(params.protocolRole, currentProtocolConfigure.descriptor.definition.structure);
+  const deliveryRequired = roleRuleSet?.$role === true && roleRuleSet.$keyAgreement !== undefined;
+  const missingAudience = (deliveryRequired && audienceKeyIds.size === 0) ||
+    [...wrappedKeyIds].some(keyId => !audienceKeyIds.has(keyId));
+  const missingDelivery = [...audienceKeyIds].some(keyId => !deliveredKeyIds.has(keyId));
+  if (missingAudience || missingDelivery) {
+    throw new FollowedSourceNotReadyError(
+      missingAudience
+        ? 'the role audience key is unavailable.'
+        : `the audience key has not been delivered to ${params.actorDid}.`,
+    );
+  }
   return {
     protocolDefinition : currentProtocolConfigure.descriptor.definition,
     roleRecordId       : params.replyRoleId,
@@ -569,63 +571,6 @@ function unsupportedEntry(entry: RecordsReadReplicationSupportEntry): Error {
   return new Error(`Role replication support returned unrelated entry '${entry.messageCid}'.`);
 }
 
-function assertAudienceDeliveryReady(
-  root: RecordsWriteMessage,
-  support: readonly RecordsReadReplicationSupportEntry[],
-  expected: { actorDid: string; contextId: string; protocol: string; protocolRole: string },
-  deliveryRequired: boolean,
-): void {
-  const wrappedKeyIds = new Set(root.encryption?.keyEncryption
-    .filter(entry => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-      'protocol' in entry && entry.protocol === expected.protocol && entry.rolePath === expected.protocolRole)
-    .map(entry => entry.keyId) ?? []);
-
-  const audienceContextId = getRoleAudienceContextId(expected.protocolRole, expected.contextId);
-  const audienceKeyIds = new Set<string>();
-  const deliveredKeyIds = new Set<string>();
-  for (const entry of support) {
-    if (!Records.isRecordsWrite(entry.message)) {
-      continue;
-    }
-    const message = entry.message;
-    if (isTaggedEncryptionControl(
-      message,
-      ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      expected.protocol,
-      expected.protocolRole,
-      audienceContextId,
-    )) {
-      audienceKeyIds.add(message.descriptor.tags!.keyId as string);
-    }
-    if (
-      message.descriptor.recipient === expected.actorDid &&
-      isTaggedEncryptionControl(
-        message,
-        ENCRYPTION_CONTROL_DELIVERY_PATH,
-        expected.protocol,
-        expected.protocolRole,
-        audienceContextId,
-      )
-    ) {
-      deliveredKeyIds.add(message.descriptor.tags!.keyId as string);
-    }
-  }
-
-  if (!deliveryRequired && wrappedKeyIds.size === 0 && audienceKeyIds.size === 0) {
-    return;
-  }
-  const missingAudience = (deliveryRequired && audienceKeyIds.size === 0) ||
-    [...wrappedKeyIds].some(keyId => !audienceKeyIds.has(keyId));
-  const missingDelivery = [...audienceKeyIds].some(keyId => !deliveredKeyIds.has(keyId));
-  if (missingAudience || missingDelivery) {
-    throw new FollowedSourceNotReadyError(
-      missingAudience
-        ? 'the role audience key is unavailable.'
-        : `the audience key has not been delivered to ${expected.actorDid}.`,
-    );
-  }
-}
-
 function toSyncEntry(entry: RecordsReadReplicationSupportEntry): SyncMessageEntry {
   const syncEntry: SyncMessageEntry = {
     message           : entry.message,
@@ -648,4 +593,25 @@ function assertCurrent(shouldContinue: (() => boolean) | undefined): void {
   if (shouldContinue?.() === false) {
     throw new SyncPullAbortedError();
   }
+}
+
+async function resolveDelegatedRoleReadGrant(
+  params: DelegatedRoleReadParams,
+  contextId: string,
+  protocolPath: string,
+): Promise<DwnDataEncodedRecordsWriteMessage | undefined> {
+  if (params.delegateDid === undefined) {
+    return undefined;
+  }
+  const { message } = await params.permissionsApi.getPermissionForRequest({
+    connectedDid : params.actorDid,
+    contextId,
+    delegate     : true,
+    delegateDid  : params.delegateDid,
+    forceRefresh : true,
+    messageType  : DwnInterface.RecordsRead,
+    protocol     : params.protocol,
+    protocolPath,
+  });
+  return message;
 }

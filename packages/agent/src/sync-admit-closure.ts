@@ -62,12 +62,6 @@ export type AdmitOutcome =
   | { kind: 'deferred'; rootCid: string; detail?: string }
   | { kind: 'failed'; rootCid: string; reason: 'invalid' | 'terminal'; detail?: string };
 
-/** A hydrated closure root and its server-proven dependencies. */
-export type ReplicationSupportBatch = {
-  dependencies: SyncMessageEntry[];
-  root: SyncMessageEntry;
-};
-
 export type AdmitClosureDeps = {
   did: string;
   dwnUrl: string;
@@ -79,7 +73,10 @@ export type AdmitClosureDeps = {
   permissionsApi?: PermissionsApi;
   prefetched?: SyncMessageEntry[];
   /** Role-authorized one-shot hydration used instead of owner/grant dependency fetches. */
-  fetchReplicationSupport?: (root: SyncMessageEntry) => Promise<ReplicationSupportBatch>;
+  fetchReplicationSupport?: (root: SyncMessageEntry) => Promise<{
+    dependencies: SyncMessageEntry[];
+    root: SyncMessageEntry;
+  }>;
   shouldContinue?: () => boolean;
 };
 

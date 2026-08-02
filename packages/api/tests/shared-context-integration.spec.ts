@@ -279,9 +279,9 @@ describe('shared context public API integration', () => {
     const inbox = await typed.contexts.invitations.observe();
     await memberHarness.agent.sync.sync('pull');
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(inbox.getState()).toMatchObject({ status: 'ready', invitations: [{}, {}] });
+      expect(inbox.getState()).toMatchObject({ status: 'ready', records: [{}, {}] });
     }, Poller.pollRetrySleep, 30_000);
-    const pending = [...inbox.getState().invitations]
+    const pending = [...inbox.getState().records]
       .sort((left, right): number => left.contextId < right.contextId ? -1 : left.contextId > right.contextId ? 1 : 0);
     expect(pending.map(({ contextId, group, ownerDid: author, preview }) => ({
       author,
@@ -308,7 +308,7 @@ describe('shared context public API integration', () => {
     const contextA = accepted.find(({ contextId }) => contextId === contextIds[0])!.context;
     const contextB = accepted.find(({ contextId }) => contextId === contextIds[1])!.context;
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(inbox.getState()).toMatchObject({ status: 'ready', invitations: [] });
+      expect(inbox.getState()).toMatchObject({ status: 'ready', records: [] });
     }, Poller.pollRetrySleep, 30_000);
     await inbox.close();
     expect(contextA).toMatchObject({ access: 'member', id: contextIds[0], ownerDid });
@@ -540,7 +540,7 @@ describe('shared context public API integration', () => {
       .observe();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(memberView.getState()).toMatchObject({
-        members: [{ delivery: { state: 'delivered' }, did: memberDid, role: 'notebook/page/member' }],
+        records: [{ delivery: { state: 'delivered' }, did: memberDid, role: 'notebook/page/member' }],
       });
     }, Poller.pollRetrySleep, 30_000);
     const members = (await owner.contexts.open('notebook/page', contextIds[0])).members();
@@ -550,7 +550,7 @@ describe('shared context public API integration', () => {
     });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(memberView.getState()).toMatchObject({
-        members: [{ delivery: { state: 'delivered' }, did: memberDid, role: 'notebook/page/viewer' }],
+        records: [{ delivery: { state: 'delivered' }, did: memberDid, role: 'notebook/page/viewer' }],
       });
     }, Poller.pollRetrySleep, 30_000);
     await ownerHarness.agent.sync.sync('push');
@@ -566,7 +566,7 @@ describe('shared context public API integration', () => {
 
     await members.remove(memberDid);
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(memberView.getState()).toMatchObject({ members: [] });
+      expect(memberView.getState()).toMatchObject({ records: [] });
     }, Poller.pollRetrySleep, 30_000);
     await memberView.close();
     await ownerHarness.agent.sync.sync('push');

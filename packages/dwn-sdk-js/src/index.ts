@@ -105,6 +105,7 @@ export {
   getTypeName,
   isCrossProtocolRef,
   parseCrossProtocolRef,
+  resolveProtocolRoleContextScope,
 } from './utils/protocols.js';
 export type { CrossProtocolRef } from './utils/protocols.js';
 export { ProtocolsConfigure } from './interfaces/protocols-configure.js';

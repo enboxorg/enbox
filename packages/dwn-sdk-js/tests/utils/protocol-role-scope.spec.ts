@@ -2,8 +2,8 @@ import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 
 import { describe, expect, it } from 'bun:test';
 
-import { getProtocolRoleActionPaths } from '../../src/utils/protocols.js';
 import { ProtocolAction } from '../../src/types/protocols-types.js';
+import { getProtocolRoleActionPaths, resolveProtocolRoleContextScope } from '../../src/utils/protocols.js';
 
 const definition = {
   protocol  : 'https://example.com/context',
@@ -45,5 +45,15 @@ describe('getProtocolRoleActionPaths', () => {
       'context/Zebra',
       'context/note',
     ]);
+  });
+});
+
+describe('resolveProtocolRoleContextScope', () => {
+  it('returns the context root and only its non-role authorized content paths', () => {
+    const scope = resolveProtocolRoleContextScope(definition, 'context/member');
+
+    expect(scope.protocolPath).toBe('context');
+    expect(scope.readablePaths).toEqual(['context', 'context/Zebra', 'context/note']);
+    expect([...scope.allowedPaths]).toEqual(['context', 'context/Zebra', 'context/note']);
   });
 });

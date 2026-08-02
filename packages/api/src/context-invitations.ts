@@ -1,8 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordCodecMap } from './record-codec.js';
-import type { RecordView } from './record-view.js';
-
-import { projectRecordView } from './record-view.js';
 import { recordCodecs } from './record-codec.js';
 
 /** Reserved record type used by the shared-context invitation inbox. */
@@ -18,36 +15,10 @@ type ContextInvitationEnvelope = Readonly<{
   preview: ContextInvitationPreview;
 }>;
 
-/** Immutable state of one protocol's pending context invitations. */
-export type ContextInvitationViewState<Invitation> = Readonly<{
-  invitations: readonly Invitation[];
-}> & Readonly<
-  | { status: 'loading' | 'ready' | 'stale'; error?: never }
-  | { status: 'error'; error: Error }
->;
-
-/** Closeable materialized view of pending shared-context invitations. */
-export interface ContextInvitationView<Invitation> {
-  getState: () => ContextInvitationViewState<Invitation>;
-  subscribe(listener: (state: ContextInvitationViewState<Invitation>) => void): () => void;
-  close(): Promise<void>;
-}
-
 const CONTEXT_INVITATION_SCHEMA = 'https://enbox.id/schemas/context-invitation';
 const CONTEXT_INVITATION_DATA_FORMAT = 'application/json';
 
 export const contextInvitationCodec = Object.freeze(recordCodecs.json<ContextInvitationEnvelope>());
-
-/** Rename the generic records collection at the invitation boundary without copying its lifecycle. */
-export function projectContextInvitationView<Invitation>(
-  view: RecordView<Invitation>,
-): ContextInvitationView<Invitation> {
-  return projectRecordView(view, (state): ContextInvitationViewState<Invitation> => Object.freeze({
-    ...(state.status === 'error' ? { error: state.error } : {}),
-    invitations : state.records,
-    status      : state.status,
-  }) as ContextInvitationViewState<Invitation>);
-}
 
 /** Add the isolated invitation inbox to a copied application protocol definition. */
 export function addContextInvitationProtocol(

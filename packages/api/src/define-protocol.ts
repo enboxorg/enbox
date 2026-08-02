@@ -17,7 +17,6 @@ import type {
 } from './protocol-types.js';
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
-import { getTypeName } from '@enbox/dwn-sdk-js';
 import {
   addContextInvitationProtocol,
   assertContextInvitationNameAvailable,
@@ -27,8 +26,8 @@ import {
   assertTypedProtocolStructureSupported,
   collectProtocolPaths,
   isEncryptedRoleAudiencePath,
-  resolveContextRoleScope,
 } from './protocol-paths.js';
+import { getTypeName, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 
 type ExactProtocolCodecs<
   D extends ProtocolDefinition,
@@ -157,7 +156,7 @@ function prepareRoleGroups(
       if (!isEncryptedRoleAudiencePath(definition, role)) {
         throw new TypeError(`defineProtocol: roleGroups['${name}'] role '${role}' is not an encrypted audience.`);
       }
-      const scope = resolveContextRoleScope(definition, role);
+      const scope = resolveProtocolRoleContextScope(definition, role);
       contextPath ??= scope.protocolPath;
       if (scope.protocolPath !== contextPath) {
         throw new TypeError(`defineProtocol: roleGroups['${name}'] roles must share one context root.`);

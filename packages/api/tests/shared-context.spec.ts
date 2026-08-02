@@ -13,8 +13,8 @@ import type {
   SyncEventListener,
   SyncIdentityOptions,
 } from '@enbox/agent';
-import type { RecordView, RecordViewListener, RecordViewState } from '../src/record-view.js';
 
+import { CONTEXT_INVITATION_PATH } from '../src/context-invitations.js';
 import { Convert } from '@enbox/common';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
@@ -22,7 +22,6 @@ import { Poller } from '@enbox/dwn-sdk-js';
 import { recordCodecs } from '../src/record-codec.js';
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { CONTEXT_INVITATION_PATH, projectContextInvitationView } from '../src/context-invitations.js';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
 import { type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
@@ -513,10 +512,10 @@ describe('TypedEnbox contexts', () => {
     const initial = view.getState();
     expect(initial).toBe(view.getState());
     expect(Object.isFrozen(initial)).toBe(true);
-    expect(Object.isFrozen(initial.members)).toBe(true);
+    expect(Object.isFrozen(initial.records)).toBe(true);
     expect(initial).toMatchObject({
       status  : 'ready',
-      members : [
+      records : [
         { data: { readonly: true }, delivery: { state: 'delivered' }, did: alphaDid, role: viewerRole },
         {
           data     : { label: 'maintainer' },
@@ -532,7 +531,7 @@ describe('TypedEnbox contexts', () => {
       listener();
     }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().members.find(({ did }) => did === betaDid)?.delivery.state).toBe('failed');
+      expect(view.getState().records.find(({ did }) => did === betaDid)?.delivery.state).toBe('failed');
     }, Poller.pollRetrySleep, 1_000);
 
     retryRoleDelivery.callsFake(async (): Promise<RoleDeliveryState> => {
@@ -547,7 +546,7 @@ describe('TypedEnbox contexts', () => {
       delivery : { state: 'delivered' },
     });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().members.find(({ did }) => did === betaDid)?.delivery.state).toBe('delivered');
+      expect(view.getState().records.find(({ did }) => did === betaDid)?.delivery.state).toBe('delivered');
     }, Poller.pollRetrySleep, 1_000);
 
     entries.set(protocolRole, []);
@@ -557,11 +556,11 @@ describe('TypedEnbox contexts', () => {
       event  : { message: { descriptor: {} } as never },
     });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().members.find(({ did }) => did === betaDid)?.role).toBe(viewerRole);
+      expect(view.getState().records.find(({ did }) => did === betaDid)?.role).toBe(viewerRole);
     }, Poller.pollRetrySleep, 1_000);
     expect(view.getState()).toMatchObject({
       status  : 'ready',
-      members : [
+      records : [
         { did: alphaDid, role: viewerRole },
         { data: { readonly: true }, delivery: { state: 'delivered' }, did: betaDid, role: viewerRole },
       ],
@@ -949,35 +948,6 @@ describe('TypedEnbox contexts', () => {
       .filter(call => call.args[0].messageType === DwnInterface.RecordsDelete)).toHaveLength(2);
     await expect(invitations[0].accept()).rejects.toThrow('invitation is no longer pending');
     expect(follow.notCalled).toBe(true);
-  });
-
-  it('exposes invitation state with stable identity and domain vocabulary', () => {
-    let state: RecordViewState<string> = Object.freeze({
-      hasMore : false,
-      records : Object.freeze(['first']),
-      status  : 'ready',
-    });
-    let listener: RecordViewListener<string> = (): void => {};
-    const records = {
-      close     : async (): Promise<void> => {},
-      getState  : (): RecordViewState<string> => state,
-      subscribe : (next: RecordViewListener<string>): (() => void) => {
-        listener = next;
-        return (): void => {};
-      },
-    } satisfies Pick<RecordView<string>, 'close' | 'getState' | 'subscribe'>;
-    const invitations = projectContextInvitationView(records);
-
-    const initial = invitations.getState();
-    expect(initial).toBe(invitations.getState());
-    expect(initial).toEqual({ invitations: ['first'], status: 'ready' });
-
-    const changed = sinon.stub();
-    invitations.subscribe(changed);
-    state = Object.freeze({ hasMore: true, records: Object.freeze(['second']), status: 'stale' });
-    listener(state);
-    expect(changed.firstCall.args[0]).toBe(invitations.getState());
-    expect(invitations.getState()).toEqual({ invitations: ['second'], status: 'stale' });
   });
 
   it('keeps a failed acceptance retryable and does not turn cleanup failure into a false rejection', async () => {
