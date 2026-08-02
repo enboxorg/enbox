@@ -102,6 +102,7 @@ import {
 } from './replication-currentness.js';
 
 const DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS = 10_000;
+const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,9 @@ type RecordSubscriptionSelection<Path extends string> = Path | readonly Path[];
 type RecordSubscriptionOptions = Readonly<{
   /** Replay each selected context path oldest-first before switching to live delivery. */
   initial: true;
+
+  /** Abort this replay and its live subscription without closing the context. */
+  signal?: AbortSignal;
 }>;
 
 type SelectedSubscriptionPaths<Selection, Path extends string = string> = Selection extends Path
@@ -1849,18 +1853,18 @@ export class TypedEnbox<
   >(
     selection: Selection,
     listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+    signal: AbortSignal | undefined = this._options.signal,
   ): Promise<RecordSubscription> {
-    this._options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
     const requestedPaths = typeof selection === 'string' ? [selection] : [...selection];
     if (requestedPaths.length === 0) {
       throw new TypeError('TypedEnbox.records.subscribe: at least one protocol path is required.');
     }
     const paths = [...new Set(requestedPaths.map(normalizePath))];
     await Promise.all(paths.map(path => this._ensureReady(path)));
-    this._options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
 
     let closed = false;
-    const signal = this._options.signal;
     let detachAbort = (): void => {};
     let detachSync = (): void => {};
     let closeSubscription = (): Promise<void> => Promise.resolve();
@@ -1965,16 +1969,37 @@ export class TypedEnbox<
     const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>,
   >(
     selection: Selection,
+    options: RecordSubscriptionOptions,
     listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
   ): Promise<RecordSubscription> {
     if (this._options.context === undefined) {
       throw new TypeError('TypedEnbox.records.subscribe: initial replay requires a context-bound records surface.');
     }
     type Change = TypedRecordChangeEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>;
+    type Event = TypedRecordSubscriptionEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>;
+    const overflow = new AbortController();
+    const signals = [this._options.signal, options.signal, overflow.signal].filter(
+      (signal): signal is AbortSignal => signal !== undefined,
+    );
+    const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+    signal.throwIfAborted();
+    let detachOpeningAbort = (): void => {};
+    const cancelled = new Promise<never>((_resolve, reject): void => {
+      const onAbort = (): void => {
+        detachOpeningAbort();
+        reject(signal.reason);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      detachOpeningAbort = (): void => { signal.removeEventListener('abort', onAbort); };
+      if (signal.aborted) {
+        onAbort();
+      }
+    });
+    const whileOpening = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, cancelled]);
     const bufferedChanges: Change[] = [];
     let subscriptionError: Error | undefined;
     const assertActive = (): void => {
-      this._options.signal?.throwIfAborted();
+      signal.throwIfAborted();
       if (subscriptionError !== undefined) {
         throw subscriptionError;
       }
@@ -1982,50 +2007,73 @@ export class TypedEnbox<
     let receive: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false> = event => {
       if (event.type === 'error') {
         subscriptionError ??= event.error;
-      } else {
-        bufferedChanges.push(event as Change);
+        return;
       }
+      if (bufferedChanges.length === INITIAL_SUBSCRIPTION_OVERLAP_LIMIT) {
+        bufferedChanges.length = 0;
+        overflow.abort(new Error(
+          `TypedEnbox.records.subscribe: initial replay exceeded the ${INITIAL_SUBSCRIPTION_OVERLAP_LIMIT}-change overlap limit.`,
+        ));
+        return;
+      }
+      bufferedChanges.push(event as Change);
     };
     let subscription: RecordSubscription;
     try {
-      subscription = await this.subscribeToRecordPaths(selection, event => receive(event));
+      subscription = await whileOpening(this.subscribeToRecordPaths(selection, event => receive(event), signal));
     } catch (error: unknown) {
+      detachOpeningAbort();
       assertActive();
       throw error;
     }
     const requestedPaths = typeof selection === 'string' ? [selection] : [...selection];
     const paths = [...new Set(requestedPaths.map(normalizePath))];
-    const deliver = async (change: Change): Promise<void> => {
-      await listener(change);
+    const deliver = async (event: Event): Promise<void> => {
+      assertActive();
+      await whileOpening(Promise.resolve(listener(event)));
       assertActive();
     };
 
     try {
       assertActive();
       for (const path of paths) {
-        let page: RecordPage<Record> | undefined = await this.records.query(
+        let page: RecordPage<Record> | undefined = await whileOpening(this.records.query(
           path as ProtocolPaths<D> & string,
           {
             dateSort   : DateSort.CreatedAscending,
             pagination : { limit: INITIAL_SUBSCRIPTION_PAGE_LIMIT },
           },
-        ) as RecordPage<Record>;
+        ) as Promise<RecordPage<Record>>);
         while (page !== undefined) {
           assertActive();
           for (const record of page.records) {
             await deliver(this.recordSubscriptionChange<Selection>(record));
           }
-          page = await page.next();
+          page = await whileOpening(page.next());
         }
       }
-      for (let index = 0; index < bufferedChanges.length; index++) {
-        assertActive();
-        await deliver(bufferedChanges[index]);
+      let opening = true;
+      let deliveryTail = Promise.resolve();
+      for (const change of bufferedChanges) {
+        deliveryTail = deliveryTail.then(() => deliver(change));
       }
+      bufferedChanges.length = 0;
+      const handoff = deliveryTail;
+      receive = (event): void | Promise<void> => {
+        if (event.type === 'error' && opening) {
+          subscriptionError ??= event.error;
+          return;
+        }
+        deliveryTail = deliveryTail.then(() => deliver(event));
+        return deliveryTail;
+      };
+      await handoff;
       assertActive();
-      receive = listener;
+      opening = false;
+      detachOpeningAbort();
       return subscription;
     } catch (error: unknown) {
+      detachOpeningAbort();
       await subscription.close().catch((): void => {});
       assertActive();
       throw error;
@@ -3223,7 +3271,7 @@ export class TypedEnbox<
           ]
       ): Promise<RecordSubscription> => args.length === 1
         ? this.subscribeToRecordPaths(selection, args[0])
-        : this.subscribeToInitialRecordPaths(selection, args[1]),
+        : this.subscribeToInitialRecordPaths(selection, args[0], args[1]),
 
       /**
        * Count the complete population selected by the same specification as

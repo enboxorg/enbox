@@ -132,6 +132,7 @@ describe('typed record subscriptions', () => {
     const queries: RecordsQueryRequest[] = [];
     const received: Array<{ id: string; type: 'delete' | 'write' }> = [];
     let deliver!: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>;
+    let duringDrainDelivery: Promise<void> | undefined;
     let queryCalls = 0;
     const dwn = {
       connectedDid      : 'did:example:alice',
@@ -173,9 +174,10 @@ describe('typed record subscriptions', () => {
       order.push(`${change.type}-${change.record.id}`);
       received.push({ id: change.record.id, type: change.type });
       if (change.record.id === 'live') {
-        await deliver(event(), duringDrain);
+        duringDrainDelivery = Promise.resolve(deliver(event(), duringDrain));
       }
     });
+    await duringDrainDelivery;
 
     expect(order).toEqual([
       'subscribe',
@@ -215,6 +217,146 @@ describe('typed record subscriptions', () => {
     expect(received.at(-1)).toEqual({ id: 'after', type: 'write' });
     await subscription.close();
     expect(close.calledOnce).toBe(true);
+  });
+
+  it('finishes the fixed handoff while sustained live writes remain ordered behind it', async () => {
+    const overlap = testRecord('overlap', '2026-01-01T00:00:00.000000Z');
+    const close = sinon.stub().resolves();
+    const pendingDeliveries: Promise<void>[] = [];
+    const received: string[] = [];
+    let releaseLive!: () => void;
+    let reportLiveStarted!: () => void;
+    const liveGate = new Promise<void>(resolve => {
+      releaseLive = resolve;
+    });
+    const liveStarted = new Promise<void>(resolve => {
+      reportLiveStarted = resolve;
+    });
+    let deliver!: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>;
+    let keepWriting = true;
+    let sequence = 0;
+    const dwn = {
+      connectedDid          : 'did:example:alice',
+      followedContextId     : undefined,
+      followedSourceId      : undefined,
+      recordTenantDid       : 'did:example:alice',
+      records               : { query: async (): Promise<RecordsQueryResponse> => queryReply([]) },
+      subscribeRecordFrames : async (
+        _request: { paths: readonly string[]; protocol: string },
+        handler: typeof deliver,
+      ) => {
+        deliver = handler;
+        await deliver(event(), overlap);
+        return {
+          status       : { code: 200, detail: 'OK' },
+          subscription : { id: 'fixed-handoff', close },
+        };
+      },
+    } as unknown as DwnApi;
+    const records = contextRecords(dwn);
+
+    const opening = records.subscribe('note', { initial: true }, async (change): Promise<void> => {
+      if (change.type === 'error') {
+        throw change.error;
+      }
+      received.push(change.record.id);
+      if (keepWriting) {
+        sequence += 1;
+        const id = `live-${sequence}`;
+        pendingDeliveries.push(Promise.resolve(deliver(
+          event(),
+          testRecord(id, `2026-01-01T00:00:01.${String(sequence).padStart(6, '0')}Z`),
+        )));
+      }
+      if (change.record.id === 'live-1') {
+        reportLiveStarted();
+        await liveGate;
+      }
+    });
+
+    const [subscription] = await Promise.all([opening, liveStarted]);
+    keepWriting = false;
+    expect(received).toEqual(['overlap', 'live-1']);
+    releaseLive();
+    await Promise.all(pendingDeliveries);
+    expect(received).toEqual(['overlap', 'live-1', 'live-2']);
+    await subscription.close();
+  });
+
+  it('closes and rejects an initial subscription whose overlap exceeds its bound', async () => {
+    const close = sinon.stub().resolves();
+    const dwn = {
+      connectedDid          : 'did:example:alice',
+      followedContextId     : undefined,
+      followedSourceId      : undefined,
+      recordTenantDid       : 'did:example:alice',
+      records               : { query: async (): Promise<RecordsQueryResponse> => queryReply([]) },
+      subscribeRecordFrames : async (
+        _request: { paths: readonly string[]; protocol: string },
+        handler: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>,
+      ) => {
+        for (let index = 0; index <= 1_000; index++) {
+          await handler(event(), testRecord(`overlap-${index}`, '2026-01-01T00:00:00.000000Z'));
+        }
+        return {
+          status       : { code: 200, detail: 'OK' },
+          subscription : { id: 'overflow', close },
+        };
+      },
+    } as unknown as DwnApi;
+    const records = contextRecords(dwn);
+
+    await expect(records.subscribe('note', { initial: true }, (): void => {}))
+      .rejects.toThrow('initial replay exceeded the 1000-change overlap limit');
+    expect(close.calledOnce).toBe(true);
+  });
+
+  it('uses an operation signal to close and cancel an initial replay', async () => {
+    const buffered = testRecord('buffered-before-cancel', '2026-01-01T00:00:00.000000Z');
+    const close = sinon.stub().resolves();
+    const query = sinon.stub();
+    const received: string[] = [];
+    let resolveQuery!: (reply: RecordsQueryResponse) => void;
+    const queryResult = new Promise<RecordsQueryResponse>(resolve => {
+      resolveQuery = resolve;
+    });
+    query.returns(queryResult);
+    const dwn = {
+      connectedDid          : 'did:example:alice',
+      followedContextId     : undefined,
+      followedSourceId      : undefined,
+      recordTenantDid       : 'did:example:alice',
+      records               : { query },
+      subscribeRecordFrames : async (
+        _request: { paths: readonly string[]; protocol: string },
+        handler: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>,
+      ) => {
+        await handler(event(), buffered);
+        return {
+          status       : { code: 200, detail: 'OK' },
+          subscription : { id: 'cancelled-replay', close },
+        };
+      },
+    } as unknown as DwnApi;
+    const records = contextRecords(dwn);
+    const controller = new AbortController();
+    const opening = records.subscribe('note', { initial: true, signal: controller.signal }, change => {
+      if (change.type !== 'error') {
+        received.push(change.record.id);
+      }
+    });
+
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(query.calledOnce).toBe(true);
+    });
+    controller.abort(new Error('initial replay superseded'));
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(close.calledOnce).toBe(true);
+    });
+    await expect(opening).rejects.toThrow('initial replay superseded');
+    expect(received).toEqual([]);
+    resolveQuery(queryReply([]));
+    expect((await records.query('note')).records).toEqual([]);
   });
 
   it('closes the live subscription when initial replay fails', async () => {

@@ -434,8 +434,11 @@ array. Each selected path is replayed oldest-first, in selection order. The
 handoff is at least once: overlap may be delivered twice, but no accepted write
 or delete between opening the subscription and completing the queries is
 missed. The returned promise resolves after the handoff; an initial query or
-listener failure closes the live stream and rejects it. Use this mode for
-append-only histories, and `observe()` for mutable collection truth.
+listener failure closes the live stream and rejects it. Pass an `AbortSignal`
+in the options to cancel one replay without closing its context. The overlap is
+bounded to 1,000 changes; exceeding that bound closes and rejects the stream
+instead of retaining an unbounded backlog. Use this mode for append-only
+histories, and `observe()` for mutable collection truth.
 
 Any protocol declaring `roleGroups` automatically carries one protocol-isolated
 invitation inbox; dapps do not define another record type or register another
