@@ -634,7 +634,7 @@ describe('TypedEnbox contexts', () => {
     expect(await typed.contexts.list()).toEqual([]);
     const view = typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(view.getSnapshot()).toMatchObject({ state: 'ready', contexts: [] });
+    expect(view.getState()).toMatchObject({ status: 'ready', contexts: [] });
     view.close();
   });
 
@@ -733,7 +733,7 @@ describe('TypedEnbox contexts', () => {
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await Promise.resolve();
 
-    expect(view.getSnapshot()).toMatchObject({ state: 'error' });
+    expect(view.getState()).toMatchObject({ status: 'error' });
     expect(transport.close.calledOnce).toBe(true);
     expect(listeners.size).toBe(0);
   });
@@ -742,12 +742,12 @@ describe('TypedEnbox contexts', () => {
     current = source();
     const view = typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
-    const initial = view.getSnapshot();
-    expect(initial.state).toBe('ready');
+    const initial = view.getState();
+    expect(initial.status).toBe('ready');
     expect(initial.contexts).toHaveLength(1);
     const first = initial.contexts[0];
-    const snapshots: Array<ReturnType<typeof view.getSnapshot>> = [];
-    view.subscribe(snapshot => { snapshots.push(snapshot); });
+    const states: Array<ReturnType<typeof view.getState>> = [];
+    view.subscribe(state => { states.push(state); });
     const retainedListener = sinon.stub();
     let removeRetainedListener = (): void => {};
     view.subscribe((): void => { removeRetainedListener(); });
@@ -755,7 +755,7 @@ describe('TypedEnbox contexts', () => {
 
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(snapshots).toEqual([]);
+    expect(states).toEqual([]);
 
     current = source({
       acceptanceId  : 'acceptance-b',
@@ -766,18 +766,18 @@ describe('TypedEnbox contexts', () => {
     });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(view.getSnapshot()).toMatchObject({
-      state    : 'ready',
+    expect(view.getState()).toMatchObject({
+      status   : 'ready',
       contexts : [{ id: contextId, ownerDid: sourceDid, role: viewerRole }],
     });
-    expect(view.getSnapshot().contexts[0]).not.toBe(first);
+    expect(view.getState().contexts[0]).not.toBe(first);
     expect(retainedListener.calledOnce).toBe(true);
 
     const removed = current;
     current = undefined;
     for (const listener of [...listeners]) { listener(followedContextChange(removed, false)); }
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(view.getSnapshot()).toMatchObject({ state: 'ready', contexts: [] });
+    expect(view.getState()).toMatchObject({ status: 'ready', contexts: [] });
 
     view.close();
     expect(listeners.size).toBe(0);
@@ -787,7 +787,7 @@ describe('TypedEnbox contexts', () => {
     current = source();
     const view = typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
-    const first = view.getSnapshot().contexts[0];
+    const first = view.getState().contexts[0];
     let finishRemovalRead!: (sources: FollowedSyncSource[]) => void;
     list.onSecondCall().returns(new Promise(resolve => { finishRemovalRead = resolve; }));
 
@@ -801,7 +801,7 @@ describe('TypedEnbox contexts', () => {
     finishRemovalRead([]);
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    const rebound = view.getSnapshot().contexts[0];
+    const rebound = view.getState().contexts[0];
     expect(rebound).not.toBe(first);
     await rebound.records.query('workspace/note');
     const localRequests = agent.processDwnRequest.callCount;

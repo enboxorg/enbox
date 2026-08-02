@@ -17,7 +17,7 @@ type RecordViewContents<Item> = Readonly<{
   /**
    * Items from the latest publishable query result.
    *
-   * The array and snapshot are immutable. The query selects each item's
+   * The array and view state are immutable. The query selects each item's
    * record or materialized-record representation.
    */
   records: readonly Item[];
@@ -26,37 +26,37 @@ type RecordViewContents<Item> = Readonly<{
   hasMore: boolean;
 }>;
 
-/** Immutable materialization published by a {@link RecordView}. */
-export type RecordViewSnapshot<Item = Record> = RecordViewContents<Item> & Readonly<
+/** Immutable materialization state published by a {@link RecordView}. */
+export type RecordViewState<Item = Record> = RecordViewContents<Item> & Readonly<
   | {
     /** Whether the materialization is current with its source. */
-    state: Exclude<ReplicationCurrentness, 'error'>;
+    status: Exclude<ReplicationCurrentness, 'error'>;
     error?: never;
   }
   | {
-    state: 'error';
+    status: 'error';
     /** The query, authorization, terminal subscription, replication, or owning-session termination. */
     error: Error;
   }
 >;
 
-/** Listener notified after a records view publishes a new snapshot. */
-export type RecordViewListener<Item = Record> = (snapshot: RecordViewSnapshot<Item>) => void;
+/** Listener notified after a records view publishes new state. */
+export type RecordViewListener<Item = Record> = (state: RecordViewState<Item>) => void;
 
 /**
  * A closeable materialized view over one canonical record query.
  *
  * Subscription events are wake signals only. Consumers render immutable
- * snapshots and never maintain collection truth from event payloads.
+ * states and never maintain collection truth from event payloads.
  */
 export interface RecordView<Item = Record> {
-  /** Return the current immutable snapshot. Safe to pass as a bare callback. */
-  getSnapshot: () => RecordViewSnapshot<Item>;
+  /** Return the current immutable state. Safe to pass as a bare callback. */
+  getState: () => RecordViewState<Item>;
 
-  /** Subscribe to later snapshot publications. Safe to pass as a bare callback. */
+  /** Subscribe to later state publications. Safe to pass as a bare callback. */
   subscribe: (listener: RecordViewListener<Item>) => () => void;
 
-  /** Fence callbacks and close the underlying local subscriptions without publishing a new snapshot. */
+  /** Fence callbacks and close the underlying local subscriptions without publishing new state. */
   close(): Promise<void>;
 }
 
@@ -74,8 +74,8 @@ type RecordViewOptions<Item> = {
 };
 
 type RecordViewCurrentness =
-  | { state: Exclude<ReplicationCurrentness, 'error'> }
-  | { state: 'error'; error: Error };
+  | { status: Exclude<ReplicationCurrentness, 'error'> }
+  | { status: 'error'; error: Error };
 
 type RegistrationChangeEvent = Extract<SyncEvent, { type: 'identity:registration-change' }>;
 type LinkStatusChangeEvent = Extract<SyncEvent, { type: 'link:status-change' }>;
@@ -114,8 +114,8 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   private _isOpen = false;
   private _materializationRequested = false;
   private _requestGeneration = 0;
-  private _snapshot: RecordViewSnapshot<Item> = immutableSnapshot({
-    state   : 'loading',
+  private _state: RecordViewState<Item> = immutableState({
+    status  : 'loading',
     records : [],
     hasMore : false,
   });
@@ -173,8 +173,8 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     }
   }
 
-  public readonly getSnapshot = (): RecordViewSnapshot<Item> => {
-    return this._snapshot;
+  public readonly getState = (): RecordViewState<Item> => {
+    return this._state;
   };
 
   public readonly subscribe = (listener: RecordViewListener<Item>): (() => void) => {
@@ -306,10 +306,10 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   private handleRegistrationChange(event: RegistrationChangeEvent): void {
     if (syncRegistrationCoversProtocol(event.options, this._query.filter.protocol)) {
       this._hasPublishedReady = false;
-      this.publish(immutableSnapshot({
-        state   : 'loading',
-        records : this._snapshot.records,
-        hasMore : this._snapshot.hasMore,
+      this.publish(immutableState({
+        status  : 'loading',
+        records : this._state.records,
+        hasMore : this._state.hasMore,
       }));
     }
     this.requestMaterialization();
@@ -394,21 +394,21 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     hasMore: boolean,
     currentness: RecordViewCurrentness,
   ): void {
-    if (currentness.state === 'error') {
-      this.publish(immutableSnapshot({
-        state : 'error',
+    if (currentness.status === 'error') {
+      this.publish(immutableState({
+        status : 'error',
         records,
         hasMore,
-        error : currentness.error,
+        error  : currentness.error,
       }));
       return;
     }
 
-    if (currentness.state === 'ready') {
+    if (currentness.status === 'ready') {
       this._hasPublishedReady = true;
     }
-    this.publish(immutableSnapshot({
-      state: currentness.state,
+    this.publish(immutableState({
+      status: currentness.status,
       records,
       hasMore,
     }));
@@ -417,13 +417,13 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   /** Resolve whether this protocol has completed its configured remote baseline. */
   private async resolveCurrentness(): Promise<RecordViewCurrentness> {
     if (this._sync === undefined) {
-      return { state: 'ready' };
+      return { status: 'ready' };
     }
 
     if (this._followedContextId === undefined) {
       const registration = await this._sync.getIdentityOptions(this._tenantDid);
       if (!syncRegistrationCoversProtocol(registration, this._query.filter.protocol)) {
-        return { state: 'ready' };
+        return { status: 'ready' };
       }
     }
 
@@ -435,30 +435,30 @@ class ObservedRecordView<Item> implements RecordView<Item> {
           && link.scope.contextId === this._followedContextId
           && link.followedSourceId === this._followedSourceId
           && link.scope.protocolPaths.includes(this._query.filter.protocolPath));
-    const state = projectReplicationCurrentness(links, this._hasPublishedReady);
-    if (state === 'error') {
+    const status = projectReplicationCurrentness(links, this._hasPublishedReady);
+    if (status === 'error') {
       return this.resolveUnavailableCurrentness(true);
     }
-    return { state };
+    return { status };
   }
 
   /** Resolve a provisional unavailable state or attach the RecordView-specific pause error. */
   private resolveUnavailableCurrentness(isPaused: boolean): RecordViewCurrentness {
     if (isPaused) {
       return {
-        state : 'error',
-        error : new Error(`RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`),
+        status : 'error',
+        error  : new Error(`RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`),
       };
     }
 
-    return { state: this._hasPublishedReady ? 'stale' : 'loading' };
+    return { status: this._hasPublishedReady ? 'stale' : 'loading' };
   }
 
   private publishError(error: Error): void {
-    this.publish(immutableSnapshot({
-      state   : 'error',
-      records : this._snapshot.records,
-      hasMore : this._snapshot.hasMore,
+    this.publish(immutableState({
+      status  : 'error',
+      records : this._state.records,
+      hasMore : this._state.hasMore,
       error,
     }));
   }
@@ -466,33 +466,33 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   /** Degrade synchronously without letting partial link evidence clear an existing error. */
   private publishProvisionalReplicationCurrentness(isPaused = false): void {
     const currentness = this.resolveUnavailableCurrentness(isPaused);
-    if (this._snapshot.state === 'error' && currentness.state !== 'error') {
+    if (this._state.status === 'error' && currentness.status !== 'error') {
       return;
     }
 
-    if (currentness.state === 'error') {
+    if (currentness.status === 'error') {
       this.publishError(currentness.error);
       return;
     }
 
-    this.publish(immutableSnapshot({
-      state   : currentness.state,
-      records : this._snapshot.records,
-      hasMore : this._snapshot.hasMore,
+    this.publish(immutableState({
+      status  : currentness.status,
+      records : this._state.records,
+      hasMore : this._state.hasMore,
     }));
   }
 
-  private publish(snapshot: RecordViewSnapshot<Item>): void {
+  private publish(state: RecordViewState<Item>): void {
     if (this._closed) {
       return;
     }
 
-    this._snapshot = snapshot;
+    this._state = state;
     // Listener mutations apply to later publications, never the one already in progress.
     const listeners = [...this._listeners];
     for (const listener of listeners) {
       try {
-        listener(snapshot);
+        listener(state);
       } catch {
         // A consumer cannot poison the view or prevent other notifications.
       }
@@ -500,9 +500,9 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   }
 }
 
-function immutableSnapshot<Item>(snapshot: RecordViewSnapshot<Item>): RecordViewSnapshot<Item> {
-  const records = Object.freeze([...snapshot.records]);
-  return Object.freeze({ ...snapshot, records });
+function immutableState<Item>(state: RecordViewState<Item>): RecordViewState<Item> {
+  const records = Object.freeze([...state.records]);
+  return Object.freeze({ ...state, records });
 }
 
 /** Project the canonical query to the structural scope containing every dependency of its result. */

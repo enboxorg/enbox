@@ -131,7 +131,7 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   const view: RecordView<Record<TaskData>> = await typed.records.observe('task', {
     pagination: { limit: 10 },
   });
-  const observedRecord: Record<TaskData> | undefined = view.getSnapshot().records[0];
+  const observedRecord: Record<TaskData> | undefined = view.getState().records[0];
   void observedRecord;
 
   const subscription: RecordSubscription = await typed.records.subscribe('task', async (event): Promise<void> => {

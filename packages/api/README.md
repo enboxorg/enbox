@@ -242,8 +242,8 @@ const nextPage = await page.next(); // undefined after the final page
 
 // Observe one bounded materialization
 const view = await notes.records.observe('note', selection);
-const unsubscribe = view.subscribe((snapshot) => {
-  console.log(snapshot.state, snapshot.records, snapshot.hasMore);
+const unsubscribe = view.subscribe((state) => {
+  console.log(state.status, state.records, state.hasMore);
 });
 
 // Consume later writes/deletes from one stream, discriminated by path
@@ -303,25 +303,25 @@ replaces the full payload; use `patch()` for a shallow partial object update.
 
 `observe()` watches the connected tenant by default; pass `from` and, when
 required, `protocolRole` to watch a foreign tenant. Subscription events are
-wake hints: every immutable snapshot is rebuilt from the same canonical query.
+wake hints: every immutable view state is rebuilt from the same canonical query.
 Its required pagination limit bounds retained records. Local views report
 replica currentness; a successful foreign query is `ready`.
-When the owning session ends, a view publishes one terminal `error` snapshot
+When the owning session ends, a view publishes one terminal `error` state
 and closes. After automatic grant refresh, `ConnectionStore` publishes a
 replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
 from the replacement `AuthManager.session` announced by `session-start`.
 
 Before the first query, every view is `loading`; a local view also remains
 `loading` until its configured replicas complete their required pull. An empty
-`ready` snapshot is therefore authoritatively empty, not still bootstrapping.
+`ready` state is therefore authoritatively empty, not still bootstrapping.
 After a local view has been ready, an offline or catching-up source makes it
-`stale`. Successful local queries continue to update stale snapshots, so
+`stale`. Successful local queries continue to update stale states, so
 offline writes remain visible. Query, authorization, and terminal sync failures
 publish `error` while retaining the latest successful records.
 `hasMore` is always present: it is `false` before the first query and whenever
 the latest bounded result has no next page.
 
-The snapshot object and records array are immutable. Each `Record<T>` handle
+The state object and records array are immutable. Each `Record<T>` handle
 represents the queried version until the caller explicitly uses that handle's
 normal `update()` or `delete()` method; record data remains lazily read.
 
@@ -428,12 +428,12 @@ durable truth:
 
 ```ts
 const contexts = notebooks.contexts.observe();
-const renderSnapshot = ({ state, contexts, error }) => {
-  if (state === 'error') report(error);
+const renderState = ({ status, contexts, error }) => {
+  if (status === 'error') report(error);
   else render(contexts);
 };
-renderSnapshot(contexts.getSnapshot());
-const unsubscribe = contexts.subscribe(renderSnapshot);
+renderState(contexts.getState());
+const unsubscribe = contexts.subscribe(renderState);
 
 // When the consuming component is released:
 unsubscribe();
@@ -538,7 +538,7 @@ coordinates writes across browser contexts.
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
 | `RecordPage<Item>` | One page of selected record items with cursor-free `next()` pagination. |
-| `RecordView<Item>` | Closeable bounded query view with immutable snapshots. |
+| `RecordView<Item>` | Closeable bounded query view with immutable state. |
 | `ContextView` | Closeable live catalog of accepted member contexts. |
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
 | `ContextMember` | One owner-managed member and its audience-key delivery state. |

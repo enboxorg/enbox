@@ -2490,7 +2490,7 @@ export class TypedEnbox<
    * Available methods:
    * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
    * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
-   * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable query snapshots
+   * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable query state
    * - `subscribe(pathOrPaths, listener)` — Consume path-discriminated committed changes
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
    * - {@link TypedEnbox.records.read | read(path, recordId or request)} — Read a single record
@@ -2677,7 +2677,7 @@ export class TypedEnbox<
       },
 
       /**
-       * Observe one bounded query as immutable materialized snapshots.
+       * Observe one bounded query as immutable materialized state.
        *
        * A subscription is installed before the initial query. Its
        * payloads are wake hints only; every published collection comes from

@@ -2,20 +2,20 @@ import type { FollowedSyncSource, SyncEngine, SyncEvent } from '@enbox/agent';
 
 import { followedSyncSourceActiveEqual } from '@enbox/agent';
 
-/** Immutable materialization of the locally accepted contexts for one protocol. */
-export type ContextViewSnapshot<Context> = Readonly<{
+/** Immutable state of the locally accepted contexts for one protocol. */
+export type ContextViewState<Context> = Readonly<{
   contexts: readonly Context[];
 }> & Readonly<
-  | { state: 'loading' | 'ready'; error?: never }
-  | { state: 'error'; error: Error }
+  | { status: 'loading' | 'ready'; error?: never }
+  | { status: 'error'; error: Error }
 >;
 
-/** Listener notified after an accepted-context view publishes a new snapshot. */
-export type ContextViewListener<Context> = (snapshot: ContextViewSnapshot<Context>) => void;
+/** Listener notified after an accepted-context view publishes new state. */
+export type ContextViewListener<Context> = (state: ContextViewState<Context>) => void;
 
 /** Closeable live view of the durable contexts accepted by one actor. */
 export interface ContextView<Context> {
-  getSnapshot: () => ContextViewSnapshot<Context>;
+  getState: () => ContextViewState<Context>;
   subscribe: (listener: ContextViewListener<Context>) => () => void;
   close(): void;
 }
@@ -52,7 +52,7 @@ class ObservedContextView<Context> implements ContextView<Context> {
   private _closed = false;
   private _materializing = false;
   private _materializationRequested = false;
-  private _snapshot: ContextViewSnapshot<Context> = immutableSnapshot({ state: 'loading', contexts: [] });
+  private _state: ContextViewState<Context> = immutableState({ status: 'loading', contexts: [] });
   private _syncUnsubscribe?: () => void;
 
   private readonly _handleAbort = (): void => {
@@ -71,7 +71,7 @@ class ObservedContextView<Context> implements ContextView<Context> {
     this.requestMaterialization();
   }
 
-  public readonly getSnapshot = (): ContextViewSnapshot<Context> => this._snapshot;
+  public readonly getState = (): ContextViewState<Context> => this._state;
 
   public readonly subscribe = (listener: ContextViewListener<Context>): (() => void) => {
     if (this._closed) {
@@ -144,7 +144,7 @@ class ObservedContextView<Context> implements ContextView<Context> {
         return;
       }
       this._bound = bound;
-      this.publish(immutableSnapshot({ state: 'ready', contexts }));
+      this.publish(immutableState({ status: 'ready', contexts }));
     } catch (error: unknown) {
       if (this.canPublish()) {
         this.publishError(error instanceof Error ? error : new Error(String(error)));
@@ -157,17 +157,17 @@ class ObservedContextView<Context> implements ContextView<Context> {
   }
 
   private publishError(error: Error): void {
-    this.publish(immutableSnapshot({ state: 'error', contexts: this._snapshot.contexts, error }));
+    this.publish(immutableState({ status: 'error', contexts: this._state.contexts, error }));
   }
 
-  private publish(snapshot: ContextViewSnapshot<Context>): void {
-    if (snapshotsEqual(this._snapshot, snapshot)) {
+  private publish(state: ContextViewState<Context>): void {
+    if (statesEqual(this._state, state)) {
       return;
     }
-    this._snapshot = snapshot;
+    this._state = state;
     for (const listener of [...this._listeners]) {
       try {
-        listener(snapshot);
+        listener(state);
       } catch {
         // Listener failures do not own the catalog lifecycle.
       }
@@ -179,15 +179,15 @@ function contextKey(source: Pick<FollowedSyncSource, 'contextId' | 'sourceDid'>)
   return JSON.stringify([source.sourceDid, source.contextId]);
 }
 
-function immutableSnapshot<Context>(snapshot: ContextViewSnapshot<Context>): ContextViewSnapshot<Context> {
-  return Object.freeze({ ...snapshot, contexts: Object.freeze([...snapshot.contexts]) });
+function immutableState<Context>(state: ContextViewState<Context>): ContextViewState<Context> {
+  return Object.freeze({ ...state, contexts: Object.freeze([...state.contexts]) });
 }
 
-function snapshotsEqual<Context>(
-  a: ContextViewSnapshot<Context>,
-  b: ContextViewSnapshot<Context>,
+function statesEqual<Context>(
+  a: ContextViewState<Context>,
+  b: ContextViewState<Context>,
 ): boolean {
-  return a.state === b.state &&
+  return a.status === b.status &&
     a.error === b.error &&
     a.contexts.length === b.contexts.length &&
     a.contexts.every((context, index) => context === b.contexts[index]);

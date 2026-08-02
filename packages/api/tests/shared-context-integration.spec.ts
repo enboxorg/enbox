@@ -1,6 +1,6 @@
 import type { PlatformAgentTestHarness } from '@enbox/agent/test';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { Record as EnboxRecord, RecordView, RecordViewSnapshot } from '../src/index.js';
+import type { Record as EnboxRecord, RecordView, RecordViewState } from '../src/index.js';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -86,7 +86,7 @@ const SharedNotebookProtocol = defineProtocol(protocolDefinition, {
 
 async function waitForView<Item>(
   view: RecordView<Item>,
-  predicate: (snapshot: RecordViewSnapshot<Item>) => boolean,
+  predicate: (state: RecordViewState<Item>) => boolean,
 ): Promise<void> {
   await new Promise<void>((resolve, reject): void => {
     const timeout = setTimeout((): void => finish(new Error('Timed out waiting for shared-context view.')), 30_000);
@@ -101,15 +101,15 @@ async function waitForView<Item>(
       unsubscribe();
       error === undefined ? resolve() : reject(error);
     };
-    const inspect = (snapshot: RecordViewSnapshot<Item>): void => {
-      if (snapshot.state === 'error') {
-        finish(snapshot.error);
-      } else if (snapshot.state === 'ready' && predicate(snapshot)) {
+    const inspect = (state: RecordViewState<Item>): void => {
+      if (state.status === 'error') {
+        finish(state.error);
+      } else if (state.status === 'ready' && predicate(state)) {
         finish();
       }
     };
     unsubscribe = view.subscribe(inspect);
-    inspect(view.getSnapshot());
+    inspect(view.getState());
   });
 }
 
@@ -448,13 +448,13 @@ describe('shared context public API integration', () => {
     const view = await contextA.records.observe('notebook/page/change', { pagination: { limit: 10 } });
     const created = await contextA.records.create('notebook/page/change', { data: { body: 'created by member' } });
     expect(signerDid(created)).toBe(memberDelegateDid);
-    await waitForView(view, (snapshot): boolean => snapshot.records.some((record): boolean => record.id === created.id));
+    await waitForView(view, (state): boolean => state.records.some((record): boolean => record.id === created.id));
 
     await created.update({
       data : { body: 'updated by member' },
       tags : { revision: 'updated' },
     });
-    await waitForView(view, (snapshot): boolean => snapshot.records.some((record): boolean =>
+    await waitForView(view, (state): boolean => state.records.some((record): boolean =>
       record.id === created.id && record.tags?.revision === 'updated'
     ));
 
@@ -464,7 +464,7 @@ describe('shared context public API integration', () => {
     offlineAfterWrite.restore();
 
     await created.delete();
-    await waitForView(view, (snapshot): boolean => snapshot.records.every((record): boolean => record.id !== created.id));
+    await waitForView(view, (state): boolean => state.records.every((record): boolean => record.id !== created.id));
     await view.close();
 
     await memberAuth!.shutdown();
@@ -494,7 +494,7 @@ describe('shared context public API integration', () => {
 
     const catalog = reopened.contexts.observe();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(catalog.getSnapshot()).toMatchObject({ state: 'ready', contexts: [{}, {}] });
+      expect(catalog.getState()).toMatchObject({ status: 'ready', contexts: [{}, {}] });
     }, Poller.pollRetrySleep, 30_000);
     const members = (await owner.contexts.open('notebook/page', contextIds[0]))
       .members(['notebook/page/member', 'notebook/page/viewer']);
@@ -506,17 +506,17 @@ describe('shared context public API integration', () => {
     await memberHarness.agent.sync.stopSync();
     await memberHarness.agent.sync.startSync({ interval: '1s' });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      const changed = catalog.getSnapshot().contexts.find(context => context.id === contextIds[0]);
+      const changed = catalog.getState().contexts.find(context => context.id === contextIds[0]);
       expect(changed).toMatchObject({ role: 'notebook/page/viewer' });
     }, Poller.pollRetrySleep, 30_000);
     await expect(restoredA.records.query('notebook/page')).rejects.toThrow('is no longer active');
-    const downgraded = catalog.getSnapshot().contexts.find(context => context.id === contextIds[0])!;
+    const downgraded = catalog.getState().contexts.find(context => context.id === contextIds[0])!;
     await downgraded.whenCurrent();
 
     await members.remove(memberDid);
     await ownerHarness.agent.sync.sync('push');
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(catalog.getSnapshot().contexts.every(context => context.id !== contextIds[0])).toBe(true);
+      expect(catalog.getState().contexts.every(context => context.id !== contextIds[0])).toBe(true);
     }, Poller.pollRetrySleep, 30_000);
     catalog.close();
 

@@ -239,10 +239,10 @@ void context.records.query('workspace', {
 void context.records.observe('workspace/note', {
   pagination: { limit: 20 },
 }).then((view): void => {
-  const note: ContextRecord<{ text: string }> | undefined = view.getSnapshot().records[0];
+  const note: ContextRecord<{ text: string }> | undefined = view.getState().records[0];
   void note;
-  // @ts-expect-error observed snapshots retain context-bound handles.
-  void view.getSnapshot().records[0]?.rawMessage;
+  // @ts-expect-error observed states retain context-bound handles.
+  void view.getState().records[0]?.rawMessage;
 });
 
 void context.records.subscribe('workspace/note', async (event): Promise<void> => {
@@ -275,10 +275,10 @@ void context.records.observe('workspace', {
   materialize : { children: ['workspace/title'] as const },
   pagination  : { limit: 1 },
 }).then((view): void => {
-  const title: ContextRecord<{ text: string }> | undefined = view.getSnapshot().records[0]?.children.title?.record;
+  const title: ContextRecord<{ text: string }> | undefined = view.getState().records[0]?.children.title?.record;
   void title;
   // @ts-expect-error materialized views retain context-bound child handles.
-  void view.getSnapshot().records[0]?.children.title?.record.rawMessage;
+  void view.getState().records[0]?.children.title?.record.rawMessage;
 });
 
 void created.then(async (record): Promise<void> => {
