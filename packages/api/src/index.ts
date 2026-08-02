@@ -72,6 +72,7 @@ export {
   type RecordValidator,
 } from './record-codec.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
+export { RecordConflictError } from './record-conflict-error.js';
 export type { RecordView, RecordViewListener, RecordViewState } from './record-view.js';
 export type { ReplicationCurrentness } from './replication-currentness.js';
 export * from './record.js';

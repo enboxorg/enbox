@@ -180,6 +180,46 @@ describe('context record execution', () => {
     }
   });
 
+  it('reads mutations from the foreign authority and fences the accepted role record', async () => {
+    agent.sendDwnRequest.resolves({
+      reply: {
+        entry: {
+          data         : dataStream({ title: 'authoritative' }),
+          recordsWrite : createRecordsWrite(),
+        },
+        roleRecordId : 'role-record',
+        status       : { code: 200, detail: 'OK' },
+      },
+    });
+    const dwn = createApi(agent);
+
+    const { record } = await dwn.readRecordForMutation({ filter: { recordId } });
+
+    expect(await record!.data.json()).toEqual({ title: 'authoritative' });
+    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.sendDwnRequest.calledOnce).toBe(true);
+    expect(agent.sendDwnRequest.firstCall.args[0]).toMatchObject({
+      messageParams : { filter: { recordId }, protocolRole },
+      target        : tenantDid,
+    });
+
+    for (const roleRecordId of [undefined, 'replacement-role-record']) {
+      agent.sendDwnRequest.resetHistory();
+      agent.sendDwnRequest.resolves({
+        reply: {
+          entry: {
+            data         : dataStream({ title: 'replacement' }),
+            recordsWrite : createRecordsWrite('replacement-data-cid'),
+          },
+          roleRecordId,
+          status: { code: 200, detail: 'OK' },
+        },
+      });
+      await expect(dwn.readRecordForMutation({ filter: { recordId } }))
+        .rejects.toBeInstanceOf(ContextNotReadyError);
+    }
+  });
+
   it('rejects a subscription opened under a different role authorization', async () => {
     const subscription = { close: sinon.stub().resolves() };
     const leakedFrame = sinon.stub();
@@ -333,7 +373,8 @@ describe('context record execution', () => {
           data         : dataStream(value),
           recordsWrite : write,
         },
-        status: { code: 200, detail: 'OK' },
+        roleRecordId : 'role-record',
+        status       : { code: 200, detail: 'OK' },
       },
     });
 
@@ -362,8 +403,9 @@ describe('context record execution', () => {
     };
     agent.processDwnRequest.resolves({
       reply: {
-        entry  : { recordsWrite: createRecordsWrite(), encodedData: btoa('{}') },
-        status : { code: 200, detail: 'OK' },
+        entry        : { recordsWrite: createRecordsWrite(), encodedData: btoa('{}') },
+        roleRecordId : 'role-record',
+        status       : { code: 200, detail: 'OK' },
       },
     });
     const dwn = createApi(agent, assertActive);
@@ -387,7 +429,8 @@ describe('context record execution', () => {
               data         : dataStream(currentData),
               recordsWrite : currentWrite,
             },
-            status: { code: 200, detail: 'OK' },
+            roleRecordId : 'role-record',
+            status       : { code: 200, detail: 'OK' },
           },
         };
       }
@@ -440,8 +483,9 @@ describe('context record execution', () => {
     const dwn = createApi(agent);
     agent.processDwnRequest.onFirstCall().resolves({
       reply: {
-        entry  : { recordsWrite: currentWrite },
-        status : { code: 200, detail: 'OK' },
+        entry        : { recordsWrite: currentWrite },
+        roleRecordId : 'role-record',
+        status       : { code: 200, detail: 'OK' },
       },
     });
     const { record } = await dwn.records.read({ from: tenantDid, filter: { recordId } });

@@ -1174,6 +1174,38 @@ export function testRecordsReadHandler(): void {
             });
             const chatReadReply = await dwn.processMessage(alice.did, readChatRecord.message);
             expect(chatReadReply.status.code).toBe(200);
+            expect(chatReadReply.roleRecordId).toBe(friendRoleRecord.message.recordId);
+          });
+
+          it('requires an explicitly invoked role even when the record is published', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const bob = await TestDataGenerator.generateDidKeyPersona();
+            const protocolDefinition = friendRoleProtocolDefinition;
+
+            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition,
+            });
+            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+            expect(protocolsConfigureReply.status.code).toBe(202);
+
+            const chatRecord = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'chat',
+              published    : true,
+            });
+            const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
+            expect(chatReply.status.code).toBe(202);
+
+            const readChatRecord = await RecordsRead.create({
+              filter       : { recordId: chatRecord.message.recordId },
+              protocolRole : 'friend',
+              signer       : Jws.createSigner(bob),
+            });
+            const chatReadReply = await dwn.processMessage(alice.did, readChatRecord.message);
+            expect(chatReadReply.status.code).toBe(401);
+            expect(chatReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
           });
 
           it('rejects root-level role authorized reads if the protocolRole is not a valid protocol path to an active role record', async () => {

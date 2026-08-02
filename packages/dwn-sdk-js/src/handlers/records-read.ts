@@ -117,6 +117,9 @@ export class RecordsReadHandler implements MethodHandler {
         data
       }
     };
+    if (resolvedRole?.roleRecordId !== undefined) {
+      recordsReadReply.roleRecordId = resolvedRole.roleRecordId;
+    }
 
     try {
       // Attach the initial write by its stable entry ID. Looking it up through
@@ -157,7 +160,6 @@ export class RecordsReadHandler implements MethodHandler {
           tenant,
         });
         recordsReadReply.support = support.entries;
-        recordsReadReply.roleRecordId = support.roleRecordId;
       } catch (error) {
         return messageReplyFromError(error, 400);
       }
@@ -240,14 +242,15 @@ export class RecordsReadHandler implements MethodHandler {
       await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.validationStateReader);
     }
 
-    if (recordsRead.message.descriptor.includeReplicationSupport === true) {
-      if (recordsRead.author === undefined || recordsRead.signaturePayload?.protocolRole === undefined) {
-        throw new DwnError(
-          DwnErrorCode.RecordsReadReplicationSupportUnsupported,
-          'replication support requires an authenticated protocol-role invocation.'
-        );
-      }
+    if (recordsRead.signaturePayload?.protocolRole !== undefined) {
       return ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
+    }
+
+    if (recordsRead.message.descriptor.includeReplicationSupport === true) {
+      throw new DwnError(
+        DwnErrorCode.RecordsReadReplicationSupportUnsupported,
+        'replication support requires an authenticated protocol-role invocation.'
+      );
     }
 
     if (recordsRead.author === tenant) {

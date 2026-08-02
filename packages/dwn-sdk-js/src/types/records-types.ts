@@ -229,7 +229,7 @@ export type RecordsReadReply = GenericMessageReply & {
   /** @internal Server-proven dependencies for seeding a role-holder replica. */
   support?: RecordsReadReplicationSupportEntry[];
 
-  /** @internal Active role assignment that authorized `support`. */
+  /** @internal Active role assignment that authorized the read. */
   roleRecordId?: string;
 };
 

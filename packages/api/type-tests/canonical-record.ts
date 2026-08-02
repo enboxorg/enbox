@@ -128,6 +128,28 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   const readRecord: Record<TaskData> | undefined = await typed.records.read('task', 'record-id');
   void readRecord;
 
+  const patchedRecord: Record<TaskData> = await typed.records.patch('task', 'record-id', {
+    note: null,
+  });
+  const producerPatchedRecord: Record<TaskData> = await typed.records.patch(
+    'task',
+    'record-id',
+    async (current) => {
+      const currentTask: TaskData = current;
+      void currentTask;
+      return current.completed ? undefined : { completed: true };
+    },
+  );
+  void patchedRecord;
+  void producerPatchedRecord;
+
+  // @ts-expect-error records.patch cannot delete a required field.
+  await typed.records.patch('task', 'record-id', { title: null });
+  // @ts-expect-error records.patch cannot introduce fields outside the payload type.
+  await typed.records.patch('task', 'record-id', { missing: true });
+  // @ts-expect-error known binary paths cannot use the JSON-object patch operation.
+  await typed.records.patch('attachment', 'attachment-id', {});
+
   const view: RecordView<Record<TaskData>> = await typed.records.observe('task', {
     pagination: { limit: 10 },
   });

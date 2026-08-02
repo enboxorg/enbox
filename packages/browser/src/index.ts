@@ -39,6 +39,7 @@ export {
   defineProtocol,
   getApplicationProtocolRequests,
   ProtocolReadinessError,
+  RecordConflictError,
   RecordValidationError,
   recordCodecs,
 } from '@enbox/api';
@@ -98,6 +99,7 @@ export type {
   RecordFilter,
   RecordPage,
   RecordPatch,
+  RecordPatchInput,
   RecordQuery,
   RecordSubscription,
   RecordSubscriptionEvent,

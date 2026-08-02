@@ -282,9 +282,19 @@ const created: Promise<ContextRecord<{ text: string }>> = context.records.create
 });
 const queried = context.records.query('workspace/note', { pagination: { limit: 20 } });
 const read: Promise<ContextRecord<{ text: string }> | undefined> = context.records.read('workspace/note', 'note-id');
+const patched: Promise<ContextRecord<{ text: string }>> = context.records.patch(
+  'workspace/note',
+  'note-id',
+  (current) => {
+    const note: { text: string } = current;
+    void note;
+    return { text: `${current.text}!` };
+  },
+);
 const set: Promise<ContextRecord<{ text: string }>> = context.records.set('workspace/title', { data: { text: 'Title' } });
 void created;
 void read;
+void patched;
 void set;
 void context.records.delete('workspace/note', { recordId: 'note-id' });
 const count: Promise<number> = context.records.count('workspace/note');
@@ -434,6 +444,10 @@ void context.records.create('workspace/live/session', {
   data            : { peer: 'peer-key' },
   parentContextId : 'workspace/live-context',
 });
+// @ts-expect-error context records.patch cannot delete a required field.
+void context.records.patch('workspace/note', 'note-id', { text: null });
+// @ts-expect-error context records.patch cannot introduce fields outside the payload type.
+void context.records.patch('workspace/note', 'note-id', { missing: true });
 // @ts-expect-error membership is available only through ownedContext.members().
 void context.records.create('workspace/member', { data: { label: 'member' }, recipient: 'did:example:member' });
 // @ts-expect-error role records are not part of context content.

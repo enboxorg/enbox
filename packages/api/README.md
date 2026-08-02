@@ -271,6 +271,11 @@ await found.update({
   data: { title: 'Launch', body: 'Shipped' },
 });
 
+// Derive a partial update from the latest value, with one conflict retry
+await notes.records.patch('note', found.id, (current) =>
+  current.body === 'Shipped' ? undefined : { body: 'Shipped' }
+);
+
 // Delete
 await found.delete();
 

@@ -70,7 +70,9 @@ import { createRecordView } from './record-view.js';
 import { Did } from '@enbox/dids';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
+import { mergeRecordPatch } from './record-patch.js';
 import { projectContextMemberView } from './context-members.js';
+import { RecordConflictError } from './record-conflict-error.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import {
   assertTypedProtocolStructureSupported,
@@ -116,6 +118,13 @@ export type DataForPath<
   C extends RecordCodecMap,
   Path extends string,
 > = TypeNameAtPath<Path> extends keyof C ? RecordCodecValue<C[TypeNameAtPath<Path>]> : never;
+
+/** A patch or a side-effect-free producer that derives one from the latest value. */
+export type RecordPatchInput<T> = [RecordPatch<T>] extends [never]
+  ? never
+  : RecordPatch<T> | (
+    (current: T) => RecordPatch<T> | undefined | Promise<RecordPatch<T> | undefined>
+  );
 
 /** Update fields available on a record whose context, role, and target are already bound. */
 export type ContextRecordUpdateParams<T = unknown> = Pick<
@@ -1054,6 +1063,12 @@ export type ContextRecordsApi<
     path: Path,
     recordIdOrRequest: string | ContextReadRequest<D, Path>,
   ) => Promise<ContextRecord<DataForPath<C, Path>> | undefined>;
+
+  patch: <Path extends ContextRecordPaths<D, Root>>(
+    path: Path,
+    recordId: string,
+    patch: RecordPatchInput<DataForPath<C, Path>>,
+  ) => Promise<ContextRecord<DataForPath<C, Path>>>;
 
   set: <Path extends SingletonProtocolPaths<D> & ContextDescendantPaths<D, Root> & string>(
     path: Path,
@@ -2884,6 +2899,39 @@ export class TypedEnbox<
     return result;
   }
 
+  /** Read and bind one typed record, optionally from a bound context's authority. */
+  private async readTypedRecord<Path extends ProtocolPaths<D> & string>(
+    path: Path,
+    request: TypedReadRequest<D, Path>,
+    authoritativeContext: boolean,
+  ): Promise<Record<DataForPath<C, Path>> | undefined> {
+    const normalizedPath = normalizePath(path);
+    await this._ensureReady(normalizedPath);
+    const within = this.resolveContextWithin(normalizedPath, request.within);
+    const readRequest = {
+      from   : request.from,
+      filter : compileRecordFilter(
+        this._definition,
+        normalizedPath,
+        request.filter,
+        undefined,
+        within,
+      ),
+      protocolRole: request.protocolRole,
+    };
+    const result = authoritativeContext
+      ? await this._dwn.readRecordForMutation(readRequest)
+      : await this._dwn.records.read(readRequest);
+
+    if (result.status.code === 404) {
+      return undefined;
+    }
+    requireDwnSuccess('TypedEnbox.records.read', result);
+    return result.record === undefined
+      ? undefined
+      : this.bindCodec<Path>(normalizedPath, result.record);
+  }
+
   /**
    * Protocol-scoped record operations.
    *
@@ -2902,6 +2950,7 @@ export class TypedEnbox<
    * - `subscribe(pathOrPaths, listener)` — Consume path-discriminated committed changes
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
    * - {@link TypedEnbox.records.read | read(path, recordId or request)} — Read a single record
+   * - `patch(path, recordId, patch)` — Apply a partial update with one conflict retry
    * - {@link TypedEnbox.records.set | set(path, request)} — Replace one protocol-declared singleton
    * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
    */
@@ -2937,6 +2986,12 @@ export class TypedEnbox<
       path: Path,
       recordIdOrRequest: string | TypedReadRequest<D, Path>,
     ) => Promise<Record<DataForPath<C, Path>> | undefined>;
+
+    patch: <Path extends ProtocolPaths<D> & string>(
+      path: Path,
+      recordId: string,
+      patch: RecordPatchInput<DataForPath<C, Path>>,
+    ) => Promise<Record<DataForPath<C, Path>>>;
 
     set: <Path extends SingletonProtocolPaths<D> & string>(
       path: Path,
@@ -3215,32 +3270,55 @@ export class TypedEnbox<
         path: Path,
         recordIdOrRequest: string | TypedReadRequest<D, Path>,
       ): Promise<Record<DataForPath<C, Path>> | undefined> => {
-        const normalizedPath = normalizePath(path);
         const request: TypedReadRequest<D, Path> = typeof recordIdOrRequest === 'string'
           ? { filter: { recordId: recordIdOrRequest } }
           : recordIdOrRequest;
-        await this._ensureReady(normalizedPath);
-        const within = this.resolveContextWithin(normalizedPath, request.within);
-        const readFilter = compileRecordFilter(
-          this._definition,
-          normalizedPath,
-          request.filter,
-          undefined,
-          within,
-        );
-        const result = await this._dwn.records.read({
-          from         : request.from,
-          filter       : readFilter,
-          protocolRole : request.protocolRole,
-        });
+        return this.readTypedRecord(path, request, false);
+      },
 
-        if (result.status.code === 404) {
-          return undefined;
+      /**
+       * Apply a shallow partial update, re-reading and retrying once when the
+       * DWN rejects an out-of-order write with its canonical 409 response.
+       * A producer receives the freshly decoded value and may return
+       * `undefined` to skip the write. Because it may run twice, it must be
+       * side-effect-free.
+       *
+       * This is bounded conflict recovery, not a transaction or compare-and-
+       * swap. A concurrent write accepted after the read can still be replaced
+       * by the DWN's normal last-writer-wins ordering.
+       */
+      patch: async <Path extends ProtocolPaths<D> & string>(
+        path: Path,
+        recordId: string,
+        patch: RecordPatchInput<DataForPath<C, Path>>,
+      ): Promise<Record<DataForPath<C, Path>>> => {
+        let retried = false;
+        while (true) {
+          const record = await this.readTypedRecord(path, { filter: { recordId } }, true);
+          if (record === undefined) {
+            throw new DwnResponseError('TypedEnbox.records.patch', { code: 404, detail: 'Not Found' });
+          }
+
+          const current = await record.value();
+          const resolvedPatch = typeof patch === 'function'
+            ? await patch(current)
+            : patch;
+          if (resolvedPatch === undefined) {
+            return record;
+          }
+
+          try {
+            return await record.update({ data: mergeRecordPatch(current, resolvedPatch) });
+          } catch (error: unknown) {
+            if (!isCanonicalRecordConflict(error)) {
+              throw error;
+            }
+            if (retried) {
+              throw new RecordConflictError(path, recordId, error);
+            }
+            retried = true;
+          }
         }
-        requireDwnSuccess('TypedEnbox.records.read', result);
-        return result.record === undefined
-          ? undefined
-          : this.bindCodec<Path>(normalizedPath, result.record);
       },
 
       /**
@@ -3371,6 +3449,14 @@ function normalizeContextInvitationLimit(limit: number | undefined): number {
     throw new TypeError('Context invitations: limit must be an integer from 1 through 100.');
   }
   return resolved;
+}
+
+/** Only a plain DWN ordering conflict is safe to recover by re-reading. */
+function isCanonicalRecordConflict(error: unknown): error is DwnResponseError {
+  return error instanceof DwnResponseError
+    && error.status.code === 409
+    && error.status.detail === 'Conflict'
+    && error.status.errorCode === undefined;
 }
 
 function normalizeContextInvitationPreview(

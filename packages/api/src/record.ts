@@ -5,6 +5,7 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type { RecordData } from './record-data.js';
+import type { RecordPatch } from './record-patch.js';
 
 import type {
   DwnDateSort,
@@ -42,6 +43,7 @@ import { Convert, isEmptyObject, removeUndefinedProperties, Stream } from '@enbo
 
 import { captureRecordDataAccess } from './record-data-access.js';
 import { createRecordData } from './record-data.js';
+import { mergeRecordPatch } from './record-patch.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { dataToBlob, SendCache } from './utils.js';
 import { encodeRecordValue, getRecordCodecBinding } from './record-codec.js';
@@ -68,6 +70,7 @@ export type {
 } from './record-types.js';
 
 export type { RecordData } from './record-data.js';
+export type { RecordPatch } from './record-patch.js';
 
 /**
  * A record handle paired with its decoded application value.
@@ -84,33 +87,6 @@ export type MaterializedRecord<T = unknown> = Readonly<{
   record: Record<T>;
   value: T;
 }>;
-
-/**
- * The shallow plain-object update accepted by {@link Record.patch}.
- *
- * Optional fields may be set to `null` to delete them. Required fields cannot
- * be deleted, so a required nullable field must be set to `null` through a
- * complete {@link Record.update} instead. Records whose payload type is unknown
- * retain the untyped string-keyed patch surface; known non-object payloads
- * cannot be patched.
- *
- * @typeParam T - The complete plain-object application value being patched.
- */
-export type RecordPatch<T = unknown> = unknown extends T
-  ? globalThis.Record<string, unknown>
-  : T extends Blob | ArrayBuffer | ArrayBufferView | ReadableStream | readonly unknown[]
-    ? never
-    : T extends object
-    ? { [K in keyof T]?: undefined extends T[K] ? T[K] | null : Exclude<T[K], null> }
-    : never;
-
-function isPlainRecord(value: unknown): value is globalThis.Record<string, unknown> {
-  if (value === null || typeof value !== 'object') {
-    return false;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
 
 /**
  * The `Record` class encapsulates a single record's data and metadata, providing a more
@@ -790,23 +766,7 @@ export class Record<T = unknown> implements RecordModel {
 
     const binding = getRecordCodecBinding(this);
     const currentData: unknown = binding === undefined ? await this.data.json() : await this.value();
-    if (!isPlainRecord(currentData)) {
-      throw new Error('Record: patch() requires the record\'s current value to be a plain object.');
-    }
-
-    const mergedData: globalThis.Record<string, unknown> = { ...currentData as globalThis.Record<string, unknown> };
-    for (const [key, value] of Object.entries(data)) {
-      if (value === undefined) {
-        continue;
-      }
-      if (value === null) {
-        delete mergedData[key];
-      } else {
-        mergedData[key] = value;
-      }
-    }
-
-    return this.update({ ...options, data: mergedData as T });
+    return this.update({ ...options, data: mergeRecordPatch(currentData, data) });
   }
 
   /**

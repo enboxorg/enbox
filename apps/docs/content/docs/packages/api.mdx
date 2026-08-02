@@ -492,6 +492,20 @@ optional field. Set a required nullable field to `null` with a complete
 `update()` instead. Like any read-merge-write operation, `patch()` can overwrite
 a concurrent update that lands between its read and write.
 
+For an application-level mutation, use the typed records API. It reads a fresh
+value and retries once when the DWN rejects an out-of-order write:
+
+```ts
+const updated = await tasks.records.patch('task', taskId, (current) =>
+  current.done ? undefined : { done: true }
+);
+```
+
+The producer may run twice and must be side-effect-free. Returning `undefined`
+skips the write. This bounded retry is not a transaction or compare-and-swap;
+normal DWN last-writer-wins ordering still applies to a write accepted after
+the read.
+
 #### delete
 
 ```ts

@@ -659,6 +659,77 @@ describe('TypedEnbox contexts', () => {
     });
   });
 
+  it('patches a shared record through its bound authority and role', async () => {
+    const recordId = 'shared-note';
+    const existing = {
+      authorization : authorization(sourceDid),
+      contextId     : `${contextId}/${recordId}`,
+      descriptor    : {
+        dataCid          : 'existing-data',
+        dataFormat       : 'application/json',
+        dataSize         : 18,
+        dateCreated      : '2026-01-01T00:00:00.000000Z',
+        interface        : 'Records',
+        messageTimestamp : '2026-01-01T00:00:00.000000Z',
+        method           : 'Write',
+        parentId         : contextId,
+        protocol         : SharedDefinition.protocol,
+        protocolPath     : 'workspace/note',
+      },
+      recordId,
+    } as DwnMessage<DwnInterface.RecordsWrite>;
+    agent.sendDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.RecordsRead) {
+        return {
+          reply: {
+            entry: {
+              data         : new Blob([JSON.stringify({ title: 'before' })]),
+              recordsWrite : existing,
+            },
+            roleRecordId : 'role-record',
+            status       : { code: 200, detail: 'OK' },
+          },
+        };
+      }
+      if (request.messageType === DwnInterface.RecordsWrite) {
+        return {
+          data    : request.dataStream,
+          message : existing,
+          reply   : { status: { code: 202, detail: 'Accepted' } },
+        };
+      }
+      throw new Error(`Unexpected remote request: ${request.messageType}`);
+    });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+
+    await shared.records.patch('workspace/note', recordId, { title: 'after' });
+
+    expect(agent.sendDwnRequest.firstCall.args[0]).toMatchObject({
+      messageParams: {
+        filter: {
+          contextId,
+          protocol     : SharedDefinition.protocol,
+          protocolPath : 'workspace/note',
+          recordId,
+        },
+        protocolRole,
+      },
+      messageType : DwnInterface.RecordsRead,
+      target      : sourceDid,
+    });
+    expect(agent.sendDwnRequest.secondCall.args[0]).toMatchObject({
+      messageParams: {
+        parentContextId : contextId,
+        protocol        : SharedDefinition.protocol,
+        protocolPath    : 'workspace/note',
+        protocolRole,
+        recordId,
+      },
+      messageType : DwnInterface.RecordsWrite,
+      target      : sourceDid,
+    });
+  });
+
   it('rejects selectors that escape the bound context before dispatch', async () => {
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 

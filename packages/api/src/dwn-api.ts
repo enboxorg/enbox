@@ -436,6 +436,59 @@ export class DwnApi {
     return { records, status, cursor };
   }
 
+  /** Execute one RecordsRead, optionally routing a bound context to its authority. */
+  private async readRecord(
+    request: RecordsReadRequest,
+    authoritativeContext: boolean,
+  ): Promise<RecordsReadResponse> {
+    const { from, ...requestedMessageParams } = request;
+    const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
+      from,
+      requestedMessageParams,
+      authoritativeContext,
+    );
+
+    const agentRequest = await this.prepareReadRequest({
+      author      : this.connectedDid,
+      messageParams,
+      messageType : DwnInterface.RecordsRead,
+      target,
+    }, {
+      protocol     : messageParams.filter?.protocol,
+      protocolPath : messageParams.filter?.protocolPath,
+      contextId    : messageParams.filter?.contextId,
+    });
+
+    const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
+    const { entry, roleRecordId, status } = agentResponse.reply;
+
+    let record: Record | undefined;
+    if (200 <= status.code && status.code <= 299) {
+      record = this.createRecordHandle({
+        dataAccess   : captureRecordDataAccess(agentRequest, remoteTarget !== undefined),
+        initialWrite : entry.initialWrite,
+        message      : entry.recordsWrite,
+        protocolRole : agentRequest.messageParams.protocolRole,
+        storedData   : entry.data,
+      });
+    }
+
+    const followedSourceId = this.recordExecutionContext?.followedSourceId;
+    if (record !== undefined
+      && followedSourceId !== undefined
+      && roleRecordId !== followedSourceId) {
+      throw new ContextNotReadyError(
+        new Error('DwnApi: the active context role changed while reading the record authority.'),
+      );
+    }
+    return { record, status };
+  }
+
+  /** @internal Read the authority before a context-bound read/modify/write operation. */
+  public readRecordForMutation(request: RecordsReadRequest): Promise<RecordsReadResponse> {
+    return this.readRecord(request, true);
+  }
+
   /** Dispatches one prepared request through the local or remote agent path. */
   private dispatchDwnRequest<T extends DwnInterface>(
     request: ProcessDwnRequest<T>,
@@ -1171,49 +1224,7 @@ export class DwnApi {
        * Read a single record based on the given filter
        */
       read: async (request: RecordsReadRequest): Promise<RecordsReadResponse> => {
-        const { from, ...requestedMessageParams } = request;
-        const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
-          from,
-          requestedMessageParams,
-          false,
-        );
-
-        const agentRequest = await this.prepareReadRequest({
-          /**
-           * The `author` is the DID that will sign the message and must be the DID the Enbox app is
-           * connected with and is authorized to access the signing private key of.
-           */
-          author      : this.connectedDid,
-          messageParams,
-          messageType : DwnInterface.RecordsRead,
-          /**
-           * The `target` is the DID of the DWN tenant under which the read will be executed.
-           * If `from` is provided, the read operation will be executed on a remote DWN.
-           * Otherwise, the read will occur on the local DWN.
-          */
-          target,
-        }, {
-          protocol     : messageParams.filter?.protocol,
-          protocolPath : messageParams.filter?.protocolPath,
-          contextId    : messageParams.filter?.contextId,
-        });
-
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
-
-        const { reply: { entry, status } } = agentResponse;
-
-        let record: Record | undefined;
-        if (200 <= status.code && status.code <= 299) {
-          record = this.createRecordHandle({
-            dataAccess   : captureRecordDataAccess(agentRequest, remoteTarget !== undefined),
-            initialWrite : entry.initialWrite,
-            message      : entry.recordsWrite,
-            protocolRole : agentRequest.messageParams.protocolRole,
-            storedData   : entry.data,
-          });
-        }
-
-        return { record, status };
+        return this.readRecord(request, false);
       },
 
       /** Subscribe to raw record events matching the given filter. */
