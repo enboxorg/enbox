@@ -13,13 +13,16 @@ import type {
   SyncEventListener,
   SyncIdentityOptions,
 } from '@enbox/agent';
+import type { RecordView, RecordViewListener, RecordViewState } from '../src/record-view.js';
 
+import { Convert } from '@enbox/common';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { recordCodecs } from '../src/record-codec.js';
 import sinon from 'sinon';
 import { TypedEnbox } from '../src/typed-enbox.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { CONTEXT_INVITATION_PATH, projectContextInvitationView } from '../src/context-invitations.js';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
 
@@ -199,12 +202,69 @@ function installedProtocol(): DwnMessage[DwnInterface.ProtocolsConfigure] {
   return {
     authorization : authorization(connectedDid),
     descriptor    : {
-      definition       : SharedDefinition,
+      definition       : SharedProtocol.definition,
       interface        : 'Protocols',
       messageTimestamp : '2026-01-01T00:00:00.000000Z',
       method           : 'Configure',
     },
   } as DwnMessage[DwnInterface.ProtocolsConfigure];
+}
+
+function invitationEntry(options: {
+  contextId?: string;
+  group?: string;
+  ownerDid?: string;
+  preview?: globalThis.Record<string, string>;
+  recordId: string;
+  recipient?: string;
+  timestamp: string;
+}): DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string } {
+  const data = {
+    contextId : options.contextId ?? contextId,
+    group     : options.group ?? 'default',
+    preview   : options.preview ?? {},
+  };
+  const definition = SharedProtocol.definition as ProtocolDefinition;
+  return {
+    authorization : authorization(options.ownerDid ?? sourceDid),
+    descriptor    : {
+      interface        : 'Records',
+      method           : 'Write',
+      dataCid          : `data-${options.recordId}`,
+      dataFormat       : 'application/json',
+      dataSize         : JSON.stringify(data).length,
+      dateCreated      : options.timestamp,
+      messageTimestamp : options.timestamp,
+      protocol         : definition.protocol,
+      protocolPath     : CONTEXT_INVITATION_PATH,
+      recipient        : options.recipient ?? connectedDid,
+      schema           : definition.types[CONTEXT_INVITATION_PATH].schema,
+    },
+    encodedData : Convert.object(data).toBase64Url(),
+    recordId    : options.recordId,
+  } as DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string };
+}
+
+function membershipEntry(recipient: string): DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string } {
+  return {
+    authorization : authorization(connectedDid),
+    contextId     : `${contextId}/member-record`,
+    descriptor    : {
+      interface        : 'Records',
+      method           : 'Write',
+      dataCid          : 'member-data',
+      dataFormat       : 'application/json',
+      dataSize         : 2,
+      dateCreated      : '2026-01-01T00:00:00.000000Z',
+      messageTimestamp : '2026-01-01T00:00:00.000000Z',
+      parentId         : contextId,
+      protocol         : SharedDefinition.protocol,
+      protocolPath     : protocolRole,
+      recipient,
+    },
+    encodedData : Convert.object({}).toBase64Url(),
+    recordId    : 'member-record',
+  } as DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string };
 }
 
 describe('TypedEnbox contexts', () => {
@@ -292,6 +352,10 @@ describe('TypedEnbox contexts', () => {
       permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
     });
     typed = new TypedEnbox(dwn, SharedProtocol, {
+      roleDelivery: {
+        get   : async (): Promise<{ state: 'delivered' }> => ({ state: 'delivered' }),
+        retry : async (): Promise<{ state: 'delivered' }> => ({ state: 'delivered' }),
+      },
       sync: {
         deleteFollowedSource,
         followSource       : follow,
@@ -551,6 +615,180 @@ describe('TypedEnbox contexts', () => {
     await typed.contexts.follow({ ownerDid: sourceDid, id: contextId, group: 'viewers' });
 
     expect(follow.firstCall.args[0].roles).toEqual([viewerRole]);
+  });
+
+  it('sends a bounded invitation only after membership is established', async () => {
+    const recipient = 'did:example:recipient';
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        const entries = request.messageParams.filter.protocolPath === protocolRole
+          && request.messageParams.filter.recipient === recipient
+          ? [membershipEntry(recipient)]
+          : [];
+        return { reply: { entries, status: { code: 200, detail: 'OK' } } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    const owned = await typed.contexts.open('workspace', contextId);
+
+    await owned.invite(recipient, { preview: { title: 'Shared workspace' } });
+
+    expect(agent.sendDwnRequest.calledOnce).toBe(true);
+    const request = agent.sendDwnRequest.firstCall.args[0];
+    expect(request).toMatchObject({
+      messageParams: {
+        protocol     : SharedDefinition.protocol,
+        protocolPath : CONTEXT_INVITATION_PATH,
+        recipient,
+      },
+      target: recipient,
+    });
+    expect(JSON.parse(await (request.dataStream as Blob).text())).toEqual({
+      contextId,
+      group   : 'default',
+      preview : { title: 'Shared workspace' },
+    });
+
+    await expect(owned.invite('did:example:stranger')).rejects.toThrow(
+      'establish membership before sending an invitation',
+    );
+    expect(agent.sendDwnRequest.calledOnce).toBe(true);
+  });
+
+  it('projects one newest invitation and dismisses represented duplicates idempotently', async () => {
+    const entries = [
+      invitationEntry({
+        preview   : { title: 'Old title' },
+        recordId  : 'invite-old',
+        timestamp : '2026-01-01T00:00:00.000000Z',
+      }),
+      invitationEntry({
+        preview   : { title: 'Current title' },
+        recordId  : 'invite-current',
+        timestamp : '2026-01-02T00:00:00.000000Z',
+      }),
+      invitationEntry({
+        group     : 'missing',
+        recordId  : 'invite-bad-group',
+        timestamp : '2026-01-03T00:00:00.000000Z',
+      }),
+      invitationEntry({
+        recipient : 'did:example:someone-else',
+        recordId  : 'invite-wrong-recipient',
+        timestamp : '2026-01-04T00:00:00.000000Z',
+      }),
+    ];
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return { reply: { entries, status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsDelete) {
+        const code = request.messageParams.recordId === 'invite-old' ? 404 : 202;
+        return { reply: { status: { code, detail: code === 404 ? 'Not Found' : 'Accepted' } } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+
+    const invitations = await typed.contexts.invitations.list();
+
+    expect(invitations).toHaveLength(1);
+    expect(invitations[0]).toMatchObject({
+      contextId,
+      group    : 'default',
+      id       : 'invite-current',
+      ownerDid : sourceDid,
+      preview  : { title: 'Current title' },
+      protocol : SharedDefinition.protocol,
+    });
+    await invitations[0].dismiss();
+    await invitations[0].dismiss();
+    expect(agent.processDwnRequest.getCalls()
+      .filter(call => call.args[0].messageType === DwnInterface.RecordsDelete)).toHaveLength(2);
+    await expect(invitations[0].accept()).rejects.toThrow('invitation is no longer pending');
+    expect(follow.notCalled).toBe(true);
+  });
+
+  it('exposes invitation state with stable identity and domain vocabulary', () => {
+    let state: RecordViewState<string> = Object.freeze({
+      hasMore : false,
+      records : Object.freeze(['first']),
+      status  : 'ready',
+    });
+    let listener: RecordViewListener<string> = (): void => {};
+    const records = {
+      close     : async (): Promise<void> => {},
+      getState  : (): RecordViewState<string> => state,
+      subscribe : (next: RecordViewListener<string>): (() => void) => {
+        listener = next;
+        return (): void => {};
+      },
+    } satisfies RecordView<string>;
+    const invitations = projectContextInvitationView(records);
+
+    const initial = invitations.getState();
+    expect(initial).toBe(invitations.getState());
+    expect(initial).toEqual({ invitations: ['first'], status: 'ready' });
+
+    const changed = sinon.stub();
+    invitations.subscribe(changed);
+    state = Object.freeze({ hasMore: true, records: Object.freeze(['second']), status: 'stale' });
+    listener(state);
+    expect(changed.firstCall.args[0]).toBe(invitations.getState());
+    expect(invitations.getState()).toEqual({ invitations: ['second'], status: 'stale' });
+  });
+
+  it('keeps a failed acceptance retryable and does not turn cleanup failure into a false rejection', async () => {
+    const entry = invitationEntry({
+      recordId  : 'invite-retry',
+      timestamp : '2026-01-01T00:00:00.000000Z',
+    });
+    let deleteAttempts = 0;
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return { reply: { entries: [entry], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsDelete) {
+        deleteAttempts++;
+        const code = deleteAttempts === 1 ? 500 : 202;
+        return { reply: { status: { code, detail: code === 500 ? 'Unavailable' : 'Accepted' } } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    follow.onFirstCall().rejects(new FollowedSourceNotReadyError('not ready yet'));
+    const [invitation] = await typed.contexts.invitations.list();
+
+    await expect(invitation.accept()).rejects.toBeInstanceOf(ContextNotReadyError);
+    expect(deleteAttempts).toBe(0);
+
+    const accepted = await invitation.accept();
+    expect(accepted).toMatchObject({ id: contextId, ownerDid: sourceDid });
+    expect(follow.secondCall.args[0]).toMatchObject({
+      contextId,
+      roles: [protocolRole, viewerRole],
+      sourceDid,
+    });
+    expect(deleteAttempts).toBe(1);
+
+    await invitation.dismiss();
+    expect(deleteAttempts).toBe(2);
   });
 
   it('does not delete a record outside the followed context by id', async () => {

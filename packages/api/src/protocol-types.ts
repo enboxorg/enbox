@@ -218,7 +218,7 @@ export type TypedProtocol<
   C extends RecordCodecMap = RecordCodecMap,
   G extends ContextRoleGroups = {},
 > = {
-  /** The raw DWN protocol definition (JSON-compatible). */
+  /** The effective DWN protocol definition, including Enbox-managed protocol paths. */
   readonly definition: D;
 
   /** Application codecs keyed by protocol type name. */

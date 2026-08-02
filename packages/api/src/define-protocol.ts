@@ -19,6 +19,11 @@ import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
 import { getTypeName } from '@enbox/dwn-sdk-js';
 import {
+  addContextInvitationProtocol,
+  assertContextInvitationNameAvailable,
+  hasContextInvitationProtocol,
+} from './context-invitations.js';
+import {
   assertTypedProtocolStructureSupported,
   collectProtocolPaths,
   isEncryptedRoleAudiencePath,
@@ -60,7 +65,7 @@ type RoleGroupsFromOptions<O> = O extends { readonly roleGroups: infer G extends
  *   attachment : recordCodecs.blob(),
  * });
  *
- * // notes.definition is the raw ProtocolDefinition
+ * // notes.definition is the effective ProtocolDefinition
  * // TypedEnbox infers paths like 'note' | 'note/attachment' and
  * // data types from the codecs.
  * ```
@@ -74,13 +79,23 @@ export function defineProtocol<
   codecs : ExactProtocolCodecs<D, C>,
   options?: O,
 ): TypedProtocol<D, C, RoleGroupsFromOptions<O>> {
+  assertContextInvitationNameAvailable(definition);
   assertTypedProtocolComponents(definition, codecs);
   const roleGroups = prepareRoleGroups(
     definition,
     options === undefined ? {} : options.roleGroups,
   ) as RoleGroupsFromOptions<O>;
 
-  return { definition, codecs, roleGroups };
+  if (Object.keys(roleGroups).length === 0) {
+    return { definition, codecs, roleGroups } as TypedProtocol<D, C, RoleGroupsFromOptions<O>>;
+  }
+
+  const augmented = addContextInvitationProtocol(definition, codecs);
+  return {
+    definition : augmented.definition as D,
+    codecs     : augmented.codecs as C,
+    roleGroups,
+  } as TypedProtocol<D, C, RoleGroupsFromOptions<O>>;
 }
 
 /** @internal Whether a runtime value satisfies the protocol shape required by typed APIs. */
@@ -91,7 +106,15 @@ export function isTypedProtocol(value: unknown): value is TypedProtocol {
 
   try {
     assertTypedProtocolComponents(value.definition, value.codecs);
-    prepareRoleGroups(value.definition as ProtocolDefinition, value.roleGroups);
+    const roleGroups = prepareRoleGroups(value.definition as ProtocolDefinition, value.roleGroups);
+    const carriesInvitations = hasContextInvitationProtocol(
+      value.definition as ProtocolDefinition,
+      value.codecs as RecordCodecMap,
+    );
+    if (Object.keys(roleGroups).length > 0) {
+      return carriesInvitations;
+    }
+    assertContextInvitationNameAvailable(value.definition as ProtocolDefinition);
     return true;
   } catch {
     return false;

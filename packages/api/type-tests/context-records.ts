@@ -132,6 +132,12 @@ void owned.then((value): void => {
   void ownerDid;
   void path;
   void value.records.query('workspace/note');
+  void value.invite('did:example:alice', { preview: { title: 'Shared workspace' } });
+  void value.invite('did:example:alice', { group: 'viewers' });
+  // @ts-expect-error invitation preview values are intentionally string-only.
+  void value.invite('did:example:alice', { preview: { count: 1 } });
+  // @ts-expect-error only groups declared for this context root can be invited.
+  void value.invite('did:example:alice', { group: 'project' });
   const members = value.members();
   const assigned: Promise<ContextMember<
     typeof ContextDefinition,
@@ -191,11 +197,44 @@ void owned.then((value): void => {
 });
 
 void typed.contexts.open('project', 'project-id').then((value): void => {
+  // @ts-expect-error this root has no default role group, so the group is required.
+  void value.invite('did:example:alice');
+  void value.invite('did:example:alice', { group: 'project' });
   const members = value.members('project');
   void members.set('did:example:alice', {
     data : { label: 'guest' },
     role : 'project/outsider',
   });
+});
+
+void typed.contexts.invitations.list().then((invitations): void => {
+  const invitation = invitations[0];
+  if (invitation !== undefined) {
+    const group: 'default' | 'project' | 'viewers' = invitation.group;
+    void group;
+    void invitation.accept().then((shared): void => {
+      const role: 'workspace/member' | 'workspace/viewer' | 'project/outsider' = shared.role;
+      void role;
+    });
+  }
+});
+
+void typed.contexts.invitations.observe().then((view): void => {
+  const status: 'loading' | 'ready' | 'stale' | 'error' = view.getState().status;
+  void status;
+  void view.getState().invitations;
+  // @ts-expect-error invitation views use the domain name, not generic records.
+  void view.getState().records;
+  // @ts-expect-error the inbox is a bounded state, not a paginated record query.
+  void view.getState().hasMore;
+});
+
+declare const plainTyped: TypedEnbox<typeof ContextDefinition, typeof ContextProtocol.codecs>;
+// @ts-expect-error protocols without role groups do not expose an invitation inbox.
+void plainTyped.contexts.invitations;
+void plainTyped.contexts.open('workspace', 'workspace-id').then((value): void => {
+  // @ts-expect-error contexts without a declared membership group cannot invite.
+  void value.invite('did:example:alice');
 });
 
 void typed.contexts.follow({

@@ -44,6 +44,10 @@ import type {
   SyncEngine,
 } from '@enbox/agent';
 import type {
+  ContextInvitationPreview,
+  ContextInvitationView,
+} from './context-invitations.js';
+import type {
   ContextRoleGroups,
   ContextRolePath,
   DirectSingletonChildPaths,
@@ -74,14 +78,20 @@ import {
 } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
+import {
+  CONTEXT_INVITATION_PATH,
+  contextInvitationCodec,
+  isContextInvitationEnvelope,
+  projectContextInvitationView,
+} from './context-invitations.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
+import { DateSort, getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
 import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
 import {
   FollowedSourceNotReadyError,
   followedSyncSourceActiveEqual,
   syncEventCoversProtocol,
 } from '@enbox/agent';
-import { getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
 import {
   projectReplicationCurrentness,
   type ReplicationCurrentness,
@@ -384,6 +394,53 @@ type RoleGroupsForRoot<G, Root extends string> = {
   [Group in RoleGroupName<G>]: RoleGroupRoot<G, Group> extends Root ? Group : never;
 }[RoleGroupName<G>];
 
+type ContextInviteArgs<Group extends string> = Group extends 'default'
+  ? [request?: Readonly<{ group?: Group; preview?: ContextInvitationPreview }>]
+  : [request: Readonly<{ group: Group; preview?: ContextInvitationPreview }>];
+
+/** One pending, signed offer to follow a shared context. */
+export type ContextInvitation<
+  Context = unknown,
+  Group extends string = string,
+> = Readonly<{
+  /** Opaque invitation identifier. */
+  id: string;
+  /** Authenticated creator of the invitation and expected context owner. */
+  ownerDid: string;
+  /** Signed application protocol containing the invitation and shared context. */
+  protocol: string;
+  /** Shared context ID on the owner's tenant. */
+  contextId: string;
+  /** Declared role-precedence group used when accepting. */
+  group: Group;
+  /** Small, non-sensitive application display metadata. */
+  preview: ContextInvitationPreview;
+  /** Signed record timestamp. */
+  timestamp: string;
+  /** Verify and follow the context, then attempt inbox cleanup. */
+  accept(): Promise<Context>;
+  /** Consume the invitation without changing owner-hosted membership. */
+  dismiss(): Promise<void>;
+}>;
+
+/** Pending invitation discovery for one typed shared-context protocol. */
+export type ContextInvitationsApi<
+  Context = unknown,
+  Group extends string = string,
+> = Readonly<{
+  list(options?: Readonly<{ limit?: number }>): Promise<ContextInvitation<Context, Group>[]>;
+  observe(options?: Readonly<{ limit?: number }>): Promise<ContextInvitationView<ContextInvitation<Context, Group>>>;
+}>;
+
+type ProtocolContextInvitation<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  G extends ContextRoleGroups,
+> = ContextInvitation<
+  MemberContext<D, C, Extract<RoleGroupRoles<G, RoleGroupName<G>>, ContextRolePath<D>>>,
+  RoleGroupName<G>
+>;
+
 /** One application-facing member of an owned context. */
 export type ContextMember<
   D extends ProtocolDefinition = ProtocolDefinition,
@@ -479,7 +536,13 @@ export type OwnedContext<
   ContextBase<D, C, Root> & {
     access: 'owner';
     members: ContextMembersSelector<D, C, G, Root>;
-  }
+  } & ([RoleGroupsForRoot<G, Root>] extends [never] ? {} : {
+    /** Send a signed discovery offer after membership has been established. */
+    invite<Group extends RoleGroupsForRoot<G, Root> = Extract<'default', RoleGroupsForRoot<G, Root>>>(
+      did: string,
+      ...args: ContextInviteArgs<Group>
+    ): Promise<void>;
+  })
 >;
 
 /** A member context authorized through one exact role record. */
@@ -525,7 +588,12 @@ export type ContextsApi<
   list(): Promise<MemberContext<D, C>[]>;
   /** Observe the locally accepted member-context catalog for this protocol. */
   observe(): ContextView<MemberContext<D, C>>;
-}>;
+} & (G extends { readonly default: readonly [string, ...string[]] } ? {
+  invitations: ContextInvitationsApi<
+    MemberContext<D, C, Extract<RoleGroupRoles<G, RoleGroupName<G>>, ContextRolePath<D>>>,
+    RoleGroupName<G>
+  >;
+} : {})>;
 
 /**
  * Options for {@link TypedEnbox} `records.create()`.
@@ -1143,7 +1211,7 @@ export class TypedEnbox<
   }
 
   /**
-   * The raw protocol definition object.
+   * The effective protocol definition object, including Enbox-managed paths.
    *
    * Contains the full `protocol`, `types`, and `structure` that define
    * the protocol's schema and permission rules.
@@ -1257,6 +1325,34 @@ export class TypedEnbox<
         .sort(compareFollowedContexts);
     };
 
+    const followContext = async (
+      request: { group?: string; id: string; ownerDid: string },
+    ): Promise<MemberContext<D, C>> => {
+      this._options.signal?.throwIfAborted();
+      const selected = this.resolveContextRoleGroup(request.group ?? 'default');
+      const contextPath = selected.contextPath;
+      if (request.id.split('/').length !== contextPath.split('/').length) {
+        throw new TypeError(`TypedEnbox.contexts.follow: id must identify a '${contextPath}' context.`);
+      }
+      assertValidRecordWithin(contextPath, request.id, true);
+      const sync = requireSync();
+      let source: FollowedSyncSource;
+      try {
+        source = await sync.followSource({
+          actorDid    : this._dwn.connectedDid,
+          contextId   : request.id,
+          delegateDid : this._dwn.recordDelegateDid,
+          protocol    : this._definition.protocol,
+          roles       : [...selected.roles] as [string, ...string[]],
+          sourceDid   : request.ownerDid,
+        });
+      } catch (error) {
+        if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
+        throw new Error('TypedEnbox.contexts.follow could not establish the requested context.');
+      }
+      return this.bindMemberContext(source);
+    };
+
     this._contexts = {
       open: async <Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
         path: Root,
@@ -1288,49 +1384,58 @@ export class TypedEnbox<
           dwn,
           { contextId: id, protocolPath: normalizedPath, protocolPaths },
         );
+        const members = ((group: string = 'default') => {
+          const selected = this.resolveContextRoleGroup(group);
+          if (selected.contextPath !== normalizedPath) {
+            throw new TypeError(
+              `OwnedContext.members: role group '${group}' belongs to '${selected.contextPath}', ` +
+              `not '${normalizedPath}'.`,
+            );
+          }
+          return this.bindContextMembers(dwn, id, selected.roles);
+        }) as ContextMembersSelector<D, C, G, Root>;
+        const canInvite = Object.keys(this._roleGroups).some(group =>
+          this.resolveContextRoleGroup(group).contextPath === normalizedPath
+        );
         return Object.freeze({
-          access  : 'owner',
+          access: 'owner',
           id,
-          members : ((group: string = 'default') => {
-            const selected = this.resolveContextRoleGroup(group);
-            if (selected.contextPath !== normalizedPath) {
-              throw new TypeError(
-                `OwnedContext.members: role group '${group}' belongs to '${selected.contextPath}', ` +
-                `not '${normalizedPath}'.`,
-              );
-            }
-            return this.bindContextMembers(dwn, id, selected.roles);
-          }) as ContextMembersSelector<D, C, G, Root>,
+          ...(canInvite ? {
+            invite: async (
+              did: string,
+              request: { group?: string; preview?: ContextInvitationPreview } = {},
+            ): Promise<void> => {
+              const group = request.group ?? 'default';
+              const selected = this.resolveContextRoleGroup(group);
+              if (selected.contextPath !== normalizedPath) {
+                throw new TypeError(
+                  `OwnedContext.invite: role group '${group}' belongs to '${selected.contextPath}', ` +
+                  `not '${normalizedPath}'.`,
+                );
+              }
+              const recipient = normalizeMemberDid(did, 'OwnedContext.invite');
+              if (await this.bindContextMembers(dwn, id, selected.roles).get(recipient) === undefined) {
+                throw new TypeError('OwnedContext.invite: establish membership before sending an invitation.');
+              }
+              await this.sendContextInvitation(recipient, id, group, request.preview);
+            },
+          } : {}),
+          members,
           ownerDid : this._dwn.connectedDid,
           path     : normalizedPath,
           records,
         }) as OwnedContext<D, C, Root, G>;
       },
-      follow: (async (request: { group?: string; id: string; ownerDid: string }): Promise<MemberContext<D, C>> => {
-        this._options.signal?.throwIfAborted();
-        const selected = this.resolveContextRoleGroup(request.group ?? 'default');
-        const contextPath = selected.contextPath;
-        if (request.id.split('/').length !== contextPath.split('/').length) {
-          throw new TypeError(`TypedEnbox.contexts.follow: id must identify a '${contextPath}' context.`);
-        }
-        assertValidRecordWithin(contextPath, request.id, true);
-        const sync = requireSync();
-        let source: FollowedSyncSource;
-        try {
-          source = await sync.followSource({
-            actorDid    : this._dwn.connectedDid,
-            contextId   : request.id,
-            delegateDid : this._dwn.recordDelegateDid,
-            protocol    : this._definition.protocol,
-            roles       : [...selected.roles] as [string, ...string[]],
-            sourceDid   : request.ownerDid,
-          });
-        } catch (error) {
-          if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
-          throw new Error('TypedEnbox.contexts.follow could not establish the requested context.');
-        }
-        return this.bindMemberContext(source);
-      }) as ContextsApi<D, C, G>['follow'],
+      follow: followContext as ContextsApi<D, C, G>['follow'],
+      ...(Object.keys(this._roleGroups).length > 0 ? {
+        invitations: {
+          list: async (options?: { limit?: number }): Promise<ProtocolContextInvitation<D, C, G>[]> =>
+            this.listContextInvitations(options?.limit, followContext),
+          observe: async (options?: { limit?: number }): Promise<
+            ContextInvitationView<ProtocolContextInvitation<D, C, G>>
+          > => this.observeContextInvitations(options?.limit, followContext),
+        },
+      } : {}),
       list: async (): Promise<MemberContext<D, C>[]> =>
         (await listSources()).map((source): MemberContext<D, C> => this.bindMemberContext(source)),
       observe: (): ContextView<MemberContext<D, C>> => createContextView({
@@ -1341,7 +1446,7 @@ export class TypedEnbox<
         signal      : this._options.signal,
         sync        : requireSync(),
       }),
-    };
+    } as ContextsApi<D, C, G>;
     return this._contexts;
   }
 
@@ -1923,6 +2028,191 @@ export class TypedEnbox<
       contextPath: parentProtocolPath(roles[0]),
       roles,
     };
+  }
+
+  /** Write one bounded discovery offer to the recipient's own protocol inbox. */
+  private async sendContextInvitation(
+    recipient : string,
+    contextId : string,
+    group : string,
+    preview : ContextInvitationPreview | undefined,
+  ): Promise<void> {
+    await this.createRecord(
+      CONTEXT_INVITATION_PATH as ProtocolPaths<D> & string,
+      {
+        data: {
+          contextId,
+          group,
+          preview: normalizeContextInvitationPreview(preview),
+        },
+        from: recipient,
+        recipient,
+      } as unknown as TypedCreateOptions<C, ProtocolPaths<D> & string>,
+    );
+  }
+
+  /** Query and project one bounded page of pending invitations. */
+  private async listContextInvitations(
+    limit : number | undefined,
+    follow : (request: { group?: string; id: string; ownerDid: string }) => Promise<MemberContext<D, C>>,
+  ): Promise<ProtocolContextInvitation<D, C, G>[]> {
+    await this._ensureReady(CONTEXT_INVITATION_PATH);
+    const result = await this._dwn.records.query(this.contextInvitationQuery(limit));
+    requireDwnSuccess('TypedEnbox.contexts.invitations.list', result);
+    return this.projectContextInvitations(result.records, follow);
+  }
+
+  /** Reuse RecordView for subscription, currentness, and serialized materialization. */
+  private async observeContextInvitations(
+    limit : number | undefined,
+    follow : (request: { group?: string; id: string; ownerDid: string }) => Promise<MemberContext<D, C>>,
+  ): Promise<ContextInvitationView<ProtocolContextInvitation<D, C, G>>> {
+    await this._ensureReady(CONTEXT_INVITATION_PATH);
+    const view = await createRecordView<ProtocolContextInvitation<D, C, G>>({
+      definition         : this._definition,
+      dwn                : this._dwn,
+      materializeRecords : records => this.projectContextInvitations(records, follow),
+      query              : this.contextInvitationQuery(limit),
+      signal             : this._options.signal,
+      sync               : this._options.sync,
+    });
+    return projectContextInvitationView(view);
+  }
+
+  /** Compile the canonical own-tenant invitation selection once per operation. */
+  private contextInvitationQuery(limit: number | undefined): ReturnType<typeof compileRecordQuery> {
+    return compileRecordQuery(this._definition, CONTEXT_INVITATION_PATH, {
+      dateSort   : DateSort.CreatedDescending,
+      filter     : { recipient: this._dwn.connectedDid },
+      pagination : { limit: normalizeContextInvitationLimit(limit) },
+    });
+  }
+
+  /** Skip malformed peer input and collapse duplicate offers for one logical context. */
+  private async projectContextInvitations(
+    records : Record[],
+    follow : (request: { group?: string; id: string; ownerDid: string }) => Promise<MemberContext<D, C>>,
+  ): Promise<ProtocolContextInvitation<D, C, G>[]> {
+    type Candidate = {
+      contextId: string;
+      group: string;
+      ownerDid: string;
+      preview: ContextInvitationPreview;
+      records: Record[];
+      selected: Record;
+    };
+    const candidates = new Map<string, Candidate>();
+
+    for (const record of records) {
+      if (record.recipient !== this._dwn.connectedDid
+        || record.protocol !== this._definition.protocol
+        || record.protocolPath !== CONTEXT_INVITATION_PATH) {
+        continue;
+      }
+      const ownerDid = record.creator.trim();
+      if (Did.parse(ownerDid)?.uri !== ownerDid) {
+        continue;
+      }
+      const invitation = bindRecordCodec(
+        record,
+        contextInvitationCodec,
+        this._definition.types[CONTEXT_INVITATION_PATH].dataFormats,
+      );
+      let envelope: unknown;
+      try {
+        envelope = await invitation.value();
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          continue;
+        }
+        throw error;
+      }
+      if (!isContextInvitationEnvelope(envelope)) {
+        continue;
+      }
+      const roles = this._roleGroups[envelope.group];
+      if (!Object.hasOwn(this._roleGroups, envelope.group) || roles === undefined) {
+        continue;
+      }
+      const contextPath = parentProtocolPath(roles[0]);
+      if (envelope.contextId.split('/').length !== contextPath.split('/').length
+        || !isValidInvitationContextId(contextPath, envelope.contextId)) {
+        continue;
+      }
+
+      const key = JSON.stringify([ownerDid, envelope.contextId, envelope.group]);
+      const existing = candidates.get(key);
+      if (existing === undefined) {
+        candidates.set(key, {
+          contextId : envelope.contextId,
+          group     : envelope.group,
+          ownerDid,
+          preview   : Object.freeze({ ...envelope.preview }),
+          records   : [record],
+          selected  : record,
+        });
+        continue;
+      }
+
+      existing.records.push(record);
+      if (compareInvitationRecords(record, existing.selected) < 0) {
+        existing.preview = Object.freeze({ ...envelope.preview });
+        existing.selected = record;
+      }
+    }
+
+    return [...candidates.values()]
+      .sort((left, right) => compareInvitationRecords(left.selected, right.selected))
+      .map((candidate): ProtocolContextInvitation<D, C, G> => {
+        let consumed = false;
+        const dismiss = async (): Promise<void> => {
+          if (consumed) {
+            return;
+          }
+          await this.dismissContextInvitationRecords(candidate.records);
+          consumed = true;
+        };
+        return Object.freeze({
+          accept: async (): Promise<MemberContext<D, C>> => {
+            if (consumed) {
+              throw new Error('ContextInvitation: invitation is no longer pending.');
+            }
+            const context = await follow({
+              group    : candidate.group,
+              id       : candidate.contextId,
+              ownerDid : candidate.ownerDid,
+            });
+            try {
+              await dismiss();
+            } catch {
+              // Following is authoritative; inbox cleanup remains independently retryable.
+            }
+            return context;
+          },
+          contextId : candidate.contextId,
+          dismiss,
+          group     : candidate.group,
+          id        : candidate.selected.id,
+          ownerDid  : candidate.ownerDid,
+          preview   : candidate.preview,
+          protocol  : this._definition.protocol,
+          timestamp : candidate.selected.timestamp,
+        }) as ProtocolContextInvitation<D, C, G>;
+      });
+  }
+
+  /** Delete every duplicate represented by one invitation handle; absence is already dismissed. */
+  private async dismissContextInvitationRecords(records: readonly Record[]): Promise<void> {
+    await Promise.all(records.map(async (record): Promise<void> => {
+      const result = await this._dwn.records.delete({
+        protocol     : this._definition.protocol,
+        protocolPath : CONTEXT_INVITATION_PATH,
+        recordId     : record.id,
+      });
+      if (result.status.code !== 404) {
+        requireDwnSuccess('ContextInvitation.dismiss', result);
+      }
+    }));
   }
 
   /** Bind owner membership tasks to one context and one declared role-precedence group. */
@@ -2917,6 +3207,44 @@ export class TypedEnbox<
 // Helpers
 // ---------------------------------------------------------------------------
 
+function normalizeContextInvitationLimit(limit: number | undefined): number {
+  const resolved = limit ?? 50;
+  if (!Number.isSafeInteger(resolved) || resolved < 1 || resolved > 100) {
+    throw new TypeError('Context invitations: limit must be an integer from 1 through 100.');
+  }
+  return resolved;
+}
+
+function normalizeContextInvitationPreview(
+  preview: ContextInvitationPreview | undefined,
+): ContextInvitationPreview {
+  if (preview === undefined) {
+    return Object.freeze({});
+  }
+  if (preview === null || typeof preview !== 'object' || Array.isArray(preview)
+    || Object.values(preview).some(value => typeof value !== 'string')) {
+    throw new TypeError('OwnedContext.invite: preview must contain only string values.');
+  }
+  return Object.freeze({ ...preview });
+}
+
+function isValidInvitationContextId(path: string, contextId: string): boolean {
+  try {
+    assertValidRecordWithin(path, contextId, true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Newest invitation first, with record ID as a stable tie-breaker. */
+function compareInvitationRecords(left: Record, right: Record): number {
+  if (left.timestamp !== right.timestamp) {
+    return left.timestamp > right.timestamp ? -1 : 1;
+  }
+  return left.id > right.id ? -1 : left.id < right.id ? 1 : 0;
+}
+
 /**
  * Compares two protocol definitions for **logical** equality using
  * deterministic JSON serialization with runtime encryption metadata stripped.
@@ -3018,10 +3346,10 @@ function normalizePath(path: string): string {
   return path.slice(start, end);
 }
 
-function normalizeMemberDid(did: string): string {
+function normalizeMemberDid(did: string, operation: string = 'OwnedContext.members'): string {
   const normalized = did.trim();
   if (Did.parse(normalized)?.uri !== normalized) {
-    throw new TypeError(`OwnedContext.members: '${did}' is not a DID.`);
+    throw new TypeError(`${operation}: '${did}' is not a DID.`);
   }
   return normalized;
 }

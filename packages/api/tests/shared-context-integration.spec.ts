@@ -161,7 +161,7 @@ describe('shared context public API integration', () => {
     const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
     const configured = await owner.configure();
     expect(configured.status.code).toBe(202);
-    expect((await configured.protocol!.send(ownerDid)).status.code).toBe(202);
+    expect((await configured.protocol!.send(ownerDid)).status).toEqual({ code: 202, detail: 'Accepted' });
 
     memberAuth = await AuthManager.create({
       agent          : memberHarness.agent as EnboxUserAgent,
@@ -227,7 +227,8 @@ describe('shared context public API integration', () => {
     localOwnerRequests.restore();
     remoteOwnerRequests.restore();
     for (const [index, page] of [pageA, pageB].entries()) {
-      const members = (await owner.contexts.open('notebook/page', page.contextId)).members();
+      const context = await owner.contexts.open('notebook/page', page.contextId);
+      const members = context.members();
       const role = index === 0 ? 'notebook/page/member' : 'notebook/page/viewer';
       const member = await members.set(memberDid, {
         data: { name: 'member' },
@@ -239,6 +240,9 @@ describe('shared context public API integration', () => {
         role,
       });
       expect((await members.list()).map(({ did }) => did)).toEqual([memberDid]);
+      await context.invite(memberDid, {
+        preview: { title: index === 0 ? 'Page A' : 'Page B' },
+      });
     }
     largePageRecordId = pageA.id;
     const removedChange = await owner.records.create('notebook/page/change', {
@@ -272,10 +276,41 @@ describe('shared context public API integration', () => {
     expect(new TextEncoder().encode(JSON.stringify(largePage)).byteLength)
       .toBeGreaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
 
-    const [contextA, contextB] = await Promise.all(contextIds.map((id) => typed.contexts.follow({
-      id,
-      ownerDid,
+    const inbox = await typed.contexts.invitations.observe();
+    await memberHarness.agent.sync.sync('pull');
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(inbox.getState()).toMatchObject({ status: 'ready', invitations: [{}, {}] });
+    }, Poller.pollRetrySleep, 30_000);
+    const pending = [...inbox.getState().invitations]
+      .sort((left, right): number => left.contextId < right.contextId ? -1 : left.contextId > right.contextId ? 1 : 0);
+    expect(pending.map(({ contextId, group, ownerDid: author, preview }) => ({
+      author,
+      contextId,
+      group,
+      preview,
+    }))).toEqual(contextIds
+      .map((contextId, index) => ({
+        author  : ownerDid,
+        contextId,
+        group   : 'default',
+        preview : { title: index === 0 ? 'Page A' : 'Page B' },
+      }))
+      .sort((left, right): number => left.contextId < right.contextId ? -1 : left.contextId > right.contextId ? 1 : 0));
+
+    const offlineInbox = sinon.stub(memberHarness.agent, 'sendDwnRequest').rejects(new Error('offline'));
+    expect(await typed.contexts.invitations.list()).toHaveLength(2);
+    offlineInbox.restore();
+
+    const accepted = await Promise.all(pending.map(async (invitation) => ({
+      context   : await invitation.accept(),
+      contextId : invitation.contextId,
     })));
+    const contextA = accepted.find(({ contextId }) => contextId === contextIds[0])!.context;
+    const contextB = accepted.find(({ contextId }) => contextId === contextIds[1])!.context;
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(inbox.getState()).toMatchObject({ status: 'ready', invitations: [] });
+    }, Poller.pollRetrySleep, 30_000);
+    await inbox.close();
     expect(contextA).toMatchObject({ access: 'member', id: contextIds[0], ownerDid });
     expect(contextA.role).toBe('notebook/page/member');
     expect(contextB.role).toBe('notebook/page/viewer');

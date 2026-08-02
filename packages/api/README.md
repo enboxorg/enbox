@@ -359,17 +359,26 @@ await members.set(collaboratorDid, {
   role : 'notebook/page/viewer',
   data : {},
 });
+await page.invite(collaboratorDid, {
+  preview: { title: 'Launch notes' },
+});
 ```
 
 `open()` binds a handle; it does not read the root record. An
-application-specific invitation can carry an owner DID and context ID. Accept
-it using the protocol's default role group:
+invitation can be accepted without handling its tenant, signed record, or role
+policy directly:
 
 ```ts
-const shared = await notebooks.contexts.follow({
-  id       : invitation.contextId,
-  ownerDid : invitation.author,
-});
+const inbox = await notebooks.contexts.invitations.observe();
+const render = (state) => {
+  if (state.status === 'error') report(state.error);
+  else showInvitations(state.invitations);
+};
+render(inbox.getState());
+const unsubscribe = inbox.subscribe(render);
+
+const [invitation] = await notebooks.contexts.invitations.list();
+const shared = await invitation.accept();
 
 // Optional before paging a complete local history. follow() itself does not
 // block on an unbounded download.
@@ -389,7 +398,33 @@ const changes = await shared.records.subscribe([
 });
 await shared.records.create('notebook/page/delta', { data: nextDelta });
 await shared.records.set('notebook/page/title', { data: { title: 'Shared title' } });
+
+unsubscribe();
+await inbox.close();
 ```
+
+Any protocol declaring `roleGroups` automatically carries one protocol-isolated
+invitation inbox; dapps do not define another record type or register another
+protocol. `invite()` requires an existing member in the selected group and
+writes a signed offer to that member's own tenant. The offer contains only the
+context ID, declared group name, and small string-valued `preview` metadata.
+The authenticated owner comes from the record creator and the protocol comes
+from its signed descriptor; preview values are untrusted, non-sensitive UI
+text. The recipient's ordinary own-tenant sync makes the bounded inbox
+available offline.
+
+`accept()` reuses `contexts.follow()` and leaves a failed follow retryable. Once
+follow succeeds, it returns the accepted member context; a temporary inbox
+cleanup failure does not falsely report that acceptance failed. `dismiss()` is
+idempotent for the retained handle and does not revoke membership. Invitation
+queries return the newest bounded page, defaulting to 50 records and accepting
+limits from 1 through 100. Continuation and abuse hardening are tracked in
+[#1552](https://github.com/enboxorg/enbox/issues/1552).
+
+Accepted-context catalogs are currently agent-local. Consuming an invitation
+on one device can therefore remove it from another device before that second
+agent has accepted the context; cross-device acceptance is tracked in
+[#1551](https://github.com/enboxorg/enbox/issues/1551).
 
 `contexts.follow()` and `whenCurrent()` throw `ContextNotReadyError` while the
 context's membership, encryption, or replication state is not ready. The
@@ -470,10 +505,9 @@ intact for retry. It is available only when that role path authorizes recipient
 `co-delete`. Following the same owner context again after removal creates a
 fresh local acceptance, even when the remote role-record ID is unchanged.
 
-Invitation discovery remains application data rather than a second generic
-inbox API. A removed source role fences future replication, but previously
-learned plaintext remains local; forward-secure member removal requires
-audience-key rotation in addition to role deletion.
+A removed source role fences future replication, but previously learned
+plaintext remains local; forward-secure member removal requires audience-key
+rotation in addition to role deletion.
 
 For wallet-delegated member sessions, a foreign owner's DWN can enforce the
 embedded grant's expiry but does not automatically receive revocations stored

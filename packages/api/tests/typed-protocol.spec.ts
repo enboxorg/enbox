@@ -9,20 +9,20 @@ import type {
 
 import sinon from 'sinon';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
-
-import { PlatformAgentTestHarness } from '@enbox/agent/test';
-import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
-
-import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { Protocol } from '../src/protocol.js';
 import { Record } from '../src/record.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { testDwnUrl } from './utils/test-config.js';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { CONTEXT_INVITATION_PATH, contextInvitationCodec } from '../src/context-invitations.js';
+import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
+import { defineProtocol, isTypedProtocol } from '../src/define-protocol.js';
 import { definitionsEqual, TypedEnbox } from '../src/typed-enbox.js';
+import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 // ---------------------------------------------------------------------------
 // Test protocol definition
@@ -152,6 +152,7 @@ describe('TypedProtocol API', () => {
       workspace : recordCodecs.json<unknown>(),
     };
     const defineRoleGroups = (roleGroups: unknown): {
+      codecs: globalThis.Record<string, RecordCodec<unknown>>;
       definition: ProtocolDefinition;
       roleGroups: Readonly<globalThis.Record<string, readonly string[]>>;
     } => (defineProtocol as unknown as (
@@ -159,6 +160,7 @@ describe('TypedProtocol API', () => {
       codecs: typeof RoleGroupCodecs,
       options: { roleGroups: unknown },
     ) => {
+      codecs: globalThis.Record<string, RecordCodec<unknown>>;
       definition: ProtocolDefinition;
       roleGroups: Readonly<globalThis.Record<string, readonly string[]>>;
     })(RoleGroupDefinition, RoleGroupCodecs, { roleGroups });
@@ -207,19 +209,74 @@ describe('TypedProtocol API', () => {
       }
     });
 
-    it('copies and freezes role precedence without changing the DWN definition', () => {
+    it('copies role precedence and adds one isolated invitation inbox without mutating authored inputs', () => {
       const roles = ['workspace/member', 'workspace/viewer'];
       const input = { default: roles };
       const protocol = defineRoleGroups(input);
 
       roles.reverse();
-      expect(protocol.definition).toBe(RoleGroupDefinition);
-      expect(protocol.definition).not.toHaveProperty('roleGroups');
+      expect(protocol.definition).not.toBe(RoleGroupDefinition);
+      expect(RoleGroupDefinition.types).not.toHaveProperty(CONTEXT_INVITATION_PATH);
+      expect(RoleGroupDefinition.structure).not.toHaveProperty(CONTEXT_INVITATION_PATH);
+      expect(RoleGroupCodecs).not.toHaveProperty(CONTEXT_INVITATION_PATH);
+      expect(protocol.definition.types[CONTEXT_INVITATION_PATH]).toMatchObject({
+        dataFormats : ['application/json'],
+        schema      : 'https://enbox.id/schemas/context-invitation',
+      });
+      expect(protocol.definition.structure[CONTEXT_INVITATION_PATH]).toEqual({
+        $actions   : [{ who: 'anyone', can: ['create'] }],
+        $immutable : true,
+        $size      : { max: 8_192 },
+      });
+      expect(protocol.codecs[CONTEXT_INVITATION_PATH]).toBe(contextInvitationCodec);
       expect(protocol.roleGroups).not.toBe(input);
       expect(protocol.roleGroups.default).not.toBe(roles);
       expect(protocol.roleGroups.default).toEqual(['workspace/member', 'workspace/viewer']);
       expect(Object.isFrozen(protocol.roleGroups)).toBe(true);
       expect(Object.isFrozen(protocol.roleGroups.default)).toBe(true);
+      expect(isTypedProtocol(protocol)).toBe(true);
+
+      const other = defineRoleGroups({ default: ['workspace/member'] });
+      expect(other.definition.types[CONTEXT_INVITATION_PATH])
+        .not.toBe(protocol.definition.types[CONTEXT_INVITATION_PATH]);
+      expect(other.definition.structure[CONTEXT_INVITATION_PATH])
+        .not.toBe(protocol.definition.structure[CONTEXT_INVITATION_PATH]);
+    });
+
+    it('rejects managed invitation fragments with altered semantics', () => {
+      const protocol = defineRoleGroups({ default: ['workspace/member'] });
+      const type = protocol.definition.types[CONTEXT_INVITATION_PATH];
+      const rule = protocol.definition.structure[CONTEXT_INVITATION_PATH];
+
+      expect(isTypedProtocol({
+        ...protocol,
+        definition: {
+          ...protocol.definition,
+          types: { ...protocol.definition.types, [CONTEXT_INVITATION_PATH]: { ...type, encryptionRequired: true } },
+        },
+      })).toBe(false);
+      expect(isTypedProtocol({
+        ...protocol,
+        definition: {
+          ...protocol.definition,
+          structure: { ...protocol.definition.structure, [CONTEXT_INVITATION_PATH]: { ...rule, $role: true } },
+        },
+      })).toBe(false);
+    });
+
+    it('reserves the invitation type name at the protocol boundary', () => {
+      for (const property of ['types', 'structure'] as const) {
+        const definition = {
+          ...TodoProtocolDefinition,
+          [property]: {
+            ...TodoProtocolDefinition[property],
+            [CONTEXT_INVITATION_PATH]: {},
+          },
+        } as unknown as typeof TodoProtocolDefinition;
+        expect(() => defineProtocol(definition, TodoProtocol.codecs)).toThrow(
+          `'${CONTEXT_INVITATION_PATH}' is reserved for shared-context invitations`,
+        );
+      }
     });
   });
 
