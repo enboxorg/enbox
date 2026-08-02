@@ -336,10 +336,9 @@ normal `update()` or `delete()` method; record data remains lazily read.
 
 `subscribe()` delivers later writes and deletes for one exact path or one
 non-empty path set as codec-bound, path-discriminated events. A path set uses
-one underlying stream, and inline frame data is reused when present. It does
-not emit an initial collection; use `query()` for a baseline or `observe()`
-when the application needs current collection truth. Change delivery is at
-least once, so append-only consumers should tolerate duplicates.
+one underlying stream, and inline frame data is reused when present. Use
+`observe()` when the application needs bounded current collection truth.
+Change delivery is at least once, so consumers should tolerate duplicates.
 
 ## Contexts
 
@@ -400,28 +399,38 @@ const unsubscribe = inbox.subscribe(render);
 const [invitation] = await notebooks.contexts.invitations.list();
 const shared = await invitation.accept();
 
-// Optional before paging a complete local history. follow() itself does not
-// block on an unbounded download.
+// Optional before consuming a complete local append-only record set.
+// follow() itself does not block on an unbounded download.
 await shared.whenCurrent();
 
-const deltas = await shared.records.query('notebook/page/delta');
 const view = await shared.records.observe('notebook/page/title', {
   pagination: { limit: 1 },
 });
-const changes = await shared.records.subscribe([
+const changes = await shared.records.subscribe(
   'notebook/page/delta',
-  'notebook/page/title',
-], async (event) => {
-  if (event.type === 'write' && event.path === 'notebook/page/delta') {
-    applyDelta(await event.record.value());
-  }
-});
+  { initial: true },
+  async (event) => {
+    if (event.type === 'write') {
+      applyDelta(await event.record.value());
+    }
+  },
+);
 await shared.records.create('notebook/page/delta', { data: nextDelta });
 await shared.records.set('notebook/page/title', { data: { title: 'Shared title' } });
 
 unsubscribe();
 await inbox.close();
 ```
+
+Context-bound `records.subscribe()` also accepts `{ initial: true }`. Enbox
+opens live delivery first, incrementally pages the currently visible records,
+and then hands off without exposing cursors or returning one complete result
+array. Each selected path is replayed oldest-first, in selection order. The
+handoff is at least once: overlap may be delivered twice, but no accepted write
+or delete between opening the subscription and completing the queries is
+missed. The returned promise resolves after the handoff; an initial query or
+listener failure closes the live stream and rejects it. Use this mode for
+append-only histories, and `observe()` for mutable collection truth.
 
 Any protocol declaring `roleGroups` automatically carries one protocol-isolated
 invitation inbox; dapps do not define another record type or register another

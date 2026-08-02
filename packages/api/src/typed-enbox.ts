@@ -100,6 +100,7 @@ import {
 } from './replication-currentness.js';
 
 const DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS = 10_000;
+const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -214,11 +215,31 @@ type TypedRecordSubscriptionListener<
   ContextBound extends boolean,
 > = (event: TypedRecordSubscriptionEvent<C, Paths, ContextBound>) => void | Promise<void>;
 
+type TypedRecordChangeEvent<
+  C extends RecordCodecMap,
+  Paths extends string,
+  ContextBound extends boolean,
+> = Exclude<TypedRecordSubscriptionEvent<C, Paths, ContextBound>, { type: 'error' }>;
+
 type RecordSubscriptionSelection<Path extends string> = Path | readonly Path[];
+
+type RecordSubscriptionOptions = Readonly<{
+  /** Replay each selected context path oldest-first before switching to live delivery. */
+  initial: true;
+}>;
 
 type SelectedSubscriptionPaths<Selection, Path extends string = string> = Selection extends Path
   ? Selection
   : Selection extends readonly (infer Selected extends Path)[] ? Selected : never;
+
+type TypedRecordsSubscribeArguments<
+  C extends RecordCodecMap,
+  Paths extends string,
+  ContextBound extends boolean,
+> = ContextBound extends true
+  ? | [listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>]
+    | [options: RecordSubscriptionOptions, listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>]
+  : [listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>];
 
 type ProtocolSubscriptionPaths<D extends ProtocolDefinition, Selection> = SelectedSubscriptionPaths<
   Selection,
@@ -231,7 +252,11 @@ type TypedRecordsSubscribe<
   ContextBound extends boolean = false,
 > = <const Selection extends RecordSubscriptionSelection<Path>>(
   selection: Selection,
-  listener: TypedRecordSubscriptionListener<C, SelectedSubscriptionPaths<Selection, Path>, ContextBound>,
+  ...args: TypedRecordsSubscribeArguments<
+    C,
+    SelectedSubscriptionPaths<Selection, Path>,
+    ContextBound
+  >
 ) => Promise<RecordSubscription>;
 
 /** Closeable typed record change subscription. */
@@ -1786,6 +1811,18 @@ export class TypedEnbox<
     }));
   }
 
+  /** Bind one raw frame record to its path-discriminated typed change. */
+  private recordSubscriptionChange<
+    const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>,
+  >(record: Record): TypedRecordChangeEvent<C, ProtocolSubscriptionPaths<D, Selection>, false> {
+    const path = record.protocolPath as ProtocolSubscriptionPaths<D, Selection>;
+    return {
+      path,
+      type   : record.deleted ? 'delete' : 'write',
+      record : this.bindCodec<ProtocolSubscriptionPaths<D, Selection>>(path, record),
+    } as TypedRecordChangeEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>;
+  }
+
   /** Open one typed change stream for one path or one non-empty path set. */
   private async subscribeToRecordPaths<
     const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>,
@@ -1846,12 +1883,7 @@ export class TypedEnbox<
         if (record === undefined) {
           throw new Error('TypedEnbox.records.subscribe: record event is missing its record handle.');
         }
-        const path = record.protocolPath as ProtocolSubscriptionPaths<D, Selection>;
-        await listener({
-          path,
-          type   : record.deleted ? 'delete' : 'write',
-          record : this.bindCodec<ProtocolSubscriptionPaths<D, Selection>>(path, record),
-        } as TypedRecordSubscriptionEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>);
+        await listener(this.recordSubscriptionChange<Selection>(record));
         return;
       }
       if (message.type === 'error') {
@@ -1906,6 +1938,78 @@ export class TypedEnbox<
     detachAbort = (): void => signal?.removeEventListener('abort', handleAbort);
 
     return { close: closeSubscription };
+  }
+
+  /** Open live delivery first, page current records, then drain buffered overlap. */
+  private async subscribeToInitialRecordPaths<
+    const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>,
+  >(
+    selection: Selection,
+    listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+  ): Promise<RecordSubscription> {
+    if (this._options.context === undefined) {
+      throw new TypeError('TypedEnbox.records.subscribe: initial replay requires a context-bound records surface.');
+    }
+    type Change = TypedRecordChangeEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>;
+    const bufferedChanges: Change[] = [];
+    let subscriptionError: Error | undefined;
+    const assertActive = (): void => {
+      this._options.signal?.throwIfAborted();
+      if (subscriptionError !== undefined) {
+        throw subscriptionError;
+      }
+    };
+    let receive: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false> = event => {
+      if (event.type === 'error') {
+        subscriptionError ??= event.error;
+      } else {
+        bufferedChanges.push(event as Change);
+      }
+    };
+    let subscription: RecordSubscription;
+    try {
+      subscription = await this.subscribeToRecordPaths(selection, event => receive(event));
+    } catch (error: unknown) {
+      assertActive();
+      throw error;
+    }
+    const requestedPaths = typeof selection === 'string' ? [selection] : [...selection];
+    const paths = [...new Set(requestedPaths.map(normalizePath))];
+    const deliver = async (change: Change): Promise<void> => {
+      await listener(change);
+      assertActive();
+    };
+
+    try {
+      assertActive();
+      for (const path of paths) {
+        let page: RecordPage<Record> | undefined = await this.records.query(
+          path as ProtocolPaths<D> & string,
+          {
+            dateSort   : DateSort.CreatedAscending,
+            pagination : { limit: INITIAL_SUBSCRIPTION_PAGE_LIMIT },
+          },
+        ) as RecordPage<Record>;
+        while (page !== undefined) {
+          assertActive();
+          for (const record of page.records) {
+            await deliver(this.recordSubscriptionChange<Selection>(record));
+          }
+          page = await page.next();
+        }
+      }
+      for (let index = 0; index < bufferedChanges.length; index++) {
+        assertActive();
+        await deliver(bufferedChanges[index]);
+      }
+      assertActive();
+      receive = listener;
+      return subscription;
+    } catch (error: unknown) {
+      await subscription.close().catch((): void => {});
+      assertActive();
+      throw error;
+    }
   }
 
   /** Require the protocol fact that gives `set()` one unambiguous target. */
@@ -3044,8 +3148,15 @@ export class TypedEnbox<
 
       subscribe: async <const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>>(
         selection: Selection,
-        listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
-      ): Promise<RecordSubscription> => this.subscribeToRecordPaths(selection, listener),
+        ...args:
+          | [listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>]
+          | [
+            options: RecordSubscriptionOptions,
+            listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+          ]
+      ): Promise<RecordSubscription> => args.length === 1
+        ? this.subscribeToRecordPaths(selection, args[0])
+        : this.subscribeToInitialRecordPaths(selection, args[1]),
 
       /**
        * Count the complete population selected by the same specification as

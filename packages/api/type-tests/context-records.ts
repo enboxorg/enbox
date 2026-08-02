@@ -348,6 +348,24 @@ void context.records.subscribe('workspace/note', async (event): Promise<void> =>
   void note.rawMessage;
 });
 
+void context.records.subscribe(
+  ['workspace/note', 'workspace/live'],
+  { initial: true },
+  async (event): Promise<void> => {
+    if (event.type === 'error') { return; }
+    if (event.path === 'workspace/note') {
+      const note: ContextRecord<{ text: string }> = event.record;
+      const value: { text: string } = await note.value();
+      void value;
+      // @ts-expect-error initial context records retain the context-bound surface.
+      void note.rawMessage;
+      return;
+    }
+    const live: { active: boolean } = await event.record.value();
+    void live;
+  },
+);
+
 void context.records.subscribe(['workspace/note', 'workspace/live'], async (event): Promise<void> => {
   if (event.type === 'error') { return; }
   if (event.path === 'workspace/note') {

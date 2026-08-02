@@ -280,6 +280,35 @@ View states and their record arrays are immutable. A `Record<T>` represents
 the queried version until the caller explicitly invokes that handle's regular
 `update()` or `delete()` method; its data is still read lazily.
 
+#### subscribe
+
+Context handles can expose currently visible append-only records followed by
+live changes through one incremental stream:
+
+```ts
+const page = await notebooks.contexts.open('notebook/page', pageContextId);
+const changes = await page.records.subscribe(
+  'notebook/page/delta',
+  { initial: true },
+  async (event) => {
+    if (event.type === 'write') {
+      applyDelta(await event.record.value());
+    }
+  },
+);
+```
+
+With `{ initial: true }`, Enbox opens live delivery before it pages the
+currently visible records. Each selected path is replayed oldest-first, in
+selection order. Enbox buffers overlap during the handoff, keeps cursors
+private, and delivers each initial record directly instead of returning one
+complete result array. The handoff is at least once: overlap can be delivered
+twice, but no accepted write or delete between opening the live subscription
+and completing the queries is missed. The returned promise resolves after the
+handoff; an initial query or listener failure closes the stream and rejects it.
+Path sets use one live stream and produce path-discriminated events. Use this
+mode for append-only histories and `observe()` for mutable collection truth.
+
 #### set
 
 `set()` is the one create-or-replace operation. It is available only on paths

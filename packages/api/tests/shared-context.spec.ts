@@ -1032,6 +1032,71 @@ describe('TypedEnbox contexts', () => {
       .rejects.toThrow('Context-bound records do not expose path \'workspace/title\'.');
   });
 
+  it('opens a context live stream before paging its initial records', async () => {
+    current = source();
+    const order: string[] = [];
+    const transport = { close: sinon.stub().resolves() };
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.MessagesSubscribe) {
+        order.push('subscribe');
+        return {
+          reply: {
+            roleRecordId : current!.id,
+            status       : { code: 200, detail: 'OK' },
+            subscription : transport,
+          },
+        };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        order.push('query');
+        return { reply: { entries: [], status: { code: 200, detail: 'OK' } } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    const [shared] = await typed.contexts.list();
+
+    const subscription = await shared.records.subscribe(
+      'workspace/note',
+      { initial: true },
+      (): void => {},
+    );
+
+    expect(order).toEqual(['subscribe', 'query']);
+    const subscribeRequest = agent.processDwnRequest.getCalls().find(
+      call => call.args[0].messageType === DwnInterface.MessagesSubscribe,
+    )!.args[0];
+    expect(subscribeRequest).toMatchObject({
+      messageParams: {
+        filters: [{
+          contextIdPrefix : contextId,
+          interface       : 'Records',
+          protocol        : SharedDefinition.protocol,
+          protocolPath    : 'workspace/note',
+        }],
+        protocolRole,
+      },
+      target: sourceDid,
+    });
+    const queryRequest = agent.processDwnRequest.getCalls().find(
+      call => call.args[0].messageType === DwnInterface.RecordsQuery,
+    )!.args[0];
+    expect(queryRequest).toMatchObject({
+      messageParams: {
+        filter: {
+          contextId    : contextId,
+          protocol     : SharedDefinition.protocol,
+          protocolPath : 'workspace/note',
+        },
+        protocolRole,
+      },
+      target: sourceDid,
+    });
+    await subscription.close();
+  });
+
   it('closes an old-scope member stream when protocol evolution starts a new acceptance', async () => {
     current = source();
     const transport = { close: sinon.stub().resolves() };

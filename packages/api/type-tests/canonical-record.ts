@@ -157,6 +157,9 @@ async function assertCanonicalRecordFlow(): Promise<void> {
     void attachment;
   });
 
+  // @ts-expect-error initial replay requires a context-bound records surface.
+  await typed.records.subscribe('task', { initial: true }, (): void => {});
+
   // @ts-expect-error subscribe has no query/routing options; use observe for filtered state.
   await typed.records.subscribe('task', (): void => {}, { from: 'did:example:other' });
 
