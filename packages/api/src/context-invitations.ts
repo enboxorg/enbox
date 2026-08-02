@@ -1,7 +1,8 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordCodecMap } from './record-codec.js';
-import type { RecordView, RecordViewState } from './record-view.js';
+import type { RecordView } from './record-view.js';
 
+import { projectRecordView } from './record-view.js';
 import { recordCodecs } from './record-codec.js';
 
 /** Reserved record type used by the shared-context invitation inbox. */
@@ -41,28 +42,11 @@ export const contextInvitationCodec = Object.freeze(recordCodecs.json<ContextInv
 export function projectContextInvitationView<Invitation>(
   view: RecordView<Invitation>,
 ): ContextInvitationView<Invitation> {
-  const project = (state: RecordViewState<Invitation>): ContextInvitationViewState<Invitation> => Object.freeze({
+  return projectRecordView(view, (state): ContextInvitationViewState<Invitation> => Object.freeze({
     ...(state.status === 'error' ? { error: state.error } : {}),
     invitations : state.records,
     status      : state.status,
-  }) as ContextInvitationViewState<Invitation>;
-
-  let source = view.getState();
-  let state = project(source);
-  const update = (next: RecordViewState<Invitation>): ContextInvitationViewState<Invitation> => {
-    if (next !== source) {
-      source = next;
-      state = project(next);
-    }
-    return state;
-  };
-
-  return Object.freeze({
-    close     : (): Promise<void> => view.close(),
-    getState  : (): ContextInvitationViewState<Invitation> => update(view.getState()),
-    subscribe : (listener: (state: ContextInvitationViewState<Invitation>) => void): (() => void) =>
-      view.subscribe(next => { listener(update(next)); }),
-  });
+  }) as ContextInvitationViewState<Invitation>);
 }
 
 /** Add the isolated invitation inbox to a copied application protocol definition. */

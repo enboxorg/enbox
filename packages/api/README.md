@@ -359,9 +359,20 @@ await members.set(collaboratorDid, {
   role : 'notebook/page/viewer',
   data : {},
 });
+const memberView = await members.observe();
+const renderMembers = (state) => {
+  if (state.status === 'error') report(state.error);
+  else render(state.members);
+};
+renderMembers(memberView.getState());
+const unsubscribeMembers = memberView.subscribe(renderMembers);
 await page.invite(collaboratorDid, {
   preview: { title: 'Launch notes' },
 });
+
+// When the consuming component is released:
+unsubscribeMembers();
+await memberView.close();
 ```
 
 `open()` binds a handle; it does not read the root record. An
@@ -464,6 +475,14 @@ is unable to decrypt future content.
 
 Role-record paths are not exposed through `context.records`; membership has one
 surface, `ownedContext.members()`.
+
+`members.observe()` publishes immutable state through `getState()` and
+`subscribe()`. Role writes, replacements, and removals that reach the local
+owner replica refresh the current roster. A `ready` view means that roster is
+current, not that every member's delivery state is `delivered`. Delivery health
+is sampled when the roster rematerializes; `retryDelivery()` returns its
+updated member directly, while delivery-only background transitions appear on
+the next membership or sync wake.
 
 Accepted contexts survive restart and are reconstructed with
 `await notebooks.contexts.list()`. For a live catalog, subscribe to the same
@@ -584,6 +603,7 @@ coordinates writes across browser contexts.
 | `ContextView` | Closeable live catalog of accepted member contexts. |
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
 | `ContextMember` | One owner-managed member and its audience-key delivery state. |
+| `ContextMemberView` | Closeable live membership view with immutable state. |
 | `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |

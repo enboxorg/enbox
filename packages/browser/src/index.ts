@@ -62,6 +62,8 @@ export type {
   ContextViewState,
   ContextMember,
   ContextMembersApi,
+  ContextMemberView,
+  ContextMemberViewState,
   ContextInvitation,
   ContextInvitationPreview,
   ContextInvitationView,

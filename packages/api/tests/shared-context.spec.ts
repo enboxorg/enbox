@@ -18,6 +18,7 @@ import type { RecordView, RecordViewListener, RecordViewState } from '../src/rec
 import { Convert } from '@enbox/common';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { Poller } from '@enbox/dwn-sdk-js';
 import { recordCodecs } from '../src/record-codec.js';
 import sinon from 'sinon';
 import { TypedEnbox } from '../src/typed-enbox.js';
@@ -245,25 +246,35 @@ function invitationEntry(options: {
   } as DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string };
 }
 
-function membershipEntry(recipient: string): DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string } {
+function membershipEntry(options: {
+  data?: unknown;
+  recipient: string;
+  recordId?: string;
+  role?: typeof protocolRole | typeof viewerRole;
+  timestamp?: string;
+}): DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string } {
+  const data = options.data ?? {};
+  const recordId = options.recordId ?? 'member-record';
+  const role = options.role ?? protocolRole;
+  const timestamp = options.timestamp ?? '2026-01-01T00:00:00.000000Z';
   return {
     authorization : authorization(connectedDid),
-    contextId     : `${contextId}/member-record`,
+    contextId     : `${contextId}/${recordId}`,
     descriptor    : {
       interface        : 'Records',
       method           : 'Write',
-      dataCid          : 'member-data',
+      dataCid          : `${recordId}-data`,
       dataFormat       : 'application/json',
-      dataSize         : 2,
-      dateCreated      : '2026-01-01T00:00:00.000000Z',
-      messageTimestamp : '2026-01-01T00:00:00.000000Z',
+      dataSize         : JSON.stringify(data).length,
+      dateCreated      : timestamp,
+      messageTimestamp : timestamp,
       parentId         : contextId,
       protocol         : SharedDefinition.protocol,
-      protocolPath     : protocolRole,
-      recipient,
+      protocolPath     : role,
+      recipient        : options.recipient,
     },
-    encodedData : Convert.object({}).toBase64Url(),
-    recordId    : 'member-record',
+    encodedData: Convert.object(data).toBase64Url(),
+    recordId,
   } as DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string };
 }
 
@@ -274,6 +285,7 @@ describe('TypedEnbox contexts', () => {
   let follow: sinon.SinonStub;
   let forgetFollowedContext: sinon.SinonStub;
   let get: sinon.SinonStub;
+  let getRoleDelivery: sinon.SinonStub;
   let links: ReplicationLinkSnapshot[];
   let list: sinon.SinonStub;
   let listeners: Set<SyncEventListener>;
@@ -334,6 +346,7 @@ describe('TypedEnbox contexts', () => {
     get = sinon.stub().callsFake(async (id: string): Promise<FollowedSyncSource | undefined> =>
       current?.id === id ? current : undefined
     );
+    getRoleDelivery = sinon.stub().resolves({ state: 'delivered' });
     list = sinon.stub().callsFake(async (): Promise<FollowedSyncSource[]> => current === undefined ? [] : [current]);
     forgetFollowedContext = sinon.stub().callsFake(async (followed: FollowedSyncSource): Promise<void> => {
       if (current?.sourceDid === followed.sourceDid && current.contextId === followed.contextId) {
@@ -353,7 +366,7 @@ describe('TypedEnbox contexts', () => {
     });
     typed = new TypedEnbox(dwn, SharedProtocol, {
       roleDelivery: {
-        get   : async (): Promise<{ state: 'delivered' }> => ({ state: 'delivered' }),
+        get   : getRoleDelivery,
         retry : async (): Promise<{ state: 'delivered' }> => ({ state: 'delivered' }),
       },
       sync: {
@@ -411,6 +424,120 @@ describe('TypedEnbox contexts', () => {
     const followed = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
     const contexts: Array<{ records: typeof owned.records }> = [owned, followed];
     expect(contexts).toHaveLength(2);
+  });
+
+  it('observes one current member per DID across every declared role', async () => {
+    const alphaDid = 'did:example:alpha';
+    const betaDid = 'did:example:beta';
+    const preferredId = 'preferred-member';
+    const fallbackId = 'fallback-viewer';
+    const entries = new Map<string, ReturnType<typeof membershipEntry>[]>([
+      [protocolRole, [
+        membershipEntry({
+          data      : { label: 'maintainer' },
+          recipient : betaDid,
+          recordId  : preferredId,
+        }),
+      ]],
+      [viewerRole, [
+        membershipEntry({
+          data      : { readonly: true },
+          recipient : alphaDid,
+          recordId  : 'alpha-viewer',
+          role      : viewerRole,
+        }),
+        membershipEntry({
+          data      : { readonly: true },
+          recipient : betaDid,
+          recordId  : fallbackId,
+          role      : viewerRole,
+        }),
+      ]],
+    ]);
+    const order: string[] = [];
+    const handlers = new Map<string, (message: DwnSubscriptionMessage) => void | Promise<void>>();
+    const transports = new Map([
+      [protocolRole, { close: sinon.stub().resolves() }],
+      [viewerRole, { close: sinon.stub().resolves() }],
+    ]);
+    getRoleDelivery.callsFake(async (recordId: string) => recordId === preferredId
+      ? { reason: 'waiting', state: 'pending' }
+      : { state: 'delivered' });
+    registration = undefined;
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsSubscribe) {
+        const role = request.messageParams.filter.protocolPath;
+        order.push(`subscribe:${role}`);
+        handlers.set(role, request.subscriptionHandler!);
+        return {
+          reply: {
+            status       : { code: 200, detail: 'OK' },
+            subscription : transports.get(role),
+          },
+        };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        const role = request.messageParams.filter.protocolPath;
+        order.push(`query:${role}`);
+        return { reply: { entries: entries.get(role) ?? [], status: { code: 200, detail: 'OK' } } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+
+    const owned = await typed.contexts.open('workspace', contextId);
+    const view = await owned.members().observe();
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().status).toBe('ready');
+    }, Poller.pollRetrySleep, 1_000);
+
+    expect(order.slice(0, 3)).toEqual([
+      `subscribe:${protocolRole}`,
+      `subscribe:${viewerRole}`,
+      `query:${protocolRole}`,
+    ]);
+    const initial = view.getState();
+    expect(initial).toBe(view.getState());
+    expect(Object.isFrozen(initial)).toBe(true);
+    expect(Object.isFrozen(initial.members)).toBe(true);
+    expect(initial).toMatchObject({
+      status  : 'ready',
+      members : [
+        { data: { readonly: true }, delivery: { state: 'delivered' }, did: alphaDid, role: viewerRole },
+        {
+          data     : { label: 'maintainer' },
+          delivery : { reason: 'waiting', state: 'pending' },
+          did      : betaDid,
+          role     : protocolRole,
+        },
+      ],
+    });
+
+    entries.set(protocolRole, []);
+    await handlers.get(viewerRole)!({
+      type   : 'event',
+      cursor : { streamId: 'local', epoch: '1', position: '1' },
+      event  : { message: { descriptor: {} } as never },
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().members.find(({ did }) => did === betaDid)?.role).toBe(viewerRole);
+    }, Poller.pollRetrySleep, 1_000);
+    expect(view.getState()).toMatchObject({
+      status  : 'ready',
+      members : [
+        { did: alphaDid, role: viewerRole },
+        { data: { readonly: true }, delivery: { state: 'delivered' }, did: betaDid, role: viewerRole },
+      ],
+    });
+
+    await view.close();
+    expect(transports.get(protocolRole)?.close.calledOnce).toBe(true);
+    expect(transports.get(viewerRole)?.close.calledOnce).toBe(true);
   });
 
   it('rejects a context ID at a different protocol depth', async () => {
@@ -629,7 +756,7 @@ describe('TypedEnbox contexts', () => {
       if (request.messageType === DwnInterface.RecordsQuery) {
         const entries = request.messageParams.filter.protocolPath === protocolRole
           && request.messageParams.filter.recipient === recipient
-          ? [membershipEntry(recipient)]
+          ? [membershipEntry({ recipient })]
           : [];
         return { reply: { entries, status: { code: 200, detail: 'OK' } } };
       }

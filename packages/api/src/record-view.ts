@@ -60,6 +60,35 @@ export interface RecordView<Item = Record> {
   close(): Promise<void>;
 }
 
+type ProjectedStateView<State> = {
+  getState: () => State;
+  subscribe(listener: (state: State) => void): () => void;
+  close(): Promise<void>;
+};
+
+/** @internal Project a RecordView's domain state while preserving stable state identity. */
+export function projectRecordView<Item, State>(
+  view: RecordView<Item>,
+  project: (state: RecordViewState<Item>) => State,
+): ProjectedStateView<State> {
+  let source = view.getState();
+  let state = project(source);
+  const update = (next: RecordViewState<Item>): State => {
+    if (next !== source) {
+      source = next;
+      state = project(next);
+    }
+    return state;
+  };
+
+  return Object.freeze({
+    close     : (): Promise<void> => view.close(),
+    getState  : (): State => update(view.getState()),
+    subscribe : (listener: (state: State) => void): (() => void) =>
+      view.subscribe(next => { listener(update(next)); }),
+  });
+}
+
 type CompiledRecordQuery = ReturnType<typeof compileRecordQuery>;
 
 /** @internal Dependencies supplied by {@link TypedEnbox} for one view. */

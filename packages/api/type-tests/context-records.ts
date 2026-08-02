@@ -1,6 +1,7 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
   ContextMember,
+  ContextMemberView,
   ContextRecord,
   ContextView,
   MemberContext,
@@ -161,6 +162,19 @@ void owned.then((value): void => {
       const expires: boolean = member.data.expires;
       void expires;
     }
+    // @ts-expect-error member rows do not expose role-record IDs.
+    void member?.recordId;
+  });
+  const memberView: Promise<ContextMemberView<ContextMember<
+    typeof ContextDefinition,
+    typeof ContextProtocol.codecs,
+    'workspace/member' | 'workspace/viewer'
+  >>> = members.observe();
+  void memberView.then((view): void => {
+    void view.getState().members;
+    // @ts-expect-error membership views use the domain name, not generic records.
+    void view.getState().records;
+    const member = view.getState().members[0];
     // @ts-expect-error member rows do not expose role-record IDs.
     void member?.recordId;
   });

@@ -31,6 +31,7 @@
  * ```
  */
 
+import type { ContextMemberView } from './context-members.js';
 import type { ContextView } from './context-view.js';
 import type { Protocol } from './protocol.js';
 import type { RecordView } from './record-view.js';
@@ -69,6 +70,7 @@ import { createRecordView } from './record-view.js';
 import { Did } from '@enbox/dids';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
+import { projectContextMemberView } from './context-members.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import {
   assertTypedProtocolStructureSupported,
@@ -469,6 +471,11 @@ export type ContextMembersApi<
 > = Readonly<{
   get(did: string): Promise<ContextMember<D, C, Role> | undefined>;
   list(): Promise<ContextMember<D, C, Role>[]>;
+  /**
+   * Observe the current preferred assignment for every member in this role group.
+   * Delivery is sampled whenever a membership change rematerializes the view.
+   */
+  observe(): Promise<ContextMemberView<ContextMember<D, C, Role>>>;
   remove(did: string): Promise<void>;
   /** Reconcile protocol-wide delivery, then return this member's current row. */
   retryDelivery(did: string): Promise<ContextMember<D, C, Role> | undefined>;
@@ -2226,35 +2233,47 @@ export class TypedEnbox<
 
     const rolePaths = [...selectedRoles] as Role[];
 
-    const load = async (did?: string): Promise<ActiveMemberRecord[]> => {
-      const perRole = await Promise.all(rolePaths.map(async (role): Promise<ActiveMemberRecord[]> => {
-        const page = await this.records.query(
-          role,
-          { within: contextId, ...(did === undefined ? {} : { filter: { recipient: did } }) },
-        );
-        return page.records.map((record): ActiveMemberRecord => ({
-          did    : record.recipient!,
-          record : record as Record<unknown>,
-          role,
-        }));
+    const activeRecords = <Value>(role: Role, records: readonly Record<Value>[]): ActiveMemberRecord[] =>
+      records.map((record): ActiveMemberRecord => ({
+        did    : record.recipient!,
+        record : record as unknown as Record<unknown>,
+        role,
       }));
+
+    const bindActiveRecords = (role: Role, records: readonly Record[]): ActiveMemberRecord[] =>
+      activeRecords(role, records.map(record => this.bindCodec<Role>(role, record)));
+
+    const loadRole = async (role: Role, did?: string): Promise<ActiveMemberRecord[]> => {
+      const page = await this.records.query(
+        role,
+        { within: contextId, ...(did === undefined ? {} : { filter: { recipient: did } }) },
+      );
+      return activeRecords(role, page.records);
+    };
+
+    const load = async (did?: string): Promise<ActiveMemberRecord[]> => {
+      const perRole = await Promise.all(rolePaths.map(role => loadRole(role, did)));
       return perRole.flat();
     };
 
+    const prefer = (
+      current: ActiveMemberRecord | undefined,
+      candidate: ActiveMemberRecord,
+    ): ActiveMemberRecord => {
+      if (current === undefined) {
+        return candidate;
+      }
+      const precedence = rolePaths.indexOf(candidate.role) - rolePaths.indexOf(current.role);
+      if (precedence !== 0) {
+        return precedence < 0 ? candidate : current;
+      }
+      if (candidate.record.timestamp !== current.record.timestamp) {
+        return candidate.record.timestamp > current.record.timestamp ? candidate : current;
+      }
+      return candidate.record.id > current.record.id ? candidate : current;
+    };
     const preferred = (candidates: readonly ActiveMemberRecord[]): ActiveMemberRecord | undefined =>
-      candidates.reduce<ActiveMemberRecord | undefined>((current, candidate) => {
-        if (current === undefined) {
-          return candidate;
-        }
-        const precedence = rolePaths.indexOf(candidate.role) - rolePaths.indexOf(current.role);
-        if (precedence !== 0) {
-          return precedence < 0 ? candidate : current;
-        }
-        if (candidate.record.timestamp !== current.record.timestamp) {
-          return candidate.record.timestamp > current.record.timestamp ? candidate : current;
-        }
-        return candidate.record.id > current.record.id ? candidate : current;
-      }, undefined);
+      candidates.reduce<ActiveMemberRecord | undefined>(prefer, undefined);
 
     const project = async (
       member: ActiveMemberRecord,
@@ -2273,6 +2292,18 @@ export class TypedEnbox<
       return member === undefined ? undefined : project(member);
     };
 
+    const projectList = async (
+      members: readonly ActiveMemberRecord[],
+    ): Promise<ContextMember<D, C, Role>[]> => {
+      const byDid = new Map<string, ActiveMemberRecord>();
+      for (const member of members) {
+        byDid.set(member.did, prefer(byDid.get(member.did), member));
+      }
+      return Promise.all([...byDid.entries()]
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .map(([, member]) => project(member)));
+    };
+
     const deleteAssignments = async (assignments: readonly ActiveMemberRecord[]): Promise<void> => {
       const results = await Promise.allSettled(assignments.map(member => member.record.delete()));
       const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
@@ -2283,17 +2314,31 @@ export class TypedEnbox<
 
     return Object.freeze({
       get,
-      list: async (): Promise<ContextMember<D, C, Role>[]> => {
-        const byDid = new Map<string, ActiveMemberRecord[]>();
-        for (const member of await load()) {
-          const candidates = byDid.get(member.did) ?? [];
-          candidates.push(member);
-          byDid.set(member.did, candidates);
-        }
-        const selected = [...byDid.entries()]
-          .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-          .map(([, candidates]) => preferred(candidates)!);
-        return Promise.all(selected.map(member => project(member)));
+      list    : async (): Promise<ContextMember<D, C, Role>[]> => projectList(await load()),
+      observe : async (): Promise<ContextMemberView<ContextMember<D, C, Role>>> => {
+        const [primaryRole, ...additionalRoles] = rolePaths;
+        await this._ensureReady(primaryRole);
+        return projectContextMemberView(await createRecordView<ContextMember<D, C, Role>>({
+          additionalWakeFilters: additionalRoles.map(role => compileRecordFilter(
+            this._definition,
+            role,
+            undefined,
+            undefined,
+            contextId,
+          )),
+          definition         : this._definition,
+          dwn                : this._dwn,
+          materializeRecords : async (records): Promise<ContextMember<D, C, Role>[]> => {
+            const additional = await Promise.all(additionalRoles.map(role => loadRole(role)));
+            return projectList([
+              ...bindActiveRecords(primaryRole, records),
+              ...additional.flat(),
+            ]);
+          },
+          query  : compileRecordQuery(this._definition, primaryRole, { within: contextId }),
+          signal : this._options.signal,
+          sync   : this._options.sync,
+        }));
       },
       remove: async (did: string): Promise<void> => {
         await deleteAssignments(await load(normalizeMemberDid(did)));

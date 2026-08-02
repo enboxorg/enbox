@@ -533,11 +533,26 @@ describe('shared context public API integration', () => {
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(catalog.getState()).toMatchObject({ status: 'ready', contexts: [{}, {}] });
     }, Poller.pollRetrySleep, 30_000);
+    const observingOwner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid })
+      .using(SharedNotebookProtocol);
+    const memberView = await (await observingOwner.contexts.open('notebook/page', contextIds[0]))
+      .members()
+      .observe();
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(memberView.getState()).toMatchObject({
+        members: [{ delivery: { state: 'delivered' }, did: memberDid, role: 'notebook/page/member' }],
+      });
+    }, Poller.pollRetrySleep, 30_000);
     const members = (await owner.contexts.open('notebook/page', contextIds[0])).members();
     await members.set(memberDid, {
       data : { name: 'member' },
       role : 'notebook/page/viewer',
     });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(memberView.getState()).toMatchObject({
+        members: [{ delivery: { state: 'delivered' }, did: memberDid, role: 'notebook/page/viewer' }],
+      });
+    }, Poller.pollRetrySleep, 30_000);
     await ownerHarness.agent.sync.sync('push');
     await memberHarness.agent.sync.stopSync();
     await memberHarness.agent.sync.startSync({ interval: '1s' });
@@ -550,6 +565,10 @@ describe('shared context public API integration', () => {
     await downgraded.whenCurrent();
 
     await members.remove(memberDid);
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(memberView.getState()).toMatchObject({ members: [] });
+    }, Poller.pollRetrySleep, 30_000);
+    await memberView.close();
     await ownerHarness.agent.sync.sync('push');
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(catalog.getState().contexts.every(context => context.id !== contextIds[0])).toBe(true);
