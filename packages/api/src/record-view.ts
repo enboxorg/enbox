@@ -40,6 +40,8 @@ export type RecordViewState<Item = Record> = RecordViewContents<Item> & Readonly
   }
 >;
 
+type UsableRecordViewState<Item> = Exclude<RecordViewState<Item>, { status: 'error' }>;
+
 /** Listener notified after a records view publishes new state. */
 export type RecordViewListener<Item = Record> = (state: RecordViewState<Item>) => void;
 
@@ -56,6 +58,14 @@ export interface RecordView<Item = Record> {
   /** Subscribe to later state publications. Safe to pass as a bare callback. */
   subscribe: (listener: RecordViewListener<Item>) => () => void;
 
+  /**
+   * Resolve with the first usable state.
+   *
+   * A state is usable when it contains records, or when `ready` makes an
+   * empty result authoritative. Errors, caller abort, and view closure reject.
+   */
+  whenUsable(options?: Readonly<{ signal?: AbortSignal }>): Promise<UsableRecordViewState<Item>>;
+
   /** Fence callbacks and close the underlying local subscriptions without publishing new state. */
   close(): Promise<void>;
 }
@@ -68,7 +78,7 @@ type ProjectedStateView<State> = {
 
 /** @internal Project a RecordView's domain state while preserving stable state identity. */
 export function projectRecordView<Item, State>(
-  view: RecordView<Item>,
+  view: Pick<RecordView<Item>, 'close' | 'getState' | 'subscribe'>,
   project: (state: RecordViewState<Item>) => State,
 ): ProjectedStateView<State> {
   let source = view.getState();
@@ -125,6 +135,7 @@ export async function createRecordView<Item = Record>(
 /** One serialized, wake-driven materialization resource. */
 class ObservedRecordView<Item> implements RecordView<Item> {
   private readonly _additionalWakeFilters: readonly RecordsFilter[];
+  private readonly _closeController = new AbortController();
   private readonly _definition: ProtocolDefinition;
   private readonly _dwn: DwnApi;
   private readonly _listeners = new Set<RecordViewListener<Item>>();
@@ -220,6 +231,42 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     return (): void => { this._listeners.delete(listener); };
   };
 
+  public whenUsable(
+    options: Readonly<{ signal?: AbortSignal }> = {},
+  ): Promise<UsableRecordViewState<Item>> {
+    const signal = options.signal === undefined
+      ? this._closeController.signal
+      : AbortSignal.any([options.signal, this._closeController.signal]);
+    return new Promise<UsableRecordViewState<Item>>((resolve, reject): void => {
+      let unsubscribe = (): void => {};
+      const cleanup = (): void => {
+        unsubscribe();
+        signal.removeEventListener('abort', onAbort);
+      };
+      const fail = (reason: unknown): void => {
+        cleanup();
+        reject(reason);
+      };
+      const inspect = (state: RecordViewState<Item>): void => {
+        if (options.signal?.aborted === true) {
+          fail(options.signal.reason);
+        } else if (state.status === 'error') {
+          fail(state.error);
+        } else if (this._closeController.signal.aborted) {
+          fail(this._closeController.signal.reason);
+        } else if (state.status === 'ready' || state.records.length > 0) {
+          cleanup();
+          resolve(state);
+        }
+      };
+      const onAbort = (): void => { inspect(this._state); };
+
+      signal.addEventListener('abort', onAbort, { once: true });
+      unsubscribe = this.subscribe(inspect);
+      inspect(this._state);
+    });
+  }
+
   public close(): Promise<void> {
     this._closePromise ??= this.closeOwnedResources();
     return this._closePromise;
@@ -227,6 +274,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
   private async closeOwnedResources(): Promise<void> {
     this._closed = true;
+    this._closeController.abort();
     this._requestGeneration += 1;
     this._materializationRequested = false;
     this._wakeUnsubscribe?.();

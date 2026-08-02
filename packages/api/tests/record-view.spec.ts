@@ -412,6 +412,103 @@ describe('RecordView', () => {
     await view.close();
   });
 
+  it('resolves a usable cached result before replication becomes current', async () => {
+    const cached = testRecord('cached');
+    const harness = createHarness(async () => ok([cached]));
+    const fakeSync = createSync();
+    fakeSync.links = [link('initializing', 'online', false)];
+    const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+
+    const state = await view.whenUsable();
+
+    expect(state).toBe(view.getState());
+    expect(state.status).toBe('loading');
+    expect(state.records).toEqual([cached]);
+    await view.close();
+  });
+
+  it('waits for an empty replica to become authoritatively ready', async () => {
+    const harness = createHarness(async () => ok([]));
+    const fakeSync = createSync();
+    fakeSync.links = [link('initializing', 'online', false)];
+    const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    const initial = view.getState();
+    let resolved = false;
+    const usable = view.whenUsable().then((state) => {
+      resolved = true;
+      return state;
+    });
+    await waitFor(() => { expect(view.getState()).not.toBe(initial); });
+    expect(view.getState()).toMatchObject({ status: 'loading', records: [] });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    fakeSync.links = [link('live')];
+    fakeSync.emit({
+      type           : 'pull:currentness-change',
+      tenantDid      : TENANT_DID,
+      remoteEndpoint : 'https://dwn.example',
+      protocol       : ViewDefinition.protocol,
+      protocols      : [ViewDefinition.protocol],
+      from           : false,
+      to             : true,
+    });
+
+    const state = await usable;
+
+    expect(state).toMatchObject({ status: 'ready', records: [], hasMore: false });
+    await view.close();
+  });
+
+  it('rejects a usable-state waiter on a published error or caller abort', async () => {
+    const failedHarness = createHarness(async () => ({
+      status  : { code: 500, detail: 'query failed' },
+      records : [],
+    }));
+    const failedView = await createTyped(failedHarness).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    await expect(failedView.whenUsable()).rejects.toBeInstanceOf(DwnResponseError);
+    await failedView.close();
+
+    let finishQuery!: (response: RecordsQueryResponse) => void;
+    const pendingHarness = createHarness(() => new Promise((resolve) => { finishQuery = resolve; }));
+    const pendingView = await createTyped(pendingHarness).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    const alreadyAborted = new AbortController();
+    const earlyReason = new Error('consumer was already stopped');
+    alreadyAborted.abort(earlyReason);
+    await expect(pendingView.whenUsable({ signal: alreadyAborted.signal })).rejects.toBe(earlyReason);
+
+    const controller = new AbortController();
+    const reason = new Error('consumer stopped waiting');
+    const pending = pendingView.whenUsable({ signal: controller.signal });
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    finishQuery(ok([]));
+    await pendingView.close();
+  });
+
+  it('rejects a usable-state waiter when the view closes', async () => {
+    let finishQuery!: (response: RecordsQueryResponse) => void;
+    const harness = createHarness(() => new Promise((resolve) => { finishQuery = resolve; }));
+    const view = await createTyped(harness).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    const pending = view.whenUsable();
+
+    await view.close();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    finishQuery(ok([]));
+  });
+
   it('rejects an already-aborted session without acquiring view resources', async () => {
     const harness = createHarness(async () => ok([]));
     const fakeSync = createSync();

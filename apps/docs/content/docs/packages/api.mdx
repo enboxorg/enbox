@@ -236,18 +236,24 @@ const view = await tasks.records.observe('task', {
   pagination: { limit: 25 },
 });
 
+await view.whenUsable();
 const unsubscribe = view.subscribe((state) => {
   // status is loading | ready | stale | error
   renderTasks(state.records, state.status, state.hasMore);
 });
 
-// getState() is useful for the initial render and framework adapters.
+// Read after subscribing to close the one-shot-to-live handoff.
 const initial = view.getState();
 renderTasks(initial.records, initial.status, initial.hasMore);
 
 unsubscribe();
 await view.close();
 ```
+
+`whenUsable({ signal })` resolves when the view contains records—even from a
+`loading` or `stale` local replica—or when `ready` makes an empty result
+authoritative. It rejects the first error state, caller abort, or view closure;
+callers may wait again after a recoverable view error.
 
 Pass `from`—and `protocolRole` when authorization requires one—to observe the
 same bounded selection on a foreign tenant. Foreign views use the remote query

@@ -242,9 +242,12 @@ const nextPage = await page.next(); // undefined after the final page
 
 // Observe one bounded materialization
 const view = await notes.records.observe('note', selection);
-const unsubscribe = view.subscribe((state) => {
+const render = (state) => {
   console.log(state.status, state.records, state.hasMore);
-});
+};
+await view.whenUsable();
+const unsubscribe = view.subscribe(render);
+render(view.getState()); // close the one-shot-to-live handoff
 
 // Consume later writes/deletes from one stream, discriminated by path
 const changes = await notes.records.subscribe(['note', 'attachment'], async (event) => {
@@ -320,6 +323,12 @@ offline writes remain visible. Query, authorization, and terminal sync failures
 publish `error` while retaining the latest successful records.
 `hasMore` is always present: it is `false` before the first query and whenever
 the latest bounded result has no next page.
+
+`whenUsable({ signal })` resolves with the first state containing records, even
+while an offline replica is `loading` or `stale`. An empty state resolves only
+when `ready` makes the absence authoritative. It rejects the first error state,
+caller abort, or closure; callers may wait again after a recoverable error, and
+later states continue through `subscribe()`.
 
 The state object and records array are immutable. Each `Record<T>` handle
 represents the queried version until the caller explicitly uses that handle's

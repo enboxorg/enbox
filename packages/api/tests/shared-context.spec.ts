@@ -894,7 +894,7 @@ describe('TypedEnbox contexts', () => {
         listener = next;
         return (): void => {};
       },
-    } satisfies RecordView<string>;
+    } satisfies Pick<RecordView<string>, 'close' | 'getState' | 'subscribe'>;
     const invitations = projectContextInvitationView(records);
 
     const initial = invitations.getState();
