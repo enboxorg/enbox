@@ -99,6 +99,7 @@ type RecordViewOptions<Item> = {
   materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   query: CompiledRecordQuery;
   signal?: AbortSignal;
+  subscribeToWakes?: (wake: () => void) => () => void;
   sync?: SyncEngine;
 };
 
@@ -130,6 +131,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   private readonly _materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   private readonly _query: CompiledRecordQuery;
   private readonly _signal?: AbortSignal;
+  private readonly _subscribeToWakes?: (wake: () => void) => () => void;
   private readonly _sync?: SyncEngine;
   private readonly _tenantDid: string;
   private readonly _followedContextId?: string;
@@ -150,6 +152,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   });
   private readonly _subscriptions: { close(): Promise<void> }[] = [];
   private _syncUnsubscribe?: () => void;
+  private _wakeUnsubscribe?: () => void;
 
   private readonly _handleAbort = (): void => {
     this.publishError(new Error('RecordView: owning session ended.', { cause: this._signal?.reason }));
@@ -163,6 +166,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     this._materializeRecords = options.materializeRecords;
     this._query = options.query;
     this._signal = options.signal;
+    this._subscribeToWakes = options.subscribeToWakes;
     this._sync = options.dwn.followedSourceId !== undefined || options.query.from === undefined
       ? options.sync
       : undefined;
@@ -191,6 +195,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       for (const filter of wakeFilters) {
         await this.openSubscription(filter, subscriptionHandler);
       }
+      this._wakeUnsubscribe = this._subscribeToWakes?.((): void => { this.requestMaterialization(); });
 
       this._isOpen = true;
       this.requestMaterialization();
@@ -224,6 +229,8 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     this._closed = true;
     this._requestGeneration += 1;
     this._materializationRequested = false;
+    this._wakeUnsubscribe?.();
+    this._wakeUnsubscribe = undefined;
     this._syncUnsubscribe?.();
     this._syncUnsubscribe = undefined;
     this._signal?.removeEventListener('abort', this._handleAbort);

@@ -333,6 +333,10 @@ export class Enbox {
           ...deliverySession,
           roleRecordId,
         }),
+        subscribe: (listener): (() => void) => this.agent.dwn.subscribeAudienceKeyDeliveryChanges({
+          ...deliverySession,
+          listener,
+        }),
       },
       signal : this._lifetimeSignal,
       sync   : this.agent.sync,

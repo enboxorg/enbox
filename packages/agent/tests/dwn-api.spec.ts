@@ -4772,7 +4772,7 @@ describe('Role record write behavior', () => {
     })).rejects.toThrow(/store:false|non-raw, stored RecordsWrite/i);
   }, 10000);
 
-  it('does not delay or unwind an accepted role write when projection persistence stalls', async () => {
+  it('keeps accepted role writes non-blocking and wakes matching protocol views after projection persistence', async () => {
     // Bob is a DWN-less recipient: no protocol is installed for him, so the owner
     // cannot resolve his role-path key. He supplies it out of band and the owner
     // wraps the delivery to it directly.
@@ -4791,9 +4791,28 @@ describe('Role record write behavior', () => {
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Supplied"}')]),
     });
+    const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
+    const deliveryWakes = [
+      { protocol: chatProtocol.protocol, target: alice.did.uri },
+      { protocol: `${chatProtocol.protocol}/other`, target: alice.did.uri },
+      { protocol: chatProtocol.protocol, target: bob.did.uri },
+    ].map(scope => {
+      const listener = sinon.spy();
+      return {
+        listener,
+        unsubscribe: testHarness.agent.dwn.subscribeAudienceKeyDeliveryChanges({ ...scope, listener }),
+      };
+    });
     let releaseProjection!: () => void;
-    const projectionWrite = sinon.stub(testHarness.audienceKeyDeliveryStore, 'record')
-      .returns(new Promise<void>(resolve => { releaseProjection = resolve; }));
+    const projectionStates = Reflect.get(testHarness.audienceKeyDeliveryStore, '_states') as {
+      put(key: string, value: string): Promise<void>;
+    };
+    const putProjection = projectionStates.put.bind(projectionStates);
+    const blockedProjection = new Promise<void>(resolve => { releaseProjection = resolve; });
+    const projectionWrite = sinon.stub(projectionStates, 'put').callsFake(async (key, value): Promise<void> => {
+      await blockedProjection;
+      await putProjection(key, value);
+    });
 
     const roleWritePromise = testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4803,7 +4822,7 @@ describe('Role record write behavior', () => {
         recipient       : bob.did.uri,
         protocol        : chatProtocol.protocol,
         protocolPath    : 'thread/participant',
-        parentContextId : (threadMessage as RecordsWriteMessage).contextId,
+        parentContextId : threadContextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
       },
@@ -4814,6 +4833,7 @@ describe('Role record write behavior', () => {
       await new Promise<void>(resolve => setTimeout(resolve, 1));
     }
     try {
+      expect(deliveryWakes.every(({ listener }) => listener.notCalled)).toBe(true);
       expect(await Promise.race([
         roleWritePromise.then(() => true),
         new Promise<false>(resolve => setTimeout(() => resolve(false), 50)),
@@ -4826,6 +4846,13 @@ describe('Role record write behavior', () => {
     expect(roleWrite.reply.status.code).toBe(202);
     expect(roleWrite.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bob.did.uri });
     expect(projectionWrite.calledOnce).toBe(true);
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(deliveryWakes[0]!.listener.calledOnce).toBe(true);
+    });
+    expect(deliveryWakes.map(({ listener }) => listener.called)).toEqual([true, false, false]);
+    for (const { unsubscribe } of deliveryWakes) {
+      unsubscribe();
+    }
 
     // Exactly one delivery record was written to the owner's DWN for the recipient.
     const deliveries = await testHarness.agent.dwn.processRequest({

@@ -422,12 +422,20 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         signal   : session.signal,
         target   : alice.did.uri,
       })).toMatchObject({ state: 'failed' });
+      const deliveryWake = sinon.spy();
+      const unsubscribe = testHarness.agent.dwn.subscribeAudienceKeyDeliveryChanges({
+        listener : deliveryWake,
+        protocol : chat.protocol,
+        target   : alice.did.uri,
+      });
       expect(await testHarness.agent.dwn.retryAudienceKeyDeliveryState({
         protocol : chat.protocol,
         roleRecordId,
         signal   : session.signal,
         target   : alice.did.uri,
       })).toMatchObject({ state: 'delivered' });
+      expect(deliveryWake.calledOnce).toBe(true);
+      unsubscribe();
       session.abort();
       await expect(testHarness.agent.dwn.getAudienceKeyDeliveryState({
         protocol : chat.protocol,

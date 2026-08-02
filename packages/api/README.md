@@ -478,11 +478,10 @@ surface, `ownedContext.members()`.
 
 `members.observe()` publishes immutable state through `getState()` and
 `subscribe()`. Role writes, replacements, and removals that reach the local
-owner replica refresh the current roster. A `ready` view means that roster is
-current, not that every member's delivery state is `delivered`. Delivery health
-is sampled when the roster rematerializes; `retryDelivery()` returns its
-updated member directly, while delivery-only background transitions appear on
-the next membership or sync wake.
+owner replica refresh the current roster. Committed local delivery-state
+changes, including background repair and `retryDelivery()`, refresh the same
+view without dapp polling. A `ready` view means that roster is current, not that
+every member's delivery state is `delivered`.
 
 Accepted contexts survive restart and are reconstructed with
 `await notebooks.contexts.list()`. For a live catalog, subscribe to the same

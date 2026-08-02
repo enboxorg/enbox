@@ -358,6 +358,7 @@ type TypedEnboxOptions = {
   roleDelivery?: {
     get(roleRecordId: string): Promise<RoleDeliveryState | undefined>;
     retry(roleRecordId: string): Promise<RoleDeliveryState | undefined>;
+    subscribe(listener: () => void): () => void;
   };
 
   /** Session-lifetime signal; aborting it closes every view created by this instance. */
@@ -2335,9 +2336,10 @@ export class TypedEnbox<
               ...additional.flat(),
             ]);
           },
-          query  : compileRecordQuery(this._definition, primaryRole, { within: contextId }),
-          signal : this._options.signal,
-          sync   : this._options.sync,
+          query            : compileRecordQuery(this._definition, primaryRole, { within: contextId }),
+          signal           : this._options.signal,
+          subscribeToWakes : this._options.roleDelivery?.subscribe,
+          sync             : this._options.sync,
         }));
       },
       remove: async (did: string): Promise<void> => {

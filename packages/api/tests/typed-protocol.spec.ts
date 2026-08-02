@@ -853,7 +853,13 @@ describe('TypedProtocol API', () => {
             default: ['workspace/member', 'workspace/viewer'],
           },
         }), {
-          roleDelivery: { get, retry },
+          roleDelivery: {
+            get,
+            retry,
+            subscribe: (): (() => void) => {
+              return (): void => {};
+            },
+          },
         });
         await roles.configure();
 

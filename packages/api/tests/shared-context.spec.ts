@@ -21,11 +21,11 @@ import { DwnApi } from '../src/dwn-api.js';
 import { Poller } from '@enbox/dwn-sdk-js';
 import { recordCodecs } from '../src/record-codec.js';
 import sinon from 'sinon';
-import { TypedEnbox } from '../src/typed-enbox.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { CONTEXT_INVITATION_PATH, projectContextInvitationView } from '../src/context-invitations.js';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
+import { type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
 
 const connectedDid = 'did:example:member';
 const contextId = 'workspaceRecord';
@@ -282,6 +282,7 @@ describe('TypedEnbox contexts', () => {
   let agent: AgentStub;
   let current: FollowedSyncSource | undefined;
   let deleteFollowedSource: sinon.SinonStub;
+  let deliveryListeners: Set<() => void>;
   let follow: sinon.SinonStub;
   let forgetFollowedContext: sinon.SinonStub;
   let get: sinon.SinonStub;
@@ -291,6 +292,7 @@ describe('TypedEnbox contexts', () => {
   let listeners: Set<SyncEventListener>;
   let liveSyncRunning: boolean;
   let registration: SyncIdentityOptions | undefined;
+  let retryRoleDelivery: sinon.SinonStub;
   let syncOnce: sinon.SinonStub;
   let typed: TypedEnbox<
     typeof SharedDefinition,
@@ -300,6 +302,7 @@ describe('TypedEnbox contexts', () => {
 
   beforeEach(() => {
     current = undefined;
+    deliveryListeners = new Set();
     links = [];
     listeners = new Set();
     liveSyncRunning = false;
@@ -347,6 +350,7 @@ describe('TypedEnbox contexts', () => {
       current?.id === id ? current : undefined
     );
     getRoleDelivery = sinon.stub().resolves({ state: 'delivered' });
+    retryRoleDelivery = sinon.stub().resolves({ state: 'delivered' });
     list = sinon.stub().callsFake(async (): Promise<FollowedSyncSource[]> => current === undefined ? [] : [current]);
     forgetFollowedContext = sinon.stub().callsFake(async (followed: FollowedSyncSource): Promise<void> => {
       if (current?.sourceDid === followed.sourceDid && current.contextId === followed.contextId) {
@@ -366,8 +370,12 @@ describe('TypedEnbox contexts', () => {
     });
     typed = new TypedEnbox(dwn, SharedProtocol, {
       roleDelivery: {
-        get   : getRoleDelivery,
-        retry : async (): Promise<{ state: 'delivered' }> => ({ state: 'delivered' }),
+        get       : getRoleDelivery,
+        retry     : retryRoleDelivery,
+        subscribe : (listener): (() => void) => {
+          deliveryListeners.add(listener);
+          return (): void => { deliveryListeners.delete(listener); };
+        },
       },
       sync: {
         deleteFollowedSource,
@@ -460,8 +468,9 @@ describe('TypedEnbox contexts', () => {
       [protocolRole, { close: sinon.stub().resolves() }],
       [viewerRole, { close: sinon.stub().resolves() }],
     ]);
+    let preferredDelivery: RoleDeliveryState = { reason: 'waiting', state: 'pending' };
     getRoleDelivery.callsFake(async (recordId: string) => recordId === preferredId
-      ? { reason: 'waiting', state: 'pending' }
+      ? preferredDelivery
       : { state: 'delivered' });
     registration = undefined;
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
@@ -518,6 +527,29 @@ describe('TypedEnbox contexts', () => {
       ],
     });
 
+    preferredDelivery = { reason: 'recipient has not installed the protocol', state: 'failed' };
+    for (const listener of deliveryListeners) {
+      listener();
+    }
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().members.find(({ did }) => did === betaDid)?.delivery.state).toBe('failed');
+    }, Poller.pollRetrySleep, 1_000);
+
+    retryRoleDelivery.callsFake(async (): Promise<RoleDeliveryState> => {
+      preferredDelivery = { state: 'delivered' };
+      for (const listener of deliveryListeners) {
+        listener();
+      }
+      return preferredDelivery;
+    });
+    expect(await owned.members().retryDelivery(betaDid)).toMatchObject({
+      did      : betaDid,
+      delivery : { state: 'delivered' },
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().members.find(({ did }) => did === betaDid)?.delivery.state).toBe('delivered');
+    }, Poller.pollRetrySleep, 1_000);
+
     entries.set(protocolRole, []);
     await handlers.get(viewerRole)!({
       type   : 'event',
@@ -536,6 +568,7 @@ describe('TypedEnbox contexts', () => {
     });
 
     await view.close();
+    expect(deliveryListeners.size).toBe(0);
     expect(transports.get(protocolRole)?.close.calledOnce).toBe(true);
     expect(transports.get(viewerRole)?.close.calledOnce).toBe(true);
   });

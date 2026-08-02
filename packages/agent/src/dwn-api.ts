@@ -1434,17 +1434,26 @@ export class AgentDwnApi {
     return this.getAudienceKeyDeliveryState(params);
   }
 
+  /** @internal Subscribe to committed delivery-projection changes for one tenant and protocol. */
+  public subscribeAudienceKeyDeliveryChanges(params: {
+    listener: () => void;
+    protocol: string;
+    target: string;
+  }): () => void {
+    return this.requireAudienceKeyDeliveryStore().subscribe(change => {
+      if (change.sourceDid === params.target && change.protocol === params.protocol) {
+        params.listener();
+      }
+    });
+  }
+
   private requireAudienceKeyDeliveryCoordinator(
     protocol: string,
     signal: AbortSignal,
     target: string,
   ): AudienceKeyDeliveryCoordinator {
     signal.throwIfAborted();
-    if (this._audienceKeyDeliveryStore === undefined) {
-      throw new Error(
-        'AgentDwnApi: audience-key delivery state requires the \'audienceKeyDeliveryStore\' constructor option.',
-      );
-    }
+    this.requireAudienceKeyDeliveryStore();
     const coordinator = [...this._audienceKeyDeliveryCoordinators].find(candidate =>
       candidate.protocol === protocol && candidate.sessionSignal === signal && candidate.targetDid === target
     );
@@ -1452,6 +1461,15 @@ export class AgentDwnApi {
       throw new Error(`AgentDwnApi: no audience-key delivery coordinator is registered for protocol '${protocol}'.`);
     }
     return coordinator;
+  }
+
+  private requireAudienceKeyDeliveryStore(): AudienceKeyDeliveryStore {
+    if (this._audienceKeyDeliveryStore === undefined) {
+      throw new Error(
+        'AgentDwnApi: audience-key delivery state requires the \'audienceKeyDeliveryStore\' constructor option.',
+      );
+    }
+    return this._audienceKeyDeliveryStore;
   }
 
   /** @internal Registers one protocol with the active session's background delivery coordinator. */
