@@ -51,6 +51,11 @@ type ReadScope = {
 
 type MissingReadGrantPolicy = 'fallback' | 'reject';
 
+type RecordMutationReadResponse<T = unknown> = RecordsReadResponse<T> & {
+  /** Whether the authority returned an existing tombstone, and whether it prunes descendants. */
+  tombstonePrune?: boolean;
+};
+
 /** A delete converged only when this tombstone was stored or another tombstone already wins. */
 function isDurableRecordsDeleteStatus(code: number): boolean {
   return (code >= 200 && code < 300) || code === 409;
@@ -440,7 +445,7 @@ export class DwnApi {
   private async readRecord(
     request: RecordsReadRequest,
     authoritativeContext: boolean,
-  ): Promise<RecordsReadResponse> {
+  ): Promise<RecordMutationReadResponse> {
     const { from, ...requestedMessageParams } = request;
     const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
       from,
@@ -473,19 +478,27 @@ export class DwnApi {
       });
     }
 
+    const tombstonePrune = authoritativeContext && entry?.recordsDelete !== undefined
+      ? entry.recordsDelete.descriptor.prune === true
+      : undefined;
+
     const followedSourceId = this.recordExecutionContext?.followedSourceId;
-    if (record !== undefined
+    if ((record !== undefined || tombstonePrune !== undefined)
       && followedSourceId !== undefined
       && roleRecordId !== followedSourceId) {
       throw new ContextNotReadyError(
         new Error('DwnApi: the active context role changed while reading the record authority.'),
       );
     }
-    return { record, status };
+    return {
+      record,
+      status,
+      ...(tombstonePrune === undefined ? {} : { tombstonePrune }),
+    };
   }
 
   /** @internal Read the authority before a context-bound read/modify/write operation. */
-  public readRecordForMutation(request: RecordsReadRequest): Promise<RecordsReadResponse> {
+  public readRecordForMutation(request: RecordsReadRequest): Promise<RecordMutationReadResponse> {
     return this.readRecord(request, true);
   }
 

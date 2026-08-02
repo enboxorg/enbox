@@ -1022,8 +1022,8 @@ describe('TypedEnbox contexts', () => {
     expect(deleteAttempts).toBe(2);
   });
 
-  it('does not delete a record outside the followed context by id', async () => {
-    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+  it('treats a context-scoped authority miss as an already completed delete', async () => {
+    agent.sendDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
       expect(request).toMatchObject({
         messageParams: {
           filter: {
@@ -1034,7 +1034,8 @@ describe('TypedEnbox contexts', () => {
           },
           protocolRole,
         },
-        target: sourceDid,
+        messageType : DwnInterface.RecordsRead,
+        target      : sourceDid,
       });
       return { reply: { status: { code: 404, detail: 'Not Found' } } };
     });
@@ -1043,9 +1044,9 @@ describe('TypedEnbox contexts', () => {
 
     await expect(shared.records.delete('workspace/note', {
       recordId: 'sibling-note',
-    })).rejects.toThrow('TypedEnbox.records.delete failed (404): Not Found');
-    expect(agent.processDwnRequest.calledOnce).toBe(true);
-    expect(agent.sendDwnRequest.notCalled).toBe(true);
+    })).resolves.toBeUndefined();
+    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.sendDwnRequest.calledOnce).toBe(true);
   });
 
   it('reconstructs listed contexts and fences exact stale and left sources', async () => {

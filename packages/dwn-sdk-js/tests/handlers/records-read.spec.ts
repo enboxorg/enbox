@@ -1369,6 +1369,22 @@ export function testRecordsReadHandler(): void {
             });
             const chatReadReply = await dwn.processMessage(alice.did, chatRead.message);
             expect(chatReadReply.status.code).toBe(200);
+
+            const chatDelete = await RecordsDelete.create({
+              recordId : chatRecord.message.recordId,
+              signer   : Jws.createSigner(alice),
+            });
+            expect((await dwn.processMessage(alice.did, chatDelete.message)).status.code).toBe(202);
+
+            const deletedChatRead = await RecordsRead.create({
+              filter       : { recordId: chatRecord.message.recordId },
+              protocolRole : 'thread/participant',
+              signer       : Jws.createSigner(bob),
+            });
+            const deletedChatReply = await dwn.processMessage(alice.did, deletedChatRead.message);
+            expect(deletedChatReply.status.code).toBe(404);
+            expect(deletedChatReply.entry?.recordsDelete).toEqual(chatDelete.message);
+            expect(deletedChatReply.roleRecordId).toBe(participantRecord.message.recordId);
           });
 
           it('should not allow context role to be invoked against a wrong context', async () => {

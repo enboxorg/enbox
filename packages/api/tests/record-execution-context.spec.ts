@@ -220,6 +220,51 @@ describe('context record execution', () => {
     }
   });
 
+  it('preserves an authorized tombstone for context-bound prune escalation', async () => {
+    const recordsDelete = {
+      authorization : createAuthorization(tenantDid),
+      descriptor    : {
+        interface        : 'Records',
+        messageTimestamp : '2026-01-01T00:00:01.000000Z',
+        method           : 'Delete',
+        prune            : false,
+        recordId,
+      },
+    } as DwnMessage<DwnInterface.RecordsDelete>;
+    agent.sendDwnRequest.resolves({
+      reply: {
+        entry: {
+          initialWrite: createRecordsWrite(),
+          recordsDelete,
+        },
+        roleRecordId : 'role-record',
+        status       : { code: 404, detail: 'Not Found' },
+      },
+    });
+    const dwn = createApi(agent);
+
+    const result = await dwn.readRecordForMutation({ filter: { recordId } });
+
+    expect(result).toEqual({
+      record         : undefined,
+      status         : { code: 404, detail: 'Not Found' },
+      tombstonePrune : false,
+    });
+
+    agent.sendDwnRequest.resolves({
+      reply: {
+        entry: {
+          initialWrite: createRecordsWrite(),
+          recordsDelete,
+        },
+        roleRecordId : 'replacement-role-record',
+        status       : { code: 404, detail: 'Not Found' },
+      },
+    });
+    await expect(dwn.readRecordForMutation({ filter: { recordId } }))
+      .rejects.toBeInstanceOf(ContextNotReadyError);
+  });
+
   it('rejects a subscription opened under a different role authorization', async () => {
     const subscription = { close: sinon.stub().resolves() };
     const leakedFrame = sinon.stub();

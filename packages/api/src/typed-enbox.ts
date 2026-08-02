@@ -126,6 +126,11 @@ export type RecordPatchInput<T> = [RecordPatch<T>] extends [never]
     (current: T) => RecordPatch<T> | undefined | Promise<RecordPatch<T> | undefined>
   );
 
+type TypedRecordReadResult<T> = {
+  record: Record<T> | undefined;
+  tombstonePrune?: boolean;
+};
+
 /** Update fields available on a record whose context, role, and target are already bound. */
 export type ContextRecordUpdateParams<T = unknown> = Pick<
   RecordUpdateParams<T>,
@@ -2904,7 +2909,7 @@ export class TypedEnbox<
     path: Path,
     request: TypedReadRequest<D, Path>,
     authoritativeContext: boolean,
-  ): Promise<Record<DataForPath<C, Path>> | undefined> {
+  ): Promise<TypedRecordReadResult<DataForPath<C, Path>>> {
     const normalizedPath = normalizePath(path);
     await this._ensureReady(normalizedPath);
     const within = this.resolveContextWithin(normalizedPath, request.within);
@@ -2919,17 +2924,24 @@ export class TypedEnbox<
       ),
       protocolRole: request.protocolRole,
     };
-    const result = authoritativeContext
+    const authoritativeResult = authoritativeContext
       ? await this._dwn.readRecordForMutation(readRequest)
-      : await this._dwn.records.read(readRequest);
+      : undefined;
+    const result = authoritativeResult ?? await this._dwn.records.read(readRequest);
 
     if (result.status.code === 404) {
-      return undefined;
+      return {
+        record: undefined,
+        ...(authoritativeResult?.tombstonePrune === undefined
+          ? {}
+          : { tombstonePrune: authoritativeResult.tombstonePrune }),
+      };
     }
     requireDwnSuccess('TypedEnbox.records.read', result);
-    return result.record === undefined
+    const record = result.record === undefined
       ? undefined
       : this.bindCodec<Path>(normalizedPath, result.record);
+    return { record };
   }
 
   /**
@@ -3273,7 +3285,7 @@ export class TypedEnbox<
         const request: TypedReadRequest<D, Path> = typeof recordIdOrRequest === 'string'
           ? { filter: { recordId: recordIdOrRequest } }
           : recordIdOrRequest;
-        return this.readTypedRecord(path, request, false);
+        return (await this.readTypedRecord(path, request, false)).record;
       },
 
       /**
@@ -3294,7 +3306,7 @@ export class TypedEnbox<
       ): Promise<Record<DataForPath<C, Path>>> => {
         let retried = false;
         while (true) {
-          const record = await this.readTypedRecord(path, { filter: { recordId } }, true);
+          const { record } = await this.readTypedRecord(path, { filter: { recordId } }, true);
           if (record === undefined) {
             throw new DwnResponseError('TypedEnbox.records.patch', { code: 404, detail: 'Not Found' });
           }
@@ -3387,7 +3399,8 @@ export class TypedEnbox<
        *   path validation).
        * @param request - Delete options. `recordId` is required; `within`
        *   scopes delegated grant resolution and `from` selects a remote DWN.
-       * @returns A promise that resolves when the delete is accepted.
+       * @returns A promise that resolves when the delete is accepted or the
+       *   record is already absent.
        *
        * @example
        * ```ts
@@ -3408,17 +3421,16 @@ export class TypedEnbox<
         const within = this.resolveContextWithin(normalizedPath, request.within);
         assertValidRecordWithin(normalizedPath, within, false);
         if (this._options.context !== undefined) {
-          const record = await cached.read(path, {
+          const { record, tombstonePrune } = await this.readTypedRecord(path, {
             filter       : { recordId: request.recordId },
             from         : request.from,
             protocolRole : request.protocolRole,
             within,
-          });
-          if (record === undefined) {
-            throw new DwnResponseError('TypedEnbox.records.delete', { code: 404, detail: 'Not Found' });
+          }, true);
+          const pruneEscalation = request.prune === true && tombstonePrune === false;
+          if (record === undefined && !pruneEscalation) {
+            return;
           }
-          await record.delete({ prune: request.prune });
-          return;
         }
         const result = await this._dwn.records.delete({
           contextId    : within,
@@ -3429,6 +3441,9 @@ export class TypedEnbox<
           recordId     : request.recordId,
           prune        : request.prune,
         });
+        if (result.status.code === 404 || isCanonicalConflictStatus(result.status)) {
+          return;
+        }
         requireDwnSuccess('TypedEnbox.records.delete', result);
       },
 
@@ -3454,9 +3469,11 @@ function normalizeContextInvitationLimit(limit: number | undefined): number {
 /** Only a plain DWN ordering conflict is safe to recover by re-reading. */
 function isCanonicalRecordConflict(error: unknown): error is DwnResponseError {
   return error instanceof DwnResponseError
-    && error.status.code === 409
-    && error.status.detail === 'Conflict'
-    && error.status.errorCode === undefined;
+    && isCanonicalConflictStatus(error.status);
+}
+
+function isCanonicalConflictStatus(status: DwnResponseStatus['status']): boolean {
+  return status.code === 409 && status.detail === 'Conflict' && status.errorCode === undefined;
 }
 
 function normalizeContextInvitationPreview(

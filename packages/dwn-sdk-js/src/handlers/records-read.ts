@@ -195,8 +195,9 @@ export class RecordsReadHandler implements MethodHandler {
     }
     const parsedNewestWrite = await RecordsWrite.parse(newestWrite);
 
+    let resolvedRole: ResolvedProtocolRole | undefined;
     try {
-      await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
+      resolvedRole = await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
     } catch (error) {
       return messageReplyFromError(error, 401);
     }
@@ -206,7 +207,8 @@ export class RecordsReadHandler implements MethodHandler {
       entry  : {
         recordsDelete: recordsDeleteMessage,
         initialWrite,
-      }
+      },
+      ...(resolvedRole?.roleRecordId === undefined ? {} : { roleRecordId: resolvedRole.roleRecordId }),
     };
   }
 

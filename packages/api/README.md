@@ -276,8 +276,8 @@ await notes.records.patch('note', found.id, (current) =>
   current.body === 'Shipped' ? undefined : { body: 'Shipped' }
 );
 
-// Delete
-await found.delete();
+// Delete by intent; already-absent records also resolve successfully
+await notes.records.delete('note', { recordId: found.id });
 
 unsubscribe();
 await view.close();

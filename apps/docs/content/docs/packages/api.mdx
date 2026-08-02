@@ -518,6 +518,16 @@ Delete with options:
 await record.delete({ prune: true });  // also delete child records
 ```
 
+For application-level deletion, use the typed records API:
+
+```ts
+await tasks.records.delete('task', { recordId: taskId });
+```
+
+Typed deletion is idempotent: it also resolves when the record is already
+absent or an equal or stronger tombstone has already completed the delete. The raw
+`dwn.records.delete()` API continues to return the exact DWN status.
+
 ### Lifecycle methods
 
 | Method | Description |
