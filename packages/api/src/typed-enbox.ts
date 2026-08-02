@@ -2650,9 +2650,10 @@ export class TypedEnbox<
         return;
       }
 
+      let pullDrained = false;
       let pullFailure: unknown;
       try {
-        await sync.sync('pull', { did: source.actorDid });
+        pullDrained = await sync.pullFollowedSource(source);
       } catch (error: unknown) {
         pullFailure = error;
       }
@@ -2676,10 +2677,15 @@ export class TypedEnbox<
       // no controller snapshot to mark ready, so the completed pull is the
       // point-in-time currentness proof.
       if (!sync.isLiveSyncRunning) {
-        if (pullFailure === undefined) {
+        if (pullDrained) {
           return;
         }
-        throw new ContextNotReadyError(pullFailure);
+        throw new ContextNotReadyError(
+          pullFailure ?? new Error(
+            `MemberContext.whenCurrent: replication did not drain every endpoint for context ` +
+            `'${source.contextId}' owned by '${source.sourceDid}'.`,
+          ),
+        );
       }
 
       const deadline = Date.now() + DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS;

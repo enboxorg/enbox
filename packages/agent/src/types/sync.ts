@@ -851,6 +851,14 @@ export interface SyncEngine {
   /** Forget the logical foreign context, including a concurrently replaced followed source. */
   forgetFollowedContext(source: FollowedSyncSource): Promise<void>;
   /**
+   * Pull one exact accepted foreign context from every endpoint advertised by
+   * its source DID. Returns `true` only when every endpoint reached its feed
+   * head while this acceptance and its actor registration remained current.
+   *
+   * @internal Used by the typed shared-context readiness boundary.
+   */
+  pullFollowedSource(source: FollowedSyncSource): Promise<boolean>;
+  /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *
    * Concurrent calls coalesce instead of throwing: when a sync (or drain) is

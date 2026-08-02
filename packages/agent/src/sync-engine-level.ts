@@ -1439,6 +1439,49 @@ export class SyncEngineLevel implements SyncEngine {
     return this.removeFollowedSource(source, true);
   }
 
+  /** Pull only one active followed source and prove that every advertised endpoint drained. */
+  public async pullFollowedSource(source: FollowedSyncSource): Promise<boolean> {
+    const expected = normalizeFollowedSyncSource(source);
+    const transitionFence = this.captureTransitionFence();
+    await this._lifecycle.acquireSync();
+    try {
+      const identity = await this._identityStore.get(expected.actorDid);
+      if (identity === undefined) {
+        return false;
+      }
+      const delegateDid = identity.delegateDid;
+      const isCurrent = async (): Promise<boolean> => {
+        const current = await this._followedSourceStore.get(expected.id);
+        const currentIdentity = await this._identityStore.get(expected.actorDid);
+        return transitionFence() &&
+          current !== undefined &&
+          followedSyncSourceActiveEqual(current, expected) &&
+          currentIdentity !== undefined &&
+          currentIdentity.delegateDid === delegateDid;
+      };
+      if (!await isCurrent()) {
+        return false;
+      }
+
+      const targets = await this.targetResolver.buildTargetsForSource(expected, delegateDid);
+      if (targets.length === 0 || !await isCurrent()) {
+        return false;
+      }
+      const results = await Promise.allSettled(targets.map(target => this.reconcileTarget(
+        target,
+        { direction: 'pull' },
+        transitionFence,
+      )));
+      const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failure !== undefined) {
+        throw failure.reason;
+      }
+      return results.every(result => result.status === 'fulfilled' && result.value.pullDrained === true) && await isCurrent();
+    } finally {
+      this._lifecycle.releaseSync();
+    }
+  }
+
   private async removeFollowedSource(source: FollowedSyncSource, logicalContext: boolean): Promise<void> {
     const normalized = normalizeFollowedSyncSource(source);
     await this.runExclusiveIdentityMutation(
@@ -4126,8 +4169,9 @@ export class SyncEngineLevel implements SyncEngine {
    * deferred entry that has aged past
    * {@link DEFERRED_PULL_DEAD_LETTER_AFTER_MS}: it is dead-lettered and the
    * page continues for ordinary links, so a single permanently unresolvable
-   * message cannot wedge the link forever. Role links instead pause because
-   * pull drainage is their only currentness proof.
+   * message cannot wedge the link forever. Role links retain deferred work
+   * because pull drainage is their only currentness proof and the dependency
+   * may become available later.
    */
   private async admitRemoteFeedPage(
     target: SyncTarget,
@@ -4197,9 +4241,8 @@ export class SyncEngineLevel implements SyncEngine {
    *   {@link DEFERRED_PULL_DEAD_LETTER_AFTER_MS} and was dead-lettered, or
    *   because the tenant was unregistered underneath us (in which case
    *   nothing is dead-lettered and the deferred work is simply abandoned).
-   *   `false` means the entry is still within its retry window and the page
-   *   must stop on it. An expired role-feed entry throws after it is
-   *   dead-lettered so the link pauses before advancing its checkpoint.
+   *   `false` means the page must stop on it. Role-feed entries remain
+   *   deferred regardless of age because they cannot be skipped safely.
    */
   private async tryRetireDeferredPull(
     target: SyncTarget,
@@ -4217,6 +4260,9 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       const state = await this.recordDeferredPull(target, entry.messageCid, detail);
+      if (target.authorization.kind === 'role') {
+        return false;
+      }
       const firstDeferredAt = Date.parse(state.firstDeferredAt);
       if (!Number.isFinite(firstDeferredAt) || Date.now() - firstDeferredAt < SyncEngineLevel.DEFERRED_PULL_DEAD_LETTER_AFTER_MS) {
         return false;
@@ -4231,7 +4277,6 @@ export class SyncEngineLevel implements SyncEngine {
         errorDetail    : detail ?? 'pull admission deferred beyond retry window',
       });
       await this.clearDeferredPull(target.did, target.dwnUrl, entry.messageCid);
-      SyncEngineLevel.throwIfRoleFeedDeadLetter(target, entry.messageCid);
       return true;
     });
   }

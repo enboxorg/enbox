@@ -128,6 +128,92 @@ describe('SyncEngineLevel — followed sources', () => {
       .toEqual({ protocolPath: 'notebook/page', recordId: 'page-a' });
   });
 
+  it('should pull one followed source across every advertised endpoint under the sync lock', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const targets = [
+      targetFor(followed, 'https://one.example.com'),
+      targetFor(followed, 'https://two.example.com'),
+    ];
+    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._followedSourceStore.replace(followed);
+    const buildTargets = sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves(targets);
+    const reconcile = sinon.stub(internal, 'reconcileTarget').callsFake(async (): Promise<{ pullDrained: true }> => {
+      expect(internal._lifecycle.isSyncInProgress).toBe(true);
+      return { pullDrained: true };
+    });
+
+    await expect(engine.pullFollowedSource(followed)).resolves.toBe(true);
+
+    expect(buildTargets.calledOnceWithExactly(followed, undefined)).toBe(true);
+    expect(reconcile.callCount).toBe(2);
+    expect(reconcile.getCalls().map(call => call.args[0].dwnUrl)).toEqual(targets.map(target => target.dwnUrl));
+    expect(reconcile.alwaysCalledWithMatch(sinon.match.any, { direction: 'pull' }, sinon.match.func)).toBe(true);
+  });
+
+  it('should report an exact followed-source pull as incomplete when one endpoint does not drain', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const targets = [
+      targetFor(followed, 'https://one.example.com'),
+      targetFor(followed, 'https://two.example.com'),
+    ];
+    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._followedSourceStore.replace(followed);
+    sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves(targets);
+    sinon.stub(internal, 'reconcileTarget').callsFake(async (target: SyncTarget): Promise<{ pullDrained?: true }> =>
+      target.dwnUrl === targets[0].dwnUrl ? { pullDrained: true } : {}
+    );
+
+    await expect(engine.pullFollowedSource(followed)).resolves.toBe(false);
+  });
+
+  it('should hold the sync lock until every exact-source endpoint settles after a failure', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const targets = [
+      targetFor(followed, 'https://one.example.com'),
+      targetFor(followed, 'https://two.example.com'),
+    ];
+    const release = deferred<void>();
+    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._followedSourceStore.replace(followed);
+    sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves(targets);
+    sinon.stub(internal, 'reconcileTarget').callsFake(async (target: SyncTarget): Promise<{ pullDrained: true }> => {
+      if (target.dwnUrl === targets[0].dwnUrl) {
+        throw new Error('endpoint failed');
+      }
+      await release.promise;
+      return { pullDrained: true };
+    });
+
+    const pulling = engine.pullFollowedSource(followed);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(internal._lifecycle.tryAcquireSync()).toBe(false);
+    release.resolve();
+    await expect(pulling).rejects.toThrow('endpoint failed');
+    expect(internal._lifecycle.tryAcquireSync()).toBe(true);
+    internal._lifecycle.releaseSync();
+  });
+
+  it('should not report currentness after the followed-source acceptance changes mid-pull', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._followedSourceStore.replace(followed);
+    sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves([targetFor(followed)]);
+    sinon.stub(internal, 'reconcileTarget').callsFake(async (): Promise<{ pullDrained: true }> => {
+      await internal._followedSourceStore.replace({ ...followed, acceptanceId: 'replacement-acceptance' });
+      return { pullDrained: true };
+    });
+
+    await expect(engine.pullFollowedSource(followed)).resolves.toBe(false);
+  });
+
   it('should prepare a followed source without holding the sync lock', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
@@ -969,7 +1055,7 @@ describe('SyncEngineLevel — followed sources', () => {
     }]);
   });
 
-  it('should pause before advancing when a deferred role-feed entry ages into a dead letter', async () => {
+  it('should retain an aged deferred role-feed entry for a later retry', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const target = targetFor(followed);
@@ -998,13 +1084,18 @@ describe('SyncEngineLevel — followed sources', () => {
       detail : 'waiting for dependency',
     });
 
-    await expect((engine as any).reconcileTarget(target, { direction: 'pull' }))
-      .rejects.toThrow(`role feed message ${messageCid} is dead-lettered`);
+    await expect((engine as any).reconcileTarget(target, { direction: 'pull' })).resolves.toMatchObject({
+      deferredPull: { detail: 'waiting for dependency', messageCid },
+    });
 
-    expect(await (engine as any)._deadLetterStore.get(target.did, messageCid, target.dwnUrl)).toBeDefined();
+    expect(await (engine as any)._deadLetterStore.get(target.did, messageCid, target.dwnUrl)).toBeUndefined();
+    expect(await (engine as any)._deferredPullStore.get(target.did, messageCid, target.dwnUrl)).toMatchObject({
+      attempts        : 2,
+      firstDeferredAt : agedAt,
+    });
     expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
       pull   : { contiguousAppliedToken: previousCheckpoint },
-      status : 'paused',
+      status : 'initializing',
     }]);
   });
 

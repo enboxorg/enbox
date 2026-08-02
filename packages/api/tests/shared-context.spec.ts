@@ -291,9 +291,9 @@ describe('TypedEnbox contexts', () => {
   let list: sinon.SinonStub;
   let listeners: Set<SyncEventListener>;
   let liveSyncRunning: boolean;
+  let pullFollowedSource: sinon.SinonStub;
   let registration: SyncIdentityOptions | undefined;
   let retryRoleDelivery: sinon.SinonStub;
-  let syncOnce: sinon.SinonStub;
   let typed: TypedEnbox<
     typeof SharedDefinition,
     typeof SharedProtocol.codecs,
@@ -306,8 +306,8 @@ describe('TypedEnbox contexts', () => {
     links = [];
     listeners = new Set();
     liveSyncRunning = false;
+    pullFollowedSource = sinon.stub().resolves(true);
     registration = { protocols: [SharedDefinition.protocol] };
-    syncOnce = sinon.stub().resolves();
     agent = {
       decryptRecordData : sinon.stub().callsFake(async ({ dataStream }) => dataStream),
       processDwnRequest : sinon.stub().callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
@@ -391,7 +391,7 @@ describe('TypedEnbox contexts', () => {
           listeners.add(listener);
           return (): void => { listeners.delete(listener); };
         },
-        sync: syncOnce,
+        pullFollowedSource,
       } as unknown as SyncEngine,
     });
   });
@@ -1332,18 +1332,21 @@ describe('TypedEnbox contexts', () => {
     view.close();
   });
 
-  it('runs one actor-scoped pull when the exact followed-source replica is not current', async () => {
+  it('pulls only the exact followed source when its replica is not current', async () => {
     current = source();
     links = [
       replicationLink({ followedSourceId: 'sibling-role' }),
       replicationLink({ isPullCurrent: false }),
     ];
-    syncOnce.callsFake(async (): Promise<void> => { links = [replicationLink()]; });
+    pullFollowedSource.callsFake(async (): Promise<boolean> => {
+      links = [replicationLink()];
+      return true;
+    });
     const [shared] = await typed.contexts.list();
 
     await shared.whenCurrent();
 
-    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 
   it('accepts a completed one-shot pull when live replication remains stopped', async () => {
@@ -1353,7 +1356,7 @@ describe('TypedEnbox contexts', () => {
 
     await shared.whenCurrent();
 
-    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 
   it('waits for an in-flight live link to publish exact currentness', async () => {
@@ -1381,7 +1384,7 @@ describe('TypedEnbox contexts', () => {
     }
 
     await ready;
-    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
     expect(listeners.size).toBe(0);
   });
 
@@ -1415,36 +1418,26 @@ describe('TypedEnbox contexts', () => {
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message)
       .toBe(`MemberContext.whenCurrent: actor '${connectedDid}' is not registered for sync.`);
-    expect(syncOnce.notCalled).toBe(true);
+    expect(pullFollowedSource.notCalled).toBe(true);
   });
 
-  it('runs one actor-scoped pull when the followed source has no replication link', async () => {
+  it('pulls the followed source when it has no replication link', async () => {
     current = source();
-    syncOnce.callsFake(async (): Promise<void> => { links = [replicationLink()]; });
-    const [shared] = await typed.contexts.list();
-
-    await shared.whenCurrent();
-
-    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
-  });
-
-  it('rechecks the exact context when another actor-scoped target makes the pull reject', async () => {
-    current = source();
-    syncOnce.callsFake(async (): Promise<void> => {
+    pullFollowedSource.callsFake(async (): Promise<boolean> => {
       links = [replicationLink()];
-      throw new Error('an unrelated actor target failed');
+      return true;
     });
     const [shared] = await typed.contexts.list();
 
     await shared.whenCurrent();
 
-    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 
-  it('maps a failed actor-scoped pull with no context link to readiness', async () => {
+  it('maps a failed followed-source pull with no context link to readiness', async () => {
     const pullError = new Error('pull failed');
     current = source();
-    syncOnce.rejects(pullError);
+    pullFollowedSource.rejects(pullError);
     const [shared] = await typed.contexts.list();
 
     const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
@@ -1464,19 +1457,20 @@ describe('TypedEnbox contexts', () => {
         protocolPaths : ['workspace', 'workspace/note'],
       },
     })];
-    syncOnce.callsFake(async (): Promise<void> => {
+    pullFollowedSource.callsFake(async (): Promise<boolean> => {
       expect(resolved).toBe(false);
       links = [replicationLink()];
+      return true;
     });
     const [shared] = await typed.contexts.list();
     const ready = shared.whenCurrent().then((): void => { resolved = true; });
 
     await ready;
     expect(resolved).toBe(true);
-    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 
-  it('rejects when one actor-scoped pull cannot establish a replication link', async () => {
+  it('rejects when one followed-source pull cannot establish a replication link', async () => {
     current = source();
     const [shared] = await typed.contexts.list();
 
@@ -1486,7 +1480,19 @@ describe('TypedEnbox contexts', () => {
     expect((error?.cause as Error).message).toBe(
       `MemberContext.whenCurrent: no replication link is available for context '${contextId}' owned by '${sourceDid}'.`,
     );
-    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
+  });
+
+  it('does not treat an incomplete stopped-runtime pull as current', async () => {
+    current = source();
+    links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
+    pullFollowedSource.resolves(false);
+    const [shared] = await typed.contexts.list();
+
+    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+
+    expect(error).toBeInstanceOf(ContextNotReadyError);
+    expect((error?.cause as Error).message).toContain('did not drain every endpoint');
   });
 
   it('reports paused context replication as retryable readiness', async () => {
@@ -1498,13 +1504,16 @@ describe('TypedEnbox contexts', () => {
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message).toContain('replication is paused');
-    expect(syncOnce.notCalled).toBe(true);
+    expect(pullFollowedSource.notCalled).toBe(true);
   });
 
   it('rechecks registration after the bounded pull', async () => {
     current = source();
     links = [replicationLink({ isPullCurrent: false })];
-    syncOnce.callsFake(async (): Promise<void> => { registration = undefined; });
+    pullFollowedSource.callsFake(async (): Promise<boolean> => {
+      registration = undefined;
+      return false;
+    });
     const [shared] = await typed.contexts.list();
 
     const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
@@ -1512,7 +1521,7 @@ describe('TypedEnbox contexts', () => {
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message)
       .toBe(`MemberContext.whenCurrent: actor '${connectedDid}' is not registered for sync.`);
-    expect(syncOnce.calledOnceWithExactly('pull', { did: connectedDid })).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 
   it('can stop following locally without withdrawing the role', async () => {
