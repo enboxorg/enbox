@@ -14,7 +14,7 @@ import sinon from 'sinon';
 
 import { describe, expect, it } from 'bun:test';
 
-import { buildDurableLinkIdentityKey } from '../src/sync-link-key.js';
+import { buildCurrentLinkIdentityKey } from '../src/sync-link-key.js';
 import { SyncQuotaManager } from '../src/sync-quota-manager.js';
 import { SyncStatusReporter } from '../src/sync-status-reporter.js';
 
@@ -245,7 +245,13 @@ function createReporter(overrides: Partial<SyncStatusReporterState> = {}): SyncS
 }
 
 function identityKey(state: ReplicationLinkState): string {
-  return buildDurableLinkIdentityKey(state.tenantDid, state.projectionId, state.authorizationEpoch);
+  return buildCurrentLinkIdentityKey(
+    state.tenantDid,
+    state.remoteEndpoint,
+    state.projectionId,
+    state.authorizationEpoch,
+    state.authorization.kind,
+  );
 }
 
 function link(overrides: Partial<SyncStatusLink> = {}): SyncStatusLink {
@@ -308,8 +314,32 @@ describe('SyncStatusReporter.getReplicationLinks', () => {
       },
     });
 
-    await expect(createReporter({ links: [roleLink] }).getReplicationLinks())
+    await expect(createReporter({
+      currentLinkIdentityKeys : new Set([identityKey(roleLink)]),
+      links                   : [roleLink],
+    }).getReplicationLinks())
       .resolves.toMatchObject([{ followedSourceId: 'role-a' }]);
+  });
+
+  it('requires an exact current endpoint for followed-source links', async () => {
+    const roleLink = link({
+      authorization: {
+        kind         : 'role',
+        actorDid     : 'did:example:member',
+        protocolRole : 'notebook/viewer',
+        roleRecordId : 'role-a',
+      },
+    });
+    const currentEndpoint = { ...roleLink, remoteEndpoint: REMOTE_B };
+
+    await expect(createReporter({
+      currentLinkIdentityKeys : new Set([identityKey(currentEndpoint)]),
+      links                   : [roleLink],
+    }).getReplicationLinks()).resolves.toEqual([]);
+    await expect(createReporter({
+      currentLinkIdentityKeys : undefined,
+      links                   : [roleLink],
+    }).getReplicationLinks()).resolves.toEqual([]);
   });
 
   it('projects current links with checkpoint positions and sorts by tenant and remote', async () => {

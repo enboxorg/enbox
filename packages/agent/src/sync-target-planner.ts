@@ -7,7 +7,11 @@ import type { FollowedSyncSource, FollowedSyncSourceStore } from './followed-syn
 export interface SyncTargetPlanningResolver {
   getEndpointUrls(did: string): Promise<string[]>;
   buildTargetsForEndpoint(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget[]>;
-  buildTargetsForSource(source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]>;
+  buildTargetsForSource(
+    source: FollowedSyncSource,
+    delegateDid?: string,
+    resolvedEndpoints?: readonly string[],
+  ): Promise<SyncTarget[]>;
 }
 
 export type SyncTargetPlannerParams = {

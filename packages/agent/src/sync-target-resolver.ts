@@ -146,8 +146,12 @@ export class SyncTargetResolver {
   }
 
   /** Build every exact-context target represented by one accepted role record. */
-  public async buildTargetsForSource(source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]> {
-    const endpoints = await this.getRemoteEndpointUrls(source.sourceDid);
+  public async buildTargetsForSource(
+    source: FollowedSyncSource,
+    delegateDid?: string,
+    resolvedEndpoints?: readonly string[],
+  ): Promise<SyncTarget[]> {
+    const endpoints = resolvedEndpoints ?? await this.getRemoteEndpointUrls(source.sourceDid);
     if (endpoints.length === 0) {
       return [];
     }

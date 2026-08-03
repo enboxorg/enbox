@@ -18,6 +18,7 @@ the code, not an entry missing from this table.
 | Reconciling one target's durable feeds | **`reconcileTarget`** | `syncTargetWithDurableFeeds` |
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
+| Identity proving that a durable link belongs to the current target plan | **`currentLinkIdentityKey`** — endpoint-specific for role-authorized foreign contexts, endpoint-independent for owned projections | using `durableLinkIdentityKey` as foreign-authority endpoint proof |
 | Durable replication-link store | **`replicationLinkStore`** | `getLinkStore`, `ledger` |
 | Authoritative in-engine owner of one active link object, both wake subscriptions, its link executor, replication generation, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
 | Per-link subscription and reconciliation fence — ONE generation for the subscription pair and link executor | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |

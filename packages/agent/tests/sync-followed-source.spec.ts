@@ -90,6 +90,20 @@ function supportBatch(roleRecordId: string): RoleReplicationSupportBatch {
   };
 }
 
+function stubPreparedSource(
+  engine: SyncEngineLevel,
+  followed: FollowedSyncSource,
+  dwnUrls = ['https://one.example.com', 'https://two.example.com'],
+): void {
+  sinon.stub(engine as any, 'prepareExistingFollowedSource').resolves({
+    kind   : 'active',
+    batch  : supportBatch(followed.id),
+    dwnUrl : dwnUrls[0],
+    dwnUrls,
+    source : followed,
+  });
+}
+
 async function storeFollowedSource(engine: SyncEngineLevel, followed: FollowedSyncSource): Promise<void> {
   const internal = engine as any;
   const replaced = await internal.commitFollowedSource(followed);
@@ -138,6 +152,7 @@ describe('SyncEngineLevel — followed sources', () => {
     ];
     await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
     await internal._followedSourceStore.replace(followed);
+    stubPreparedSource(engine, followed);
     const buildTargets = sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves(targets);
     const reconcile = sinon.stub(internal, 'reconcileTarget').callsFake(async (): Promise<{ pullDrained: true }> => {
       expect(internal._lifecycle.isSyncInProgress).toBe(true);
@@ -146,7 +161,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
     await expect(engine.pullFollowedSource(followed)).resolves.toBe(true);
 
-    expect(buildTargets.calledOnceWithExactly(followed, undefined)).toBe(true);
+    expect(buildTargets.calledOnceWithExactly(followed, undefined, targets.map(target => target.dwnUrl))).toBe(true);
     expect(reconcile.callCount).toBe(2);
     expect(reconcile.getCalls().map(call => call.args[0].dwnUrl)).toEqual(targets.map(target => target.dwnUrl));
     expect(reconcile.alwaysCalledWithMatch(sinon.match.any, { direction: 'pull' }, sinon.match.func)).toBe(true);
@@ -162,6 +177,7 @@ describe('SyncEngineLevel — followed sources', () => {
     ];
     await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
     await internal._followedSourceStore.replace(followed);
+    stubPreparedSource(engine, followed);
     sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves(targets);
     sinon.stub(internal, 'reconcileTarget').callsFake(async (target: SyncTarget): Promise<{ pullDrained?: true }> =>
       target.dwnUrl === targets[0].dwnUrl ? { pullDrained: true } : {}
@@ -181,6 +197,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const release = deferred<void>();
     await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
     await internal._followedSourceStore.replace(followed);
+    stubPreparedSource(engine, followed);
     sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves(targets);
     sinon.stub(internal, 'reconcileTarget').callsFake(async (target: SyncTarget): Promise<{ pullDrained: true }> => {
       if (target.dwnUrl === targets[0].dwnUrl) {
@@ -191,7 +208,7 @@ describe('SyncEngineLevel — followed sources', () => {
     });
 
     const pulling = engine.pullFollowedSource(followed);
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    await waitFor(() => internal._lifecycle.isSyncInProgress);
     expect(internal._lifecycle.tryAcquireSync()).toBe(false);
     release.resolve();
     await expect(pulling).rejects.toThrow('endpoint failed');
@@ -205,6 +222,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const followed = source();
     await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
     await internal._followedSourceStore.replace(followed);
+    stubPreparedSource(engine, followed, ['https://owner.example.com']);
     sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves([targetFor(followed)]);
     sinon.stub(internal, 'reconcileTarget').callsFake(async (): Promise<{ pullDrained: true }> => {
       await internal._followedSourceStore.replace({ ...followed, acceptanceId: 'replacement-acceptance' });
@@ -212,6 +230,57 @@ describe('SyncEngineLevel — followed sources', () => {
     });
 
     await expect(engine.pullFollowedSource(followed)).resolves.toBe(false);
+  });
+
+  it('should resolve and persist current protocol paths before a stopped-runtime pull', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const evolved: FollowedSyncSource = {
+      ...followed,
+      acceptanceId  : 'acceptance-evolved',
+      protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+    };
+    const dwnUrls = ['https://current.example.com'];
+    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._followedSourceStore.replace(followed);
+    const resolve = sinon.stub(internal, 'resolveFollowedSource').resolves({
+      kind   : 'active',
+      batch  : supportBatch(evolved.id),
+      dwnUrl : dwnUrls[0],
+      dwnUrls,
+      source : evolved,
+    });
+    const converge = sinon.stub(internal, 'convergeRetiredFollowedSources').resolves();
+    const admit = sinon.stub(internal, 'admitFollowedSource').resolves();
+    const buildTargets = sinon.stub(internal.targetResolver, 'buildTargetsForSource')
+      .resolves([targetFor(evolved, dwnUrls[0])]);
+    const reconcile = sinon.stub(internal, 'reconcileTarget').resolves({ pullDrained: true });
+
+    await expect(engine.pullFollowedSource(followed)).resolves.toBe(false);
+
+    expect(await engine.getFollowedSource(followed.id)).toEqual(evolved);
+    expect(resolve.calledOnceWithMatch(sourceInput(followed), undefined, sinon.match.func, [followed])).toBe(true);
+    expect(converge.calledOnceWithExactly([followed], dwnUrls, evolved.id, undefined, sinon.match.func)).toBe(true);
+    expect(admit.calledOnce).toBe(true);
+    expect(buildTargets.calledOnceWithExactly(evolved, undefined, dwnUrls)).toBe(true);
+    expect(reconcile.calledOnceWithMatch(targetFor(evolved, dwnUrls[0]), { direction: 'pull' }, sinon.match.func)).toBe(true);
+  });
+
+  it('should mark an exact followed source pull-pending after a remote mutation', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    await internal._followedSourceStore.replace(followed);
+    const link = await createRoleLink(engine, targetFor(followed));
+    const controller = internal.activateLink(linkKey(link), link);
+    expect(controller.markPullCurrent(controller.replicationGeneration)).toBe(true);
+
+    await expect(engine.markFollowedSourcePullPending(followed)).resolves.toBe(true);
+
+    expect(controller.isPullCurrent).toBe(false);
+    expect(controller.executor.hasPending('pull')).toBe(true);
+    await expect(engine.markFollowedSourcePullPending({ ...followed, acceptanceId: 'retired' })).resolves.toBe(false);
   });
 
   it('should prepare a followed source without holding the sync lock', async () => {
@@ -688,12 +757,13 @@ describe('SyncEngineLevel — followed sources', () => {
     const internal = engine as any;
     const followed = source();
     await createRoleLink(engine, targetFor(followed));
+    sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves([targetFor(followed)]);
     sinon.stub(internal, 'runIdentityLifecycle').callsFake(async (_did: string, operation: () => Promise<void>) => {
       await internal._followedSourceStore.replace(followed);
       await operation();
     });
 
-    await internal.removeObsoleteFollowedSourceLinks();
+    await internal.removeObsoleteFollowedSourceLinks([]);
 
     expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toHaveLength(1);
   });
@@ -710,15 +780,35 @@ describe('SyncEngineLevel — followed sources', () => {
     await internal._followedSourceStore.replace(followed);
     await createRoleLink(engine, currentTarget);
     await createRoleLink(engine, obsoleteTarget);
+    sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves([currentTarget]);
 
-    await internal.removeObsoleteFollowedSourceLinks();
+    await internal.removeObsoleteFollowedSourceLinks([followed]);
 
     expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
       scope: currentTarget.scope,
     }]);
   });
 
-  it('should publish the durable source that wins while catalog cleanup is pending', async () => {
+  it('should exclude and retire links for endpoints no longer advertised by a followed source', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const oldTarget = targetFor(followed, 'https://old.example.com');
+    const currentTarget = targetFor(followed, 'https://current.example.com');
+    await internal._followedSourceStore.replace(followed);
+    const oldLink = await createRoleLink(engine, oldTarget);
+    const controller = internal.activateLink(linkKey(oldLink), oldLink);
+    sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves([currentTarget]);
+
+    expect(await engine.getReplicationLinks(SOURCE_DID)).toEqual([]);
+    await internal.removeObsoleteFollowedSourceLinks([followed]);
+
+    expect(controller.isActive).toBe(false);
+    expect(internal._linkControllers.has(linkKey(oldLink))).toBe(false);
+    expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toEqual([]);
+  });
+
+  it('should publish a catalog change received while obsolete-link cleanup is pending', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
     const previous = source('role-a');
@@ -746,6 +836,7 @@ describe('SyncEngineLevel — followed sources', () => {
     await internal._followedSourceStore.replace(replacement, [previous.id]);
     releaseCleanup();
     await refresh;
+    await internal.refreshFollowedSourceState();
 
     expect(events).toEqual([replacement.id]);
     expect(await engine.listFollowedSources()).toEqual([replacement]);
@@ -1374,6 +1465,22 @@ describe('SyncEngineLevel — followed sources', () => {
 
     (engine as any)._runtime.dispose();
     await controllerB.dispose();
+  });
+
+  it('should deactivate a followed source before durable cleanup and retain it when cleanup fails', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    await internal._followedSourceStore.replace(followed);
+    const link = await createRoleLink(engine, targetFor(followed));
+    const controller = internal.activateLink(linkKey(link), link);
+    sinon.stub(internal.replicationLinkStore, 'getLinksForTenant').rejects(new Error('link store unavailable'));
+
+    await expect(engine.deleteFollowedSource(followed)).rejects.toThrow('link store unavailable');
+
+    expect(controller.isActive).toBe(false);
+    expect(internal._linkControllers.has(linkKey(link))).toBe(false);
+    expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
   });
 });
 

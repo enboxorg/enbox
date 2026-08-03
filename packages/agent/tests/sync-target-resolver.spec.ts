@@ -326,6 +326,22 @@ describe('SyncTargetResolver', () => {
       expect(typeof target.authorizationEpoch).toBe('string');
     });
 
+    it('should build a followed target from an already-authoritative endpoint snapshot', async () => {
+      const source = followedSource();
+      const { getRemoteDwnEndpointUrls, resolver } = createResolver({
+        remoteEndpoints: ['https://stale.example.com'],
+      });
+
+      const [target] = await resolver.buildTargetsForSource(
+        source,
+        undefined,
+        ['https://current.example.com'],
+      );
+
+      expect(target.dwnUrl).toBe('https://current.example.com');
+      expect(getRemoteDwnEndpointUrls.notCalled).toBe(true);
+    });
+
     it('should keep transient delegate grants out of followed-source target identity', async () => {
       const delegateDid = 'did:example:delegate';
       const source = followedSource();

@@ -849,6 +849,13 @@ export interface SyncEngine {
   /** Stop following one exact followed source. */
   deleteFollowedSource(source: FollowedSyncSource): Promise<void>;
   /**
+   * Mark one exact followed source's live links pull-pending after a remote
+   * mutation is accepted. Returns false when that acceptance is no longer active.
+   *
+   * @internal Used by the typed shared-context mutation boundary.
+   */
+  markFollowedSourcePullPending(source: FollowedSyncSource): Promise<boolean>;
+  /**
    * Pull one exact accepted foreign context from every endpoint advertised by
    * its source DID. Returns `true` only when every endpoint reached its feed
    * head while this acceptance and its actor registration remained current.
