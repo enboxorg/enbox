@@ -342,6 +342,39 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(await engine.listFollowedSources()).toEqual([followed]);
   });
 
+  it('should commit a replacement without reading the obsolete-link store', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const previous = source();
+    const replacement = source('role-b', previous.contextId, 'notebook/collaborator');
+    await internal._identityStore.set(previous.actorDid, { protocols: 'all' });
+    await internal._followedSourceStore.replace(previous);
+    const link = await createRoleLink(engine, targetFor(previous));
+    const controller = internal.activateLink(linkKey(link), link);
+    sinon.stub(internal, 'resolveFollowedSource').resolves({
+      kind    : 'active',
+      batch   : supportBatch(replacement.id),
+      dwnUrl  : 'https://owner.example.com',
+      dwnUrls : ['https://owner.example.com'],
+      source  : replacement,
+    });
+    sinon.stub(internal, 'convergeRetiredFollowedSources').resolves();
+    sinon.stub(internal, 'admitFollowedSource').resolves();
+    const readLinks = sinon.stub(internal.replicationLinkStore, 'getLinksForTenant');
+
+    await expect(engine.followSource(sourceInput(previous))).resolves.toEqual(replacement);
+
+    expect(readLinks.notCalled).toBe(true);
+    expect(controller.isActive).toBe(false);
+    expect(internal._linkControllers.has(linkKey(link))).toBe(false);
+    expect(await engine.getFollowedSource(previous.id)).toBeUndefined();
+    expect(await engine.getFollowedSource(replacement.id)).toEqual(replacement);
+    readLinks.restore();
+    const retainedLinks = await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID);
+    expect(retainedLinks).toHaveLength(1);
+    expect(retainedLinks[0].authorization).toMatchObject({ kind: 'role', roleRecordId: previous.id });
+  });
+
   it('should reject a followed source whose actor is not registered for sync', async () => {
     const engine = new SyncEngineLevel({ db });
     const resolve = sinon.stub(engine as any, 'resolveFollowedSource');

@@ -1175,7 +1175,9 @@ export class SyncEngineLevel implements SyncEngine {
               return;
             }
             replaced = await this.commitFollowedSource(resolution.source);
-            await this.removeFollowedSourceLinksForSources(replaced);
+            for (const previous of replaced) {
+              this.deactivateFollowedSourceControllers(previous.id, previous.sourceDid);
+            }
           });
         } finally {
           this._lifecycle.releaseSync();
@@ -1624,6 +1626,20 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async removeFollowedSourceLinks(id: string, sourceDid: string): Promise<void> {
+    const targets = this.deactivateFollowedSourceControllers(id, sourceDid);
+    const links = (await this.replicationLinkStore.getLinksForTenant(sourceDid)).filter(link =>
+      link.authorization.kind === 'role' && link.authorization.roleRecordId === id
+    );
+    for (const link of links) {
+      targets.set(
+        buildLinkKey(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch),
+        syncTargetFromLink(link),
+      );
+    }
+    await Promise.all([...targets.values()].map(target => this.removeFollowedSourceLink(target)));
+  }
+
+  private deactivateFollowedSourceControllers(id: string, sourceDid: string): Map<string, SyncTarget> {
     const targets = new Map<string, SyncTarget>();
     for (const [linkKey, controller] of this._linkControllers) {
       if (
@@ -1636,16 +1652,7 @@ export class SyncEngineLevel implements SyncEngine {
         this.deactivateFollowedSourceLink(target);
       }
     }
-    const links = (await this.replicationLinkStore.getLinksForTenant(sourceDid)).filter(link =>
-      link.authorization.kind === 'role' && link.authorization.roleRecordId === id
-    );
-    for (const link of links) {
-      targets.set(
-        buildLinkKey(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch),
-        syncTargetFromLink(link),
-      );
-    }
-    await Promise.all([...targets.values()].map(target => this.removeFollowedSourceLink(target)));
+    return targets;
   }
 
   private async removeFollowedSourceLink(target: SyncTarget): Promise<void> {
@@ -1842,7 +1849,7 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    let activation: FollowedSyncSource[] | undefined;
+    let activate = false;
     await this._lifecycle.acquireSync();
     try {
       if (runtime.disposed) {
@@ -1865,16 +1872,17 @@ export class SyncEngineLevel implements SyncEngine {
           await this.removeFollowedSourceLinksForSources([current]);
           await this.commitFollowedSourceRemoval(current);
         } else if (followedSyncSourceEqual(current, resolution.source)) {
-          activation = [];
+          activate = true;
         } else {
           await this.removeFollowedSourceLinksForSources([current]);
-          activation = await this.commitFollowedSource(resolution.source);
+          await this.commitFollowedSource(resolution.source);
+          activate = true;
         }
       });
     } finally {
       this._lifecycle.releaseSync();
     }
-    if (activation !== undefined && resolution.kind === 'active') {
+    if (activate && resolution.kind === 'active') {
       this.activateFollowedSource(
         resolution.source,
         identity.delegateDid,
