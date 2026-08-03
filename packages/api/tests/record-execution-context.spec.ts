@@ -80,7 +80,7 @@ function createApi(
   agent: AgentStub,
   options: {
     assertActive?: () => Promise<void>;
-    mutationAccepted?: () => Promise<void>;
+    invalidateReplica?: () => Promise<void>;
   } = {},
 ): DwnApi {
   const permissionsApi = { getPermissionForRequest: sinon.stub() };
@@ -90,10 +90,10 @@ function createApi(
     permissionsApi : permissionsApi as unknown as AgentPermissionsApi,
   });
   return dwn.withRecordExecutionContext({
-    assertActive     : options.assertActive ?? (async (): Promise<void> => {}),
-    contextId        : 'workspace',
-    followedSourceId : 'role-record',
-    mutationAccepted : options.mutationAccepted,
+    assertActive      : options.assertActive ?? (async (): Promise<void> => {}),
+    contextId         : 'workspace',
+    followedSourceId  : 'role-record',
+    invalidateReplica : options.invalidateReplica,
     protocolRole,
     tenantDid,
   });
@@ -253,8 +253,8 @@ describe('context record execution', () => {
     });
   });
 
-  it('fences the local replica after each accepted authority mutation', async () => {
-    const mutationAccepted = sinon.stub().resolves();
+  it('does not reject accepted authority mutations when replica invalidation fails', async () => {
+    const invalidateReplica = sinon.stub().rejects(new Error('sync state unavailable'));
     const recordsWrite = createRecordsWrite();
     const recordsDelete = {
       authorization : createAuthorization(connectedDid),
@@ -270,7 +270,7 @@ describe('context record execution', () => {
       message : request.messageType === DwnInterface.RecordsDelete ? recordsDelete : recordsWrite,
       reply   : { status: { code: 202, detail: 'Accepted' } },
     }));
-    const dwn = createApi(agent, { mutationAccepted });
+    const dwn = createApi(agent, { invalidateReplica });
 
     const { record } = await dwn.records.write({
       data            : { title: 'created' },
@@ -278,11 +278,12 @@ describe('context record execution', () => {
       protocolPath    : 'note',
       parentContextId : 'workspace',
     });
-    await record!.update({ data: { title: 'updated' } });
-    await record!.delete();
-    await dwn.records.delete({ protocol, protocolPath: 'note', recordId });
+    await expect(record!.update({ data: { title: 'updated' } })).resolves.toBe(record);
+    await expect(record!.delete()).resolves.toBeUndefined();
+    await expect(dwn.records.delete({ protocol, protocolPath: 'note', recordId }))
+      .resolves.toEqual({ status: { code: 202, detail: 'Accepted' } });
 
-    expect(mutationAccepted.callCount).toBe(4);
+    expect(invalidateReplica.callCount).toBe(4);
   });
 
   it('preserves an authorized tombstone for context-bound prune escalation', async () => {

@@ -6,6 +6,7 @@
 
 import type { RecordData } from './record-data.js';
 
+import { invalidateRecordReplica } from './record-types.js';
 import type {
   DwnDateSort,
   DwnMessage,
@@ -681,7 +682,7 @@ export class Record<T = unknown> implements RecordModel {
     this._dataAccess = dataAccess;
     this._storedData = this.createStoredDataSource(storedData);
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
-    await this._executionContext?.mutationAccepted?.();
+    await invalidateRecordReplica(this._executionContext);
 
     return this;
   }
@@ -812,7 +813,7 @@ export class Record<T = unknown> implements RecordModel {
     this._protocolRole = effectiveProtocolRole;
     this._storedData = undefined;
     this._rawMessageDirty = true;
-    await this._executionContext?.mutationAccepted?.();
+    await invalidateRecordReplica(this._executionContext);
   }
 
   /**

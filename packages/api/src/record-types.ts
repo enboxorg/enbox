@@ -24,8 +24,8 @@ import type {
 export type RecordExecutionContext = Readonly<{
   /** Reject operations after this context has been left or removed. */
   assertActive(): Promise<void>;
-  /** Fence the local replica after an authoritative mutation is accepted. */
-  mutationAccepted?(): Promise<void>;
+  /** Mark the local replica stale after its authority may have changed. */
+  invalidateReplica?(): Promise<void>;
   /** Root context that bounds every operation. */
   contextId: string;
   /** Opaque local acceptance when this is a followed context. */
@@ -37,6 +37,15 @@ export type RecordExecutionContext = Readonly<{
   /** Tenant that owns the context. */
   tenantDid: string;
 }>;
+
+/** @internal Best-effort invalidation cannot change an already-completed mutation's outcome. */
+export async function invalidateRecordReplica(context?: RecordExecutionContext): Promise<void> {
+  try {
+    await context?.invalidateReplica?.();
+  } catch {
+    // Background sync can repair missed invalidation; the authority mutation is already final.
+  }
+}
 
 /** Authorization and routing context used when opening a record's raw stored bytes. */
 export type RecordDataAccess = Pick<

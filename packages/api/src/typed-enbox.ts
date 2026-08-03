@@ -2584,7 +2584,7 @@ export class TypedEnbox<
       contextId                  : source.contextId,
       followedSourceAcceptanceId : source.acceptanceId,
       followedSourceId           : source.id,
-      mutationAccepted           : async (): Promise<void> => {
+      invalidateReplica          : async (): Promise<void> => {
         await sync.markFollowedSourcePullPending(source);
       },
       protocolRole : source.protocolRole,
@@ -3484,6 +3484,7 @@ export class TypedEnbox<
               });
             }
             if (request.prune !== true || tombstonePrune) {
+              await this._dwn.invalidateRecordReplica();
               return;
             }
           }
@@ -3498,6 +3499,9 @@ export class TypedEnbox<
           prune        : request.prune,
         });
         if (result.status.code === 404 || isCanonicalConflictStatus(result.status)) {
+          if (this._options.context !== undefined) {
+            await this._dwn.invalidateRecordReplica();
+          }
           return;
         }
         requireDwnSuccess('TypedEnbox.records.delete', result);

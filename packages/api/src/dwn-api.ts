@@ -29,6 +29,7 @@ import { captureRecordDataAccess } from './record-data-access.js';
 import { ContextNotReadyError } from './context-errors.js';
 import { dataToBlob } from './utils.js';
 import { DwnResponseError } from './dwn-response-error.js';
+import { invalidateRecordReplica } from './record-types.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
 import { Protocol } from './protocol.js';
@@ -818,6 +819,11 @@ export class DwnApi {
     });
   }
 
+  /** @internal Mark a bound replica stale without changing the completed operation's outcome. */
+  public invalidateRecordReplica(): Promise<void> {
+    return invalidateRecordReplica(this.recordExecutionContext);
+  }
+
   /** Whether this DWN API instance is operating as a delegate. */
   get isDelegate(): boolean {
     return this.delegateDid !== undefined;
@@ -1230,7 +1236,7 @@ export class DwnApi {
         const { agentRequest, remoteTarget } = await this.prepareDeleteRecord(request);
         const response = await this.dispatchDwnRequest(agentRequest, remoteTarget);
         if (response.reply.status.code >= 200 && response.reply.status.code < 300) {
-          await this.recordExecutionContext?.mutationAccepted?.();
+          await this.invalidateRecordReplica();
         }
         return { status: response.reply.status };
       },
@@ -1341,7 +1347,7 @@ export class DwnApi {
             protocolRole : messageParams.protocolRole,
             storedData   : responseData,
           });
-          await this.recordExecutionContext?.mutationAccepted?.();
+          await this.invalidateRecordReplica();
         }
 
         return { record, status, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };

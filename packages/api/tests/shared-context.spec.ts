@@ -1106,6 +1106,55 @@ describe('TypedEnbox contexts', () => {
     expect(agent.processDwnRequest.notCalled).toBe(true);
     expect(agent.sendDwnRequest.calledOnce).toBe(true);
     expect(agent.sendDwnRequest.firstCall.args[0].messageType).toBe(DwnInterface.RecordsRead);
+    expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
+  });
+
+  it('invalidates the exact replica when a context delete loses an idempotent race', async () => {
+    const existing = {
+      authorization : authorization(sourceDid),
+      contextId     : `${contextId}/raced-note`,
+      descriptor    : {
+        dataCid          : 'raced-note-data',
+        dataFormat       : 'application/json',
+        dataSize         : 18,
+        dateCreated      : '2026-01-01T00:00:00.000000Z',
+        interface        : 'Records',
+        messageTimestamp : '2026-01-01T00:00:00.000000Z',
+        method           : 'Write',
+        parentId         : contextId,
+        protocol         : SharedDefinition.protocol,
+        protocolPath     : 'workspace/note',
+      },
+      recordId: 'raced-note',
+    } as DwnMessage<DwnInterface.RecordsWrite>;
+    const deleteStatuses = [
+      { code: 404, detail: 'Not Found' },
+      { code: 409, detail: 'Conflict' },
+    ];
+    agent.sendDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.RecordsRead) {
+        return {
+          reply: {
+            entry        : { recordsWrite: existing },
+            roleRecordId : 'role-record',
+            status       : { code: 200, detail: 'OK' },
+          },
+        };
+      }
+      if (request.messageType === DwnInterface.RecordsDelete) {
+        return { reply: { status: deleteStatuses.shift()! } };
+      }
+      throw new Error(`Unexpected remote request: ${request.messageType}`);
+    });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      markFollowedSourcePullPending.resetHistory();
+      await expect(shared.records.delete('workspace/note', { recordId: 'raced-note' }))
+        .resolves.toBeUndefined();
+      expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
+    }
+    expect(deleteStatuses).toHaveLength(0);
   });
 
   it('reconstructs listed contexts and fences exact stale and left sources', async () => {
