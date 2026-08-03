@@ -1,7 +1,6 @@
 import type { compileRecordQuery } from './record-query.js';
 import type { DwnApi } from './dwn-api.js';
 import type { Record } from './record.js';
-import type { ReplicationCurrentness } from './replication-currentness.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { SyncEngine, SyncEvent } from '@enbox/agent';
@@ -12,6 +11,7 @@ import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
+import { waitForViewReady } from './view-ready.js';
 
 type RecordViewContents<Item> = Readonly<{
   /**
@@ -29,18 +29,26 @@ type RecordViewContents<Item> = Readonly<{
 /** Immutable materialization state published by a {@link RecordView}. */
 export type RecordViewState<Item = Record> = RecordViewContents<Item> & Readonly<
   | {
-    /** Whether the materialization is current with its source. */
-    status: Exclude<ReplicationCurrentness, 'error'>;
+    /** The first local query has not completed. */
+    status: 'loading';
+    current: false;
+    error?: never;
+  }
+  | {
+    /** Local records are usable. `current` reports whether replication is caught up. */
+    status: 'ready';
+    current: boolean;
     error?: never;
   }
   | {
     status: 'error';
+    current: false;
     /** The query, authorization, terminal subscription, replication, or owning-session termination. */
     error: Error;
   }
 >;
 
-type UsableRecordViewState<Item> = Exclude<RecordViewState<Item>, { status: 'error' }>;
+type ReadyRecordViewState<Item> = Extract<RecordViewState<Item>, { status: 'ready' }>;
 
 /** Listener notified after a records view publishes new state. */
 export type RecordViewListener<Item = Record> = (state: RecordViewState<Item>) => void;
@@ -58,13 +66,8 @@ export interface RecordView<Item = Record> {
   /** Subscribe to later state publications. Safe to pass as a bare callback. */
   subscribe: (listener: RecordViewListener<Item>) => () => void;
 
-  /**
-   * Resolve with the first usable state.
-   *
-   * A state is usable when it contains records, or when `ready` makes an
-   * empty result authoritative. Errors, caller abort, and view closure reject.
-   */
-  whenUsable(options?: Readonly<{ signal?: AbortSignal }>): Promise<UsableRecordViewState<Item>>;
+  /** Resolve after the first local query makes records, including an empty result, usable. */
+  ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<ReadyRecordViewState<Item>>;
 
   /** Fence callbacks and close the underlying local subscriptions without publishing new state. */
   close(): Promise<void>;
@@ -85,7 +88,7 @@ type RecordViewOptions<Item> = {
 };
 
 type RecordViewCurrentness =
-  | { status: Exclude<ReplicationCurrentness, 'error'> }
+  | { current: boolean }
   | { status: 'error'; error: Error };
 
 type RegistrationChangeEvent = Extract<SyncEvent, { type: 'identity:registration-change' }>;
@@ -122,7 +125,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
   private _closed = false;
   private _closePromise?: Promise<void>;
-  private _hasPublishedReady = false;
+  private _hasMaterialized = false;
   private _isMaterializing = false;
   private _isOpen = false;
   private _materializationRequested = false;
@@ -131,6 +134,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     status  : 'loading',
     records : [],
     hasMore : false,
+    current : false,
   });
   private readonly _subscriptions: { close(): Promise<void> }[] = [];
   private _syncUnsubscribe?: () => void;
@@ -202,39 +206,14 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     return (): void => { this._listeners.delete(listener); };
   };
 
-  public whenUsable(
+  public ready(
     options: Readonly<{ signal?: AbortSignal }> = {},
-  ): Promise<UsableRecordViewState<Item>> {
-    const signal = options.signal === undefined
-      ? this._closeController.signal
-      : AbortSignal.any([options.signal, this._closeController.signal]);
-    return new Promise<UsableRecordViewState<Item>>((resolve, reject): void => {
-      let unsubscribe = (): void => {};
-      const cleanup = (): void => {
-        unsubscribe();
-        signal.removeEventListener('abort', onAbort);
-      };
-      const fail = (reason: unknown): void => {
-        cleanup();
-        reject(reason);
-      };
-      const inspect = (state: RecordViewState<Item>): void => {
-        if (options.signal?.aborted === true) {
-          fail(options.signal.reason);
-        } else if (state.status === 'error') {
-          fail(state.error);
-        } else if (this._closeController.signal.aborted) {
-          fail(this._closeController.signal.reason);
-        } else if (state.status === 'ready' || state.records.length > 0) {
-          cleanup();
-          resolve(state);
-        }
-      };
-      const onAbort = (): void => { inspect(this._state); };
-
-      signal.addEventListener('abort', onAbort, { once: true });
-      unsubscribe = this.subscribe(inspect);
-      inspect(this._state);
+  ): Promise<ReadyRecordViewState<Item>> {
+    return waitForViewReady({
+      closeSignal : this._closeController.signal,
+      getState    : this.getState,
+      signal      : options.signal,
+      subscribe   : this.subscribe,
     });
   }
 
@@ -360,12 +339,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   /** A changed registration defines a new baseline for its selected protocols. */
   private handleRegistrationChange(event: RegistrationChangeEvent): void {
     if (syncRegistrationCoversProtocol(event.options, this._query.filter.protocol)) {
-      this._hasPublishedReady = false;
-      this.publish(immutableState({
-        status  : 'loading',
-        records : this._state.records,
-        hasMore : this._state.hasMore,
-      }));
+      this.publishProvisionalReplicationCurrentness();
     }
     this.requestMaterialization();
   }
@@ -449,36 +423,36 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     hasMore: boolean,
     currentness: RecordViewCurrentness,
   ): void {
-    if (currentness.status === 'error') {
+    if ('status' in currentness) {
       this.publish(immutableState({
-        status : 'error',
-        records,
+        status  : 'error',
+        records : records,
         hasMore,
-        error  : currentness.error,
+        current : false,
+        error   : currentness.error,
       }));
       return;
     }
 
-    if (currentness.status === 'ready') {
-      this._hasPublishedReady = true;
-    }
+    this._hasMaterialized = true;
     this.publish(immutableState({
-      status: currentness.status,
+      status: 'ready',
       records,
       hasMore,
+      current: currentness.current,
     }));
   }
 
   /** Resolve whether this protocol has completed its configured remote baseline. */
   private async resolveCurrentness(): Promise<RecordViewCurrentness> {
     if (this._sync === undefined) {
-      return { status: 'ready' };
+      return { current: true };
     }
 
     if (this._followedContextId === undefined) {
       const registration = await this._sync.getIdentityOptions(this._tenantDid);
       if (!syncRegistrationCoversProtocol(registration, this._query.filter.protocol)) {
-        return { status: 'ready' };
+        return { current: true };
       }
     }
 
@@ -490,11 +464,11 @@ class ObservedRecordView<Item> implements RecordView<Item> {
           && link.scope.contextId === this._followedContextId
           && link.followedSourceId === this._followedSourceId
           && link.scope.protocolPaths.includes(this._query.filter.protocolPath));
-    const status = projectReplicationCurrentness(links, this._hasPublishedReady);
+    const status = projectReplicationCurrentness(links, false);
     if (status === 'error') {
       return this.resolveUnavailableCurrentness(true);
     }
-    return { status };
+    return { current: status === 'ready' };
   }
 
   /** Resolve a provisional unavailable state or attach the RecordView-specific pause error. */
@@ -506,7 +480,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       };
     }
 
-    return { status: this._hasPublishedReady ? 'stale' : 'loading' };
+    return { current: false };
   }
 
   private publishError(error: Error): void {
@@ -514,6 +488,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       status  : 'error',
       records : this._state.records,
       hasMore : this._state.hasMore,
+      current : false,
       error,
     }));
   }
@@ -521,20 +496,23 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   /** Degrade synchronously without letting partial link evidence clear an existing error. */
   private publishProvisionalReplicationCurrentness(isPaused = false): void {
     const currentness = this.resolveUnavailableCurrentness(isPaused);
-    if (this._state.status === 'error' && currentness.status !== 'error') {
+    if (this._state.status === 'error' && !('status' in currentness)) {
       return;
     }
 
-    if (currentness.status === 'error') {
+    if ('status' in currentness) {
       this.publishError(currentness.error);
       return;
     }
 
-    this.publish(immutableState({
-      status  : currentness.status,
-      records : this._state.records,
-      hasMore : this._state.hasMore,
-    }));
+    if (this._hasMaterialized) {
+      this.publish(immutableState({
+        status  : 'ready',
+        records : this._state.records,
+        hasMore : this._state.hasMore,
+        current : false,
+      }));
+    }
   }
 
   private publish(state: RecordViewState<Item>): void {

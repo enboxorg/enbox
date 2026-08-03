@@ -237,7 +237,7 @@ const view = await tasks.records.observe('task', {
   pagination: { limit: 25 },
 });
 
-await view.whenUsable();
+await view.ready();
 const unsubscribe = view.subscribe((state) => {
   // status is loading | ready | stale | error
   renderTasks(state.records, state.status, state.hasMore);
@@ -251,7 +251,7 @@ unsubscribe();
 await view.close();
 ```
 
-`whenUsable({ signal })` resolves when the view contains records—even from a
+`ready({ signal })` resolves when the view contains records—even from a
 `loading` or `stale` local replica—or when `ready` makes an empty result
 authoritative. It rejects the first error state, caller abort, or view closure;
 callers may wait again after a recoverable view error.

@@ -245,7 +245,7 @@ const view = await notes.records.observe('note', selection);
 const render = (state) => {
   console.log(state.status, state.records, state.hasMore);
 };
-await view.whenUsable();
+await view.ready();
 const unsubscribe = view.subscribe(render);
 render(view.getState()); // close the one-shot-to-live handoff
 
@@ -335,7 +335,7 @@ publish `error` while retaining the latest successful records.
 `hasMore` is always present: it is `false` before the first query and whenever
 the latest bounded result has no next page.
 
-`whenUsable({ signal })` resolves with the first state containing records, even
+`ready({ signal })` resolves with the first state containing records, even
 while an offline replica is `loading` or `stale`. An empty state resolves only
 when `ready` makes the absence authoritative. It rejects the first error state,
 caller abort, or closure; callers may wait again after a recoverable error, and

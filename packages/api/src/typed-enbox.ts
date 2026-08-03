@@ -595,6 +595,31 @@ export type MemberContext<
   Extract<ParentProtocolPath<Role>, ProtocolPaths<D> & string>
 >;
 
+type DeclaredContextRoot<
+  D extends ProtocolDefinition,
+  G extends ContextRoleGroups,
+> = Extract<
+  RoleGroupRoot<G, RoleGroupName<G>>,
+  Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>
+>;
+
+type DeclaredOwnedContext<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  G extends ContextRoleGroups,
+> = OwnedContext<D, C, DeclaredContextRoot<D, G>, G>;
+
+/** One owned or accepted member context in a protocol's local catalog. */
+export type ProtocolContext<
+  D extends ProtocolDefinition = ProtocolDefinition,
+  C extends RecordCodecMap = RecordCodecMap,
+  G extends ContextRoleGroups = {},
+> = DeclaredOwnedContext<D, C, G> | MemberContext<
+  D,
+  C,
+  Extract<RoleGroupRoles<G, RoleGroupName<G>>, ContextRolePath<D>>
+>;
+
 /** Public request for following one foreign context through one declared role group. */
 export type FollowContextOptions<Group extends string = 'default'> = Readonly<{
   id: string;
@@ -622,10 +647,10 @@ export type ContextsApi<
     id: string,
   ): Promise<OwnedContext<D, C, Root, G>>;
   follow: ContextFollow<D, C, G>;
-  /** List locally accepted member contexts for this protocol. */
-  list(): Promise<MemberContext<D, C>[]>;
-  /** Observe the locally accepted member-context catalog for this protocol. */
-  observe(): ContextView<MemberContext<D, C>>;
+  /** List owned and accepted member contexts in the local catalog. */
+  list(): Promise<ProtocolContext<D, C, G>[]>;
+  /** Observe owned and accepted member contexts in the local catalog. */
+  observe(): Promise<ContextView<ProtocolContext<D, C, G>>>;
 } & (G extends { readonly default: readonly [string, ...string[]] } ? {
   invitations: ContextInvitationsApi<
     MemberContext<D, C, Extract<RoleGroupRoles<G, RoleGroupName<G>>, ContextRolePath<D>>>,
@@ -1358,15 +1383,24 @@ export class TypedEnbox<
       return this._options.sync;
     };
 
+    const contextRoots = [...new Set(Object.keys(this._roleGroups)
+      .map(group => this.resolveContextRoleGroup(group).contextPath))]
+      .sort() as Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>[];
+    type CatalogContext = { access: 'member' | 'owner'; id: string; ownerDid: string };
+    const boundMembers = new Map<string, { context: CatalogContext; source: FollowedSyncSource }>();
+    const boundOwners = new Map<string, CatalogContext>();
+
     const listSources = async (): Promise<FollowedSyncSource[]> => {
       this._options.signal?.throwIfAborted();
-      return (await requireSync().listFollowedSources())
+      if (this._options.sync === undefined) {
+        return [];
+      }
+      return (await this._options.sync.listFollowedSources())
         .filter(source =>
           source.actorDid === this._dwn.connectedDid &&
           source.protocol === this._definition.protocol &&
           this.supportsMemberContextSource(source)
-        )
-        .sort(compareFollowedContexts);
+        );
     };
 
     const followContext = async (
@@ -1391,84 +1425,185 @@ export class TypedEnbox<
         });
       } catch (error) {
         if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
-        throw new Error('TypedEnbox.contexts.follow could not establish the requested context.');
+        throw new Error('TypedEnbox.contexts.follow could not establish the requested context.', { cause: error });
       }
       return this.bindMemberContext(source);
     };
 
-    this._contexts = {
-      open: async <Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
-        path: Root,
-        id: string,
-      ): Promise<OwnedContext<D, C, Root, G>> => {
-        const normalizedPath = normalizePath(path) as Root;
-        if (isProtocolRolePath(this._definition, normalizedPath)) {
-          throw new TypeError('TypedEnbox.contexts.open cannot open a role record as a context.');
+    const bindOwnedContext = <Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
+      normalizedPath: Root,
+      id: string,
+    ): OwnedContext<D, C, Root, G> => {
+      const protocolPaths = new Set(
+        [...this._validPaths]
+          .filter((candidate): boolean =>
+            (candidate === normalizedPath || candidate.startsWith(`${normalizedPath}/`)) &&
+            !isProtocolRolePath(this._definition, candidate)
+          ),
+      );
+      const dwn = this._dwn.withRecordExecutionContext({
+        assertActive : async (): Promise<void> => this._options.signal?.throwIfAborted(),
+        contextId    : id,
+        tenantDid    : this._dwn.connectedDid,
+      });
+      const records = this.bindContextRecords(
+        dwn,
+        { contextId: id, protocolPath: normalizedPath, protocolPaths },
+      );
+      const members = ((group: string = 'default') => {
+        const selected = this.resolveContextRoleGroup(group);
+        if (selected.contextPath !== normalizedPath) {
+          throw new TypeError(
+            `OwnedContext.members: role group '${group}' belongs to '${selected.contextPath}', ` +
+            `not '${normalizedPath}'.`,
+          );
         }
-        if (id.split('/').length !== normalizedPath.split('/').length) {
-          throw new TypeError(`TypedEnbox.contexts.open: id must identify a '${normalizedPath}' context.`);
-        }
-        assertValidRecordWithin(normalizedPath, id, true);
-        await this._ensureReady(normalizedPath);
+        return this.bindContextMembers(dwn, id, selected.roles);
+      }) as ContextMembersSelector<D, C, G, Root>;
+      const canInvite = Object.keys(this._roleGroups).some(group =>
+        this.resolveContextRoleGroup(group).contextPath === normalizedPath
+      );
+      return Object.freeze({
+        access: 'owner',
+        id,
+        ...(canInvite ? {
+          invite: async (
+            did: string,
+            request: { group?: string; preview?: ContextInvitationPreview } = {},
+          ): Promise<void> => {
+            const group = request.group ?? 'default';
+            const selected = this.resolveContextRoleGroup(group);
+            if (selected.contextPath !== normalizedPath) {
+              throw new TypeError(
+                `OwnedContext.invite: role group '${group}' belongs to '${selected.contextPath}', ` +
+                `not '${normalizedPath}'.`,
+              );
+            }
+            const recipient = normalizeMemberDid(did, 'OwnedContext.invite');
+            if (await this.bindContextMembers(dwn, id, selected.roles).get(recipient) === undefined) {
+              throw new TypeError('OwnedContext.invite: establish membership before sending an invitation.');
+            }
+            await this.sendContextInvitation(recipient, id, group, request.preview);
+          },
+        } : {}),
+        members,
+        ownerDid : this._dwn.connectedDid,
+        path     : normalizedPath,
+        records,
+      }) as OwnedContext<D, C, Root, G>;
+    };
 
-        const protocolPaths = new Set(
-          [...this._validPaths]
-            .filter((candidate): boolean =>
-              (candidate === normalizedPath || candidate.startsWith(`${normalizedPath}/`)) &&
-              !isProtocolRolePath(this._definition, candidate)
-            ),
-        );
-        const dwn = this._dwn.withRecordExecutionContext({
-          assertActive : async (): Promise<void> => this._options.signal?.throwIfAborted(),
-          contextId    : id,
-          tenantDid    : this._dwn.connectedDid,
-        });
-        const records = this.bindContextRecords(
-          dwn,
-          { contextId: id, protocolPath: normalizedPath, protocolPaths },
-        );
-        const members = ((group: string = 'default') => {
-          const selected = this.resolveContextRoleGroup(group);
-          if (selected.contextPath !== normalizedPath) {
-            throw new TypeError(
-              `OwnedContext.members: role group '${group}' belongs to '${selected.contextPath}', ` +
-              `not '${normalizedPath}'.`,
-            );
+    const openContext = async <Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
+      path: Root,
+      id: string,
+    ): Promise<OwnedContext<D, C, Root, G>> => {
+      const normalizedPath = normalizePath(path) as Root;
+      if (isProtocolRolePath(this._definition, normalizedPath)) {
+        throw new TypeError('TypedEnbox.contexts.open cannot open a role record as a context.');
+      }
+      if (id.split('/').length !== normalizedPath.split('/').length) {
+        throw new TypeError(`TypedEnbox.contexts.open: id must identify a '${normalizedPath}' context.`);
+      }
+      assertValidRecordWithin(normalizedPath, id, true);
+      await this._ensureReady(normalizedPath);
+      return bindOwnedContext(normalizedPath, id);
+    };
+
+    const bindListedMember = (source: FollowedSyncSource): CatalogContext => {
+      const key = contextKey(source.sourceDid, source.contextId);
+      const existing = boundMembers.get(key);
+      if (existing !== undefined && followedSyncSourceActiveEqual(existing.source, source)) {
+        return existing.context;
+      }
+      const context = this.bindMemberContext(source) as unknown as CatalogContext;
+      boundMembers.set(key, { context, source });
+      return context;
+    };
+
+    const listCatalogContexts = async (): Promise<CatalogContext[]> => {
+      const [ownedByRoot, sources] = await Promise.all([
+        Promise.all(contextRoots.map(async (path): Promise<CatalogContext[]> => {
+          const contexts: CatalogContext[] = [];
+          const result = await this._dwn.records.query({
+            filter: compileRecordFilter(this._definition, path, undefined),
+          });
+          requireDwnSuccess('TypedEnbox.contexts.list', result);
+          for (const record of result.records) {
+            if (record.contextId === undefined) {
+              throw new Error(`TypedEnbox.contexts.list: '${path}' record is missing its context ID.`);
+            }
+            const key = contextKey(this._dwn.connectedDid, record.contextId);
+            let context = boundOwners.get(key);
+            if (context === undefined) {
+              context = bindOwnedContext(path, record.contextId);
+              boundOwners.set(key, context);
+            }
+            contexts.push(context);
           }
-          return this.bindContextMembers(dwn, id, selected.roles);
-        }) as ContextMembersSelector<D, C, G, Root>;
-        const canInvite = Object.keys(this._roleGroups).some(group =>
-          this.resolveContextRoleGroup(group).contextPath === normalizedPath
-        );
-        return Object.freeze({
-          access: 'owner',
-          id,
-          ...(canInvite ? {
-            invite: async (
-              did: string,
-              request: { group?: string; preview?: ContextInvitationPreview } = {},
-            ): Promise<void> => {
-              const group = request.group ?? 'default';
-              const selected = this.resolveContextRoleGroup(group);
-              if (selected.contextPath !== normalizedPath) {
-                throw new TypeError(
-                  `OwnedContext.invite: role group '${group}' belongs to '${selected.contextPath}', ` +
-                  `not '${normalizedPath}'.`,
-                );
-              }
-              const recipient = normalizeMemberDid(did, 'OwnedContext.invite');
-              if (await this.bindContextMembers(dwn, id, selected.roles).get(recipient) === undefined) {
-                throw new TypeError('OwnedContext.invite: establish membership before sending an invitation.');
-              }
-              await this.sendContextInvitation(recipient, id, group, request.preview);
-            },
-          } : {}),
-          members,
-          ownerDid : this._dwn.connectedDid,
-          path     : normalizedPath,
-          records,
-        }) as OwnedContext<D, C, Root, G>;
-      },
+          return contexts;
+        })),
+        listSources(),
+      ]);
+      const owned = ownedByRoot.flat();
+      const activeOwnerKeys = new Set(owned.map(context => contextKey(context.ownerDid, context.id)));
+      const activeMemberKeys = new Set(sources.map(source => contextKey(source.sourceDid, source.contextId)));
+      for (const key of boundOwners.keys()) {
+        if (!activeOwnerKeys.has(key)) { boundOwners.delete(key); }
+      }
+      for (const key of boundMembers.keys()) {
+        if (!activeMemberKeys.has(key)) { boundMembers.delete(key); }
+      }
+
+      const contexts = new Map<string, CatalogContext>();
+      for (const context of owned) {
+        contexts.set(contextKey(context.ownerDid, context.id), context);
+      }
+      for (const source of sources) {
+        const key = contextKey(source.sourceDid, source.contextId);
+        if (!contexts.has(key)) { contexts.set(key, bindListedMember(source)); }
+      }
+      return [...contexts.values()].sort(compareProtocolContexts);
+    };
+    const listContexts = async (): Promise<ProtocolContext<D, C, G>[]> =>
+      await listCatalogContexts() as unknown as ProtocolContext<D, C, G>[];
+
+    const openCatalogWakeSubscription = async (
+      wake: () => void,
+      fail: (error: Error) => void,
+    ): Promise<{ close(): Promise<void> }> => {
+      const detachSync = this._options.sync?.on((event): void => {
+        if (
+          event.type === 'followed-context:change' &&
+          event.actorDid === this._dwn.connectedDid &&
+          event.protocol === this._definition.protocol
+        ) {
+          wake();
+        }
+      }) ?? (() => {});
+      try {
+        const records = contextRoots.length === 0
+          ? undefined
+          : await this.records.subscribe(contextRoots, (event): void => {
+            if (event.type === 'error') {
+              fail(event.error);
+            } else {
+              wake();
+            }
+          });
+        return {
+          close: async (): Promise<void> => {
+            detachSync();
+            await records?.close();
+          },
+        };
+      } catch (error: unknown) {
+        detachSync();
+        throw error;
+      }
+    };
+
+    this._contexts = {
+      open: openContext,
       follow: followContext as ContextsApi<D, C, G>['follow'],
       ...(Object.keys(this._roleGroups).length > 0 ? {
         invitations: {
@@ -1479,15 +1614,11 @@ export class TypedEnbox<
           > => this.observeContextInvitations(options?.limit, followContext),
         },
       } : {}),
-      list: async (): Promise<MemberContext<D, C>[]> =>
-        (await listSources()).map((source): MemberContext<D, C> => this.bindMemberContext(source)),
-      observe: (): ContextView<MemberContext<D, C>> => createContextView({
-        actorDid    : this._dwn.connectedDid,
-        bind        : (source): MemberContext<D, C> => this.bindMemberContext(source),
-        listSources : listSources,
-        protocol    : this._definition.protocol,
-        signal      : this._options.signal,
-        sync        : requireSync(),
+      list    : listContexts,
+      observe : async (): Promise<ContextView<ProtocolContext<D, C, G>>> => createContextView({
+        list                 : listContexts,
+        openWakeSubscription : openCatalogWakeSubscription,
+        signal               : this._options.signal,
       }),
     } as ContextsApi<D, C, G>;
     return this._contexts;
@@ -3702,9 +3833,19 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-function compareFollowedContexts(a: FollowedSyncSource, b: FollowedSyncSource): number {
-  if (a.sourceDid !== b.sourceDid) {
-    return a.sourceDid < b.sourceDid ? -1 : 1;
+function contextKey(ownerDid: string, contextId: string): string {
+  return JSON.stringify([ownerDid, contextId]);
+}
+
+function compareProtocolContexts(
+  a: { access: 'member' | 'owner'; id: string; ownerDid: string },
+  b: { access: 'member' | 'owner'; id: string; ownerDid: string },
+): number {
+  if (a.ownerDid !== b.ownerDid) {
+    return a.ownerDid < b.ownerDid ? -1 : 1;
   }
-  return a.contextId === b.contextId ? 0 : a.contextId < b.contextId ? -1 : 1;
+  if (a.id !== b.id) {
+    return a.id < b.id ? -1 : 1;
+  }
+  return a.access === b.access ? 0 : a.access === 'owner' ? -1 : 1;
 }

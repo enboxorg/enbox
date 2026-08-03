@@ -5,6 +5,7 @@ import type {
   ContextView,
   MemberContext,
   OwnedContext,
+  ProtocolContext,
   RecordView,
   TypedEnbox,
 } from '@enbox/api';
@@ -115,14 +116,20 @@ if (catalogContext.role === 'workspace/member') {
 }
 
 const owned = typed.contexts.open('workspace', 'workspace-id');
-const listed: Promise<MemberContext<typeof ContextDefinition, typeof ContextProtocol.codecs>[]> =
+const listed: Promise<ProtocolContext<
+  typeof ContextDefinition,
+  typeof ContextProtocol.codecs,
+  typeof ContextProtocol.roleGroups
+>[]> =
   typed.contexts.list();
-const observed: ContextView<MemberContext<typeof ContextDefinition, typeof ContextProtocol.codecs>> =
+const observed: Promise<ContextView<ProtocolContext<
+  typeof ContextDefinition,
+  typeof ContextProtocol.codecs,
+  typeof ContextProtocol.roleGroups
+>>> =
   typed.contexts.observe();
-const closed: void = observed.close();
 void listed;
 void observed;
-void closed;
 // @ts-expect-error role records are membership, not contexts.
 void typed.contexts.open('workspace/member', 'workspace-id/member-id');
 void owned.then((value): void => {

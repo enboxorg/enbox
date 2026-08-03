@@ -1,74 +1,71 @@
-import type { FollowedSyncSource, SyncEngine, SyncEvent } from '@enbox/agent';
+import { waitForViewReady } from './view-ready.js';
 
-import { followedSyncSourceActiveEqual } from '@enbox/agent';
-
-/** Immutable state of the locally accepted contexts for one protocol. */
+/** Immutable state of one protocol's local context catalog. */
 export type ContextViewState<Context> = Readonly<{
   contexts: readonly Context[];
 }> & Readonly<
-  | { status: 'loading' | 'ready'; error?: never }
+  | { status: 'loading'; error?: never }
+  | { status: 'ready'; error?: never }
   | { status: 'error'; error: Error }
 >;
 
-/** Listener notified after an accepted-context view publishes new state. */
+type ReadyContextViewState<Context> = Extract<ContextViewState<Context>, { status: 'ready' }>;
+
+/** Listener notified after a context view publishes new state. */
 export type ContextViewListener<Context> = (state: ContextViewState<Context>) => void;
 
-/** Closeable live view of the durable contexts accepted by one actor. */
+/** Closeable live view of one protocol's local context catalog. */
 export interface ContextView<Context> {
   getState: () => ContextViewState<Context>;
   subscribe: (listener: ContextViewListener<Context>) => () => void;
-  close(): void;
+  /** Resolve after the catalog's first local materialization. */
+  ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<ReadyContextViewState<Context>>;
+  close(): Promise<void>;
 }
 
 type ContextViewOptions<Context> = {
-  actorDid: string;
-  bind(source: FollowedSyncSource): Context;
-  listSources(): Promise<readonly FollowedSyncSource[]>;
-  protocol: string;
+  list(): Promise<readonly Context[]>;
+  openWakeSubscription(
+    wake: () => void,
+    fail: (error: Error) => void,
+  ): Promise<{ close(): Promise<void> }>;
   signal?: AbortSignal;
-  sync: SyncEngine;
 };
 
-type BoundContext<Context> = {
-  context: Context;
-  source: FollowedSyncSource;
-};
-
-/** @internal Create a view after installing its wake listener. */
-export function createContextView<Context>(options: ContextViewOptions<Context>): ContextView<Context> {
+/** @internal Create a view after installing its wake subscription. */
+export async function createContextView<Context>(
+  options: ContextViewOptions<Context>,
+): Promise<ContextView<Context>> {
   options.signal?.throwIfAborted();
-  return new ObservedContextView(options);
+  const view = new ObservedContextView(options);
+  await view.open();
+  return view;
 }
 
 class ObservedContextView<Context> implements ContextView<Context> {
-  private readonly _actorDid: string;
-  private readonly _bind: ContextViewOptions<Context>['bind'];
+  private readonly _closeController = new AbortController();
   private readonly _listeners = new Set<ContextViewListener<Context>>();
-  private readonly _listSources: ContextViewOptions<Context>['listSources'];
-  private readonly _protocol: string;
+  private readonly _list: ContextViewOptions<Context>['list'];
+  private readonly _openWakeSubscription: ContextViewOptions<Context>['openWakeSubscription'];
   private readonly _signal?: AbortSignal;
 
-  private _bound = new Map<string, BoundContext<Context>>();
   private _closed = false;
+  private _closePromise?: Promise<void>;
   private _materializing = false;
   private _materializationRequested = false;
   private _state: ContextViewState<Context> = immutableState({ status: 'loading', contexts: [] });
-  private _syncUnsubscribe?: () => void;
+  private _wakeSubscription?: { close(): Promise<void> };
 
   private readonly _handleAbort = (): void => {
     this.publishError(new Error('ContextView: owning session ended.', { cause: this._signal?.reason }));
-    this.close();
+    void this.close();
   };
 
   public constructor(options: ContextViewOptions<Context>) {
-    this._actorDid = options.actorDid;
-    this._bind = options.bind;
-    this._listSources = options.listSources;
-    this._protocol = options.protocol;
+    this._list = options.list;
+    this._openWakeSubscription = options.openWakeSubscription;
     this._signal = options.signal;
     this._signal?.addEventListener('abort', this._handleAbort, { once: true });
-    this._syncUnsubscribe = options.sync.on((event): void => { this.handleSyncEvent(event); });
-    this.requestMaterialization();
   }
 
   public readonly getState = (): ContextViewState<Context> => this._state;
@@ -81,27 +78,56 @@ class ObservedContextView<Context> implements ContextView<Context> {
     return (): void => { this._listeners.delete(listener); };
   };
 
-  public close(): void {
+  public ready(
+    options: Readonly<{ signal?: AbortSignal }> = {},
+  ): Promise<ReadyContextViewState<Context>> {
+    return waitForViewReady({
+      closeSignal : this._closeController.signal,
+      getState    : this.getState,
+      signal      : options.signal,
+      subscribe   : this.subscribe,
+    });
+  }
+
+  public close(): Promise<void> {
+    this._closePromise ??= this.closeOwnedResources();
+    return this._closePromise;
+  }
+
+  /** Install wake delivery before the initial list so changes cannot fall through the handoff. */
+  public async open(): Promise<void> {
+    try {
+      this._wakeSubscription = await this._openWakeSubscription(
+        (): void => { this.requestMaterialization(); },
+        (error): void => {
+          if (!this._closed) {
+            this.publishError(error);
+            void this.close();
+          }
+        },
+      );
+      if (this._closed) {
+        await this._wakeSubscription.close();
+        return;
+      }
+      this.requestMaterialization();
+    } catch (error: unknown) {
+      await this.close();
+      throw error;
+    }
+  }
+
+  private async closeOwnedResources(): Promise<void> {
     if (this._closed) {
       return;
     }
     this._closed = true;
+    this._closeController.abort();
     this._materializationRequested = false;
-    this._syncUnsubscribe?.();
-    this._syncUnsubscribe = undefined;
     this._signal?.removeEventListener('abort', this._handleAbort);
     this._listeners.clear();
-    this._bound.clear();
-  }
-
-  private handleSyncEvent(event: SyncEvent): void {
-    if (
-      event.type === 'followed-context:change' &&
-      event.actorDid === this._actorDid &&
-      event.protocol === this._protocol
-    ) {
-      this.requestMaterialization();
-    }
+    await this._wakeSubscription?.close();
+    this._wakeSubscription = undefined;
   }
 
   private requestMaterialization(): void {
@@ -129,22 +155,10 @@ class ObservedContextView<Context> implements ContextView<Context> {
   private async materialize(): Promise<void> {
     this._materializationRequested = false;
     try {
-      const sources = await this._listSources();
-      const bound = new Map<string, BoundContext<Context>>();
-      const contexts = sources.map((source): Context => {
-        const key = contextKey(source);
-        const existing = this._bound.get(key);
-        const context = existing !== undefined && followedSyncSourceActiveEqual(existing.source, source)
-          ? existing.context
-          : this._bind(source);
-        bound.set(key, { context, source });
-        return context;
-      });
-      if (!this.canPublish()) {
-        return;
+      const contexts = await this._list();
+      if (this.canPublish()) {
+        this.publish(immutableState({ status: 'ready', contexts }));
       }
-      this._bound = bound;
-      this.publish(immutableState({ status: 'ready', contexts }));
     } catch (error: unknown) {
       if (this.canPublish()) {
         this.publishError(error instanceof Error ? error : new Error(String(error)));
@@ -175,18 +189,11 @@ class ObservedContextView<Context> implements ContextView<Context> {
   }
 }
 
-function contextKey(source: Pick<FollowedSyncSource, 'contextId' | 'sourceDid'>): string {
-  return JSON.stringify([source.sourceDid, source.contextId]);
-}
-
 function immutableState<Context>(state: ContextViewState<Context>): ContextViewState<Context> {
   return Object.freeze({ ...state, contexts: Object.freeze([...state.contexts]) });
 }
 
-function statesEqual<Context>(
-  a: ContextViewState<Context>,
-  b: ContextViewState<Context>,
-): boolean {
+function statesEqual<Context>(a: ContextViewState<Context>, b: ContextViewState<Context>): boolean {
   return a.status === b.status &&
     a.error === b.error &&
     a.contexts.length === b.contexts.length &&

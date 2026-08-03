@@ -88,6 +88,7 @@ export type {
   MaterializedRecord,
   MemberContext,
   OwnedContext,
+  ProtocolContext,
   ProtocolRolePaths,
   RecordCodec,
   RecordCodecContext,

@@ -277,6 +277,27 @@ function membershipEntry(options: {
   } as DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string };
 }
 
+function contextEntry(recordId: string = contextId): DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string } {
+  const data = {};
+  return {
+    authorization : authorization(connectedDid),
+    contextId     : recordId,
+    descriptor    : {
+      interface        : 'Records',
+      method           : 'Write',
+      dataCid          : `${recordId}-data`,
+      dataFormat       : 'application/json',
+      dataSize         : JSON.stringify(data).length,
+      dateCreated      : '2026-01-01T00:00:00.000000Z',
+      messageTimestamp : '2026-01-01T00:00:00.000000Z',
+      protocol         : SharedDefinition.protocol,
+      protocolPath     : 'workspace',
+    },
+    encodedData: Convert.object(data).toBase64Url(),
+    recordId,
+  } as DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string };
+}
+
 describe('TypedEnbox contexts', () => {
   let agent: AgentStub;
   let current: FollowedSyncSource | undefined;
@@ -322,6 +343,14 @@ describe('TypedEnbox contexts', () => {
         }
         if (request.messageType === DwnInterface.RecordsCount) {
           return { reply: { count: 3, status: { code: 200, detail: 'OK' } } };
+        }
+        if (request.messageType === DwnInterface.MessagesSubscribe) {
+          return {
+            reply: {
+              status       : { code: 200, detail: 'OK' },
+              subscription : { close: async (): Promise<void> => {} },
+            },
+          };
         }
         throw new Error(`Unexpected local request: ${request.messageType}`);
       }),
@@ -951,6 +980,88 @@ describe('TypedEnbox contexts', () => {
     expect(agent.sendDwnRequest.calledOnce).toBe(true);
   });
 
+  it('lists owned and member contexts together and prefers owner access for the same context', async () => {
+    current = source();
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return { reply: { entries: [contextEntry()], status: { code: 200, detail: 'OK' } } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+
+    const catalog = await typed.contexts.list();
+    expect(catalog).toHaveLength(2);
+    expect(catalog.find(context => context.access === 'owner'))
+      .toMatchObject({ id: contextId, ownerDid: connectedDid });
+    expect(catalog.find(context => context.access === 'member'))
+      .toMatchObject({ id: contextId, ownerDid: sourceDid });
+
+    current = source({ sourceDid: connectedDid });
+    expect(await typed.contexts.list()).toMatchObject([
+      { access: 'owner', id: contextId, ownerDid: connectedDid },
+    ]);
+  });
+
+  it('lists owned contexts without requiring a sync engine', async () => {
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return { reply: { entries: [contextEntry()], status: { code: 200, detail: 'OK' } } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    const local = new TypedEnbox(new DwnApi({
+      agent          : agent as unknown as EnboxAgent,
+      connectedDid,
+      permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
+    }), SharedProtocol);
+
+    expect(await local.contexts.list()).toMatchObject([
+      { access: 'owner', id: contextId, ownerDid: connectedDid },
+    ]);
+  });
+
+  it('observes owned context additions and removals through the shared catalog view', async () => {
+    let entries = [contextEntry()];
+    let deliver!: (message: DwnSubscriptionMessage) => void | Promise<void>;
+    const transport = { close: sinon.stub().resolves() };
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.MessagesSubscribe) {
+        deliver = request.subscriptionHandler!;
+        return { reply: { status: { code: 200, detail: 'OK' }, subscription: transport } };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return { reply: { entries, status: { code: 200, detail: 'OK' } } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    const view = await typed.contexts.observe();
+
+    expect(await view.ready()).toMatchObject({
+      status   : 'ready',
+      contexts : [{ access: 'owner', id: contextId }],
+    });
+
+    entries = [];
+    const changed = contextEntry();
+    await deliver({
+      type        : 'event',
+      cursor      : { epoch: 'epoch', position: '1', streamId: 'stream' },
+      encodedData : changed.encodedData,
+      event       : { message: changed },
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(view.getState().contexts).toEqual([]);
+
+    await view.close();
+    expect(transport.close.calledOnce).toBe(true);
+  });
+
   it('projects one newest invitation and dismisses represented duplicates idempotently', async () => {
     const entries = [
       invitationEntry({
@@ -1196,10 +1307,10 @@ describe('TypedEnbox contexts', () => {
     });
 
     expect(await typed.contexts.list()).toEqual([]);
-    const view = typed.contexts.observe();
+    const view = await typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(view.getState()).toMatchObject({ status: 'ready', contexts: [] });
-    view.close();
+    await view.close();
   });
 
   it('limits a pre-maintenance context to readable paths stored under its accepted definition', async () => {
@@ -1237,6 +1348,7 @@ describe('TypedEnbox contexts', () => {
       throw new Error(`Unexpected local request: ${request.messageType}`);
     });
     const [shared] = await typed.contexts.list();
+    order.length = 0;
 
     const subscription = await shared.records.subscribe(
       'workspace/note',
@@ -1261,7 +1373,8 @@ describe('TypedEnbox contexts', () => {
       target: sourceDid,
     });
     const queryRequest = agent.processDwnRequest.getCalls().find(
-      call => call.args[0].messageType === DwnInterface.RecordsQuery,
+      call => call.args[0].messageType === DwnInterface.RecordsQuery &&
+        call.args[0].messageParams?.filter?.protocolPath === 'workspace/note',
     )!.args[0];
     expect(queryRequest).toMatchObject({
       messageParams: {
@@ -1294,6 +1407,9 @@ describe('TypedEnbox contexts', () => {
             subscription : transport,
           },
         };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return { reply: { entries: [], status: { code: 200, detail: 'OK' } } };
       }
       throw new Error(`Unexpected local request: ${request.messageType}`);
     });
@@ -1328,6 +1444,9 @@ describe('TypedEnbox contexts', () => {
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
       if (request.messageType === DwnInterface.ProtocolsQuery) {
         return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return { reply: { entries: [], status: { code: 200, detail: 'OK' } } };
       }
       throw new Error('subscription unavailable');
     });
@@ -1369,7 +1488,7 @@ describe('TypedEnbox contexts', () => {
 
   it('observes one stable accepted-context catalog across role replacement and removal', async () => {
     current = source();
-    const view = typed.contexts.observe();
+    const view = await typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
     const initial = view.getState();
     expect(initial.status).toBe('ready');
@@ -1408,13 +1527,13 @@ describe('TypedEnbox contexts', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(view.getState()).toMatchObject({ status: 'ready', contexts: [] });
 
-    view.close();
+    await view.close();
     expect(listeners.size).toBe(0);
   });
 
   it('permanently retires a retained context when external removal and same-source re-follow coalesce', async () => {
     current = source();
-    const view = typed.contexts.observe();
+    const view = await typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
     const first = view.getState().contexts[0];
     let finishRemovalRead!: (sources: FollowedSyncSource[]) => void;
@@ -1437,7 +1556,7 @@ describe('TypedEnbox contexts', () => {
     await expect(first.records.query('workspace/note'))
       .rejects.toThrow(`Member context '${contextId}' is no longer active.`);
     expect(agent.processDwnRequest.callCount).toBe(localRequests);
-    view.close();
+    await view.close();
   });
 
   it('pulls only the exact followed source when its replica is not current', async () => {
@@ -1683,11 +1802,9 @@ describe('TypedEnbox contexts', () => {
       messageParams : { recordId: 'role-record' },
       target        : sourceDid,
     });
-    expect(agent.processDwnRequest.calledOnce).toBe(true);
-    expect(agent.processDwnRequest.firstCall.args[0]).toMatchObject({
-      rawMessage : tombstone,
-      target     : sourceDid,
-    });
+    expect(agent.processDwnRequest.getCalls().some(call =>
+      call.args[0].rawMessage === tombstone && call.args[0].target === sourceDid
+    )).toBe(true);
     expect(deleteFollowedSource.calledOnceWith(source())).toBe(true);
   });
 });
