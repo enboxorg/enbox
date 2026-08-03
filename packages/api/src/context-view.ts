@@ -58,7 +58,7 @@ class ObservedContextView<Context> implements ContextView<Context> {
 
   private readonly _handleAbort = (): void => {
     this.publishError(new Error('ContextView: owning session ended.', { cause: this._signal?.reason }));
-    void this.close();
+    void this.close().catch((): void => {});
   };
 
   public constructor(options: ContextViewOptions<Context>) {
@@ -102,7 +102,7 @@ class ObservedContextView<Context> implements ContextView<Context> {
         (error): void => {
           if (!this._closed) {
             this.publishError(error);
-            void this.close();
+            void this.close().catch((): void => {});
           }
         },
       );

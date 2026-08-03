@@ -130,6 +130,30 @@ const observed: Promise<ContextView<ProtocolContext<
   typed.contexts.observe();
 void listed;
 void observed;
+declare const listedContext: ProtocolContext<
+  typeof ContextDefinition,
+  typeof ContextProtocol.codecs,
+  typeof ContextProtocol.roleGroups
+>;
+if (listedContext.access === 'owner') {
+  if (listedContext.path === 'workspace') {
+    void listedContext.records.query('workspace/note');
+    void listedContext.members().list();
+    // @ts-expect-error an owned workspace context cannot access the project subtree.
+    void listedContext.records.query('project');
+    // @ts-expect-error the project role group does not belong to the workspace root.
+    void listedContext.members('project');
+  } else {
+    const projectPath: 'project' = listedContext.path;
+    void projectPath;
+    void listedContext.records.query('project');
+    void listedContext.members('project').list();
+    // @ts-expect-error an owned project context cannot access the workspace subtree.
+    void listedContext.records.query('workspace/note');
+    // @ts-expect-error the workspace role group does not belong to the project root.
+    void listedContext.members('viewers');
+  }
+}
 // @ts-expect-error role records are membership, not contexts.
 void typed.contexts.open('workspace/member', 'workspace-id/member-id');
 void owned.then((value): void => {

@@ -1313,6 +1313,21 @@ describe('TypedEnbox contexts', () => {
     await view.close();
   });
 
+  it('omits an accepted source whose active role is not declared as a context role', async () => {
+    current = source({
+      contextId     : 'outsideRecord',
+      protocolPaths : ['outside'],
+      protocolRole  : outsideRole,
+      roles         : [outsideRole],
+    });
+
+    expect(await typed.contexts.list()).toEqual([]);
+    const view = await typed.contexts.observe();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(view.getState()).toMatchObject({ status: 'ready', contexts: [] });
+    await view.close();
+  });
+
   it('limits a pre-maintenance context to readable paths stored under its accepted definition', async () => {
     current = source({ protocolPaths: ['workspace', 'workspace/note'] });
     const [shared] = await typed.contexts.list();

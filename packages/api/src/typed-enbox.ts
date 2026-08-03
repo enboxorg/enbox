@@ -568,7 +568,7 @@ export type OwnedContext<
   C extends RecordCodecMap = RecordCodecMap,
   Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
   G extends ContextRoleGroups = {},
-> = Readonly<
+> = Root extends unknown ? Readonly<
   ContextBase<D, C, Root> & {
     access: 'owner';
     members: ContextMembersSelector<D, C, G, Root>;
@@ -579,7 +579,7 @@ export type OwnedContext<
       ...args: ContextInviteArgs<Group>
     ): Promise<void>;
   })
->;
+> : never;
 
 /** A member context authorized through one exact role record. */
 export type MemberContext<
@@ -1384,6 +1384,7 @@ export class TypedEnbox<
     const contextRoots = [...new Set(Object.keys(this._roleGroups)
       .map(group => this.resolveContextRoleGroup(group).contextPath))]
       .sort() as Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>[];
+    const contextRoles = new Set(Object.values(this._roleGroups).flat());
     type CatalogContext = { access: 'member' | 'owner'; id: string; ownerDid: string };
     const boundMembers = new Map<string, { context: CatalogContext; source: FollowedSyncSource }>();
     const boundOwners = new Map<string, CatalogContext>();
@@ -1397,6 +1398,7 @@ export class TypedEnbox<
         .filter(source =>
           source.actorDid === this._dwn.connectedDid &&
           source.protocol === this._definition.protocol &&
+          contextRoles.has(source.protocolRole) &&
           this.supportsMemberContextSource(source)
         );
     };
@@ -3836,8 +3838,8 @@ function contextKey(ownerDid: string, contextId: string): string {
 }
 
 function compareProtocolContexts(
-  a: { access: 'member' | 'owner'; id: string; ownerDid: string },
-  b: { access: 'member' | 'owner'; id: string; ownerDid: string },
+  a: { id: string; ownerDid: string },
+  b: { id: string; ownerDid: string },
 ): number {
   if (a.ownerDid !== b.ownerDid) {
     return a.ownerDid < b.ownerDid ? -1 : 1;
@@ -3845,5 +3847,5 @@ function compareProtocolContexts(
   if (a.id !== b.id) {
     return a.id < b.id ? -1 : 1;
   }
-  return a.access === b.access ? 0 : a.access === 'owner' ? -1 : 1;
+  return 0;
 }
