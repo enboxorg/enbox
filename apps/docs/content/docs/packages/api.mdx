@@ -365,6 +365,9 @@ accept remains retryable. `dismiss()` removes only the inbox item.
 context links, performs at most one scoped pull when necessary, and uses a
 bounded wait for live initialization. It throws `ContextNotReadyError` when
 membership, decryption, registration, or replication is temporarily not ready.
+Once records have replicated, member reads, queries, and views remain available
+offline. Member mutations are sent to the context owner's DWN and therefore
+require it to be reachable; Enbox does not queue those mutations offline.
 
 ### One owned-and-shared catalog
 

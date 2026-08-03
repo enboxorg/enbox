@@ -780,11 +780,6 @@ export class DwnApi {
     return this.recordExecutionContext?.followedSourceId;
   }
 
-  /** @internal Current delegate used to author records requests for the connected DID. */
-  public get recordDelegateDid(): string | undefined {
-    return this.delegateDid;
-  }
-
   /** (optional) The DID of the signer when signing with permissions */
   private readonly delegateDid?: string;
 

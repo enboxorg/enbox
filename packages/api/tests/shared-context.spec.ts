@@ -117,6 +117,32 @@ const SharedProtocol = defineProtocol(SharedDefinition, {
   },
 });
 
+const NestedDefinition = {
+  protocol  : `${SharedDefinition.protocol}/nested`,
+  published : true,
+  types     : {
+    member   : { dataFormats: ['application/json'] },
+    notebook : { dataFormats: ['application/json'] },
+    page     : { dataFormats: ['application/json'], encryptionRequired: true },
+  },
+  structure: {
+    notebook: {
+      page: {
+        $actions : [{ role: 'notebook/page/member', can: ['read'] }],
+        member   : { $role: true },
+      },
+    },
+  },
+} as const satisfies ProtocolDefinition;
+
+const NestedProtocol = defineProtocol(NestedDefinition, {
+  member   : recordCodecs.json<unknown>(),
+  notebook : recordCodecs.json<unknown>(),
+  page     : recordCodecs.json<unknown>(),
+}, {
+  roleGroups: { default: ['notebook/page/member'] },
+});
+
 type AgentStub = {
   decryptRecordData: sinon.SinonStub;
   processDwnRequest: sinon.SinonStub;
@@ -1034,6 +1060,60 @@ describe('TypedEnbox contexts', () => {
     ]);
   });
 
+  it('walks parent contexts when listing a nested owned context root', async () => {
+    const nestedEntry = (
+      protocolPath: 'notebook' | 'notebook/page',
+      recordId: string,
+      recordContextId: string,
+      parentId?: string,
+    ): ReturnType<typeof contextEntry> => {
+      const entry = contextEntry(recordId);
+      return {
+        ...entry,
+        contextId  : recordContextId,
+        descriptor : {
+          ...entry.descriptor,
+          ...(parentId === undefined ? {} : { parentId }),
+          protocol: NestedDefinition.protocol,
+          protocolPath,
+        },
+      } as ReturnType<typeof contextEntry>;
+    };
+    const notebookId = 'notebookRecord';
+    const pageContextId = `${notebookId}/pageRecord`;
+    const queries: unknown[] = [];
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        const filter = request.messageParams.filter;
+        queries.push(filter);
+        const entries = filter.protocolPath === 'notebook'
+          ? [nestedEntry('notebook', notebookId, notebookId)]
+          : [nestedEntry('notebook/page', 'pageRecord', pageContextId, notebookId)];
+        return { reply: { entries, status: { code: 200, detail: 'OK' } } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    const local = new TypedEnbox(new DwnApi({
+      agent          : agent as unknown as EnboxAgent,
+      connectedDid,
+      permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
+    }), NestedProtocol);
+
+    expect(await local.contexts.list()).toMatchObject([
+      { access: 'owner', id: pageContextId, ownerDid: connectedDid, path: 'notebook/page' },
+    ]);
+    expect(queries).toEqual([
+      { protocol: NestedDefinition.protocol, protocolPath: 'notebook' },
+      { contextId: notebookId, protocol: NestedDefinition.protocol, protocolPath: 'notebook/page' },
+    ]);
+  });
+
   it('observes owned context additions and removals through the shared catalog view', async () => {
     let entries = [contextEntry()];
     let deliver!: (message: DwnSubscriptionMessage) => void | Promise<void>;
@@ -1234,7 +1314,7 @@ describe('TypedEnbox contexts', () => {
     expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
   });
 
-  it('invalidates the exact replica when a context delete loses an idempotent race', async () => {
+  it('rejects a raced context delete unless the authority returns the canonical conflict', async () => {
     const existing = {
       authorization : authorization(sourceDid),
       contextId     : `${contextId}/raced-note`,
@@ -1273,12 +1353,14 @@ describe('TypedEnbox contexts', () => {
     });
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-      markFollowedSourcePullPending.resetHistory();
-      await expect(shared.records.delete('workspace/note', { recordId: 'raced-note' }))
-        .resolves.toBeUndefined();
-      expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
-    }
+    await expect(shared.records.delete('workspace/note', { recordId: 'raced-note' }))
+      .rejects.toMatchObject({ status: { code: 404, detail: 'Not Found' } });
+    expect(markFollowedSourcePullPending.notCalled).toBe(true);
+
+    markFollowedSourcePullPending.resetHistory();
+    await expect(shared.records.delete('workspace/note', { recordId: 'raced-note' }))
+      .resolves.toBeUndefined();
+    expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
     expect(deleteStatuses).toHaveLength(0);
   });
 

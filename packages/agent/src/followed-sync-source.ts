@@ -118,27 +118,23 @@ export function followedSyncSourceRoleRecordEqual(a: FollowedSyncSource, b: Foll
     a.protocolRole === b.protocolRole;
 }
 
-/** Equality for the signed role authorization and its exact protocol-derived path policy. */
-export function followedSyncSourceAuthorizationEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
-  return followedSyncSourceRoleRecordEqual(a, b) && sameStrings(a.protocolPaths, b.protocolPaths);
-}
-
-/** Equality for one acceptance and its exact active replication scope; fallback policy is intentionally ignored. */
-export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
-  return a.acceptanceId === b.acceptanceId && followedSyncSourceAuthorizationEqual(a, b);
-}
-
-/** Exact equality for an active source and its ordered role policy. */
-export function followedSyncSourceEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
-  return followedSyncSourceActiveEqual(a, b) &&
+/** Equality for the role authorization and the ordered fallback policy accepted with it. */
+export function followedSyncSourcePolicyEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+  return followedSyncSourceRoleRecordEqual(a, b) &&
+    sameStrings(a.protocolPaths, b.protocolPaths) &&
     sameStrings(a.roles, b.roles);
+}
+
+/** Equality for one acceptance and its complete role policy. */
+export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+  return a.acceptanceId === b.acceptanceId && followedSyncSourcePolicyEqual(a, b);
 }
 
 /** Resolve and validate the context root addressed by one role candidate. */
 export function resolveFollowedSyncRoleRoot(
   contextId: string,
   role: string,
-): { protocolPath: string; recordId: string } {
+): { protocolPath: string } {
   const roleSegments = role.split('/');
   const contextSegments = contextId.split('/');
   if (
@@ -151,7 +147,7 @@ export function resolveFollowedSyncRoleRoot(
   }
 
   const protocolPath = roleSegments.slice(0, -1).join('/');
-  return { protocolPath, recordId: contextSegments.at(-1)! };
+  return { protocolPath };
 }
 
 function normalizeFollowedSyncRole(role: string): string {

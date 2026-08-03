@@ -491,12 +491,14 @@ for at most ten seconds.
 `shared.records` is the existing typed records implementation projected as a
 context-bound API—the same contract returned by `notebooks.contexts.open()`.
 Reads and views use a member context's pull-synchronized local replica;
-creates and retained-record mutations go to the source DWN. Callers do not
-pass tenant DIDs, grant IDs, `from`, `protocolRole`, root `within` selectors,
-or raw DWN storage controls. Deeper descendants can still name their direct
-parent inside the shared context. A new follow performs only bounded role,
-protocol, context-root, and audience-key bootstrap, while the existing sync
-engine catches up the exact role-readable path set.
+once synchronized, they remain available offline. Creates and retained-record
+mutations go to the context owner's DWN and require it to be reachable; Enbox
+does not queue those mutations offline. Callers do not pass tenant DIDs, grant
+IDs, `from`, `protocolRole`, root `within` selectors, or raw DWN storage
+controls. Deeper descendants can still name their direct parent inside the
+shared context. A new follow performs only bounded role, protocol, context-root,
+and audience-key bootstrap, while the existing sync engine catches up the exact
+role-readable path set.
 
 `defineProtocol()` declares ordered, mutually-exclusive groups of direct
 encrypted roles once, then reuses them at every owner and member call site. A

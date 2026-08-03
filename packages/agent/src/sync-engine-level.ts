@@ -85,9 +85,9 @@ import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildCurrentLinkIdentityKey, buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
-import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor } from './sync-messages.js';
+import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor, SyncPullAbortedError } from './sync-messages.js';
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readFollowedRoleState, readRoleReplicationSupport, type RoleReplicationSupportBatch } from './sync-role-replication-support.js';
-import { followedSyncSourceActiveEqual, followedSyncSourceAuthorizationEqual, followedSyncSourceEqual, followedSyncSourceRoleRecordEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
+import { followedSyncSourceActiveEqual, followedSyncSourcePolicyEqual, followedSyncSourceRoleRecordEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import { isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
@@ -155,6 +155,13 @@ type FollowedSourceResolution =
   | { kind: 'active'; batch: RoleReplicationSupportBatch; dwnUrl: string; dwnUrls: string[]; source: FollowedSyncSource }
   | { kind: 'absent'; dwnUrls: string[] }
   | { kind: 'unknown'; error: Error };
+
+type PreparedFollowedSourceTombstone = { sourceDid: string; tombstone: RecordsDeleteMessage };
+
+type PreparedFollowedSource = {
+  resolution: FollowedSourceResolution;
+  tombstones: PreparedFollowedSourceTombstone[];
+};
 
 type FollowedSourceChangeEvent = Extract<SyncEvent, { type: 'followed-context:change' }>;
 
@@ -1133,63 +1140,82 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async followSource(input: FollowedSyncSourceInput): Promise<FollowedSyncSource> {
     const normalized = normalizeFollowedSyncSourceInput(input);
-    let source!: FollowedSyncSource;
-    let delegateDid: string | undefined;
-    await this._lifecycle.runTransition(async (): Promise<void> => {
+    const transitionFence = this.captureTransitionFence();
+    const assertTransitionCurrent = (): void => {
+      if (!transitionFence()) {
+        throw new FollowedSourceNotReadyError('the local sync lifecycle changed while accepting the context');
+      }
+    };
+
+    for (;;) {
+      assertTransitionCurrent();
       const identity = await this._identityStore.get(normalized.actorDid);
       if (identity === undefined) {
         throw new FollowedSourceNotReadyError(`actor '${normalized.actorDid}' is not registered for sync`);
       }
-      delegateDid = identity.delegateDid;
-      for (;;) {
-        const previous = (await this.readFollowedSources()).filter(candidate =>
-          SyncEngineLevel.sameFollowedContext(candidate, normalized)
-        );
-        const resolution = await this.resolveFollowedSource(normalized, delegateDid, undefined, previous);
-        if (resolution.kind === 'absent') {
-          throw new Error('SyncEngineLevel: None of the requested roles currently authorizes this context.');
-        }
-        if (resolution.kind === 'unknown') {
-          throw resolution.error;
-        }
+      const previous = (await this.readFollowedSources()).filter(candidate =>
+        SyncEngineLevel.sameFollowedContext(candidate, normalized)
+      );
+      const resolution = await this.resolveFollowedSource(
+        normalized,
+        identity.delegateDid,
+        transitionFence,
+        previous,
+      );
+      assertTransitionCurrent();
+      if (resolution.kind === 'absent') {
+        throw new FollowedSourceNotReadyError('none of the requested roles is visible on every source endpoint yet');
+      }
+      if (resolution.kind === 'unknown') {
+        throw resolution.error;
+      }
 
-        await this.convergeRetiredFollowedSources(
-          previous,
-          resolution.dwnUrls,
-          resolution.source.id,
-          delegateDid,
-        );
-        await this.admitFollowedSource(resolution);
+      const tombstones = await this.prepareRetiredFollowedSourceTombstones(
+        previous,
+        resolution.dwnUrls,
+        resolution.source.id,
+        identity.delegateDid,
+        transitionFence,
+      );
+      assertTransitionCurrent();
 
-        let replaced: FollowedSyncSource[] | undefined;
+      let committed = false;
+      await this._lifecycle.runTransition(async (): Promise<void> => {
+        assertTransitionCurrent();
         await this._lifecycle.acquireSync();
         try {
           await this.runIdentityLifecycle(normalized.sourceDid, async (): Promise<void> => {
+            const currentIdentity = await this._identityStore.get(normalized.actorDid);
             const current = (await this.readFollowedSources()).filter(candidate =>
               SyncEngineLevel.sameFollowedContext(candidate, normalized)
             );
             if (
+              currentIdentity === undefined ||
+              currentIdentity.delegateDid !== identity.delegateDid ||
               current.length !== previous.length ||
-              current.some(candidate => !previous.some(entry => followedSyncSourceEqual(candidate, entry)))
+              current.some(candidate => !previous.some(entry => followedSyncSourceActiveEqual(candidate, entry)))
             ) {
               return;
             }
-            replaced = await this.commitFollowedSource(resolution.source);
+            await this.applyPreparedFollowedSource(resolution, tombstones, transitionFence);
+            const replaced = await this.commitFollowedSource(resolution.source);
             for (const previous of replaced) {
               this.deactivateFollowedSourceControllers(previous.id, previous.sourceDid);
             }
+            committed = true;
           });
         } finally {
           this._lifecycle.releaseSync();
         }
-        if (replaced !== undefined) {
-          source = resolution.source;
-          return;
-        }
+      });
+      assertTransitionCurrent();
+      if (!committed) {
+        continue;
       }
-    });
-    this.activateFollowedSource(source, delegateDid);
-    return source;
+
+      this.activateFollowedSource(resolution.source, identity.delegateDid);
+      return resolution.source;
+    }
   }
 
   /** Resolve one role only when every advertised endpoint agrees on its exact record. */
@@ -1263,19 +1289,19 @@ export class SyncEngineLevel implements SyncEngine {
       protocolPaths : first.protocolPaths,
       protocolRole  : first.role,
     });
-    const previous = previousSources.find(candidate => followedSyncSourceAuthorizationEqual(candidate, source));
+    const previous = previousSources.find(candidate => followedSyncSourcePolicyEqual(candidate, source));
     if (previous !== undefined) {
       source = { ...source, acceptanceId: previous.acceptanceId };
     }
     return { kind: 'active', batch: first.batch, dwnUrl: first.dwnUrl, dwnUrls: endpoints, source };
   }
 
-  /** Resolve, verify retirement, and admit the current authority for one accepted context. */
+  /** Resolve the current authority and prepare any verified retirement tombstones for local application. */
   private async prepareExistingFollowedSource(
     expected: FollowedSyncSource,
     delegateDid: string | undefined,
     shouldContinue?: () => boolean,
-  ): Promise<FollowedSourceResolution> {
+  ): Promise<PreparedFollowedSource> {
     const resolution = await this.resolveFollowedSource({
       actorDid  : expected.actorDid,
       contextId : expected.contextId,
@@ -1284,30 +1310,17 @@ export class SyncEngineLevel implements SyncEngine {
       sourceDid : expected.sourceDid,
     }, delegateDid, shouldContinue, [expected]);
     if (resolution.kind === 'unknown') {
-      return resolution;
+      return { resolution, tombstones: [] };
     }
-    if (resolution.kind === 'absent') {
-      await this.convergeRetiredFollowedSources(
-        [expected],
-        resolution.dwnUrls,
-        undefined,
-        delegateDid,
-        shouldContinue,
-      );
-      return resolution;
-    }
-
-    if (!followedSyncSourceEqual(expected, resolution.source)) {
-      await this.convergeRetiredFollowedSources(
-        [expected],
-        resolution.dwnUrls,
-        resolution.source.id,
-        delegateDid,
-        shouldContinue,
-      );
-    }
-    await this.admitFollowedSource(resolution, shouldContinue);
-    return resolution;
+    const activeRoleRecordId = resolution.kind === 'active' ? resolution.source.id : undefined;
+    const tombstones = await this.prepareRetiredFollowedSourceTombstones(
+      [expected],
+      resolution.dwnUrls,
+      activeRoleRecordId,
+      delegateDid,
+      shouldContinue,
+    );
+    return { resolution, tombstones };
   }
 
   /** Select the strongest role proven by one endpoint; only verified absence permits fallback. */
@@ -1369,6 +1382,28 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  /** Apply already-verified local state before committing its matching catalog authority. */
+  private async applyPreparedFollowedSource(
+    resolution: Exclude<FollowedSourceResolution, { kind: 'unknown' }>,
+    tombstones: readonly PreparedFollowedSourceTombstone[],
+    shouldContinue?: () => boolean,
+  ): Promise<void> {
+    for (const { sourceDid, tombstone } of tombstones) {
+      if (shouldContinue?.() === false) {
+        throw new SyncPullAbortedError();
+      }
+      const outcome = await this.agent.dwn.applyReplicatedMessage(sourceDid, tombstone);
+      if (outcome.kind !== 'Applied' && outcome.kind !== 'Duplicate' && outcome.kind !== 'Superseded') {
+        throw new Error(
+          `SyncEngineLevel: Could not apply retired role deletion locally (${outcome.kind}).`,
+        );
+      }
+    }
+    if (resolution.kind === 'active') {
+      await this.admitFollowedSource(resolution, shouldContinue);
+    }
+  }
+
   /** Commit one followed source without coupling durable truth to link cleanup. */
   private async commitFollowedSource(source: FollowedSyncSource): Promise<FollowedSyncSource[]> {
     const sources = await this.readFollowedSources();
@@ -1384,7 +1419,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (existing !== undefined && !followedSyncSourceActiveEqual(existing, source)) {
       replaced.push(existing);
     }
-    const changed = existing === undefined || !followedSyncSourceEqual(existing, source) || replaced.length > 0;
+    const changed = existing === undefined || !followedSyncSourceActiveEqual(existing, source) || replaced.length > 0;
     if (changed) {
       await this._followedSourceStore.replace(source, replaced.map(previous => previous.id));
       this._followedSourceSnapshot.set(SyncEngineLevel.followedContextKey(source), source);
@@ -1503,11 +1538,12 @@ export class SyncEngineLevel implements SyncEngine {
     if (accepted === undefined || !followedSyncSourceActiveEqual(accepted, expected)) {
       return false;
     }
-    const resolution = await this.prepareExistingFollowedSource(
+    const prepared = await this.prepareExistingFollowedSource(
       expected,
       identity.delegateDid,
       transitionFence,
     );
+    const { resolution, tombstones } = prepared;
     if (resolution.kind === 'unknown') {
       throw resolution.error;
     }
@@ -1531,12 +1567,13 @@ export class SyncEngineLevel implements SyncEngine {
           return;
         }
 
+        await this.applyPreparedFollowedSource(resolution, tombstones, transitionFence);
         if (resolution.kind === 'absent') {
           await this.removeFollowedSourceLinksForSources([current]);
           await this.commitFollowedSourceRemoval(current);
           return;
         }
-        if (!followedSyncSourceEqual(current, resolution.source)) {
+        if (!followedSyncSourceActiveEqual(current, resolution.source)) {
           await this.removeFollowedSourceLinksForSources([current]);
           await this.commitFollowedSource(resolution.source);
           activate = resolution.source;
@@ -1697,7 +1734,7 @@ export class SyncEngineLevel implements SyncEngine {
       for (const key of new Set([...this._followedSourceSnapshot.keys(), ...current.keys()])) {
         const previous = this._followedSourceSnapshot.get(key);
         const next = current.get(key);
-        if (previous !== undefined && next !== undefined && followedSyncSourceEqual(previous, next)) {
+        if (previous !== undefined && next !== undefined && followedSyncSourceActiveEqual(previous, next)) {
           continue;
         }
         const source = next ?? previous;
@@ -1766,7 +1803,7 @@ export class SyncEngineLevel implements SyncEngine {
           }
 
           const scanned = scannedSources.get(id);
-          if (scanned === undefined || !followedSyncSourceEqual(scanned, current)) {
+          if (scanned === undefined || !followedSyncSourceActiveEqual(scanned, current)) {
             return;
           }
           const currentEndpoints = scannedEndpoints.get(id);
@@ -1831,7 +1868,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  /** Resolve remotely, then make only the durable compare-and-swap exclusive. */
+  /** Resolve remotely, then make local admission and the durable compare-and-swap exclusive. */
   private async runFollowedSourceMaintenance(
     runtime: SyncRuntime,
     expected: FollowedSyncSource,
@@ -1844,7 +1881,11 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
     const shouldContinue = (): boolean => !runtime.disposed;
-    const resolution = await this.prepareExistingFollowedSource(expected, identity.delegateDid, shouldContinue);
+    const { resolution, tombstones } = await this.prepareExistingFollowedSource(
+      expected,
+      identity.delegateDid,
+      shouldContinue,
+    );
     if (runtime.disposed || resolution.kind === 'unknown') {
       return;
     }
@@ -1861,17 +1902,18 @@ export class SyncEngineLevel implements SyncEngine {
         if (
           runtime.disposed ||
           current === undefined ||
-          !followedSyncSourceEqual(current, expected) ||
+          !followedSyncSourceActiveEqual(current, expected) ||
           latestIdentity === undefined ||
           latestIdentity.delegateDid !== identity.delegateDid
         ) {
           return;
         }
 
+        await this.applyPreparedFollowedSource(resolution, tombstones, shouldContinue);
         if (resolution.kind === 'absent') {
           await this.removeFollowedSourceLinksForSources([current]);
           await this.commitFollowedSourceRemoval(current);
-        } else if (followedSyncSourceEqual(current, resolution.source)) {
+        } else if (followedSyncSourceActiveEqual(current, resolution.source)) {
           activate = true;
         } else {
           await this.removeFollowedSourceLinksForSources([current]);
@@ -1890,14 +1932,15 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  /** Apply verified retired-role tombstones before admitting a replacement role. */
-  private async convergeRetiredFollowedSources(
+  /** Prove retired roles remotely and retain their signed tombstones for the local commit. */
+  private async prepareRetiredFollowedSourceTombstones(
     previousSources: readonly FollowedSyncSource[],
     dwnUrls: readonly string[],
     activeRoleRecordId: string | undefined,
     delegateDid?: string,
     shouldContinue?: () => boolean,
-  ): Promise<void> {
+  ): Promise<PreparedFollowedSourceTombstone[]> {
+    const prepared = new Map<string, PreparedFollowedSourceTombstone>();
     for (const previous of previousSources) {
       if (previous.id === activeRoleRecordId) {
         continue;
@@ -1931,15 +1974,11 @@ export class SyncEngineLevel implements SyncEngine {
           `retired role '${previous.protocolRole}' has no verifiable deletion`,
         );
       }
-      for (const tombstone of tombstones.values()) {
-        const outcome = await this.agent.dwn.applyReplicatedMessage(previous.sourceDid, tombstone);
-        if (outcome.kind !== 'Applied' && outcome.kind !== 'Duplicate' && outcome.kind !== 'Superseded') {
-          throw new Error(
-            `SyncEngineLevel: Could not apply retired role deletion locally (${outcome.kind}).`,
-          );
-        }
+      for (const [cid, tombstone] of tombstones) {
+        prepared.set(JSON.stringify([previous.sourceDid, cid]), { sourceDid: previous.sourceDid, tombstone });
       }
     }
+    return [...prepared.values()];
   }
 
   // ---------------------------------------------------------------------------

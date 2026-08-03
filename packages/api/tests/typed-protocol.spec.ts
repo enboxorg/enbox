@@ -1,5 +1,7 @@
 import type { BearerDid } from '@enbox/dids';
+import type { ContextMembersApi } from '../src/typed-enbox.js';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { RecordDeleteParams } from '../src/record-types.js';
 import type {
   EncodedRecordData,
   RecordCodec,
@@ -9,6 +11,7 @@ import type {
 
 import sinon from 'sinon';
 
+import { ContextNotReadyError } from '../src/context-errors.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
@@ -749,6 +752,72 @@ describe('TypedProtocol API', () => {
         member    : recordCodecs.json<{ label: string }>(),
         workspace : recordCodecs.json<{ name: string }>(),
       });
+      const DeliveryDefinition = {
+        ...RoleDefinition,
+        protocol : `${RoleDefinition.protocol}/delivery`,
+        types    : {
+          ...RoleDefinition.types,
+          blind  : { dataFormats: ['application/json'] },
+          member : { ...RoleDefinition.types.member, encryptionRequired: true },
+          viewer : { dataFormats: ['application/json'] },
+        },
+        structure: {
+          workspace: {
+            $actions: [
+              { role: 'workspace/member', can: ['read'] },
+              { role: 'workspace/viewer', can: ['read'] },
+            ],
+            blind  : { $role: true },
+            member : { $role: true },
+            viewer : { $role: true },
+          },
+        },
+      } as const satisfies ProtocolDefinition;
+      const DeliveryProtocol = defineProtocol(DeliveryDefinition, {
+        ...RoleProtocol.codecs,
+        blind  : recordCodecs.json<{ note: string }>(),
+        viewer : recordCodecs.json<{ readonly: boolean }>(),
+      }, {
+        roleGroups: {
+          default: ['workspace/member', 'workspace/viewer'],
+        },
+      });
+      type DeliveryRole = 'workspace/member' | 'workspace/viewer';
+      type DeliveryMembers = ContextMembersApi<
+        typeof DeliveryDefinition,
+        typeof DeliveryProtocol.codecs,
+        DeliveryRole
+      >;
+      const recipient = 'did:example:bob';
+      const createDeliveryMembers = async (): Promise<DeliveryMembers> => {
+        const roleDelivery = {
+          get       : sinon.stub().resolves({ state: 'delivered' as const }),
+          retry     : sinon.stub().resolves({ state: 'delivered' as const }),
+          subscribe : (): (() => void) => (): void => {},
+        };
+        const roles = new TypedEnbox(dwnAlice, DeliveryProtocol, { roleDelivery });
+        await roles.configure();
+        const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
+        sinon.stub(testHarness.agent.dwn as any, 'provisionAudienceKeyDeliveryForReply').resolves({
+          delivered    : false,
+          failure      : 'awaiting-recipient-install',
+          recipientDid : recipient,
+          reason       : 'recipient protocol not installed',
+        });
+        return (await roles.contexts.open('workspace', workspace.contextId)).members();
+      };
+      const failRoleDeletion = (cause: Error, deleteFirst: boolean = false): void => {
+        const deleteRecord = Record.prototype.delete;
+        sinon.stub(Record.prototype, 'delete').callsFake(async function (
+          this: Record,
+          params?: RecordDeleteParams,
+        ): Promise<void> {
+          if (deleteFirst) {
+            await deleteRecord.call(this, params);
+          }
+          throw cause;
+        });
+      };
 
       it('rejects a missing role recipient before issuing a DWN request', async () => {
         const roles = new TypedEnbox(dwnAlice, RoleProtocol);
@@ -815,38 +884,9 @@ describe('TypedProtocol API', () => {
       });
 
       it('manages encrypted context membership without exposing role records', async () => {
-        const DeliveryDefinition = {
-          ...RoleDefinition,
-          protocol : `${RoleDefinition.protocol}/delivery`,
-          types    : {
-            ...RoleDefinition.types,
-            blind  : { dataFormats: ['application/json'] },
-            member : { ...RoleDefinition.types.member, encryptionRequired: true },
-            viewer : { dataFormats: ['application/json'] },
-          },
-          structure: {
-            workspace: {
-              $actions: [
-                { role: 'workspace/member', can: ['read'] },
-                { role: 'workspace/viewer', can: ['read'] },
-              ],
-              blind  : { $role: true },
-              member : { $role: true },
-              viewer : { $role: true },
-            },
-          },
-        } as const satisfies ProtocolDefinition;
         const get = sinon.stub().resolves(undefined);
         const retry = sinon.stub().resolves({ state: 'delivered' as const });
-        const roles = new TypedEnbox(dwnAlice, defineProtocol(DeliveryDefinition, {
-          ...RoleProtocol.codecs,
-          blind  : recordCodecs.json<{ note: string }>(),
-          viewer : recordCodecs.json<{ readonly: boolean }>(),
-        }, {
-          roleGroups: {
-            default: ['workspace/member', 'workspace/viewer'],
-          },
-        }), {
+        const roles = new TypedEnbox(dwnAlice, DeliveryProtocol, {
           roleDelivery: {
             get,
             retry,
@@ -860,7 +900,6 @@ describe('TypedProtocol API', () => {
         const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
         const owned = await roles.contexts.open('workspace', workspace.contextId);
         const members = owned.members();
-        const recipient = 'did:example:bob';
         sinon.stub(testHarness.agent.dwn as any, 'provisionAudienceKeyDeliveryForReply').resolves({
           delivered    : false,
           failure      : 'awaiting-recipient-install',
@@ -913,6 +952,71 @@ describe('TypedProtocol API', () => {
           data : { label: 'invalid' },
           role : 'workspace/member',
         })).rejects.toThrow('is not a DID');
+      }, 15000);
+
+      it('returns a role change when cleanup fails after the requested role becomes effective', async () => {
+        const members = await createDeliveryMembers();
+        await members.set(recipient, {
+          data : { readonly: true },
+          role : 'workspace/viewer',
+        });
+        const cleanupError = new Error('viewer cleanup failed');
+        failRoleDeletion(cleanupError);
+
+        const changed = await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+
+        expect(changed).toMatchObject({ did: recipient, role: 'workspace/member' });
+        expect((await members.get(recipient))?.role).toBe('workspace/member');
+      }, 15000);
+
+      it('makes an incomplete role change retryable when the previous stronger role remains effective', async () => {
+        const members = await createDeliveryMembers();
+        await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+        const cleanupError = new Error('member cleanup failed');
+        failRoleDeletion(cleanupError);
+
+        const error = await members.set(recipient, {
+          data : { readonly: true },
+          role : 'workspace/viewer',
+        }).then(() => undefined, reason => reason as Error);
+
+        expect(error).toBeInstanceOf(ContextNotReadyError);
+        expect(error?.cause).toBe(cleanupError);
+        expect((await members.get(recipient))?.role).toBe('workspace/member');
+      }, 15000);
+
+      it('accepts a failed removal only when its reread proves the member absent', async () => {
+        const members = await createDeliveryMembers();
+        await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+        failRoleDeletion(new Error('delete response was lost'), true);
+
+        await expect(members.remove(recipient)).resolves.toBeUndefined();
+        expect(await members.get(recipient)).toBeUndefined();
+      }, 15000);
+
+      it('makes a failed removal retryable while the member remains effective', async () => {
+        const members = await createDeliveryMembers();
+        await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+        const cleanupError = new Error('member removal failed');
+        failRoleDeletion(cleanupError);
+
+        const error = await members.remove(recipient).then(() => undefined, reason => reason as Error);
+
+        expect(error).toBeInstanceOf(ContextNotReadyError);
+        expect(error?.cause).toBe(cleanupError);
+        expect((await members.get(recipient))?.role).toBe('workspace/member');
       }, 15000);
     });
 

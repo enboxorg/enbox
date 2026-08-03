@@ -14,9 +14,6 @@
  * ```ts
  * const threads = enbox.using(ThreadsProtocol);
  *
- * // Install the protocol
- * await threads.configure();
- *
  * // Create — path and data type are checked at compile time
  * const record = await threads.records.create('thread', {
  *   data: { title: 'Hello World', body: '...' },
@@ -1205,8 +1202,6 @@ export type VerifyInstalledResult = {
  * ```ts
  * const notes = enbox.using(NotesProtocol);
  *
- * await notes.configure();
- *
  * const record = await notes.records.create('note', {
  *   data: { title: 'Hello', body: 'Typed data' },
  * });
@@ -1308,9 +1303,8 @@ export class TypedEnbox<
    * the protocol is re-configured with the updated definition and returns
    * status `202`.
    *
-   * **Must be called before any record operations.** Methods like
-   * `records.create()`, `records.query()`, etc. will throw if the protocol
-   * has not been configured.
+   * Record operations prepare the protocol automatically. Call this method
+   * directly only when the application needs the installation result first.
    *
    * @returns The DWN response status and the installed protocol object.
    *
@@ -1320,8 +1314,6 @@ export class TypedEnbox<
    *
    * const { status, protocol } = await proto.configure();
    * console.log(status.code); // 202 (first install) or 200 (already installed)
-   *
-   * // Now you can use records.create(), records.query(), etc.
    * ```
    */
   public async configure(): Promise<DwnResponseStatus & { protocol?: Protocol }> {
@@ -1361,8 +1353,8 @@ export class TypedEnbox<
   /**
    * Whether the protocol has been configured (installed) on the local DWN.
    *
-   * Returns `true` after a successful call to {@link TypedEnbox.configure | configure()}.
-   * Record operations will throw if this is `false`.
+   * Returns `true` after explicit configuration or the first record operation
+   * has prepared the protocol automatically.
    */
   public get isConfigured(): boolean {
     return this._configured;
@@ -1398,8 +1390,7 @@ export class TypedEnbox<
         .filter(source =>
           source.actorDid === this._dwn.connectedDid &&
           source.protocol === this._definition.protocol &&
-          contextRoles.has(source.protocolRole) &&
-          this.supportsMemberContextSource(source)
+          contextRoles.has(source.protocolRole)
         );
     };
 
@@ -1520,23 +1511,40 @@ export class TypedEnbox<
       return context;
     };
 
+    const listOwnedRootContextIds = async (path: string): Promise<string[]> => {
+      await this._ensureReady(path);
+      let parentContexts: Array<string | undefined> = [undefined];
+      let contextIds: string[] = [];
+      const segments = path.split('/');
+      for (let depth = 1; depth <= segments.length; depth++) {
+        const protocolPath = segments.slice(0, depth).join('/');
+        const results = await Promise.all(parentContexts.map(async (within) => {
+          const result = await this._dwn.records.query({
+            filter: compileRecordFilter(this._definition, protocolPath, undefined, undefined, within),
+          });
+          requireDwnSuccess('TypedEnbox.contexts.list', result);
+          return result.records;
+        }));
+        contextIds = results.flat().map((record) => {
+          if (record.contextId === undefined) {
+            throw new Error(`TypedEnbox.contexts.list: '${protocolPath}' record is missing its context ID.`);
+          }
+          return record.contextId;
+        });
+        parentContexts = contextIds;
+      }
+      return contextIds;
+    };
+
     const listCatalogContexts = async (): Promise<CatalogContext[]> => {
       const [ownedByRoot, sources] = await Promise.all([
         Promise.all(contextRoots.map(async (path): Promise<CatalogContext[]> => {
           const contexts: CatalogContext[] = [];
-          await this._ensureReady(path);
-          const result = await this._dwn.records.query({
-            filter: compileRecordFilter(this._definition, path, undefined),
-          });
-          requireDwnSuccess('TypedEnbox.contexts.list', result);
-          for (const record of result.records) {
-            if (record.contextId === undefined) {
-              throw new Error(`TypedEnbox.contexts.list: '${path}' record is missing its context ID.`);
-            }
-            const key = contextKey(this._dwn.connectedDid, record.contextId);
+          for (const contextId of await listOwnedRootContextIds(path)) {
+            const key = contextKey(this._dwn.connectedDid, contextId);
             let context = boundOwners.get(key);
             if (context === undefined) {
-              context = bindOwnedContext(path, record.contextId);
+              context = bindOwnedContext(path, contextId);
               boundOwners.set(key, context);
             }
             contexts.push(context);
@@ -2610,11 +2618,17 @@ export class TypedEnbox<
         .map(([, member]) => project(member)));
     };
 
-    const deleteAssignments = async (assignments: readonly ActiveMemberRecord[]): Promise<void> => {
+    const deleteAssignments = async (
+      assignments: readonly ActiveMemberRecord[],
+    ): Promise<PromiseRejectedResult | undefined> => {
       const results = await Promise.allSettled(assignments.map(member => member.record.delete()));
-      const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-      if (failure !== undefined) {
-        throw failure.reason;
+      return results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    };
+    const preferredAfterFailure = async (did: string): Promise<ActiveMemberRecord | undefined> => {
+      try {
+        return preferred(await load(did));
+      } catch (cause: unknown) {
+        throw new ContextNotReadyError(cause);
       }
     };
 
@@ -2648,7 +2662,11 @@ export class TypedEnbox<
         });
       },
       remove: async (did: string): Promise<void> => {
-        await deleteAssignments(await load(normalizeMemberDid(did)));
+        const recipient = normalizeMemberDid(did);
+        const failure = await deleteAssignments(await load(recipient));
+        if (failure !== undefined && await preferredAfterFailure(recipient) !== undefined) {
+          throw new ContextNotReadyError(failure.reason);
+        }
       },
       retryDelivery: async (did: string): Promise<ContextMember<D, C, Role> | undefined> => {
         const member = preferred(await load(normalizeMemberDid(did)));
@@ -2680,7 +2698,17 @@ export class TypedEnbox<
           accepted = { did: recipient, record: await current.record.update({ data: request.data }), role };
         }
 
-        await deleteAssignments(existing.filter(member => member.record.id !== accepted.record.id));
+        const failure = await deleteAssignments(existing.filter(member => member.record.id !== accepted.record.id));
+        if (failure !== undefined) {
+          const effective = await preferredAfterFailure(recipient);
+          if (effective?.role !== role) {
+            throw new ContextNotReadyError(failure.reason);
+          }
+          if (effective.record.id !== accepted.record.id) {
+            outcome = undefined;
+          }
+          accepted = effective;
+        }
         return project(accepted, false, outcome);
       },
     }) as unknown as ContextMembersApi<D, C, Role>;
@@ -2886,19 +2914,6 @@ export class TypedEnbox<
       role: scope.role,
       refresh,
     }) as unknown as MemberContext<D, C>;
-  }
-
-  /** Whether the current application definition can represent one stored active role. */
-  private supportsMemberContextSource(source: FollowedSyncSource): boolean {
-    try {
-      this.resolveMemberContextScope(source.protocolRole);
-      return true;
-    } catch (error: unknown) {
-      if (error instanceof TypeError) {
-        return false;
-      }
-      throw error;
-    }
   }
 
   /** Reuse one typed records implementation with tenant and root routing already bound. */
@@ -3630,7 +3645,10 @@ export class TypedEnbox<
           recordId     : request.recordId,
           prune        : request.prune,
         });
-        if (result.status.code === 404 || isCanonicalConflictStatus(result.status)) {
+        if (result.status.code === 404 && this._options.context === undefined) {
+          return;
+        }
+        if (isCanonicalConflictStatus(result.status)) {
           if (this._options.context !== undefined) {
             await this._dwn.invalidateRecordReplica();
           }

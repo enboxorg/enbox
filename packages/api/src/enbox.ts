@@ -295,8 +295,6 @@ export class Enbox {
    * ```ts
    * const notes = enbox.using(NotesProtocol);
    *
-   * await notes.configure();
-   *
    * const record = await notes.records.create('note', {
    *   data: { title: 'Hello', body: 'Typed data' },
    * });
