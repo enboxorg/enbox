@@ -10,8 +10,8 @@ import { followedContextChangeRetiresSource } from './followed-context-lifecycle
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
-import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
 import { waitForViewReady } from './view-ready.js';
+import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
 
 type RecordViewContents<Item> = Readonly<{
   /**
@@ -436,10 +436,10 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
     this._hasMaterialized = true;
     this.publish(immutableState({
-      status: 'ready',
+      status  : 'ready',
       records,
       hasMore,
-      current: currentness.current,
+      current : currentness.current,
     }));
   }
 

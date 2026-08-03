@@ -504,7 +504,7 @@ export type ContextMembersApi<
   list(): Promise<ContextMember<D, C, Role>[]>;
   /**
    * Observe the current preferred assignment for every member in this role group.
-   * Delivery is sampled whenever a membership change rematerializes the view.
+   * Delivery is sampled whenever membership or delivery state rematerializes the view.
    */
   observe(): Promise<RecordView<ContextMember<D, C, Role>>>;
   remove(did: string): Promise<void>;
@@ -1524,6 +1524,7 @@ export class TypedEnbox<
       const [ownedByRoot, sources] = await Promise.all([
         Promise.all(contextRoots.map(async (path): Promise<CatalogContext[]> => {
           const contexts: CatalogContext[] = [];
+          await this._ensureReady(path);
           const result = await this._dwn.records.query({
             filter: compileRecordFilter(this._definition, path, undefined),
           });

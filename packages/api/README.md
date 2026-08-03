@@ -372,20 +372,26 @@ await page.records.set('notebook/page/title', { data: { title: 'Local title' } }
 await page.records.query('notebook/page/delta');
 
 const members = page.members();
-await members.set(collaboratorDid, {
+let collaborator = await members.set(collaboratorDid, {
   role : 'notebook/page/viewer',
   data : {},
 });
+if (collaborator.delivery.state === 'awaiting-recipient-install') {
+  showInstallPrompt(collaboratorDid);
+  collaborator = await members.retryDelivery(collaboratorDid) ?? collaborator;
+}
 const memberView = await members.observe();
 const renderMembers = (state) => {
   if (state.status === 'error') report(state.error);
   else render(state.records);
 };
-renderMembers(memberView.getState());
 const unsubscribeMembers = memberView.subscribe(renderMembers);
-await page.invite(collaboratorDid, {
-  preview: { title: 'Launch notes' },
-});
+renderMembers(memberView.getState());
+if (collaborator.delivery.state === 'delivered') {
+  await page.invite(collaboratorDid, {
+    preview: { title: 'Launch notes' },
+  });
+}
 
 // When the consuming component is released:
 unsubscribeMembers();
@@ -402,10 +408,11 @@ const render = (state) => {
   if (state.status === 'error') report(state.error);
   else showInvitations(state.records);
 };
-render(inbox.getState());
 const unsubscribe = inbox.subscribe(render);
+render(inbox.getState());
 
-const [invitation] = await notebooks.contexts.invitations.list();
+const [invitation] = (await inbox.ready()).records;
+if (invitation === undefined) throw new Error('Invitation not found.');
 const shared = await invitation.accept();
 
 // Optional before consuming a complete local append-only record set.
@@ -428,6 +435,8 @@ await shared.records.create('notebook/page/delta', { data: nextDelta });
 await shared.records.set('notebook/page/title', { data: { title: 'Shared title' } });
 
 unsubscribe();
+await changes.close();
+await view.close();
 await inbox.close();
 ```
 
@@ -528,8 +537,8 @@ const renderState = ({ status, contexts, error }) => {
   if (status === 'error') report(error);
   else render(contexts);
 };
-renderState(contexts.getState());
 const unsubscribe = contexts.subscribe(renderState);
+renderState(contexts.getState());
 
 // When the consuming component is released:
 unsubscribe();

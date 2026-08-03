@@ -20,10 +20,14 @@ import { BrowserConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enb
 
 const { enbox } = await Enbox.connect({
   connectHandler : BrowserConnectHandler({ appName: 'Notes' }),
-  createIdentity : true,
   protocols      : [NotesProtocol],
 });
 ```
+
+This is the delegated wallet flow. For a local owner identity, omit
+`connectHandler` and pass `createIdentity: true` instead. Applications that own
+session restoration and refresh should use the manifest-backed connection store
+shown in the [`@enbox/api` guide](/docs/packages/api).
 
 ## Browser entrypoint
 
@@ -43,6 +47,6 @@ details.
 | `recordCodecs` | JSON, text, bytes, and Blob record codecs |
 | `AuthManager` | Auth/session lifecycle from `@enbox/auth` |
 | `BrowserConnectHandler` | Browser wallet/connect handler |
-| `DWebConnect` | Browser DWeb connect client helpers |
+| `connectViaPopup()` | Low-level DWeb Connect popup handshake |
 | `activatePolyfills()` | DRL and DWeb browser feature activation |
-| `showWalletSelector()` | Built-in wallet selector UI |
+| `runConnectModal()` | Built-in wallet/connect method selector |

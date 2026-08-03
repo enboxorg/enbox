@@ -29,7 +29,9 @@ Secondary build passes, such as VitePWA service-worker builds, should use the
 same bare package imports as the main app:
 
 ```ts
-import { Enbox } from '@enbox/browser';
+import { activatePolyfills } from '@enbox/browser';
+
+activatePolyfills();
 ```
 
 Do not add a separate `process` shim or IIFE wrapper just for Enbox. If your
@@ -51,8 +53,10 @@ is for server-side DWN deployments.
 ## DWeb polyfills
 
 `activatePolyfills()` from `@enbox/browser` enables browser DWeb behavior such
-as DRL service-worker handling. It is not a Node-global shim and is not required
-to make the SDK package graph importable.
+as DRL service-worker handling. Every Enbox browser app must register a service
+worker that calls it; without that worker, DRL fetches fail as ordinary network
+requests. It is not a Node-global shim and is not required merely to import the
+SDK package graph.
 
 ```ts
 import { activatePolyfills } from '@enbox/browser';

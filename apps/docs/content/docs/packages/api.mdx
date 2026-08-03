@@ -12,11 +12,11 @@ cursors stay inside Enbox.
 ## Installation
 
 ```bash
-bun add @enbox/api
+bun add @enbox/browser
 ```
 
-Browser apps normally import the same API from `@enbox/browser`, which also
-provides browser connection handlers and storage defaults.
+`@enbox/browser` re-exports this API and adds browser connection handlers and
+storage defaults. Non-browser applications can install `@enbox/api` directly.
 
 ## Application bootstrap
 
@@ -30,8 +30,7 @@ Members can edit; viewers can read. `roleGroups` records that policy once so
 owner and member call sites do not repeat role paths or precedence.
 
 ```ts
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import { defineProtocol, recordCodecs } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/browser';
 
 const definition = {
   protocol  : 'https://example.com/protocols/notebooks',
@@ -78,7 +77,7 @@ const definition = {
       },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const;
 
 export const NotebookProtocol = defineProtocol(definition, {
   notebook : recordCodecs.json<{ name: string }>(),
@@ -102,7 +101,11 @@ deliver those keys directly.
 ### 2. Register and connect the application
 
 ```ts
-import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
+import {
+  BrowserConnectHandler,
+  createConnectionStore,
+  defineApplicationManifest,
+} from '@enbox/browser';
 import { NotebookProtocol } from './notebook-protocol.js';
 
 export const application = defineApplicationManifest({
@@ -111,7 +114,7 @@ export const application = defineApplicationManifest({
 
 const store = createConnectionStore({
   application,
-  connectHandler,
+  connectHandler: BrowserConnectHandler({ appName: 'Notebook' }),
   monitor: { autoRefresh: {} },
 });
 
@@ -125,6 +128,10 @@ if (snapshot.phase !== 'connected') {
 
 const notebooks = snapshot.enbox!.using(NotebookProtocol);
 ```
+
+Browser apps must also register a service worker that calls
+`activatePolyfills()` so DRL-backed data resolves. See
+[Browser & bundlers](/docs/guides/browser-bundlers) for the required wiring.
 
 The manifest is the canonical list of protocols and delegated permissions.
 The store restores sessions, requests the required grants, installs protocols
@@ -199,10 +206,11 @@ The main operations are:
 `update({ data })` replaces the full value; `patch()` performs a shallow merge
 and may invoke its side-effect-free producer twice when retrying one conflict.
 
-A missing read returns `undefined`. Other non-success statuses throw
-`DwnResponseError`. Typed deletion is idempotent only when the authority proves
-an existing tombstone; a context-scoped plain 404 still throws because the ID
-may identify a record outside that context.
+A missing read returns `undefined`; other non-success statuses normally throw
+`DwnResponseError`. An unbound typed delete also treats an already-absent record
+or a canonical tombstone conflict as complete. Context-bound deletion is
+stricter: its initial authority miss requires an authorized tombstone because
+the ID may identify a record outside that context.
 
 ### Query, observe, or subscribe?
 
@@ -222,13 +230,13 @@ const view = await notebooks.records.observe('notebook/page', {
   pagination : { limit: 25 },
 });
 
-const state = await view.ready();
-renderPages(state.records, state.current);
-
-const unsubscribe = view.subscribe((next) => {
+const renderView = (next) => {
   if (next.status === 'error') report(next.error);
   else renderPages(next.records, next.current);
-});
+};
+const unsubscribe = view.subscribe(renderView);
+renderView(view.getState());
+await view.ready();
 
 unsubscribe();
 await view.close();
@@ -259,6 +267,9 @@ const changes = await page.records.subscribe(
     if (event.type === 'write') applyChange(await event.record.value());
   },
 );
+
+// When the consuming component is released:
+await changes.close();
 ```
 
 The live stream opens before replay. The handoff is at least once, so consumers
@@ -288,18 +299,22 @@ await page.records.create('notebook/page/change', {
 });
 
 const members = page.members();
-const alice = await members.set(aliceDid, {
+let alice = await members.set(aliceDid, {
   role : 'notebook/page/member',
   data : { name: 'Alice' },
 });
 
 if (alice.delivery.state === 'awaiting-recipient-install') {
   showInstallPrompt(aliceDid);
+  // After the recipient reports that installation completed:
+  alice = await members.retryDelivery(aliceDid) ?? alice;
 }
 
-await page.invite(aliceDid, {
-  preview: { title: 'Launch plan' },
-});
+if (alice.delivery.state === 'delivered') {
+  await page.invite(aliceDid, {
+    preview: { title: 'Launch plan' },
+  });
+}
 ```
 
 `members().set()` creates or replaces the preferred assignment, provisions the
@@ -315,9 +330,14 @@ audience-key rotation.
 
 ```ts
 const inbox = await notebooks.contexts.invitations.observe();
-await inbox.ready();
+const renderInbox = (state) => {
+  if (state.status === 'error') report(state.error);
+  else showInvitations(state.records, state.current);
+};
+const unsubscribeInbox = inbox.subscribe(renderInbox);
+renderInbox(inbox.getState());
 
-const [invitation] = await notebooks.contexts.invitations.list();
+const [invitation] = (await inbox.ready()).records;
 if (invitation === undefined) throw new Error('Invitation not found.');
 
 // accept() verifies current membership and begins exact-context replication.
@@ -332,6 +352,7 @@ await shared.records.create('notebook/page/change', {
   data: { body: 'Reviewed by Alice' },
 });
 
+unsubscribeInbox();
 await inbox.close();
 ```
 
@@ -348,6 +369,7 @@ membership, decryption, registration, or replication is temporarily not ready.
 ### One owned-and-shared catalog
 
 ```ts
+// Read once:
 const all = await notebooks.contexts.list();
 
 for (const context of all) {
@@ -358,13 +380,15 @@ for (const context of all) {
   }
 }
 
+// Or keep the same catalog live:
 const catalog = await notebooks.contexts.observe();
-await catalog.ready();
-
-const unsubscribeCatalog = catalog.subscribe(({ status, contexts, error }) => {
+const renderCatalog = ({ status, contexts, error }) => {
   if (status === 'error') report(error);
   else renderNotebooks(contexts);
-});
+};
+const unsubscribeCatalog = catalog.subscribe(renderCatalog);
+renderCatalog(catalog.getState());
+await catalog.ready();
 
 unsubscribeCatalog();
 await catalog.close();
@@ -396,9 +420,16 @@ operation needs replication freshness.
 - Other `follow()` failures use a sanitized message but preserve the original
   error as `cause` for diagnostics.
 
-Accepted contexts survive restart. Enbox re-resolves owner endpoints and role
-authority, replicates only the readable context paths, and keeps tenant DIDs,
-grants, progress cursors, and encryption envelopes out of the dapp surface.
+Accepted contexts survive restart in the current agent. Acceptance does not yet
+replicate between a user's devices ([tracking issue](https://github.com/enboxorg/enbox/issues/1551)).
+Enbox re-resolves owner endpoints and role authority, replicates only the
+readable context paths, and keeps tenant DIDs, grants, progress cursors, and
+encryption envelopes out of the dapp surface.
+
+For wallet-delegated member sessions, a foreign owner's DWN can enforce the
+embedded grant's expiry but does not receive revocations stored only on the
+member's own DWNs. Treat revocation of a compromised delegate as expiry-bounded
+until foreign-context revocation is made verifier-visible.
 
 ## Advanced entry points
 

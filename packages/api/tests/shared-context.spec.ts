@@ -892,9 +892,10 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('does not expose internal source record IDs when following fails', async () => {
-    follow.rejects(new Error(
+    const cause = new Error(
       'Followed context endpoints disagree on role secret-role-record-id and source secret-source-record-id.',
-    ));
+    );
+    follow.rejects(cause);
 
     const error = await typed.contexts.follow({
       ownerDid : sourceDid,
@@ -903,6 +904,7 @@ describe('TypedEnbox contexts', () => {
 
     expect(error).toBeInstanceOf(Error);
     expect(error?.message).toBe('TypedEnbox.contexts.follow could not establish the requested context.');
+    expect(error?.cause).toBe(cause);
     expect(error?.message).not.toContain('secret-role-record-id');
     expect(error?.message).not.toContain('secret-source-record-id');
   });
@@ -983,6 +985,12 @@ describe('TypedEnbox contexts', () => {
   it('lists owned and member contexts together and prefers owner access for the same context', async () => {
     current = source();
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return { reply: { entries: [contextEntry()], status: { code: 200, detail: 'OK' } } };
       }
@@ -1004,6 +1012,12 @@ describe('TypedEnbox contexts', () => {
 
   it('lists owned contexts without requiring a sync engine', async () => {
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return { reply: { entries: [contextEntry()], status: { code: 200, detail: 'OK' } } };
       }
@@ -1308,8 +1322,7 @@ describe('TypedEnbox contexts', () => {
 
     expect(await typed.contexts.list()).toEqual([]);
     const view = await typed.contexts.observe();
-    await new Promise(resolve => setTimeout(resolve, 0));
-    expect(view.getState()).toMatchObject({ status: 'ready', contexts: [] });
+    expect(await view.ready()).toMatchObject({ status: 'ready', contexts: [] });
     await view.close();
   });
 
@@ -1323,8 +1336,7 @@ describe('TypedEnbox contexts', () => {
 
     expect(await typed.contexts.list()).toEqual([]);
     const view = await typed.contexts.observe();
-    await new Promise(resolve => setTimeout(resolve, 0));
-    expect(view.getState()).toMatchObject({ status: 'ready', contexts: [] });
+    expect(await view.ready()).toMatchObject({ status: 'ready', contexts: [] });
     await view.close();
   });
 
@@ -1345,6 +1357,9 @@ describe('TypedEnbox contexts', () => {
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
       if (request.messageType === DwnInterface.ProtocolsQuery) {
         return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
       }
       if (request.messageType === DwnInterface.MessagesSubscribe) {
         order.push('subscribe');
@@ -1413,6 +1428,9 @@ describe('TypedEnbox contexts', () => {
       if (request.messageType === DwnInterface.ProtocolsQuery) {
         return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
       }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
       if (request.messageType === DwnInterface.MessagesSubscribe) {
         deliver = request.subscriptionHandler!;
         return {
@@ -1460,6 +1478,9 @@ describe('TypedEnbox contexts', () => {
       if (request.messageType === DwnInterface.ProtocolsQuery) {
         return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
       }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return { reply: { entries: [], status: { code: 200, detail: 'OK' } } };
       }
@@ -1480,6 +1501,9 @@ describe('TypedEnbox contexts', () => {
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
       if (request.messageType === DwnInterface.ProtocolsQuery) {
         return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
       }
       if (request.messageType === DwnInterface.RecordsSubscribe) {
         return { reply: { status: { code: 200, detail: 'OK' }, subscription: transport } };
