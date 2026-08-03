@@ -1511,6 +1511,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     let activate: FollowedSyncSource | undefined;
+    let initializeTargets: SyncTarget[] = [];
     let pullDrained = false;
     await this._lifecycle.acquireSync();
     try {
@@ -1566,6 +1567,14 @@ export class SyncEngineLevel implements SyncEngine {
       if (targets.length === 0 || !await isCurrent()) {
         return false;
       }
+      if (activate === undefined && this._runtime.live) {
+        initializeTargets = targets.filter(target => this.getLinkController(buildLinkKey(
+          target.did,
+          target.dwnUrl,
+          target.projectionId,
+          target.authorizationEpoch,
+        ))?.isActive !== true);
+      }
       const results = await Promise.allSettled(targets.map(target => this.reconcileTarget(
         target,
         { direction: 'pull' },
@@ -1581,6 +1590,12 @@ export class SyncEngineLevel implements SyncEngine {
       this._lifecycle.releaseSync();
       if (activate !== undefined) {
         this.activateFollowedSource(activate, identity.delegateDid);
+      }
+    }
+    if (initializeTargets.length > 0) {
+      const initialized = await Promise.all(initializeTargets.map(target => this.initializeLinkTargetWithRetry(target)));
+      if (initialized.some(result => result.status !== LinkInitializationStatus.Active)) {
+        return false;
       }
     }
     return pullDrained;
@@ -4913,11 +4928,23 @@ export class SyncEngineLevel implements SyncEngine {
           continue;
         }
 
-        const scope = syncScopeFromProtocols(entry.options.protocols);
-        const resolutions = await this.targetResolver.buildTargetResolutions(entry.did, scope, entry.options);
-        for (const resolution of resolutions) {
-          const projectionId = await computeProjectionId(entry.did, resolution.scope);
-          identityKeys.add(buildDurableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
+        try {
+          const scope = syncScopeFromProtocols(entry.options.protocols);
+          const resolutions = await this.targetResolver.buildTargetResolutions(entry.did, scope, entry.options);
+          for (const resolution of resolutions) {
+            const projectionId = await computeProjectionId(entry.did, resolution.scope);
+            identityKeys.add(buildDurableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
+          }
+        } catch (error: unknown) {
+          console.warn(
+            `SyncEngineLevel: Failed to resolve current link identities for ${entry.did}; retaining its durable links`,
+            error,
+          );
+          for (const link of await this.replicationLinkStore.getLinksForTenant(entry.did)) {
+            if (link.authorization.kind !== 'role') {
+              identityKeys.add(this.getDurableLinkIdentityKey(link));
+            }
+          }
         }
       }
       for (const entry of await this._followedSourceStore.list()) {
@@ -4925,14 +4952,21 @@ export class SyncEngineLevel implements SyncEngine {
           console.warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping health target:`, entry.error);
           continue;
         }
-        for (const target of await this.targetResolver.buildTargetsForSource(entry.source)) {
-          identityKeys.add(buildCurrentLinkIdentityKey(
-            target.did,
-            target.dwnUrl,
-            target.projectionId,
-            target.authorizationEpoch,
-            target.authorization.kind,
-          ));
+        try {
+          for (const target of await this.targetResolver.buildTargetsForSource(entry.source)) {
+            identityKeys.add(buildCurrentLinkIdentityKey(
+              target.did,
+              target.dwnUrl,
+              target.projectionId,
+              target.authorizationEpoch,
+              target.authorization.kind,
+            ));
+          }
+        } catch (error: unknown) {
+          console.warn(
+            `SyncEngineLevel: Failed to resolve current endpoints for followed source ${entry.source.id}; excluding its role links`,
+            error,
+          );
         }
       }
       return identityKeys;

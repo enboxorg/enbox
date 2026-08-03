@@ -167,6 +167,34 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(reconcile.alwaysCalledWithMatch(sinon.match.any, { direction: 'pull' }, sinon.match.func)).toBe(true);
   });
 
+  it('should initialize only missing current endpoint controllers after a live pull', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const dwnUrls = ['https://current.example.com', 'https://new.example.com'];
+    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._followedSourceStore.replace(followed);
+    stubPreparedSource(engine, followed, dwnUrls);
+
+    const currentLink = await createRoleLink(engine, targetFor(followed, dwnUrls[0]));
+    const currentTarget = { ...targetFor(followed, dwnUrls[0]), projectionId: currentLink.projectionId };
+    const newTarget = { ...targetFor(followed, dwnUrls[1]), projectionId: currentLink.projectionId };
+    const currentController = internal.activateLink(linkKey(currentLink), currentLink);
+    internal._runtime = new SyncRuntime(true);
+    sinon.stub(internal.targetResolver, 'buildTargetsForSource').resolves([currentTarget, newTarget]);
+    sinon.stub(internal, 'reconcileTarget').resolves({ pullDrained: true });
+    const initialize = sinon.stub(internal, 'initializeLinkTargetWithRetry').resolves({
+      status                 : 'active',
+      durableLinkIdentityKey : 'new-link',
+    });
+
+    await expect(engine.pullFollowedSource(followed)).resolves.toBe(true);
+
+    expect(initialize.calledOnceWithExactly(newTarget)).toBe(true);
+    internal._runtime.dispose();
+    await currentController.dispose();
+  });
+
   it('should report an exact followed-source pull as incomplete when one endpoint does not drain', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
@@ -806,6 +834,44 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(controller.isActive).toBe(false);
     expect(internal._linkControllers.has(linkKey(oldLink))).toBe(false);
     expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toEqual([]);
+  });
+
+  it('should isolate current-link resolution failures to their identity and followed source', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const healthy = source('role-healthy', 'notebook-healthy');
+    const unavailable = source('role-unavailable', 'notebook-unavailable');
+    const unavailableIdentity = 'did:example:unavailable-identity';
+    await internal._identityStore.set(unavailableIdentity, { protocols: 'all' });
+    await internal._followedSourceStore.replace(healthy);
+    await internal._followedSourceStore.replace(unavailable);
+    await internal.replicationLinkStore.getOrCreateLink({
+      tenantDid          : unavailableIdentity,
+      remoteEndpoint     : 'https://member.example.com',
+      scope              : { kind: 'full' },
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+    });
+    const healthyLink = await createRoleLink(engine, targetFor(healthy));
+    await createRoleLink(engine, targetFor(unavailable));
+    const healthyTarget = { ...targetFor(healthy), projectionId: healthyLink.projectionId };
+    sinon.stub(internal.targetResolver, 'buildTargetResolutions').rejects(new Error('identity unavailable'));
+    sinon.stub(internal.targetResolver, 'buildTargetsForSource').callsFake(
+      async (candidate: FollowedSyncSource): Promise<SyncTarget[]> => {
+        if (candidate.id === unavailable.id) {
+          throw new Error('source unavailable');
+        }
+        return [healthyTarget];
+      },
+    );
+    sinon.stub(console, 'warn');
+
+    const links = await engine.getReplicationLinks();
+
+    expect(links).toHaveLength(2);
+    expect(links.some(link => link.tenantDid === unavailableIdentity && link.followedSourceId === undefined)).toBe(true);
+    expect(links.filter(link => link.followedSourceId !== undefined).map(link => link.followedSourceId))
+      .toEqual([healthy.id]);
   });
 
   it('should publish a catalog change received while obsolete-link cleanup is pending', async () => {
