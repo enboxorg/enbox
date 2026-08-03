@@ -710,7 +710,7 @@ describe('TypedEnbox contexts', () => {
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 
     const created = await shared.records.create('workspace/note', { data: { title: 'Created remotely' } });
-    await shared.whenCurrent();
+    await shared.refresh();
     const local = await shared.records.query('workspace/note');
 
     expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
@@ -1571,7 +1571,7 @@ describe('TypedEnbox contexts', () => {
     });
     const [shared] = await typed.contexts.list();
 
-    await shared.whenCurrent();
+    await shared.refresh();
 
     expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
@@ -1581,7 +1581,7 @@ describe('TypedEnbox contexts', () => {
     links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
     const [shared] = await typed.contexts.list();
 
-    await shared.whenCurrent();
+    await shared.refresh();
 
     expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
@@ -1592,7 +1592,7 @@ describe('TypedEnbox contexts', () => {
     links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
     const [shared] = await typed.contexts.list();
     let resolved = false;
-    const ready = shared.whenCurrent().then((): void => { resolved = true; });
+    const ready = shared.refresh().then((): void => { resolved = true; });
 
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(resolved).toBe(false);
@@ -1622,7 +1622,7 @@ describe('TypedEnbox contexts', () => {
     const [shared] = await typed.contexts.list();
     const clock = sinon.useFakeTimers();
     try {
-      const pending = shared.whenCurrent().then(() => undefined, reason => reason as Error);
+      const pending = shared.refresh().then(() => undefined, reason => reason as Error);
 
       await clock.tickAsync(10_001);
       const error = await pending;
@@ -1640,11 +1640,11 @@ describe('TypedEnbox contexts', () => {
     registration = undefined;
     const [shared] = await typed.contexts.list();
 
-    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message)
-      .toBe(`MemberContext.whenCurrent: actor '${connectedDid}' is not registered for sync.`);
+      .toBe(`MemberContext.refresh: actor '${connectedDid}' is not registered for sync.`);
     expect(pullFollowedSource.notCalled).toBe(true);
   });
 
@@ -1656,7 +1656,7 @@ describe('TypedEnbox contexts', () => {
     });
     const [shared] = await typed.contexts.list();
 
-    await shared.whenCurrent();
+    await shared.refresh();
 
     expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
@@ -1667,7 +1667,7 @@ describe('TypedEnbox contexts', () => {
     pullFollowedSource.rejects(pullError);
     const [shared] = await typed.contexts.list();
 
-    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect(error?.cause).toBe(pullError);
@@ -1690,7 +1690,7 @@ describe('TypedEnbox contexts', () => {
       return true;
     });
     const [shared] = await typed.contexts.list();
-    const ready = shared.whenCurrent().then((): void => { resolved = true; });
+    const ready = shared.refresh().then((): void => { resolved = true; });
 
     await ready;
     expect(resolved).toBe(true);
@@ -1701,11 +1701,11 @@ describe('TypedEnbox contexts', () => {
     current = source();
     const [shared] = await typed.contexts.list();
 
-    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message).toBe(
-      `MemberContext.whenCurrent: no replication link is available for context '${contextId}' owned by '${sourceDid}'.`,
+      `MemberContext.refresh: no replication link is available for context '${contextId}' owned by '${sourceDid}'.`,
     );
     expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
@@ -1716,7 +1716,7 @@ describe('TypedEnbox contexts', () => {
     pullFollowedSource.resolves(false);
     const [shared] = await typed.contexts.list();
 
-    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message).toContain('did not drain every endpoint');
@@ -1727,7 +1727,7 @@ describe('TypedEnbox contexts', () => {
     links = [replicationLink({ status: 'paused' })];
     const [shared] = await typed.contexts.list();
 
-    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message).toContain('replication is paused');
@@ -1743,11 +1743,11 @@ describe('TypedEnbox contexts', () => {
     });
     const [shared] = await typed.contexts.list();
 
-    const error = await shared.whenCurrent().then(() => undefined, reason => reason as Error);
+    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message)
-      .toBe(`MemberContext.whenCurrent: actor '${connectedDid}' is not registered for sync.`);
+      .toBe(`MemberContext.refresh: actor '${connectedDid}' is not registered for sync.`);
     expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 

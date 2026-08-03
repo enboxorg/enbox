@@ -455,7 +455,7 @@ describe('RecordView', () => {
     await view.close();
   });
 
-  it('rejects a usable-state waiter on a published error or caller abort', async () => {
+  it('rejects a ready waiter on a published error or caller abort', async () => {
     const failedHarness = createHarness(async () => ({
       status  : { code: 500, detail: 'query failed' },
       records : [],
@@ -486,7 +486,7 @@ describe('RecordView', () => {
     await pendingView.close();
   });
 
-  it('rejects a usable-state waiter when the view closes', async () => {
+  it('rejects a ready waiter when the view closes', async () => {
     let finishQuery!: (response: RecordsQueryResponse) => void;
     const harness = createHarness(() => new Promise((resolve) => { finishQuery = resolve; }));
     const view = await createTyped(harness).records.observe('note', {

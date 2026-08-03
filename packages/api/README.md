@@ -64,8 +64,8 @@ const unsubscribe = store.subscribe((snapshot) => {
 await store.initialize();
 ```
 
-`sync` uses the same `loading`, `ready`, `stale`, and `error` terms as observed
-record views. `loading` means a registered replica has not completed its first
+Connection snapshots retain the replication-level `loading`, `ready`, `stale`,
+and `error` states. `loading` means a registered replica has not completed its first
 baseline; `ready` means every current link is caught up (or the identity is
 local-only); `stale` retains a previously reached baseline while a link is no
 longer current; and `error` reports paused replication or an unreadable local
@@ -318,28 +318,26 @@ a shallow partial object update with one bounded conflict retry.
 `observe()` watches the connected tenant by default; pass `from` and, when
 required, `protocolRole` to watch a foreign tenant. Subscription events are
 wake hints: every immutable view state is rebuilt from the same canonical query.
-Its required pagination limit bounds retained records. Local views report
-replica currentness; a successful foreign query is `ready`.
+Its required pagination limit bounds retained records.
 When the owning session ends, a view publishes one terminal `error` state
 and closes. After automatic grant refresh, `ConnectionStore` publishes a
 replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
 from the replacement `AuthManager.session` announced by `session-start`.
 
-Before the first query, every view is `loading`; a local view also remains
-`loading` until its configured replicas complete their required pull. An empty
-`ready` state is therefore authoritatively empty, not still bootstrapping.
-After a local view has been ready, an offline or catching-up source makes it
-`stale`. Successful local queries continue to update stale states, so
-offline writes remain visible. Query, authorization, and terminal sync failures
-publish `error` while retaining the latest successful records.
+Before the first query, every view is `loading`. After the first local
+materialization it is `ready`, including for an empty or offline result.
+`current` separately reports whether the relevant replication links are caught
+up. Successful local queries continue to update a non-current state, so offline
+writes remain visible. Query, authorization, and terminal sync failures publish
+`error` while retaining the latest successful records.
 `hasMore` is always present: it is `false` before the first query and whenever
 the latest bounded result has no next page.
 
-`ready({ signal })` resolves with the first state containing records, even
-while an offline replica is `loading` or `stale`. An empty state resolves only
-when `ready` makes the absence authoritative. It rejects the first error state,
-caller abort, or closure; callers may wait again after a recoverable error, and
-later states continue through `subscribe()`.
+`ready({ signal })` resolves after the first local query makes its result
+usable. It rejects the first error state, caller abort, or closure; callers may
+wait again after a recoverable error, and later states continue through
+`subscribe()`. Do not treat an empty result as authoritative remote absence
+until `current` is true.
 
 The state object and records array are immutable. Each `Record<T>` handle
 represents the queried version until the caller explicitly uses that handle's
@@ -412,7 +410,7 @@ const shared = await invitation.accept();
 
 // Optional before consuming a complete local append-only record set.
 // follow() itself does not block on an unbounded download.
-await shared.whenCurrent();
+await shared.refresh();
 
 const view = await shared.records.observe('notebook/page/title', {
   pagination: { limit: 1 },
@@ -472,13 +470,14 @@ on one device can therefore remove it from another device before that second
 agent has accepted the context; cross-device acceptance is tracked in
 [#1551](https://github.com/enboxorg/enbox/issues/1551).
 
-`contexts.follow()` and `whenCurrent()` throw `ContextNotReadyError` while the
+`contexts.follow()` and `refresh()` throw `ContextNotReadyError` while the
 context's membership, encryption, or replication state is not ready. The
 condition is retryable; other establishment failures remain sanitized as a
-generic context error. `whenCurrent()` starts one actor-scoped pull when the
-accepted context is not current, then rejects instead of waiting forever if
-that pull cannot catch it up. If live sync is already initializing the link,
-it waits for that initialization for at most ten seconds.
+generic context error with the original error retained as `cause`. `refresh()`
+is a no-op when the replica is current; otherwise it starts one actor-scoped
+pull, then rejects instead of waiting forever if that pull cannot catch it up.
+If live sync is already initializing the link, it waits for that initialization
+for at most ten seconds.
 
 `shared.records` is the existing typed records implementation projected as a
 context-bound API—the same contract returned by `notebooks.contexts.open()`.
@@ -515,15 +514,16 @@ surface, `ownedContext.members()`.
 `subscribe()`. Role writes, replacements, and removals that reach the local
 owner replica refresh the current roster. Committed local delivery-state
 changes, including background repair and `retryDelivery()`, refresh the same
-view without dapp polling. A `ready` view means that roster is current, not that
-every member's delivery state is `delivered`.
+view without dapp polling. `ready` means the local roster can be rendered;
+check the view's `current` flag before treating it as a complete remote roster.
+Neither state implies that every member's delivery is `delivered`.
 
-Accepted contexts survive restart and are reconstructed with
-`await notebooks.contexts.list()`. For a live catalog, subscribe to the same
-durable truth:
+Owned collaboration roots and accepted member contexts are returned together
+by `await notebooks.contexts.list()`. Accepted contexts survive restart. For a
+live catalog, subscribe to the same local truth:
 
 ```ts
-const contexts = notebooks.contexts.observe();
+const contexts = await notebooks.contexts.observe();
 const renderState = ({ status, contexts, error }) => {
   if (status === 'error') report(error);
   else render(contexts);
@@ -533,11 +533,14 @@ const unsubscribe = contexts.subscribe(renderState);
 
 // When the consuming component is released:
 unsubscribe();
-contexts.close();
+await contexts.close();
 ```
 
-The catalog's `ready` state means the local accepted-context list has loaded;
-use each context's `whenCurrent()` or record views for replication currentness.
+The catalog's `ready` state means its first local materialization has loaded.
+Record views expose `current`, and member contexts expose `refresh()`, for
+replication freshness. Catalog entries discriminate owner and member access
+through `context.access`; when the same owner and context ID appears through
+both routes, owner access wins.
 Enbox persists the ordered role group and automatically replaces the active
 role when every advertised owner endpoint proves the same new role record. The
 active readable paths come from that hosted protocol definition; a definition
@@ -635,7 +638,8 @@ coordinates writes across browser contexts.
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
 | `RecordPage<Item>` | One page of selected record items with cursor-free `next()` pagination. |
 | `RecordView<Item>` | Closeable bounded query view with immutable state. |
-| `ContextView` | Closeable live catalog of accepted member contexts. |
+| `ContextView` | Closeable live catalog of owned and accepted member contexts. |
+| `ProtocolContext` | Discriminated owner/member entry returned by a context catalog. |
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
 | `ContextMember` | One owner-managed member and its audience-key delivery state. |
 | `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |

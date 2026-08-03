@@ -3,4 +3,4 @@
 '@enbox/browser': patch
 ---
 
-Add `RecordView.whenUsable()` to await the first state containing records or an authoritative ready-empty result, with caller abort and view-lifecycle cleanup.
+Give observable views one lifecycle contract through `ready()` and async `close()`, while `RecordView.current` reports replication freshness separately from local usability.

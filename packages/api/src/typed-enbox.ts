@@ -555,12 +555,10 @@ type MemberContextForRoot<
     /** Forget this exact accepted source locally without changing the owner-hosted role record. */
     forget(): Promise<void>;
     /**
-     * Resolve once this exact role-authorized local replica is caught up.
-     * Runs at most one scoped pull, gives in-flight live initialization a
-     * bounded wait, and throws {@link ContextNotReadyError} if the replica
-     * remains unavailable, behind, or paused.
+     * Ensure the local replica is current, pulling once when needed and
+     * throwing {@link ContextNotReadyError} when it cannot catch up.
      */
-    whenCurrent(): Promise<void>;
+    refresh(): Promise<void>;
   }>
   : never;
 
@@ -1579,7 +1577,7 @@ export class TypedEnbox<
         ) {
           wake();
         }
-      }) ?? (() => {});
+      }) ?? ((): void => {});
       try {
         const records = contextRoots.length === 0
           ? undefined
@@ -1603,8 +1601,8 @@ export class TypedEnbox<
     };
 
     this._contexts = {
-      open: openContext,
-      follow: followContext as ContextsApi<D, C, G>['follow'],
+      open   : openContext,
+      follow : followContext as ContextsApi<D, C, G>['follow'],
       ...(Object.keys(this._roleGroups).length > 0 ? {
         invitations: {
           list: async (options?: { limit?: number }): Promise<ProtocolContextInvitation<D, C, G>[]> =>
@@ -2737,7 +2735,7 @@ export class TypedEnbox<
       await sync.deleteFollowedSource(source);
       controller.abort(new ContextRetiredError(source.contextId));
     };
-    const whenCurrent = async (): Promise<void> => {
+    const refresh = async (): Promise<void> => {
       const readCurrentness = async (): Promise<{
         links: ReplicationLinkSnapshot[];
         state: ReplicationCurrentness;
@@ -2754,7 +2752,7 @@ export class TypedEnbox<
       const assertRegistered = async (): Promise<void> => {
         if (await sync.getIdentityOptions(source.actorDid) === undefined) {
           throw new ContextNotReadyError(
-            new Error(`MemberContext.whenCurrent: actor '${source.actorDid}' is not registered for sync.`),
+            new Error(`MemberContext.refresh: actor '${source.actorDid}' is not registered for sync.`),
           );
         }
       };
@@ -2764,7 +2762,7 @@ export class TypedEnbox<
         }
         throw new ContextNotReadyError(
           new Error(
-            `MemberContext.whenCurrent: replication is paused for context '${source.contextId}' ` +
+            `MemberContext.refresh: replication is paused for context '${source.contextId}' ` +
             `owned by '${source.sourceDid}'.`,
           ),
         );
@@ -2796,7 +2794,7 @@ export class TypedEnbox<
       if (currentness.links.length === 0) {
         throw new ContextNotReadyError(
           pullFailure ?? new Error(
-            `MemberContext.whenCurrent: no replication link is available for context '${source.contextId}' ` +
+            `MemberContext.refresh: no replication link is available for context '${source.contextId}' ` +
             `owned by '${source.sourceDid}'.`,
           ),
         );
@@ -2810,7 +2808,7 @@ export class TypedEnbox<
         }
         throw new ContextNotReadyError(
           pullFailure ?? new Error(
-            `MemberContext.whenCurrent: replication did not drain every endpoint for context ` +
+            `MemberContext.refresh: replication did not drain every endpoint for context ` +
             `'${source.contextId}' owned by '${source.sourceDid}'.`,
           ),
         );
@@ -2822,7 +2820,7 @@ export class TypedEnbox<
         if (remaining <= 0) {
           throw new ContextNotReadyError(
             pullFailure ?? new Error(
-              `MemberContext.whenCurrent: replication did not become current within ` +
+              `MemberContext.refresh: replication did not become current within ` +
               `${DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS} milliseconds.`,
             ),
           );
@@ -2883,7 +2881,7 @@ export class TypedEnbox<
         protocolPaths,
       }, signal),
       role: scope.role,
-      whenCurrent,
+      refresh,
     }) as unknown as MemberContext<D, C>;
   }
 

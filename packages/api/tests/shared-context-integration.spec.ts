@@ -315,7 +315,7 @@ describe('shared context public API integration', () => {
     expect(contextA.role).toBe('notebook/page/member');
     expect(contextB.role).toBe('notebook/page/viewer');
 
-    await Promise.all([contextA.whenCurrent(), contextB.whenCurrent()]);
+    await Promise.all([contextA.refresh(), contextB.refresh()]);
 
     await memberHarness.agent.sync.stopSync();
     const localRequests = sinon.spy(memberHarness.agent, 'processDwnRequest');
@@ -523,13 +523,14 @@ describe('shared context public API integration', () => {
     expect(restored.map((context) => context.id).sort()).toEqual([...contextIds].sort());
 
     const restoredA = restored.find((context) => context.id === contextIds[0])!;
-    await restoredA.whenCurrent();
+    if (restoredA.access !== 'member') { throw new Error('expected a member context'); }
+    await restoredA.refresh();
     const restoredPages = await restoredA.records.query('notebook/page', { pagination: { limit: 10 } });
     expect(restoredPages.records).toHaveLength(1);
     expect(restoredPages.records[0].id).toBe(largePageRecordId);
     expect(await restoredPages.records[0].value()).toEqual(largePage);
 
-    const catalog = reopened.contexts.observe();
+    const catalog = await reopened.contexts.observe();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(catalog.getState()).toMatchObject({ status: 'ready', contexts: [{}, {}] });
     }, Poller.pollRetrySleep, 30_000);
@@ -562,7 +563,8 @@ describe('shared context public API integration', () => {
     }, Poller.pollRetrySleep, 30_000);
     await expect(restoredA.records.query('notebook/page')).rejects.toThrow('is no longer active');
     const downgraded = catalog.getState().contexts.find(context => context.id === contextIds[0])!;
-    await downgraded.whenCurrent();
+    if (downgraded.access !== 'member') { throw new Error('expected a member context'); }
+    await downgraded.refresh();
 
     await members.remove(memberDid);
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
@@ -573,11 +575,12 @@ describe('shared context public API integration', () => {
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(catalog.getState().contexts.every(context => context.id !== contextIds[0])).toBe(true);
     }, Poller.pollRetrySleep, 30_000);
-    catalog.close();
+    await catalog.close();
 
     const [sibling] = await reopened.contexts.list();
     expect(sibling.id).toBe(contextIds[1]);
-    await sibling.whenCurrent();
+    if (sibling.access !== 'member') { throw new Error('expected a member context'); }
+    await sibling.refresh();
     const siblingPages = await sibling.records.query('notebook/page', { pagination: { limit: 10 } });
     expect(await siblingPages.records[0].value()).toEqual({ body: 'sibling page' });
     await sibling.leave();

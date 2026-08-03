@@ -239,8 +239,10 @@ void typed.contexts.invitations.list().then((invitations): void => {
 });
 
 void typed.contexts.invitations.observe().then((view): void => {
-  const status: 'loading' | 'ready' | 'stale' | 'error' = view.getState().status;
+  const status: 'loading' | 'ready' | 'error' = view.getState().status;
+  const current: boolean = view.getState().current;
   void status;
+  void current;
   void view.getState().records;
   void view.getState().hasMore;
 });
@@ -274,7 +276,7 @@ if (context.access === 'member') {
   void context.role;
   void context.forget();
   void context.leave();
-  void context.whenCurrent();
+  void context.refresh();
   // @ts-expect-error only owners manage context membership.
   context.members();
 }

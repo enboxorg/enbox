@@ -114,7 +114,7 @@ void sharedContext.then(context => {
   void role;
   // @ts-expect-error member contexts expose only their root and descendants.
   void context.records.query('admin');
-  return context.whenCurrent();
+  return context.refresh();
 });
 
 const viewerContext = typed.contexts.follow({
