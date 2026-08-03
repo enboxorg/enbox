@@ -76,7 +76,13 @@ function eose(position: string): DwnSubscriptionMessage {
   };
 }
 
-function createApi(agent: AgentStub, assertActive: () => Promise<void> = async (): Promise<void> => {}): DwnApi {
+function createApi(
+  agent: AgentStub,
+  options: {
+    assertActive?: () => Promise<void>;
+    mutationAccepted?: () => Promise<void>;
+  } = {},
+): DwnApi {
   const permissionsApi = { getPermissionForRequest: sinon.stub() };
   const dwn = new DwnApi({
     agent          : agent as unknown as EnboxAgent,
@@ -84,9 +90,10 @@ function createApi(agent: AgentStub, assertActive: () => Promise<void> = async (
     permissionsApi : permissionsApi as unknown as AgentPermissionsApi,
   });
   return dwn.withRecordExecutionContext({
-    assertActive,
+    assertActive     : options.assertActive ?? (async (): Promise<void> => {}),
     contextId        : 'workspace',
     followedSourceId : 'role-record',
+    mutationAccepted : options.mutationAccepted,
     protocolRole,
     tenantDid,
   });
@@ -218,6 +225,64 @@ describe('context record execution', () => {
       await expect(dwn.readRecordForMutation({ filter: { recordId } }))
         .rejects.toBeInstanceOf(ContextNotReadyError);
     }
+  });
+
+  it('selects mutation targets from the foreign authority', async () => {
+    agent.sendDwnRequest.resolves({
+      reply: {
+        entries : [{ ...createRecordsWrite(), encodedData: btoa('{}') }],
+        status  : { code: 200, detail: 'OK' },
+      },
+    });
+    const dwn = createApi(agent);
+
+    const result = await dwn.queryRecordsWithRequiredGrant({
+      filter: { protocol, protocolPath: 'note' },
+    });
+
+    expect(result.records).toHaveLength(1);
+    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.sendDwnRequest.calledOnce).toBe(true);
+    expect(agent.sendDwnRequest.firstCall.args[0]).toMatchObject({
+      messageParams: {
+        filter: { protocol, protocolPath: 'note' },
+        protocolRole,
+      },
+      messageType : DwnInterface.RecordsQuery,
+      target      : tenantDid,
+    });
+  });
+
+  it('fences the local replica after each accepted authority mutation', async () => {
+    const mutationAccepted = sinon.stub().resolves();
+    const recordsWrite = createRecordsWrite();
+    const recordsDelete = {
+      authorization : createAuthorization(connectedDid),
+      descriptor    : {
+        interface        : 'Records',
+        messageTimestamp : '2026-01-01T00:00:01.000000Z',
+        method           : 'Delete',
+        recordId,
+      },
+    } as DwnMessage<DwnInterface.RecordsDelete>;
+    agent.sendDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => ({
+      data    : request.messageType === DwnInterface.RecordsWrite ? request.dataStream : undefined,
+      message : request.messageType === DwnInterface.RecordsDelete ? recordsDelete : recordsWrite,
+      reply   : { status: { code: 202, detail: 'Accepted' } },
+    }));
+    const dwn = createApi(agent, { mutationAccepted });
+
+    const { record } = await dwn.records.write({
+      data            : { title: 'created' },
+      protocol,
+      protocolPath    : 'note',
+      parentContextId : 'workspace',
+    });
+    await record!.update({ data: { title: 'updated' } });
+    await record!.delete();
+    await dwn.records.delete({ protocol, protocolPath: 'note', recordId });
+
+    expect(mutationAccepted.callCount).toBe(4);
   });
 
   it('preserves an authorized tombstone for context-bound prune escalation', async () => {
@@ -453,7 +518,7 @@ describe('context record execution', () => {
         status       : { code: 200, detail: 'OK' },
       },
     });
-    const dwn = createApi(agent, assertActive);
+    const dwn = createApi(agent, { assertActive });
     const { record } = await dwn.records.read({ filter: { recordId } });
     expect(record).toBeDefined();
 

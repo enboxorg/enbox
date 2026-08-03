@@ -276,7 +276,7 @@ await notes.records.patch('note', found.id, (current) =>
   current.body === 'Shipped' ? undefined : { body: 'Shipped' }
 );
 
-// Delete by intent; already-absent records also resolve successfully
+// Delete by intent; an existing tombstone also resolves successfully
 await notes.records.delete('note', { recordId: found.id });
 
 unsubscribe();
@@ -289,8 +289,12 @@ a `Record`, `query()` returns a `RecordPage`, `count()` returns a number, and
 `read()` returns a `Record` or `undefined`. `Record.update()` mutates and returns
 the same handle, while `TypedEnbox.records.patch()` returns the freshly read and
 updated record. Successful delete, store, import, and send operations resolve
-without a value. Other non-success DWN statuses throw a
-`DwnResponseError` with the original status:
+without a value. Context-bound deletion requires authority-backed proof: an
+authorized existing tombstone is idempotent, while a plain scoped 404 remains a
+404 because the ID may name a record outside the context.
+
+Other non-success DWN statuses throw a `DwnResponseError` with the original
+status:
 
 ```ts
 import { DwnResponseError } from '@enbox/api';

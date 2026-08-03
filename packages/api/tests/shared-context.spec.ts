@@ -289,6 +289,7 @@ describe('TypedEnbox contexts', () => {
   let list: sinon.SinonStub;
   let listeners: Set<SyncEventListener>;
   let liveSyncRunning: boolean;
+  let markFollowedSourcePullPending: sinon.SinonStub;
   let pullFollowedSource: sinon.SinonStub;
   let registration: SyncIdentityOptions | undefined;
   let retryRoleDelivery: sinon.SinonStub;
@@ -304,6 +305,7 @@ describe('TypedEnbox contexts', () => {
     links = [];
     listeners = new Set();
     liveSyncRunning = false;
+    markFollowedSourcePullPending = sinon.stub().resolves(true);
     pullFollowedSource = sinon.stub().resolves(true);
     registration = { protocols: [SharedDefinition.protocol] };
     agent = {
@@ -379,6 +381,7 @@ describe('TypedEnbox contexts', () => {
         getReplicationLinks : async (): Promise<ReplicationLinkSnapshot[]> => links,
         get isLiveSyncRunning(): boolean { return liveSyncRunning; },
         listFollowedSources : list,
+        markFollowedSourcePullPending,
         on                  : (listener: SyncEventListener): (() => void) => {
           listeners.add(listener);
           return (): void => { listeners.delete(listener); };
@@ -648,6 +651,42 @@ describe('TypedEnbox contexts', () => {
       },
       target: sourceDid,
     });
+    expect(markFollowedSourcePullPending.calledTwice).toBe(true);
+    expect(markFollowedSourcePullPending.alwaysCalledWithExactly(current!)).toBe(true);
+  });
+
+  it('makes a member mutation stale until the exact context is pulled locally', async () => {
+    let replicated: DwnMessage<DwnInterface.RecordsWrite> | undefined;
+    links = [replicationLink()];
+    markFollowedSourcePullPending.callsFake(async (): Promise<boolean> => {
+      links = [replicationLink({ isPullCurrent: false })];
+      return true;
+    });
+    pullFollowedSource.callsFake(async (): Promise<boolean> => {
+      replicated = writeFrom(agent.sendDwnRequest.firstCall.args[0]);
+      links = [replicationLink()];
+      return true;
+    });
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return {
+          reply: {
+            entries : replicated === undefined ? [] : [replicated],
+            status  : { code: 200, detail: 'OK' },
+          },
+        };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+
+    const created = await shared.records.create('workspace/note', { data: { title: 'Created remotely' } });
+    await shared.whenCurrent();
+    const local = await shared.records.query('workspace/note');
+
+    expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(current!)).toBe(true);
+    expect(local.records.map(record => record.id)).toEqual([created.id]);
   });
 
   it('patches a shared record through its bound authority and role', async () => {
@@ -737,13 +776,33 @@ describe('TypedEnbox contexts', () => {
     expect(agent.sendDwnRequest.notCalled).toBe(true);
   });
 
-  it('creates and updates a direct singleton through the bound root', async () => {
+  it('selects and updates a direct singleton from the bound authority', async () => {
+    let existing: DwnMessage<DwnInterface.RecordsWrite> | undefined;
+    agent.sendDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return {
+          reply: {
+            entries : existing === undefined ? [] : [existing],
+            status  : { code: 200, detail: 'OK' },
+          },
+        };
+      }
+      if (request.messageType === DwnInterface.RecordsWrite) {
+        existing = writeFrom(request);
+        return {
+          data    : request.dataStream,
+          message : existing,
+          reply   : { status: { code: 202, detail: 'Accepted' } },
+        };
+      }
+      throw new Error(`Unexpected remote request: ${request.messageType}`);
+    });
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
 
     await shared.records.set('workspace/title', { data: 'First title' });
 
-    expect(agent.processDwnRequest.calledOnce).toBe(true);
-    expect(agent.processDwnRequest.firstCall.args[0]).toMatchObject({
+    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.sendDwnRequest.firstCall.args[0]).toMatchObject({
       messageParams: {
         filter: {
           contextId,
@@ -752,36 +811,45 @@ describe('TypedEnbox contexts', () => {
         },
         protocolRole,
       },
-      target: sourceDid,
+      messageType : DwnInterface.RecordsQuery,
+      target      : sourceDid,
     });
-    expect(agent.sendDwnRequest.calledOnce).toBe(true);
-    expect(agent.sendDwnRequest.firstCall.args[0]).toMatchObject({
+    expect(agent.sendDwnRequest.secondCall.args[0]).toMatchObject({
       messageParams: {
         parentContextId : contextId,
         protocol        : SharedDefinition.protocol,
         protocolPath    : 'workspace/title',
         protocolRole,
       },
-      target: sourceDid,
-    });
-
-    const existing = writeFrom(agent.sendDwnRequest.firstCall.args[0]);
-    agent.processDwnRequest.resolves({
-      reply: { entries: [existing], status: { code: 200, detail: 'OK' } },
+      messageType : DwnInterface.RecordsWrite,
+      target      : sourceDid,
     });
 
     await shared.records.set('workspace/title', { data: 'Updated title' });
 
-    expect(agent.processDwnRequest.callCount).toBe(2);
-    expect(agent.sendDwnRequest.callCount).toBe(2);
-    expect(agent.sendDwnRequest.secondCall.args[0]).toMatchObject({
+    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.sendDwnRequest.callCount).toBe(4);
+    expect(agent.sendDwnRequest.thirdCall.args[0]).toMatchObject({
+      messageParams: {
+        filter: {
+          contextId,
+          protocol     : SharedDefinition.protocol,
+          protocolPath : 'workspace/title',
+        },
+        protocolRole,
+      },
+      messageType : DwnInterface.RecordsQuery,
+      target      : sourceDid,
+    });
+    expect(agent.sendDwnRequest.getCall(3).args[0]).toMatchObject({
       messageParams: {
         protocol     : SharedDefinition.protocol,
         protocolPath : 'workspace/title',
         protocolRole,
-        recordId     : existing.recordId,
+        recordId     : existing!.recordId,
       },
-      target: sourceDid,
+      messageType : DwnInterface.RecordsWrite,
+      target      : sourceDid,
     });
   });
 
@@ -983,7 +1051,7 @@ describe('TypedEnbox contexts', () => {
     expect(deleteAttempts).toBe(2);
   });
 
-  it('treats a context-scoped authority miss as an already completed delete', async () => {
+  it('rejects a context-scoped authority miss without deleting outside the context', async () => {
     agent.sendDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
       expect(request).toMatchObject({
         messageParams: {
@@ -1005,9 +1073,39 @@ describe('TypedEnbox contexts', () => {
 
     await expect(shared.records.delete('workspace/note', {
       recordId: 'sibling-note',
-    })).resolves.toBeUndefined();
+    })).rejects.toMatchObject({ status: { code: 404, detail: 'Not Found' } });
     expect(agent.processDwnRequest.notCalled).toBe(true);
     expect(agent.sendDwnRequest.calledOnce).toBe(true);
+  });
+
+  it('accepts an authorized tombstone as proof that a context delete is complete', async () => {
+    agent.sendDwnRequest.resolves({
+      reply: {
+        entry: {
+          recordsDelete: {
+            authorization : authorization(connectedDid),
+            descriptor    : {
+              interface        : 'Records',
+              messageTimestamp : '2026-01-01T00:00:01.000000Z',
+              method           : 'Delete',
+              prune            : false,
+              recordId         : 'deleted-note',
+            },
+          },
+        },
+        roleRecordId : 'role-record',
+        status       : { code: 404, detail: 'Not Found' },
+      },
+    });
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+
+    await expect(shared.records.delete('workspace/note', {
+      recordId: 'deleted-note',
+    })).resolves.toBeUndefined();
+
+    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.sendDwnRequest.calledOnce).toBe(true);
+    expect(agent.sendDwnRequest.firstCall.args[0].messageType).toBe(DwnInterface.RecordsRead);
   });
 
   it('reconstructs listed contexts and fences exact stale and left sources', async () => {

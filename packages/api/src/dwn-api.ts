@@ -409,9 +409,14 @@ export class DwnApi {
   private async queryRecords(
     request: RecordsQueryRequest,
     missingGrantPolicy: MissingReadGrantPolicy,
+    authoritativeContext: boolean = false,
   ): Promise<RecordsQueryResponse> {
     const { from, ...requestedMessageParams } = request;
-    const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(from, requestedMessageParams, false);
+    const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
+      from,
+      requestedMessageParams,
+      authoritativeContext,
+    );
 
     const agentRequest = await this.prepareReadRequest({
       author      : this.connectedDid,
@@ -821,10 +826,11 @@ export class DwnApi {
   /**
    * @internal
    * Query as the connected identity without falling back to the delegate's
-   * independently visible records when a Records.Read grant is missing.
+   * independently visible records when a Records.Read grant is missing. A
+   * bound context selects from its authoritative tenant for mutation safety.
    */
   public queryRecordsWithRequiredGrant(request: RecordsQueryRequest): Promise<RecordsQueryResponse> {
-    return this.queryRecords(request, 'reject');
+    return this.queryRecords(request, 'reject', this.recordExecutionContext !== undefined);
   }
 
   /** @internal Delete at every hosted endpoint, then apply the exact signed tombstone locally. */
@@ -1223,6 +1229,9 @@ export class DwnApi {
       delete: async (request: RecordsDeleteRequest): Promise<DwnResponseStatus> => {
         const { agentRequest, remoteTarget } = await this.prepareDeleteRecord(request);
         const response = await this.dispatchDwnRequest(agentRequest, remoteTarget);
+        if (response.reply.status.code >= 200 && response.reply.status.code < 300) {
+          await this.recordExecutionContext?.mutationAccepted?.();
+        }
         return { status: response.reply.status };
       },
 
@@ -1332,6 +1341,7 @@ export class DwnApi {
             protocolRole : messageParams.protocolRole,
             storedData   : responseData,
           });
+          await this.recordExecutionContext?.mutationAccepted?.();
         }
 
         return { record, status, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };

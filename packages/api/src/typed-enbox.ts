@@ -196,7 +196,7 @@ export type RecordSubscriptionEvent<
   | { type: 'error'; error: Error }
 >;
 
-/** Callback invoked for one typed record subscription. */
+/** Callback invoked for one typed record subscription. Rejecting closes the subscription. */
 export type RecordSubscriptionListener<
   Path extends string = string,
   Item = Record,
@@ -268,7 +268,7 @@ type TypedRecordsSubscribe<
 
 /** Closeable typed record change subscription. */
 export interface RecordSubscription {
-  /** Stop future delivery. */
+  /** Stop future delivery. A rejected listener also closes the subscription. */
   close(): Promise<void>;
 }
 
@@ -1854,6 +1854,20 @@ export class TypedEnbox<
     let detachAbort = (): void => {};
     let detachSync = (): void => {};
     let closeSubscription = (): Promise<void> => Promise.resolve();
+    let listenerFailure: { error: unknown } | undefined;
+    const deliver = async (
+      event: TypedRecordSubscriptionEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+    ): Promise<void> => {
+      try {
+        await listener(event);
+      } catch (error: unknown) {
+        listenerFailure ??= { error };
+        closed = true;
+        detachAbort();
+        detachSync();
+        await closeSubscription().catch((): void => {});
+      }
+    };
     const followedSourceAcceptanceId = this._dwn.followedSourceAcceptanceId;
     const followedSourceId = this._dwn.followedSourceId;
     const contextId = this._options.context?.contextId;
@@ -1893,14 +1907,14 @@ export class TypedEnbox<
         if (record === undefined) {
           throw new Error('TypedEnbox.records.subscribe: record event is missing its record handle.');
         }
-        await listener(this.recordSubscriptionChange<Selection>(record));
+        await deliver(this.recordSubscriptionChange<Selection>(record));
         return;
       }
       if (message.type === 'error') {
         closed = true;
         detachAbort();
         detachSync();
-        await listener({
+        await deliver({
           type  : 'error',
           error : new Error(`Record subscription failed (${message.error.code}): ${message.error.detail}`),
         });
@@ -1939,6 +1953,9 @@ export class TypedEnbox<
       detachSync();
       await closeSubscription();
       signal?.throwIfAborted();
+      if (listenerFailure !== undefined) {
+        throw listenerFailure.error;
+      }
       throw new Error('TypedEnbox.records.subscribe: closed while opening the subscription.');
     }
     const handleAbort = (): void => {
@@ -2567,8 +2584,11 @@ export class TypedEnbox<
       contextId                  : source.contextId,
       followedSourceAcceptanceId : source.acceptanceId,
       followedSourceId           : source.id,
-      protocolRole               : source.protocolRole,
-      tenantDid                  : source.sourceDid,
+      mutationAccepted           : async (): Promise<void> => {
+        await sync.markFollowedSourcePullPending(source);
+      },
+      protocolRole : source.protocolRole,
+      tenantDid    : source.sourceDid,
     });
     const retire = async (leave: boolean): Promise<void> => {
       if (leave) {
@@ -3427,8 +3447,9 @@ export class TypedEnbox<
        *   path validation).
        * @param request - Delete options. `recordId` is required; `within`
        *   scopes delegated grant resolution and `from` selects a remote DWN.
-       * @returns A promise that resolves when the delete is accepted or the
-       *   record is already absent.
+       * @returns A promise that resolves when the delete is accepted. A
+       *   context-bound miss resolves only when the authority returns an
+       *   authorized tombstone proving the record was deleted in this context.
        *
        * @example
        * ```ts
@@ -3455,9 +3476,16 @@ export class TypedEnbox<
             protocolRole : request.protocolRole,
             within,
           }, true);
-          const pruneEscalation = request.prune === true && tombstonePrune === false;
-          if (record === undefined && !pruneEscalation) {
-            return;
+          if (record === undefined) {
+            if (tombstonePrune === undefined) {
+              throw new DwnResponseError('TypedEnbox.records.delete authority', {
+                code   : 404,
+                detail : 'Not Found',
+              });
+            }
+            if (request.prune !== true || tombstonePrune) {
+              return;
+            }
           }
         }
         const result = await this._dwn.records.delete({

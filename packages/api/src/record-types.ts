@@ -24,6 +24,8 @@ import type {
 export type RecordExecutionContext = Readonly<{
   /** Reject operations after this context has been left or removed. */
   assertActive(): Promise<void>;
+  /** Fence the local replica after an authoritative mutation is accepted. */
+  mutationAccepted?(): Promise<void>;
   /** Root context that bounds every operation. */
   contextId: string;
   /** Opaque local acceptance when this is a followed context. */

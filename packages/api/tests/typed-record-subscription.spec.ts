@@ -384,6 +384,38 @@ describe('typed record subscriptions', () => {
     expect(close.calledOnce).toBe(true);
   });
 
+  it('closes a live subscription after its listener rejects', async () => {
+    const close = sinon.stub().resolves();
+    let deliver!: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>;
+    const dwn = {
+      connectedDid          : 'did:example:alice',
+      followedContextId     : undefined,
+      followedSourceId      : undefined,
+      recordTenantDid       : 'did:example:alice',
+      subscribeRecordFrames : async (
+        _request: { paths: readonly string[]; protocol: string },
+        handler: typeof deliver,
+      ) => {
+        deliver = handler;
+        return {
+          status       : { code: 200, detail: 'OK' },
+          subscription : { id: 'listener-failure', close },
+        };
+      },
+    } as unknown as DwnApi;
+    const records = contextRecords(dwn);
+    const listener = sinon.stub().onFirstCall().rejects(new Error('listener failed'));
+
+    const subscription = await records.subscribe('note', listener);
+    await deliver(event(), testRecord('first', '2026-01-01T00:00:00.000000Z'));
+    await deliver(event(), testRecord('second', '2026-01-01T00:00:01.000000Z'));
+
+    expect(listener.calledOnce).toBe(true);
+    expect(close.calledOnce).toBe(true);
+    await subscription.close();
+    expect(close.calledOnce).toBe(true);
+  });
+
   it('delivers one path-discriminated stream without re-reading inline payloads', async () => {
     const context = await createEnboxTestContext({ application });
     const processRequest = sinon.spy(context.enbox.agent, 'processDwnRequest');
