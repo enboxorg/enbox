@@ -4,6 +4,12 @@
   "type": "object",
   "additionalProperties": false,
   "minProperties": 1,
+  "not": {
+    "required": [
+      "protocolPath",
+      "protocolPathPrefix"
+    ]
+  },
   "properties": {
     "interface": {
       "enum": [

@@ -1,5 +1,5 @@
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
-import { DwnInterfaceName, DwnMethodName, Jws, TestDataGenerator, Time } from '../../src/index.js';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Jws, TestDataGenerator, Time } from '../../src/index.js';
 
 import { describe, expect, it } from 'bun:test';
 
@@ -18,6 +18,19 @@ describe('MessagesSubscribe', () => {
       expect(message.descriptor.method).toEqual(DwnMethodName.Subscribe);
       expect(message.authorization).toBeDefined();
       expect(message.descriptor.messageTimestamp).toBe(timestamp);
+    });
+
+    it('should reject a filter with exact and prefix protocol paths', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+
+      await expect(MessagesSubscribe.create({
+        signer  : Jws.createSigner(alice),
+        filters : [{
+          protocol           : 'http://example.com/protocol',
+          protocolPath       : 'post/attachment',
+          protocolPathPrefix : 'post',
+        }],
+      })).rejects.toThrow(DwnErrorCode.SchemaValidatorFailure);
     });
   });
 });

@@ -142,6 +142,47 @@ export function testMessagesSubscribeHandler(): void {
         expect(reply.status.code).toBe(400);
       });
 
+      it('rejects a signed grant subscription whose exact path is paired with a broader path prefix', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = 'http://messages-subscribe-ambiguous-path-filter';
+        const grant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : bob,
+          scope     : {
+            interface    : DwnInterfaceName.Messages,
+            method       : DwnMethodName.Read,
+            protocol,
+            protocolPath : 'post/attachment',
+          },
+        });
+        expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+        const subscribe = await TestDataGenerator.generateMessagesSubscribe({
+          author             : bob,
+          filters            : [{ protocol, protocolPath: 'post/attachment' }],
+          permissionGrantIds : [grant.message.recordId],
+        });
+        const descriptor = {
+          ...subscribe.message.descriptor,
+          filters: [{
+            protocol,
+            protocolPath       : 'post/attachment',
+            protocolPathPrefix : 'post',
+          }],
+        };
+        const authorization = await Message.createAuthorization({
+          descriptor,
+          signer             : Jws.createSigner(bob),
+          permissionGrantIds : [grant.message.recordId],
+        });
+
+        const reply = await dwn.processMessage(alice.did, { descriptor, authorization }, { subscriptionHandler: (_) => {} });
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.SchemaValidatorFailure);
+        expect(reply.subscription).toBeUndefined();
+      });
+
 
       it('should allow tenant to subscribe their own event stream', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();

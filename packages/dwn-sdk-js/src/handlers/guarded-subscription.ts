@@ -18,12 +18,12 @@ export function createGuardedSubscriptionHandler(input: {
   let closeRequested = false;
   let deliveryQueue: Promise<void> = Promise.resolve();
 
-  const closeSubscription = (): void => {
+  const closeSubscription = async (): Promise<void> => {
     if (closeRequested) {
       return;
     }
     closeRequested = true;
-    Promise.resolve(subscription?.close()).catch(() => {});
+    await subscription?.close().catch((): void => {});
   };
 
   const deliver = async (message: SubscriptionMessage): Promise<void> => {
@@ -31,26 +31,32 @@ export function createGuardedSubscriptionHandler(input: {
       return;
     }
     if (message.type !== 'event') {
-      input.listener(message);
+      await input.listener(message);
       return;
     }
 
+    let terminalError: SubscriptionMessage | undefined;
     const fail = (code: DwnErrorCode, detail: string): void => {
-      if (closeRequested) {
+      if (closeRequested || terminalError !== undefined) {
         return;
       }
-      closeSubscription();
-      input.listener({ type: 'error', cursor: message.cursor, error: { code, detail } });
+      terminalError = { type: 'error', cursor: message.cursor, error: { code, detail } };
     };
     const projected = await input.processEvent(message, fail);
-    if (!closeRequested && projected !== undefined) {
-      input.listener(projected);
+    if (terminalError !== undefined) {
+      await closeSubscription();
+      await input.listener(terminalError);
+      return;
+    }
+    if (projected !== undefined) {
+      await input.listener(projected);
     }
   };
 
   return {
-    listener: (message): void => {
-      deliveryQueue = deliveryQueue.then(() => deliver(message)).catch(() => {});
+    listener: (message): Promise<void> => {
+      deliveryQueue = deliveryQueue.then(() => deliver(message)).catch(closeSubscription);
+      return deliveryQueue;
     },
     setSubscription: async (eventSubscription): Promise<void> => {
       subscription = eventSubscription;

@@ -256,6 +256,46 @@ export function testMessagesQueryHandler(): void {
       expect(reply.error?.reason).toBe('stream_mismatch');
     });
 
+    it('rejects a signed grant query whose exact path is paired with a broader path prefix', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'http://messages-query-ambiguous-path-filter';
+      const grant = await TestDataGenerator.generateGrantCreate({
+        author    : alice,
+        grantedTo : bob,
+        scope     : {
+          interface    : DwnInterfaceName.Messages,
+          method       : DwnMethodName.Read,
+          protocol,
+          protocolPath : 'post/attachment',
+        },
+      });
+      expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+      const query = await TestDataGenerator.generateMessagesQuery({
+        author             : bob,
+        filters            : [{ protocol, protocolPath: 'post/attachment' }],
+        permissionGrantIds : [grant.message.recordId],
+      });
+      const descriptor = {
+        ...query.message.descriptor,
+        filters: [{
+          protocol,
+          protocolPath       : 'post/attachment',
+          protocolPathPrefix : 'post',
+        }],
+      };
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer             : Jws.createSigner(bob),
+        permissionGrantIds : [grant.message.recordId],
+      });
+
+      const reply = await dwn.processMessage(alice.did, { descriptor, authorization });
+      expect(reply.status.code).toBe(400);
+      expect(reply.status.detail).toContain(DwnErrorCode.SchemaValidatorFailure);
+    });
+
     it.skipIf(!supportsReplicationFeed)('applies broad and subtree grant visibility to delegated queries', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
