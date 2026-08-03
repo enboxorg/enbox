@@ -6,7 +6,7 @@ export type GuardedSubscriptionHandler = {
   setSubscription(subscription: EventSubscription): Promise<void>;
 };
 
-/** Serializes subscription projection and closes exactly once after a terminal delivery failure. */
+/** Serializes projection, fences terminal delivery, and owns exactly one subscription close. */
 export function createGuardedSubscriptionHandler(input: {
   listener: SubscriptionListener;
   processEvent(
@@ -16,14 +16,19 @@ export function createGuardedSubscriptionHandler(input: {
 }): GuardedSubscriptionHandler {
   let subscription: EventSubscription | undefined;
   let closeRequested = false;
+  let closePromise: Promise<void> | undefined;
   let deliveryQueue: Promise<void> = Promise.resolve();
 
-  const closeSubscription = async (): Promise<void> => {
-    if (closeRequested) {
-      return;
-    }
+  const closeSubscription = (): Promise<void> => {
     closeRequested = true;
-    await subscription?.close().catch((): void => {});
+    if (subscription === undefined) {
+      return Promise.resolve();
+    }
+    const installedSubscription = subscription;
+    closePromise ??= Promise.resolve()
+      .then((): Promise<void> => installedSubscription.close())
+      .catch((): void => {});
+    return closePromise;
   };
 
   const deliver = async (message: SubscriptionMessage): Promise<void> => {
@@ -41,10 +46,10 @@ export function createGuardedSubscriptionHandler(input: {
         return;
       }
       terminalError = { type: 'error', cursor: message.cursor, error: { code, detail } };
+      void closeSubscription();
     };
     const projected = await input.processEvent(message, fail);
     if (terminalError !== undefined) {
-      await closeSubscription();
       await input.listener(terminalError);
       return;
     }
@@ -61,7 +66,7 @@ export function createGuardedSubscriptionHandler(input: {
     setSubscription: async (eventSubscription): Promise<void> => {
       subscription = eventSubscription;
       if (closeRequested) {
-        await eventSubscription.close();
+        await closeSubscription();
       }
     },
   };

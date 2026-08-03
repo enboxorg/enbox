@@ -1,8 +1,9 @@
-import type { EventSubscription, SubscriptionEvent } from '../../src/types/subscriptions.js';
+import type { EventSubscription, SubscriptionEvent, SubscriptionMessage } from '../../src/types/subscriptions.js';
 
 import { describe, expect, it } from 'bun:test';
 
 import { createGuardedSubscriptionHandler } from '../../src/handlers/guarded-subscription.js';
+import { DwnErrorCode } from '../../src/core/dwn-error.js';
 
 const timestamp = '2026-08-03T00:00:00.000000Z';
 
@@ -81,5 +82,57 @@ describe('createGuardedSubscriptionHandler', () => {
     });
 
     expect(closeCount).toBe(1);
+  });
+
+  it('should deliver a terminal projection error without waiting for subscription close', async () => {
+    let closeCount = 0;
+    let processCount = 0;
+    let releaseClose!: () => void;
+    const closeBlocked = new Promise<void>((resolve) => { releaseClose = resolve; });
+    const delivered: SubscriptionMessage[] = [];
+    const guarded = createGuardedSubscriptionHandler({
+      listener     : async (message): Promise<void> => { delivered.push(message); },
+      processEvent : async (_event, fail): Promise<undefined> => {
+        processCount++;
+        fail(DwnErrorCode.MessagesSubscribeDeliveryFailed, 'terminal delivery failure');
+        return undefined;
+      },
+    });
+    await guarded.setSubscription({
+      id    : 'subscription',
+      close : async (): Promise<void> => {
+        closeCount++;
+        await closeBlocked;
+      },
+    });
+
+    let firstSettled = false;
+    let secondSettled = false;
+    const firstDelivery = Promise.resolve(guarded.listener(subscriptionEvent('1')))
+      .then((): void => { firstSettled = true; });
+    const secondDelivery = Promise.resolve(guarded.listener(subscriptionEvent('2')))
+      .then((): void => { secondSettled = true; });
+
+    try {
+      for (let turn = 0; turn < 10 && (!firstSettled || !secondSettled); turn++) {
+        await Promise.resolve();
+      }
+
+      expect(delivered).toEqual([{
+        type   : 'error',
+        cursor : subscriptionEvent('1').cursor,
+        error  : {
+          code   : DwnErrorCode.MessagesSubscribeDeliveryFailed,
+          detail : 'terminal delivery failure',
+        },
+      }]);
+      expect(firstSettled).toBe(true);
+      expect(secondSettled).toBe(true);
+      expect(processCount).toBe(1);
+      expect(closeCount).toBe(1);
+    } finally {
+      releaseClose();
+      await Promise.all([firstDelivery, secondDelivery]);
+    }
   });
 });
