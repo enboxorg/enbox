@@ -96,7 +96,13 @@ const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
 
 function compareCodeUnits(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -2466,59 +2472,25 @@ export class TypedEnbox<
     const candidates = new Map<string, Candidate>();
 
     for (const record of records) {
-      if (record.recipient !== this._dwn.connectedDid
-        || record.protocol !== this._definition.protocol
-        || record.protocolPath !== CONTEXT_INVITATION_PATH) {
-        continue;
-      }
-      const ownerDid = record.creator.trim();
-      if (Did.parse(ownerDid)?.uri !== ownerDid) {
-        continue;
-      }
-      const invitation = bindRecordCodec(
-        record,
-        contextInvitationCodec,
-        this._definition.types[CONTEXT_INVITATION_PATH].dataFormats,
-      );
-      let envelope: unknown;
-      try {
-        envelope = await invitation.value();
-      } catch (error) {
-        if (error instanceof SyntaxError) {
-          continue;
-        }
-        throw error;
-      }
-      if (!isContextInvitationEnvelope(envelope)) {
-        continue;
-      }
-      const roles = this._roleGroups[envelope.group];
-      if (!Object.hasOwn(this._roleGroups, envelope.group) || roles === undefined) {
-        continue;
-      }
-      const contextPath = parentProtocolPath(roles[0]);
-      if (envelope.contextId.split('/').length !== contextPath.split('/').length
-        || !isValidInvitationContextId(contextPath, envelope.contextId)) {
+      const invitation = await this.readContextInvitation(record);
+      if (invitation === undefined) {
         continue;
       }
 
-      const key = JSON.stringify([ownerDid, envelope.contextId, envelope.group]);
+      const key = JSON.stringify([invitation.ownerDid, invitation.contextId, invitation.group]);
       const existing = candidates.get(key);
       if (existing === undefined) {
         candidates.set(key, {
-          contextId : envelope.contextId,
-          group     : envelope.group,
-          ownerDid,
-          preview   : Object.freeze({ ...envelope.preview }),
-          records   : [record],
-          selected  : record,
+          ...invitation,
+          records  : [record],
+          selected : record,
         });
         continue;
       }
 
       existing.records.push(record);
       if (compareInvitationRecords(record, existing.selected) < 0) {
-        existing.preview = Object.freeze({ ...envelope.preview });
+        existing.preview = invitation.preview;
         existing.selected = record;
       }
     }
@@ -2560,6 +2532,56 @@ export class TypedEnbox<
           timestamp : candidate.selected.timestamp,
         }) as ProtocolContextInvitation<D, C, G>;
       });
+  }
+
+  /** Validate and decode one untrusted invitation inbox record. */
+  private async readContextInvitation(record: Record): Promise<{
+    contextId: string;
+    group: string;
+    ownerDid: string;
+    preview: ContextInvitationPreview;
+  } | undefined> {
+    if (record.recipient !== this._dwn.connectedDid
+      || record.protocol !== this._definition.protocol
+      || record.protocolPath !== CONTEXT_INVITATION_PATH) {
+      return undefined;
+    }
+    const ownerDid = record.creator.trim();
+    if (Did.parse(ownerDid)?.uri !== ownerDid) {
+      return undefined;
+    }
+    const invitation = bindRecordCodec(
+      record,
+      contextInvitationCodec,
+      this._definition.types[CONTEXT_INVITATION_PATH].dataFormats,
+    );
+    let envelope: unknown;
+    try {
+      envelope = await invitation.value();
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        return undefined;
+      }
+      throw error;
+    }
+    if (!isContextInvitationEnvelope(envelope)) {
+      return undefined;
+    }
+    const roles = this._roleGroups[envelope.group];
+    if (!Object.hasOwn(this._roleGroups, envelope.group) || roles === undefined) {
+      return undefined;
+    }
+    const contextPath = parentProtocolPath(roles[0]);
+    if (envelope.contextId.split('/').length !== contextPath.split('/').length
+      || !isValidInvitationContextId(contextPath, envelope.contextId)) {
+      return undefined;
+    }
+    return {
+      contextId : envelope.contextId,
+      group     : envelope.group,
+      ownerDid,
+      preview   : Object.freeze({ ...envelope.preview }),
+    };
   }
 
   /** Delete every duplicate represented by one invitation handle; absence is already dismissed. */
@@ -3663,12 +3685,11 @@ export class TypedEnbox<
 // Helpers
 // ---------------------------------------------------------------------------
 
-function normalizeContextInvitationLimit(limit: number | undefined): number {
-  const resolved = limit ?? 50;
-  if (!Number.isSafeInteger(resolved) || resolved < 1 || resolved > 100) {
+function normalizeContextInvitationLimit(limit: number = 50): number {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
     throw new TypeError('Context invitations: limit must be an integer from 1 through 100.');
   }
-  return resolved;
+  return limit;
 }
 
 /** Only a plain DWN ordering conflict is safe to recover by re-reading. */
@@ -3708,7 +3729,7 @@ function compareInvitationRecords(left: Record, right: Record): number {
   if (left.timestamp !== right.timestamp) {
     return left.timestamp > right.timestamp ? -1 : 1;
   }
-  return left.id > right.id ? -1 : left.id < right.id ? 1 : 0;
+  return compareCodeUnits(right.id, left.id);
 }
 
 /**

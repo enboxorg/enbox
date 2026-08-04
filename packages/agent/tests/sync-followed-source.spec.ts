@@ -775,6 +775,7 @@ describe('SyncEngineLevel — followed sources', () => {
       await waitFor(async () => events.includes(undefined) &&
         !secondInternal._linkControllers.has(replacementLinkKey) &&
         (await secondInternal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).length === 0);
+      expect(await secondInternal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toHaveLength(0);
     } finally {
       secondInternal._runtime.dispose();
       (first as any).closeFollowedSourceWakePublisher();

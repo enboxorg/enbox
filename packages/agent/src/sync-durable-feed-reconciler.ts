@@ -324,8 +324,8 @@ export class SyncDurableFeedReconciler {
     link: ReplicationLinkState,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    if (link.pull.contiguousAppliedToken === undefined && target.authorization.kind !== 'role') {
-      const result = await this.pullRemoteDiffWhenUseful(target, link, shouldContinue);
+    if (link.pull.contiguousAppliedToken === undefined) {
+      const result = await this.pullRemoteOwnerDiffWhenUseful(target, link, shouldContinue);
       if (result !== undefined) {
         return result;
       }
@@ -349,11 +349,9 @@ export class SyncDurableFeedReconciler {
       if (await this.resetAfterProgressGap(reply, link, 'pull', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
-        if (target.authorization.kind !== 'role') {
-          const result = await this.pullRemoteDiffWhenUseful(target, link, shouldContinue);
-          if (result !== undefined) {
-            return result;
-          }
+        const result = await this.pullRemoteOwnerDiffWhenUseful(target, link, shouldContinue);
+        if (result !== undefined) {
+          return result;
         }
         continue;
       }
@@ -372,6 +370,17 @@ export class SyncDurableFeedReconciler {
       }
       cursor = result.nextCursor;
     }
+  }
+
+  private async pullRemoteOwnerDiffWhenUseful(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncDurableFeedReconcileResult | undefined> {
+    if (target.authorization.kind === 'role') {
+      return undefined;
+    }
+    return this.pullRemoteDiffWhenUseful(target, link, shouldContinue);
   }
 
   private async pullRemoteDiffWhenUseful(

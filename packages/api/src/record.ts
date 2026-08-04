@@ -569,10 +569,8 @@ export class Record<T = unknown> implements RecordModel {
 
     await this._executionContext?.assertActive();
 
-    if (this._executionContext !== undefined) {
-      if (from !== undefined && from !== this._executionContext.tenantDid) {
-        throw new TypeError('Context-bound records cannot be updated on another tenant.');
-      }
+    if (this._executionContext !== undefined && from !== undefined && from !== this._executionContext.tenantDid) {
+      throw new TypeError('Context-bound records cannot be updated on another tenant.');
     }
     const effectiveProtocolRole = this.resolveProtocolRole(protocolRole);
 

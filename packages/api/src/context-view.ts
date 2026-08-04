@@ -179,7 +179,8 @@ class ObservedContextView<Context> implements ContextView<Context> {
       return;
     }
     this._state = state;
-    for (const listener of [...this._listeners]) {
+    const listeners = [...this._listeners];
+    for (const listener of listeners) {
       try {
         listener(state);
       } catch {

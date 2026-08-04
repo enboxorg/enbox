@@ -39,11 +39,15 @@ function classifyContextScope(
 ): SyncScopeClassification {
   const isDelete = message.descriptor.interface === DwnInterfaceName.Records &&
     message.descriptor.method === DwnMethodName.Delete;
-  const recordsWrite = isDelete
-    ? initialWrite
-    : message.descriptor.interface === DwnInterfaceName.Records && message.descriptor.method === DwnMethodName.Write
-      ? message as RecordsWriteMessage
-      : undefined;
+  let recordsWrite: RecordsWriteMessage | undefined;
+  if (isDelete) {
+    recordsWrite = initialWrite;
+  } else if (
+    message.descriptor.interface === DwnInterfaceName.Records &&
+    message.descriptor.method === DwnMethodName.Write
+  ) {
+    recordsWrite = message as RecordsWriteMessage;
+  }
   if (recordsWrite === undefined) {
     return isDelete ? 'unknown' : 'out-of-scope';
   }

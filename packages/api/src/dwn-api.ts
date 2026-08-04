@@ -696,8 +696,8 @@ export class DwnApi {
       );
     }
     try {
-      for (let index = 0; index < pendingFrames.length; index++) {
-        await handleFrame(pendingFrames[index]);
+      for (const frame of pendingFrames) {
+        await handleFrame(frame);
       }
     } catch (error: unknown) {
       await reply.subscription.close();

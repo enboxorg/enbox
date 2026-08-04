@@ -69,6 +69,14 @@ export class RecordsReadHandler implements MethodHandler {
     // else the matched message is a RecordsWrite
     const matchedRecordsWrite = matchedMessage as RecordsQueryReplyEntry;
 
+    return this.replyForActiveRecord(tenant, recordsRead, matchedRecordsWrite);
+  };
+
+  private async replyForActiveRecord(
+    tenant: string,
+    recordsRead: RecordsRead,
+    matchedRecordsWrite: RecordsQueryReplyEntry,
+  ): Promise<RecordsReadReply> {
     if (!await isRecordLimitOccupant({
       messageStore          : this.deps.messageStore,
       validationStateReader : this.deps.validationStateReader,
@@ -144,28 +152,38 @@ export class RecordsReadHandler implements MethodHandler {
       return messageReplyFromError(error, 500);
     }
 
-    if (message.descriptor.includeReplicationSupport === true) {
+    if (recordsRead.message.descriptor.includeReplicationSupport === true) {
       try {
-        if (recordsRead.author === undefined || resolvedRole === undefined) {
-          throw new DwnError(
-            DwnErrorCode.RecordsReadReplicationSupportUnsupported,
-            'replication support requires an authenticated protocol-role invocation.'
-          );
-        }
-        recordsReadReply.support = await RecordsReadReplicationSupport.build({
-          deps      : this.deps,
-          matchedRecordsWrite,
-          requester : recordsRead.author,
-          resolvedRole,
-          tenant,
-        });
+        await this.attachReplicationSupport(tenant, recordsRead, matchedRecordsWrite, resolvedRole, recordsReadReply);
       } catch (error) {
         return messageReplyFromError(error, 400);
       }
     }
 
     return recordsReadReply;
-  };
+  }
+
+  private async attachReplicationSupport(
+    tenant: string,
+    recordsRead: RecordsRead,
+    matchedRecordsWrite: RecordsQueryReplyEntry,
+    resolvedRole: ResolvedProtocolRole | undefined,
+    reply: RecordsReadReply,
+  ): Promise<void> {
+    if (recordsRead.author === undefined || resolvedRole === undefined) {
+      throw new DwnError(
+        DwnErrorCode.RecordsReadReplicationSupportUnsupported,
+        'replication support requires an authenticated protocol-role invocation.'
+      );
+    }
+    reply.support = await RecordsReadReplicationSupport.build({
+      deps      : this.deps,
+      matchedRecordsWrite,
+      requester : recordsRead.author,
+      resolvedRole,
+      tenant,
+    });
+  }
 
   private async replyForDeletedRecord(
     tenant: string,

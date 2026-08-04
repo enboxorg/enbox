@@ -165,6 +165,8 @@ type PreparedFollowedSource = {
 
 type FollowedSourceChangeEvent = Extract<SyncEvent, { type: 'followed-context:change' }>;
 
+type FollowedContextKey = Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'protocol' | 'sourceDid'>;
+
 /** Accumulated shape of every `sync()` request joined into one queued follow-up run. */
 type MergedSyncRunRequest = {
   direction?: SyncDirection;
@@ -1711,15 +1713,13 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private static sameFollowedContext(
-    a: Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'protocol' | 'sourceDid'>,
-    b: Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'protocol' | 'sourceDid'>,
+    a: FollowedContextKey,
+    b: FollowedContextKey,
   ): boolean {
     return SyncEngineLevel.followedContextKey(a) === SyncEngineLevel.followedContextKey(b);
   }
 
-  private static followedContextKey(
-    source: Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'protocol' | 'sourceDid'>,
-  ): string {
+  private static followedContextKey(source: FollowedContextKey): string {
     return JSON.stringify([source.sourceDid, source.actorDid, source.protocol, source.contextId]);
   }
 
@@ -4969,57 +4969,65 @@ export class SyncEngineLevel implements SyncEngine {
   private async getCurrentLinkIdentityKeys(): Promise<Set<string> | undefined> {
     try {
       const identityKeys = new Set<string>();
-      for await (const entry of this._identityStore.entries()) {
-        if (entry.status === 'corrupt') {
-          console.warn(`SyncEngineLevel: Corrupt sync options for ${entry.did}, skipping health target:`, entry.error);
-          continue;
-        }
-
-        try {
-          const scope = syncScopeFromProtocols(entry.options.protocols);
-          const resolutions = await this.targetResolver.buildTargetResolutions(entry.did, scope, entry.options);
-          for (const resolution of resolutions) {
-            const projectionId = await computeProjectionId(entry.did, resolution.scope);
-            identityKeys.add(buildDurableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
-          }
-        } catch (error: unknown) {
-          console.warn(
-            `SyncEngineLevel: Failed to resolve current link identities for ${entry.did}; retaining its durable links`,
-            error,
-          );
-          for (const link of await this.replicationLinkStore.getLinksForTenant(entry.did)) {
-            if (link.authorization.kind !== 'role') {
-              identityKeys.add(this.getDurableLinkIdentityKey(link));
-            }
-          }
-        }
-      }
-      for (const entry of await this._followedSourceStore.list()) {
-        if (entry.status === 'corrupt') {
-          console.warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping health target:`, entry.error);
-          continue;
-        }
-        try {
-          for (const target of await this.targetResolver.buildTargetsForSource(entry.source)) {
-            identityKeys.add(buildCurrentLinkIdentityKey(
-              target.did,
-              target.dwnUrl,
-              target.projectionId,
-              target.authorizationEpoch,
-              target.authorization.kind,
-            ));
-          }
-        } catch (error: unknown) {
-          console.warn(
-            `SyncEngineLevel: Failed to resolve current endpoints for followed source ${entry.source.id}; excluding its role links`,
-            error,
-          );
-        }
-      }
+      await this.addCurrentRegisteredIdentityKeys(identityKeys);
+      await this.addCurrentFollowedSourceKeys(identityKeys);
       return identityKeys;
     } catch (error: unknown) {
       console.warn('SyncEngineLevel: Failed to resolve current link identities for health; excluding unproven role links', error);
       return undefined;
+    }
+  }
+
+  private async addCurrentRegisteredIdentityKeys(identityKeys: Set<string>): Promise<void> {
+    for await (const entry of this._identityStore.entries()) {
+      if (entry.status === 'corrupt') {
+        console.warn(`SyncEngineLevel: Corrupt sync options for ${entry.did}, skipping health target:`, entry.error);
+        continue;
+      }
+
+      try {
+        const scope = syncScopeFromProtocols(entry.options.protocols);
+        const resolutions = await this.targetResolver.buildTargetResolutions(entry.did, scope, entry.options);
+        for (const resolution of resolutions) {
+          const projectionId = await computeProjectionId(entry.did, resolution.scope);
+          identityKeys.add(buildDurableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
+        }
+      } catch (error: unknown) {
+        console.warn(
+          `SyncEngineLevel: Failed to resolve current link identities for ${entry.did}; retaining its durable links`,
+          error,
+        );
+        for (const link of await this.replicationLinkStore.getLinksForTenant(entry.did)) {
+          if (link.authorization.kind !== 'role') {
+            identityKeys.add(this.getDurableLinkIdentityKey(link));
+          }
+        }
+      }
+    }
+  }
+
+  private async addCurrentFollowedSourceKeys(identityKeys: Set<string>): Promise<void> {
+    for (const entry of await this._followedSourceStore.list()) {
+      if (entry.status === 'corrupt') {
+        console.warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping health target:`, entry.error);
+        continue;
+      }
+      try {
+        for (const target of await this.targetResolver.buildTargetsForSource(entry.source)) {
+          identityKeys.add(buildCurrentLinkIdentityKey(
+            target.did,
+            target.dwnUrl,
+            target.projectionId,
+            target.authorizationEpoch,
+            target.authorization.kind,
+          ));
+        }
+      } catch (error: unknown) {
+        console.warn(
+          `SyncEngineLevel: Failed to resolve current endpoints for followed source ${entry.source.id}; excluding its role links`,
+          error,
+        );
+      }
     }
   }
 
