@@ -3,4 +3,4 @@
 '@enbox/browser': patch
 ---
 
-Replace record-ID delivery inspection with owned-context membership operations that manage mutually exclusive roles and audience-key delivery without exposing role records, routing, or delivery IDs.
+Add owned-context membership operations that manage mutually exclusive roles and audience-key delivery by member DID without exposing role records, routing, or delivery IDs.

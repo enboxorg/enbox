@@ -1038,6 +1038,83 @@ type ContextSetRequest<
 
 type ContextDeleteRequest = Omit<TypedDeleteRequest, 'from' | 'protocolRole'>;
 
+/** One typed records contract, optionally confined to an application context. */
+type TypedRecordsApi<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  Paths extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
+  CreatePaths extends ProtocolPaths<D> & string = Paths,
+  SetPaths extends ProtocolPaths<D> & string = SingletonProtocolPaths<D> & Paths & string,
+  ContextBound extends boolean = false,
+> = Readonly<{
+  create: <Path extends CreatePaths>(
+    path: Path,
+    request: ContextBound extends true
+      ? ContextCreateRequest<D, C, Path>
+      : TypedCreateRequest<D, C, Path>,
+  ) => Promise<RecordHandle<DataForPath<C, Path>, ContextBound>>;
+
+  query: <
+    Path extends Paths,
+    Materialization extends (
+      ContextBound extends true
+        ? ContextRecordMaterialization<D, NoInfer<Path>>
+        : RecordMaterialization<D, Path>
+    ) | undefined = undefined,
+  >(...args: ContextBound extends true
+      ? ContextQueryArguments<D, Path, Materialization>
+      : TypedQueryArguments<D, Path, Materialization>
+    ) => Promise<
+    RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization, ContextBound>>
+  >;
+
+  observe: <
+    Path extends Paths,
+    Materialization extends (
+      ContextBound extends true
+        ? ContextRecordMaterialization<D, NoInfer<Path>>
+        : RecordMaterialization<D, Path>
+    ) | undefined = undefined,
+  >(
+    path: Path,
+    request: ContextBound extends true
+      ? ContextObserveRequest<D, NoInfer<Path>, Materialization>
+      : TypedObserveRequest<D, Path, Materialization>,
+  ) => Promise<RecordView<
+    SelectedRecordRepresentation<D, C, Path, Materialization, ContextBound>
+  >>;
+
+  subscribe: TypedRecordsSubscribe<C, Paths, ContextBound>;
+
+  count: <Path extends Paths>(
+    path: Path,
+    request?: ContextBound extends true ? ContextRecordQuery<D, Path> : RecordQuery<D, Path>,
+  ) => Promise<number>;
+
+  read: <Path extends Paths>(
+    path: Path,
+    recordIdOrRequest: string | (ContextBound extends true
+      ? ContextReadRequest<D, Path>
+      : TypedReadRequest<D, Path>),
+  ) => Promise<RecordHandle<DataForPath<C, Path>, ContextBound> | undefined>;
+
+  patch: <Path extends Paths>(
+    path: Path,
+    recordId: string,
+    patch: RecordPatchInput<DataForPath<C, Path>>,
+  ) => Promise<RecordHandle<DataForPath<C, Path>, ContextBound>>;
+
+  set: <Path extends SetPaths>(
+    path: Path,
+    request: ContextBound extends true ? ContextSetRequest<C, Path> : TypedSetRequest<C, Path>,
+  ) => Promise<RecordHandle<DataForPath<C, Path>, ContextBound>>;
+
+  delete: <Path extends Paths>(
+    path: Path,
+    request: ContextBound extends true ? ContextDeleteRequest : TypedDeleteRequest,
+  ) => Promise<void>;
+}>;
+
 /**
  * Existing typed records operations confined to one application context.
  * Source routing, authorization roles, key delivery, and root scope are owned
@@ -1047,55 +1124,14 @@ export type ContextRecordsApi<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
   Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
-> = Readonly<{
-  create: <Path extends ContextDescendantPaths<D, Root>>(
-    path: Path,
-    request: ContextCreateRequest<D, C, Path>,
-  ) => Promise<ContextRecord<DataForPath<C, Path>>>;
-
-  query: <
-    Path extends ContextRecordPaths<D, Root>,
-    Materialization extends ContextRecordMaterialization<D, NoInfer<Path>> | undefined = undefined,
-  >(...args: ContextQueryArguments<D, Path, Materialization>) => Promise<
-    RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization, true>>
-  >;
-
-  observe: <
-    Path extends ContextRecordPaths<D, Root>,
-    Materialization extends ContextRecordMaterialization<D, NoInfer<Path>> | undefined = undefined,
-  >(
-    path: Path,
-    request: ContextObserveRequest<D, NoInfer<Path>, Materialization>,
-  ) => Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization, true>>>;
-
-  subscribe: TypedRecordsSubscribe<C, ContextRecordPaths<D, Root>, true>;
-
-  count: <Path extends ContextRecordPaths<D, Root>>(
-    path: Path,
-    request?: ContextRecordQuery<D, Path>,
-  ) => Promise<number>;
-
-  read: <Path extends ContextRecordPaths<D, Root>>(
-    path: Path,
-    recordIdOrRequest: string | ContextReadRequest<D, Path>,
-  ) => Promise<ContextRecord<DataForPath<C, Path>> | undefined>;
-
-  patch: <Path extends ContextRecordPaths<D, Root>>(
-    path: Path,
-    recordId: string,
-    patch: RecordPatchInput<DataForPath<C, Path>>,
-  ) => Promise<ContextRecord<DataForPath<C, Path>>>;
-
-  set: <Path extends SingletonProtocolPaths<D> & ContextDescendantPaths<D, Root> & string>(
-    path: Path,
-    request: ContextSetRequest<C, Path>,
-  ) => Promise<ContextRecord<DataForPath<C, Path>>>;
-
-  delete: <Path extends ContextRecordPaths<D, Root>>(
-    path: Path,
-    request: ContextDeleteRequest,
-  ) => Promise<void>;
-}>;
+> = TypedRecordsApi<
+  D,
+  C,
+  ContextRecordPaths<D, Root>,
+  ContextDescendantPaths<D, Root>,
+  SingletonProtocolPaths<D> & ContextDescendantPaths<D, Root> & string,
+  true
+>;
 
 /**
  * Thrown/returned by {@link TypedEnbox.verifyInstalled} when a DELEGATE
@@ -1237,7 +1273,7 @@ export class TypedEnbox<
   /** @internal */
   private readonly _validPaths: Set<string>;
   /** @internal */
-  private _records?: TypedEnbox<D, C, G>['records'];
+  private _records?: TypedRecordsApi<D, C>;
   /** @internal — cached result of the `hasEncryptedTypes` scan (definition is immutable). */
   private readonly _hasEncryptedTypes: boolean;
   /** @internal */
@@ -3151,65 +3187,17 @@ export class TypedEnbox<
    * the resolved data type from the codec map.
    *
    * Available methods:
-   * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
-   * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
-   * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable query state
+   * - `create(path, request)` — Create a new record
+   * - `query(path, request?)` — Query records with filters
+   * - `observe(path, request)` — Observe immutable query state
    * - `subscribe(pathOrPaths, listener)` — Consume path-discriminated committed changes
-   * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
-   * - {@link TypedEnbox.records.read | read(path, recordId or request)} — Read a single record
+   * - `count(path, request?)` — Count the same matching population
+   * - `read(path, recordId or request)` — Read a single record
    * - `patch(path, recordId, patch)` — Apply a partial update with one conflict retry
-   * - {@link TypedEnbox.records.set | set(path, request)} — Replace one protocol-declared singleton
-   * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
+   * - `set(path, request)` — Replace one protocol-declared singleton
+   * - `delete(path, request)` — Delete a record by ID
    */
-  public get records(): {
-    create: <Path extends ProtocolPaths<D> & string>(
-      path: Path,
-      request: TypedCreateRequest<D, C, Path>,
-    ) => Promise<Record<DataForPath<C, Path>>>;
-
-    query: <
-      Path extends ProtocolPaths<D> & string,
-      Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
-    >(...args: TypedQueryArguments<D, Path, Materialization>) => Promise<
-      RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>>
-    >;
-
-    observe: <
-      Path extends ProtocolPaths<D> & string,
-      Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
-    >(
-      path: Path,
-      request: TypedObserveRequest<D, Path, Materialization>,
-    ) => Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>>;
-
-    subscribe: TypedRecordsSubscribe<C, ProtocolPaths<D> & string>;
-
-    count: <Path extends ProtocolPaths<D> & string>(
-      path: Path,
-      request?: RecordQuery<D, Path>,
-    ) => Promise<number>;
-
-    read: <Path extends ProtocolPaths<D> & string>(
-      path: Path,
-      recordIdOrRequest: string | TypedReadRequest<D, Path>,
-    ) => Promise<Record<DataForPath<C, Path>> | undefined>;
-
-    patch: <Path extends ProtocolPaths<D> & string>(
-      path: Path,
-      recordId: string,
-      patch: RecordPatchInput<DataForPath<C, Path>>,
-    ) => Promise<Record<DataForPath<C, Path>>>;
-
-    set: <Path extends SingletonProtocolPaths<D> & string>(
-      path: Path,
-      request: TypedSetRequest<C, Path>,
-    ) => Promise<Record<DataForPath<C, Path>>>;
-
-    delete: <Path extends ProtocolPaths<D> & string>(
-      path: Path,
-      request: TypedDeleteRequest,
-    ) => Promise<void>;
-    } {
+  public get records(): TypedRecordsApi<D, C> {
     if (this._records !== undefined) {
       return this._records;
     }
