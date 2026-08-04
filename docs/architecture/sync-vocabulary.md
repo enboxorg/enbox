@@ -70,6 +70,17 @@ the code, not an entry missing from this table.
 | **shared** | One execution and result joined by several callers, such as the queued `sync()` follow-up in `joinPendingSyncRun` | A work mark or distinct caller-specific executor call |
 | **incarnation** | Retired: name the exact concept as an *acceptance*, *followed source*, or *role authorization* | A generic synonym for any of those lifetimes |
 
+## Application-facing freshness
+
+- A record or context view is **`ready`** once its first local materialization is
+  usable. `RecordView.current` separately says whether the relevant replica is
+  caught up; context catalog views do not currently expose freshness.
+- `ReplicationCurrentness` is **`syncing`**, **`caught-up`**, or **`error`**.
+  `ready` is not a replication state.
+- **`caught-up`** means every selected replication link is live, online, and
+  pull-current. A registered replica that does not meet that predicate is
+  **`syncing`**, whether or not it was caught up previously.
+
 ## Verb conventions
 
 | Verb | Use for |

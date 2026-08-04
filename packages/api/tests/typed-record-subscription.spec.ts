@@ -384,6 +384,29 @@ describe('typed record subscriptions', () => {
     expect(close.calledOnce).toBe(true);
   });
 
+  it('closes and rejects when the initial replay listener rejects', async () => {
+    const initial = testRecord('initial', '2026-01-01T00:00:00.000000Z');
+    const close = sinon.stub().resolves();
+    const dwn = {
+      connectedDid          : 'did:example:alice',
+      followedContextId     : undefined,
+      followedSourceId      : undefined,
+      recordTenantDid       : 'did:example:alice',
+      records               : { query: async (): Promise<RecordsQueryResponse> => queryReply([initial]) },
+      subscribeRecordFrames : async () => ({
+        status       : { code: 200, detail: 'OK' },
+        subscription : { id: 'initial-listener-failure', close },
+      }),
+    } as unknown as DwnApi;
+    const records = contextRecords(dwn);
+    const failure = new Error('initial listener failed');
+    const listener = sinon.stub().rejects(failure);
+
+    await expect(records.subscribe('note', { initial: true }, listener)).rejects.toBe(failure);
+    expect(listener.calledOnce).toBe(true);
+    expect(close.calledOnce).toBe(true);
+  });
+
   it('closes a live subscription after its listener rejects', async () => {
     const close = sinon.stub().resolves();
     let deliver!: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>;

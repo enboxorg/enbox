@@ -464,11 +464,11 @@ class ObservedRecordView<Item> implements RecordView<Item> {
           && link.scope.contextId === this._followedContextId
           && link.followedSourceId === this._followedSourceId
           && link.scope.protocolPaths.includes(this._query.filter.protocolPath));
-    const status = projectReplicationCurrentness(links, false);
+    const status = projectReplicationCurrentness(links);
     if (status === 'error') {
       return this.resolveUnavailableCurrentness(true);
     }
-    return { current: status === 'ready' };
+    return { current: status === 'caught-up' };
   }
 
   /** Resolve a provisional unavailable state or attach the RecordView-specific pause error. */

@@ -64,15 +64,13 @@ const unsubscribe = store.subscribe((snapshot) => {
 await store.initialize();
 ```
 
-Connection snapshots retain the replication-level `loading`, `ready`, `stale`,
-and `error` states. `loading` means a registered replica has not completed its first
-baseline; `ready` means every current link is caught up (or the identity is
-local-only); `stale` retains a previously reached baseline while a link is no
-longer current; and `error` reports paused replication or an unreadable local
-status projection. `connectivity` is `unknown`, `online`, or `offline`, and
-`lastActivityAt` is the newest activity time recorded by the sync engine.
-`loading` has no timeout: a registered identity with no established links
-remains there until the engine reports new state.
+Connection snapshots report replication as `syncing`, `caught-up`, or `error`.
+`syncing` covers any registered replica that is not current, including an
+identity with no established links. `caught-up` means every current link is
+caught up, or that the identity is local-only. `error` reports paused
+replication or an unreadable local status projection. `connectivity` is
+`unknown`, `online`, or `offline`, and `lastActivityAt` is the newest activity
+time recorded by the sync engine.
 
 For registered identities, connectivity uses the sync engine's existing
 aggregation rule: any online link makes the identity online; otherwise an
@@ -308,6 +306,64 @@ try {
 }
 ```
 
+### Compact a delta history
+
+Given a typed `history` protocol whose `document/change` path declares
+`$squash: true`, every delta and snapshot on that path must use one monotonic
+application clock with identical explicit `dateCreated` and `messageTimestamp`
+values; the squash backstop applies to both. Create ordinary deltas with that
+clock, then create a full-state snapshot with `squash: true`:
+
+```ts
+import { DwnResponseError } from '@enbox/api';
+
+const writeDelta = (data, timestamp) => history.records.create('document/change', {
+  data,
+  parentContextId : documentContextId,
+  dateCreated     : timestamp,
+  messageTimestamp: timestamp,
+});
+
+const writeSnapshot = (data, timestamp) => history.records.create('document/change', {
+  data,
+  parentContextId : documentContextId,
+  squash          : true,
+  dateCreated     : timestamp,
+  messageTimestamp: timestamp,
+});
+```
+
+A successful snapshot removes older siblings at that path and parent and
+establishes a temporal floor. Concurrent compaction can establish a newer floor
+first. In that case the DWN returns a `409` whose `errorCode` is
+`ProtocolAuthorizationSquashBackstop`. Read the floor without parsing error
+text, reload the authoritative history, and rebase pending application changes
+before writing another snapshot:
+
+```ts
+try {
+  await writeSnapshot(compactedState, nextDwnTimestampAfter());
+} catch (error) {
+  if (!(error instanceof DwnResponseError)
+    || error.status.errorCode !== 'ProtocolAuthorizationSquashBackstop') {
+    throw error;
+  }
+
+  const floor = error.status.info?.squashFloorTimestamp;
+  if (typeof floor !== 'string') throw error;
+
+  const authoritative = await readAuthoritativeHistory();
+  const rebased = applyPendingChanges(authoritative, pendingChanges);
+  await writeSnapshot(rebased, nextDwnTimestampAfter(floor));
+}
+```
+
+`nextDwnTimestampAfter()` represents an application helper that returns a
+DWN-compatible timestamp strictly newer than both wall-clock now and the
+provided floor. If another writer races the second attempt, repeat the
+read/rebase/write sequence with a bounded retry count; do not blindly retry the
+rejected snapshot.
+
 Returned records are canonical `Record<T>` instances. `value()` decodes the
 typed application value through the protocol codec, while `data.json()`,
 `data.text()`, `data.bytes()`, `data.blob()`, and `data.stream()` expose the
@@ -471,8 +527,13 @@ follow succeeds, it returns the accepted member context; a temporary inbox
 cleanup failure does not falsely report that acceptance failed. `dismiss()` is
 idempotent for the retained handle and does not revoke membership. Invitation
 queries return the newest bounded page, defaulting to 50 records and accepting
-limits from 1 through 100. Continuation and abuse hardening are tracked in
-[#1552](https://github.com/enboxorg/enbox/issues/1552).
+limits from 1 through 100. Malformed, duplicate, or unsolicited records consume
+that bound and can crowd out older valid invitations; pagination continuation
+and automatic junk cleanup are not available yet and are tracked in
+[#1552](https://github.com/enboxorg/enbox/issues/1552). When an app receives the
+owner DID, context ID, and group through another channel, it can bypass inbox
+discovery with `contexts.follow({ ownerDid, id, group })`; following still proves
+current membership before accepting the context.
 
 Accepted-context catalogs are currently agent-local. Consuming an invitation
 on one device can therefore remove it from another device before that second

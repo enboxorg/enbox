@@ -43,7 +43,6 @@ import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
 import { TypedEnbox } from './typed-enbox.js';
-import { VcApi } from './vc-api.js';
 import { collectProtocolPaths, isEncryptedRoleAudiencePath } from './protocol-paths.js';
 
 /**
@@ -64,8 +63,7 @@ const inflightConnects = new Map<string, Promise<unknown>>();
 
 /**
  * The main Enbox API interface. It provides protocol-scoped access to
- * Decentralized Web Nodes (DWNs), Decentralized Identifiers (DIDs),
- * and Verifiable Credentials (VCs).
+ * Decentralized Web Nodes (DWNs) and Decentralized Identifiers (DIDs).
  *
  * For common app flows, use the asynchronous {@link Enbox.connect} helper.
  * For custom auth/session flows, use {@link Enbox.fromSession} with an
@@ -119,9 +117,6 @@ export class Enbox {
    */
   private readonly _typedInstances = new Map<object, unknown>();
 
-  /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs. */
-  public vc: VcApi;
-
   /** Application protocol installation and hosted-publication lifecycle. */
   public protocols: ProtocolReadinessApi;
 
@@ -159,7 +154,6 @@ export class Enbox {
       delegateDid,
       using: this.using.bind(this),
     });
-    this.vc = new VcApi({ agent, connectedDid });
   }
 
   /**

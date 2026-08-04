@@ -2814,7 +2814,7 @@ export class TypedEnbox<
             && link.scope.contextId === source.contextId
             && sameStrings(link.scope.protocolPaths, source.protocolPaths));
         signal.throwIfAborted();
-        return { links, state: projectReplicationCurrentness(links, false) };
+        return { links, state: projectReplicationCurrentness(links) };
       };
       const assertRegistered = async (): Promise<void> => {
         if (await sync.getIdentityOptions(source.actorDid) === undefined) {
@@ -2839,7 +2839,7 @@ export class TypedEnbox<
       await assertRegistered();
       let currentness = await readCurrentness();
       assertNotPaused(currentness.state);
-      if (currentness.state === 'ready') {
+      if (currentness.state === 'caught-up') {
         return;
       }
 
@@ -2855,7 +2855,7 @@ export class TypedEnbox<
       await assertRegistered();
       currentness = await readCurrentness();
       assertNotPaused(currentness.state);
-      if (currentness.state === 'ready') {
+      if (currentness.state === 'caught-up') {
         return;
       }
       if (currentness.links.length === 0) {
@@ -2921,7 +2921,7 @@ export class TypedEnbox<
           await assertRegistered();
           currentness = await readCurrentness();
           assertNotPaused(currentness.state);
-          if (currentness.state === 'ready') {
+          if (currentness.state === 'caught-up') {
             return;
           }
           await wake;

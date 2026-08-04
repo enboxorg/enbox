@@ -1,8 +1,8 @@
 /**
- * Enbox SDK — high-level API for Decentralized Web Nodes, DIDs, and VCs.
+ * Enbox SDK — high-level API for Decentralized Web Nodes and DIDs.
  *
  * The SDK provides protocol-scoped access to DWN records with compile-time
- * type safety, DID management, and Verifiable Credential operations.
+ * type safety and DID management.
  *
  * Common authentication and identity setup is available through
  * `Enbox.connect()`. Advanced session management can use `@enbox/auth` or
@@ -74,8 +74,6 @@ export type { RecordView, RecordViewListener, RecordViewState } from './record-v
 export type { ReplicationCurrentness } from './replication-currentness.js';
 export * from './record.js';
 export * from './typed-enbox.js';
-export * from './vc-api.js';
-
 export {
   AudienceDecryptError,
   type AudienceDecryptFailureCause,

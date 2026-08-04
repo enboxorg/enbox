@@ -58,6 +58,7 @@ const definition = {
           $recordLimit: { max: 1 },
         },
         change: {
+          $squash: true,
           $actions: [
             {
               role : 'notebook/page/member',
@@ -138,6 +139,9 @@ The store restores sessions, requests the required grants, installs protocols
 locally, registers sync, and publishes a replacement `enbox` when a refreshed
 session replaces the old one. Use `store.subscribe()` and `getSnapshot()` with
 React `useSyncExternalStore` or the equivalent primitive in another framework.
+Connection sync is `syncing`, `caught-up`, or `error`; `ready` is reserved for
+views whose local data is usable. `RecordView.current` separately indicates
+whether its replica is caught up.
 
 Owner connections are local-first. Use `store.connectVault()` for an explicit
 owner/vault flow. Hosted protocol publication is opt-in through
@@ -211,6 +215,61 @@ A missing read returns `undefined`; other non-success statuses normally throw
 or a canonical tombstone conflict as complete. Context-bound deletion is
 stricter: its initial authority miss requires an authorized tombstone because
 the ID may identify a record outside that context.
+
+### Compact a delta history
+
+Declare `$squash: true` on an append-only protocol path. Every delta and snapshot
+on that path must use one monotonic application clock with identical explicit
+`dateCreated` and `messageTimestamp` values; the squash backstop applies to both.
+Create an ordinary delta and a full-state snapshot like this:
+
+```ts
+import { DwnResponseError } from '@enbox/browser';
+
+const writeDelta = (data, timestamp) => notebooks.records.create(
+  'notebook/page/change',
+  {
+    data,
+    parentContextId : pageContextId,
+    dateCreated     : timestamp,
+    messageTimestamp: timestamp,
+  },
+);
+
+const writeSnapshot = (data, timestamp) => notebooks.records.create(
+  'notebook/page/change',
+  {
+    data,
+    parentContextId : pageContextId,
+    squash          : true,
+    dateCreated     : timestamp,
+    messageTimestamp: timestamp,
+  },
+);
+
+try {
+  await writeSnapshot(compactedState, nextDwnTimestampAfter());
+} catch (error) {
+  if (!(error instanceof DwnResponseError)
+    || error.status.errorCode !== 'ProtocolAuthorizationSquashBackstop') {
+    throw error;
+  }
+
+  const floor = error.status.info?.squashFloorTimestamp;
+  if (typeof floor !== 'string') throw error;
+
+  const authoritative = await readAuthoritativeHistory();
+  const rebased = applyPendingChanges(authoritative, pendingChanges);
+  await writeSnapshot(rebased, nextDwnTimestampAfter(floor));
+}
+```
+
+A successful squash removes older siblings and establishes a temporal floor.
+`nextDwnTimestampAfter()` represents an application helper that produces a
+DWN-compatible timestamp strictly newer than both wall-clock now and the
+provided floor. If the rebased write also races, repeat the authoritative
+read/rebase/write sequence with a bounded retry count. Never blindly retry the
+rejected snapshot.
 
 ### Query, observe, or subscribe?
 
@@ -360,6 +419,16 @@ Invitation preview fields are untrusted display text. Acceptance does not trust
 the invitation as membership proof: it resolves the owner-hosted role record,
 protocol, context root, and audience key before admitting the context. A failed
 accept remains retryable. `dismiss()` removes only the inbox item.
+
+Invitation discovery is a bounded newest-first query: it reads 50 raw inbox
+records by default and accepts limits up to 100. Malformed, duplicate, or
+unsolicited records consume that bound and can crowd out older valid
+invitations. Pagination continuation and automatic junk cleanup are not
+available yet and are tracked in
+[#1552](https://github.com/enboxorg/enbox/issues/1552). Apps that receive the
+owner DID, context ID, and group through another channel can bypass inbox
+discovery with `contexts.follow({ ownerDid, id, group })`; following still proves
+current membership before accepting the context.
 
 `refresh()` means “ensure current,” not “always fetch.” It reads the exact
 context links, performs at most one scoped pull when necessary, and uses a

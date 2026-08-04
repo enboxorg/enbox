@@ -17,8 +17,6 @@ import type {
   ProcessDwnRequest,
   SendDwnRequest,
 } from './dwn.js';
-import type { ProcessVcRequest, SendVcRequest, VcResponse } from './vc.js';
-
 
 /**
  * Defines the structure for response status in the context of an Agent's interaction within the
@@ -64,11 +62,11 @@ export type ResponseStatus = {
  * Defines the interface for an Enbox Agent, encapsulating the core functionality all implementations
  * must include.
  *
- * The Agent is responsible for handling decentralized identifier (DID) requests, decentralized web
- * node (DWN) requests, and verifiable credential (VC) requests.
+ * The Agent is responsible for handling decentralized identifier (DID) and decentralized web node
+ * (DWN) requests.
  *
  * The `AgentDid` property represents the Enbox Agent's own DID, while the various process and send
- * methods enable the Agent to handle and initiate requests pertaining to DIDs, DWNs, and VCs.
+ * methods enable the Agent to handle and initiate requests pertaining to DIDs and DWNs.
  */
 export interface EnboxAgent {
   /**
@@ -111,19 +109,6 @@ export interface EnboxAgent {
   sendDwnDeleteToAllRemoteEndpoints(
     request: ProcessDwnRequest<DwnInterface.RecordsDelete>,
   ): ReturnType<AgentDwnApi['sendDeleteToAllRemoteEndpoints']>;
-
-  /**
-   * Processes a request for handling Verifiable Credentials (VCs), such as issuing or verifying
-   * them, and returns a response indicating the outcome.
-   */
-  processVcRequest(request: ProcessVcRequest): Promise<VcResponse>
-
-  /**
-   * Sends a request to issue, verify, or manage Verifiable Credentials (VCs), expecting a response
-   * that indicates the result of the operation. This method is often used for interactions
-   * involving VCs occurring over a network or between different agents.
-   */
-  sendVcRequest(request: SendVcRequest): Promise<VcResponse>;
 }
 
 /**

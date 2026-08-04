@@ -92,7 +92,6 @@ describe('Enbox API', () => {
         });
         expect(enbox).toBeDefined();
         expect(enbox).toHaveProperty('did');
-        expect(enbox).toHaveProperty('vc');
         expect(enbox).toHaveProperty('using');
         expect((enbox as any)._dwn.permissionsApi).toBe(testHarness.agent.permissions);
       });

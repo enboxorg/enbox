@@ -397,7 +397,6 @@ function requiresWalletReapproval(error: Error): boolean {
 }
 
 type SyncStatusBinding = {
-  hasBeenReady: boolean;
   onAbort: () => void;
   refreshRequested: boolean;
   refreshing: boolean;
@@ -1018,7 +1017,6 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
 
     const binding: SyncStatusBinding = {
-      hasBeenReady     : false,
       onAbort          : (): void => { this._handleSyncAbort(binding); },
       refreshRequested : false,
       refreshing       : false,
@@ -1030,14 +1028,11 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (event.tenantDid !== session.did) {
         return;
       }
-      if (event.type === 'identity:registration-change' && event.options !== undefined) {
-        binding.hasBeenReady = false;
-      }
       this._requestSyncStatus(binding);
     });
     this._requestSyncStatus(binding);
 
-    return immutableSyncStatus({ state: 'loading', connectivity: 'unknown' });
+    return immutableSyncStatus({ state: 'syncing', connectivity: 'unknown' });
   }
 
   private _handleSyncAbort(binding: SyncStatusBinding): void {
@@ -1084,10 +1079,6 @@ class HeadlessConnectionStore implements ConnectionStore {
         if (this._syncBinding !== binding || binding.refreshRequested) {
           continue;
         }
-        // A superseded baseline was never published, so it must not make later state stale.
-        if (snapshot.state === 'ready') {
-          binding.hasBeenReady = true;
-        }
         this._publishSyncStatus(binding, snapshot);
       }
     } finally {
@@ -1100,10 +1091,10 @@ class HeadlessConnectionStore implements ConnectionStore {
     try {
       const registration = await session.agent.sync.getIdentityOptions(session.did);
       if (registration === undefined) {
-        return immutableSyncStatus({ state: 'ready', connectivity: 'unknown' });
+        return immutableSyncStatus({ state: 'caught-up', connectivity: 'unknown' });
       }
       const links = await session.agent.sync.getReplicationLinks(session.did);
-      return projectSyncStatus(links, binding.hasBeenReady, session.agent.sync.connectivityState);
+      return projectSyncStatus(links, session.agent.sync.connectivityState);
     } catch (cause: unknown) {
       const current = this._snapshot.sync;
       return immutableSyncStatus({
@@ -1182,7 +1173,6 @@ class HeadlessConnectionStore implements ConnectionStore {
 
 function projectSyncStatus(
   links: readonly ReplicationLinkSnapshot[],
-  hasBeenReady: boolean,
   fallbackConnectivity: SyncConnectivityState,
 ): SyncStatusSnapshot {
   const connectivity = resolveSyncConnectivityState(
@@ -1190,7 +1180,7 @@ function projectSyncStatus(
     fallbackConnectivity,
   );
   const lastActivityAt = latestActivityAt(links);
-  const state = projectReplicationCurrentness(links, hasBeenReady);
+  const state = projectReplicationCurrentness(links);
   if (state === 'error') {
     return immutableSyncStatus({
       state : 'error',
