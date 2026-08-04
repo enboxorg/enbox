@@ -2,6 +2,7 @@ import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
 import { KeyDerivationScheme } from '../utils/hd-key.js';
+import { lexicographicalCompare } from './string.js';
 import { ProtocolAction } from '../types/protocols-types.js';
 
 /**
@@ -141,8 +142,8 @@ export function resolveProtocolRoleContextScope(
     }
   };
   visit(definition.structure as ProtocolRuleSet, '');
-  allowedPaths.sort();
-  readablePaths.sort();
+  allowedPaths.sort(lexicographicalCompare);
+  readablePaths.sort(lexicographicalCompare);
   if (!readablePaths.includes(protocolPath)) {
     throw new TypeError(`Context role '${rolePath}' must authorize reading its parent context '${protocolPath}'.`);
   }

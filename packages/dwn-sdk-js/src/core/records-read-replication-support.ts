@@ -7,6 +7,7 @@ import type { RecordsReadReplicationSupportEntry, RecordsWriteMessage } from '..
 import { ENCRYPTION_CONTROL_DELIVERY_PATH } from './constants.js';
 import { EncryptionControl } from './encryption-control.js';
 import { getRoleAudienceContextId } from '../utils/protocols.js';
+import { lexicographicalCompare } from '../utils/string.js';
 import { Message } from './message.js';
 import { Messages } from '../utils/messages.js';
 import { Records } from '../utils/records.js';
@@ -194,7 +195,8 @@ export class RecordsReadReplicationSupport {
     records: readonly RecordsWriteMessage[],
   ): Promise<{ isLatestBaseState: boolean; message: ProtocolsConfigureMessage }[]> {
     const latest = await RecordsReadReplicationSupport.fetchProtocolConfigure(deps, tenant, protocol);
-    const timestamps = [...new Set(records.map((record): string => record.descriptor.messageTimestamp))].sort();
+    const timestamps = [...new Set(records.map((record): string => record.descriptor.messageTimestamp))]
+      .sort(lexicographicalCompare);
     const historical = await Promise.all(timestamps.map((messageTimestamp) =>
       RecordsReadReplicationSupport.fetchProtocolConfigure(deps, tenant, protocol, messageTimestamp)));
     const latestCid = await Message.getCid(latest);

@@ -1,3 +1,5 @@
+import { lexicographicalCompare } from './types/sync.js';
+
 /** Durable description of one foreign context accepted through a role record. */
 export type FollowedSyncSource = {
   /** Opaque local acceptance ID. A re-follow never revives handles from a former acceptance. */
@@ -162,7 +164,7 @@ function normalizeProtocolPaths(protocolPaths: readonly string[]): [string, ...s
     throw new TypeError('FollowedSyncSource: \'protocolPaths\' must contain at least one path.');
   }
 
-  const normalized = [...new Set(protocolPaths)].sort();
+  const normalized = [...new Set(protocolPaths)].sort(lexicographicalCompare);
   if (normalized.length === 0 || normalized.some(path => typeof path !== 'string' || path.length === 0)) {
     throw new TypeError('FollowedSyncSource: \'protocolPaths\' must contain non-empty paths.');
   }

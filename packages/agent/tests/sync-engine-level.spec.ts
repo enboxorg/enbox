@@ -713,6 +713,10 @@ describe('SyncEngineLevel', () => {
 
       sinon.restore();
 
+      // This suite exercises owned-tenant sync. Followed-context maintenance
+      // has its own focused tests and would otherwise race fake timer ticks.
+      sinon.stub(syncEngine as any, 'scheduleFollowedSourceReconciliation');
+
       // Reset the sync lock in case a previous test timed out while sync was in progress.
       // Without this, all subsequent tests would fail with "Sync operation is already in progress."
       if (syncEngine['_lifecycle'].isSyncInProgress) {

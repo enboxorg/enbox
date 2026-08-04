@@ -95,6 +95,10 @@ const DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS = 10_000;
 const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
 
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 // ---------------------------------------------------------------------------
 // Helper types
 // ---------------------------------------------------------------------------
@@ -1411,7 +1415,7 @@ export class TypedEnbox<
 
     const contextRoots = [...new Set(Object.keys(this._roleGroups)
       .map(group => this.resolveContextRoleGroup(group).contextPath))]
-      .sort() as Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>[];
+      .sort(compareCodeUnits) as Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>[];
     const contextRoles = new Set(Object.values(this._roleGroups).flat());
     type CatalogContext = { access: 'member' | 'owner'; id: string; ownerDid: string };
     const boundMembers = new Map<string, { context: CatalogContext; source: FollowedSyncSource }>();
@@ -2623,7 +2627,10 @@ export class TypedEnbox<
       return candidate.record.id > current.record.id ? candidate : current;
     };
     const preferred = (candidates: readonly ActiveMemberRecord[]): ActiveMemberRecord | undefined =>
-      candidates.reduce<ActiveMemberRecord | undefined>(prefer, undefined);
+      candidates.reduce<ActiveMemberRecord | undefined>(
+        (current, candidate) => prefer(current, candidate),
+        undefined,
+      );
 
     const project = async (
       member: ActiveMemberRecord,
@@ -2650,7 +2657,7 @@ export class TypedEnbox<
         byDid.set(member.did, prefer(byDid.get(member.did), member));
       }
       return Promise.all([...byDid.entries()]
-        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .sort(([left], [right]) => compareCodeUnits(left, right))
         .map(([, member]) => project(member)));
     };
 

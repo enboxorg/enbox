@@ -1127,6 +1127,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
     sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
     sinon.stub(engine as any, 'reinitializeOrphanedLinkTargets').resolves();
+    sinon.stub(engine as any, 'scheduleFollowedSourceReconciliation');
     const verifyConvergence = sinon.stub(engine['_durableFeedReconciler'], 'verifyConvergence').resolves({
       converged    : true,
       pushFailures : [],
