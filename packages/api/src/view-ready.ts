@@ -1,4 +1,4 @@
-type ViewState =
+export type ViewState =
   | { status: 'loading' | 'ready'; error?: never }
   | { status: 'error'; error: Error };
 

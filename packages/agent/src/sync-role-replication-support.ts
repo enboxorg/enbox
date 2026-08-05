@@ -30,6 +30,7 @@ import {
 } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
+import { isEncryptionControlRecordFor } from './dwn-encryption.js';
 import { isTenantProtocolConfig } from './sync-fetch-helpers.js';
 import { resolveDwnSubscriptionUrl as resolveDwnWebSocketUrl } from './utils.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
@@ -608,14 +609,8 @@ function isTaggedEncryptionControl(
   rolePath: string,
   contextId: string | undefined,
 ): boolean {
-  const tags = message.descriptor.tags;
   return contextId !== undefined &&
-    message.descriptor.protocol === protocol &&
-    message.descriptor.protocolPath === protocolPath &&
-    tags?.protocol === protocol &&
-    tags.rolePath === rolePath &&
-    tags.contextId === contextId &&
-    typeof tags.keyId === 'string';
+    isEncryptionControlRecordFor(message, protocolPath, { protocol, rolePath, contextId });
 }
 
 function isRootAudienceControl(

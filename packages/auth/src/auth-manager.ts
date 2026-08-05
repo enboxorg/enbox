@@ -60,6 +60,7 @@ import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
 import { ConnectDeniedError } from './errors.js';
 import { createDefaultStorage } from './storage/storage.js';
+import { fetchConnectionStatus } from './connect/status.js';
 import { importFromPortable } from './connect/import.js';
 import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
@@ -76,7 +77,6 @@ import {
   readLocalDwnEjectionRecordForPairing,
   requestLocalDwnPairing,
 } from './discovery.js';
-import { computeConnectionStatus, reconcileConnectionStatusGrants } from './connect/status.js';
 import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
 
 type ConnectionMonitorState = {
@@ -406,48 +406,11 @@ export class AuthManager {
       return { state: 'none' };
     }
 
-    const fetchParams = {
-      author  : delegateDid,
-      grantee : delegateDid,
-      grantor : connectedDid,
-    };
-    const [ownerGrantEntries, activeOwnerGrantEntries, delegateGrantEntries] = await Promise.all([
-      this._userAgent.permissions.fetchGrants({ ...fetchParams, target: connectedDid }),
-      options.checkRevoked === false
-        ? Promise.resolve(undefined)
-        : this._userAgent.permissions.fetchGrants({
-          ...fetchParams,
-          target       : connectedDid,
-          checkRevoked : true,
-        }),
-      this._userAgent.permissions.fetchGrants({ ...fetchParams, target: delegateDid }),
-    ]);
-    const activeOwnerGrantIds = activeOwnerGrantEntries === undefined
-      ? undefined
-      : new Set(activeOwnerGrantEntries.map(({ grant }) => grant.id));
-
-    const ownerGrants = ownerGrantEntries.map(({ grant }) => ({
-      id             : grant.id,
-      grantor        : grant.grantor,
-      grantee        : grant.grantee,
-      dateExpires    : grant.dateExpires,
-      connectSession : grant.connectSession,
-    }));
-    const delegateGrants = delegateGrantEntries.map(({ grant }) => ({
-      id             : grant.id,
-      grantor        : grant.grantor,
-      grantee        : grant.grantee,
-      dateExpires    : grant.dateExpires,
-      connectSession : grant.connectSession,
-    }));
-    const grants = reconcileConnectionStatusGrants({
-      ownerGrants,
-      delegateGrants,
-      activeOwnerGrantIds,
-    });
-
-    return computeConnectionStatus(grants, {
-      expiringSoonThresholdSeconds: options.expiringSoonThresholdSeconds,
+    return fetchConnectionStatus({
+      connectedDid,
+      delegateDid,
+      options,
+      permissions: this._userAgent.permissions,
     });
   }
 

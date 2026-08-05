@@ -4,18 +4,16 @@ import type {
   DwnPermissionConditions,
   DwnPermissionScope,
   DwnResponseStatus,
-  EnboxAgent,
-  SendDwnRequest
+  EnboxAgent
 } from '@enbox/agent';
 
-import { Convert } from '@enbox/common';
 import {
   AgentPermissionsApi,
-  DwnInterface,
   DwnPermissionGrant,
 } from '@enbox/agent';
 
 import { PermissionGrantRevocation } from './grant-revocation.js';
+import { sendPermissionRecordMessage, storePermissionRecordMessage } from './permission-record-transport.js';
 
 /**
  * Represents the structured data model of a PermissionGrant record, encapsulating the essential fields that define
@@ -207,22 +205,12 @@ export class PermissionGrant implements PermissionGrantModel {
    * @beta
    */
   async send(target?: string): Promise<DwnResponseStatus> {
-    target ??= this._connectedDid;
-
-    const { encodedData, ...rawMessage } = this._message;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
-
-    const sendRequestOptions: SendDwnRequest<DwnInterface.RecordsWrite> = {
-      messageType : DwnInterface.RecordsWrite,
-      author      : this._connectedDid,
-      target      : target,
-      dataStream,
-      rawMessage,
-    };
-
-    // Send the current/latest state to the target.
-    const { reply } = await this.agent.sendDwnRequest(sendRequestOptions);
-    return reply;
+    return sendPermissionRecordMessage({
+      agent        : this.agent,
+      connectedDid : this._connectedDid,
+      message      : this._message,
+      target,
+    });
   }
 
   /**
@@ -234,21 +222,16 @@ export class PermissionGrant implements PermissionGrantModel {
    * @beta
    */
   async store(importGrant: boolean = false): Promise<DwnResponseStatus> {
-    const { encodedData, ...rawMessage } = this.rawMessage;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
-
-    const { reply, message } = await this.agent.processDwnRequest({
-      store       : true,
-      author      : this._connectedDid,
-      target      : this._connectedDid,
-      messageType : DwnInterface.RecordsWrite,
-      signAsOwner : importGrant,
-      rawMessage,
-      dataStream,
+    const { message, status } = await storePermissionRecordMessage({
+      agent        : this.agent,
+      connectedDid : this._connectedDid,
+      message      : this.rawMessage,
+      signAsOwner  : importGrant,
+      store        : true,
     });
 
-    this._message = { ...message, encodedData: encodedData };
-    return { status: reply.status };
+    this._message = message;
+    return status;
   }
 
   /**
@@ -261,21 +244,16 @@ export class PermissionGrant implements PermissionGrantModel {
    * @beta
    */
   async import(store: boolean = false): Promise<DwnResponseStatus> {
-    const { encodedData, ...rawMessage } = this.rawMessage;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
-
-    const { reply, message } = await this.agent.processDwnRequest({
+    const { message, status } = await storePermissionRecordMessage({
+      agent        : this.agent,
+      connectedDid : this._connectedDid,
+      message      : this.rawMessage,
+      signAsOwner  : true,
       store,
-      author      : this._connectedDid,
-      target      : this._connectedDid,
-      messageType : DwnInterface.RecordsWrite,
-      signAsOwner : true,
-      rawMessage,
-      dataStream,
     });
 
-    this._message = { ...message, encodedData: encodedData };
-    return { status: reply.status };
+    this._message = message;
+    return status;
   }
 
   /**

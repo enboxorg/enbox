@@ -1,14 +1,11 @@
 import type { PortableDid } from '@enbox/dids';
 
-import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
 
+import type { AgentDataStore } from './store-data.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
-import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreSetParams, DataStoreTenantParams } from './store-data.js';
 
-import { DwnInterface } from './types/dwn.js';
 import { IdentityProtocolDefinition } from './store-data-protocols.js';
-import { TENANT_SEPARATOR } from './utils-internal.js';
 import { DwnDataStore, InMemoryDataStore } from './store-data.js';
 
 export class DwnDidStore extends DwnDataStore<PortableDid> implements AgentDataStore<PortableDid> {
@@ -26,80 +23,22 @@ export class DwnDidStore extends DwnDataStore<PortableDid> implements AgentDataS
     schema       : this._recordProtocolDefinition.types.portableDid.schema,
   };
 
-  public async delete(params: DataStoreDeleteParams): Promise<boolean> {
-    return await super.delete(params);
-  }
-
-  public async get(params: DataStoreGetParams): Promise<PortableDid | undefined> {
-    return await super.get(params);
-  }
-
-  public async list(params: DataStoreTenantParams): Promise<PortableDid[]> {
-    return await super.list(params);
-  }
-
-  public async set(params: DataStoreSetParams<PortableDid>): Promise<void> {
-    return await super.set(params);
-  }
-
-  protected async getAllRecords({ agent, tenantDid }: {
+  protected async getAllRecords(params: {
     agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<PortableDid[]> {
-    // Clear the index since it will be rebuilt from the query results.
-    this._index.clear();
+    return this.queryAllStoredRecords(params);
+  }
 
-    // Query the DWN for all stored PortableDid objects.
-    const { reply: queryReply } = await agent.dwn.processRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { ...this._recordProperties } }
-    });
+  protected getStoredObjectId(storedDid: PortableDid): string {
+    return storedDid.uri;
+  }
 
-    // Loop through all of the stored DID records and accumulate the DID objects.
-    const storedDids: PortableDid[] = [];
-    for (const record of queryReply.entries ?? []) {
-      // All DID records are expected to be small enough such that the data is returned with the
-      // query results. If a record is returned without `encodedData` this is unexpected so throw
-      // an error.
-      if (!record.encodedData) {
-        throw new Error(`${this.name}: Expected 'encodedData' to be present in the DWN query result entry`);
-      }
-
-      const storedDid = Convert.base64Url(record.encodedData).toObject() as PortableDid;
-      if (isPortableDid(storedDid)) {
-        // Update the index with the matching record ID.
-        const indexKey = `${tenantDid}${TENANT_SEPARATOR}${storedDid.uri}`;
-        this._index.set(indexKey, record.recordId);
-
-        // Add the stored DID to the cache.
-        this._cache.set(record.recordId, storedDid);
-
-        storedDids.push(storedDid);
-      }
-    }
-
-    return storedDids;
+  protected isStoredObject(value: unknown): value is PortableDid {
+    return isPortableDid(value);
   }
 }
 
 export class InMemoryDidStore extends InMemoryDataStore<PortableDid> implements AgentDataStore<PortableDid> {
   protected name = 'InMemoryDidStore';
-
-  public async delete(params: DataStoreDeleteParams): Promise<boolean> {
-    return await super.delete(params);
-  }
-
-  public async get(params: DataStoreGetParams): Promise<PortableDid | undefined> {
-    return await super.get(params);
-  }
-
-  public async list(params: DataStoreTenantParams): Promise<PortableDid[]> {
-    return await super.list(params);
-  }
-
-  public async set(params: DataStoreSetParams<PortableDid>): Promise<void> {
-    return await super.set(params);
-  }
 }

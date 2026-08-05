@@ -9,6 +9,13 @@
  */
 
 export { DwnApi } from './dwn-api.js';
+export { PermissionGrantRevocation } from './grant-revocation.js';
+export { PermissionGrant } from './permission-grant.js';
+export { PermissionRequest } from './permission-request.js';
+
+export type { GrantRevocationModel, GrantRevocationOptions } from './grant-revocation.js';
+export type { PermissionGrantModel, PermissionGrantOptions } from './permission-grant.js';
+export type { PermissionRequestModel } from './permission-request.js';
 
 export type {
   FetchGrantsRequest,

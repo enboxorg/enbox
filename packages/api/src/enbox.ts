@@ -10,7 +10,6 @@ import type {
   AuthManagerOptions,
   AuthSession,
   ConnectionStatus,
-  ConnectionStatusGrant,
   ConnectOptions,
   GetConnectionStatusOptions,
   HandlerConnectOptions,
@@ -34,8 +33,8 @@ import type {
 import { AnonymousDwnApi } from '@enbox/agent';
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
+import { fetchConnectionStatus } from '@enbox/auth';
 import { omitUndefined } from '@enbox/common';
-import { computeConnectionStatus, reconcileConnectionStatusGrants } from '@enbox/auth';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
 import { createProtocolReadinessApi } from './protocol-readiness.js';
@@ -203,40 +202,11 @@ export class Enbox {
       return { state: 'none' };
     }
 
-    const query = {
-      author  : this._delegateDid,
-      grantor : this._connectedDid,
-      grantee : this._delegateDid,
-    };
-    const [ownerGrantEntries, activeOwnerGrantEntries, delegateGrantEntries] = await Promise.all([
-      this.agent.permissions.fetchGrants({ ...query, target: this._connectedDid }),
-      options.checkRevoked === false
-        ? Promise.resolve(undefined)
-        : this.agent.permissions.fetchGrants({
-          ...query,
-          target       : this._connectedDid,
-          checkRevoked : true,
-        }),
-      this.agent.permissions.fetchGrants({ ...query, target: this._delegateDid }),
-    ]);
-    const activeOwnerGrantIds = activeOwnerGrantEntries === undefined
-      ? undefined
-      : new Set<string>(activeOwnerGrantEntries.map(({ grant }) => grant.id as string));
-    const toStatusGrant = ({ grant }: typeof ownerGrantEntries[number]): ConnectionStatusGrant => ({
-      id             : grant.id,
-      grantor        : grant.grantor,
-      grantee        : grant.grantee,
-      dateExpires    : grant.dateExpires,
-      connectSession : grant.connectSession,
-    });
-    const grants = reconcileConnectionStatusGrants({
-      ownerGrants    : ownerGrantEntries.map(toStatusGrant),
-      delegateGrants : delegateGrantEntries.map(toStatusGrant),
-      activeOwnerGrantIds,
-    });
-
-    return computeConnectionStatus(grants, {
-      expiringSoonThresholdSeconds: options.expiringSoonThresholdSeconds,
+    return fetchConnectionStatus({
+      connectedDid : this._connectedDid,
+      delegateDid  : this._delegateDid,
+      options,
+      permissions  : this.agent.permissions,
     });
   }
 

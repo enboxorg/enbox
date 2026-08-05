@@ -1,7 +1,8 @@
-import type { DwnDataEncodedRecordsWriteMessage, DwnResponseStatus, EnboxAgent, SendDwnRequest } from '@enbox/agent';
+import type { DwnDataEncodedRecordsWriteMessage, DwnResponseStatus, EnboxAgent } from '@enbox/agent';
 
-import { Convert } from '@enbox/common';
-import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
+import { AgentPermissionsApi, getRecordAuthor } from '@enbox/agent';
+
+import { sendPermissionRecordMessage, storePermissionRecordMessage } from './permission-record-transport.js';
 
 /**
  * Represents the structured data model of a GrantRevocation record, encapsulating the essential fields that define.
@@ -80,22 +81,12 @@ export class PermissionGrantRevocation implements GrantRevocationModel {
    * @beta
    */
   async send(target?: string): Promise<DwnResponseStatus> {
-    target ??= this._connectedDid;
-
-    const { encodedData, ...rawMessage } = this._message;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
-
-    const sendRequestOptions: SendDwnRequest<DwnInterface.RecordsWrite> = {
-      messageType : DwnInterface.RecordsWrite,
-      author      : this._connectedDid,
-      target      : target,
-      dataStream,
-      rawMessage,
-    };
-
-    // Send the current/latest state to the target.
-    const { reply } = await this.agent.sendDwnRequest(sendRequestOptions);
-    return reply;
+    return sendPermissionRecordMessage({
+      agent        : this.agent,
+      connectedDid : this._connectedDid,
+      message      : this._message,
+      target,
+    });
   }
 
   /**
@@ -107,19 +98,14 @@ export class PermissionGrantRevocation implements GrantRevocationModel {
    * @beta
    */
   async store(importRevocation?: boolean): Promise<DwnResponseStatus> {
-    const { encodedData, ...rawMessage } = this.rawMessage;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
-
-    const { reply, message } = await this.agent.processDwnRequest({
-      author      : this._connectedDid,
-      target      : this._connectedDid,
-      messageType : DwnInterface.RecordsWrite,
-      signAsOwner : importRevocation,
-      rawMessage,
-      dataStream,
+    const { message, status } = await storePermissionRecordMessage({
+      agent        : this.agent,
+      connectedDid : this._connectedDid,
+      message      : this.rawMessage,
+      signAsOwner  : importRevocation,
     });
 
-    this._message = { ...message, encodedData: encodedData };
-    return { status: reply.status };
+    this._message = message;
+    return status;
   }
 }

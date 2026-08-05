@@ -510,6 +510,7 @@
         "protocol-codegen": "./dist/esm/cli.js",
       },
       "dependencies": {
+        "@enbox/common": "workspace:*",
         "ajv": "8.18.0",
         "ajv-formats": "3.0.1",
         "esbuild": "0.28.1",

@@ -11,10 +11,10 @@ import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataSto
 
 import { AgentDidApi } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
+import { getDataStoreTenant } from '../src/utils-internal.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { DwnDataStore, InMemoryDataStore } from '../src/store-data.js';
-import { getDataStoreTenant, TENANT_SEPARATOR } from '../src/utils-internal.js';
 
 class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<PortableDid> {
   protected name = 'DwnTestStore';
@@ -63,41 +63,15 @@ class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<P
     agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<PortableDid[]> {
-    // Clear the index since it will be rebuilt from the query results.
-    this._index.clear();
+    return this.queryAllStoredRecords({ agent, tenantDid });
+  }
 
-    // Query the DWN for all stored PortableDid objects.
-    const { reply: queryReply } = await agent.dwn.processRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { ...this._recordProperties } }
-    });
+  protected getStoredObjectId(storedObject: PortableDid): string {
+    return storedObject.uri;
+  }
 
-    // Loop through all of the stored PortableDid records and accumulate the objects.
-    const storedObjects: PortableDid[] = [];
-    for (const record of queryReply.entries ?? []) {
-      // All PortableDid records are expected to be small enough such that the data is returned
-      // with the query results. If a record is returned without `encodedData` this is unexpected so
-      // throw an error.
-      if (!record.encodedData) {
-        throw new Error(`${this.name}: Expected 'encodedData' to be present in the DWN query result entry`);
-      }
-
-      const storedObject = Convert.base64Url(record.encodedData).toObject() as PortableDid;
-      if (isPortableDid(storedObject)) {
-        // Update the index with the matching record ID.
-        const indexKey = `${tenantDid}${TENANT_SEPARATOR}${storedObject.uri}`;
-        this._index.set(indexKey, record.recordId);
-
-        // Add the stored Identity to the cache.
-        this._cache.set(record.recordId, storedObject);
-
-        storedObjects.push(storedObject);
-      }
-    }
-
-    return storedObjects;
+  protected isStoredObject(value: unknown): value is PortableDid {
+    return isPortableDid(value);
   }
 }
 

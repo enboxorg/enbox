@@ -3,13 +3,14 @@ import type { DataStore } from '../types/data-store.js';
 import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
+import type { ProtocolDefinition } from '../types/protocols-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
-import type { ProtocolDefinition, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from './constants.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
+import { queryProtocolConfigure } from './protocol-configure-lookup.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
@@ -248,50 +249,11 @@ export class StoreValidationStateReader implements ValidationStateReader {
     }
 
     // fetch the corresponding protocol definition
-    const query: Filter = {
-      interface : DwnInterfaceName.Protocols,
-      method    : DwnMethodName.Configure,
-      protocol  : protocolUri,
-    };
-
-    if (messageTimestamp === undefined) {
-      // default: return only the latest protocol definition
-      query.isLatestBaseState = true;
-    } else {
-      // temporal lookup: find the protocol definition active at the given timestamp
-      query.messageTimestamp = { lte: messageTimestamp };
-    }
-
-    let { messages: protocols } = await this.messageStore.query(
-      tenant,
-      [query],
-      { messageTimestamp: SortDirection.Descending },
-      { limit: 1 },
-    );
-
-    if (protocols.length === 0 && messageTimestamp !== undefined) {
-      // A record can be authored before the protocol's earliest retained config yet still have
-      // been admitted under that config: admission order, not timestamp order, governed the
-      // source. When no config predates the record, reconstruct the historical answer from the
-      // earliest retained config. A protocol that is genuinely not installed still has zero
-      // configs and fails below.
-      ({ messages: protocols } = await this.messageStore.query(
-        tenant,
-        [{
-          interface : DwnInterfaceName.Protocols,
-          method    : DwnMethodName.Configure,
-          protocol  : protocolUri,
-        }],
-        { messageTimestamp: SortDirection.Ascending },
-        { limit: 1 },
-      ));
-    }
-
-    if (protocols.length === 0) {
+    const protocolMessage = await queryProtocolConfigure(this.messageStore, tenant, protocolUri, messageTimestamp);
+    if (protocolMessage === undefined) {
       throw new DwnError(DwnErrorCode.ProtocolAuthorizationProtocolNotFound, `unable to find protocol definition for ${protocolUri}`);
     }
 
-    const protocolMessage = protocols[0] as ProtocolsConfigureMessage;
     return protocolMessage.descriptor.definition;
   }
 

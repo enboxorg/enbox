@@ -103,6 +103,31 @@ export function getRuleSetAtPath(protocolPath: string, structure: { [key: string
   return current;
 }
 
+/**
+ * Walks every non-directive rule set in a protocol structure in pre-order,
+ * visiting each node with its slash-joined protocol path. Recursion into a
+ * node is skipped when its value is not a plain record, so malformed input
+ * fails the caller's own validation rather than the walk itself.
+ */
+export function walkProtocolRuleSets(
+  structure: ProtocolRuleSet,
+  visit: (protocolPath: string, ruleSet: ProtocolRuleSet) => void,
+): void {
+  const walk = (ruleSet: ProtocolRuleSet, parentPath: string): void => {
+    for (const [name, child] of Object.entries(ruleSet)) {
+      if (name.startsWith('$')) {
+        continue;
+      }
+      const path = parentPath === '' ? name : `${parentPath}/${name}`;
+      visit(path, child as ProtocolRuleSet);
+      if (child !== null && typeof child === 'object' && !Array.isArray(child)) {
+        walk(child as ProtocolRuleSet, path);
+      }
+    }
+  };
+  walk(structure, '');
+}
+
 /** Resolve the non-role content scope governed by one nested protocol role. */
 export function resolveProtocolRoleContextScope(
   definition: ProtocolDefinition,
@@ -122,26 +147,19 @@ export function resolveProtocolRoleContextScope(
   }
   const allowedPaths: string[] = [];
   const readablePaths: string[] = [];
-  const visit = (ruleSet: ProtocolRuleSet, parentPath: string): void => {
-    for (const [name, value] of Object.entries(ruleSet)) {
-      if (name.startsWith('$')) {continue;}
-      const path = parentPath === '' ? name : `${parentPath}/${name}`;
-      const child = value as ProtocolRuleSet;
-      const contentPath = child.$role !== true &&
-        (path === protocolPath || path.startsWith(`${protocolPath}/`));
-      if (contentPath) {
-        const actions = (child.$actions ?? []).filter(rule => rule.role === rolePath);
-        if (actions.length > 0) {
-          allowedPaths.push(path);
-        }
-        if (actions.some(rule => rule.can.includes(ProtocolAction.Read))) {
-          readablePaths.push(path);
-        }
+  walkProtocolRuleSets(definition.structure as ProtocolRuleSet, (path, child): void => {
+    const contentPath = child.$role !== true &&
+      (path === protocolPath || path.startsWith(`${protocolPath}/`));
+    if (contentPath) {
+      const actions = (child.$actions ?? []).filter(rule => rule.role === rolePath);
+      if (actions.length > 0) {
+        allowedPaths.push(path);
       }
-      visit(child, path);
+      if (actions.some(rule => rule.can.includes(ProtocolAction.Read))) {
+        readablePaths.push(path);
+      }
     }
-  };
-  visit(definition.structure as ProtocolRuleSet, '');
+  });
   allowedPaths.sort(lexicographicalCompare);
   readablePaths.sort(lexicographicalCompare);
   if (!readablePaths.includes(protocolPath)) {
