@@ -4,13 +4,12 @@ import type {
   DwnPermissionScope,
   DwnResponseStatus,
   EnboxAgent,
-  SendDwnRequest,
 } from '@enbox/agent';
 
-import { Convert } from '@enbox/common';
-import { AgentPermissionsApi, DwnInterface, DwnPermissionRequest } from '@enbox/agent';
+import { AgentPermissionsApi, DwnPermissionRequest } from '@enbox/agent';
 
 import { PermissionGrant } from './permission-grant.js';
+import { sendPermissionRecordMessage, storePermissionRecordMessage } from './permission-record-transport.js';
 
 /**
  * Represents the structured data model of a PermissionsRequest record, encapsulating the essential fields that define
@@ -144,22 +143,12 @@ export class PermissionRequest implements PermissionRequestModel {
    * @beta
    */
   async send(target?: string): Promise<DwnResponseStatus> {
-    target ??= this._connectedDid;
-
-    const { encodedData, ...rawMessage } = this._message;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
-
-    const sendRequestOptions: SendDwnRequest<DwnInterface.RecordsWrite> = {
-      messageType : DwnInterface.RecordsWrite,
-      author      : this._connectedDid,
-      target      : target,
-      dataStream,
-      rawMessage,
-    };
-
-    // Send the current/latest state to the target.
-    const { reply } = await this.agent.sendDwnRequest(sendRequestOptions);
-    return reply;
+    return sendPermissionRecordMessage({
+      agent        : this.agent,
+      connectedDid : this._connectedDid,
+      message      : this._message,
+      target,
+    });
   }
 
   /**
@@ -171,19 +160,14 @@ export class PermissionRequest implements PermissionRequestModel {
    * @beta
    */
   async store(): Promise<DwnResponseStatus> {
-    const { encodedData, ...rawMessage } = this.rawMessage;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
-
-    const { reply, message } = await this.agent.processDwnRequest({
-      author      : this._connectedDid,
-      target      : this._connectedDid,
-      messageType : DwnInterface.RecordsWrite,
-      rawMessage,
-      dataStream,
+    const { message, status } = await storePermissionRecordMessage({
+      agent        : this.agent,
+      connectedDid : this._connectedDid,
+      message      : this.rawMessage,
     });
 
-    this._message = { ...message, encodedData: encodedData };
-    return { status: reply.status };
+    this._message = message;
+    return status;
   }
 
   /**

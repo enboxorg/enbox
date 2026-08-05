@@ -1,6 +1,6 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
 
-import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
+import { getRuleSetAtPath, walkProtocolRuleSets } from '@enbox/dwn-sdk-js';
 
 /**
  * @internal Classifies an audience role in an authored protocol definition.
@@ -27,44 +27,23 @@ export function isProtocolRolePath(
 /** @internal Collect every non-directive path in a protocol structure. */
 export function collectProtocolPaths(
   structure: globalThis.Record<string, unknown>,
-  prefix: string = '',
 ): Set<string> {
   const paths = new Set<string>();
-
-  for (const [key, child] of Object.entries(structure)) {
-    if (key.startsWith('$')) {
-      continue;
-    }
-
-    const path = prefix === '' ? key : `${prefix}/${key}`;
+  walkProtocolRuleSets(structure as ProtocolRuleSet, (path): void => {
     paths.add(path);
-    if (child !== null && typeof child === 'object') {
-      for (const nested of collectProtocolPaths(child as globalThis.Record<string, unknown>, path)) {
-        paths.add(nested);
-      }
-    }
-  }
-
+  });
   return paths;
 }
 
 /** @internal Reject protocol composition until typed referenced policy can be supplied explicitly. */
 export function assertTypedProtocolStructureSupported(
   structure: globalThis.Record<string, unknown>,
-  prefix: string = '',
 ): void {
-  for (const [key, child] of Object.entries(structure)) {
-    if (key.startsWith('$') || child === null || typeof child !== 'object') {
-      continue;
-    }
-
-    const path = prefix === '' ? key : `${prefix}/${key}`;
-    const node = child as globalThis.Record<string, unknown>;
-    if (typeof node.$ref === 'string') {
+  walkProtocolRuleSets(structure as ProtocolRuleSet, (path, ruleSet): void => {
+    if (typeof (ruleSet as { $ref?: unknown }).$ref === 'string') {
       throw new TypeError(
         `Typed protocols do not yet support $ref at '${path}'; use the raw DWN API for protocol composition.`,
       );
     }
-    assertTypedProtocolStructureSupported(node, path);
-  }
+  });
 }

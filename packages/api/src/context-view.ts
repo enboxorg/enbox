@@ -1,4 +1,4 @@
-import { waitForViewReady } from './view-ready.js';
+import { ObservedView } from './observed-view.js';
 
 /** Immutable state of one protocol's local context catalog. */
 export type ContextViewState<Context> = Readonly<{
@@ -42,18 +42,11 @@ export async function createContextView<Context>(
   return view;
 }
 
-class ObservedContextView<Context> implements ContextView<Context> {
-  private readonly _closeController = new AbortController();
-  private readonly _listeners = new Set<ContextViewListener<Context>>();
+class ObservedContextView<Context> extends ObservedView<ContextViewState<Context>> implements ContextView<Context> {
   private readonly _list: ContextViewOptions<Context>['list'];
   private readonly _openWakeSubscription: ContextViewOptions<Context>['openWakeSubscription'];
   private readonly _signal?: AbortSignal;
 
-  private _closed = false;
-  private _closePromise?: Promise<void>;
-  private _materializing = false;
-  private _materializationRequested = false;
-  private _state: ContextViewState<Context> = immutableState({ status: 'loading', contexts: [] });
   private _wakeSubscription?: { close(): Promise<void> };
 
   private readonly _handleAbort = (): void => {
@@ -62,36 +55,11 @@ class ObservedContextView<Context> implements ContextView<Context> {
   };
 
   public constructor(options: ContextViewOptions<Context>) {
+    super(immutableState({ status: 'loading', contexts: [] }));
     this._list = options.list;
     this._openWakeSubscription = options.openWakeSubscription;
     this._signal = options.signal;
     this._signal?.addEventListener('abort', this._handleAbort, { once: true });
-  }
-
-  public readonly getState = (): ContextViewState<Context> => this._state;
-
-  public readonly subscribe = (listener: ContextViewListener<Context>): (() => void) => {
-    if (this._closed) {
-      return (): void => {};
-    }
-    this._listeners.add(listener);
-    return (): void => { this._listeners.delete(listener); };
-  };
-
-  public ready(
-    options: Readonly<{ signal?: AbortSignal }> = {},
-  ): Promise<ReadyContextViewState<Context>> {
-    return waitForViewReady({
-      closeSignal : this._closeController.signal,
-      getState    : this.getState,
-      signal      : options.signal,
-      subscribe   : this.subscribe,
-    });
-  }
-
-  public close(): Promise<void> {
-    this._closePromise ??= this.closeOwnedResources();
-    return this._closePromise;
   }
 
   /** Install wake delivery before the initial list so changes cannot fall through the handoff. */
@@ -100,13 +68,13 @@ class ObservedContextView<Context> implements ContextView<Context> {
       this._wakeSubscription = await this._openWakeSubscription(
         (): void => { this.requestMaterialization(); },
         (error): void => {
-          if (!this._closed) {
+          if (!this.isClosed) {
             this.publishError(error);
             void this.close().catch((): void => {});
           }
         },
       );
-      if (this._closed) {
+      if (this.isClosed) {
         await this._wakeSubscription.close();
         return;
       }
@@ -117,76 +85,35 @@ class ObservedContextView<Context> implements ContextView<Context> {
     }
   }
 
-  private async closeOwnedResources(): Promise<void> {
-    if (this._closed) {
-      return;
-    }
-    this._closed = true;
-    this._closeController.abort();
-    this._materializationRequested = false;
+  protected async closeOwnedResources(): Promise<void> {
     this._signal?.removeEventListener('abort', this._handleAbort);
-    this._listeners.clear();
     await this._wakeSubscription?.close();
     this._wakeSubscription = undefined;
   }
 
-  private requestMaterialization(): void {
-    if (this._closed) {
-      return;
-    }
-    this._materializationRequested = true;
-    if (this._materializing) {
-      return;
-    }
-    this._materializing = true;
-    void this.drainMaterializations();
-  }
-
-  private async drainMaterializations(): Promise<void> {
-    try {
-      while (!this._closed && this._materializationRequested) {
-        await this.materialize();
-      }
-    } finally {
-      this._materializing = false;
-    }
-  }
-
-  private async materialize(): Promise<void> {
-    this._materializationRequested = false;
+  protected async materialize(): Promise<void> {
     try {
       const contexts = await this._list();
-      if (this.canPublish()) {
+      if (this.canPublishPass()) {
         this.publish(immutableState({ status: 'ready', contexts }));
       }
     } catch (error: unknown) {
-      if (this.canPublish()) {
+      if (this.canPublishPass()) {
         this.publishError(error instanceof Error ? error : new Error(String(error)));
       }
     }
   }
 
-  private canPublish(): boolean {
-    return !this._closed && !this._materializationRequested;
+  protected statesEqual(previous: ContextViewState<Context>, next: ContextViewState<Context>): boolean {
+    return statesEqual(previous, next);
+  }
+
+  private canPublishPass(): boolean {
+    return !this.isClosed && !this.isMaterializationRequested;
   }
 
   private publishError(error: Error): void {
-    this.publish(immutableState({ status: 'error', contexts: this._state.contexts, error }));
-  }
-
-  private publish(state: ContextViewState<Context>): void {
-    if (statesEqual(this._state, state)) {
-      return;
-    }
-    this._state = state;
-    const listeners = [...this._listeners];
-    for (const listener of listeners) {
-      try {
-        listener(state);
-      } catch {
-        // Listener failures do not own the catalog lifecycle.
-      }
-    }
+    this.publish(immutableState({ status: 'error', contexts: this.getState().contexts, error }));
   }
 }
 

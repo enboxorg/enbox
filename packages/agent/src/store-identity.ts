@@ -1,12 +1,8 @@
-import { Convert } from '@enbox/common';
-
+import type { AgentDataStore } from './store-data.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata } from './types/identity.js';
-import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreSetParams, DataStoreTenantParams } from './store-data.js';
 
-import { DwnInterface } from './types/dwn.js';
 import { IdentityProtocolDefinition } from './store-data-protocols.js';
-import { TENANT_SEPARATOR } from './utils-internal.js';
 import { DwnDataStore, InMemoryDataStore } from './store-data.js';
 
 export function isIdentityMetadata(obj: unknown): obj is IdentityMetadata {
@@ -30,80 +26,22 @@ export class DwnIdentityStore extends DwnDataStore<IdentityMetadata> implements 
     schema       : this._recordProtocolDefinition.types.identityMetadata.schema,
   };
 
-  public async delete(params: DataStoreDeleteParams): Promise<boolean> {
-    return await super.delete(params);
-  }
-
-  public async get(params: DataStoreGetParams): Promise<IdentityMetadata | undefined> {
-    return await super.get(params);
-  }
-
-  public async set(params: DataStoreSetParams<IdentityMetadata>): Promise<void> {
-    return await super.set(params);
-  }
-
-  public async list(params: DataStoreTenantParams): Promise<IdentityMetadata[]> {
-    return await super.list(params);
-  }
-
-  protected async getAllRecords({ agent, tenantDid }: {
+  protected async getAllRecords(params: {
     agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<IdentityMetadata[]> {
-    // Clear the index since it will be rebuilt from the query results.
-    this._index.clear();
+    return this.queryAllStoredRecords(params);
+  }
 
-    // Query the DWN for all stored IdentityMetadata objects.
-    const { reply: queryReply } = await agent.dwn.processRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { ...this._recordProperties } }
-    });
+  protected getStoredObjectId(storedIdentity: IdentityMetadata): string {
+    return storedIdentity.uri;
+  }
 
-    // Loop through all of the stored IdentityMetadata records and accumulate the objects.
-    const storedIdentities: IdentityMetadata[] = [];
-    for (const record of queryReply.entries ?? []) {
-      // All IdentityMetadata records are expected to be small enough such that the data is returned
-      // with the query results. If a record is returned without `encodedData` this is unexpected so
-      // throw an error.
-      if (!record.encodedData) {
-        throw new Error(`${this.name}: Expected 'encodedData' to be present in the DWN query result entry`);
-      }
-
-      const storedIdentity = Convert.base64Url(record.encodedData).toObject() as IdentityMetadata;
-      if (isIdentityMetadata(storedIdentity)) {
-        // Update the index with the matching record ID.
-        const indexKey = `${tenantDid}${TENANT_SEPARATOR}${storedIdentity.uri}`;
-        this._index.set(indexKey, record.recordId);
-
-        // Add the stored Identity to the cache.
-        this._cache.set(record.recordId, storedIdentity);
-
-        storedIdentities.push(storedIdentity);
-      }
-    }
-
-    return storedIdentities;
+  protected isStoredObject(value: unknown): value is IdentityMetadata {
+    return isIdentityMetadata(value);
   }
 }
 
 export class InMemoryIdentityStore extends InMemoryDataStore<IdentityMetadata> implements AgentDataStore<IdentityMetadata> {
   protected name = 'InMemoryIdentityStore';
-
-  public async delete(params: DataStoreDeleteParams): Promise<boolean> {
-    return await super.delete(params);
-  }
-
-  public async get(params: DataStoreGetParams): Promise<IdentityMetadata | undefined> {
-    return await super.get(params);
-  }
-
-  public async list(params: DataStoreTenantParams): Promise<IdentityMetadata[]> {
-    return await super.list(params);
-  }
-
-  public async set(params: DataStoreSetParams<IdentityMetadata>): Promise<void> {
-    return await super.set(params);
-  }
 }

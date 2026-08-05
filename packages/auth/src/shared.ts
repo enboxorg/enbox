@@ -14,6 +14,7 @@ export {
   SESSION_EXPIRED_ERROR_CODE,
   SESSION_REVOKED_ERROR_CODE,
   computeConnectionStatus,
+  fetchConnectionStatus,
   isSessionExpiredError,
   isSessionInvalidError,
   reconcileConnectionStatusGrants,

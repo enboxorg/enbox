@@ -11,6 +11,7 @@ import { EncryptionControl } from './encryption-control.js';
 import { lexicographicalCompare } from '../utils/string.js';
 import { Message } from './message.js';
 import { Messages } from '../utils/messages.js';
+import { queryProtocolConfigure } from './protocol-configure-lookup.js';
 import { Records } from '../utils/records.js';
 import { RecordsDelete } from '../interfaces/records-delete.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
@@ -385,29 +386,7 @@ export class RecordsReadReplicationSupport {
     protocol: string,
     messageTimestamp?: string,
   ): Promise<ProtocolsConfigureMessage> {
-    const filter = {
-      interface : DwnInterfaceName.Protocols,
-      method    : DwnMethodName.Configure,
-      protocol,
-      ...(messageTimestamp === undefined
-        ? { isLatestBaseState: true }
-        : { messageTimestamp: { lte: messageTimestamp } }),
-    };
-    let { messages } = await deps.messageStore.query(
-      tenant,
-      [filter],
-      messageTimestamp === undefined ? undefined : { messageTimestamp: SortDirection.Descending },
-      { limit: 1 },
-    );
-    if (messages.length === 0 && messageTimestamp !== undefined) {
-      ({ messages } = await deps.messageStore.query(tenant, [{
-        interface : DwnInterfaceName.Protocols,
-        method    : DwnMethodName.Configure,
-        protocol,
-      }], { messageTimestamp: SortDirection.Ascending }, { limit: 1 }));
-    }
-
-    const protocolConfigure = messages[0] as ProtocolsConfigureMessage | undefined;
+    const protocolConfigure = await queryProtocolConfigure(deps.messageStore, tenant, protocol, messageTimestamp);
     if (protocolConfigure === undefined) {
       throw RecordsReadReplicationSupport.unsupported(`no stored protocol configuration exists for '${protocol}'.`);
     }

@@ -13,6 +13,7 @@ import type { JsonSchema } from './schema-resolver.js';
 import addFormats from 'ajv-formats';
 import Ajv from 'ajv';
 import { build } from 'esbuild';
+import { canonicalizeJson } from '@enbox/common';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import standaloneCode from 'ajv/dist/standalone/index.js';
@@ -109,7 +110,7 @@ function prepareValidators(validators: readonly NamedStandaloneValidator[]): Pre
       }
       names.add(validator.name);
 
-      const schema = canonicalizeSchema(validator.schema) as JsonSchema;
+      const schema = canonicalizeJson(validator.schema) as JsonSchema;
       assertSupportedSchema(validator.name, schema);
       const schemaKey = schemaKeyFor(validator.name, schema);
 
@@ -150,21 +151,6 @@ function schemaKeyFor(name: string, schema: JsonSchema): string {
     throw new TypeError(`Schema for validator '${name}' must have a non-empty string $id when one is declared.`);
   }
   return schemaId;
-}
-
-function canonicalizeSchema(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(canonicalizeSchema);
-  }
-  if (value !== null && typeof value === 'object') {
-    const object = value as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.keys(object)
-        .sort(compareCodePoints)
-        .map((key): readonly [string, unknown] => [key, canonicalizeSchema(object[key])]),
-    );
-  }
-  return value;
 }
 
 function compareCodePoints(a: string, b: string): number {

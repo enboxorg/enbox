@@ -8,9 +8,9 @@ import type { SyncEngine, SyncEvent } from '@enbox/agent';
 import { ContextRetiredError } from './context-errors.js';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
+import { ObservedView } from './observed-view.js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
-import { waitForViewReady } from './view-ready.js';
 import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
 
 type RecordViewContents<Item> = Readonly<{
@@ -107,12 +107,10 @@ export async function createRecordView<Item = Record>(
 }
 
 /** One serialized, wake-driven materialization resource. */
-class ObservedRecordView<Item> implements RecordView<Item> {
+class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> implements RecordView<Item> {
   private readonly _additionalWakeFilters: readonly RecordsFilter[];
-  private readonly _closeController = new AbortController();
   private readonly _definition: ProtocolDefinition;
   private readonly _dwn: DwnApi;
-  private readonly _listeners = new Set<RecordViewListener<Item>>();
   private readonly _materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   private readonly _query: CompiledRecordQuery;
   private readonly _signal?: AbortSignal;
@@ -123,19 +121,8 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   private readonly _followedSourceAcceptanceId?: string;
   private readonly _followedSourceId?: string;
 
-  private _closed = false;
-  private _closePromise?: Promise<void>;
   private _hasMaterialized = false;
-  private _isMaterializing = false;
   private _isOpen = false;
-  private _materializationRequested = false;
-  private _requestGeneration = 0;
-  private _state: RecordViewState<Item> = immutableState({
-    status  : 'loading',
-    records : [],
-    hasMore : false,
-    current : false,
-  });
   private readonly _subscriptions: { close(): Promise<void> }[] = [];
   private _syncUnsubscribe?: () => void;
   private _wakeUnsubscribe?: () => void;
@@ -146,6 +133,12 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   };
 
   public constructor(options: RecordViewOptions<Item>) {
+    super(immutableState({
+      status  : 'loading',
+      records : [],
+      hasMore : false,
+      current : false,
+    }));
     this._additionalWakeFilters = options.additionalWakeFilters ?? [];
     this._definition = options.definition;
     this._dwn = options.dwn;
@@ -186,53 +179,19 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       this._isOpen = true;
       this.requestMaterialization();
     } catch (error: unknown) {
-      if (!this._closed) {
+      if (!this.isClosed) {
         await this.close();
       }
       throw error;
     }
   }
 
-  public readonly getState = (): RecordViewState<Item> => {
-    return this._state;
-  };
-
-  public readonly subscribe = (listener: RecordViewListener<Item>): (() => void) => {
-    if (this._closed) {
-      return (): void => {};
-    }
-
-    this._listeners.add(listener);
-    return (): void => { this._listeners.delete(listener); };
-  };
-
-  public ready(
-    options: Readonly<{ signal?: AbortSignal }> = {},
-  ): Promise<ReadyRecordViewState<Item>> {
-    return waitForViewReady({
-      closeSignal : this._closeController.signal,
-      getState    : this.getState,
-      signal      : options.signal,
-      subscribe   : this.subscribe,
-    });
-  }
-
-  public close(): Promise<void> {
-    this._closePromise ??= this.closeOwnedResources();
-    return this._closePromise;
-  }
-
-  private async closeOwnedResources(): Promise<void> {
-    this._closed = true;
-    this._closeController.abort();
-    this._requestGeneration += 1;
-    this._materializationRequested = false;
+  protected async closeOwnedResources(): Promise<void> {
     this._wakeUnsubscribe?.();
     this._wakeUnsubscribe = undefined;
     this._syncUnsubscribe?.();
     this._syncUnsubscribe = undefined;
     this._signal?.removeEventListener('abort', this._handleAbort);
-    this._listeners.clear();
 
     const subscriptions = this._subscriptions.splice(0);
     await Promise.all(subscriptions.map(async (subscription): Promise<void> => subscription.close()));
@@ -251,7 +210,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       subscriptionHandler,
     });
 
-    if (this._closed) {
+    if (this.isClosed) {
       await reply.subscription?.close();
       this._signal?.throwIfAborted();
       throw new Error('RecordView: closed while opening the subscription.');
@@ -272,7 +231,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
   /** Keep transport acknowledgements independent from query latency. */
   private handleSubscriptionMessage(message: DwnSubscriptionMessage): void {
-    if (this._closed) {
+    if (this.isClosed) {
       return;
     }
 
@@ -289,7 +248,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
   /** Wake only for sync transitions that can change this local materialization. */
   private handleSyncEvent(event: SyncEvent): void {
-    if (this._closed || event.tenantDid !== this._tenantDid) {
+    if (this.isClosed || event.tenantDid !== this._tenantDid) {
       return;
     }
 
@@ -366,35 +325,13 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     this.requestMaterialization();
   }
 
-  /** Coalesce arbitrary wakes into one active and at most one trailing pass. */
-  private requestMaterialization(): void {
-    if (this._closed) {
-      return;
-    }
-
-    this._requestGeneration += 1;
-    this._materializationRequested = true;
-    if (!this._isOpen || this._isMaterializing) {
-      return;
-    }
-
-    this._isMaterializing = true;
-    void this.drainMaterializations();
-  }
-
-  private async drainMaterializations(): Promise<void> {
-    try {
-      while (!this._closed && this._materializationRequested) {
-        await this.materializeRequestedGeneration();
-      }
-    } finally {
-      this._isMaterializing = false;
-    }
+  /** The first pass may start only after every wake subscription is installed. */
+  protected override mayStartMaterialization(): boolean {
+    return this._isOpen;
   }
 
   /** Execute and publish one generation without owning the outer drain loop. */
-  private async materializeRequestedGeneration(): Promise<void> {
-    this._materializationRequested = false;
+  protected async materialize(): Promise<void> {
     const generation = this._requestGeneration;
 
     try {
@@ -415,7 +352,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   }
 
   private canPublishGeneration(generation: number): boolean {
-    return !this._closed && generation === this._requestGeneration;
+    return !this.isClosed && generation === this._requestGeneration;
   }
 
   private publishMaterialization(
@@ -486,8 +423,8 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   private publishError(error: Error): void {
     this.publish(immutableState({
       status  : 'error',
-      records : this._state.records,
-      hasMore : this._state.hasMore,
+      records : this.getState().records,
+      hasMore : this.getState().hasMore,
       current : false,
       error,
     }));
@@ -496,7 +433,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   /** Degrade synchronously without letting partial link evidence clear an existing error. */
   private publishProvisionalReplicationCurrentness(isPaused = false): void {
     const currentness = this.resolveUnavailableCurrentness(isPaused);
-    if (this._state.status === 'error' && !('status' in currentness)) {
+    if (this.getState().status === 'error' && !('status' in currentness)) {
       return;
     }
 
@@ -508,27 +445,10 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     if (this._hasMaterialized) {
       this.publish(immutableState({
         status  : 'ready',
-        records : this._state.records,
-        hasMore : this._state.hasMore,
+        records : this.getState().records,
+        hasMore : this.getState().hasMore,
         current : false,
       }));
-    }
-  }
-
-  private publish(state: RecordViewState<Item>): void {
-    if (this._closed) {
-      return;
-    }
-
-    this._state = state;
-    // Listener mutations apply to later publications, never the one already in progress.
-    const listeners = [...this._listeners];
-    for (const listener of listeners) {
-      try {
-        listener(state);
-      } catch {
-        // A consumer cannot poison the view or prevent other notifications.
-      }
     }
   }
 }
