@@ -174,7 +174,7 @@ export function testRecordsReadHandler(): void {
         expect(replicationReply.status.detail).toContain(DwnErrorCode.RecordsReadReplicationSupportUnsupported);
       });
 
-      it('should include the historical role proof for a record authored by another member', async () => {
+      it('should include a root-level role proof for a record authored by another member', async () => {
         const owner = await TestDataGenerator.generateDidKeyPersona();
         const author = await TestDataGenerator.generateDidKeyPersona();
         const reader = await TestDataGenerator.generateDidKeyPersona();
@@ -183,15 +183,22 @@ export function testRecordsReadHandler(): void {
         const definition: ProtocolDefinition = {
           protocol,
           published : true,
-          types     : { thread: {}, participant: {}, chat: {} },
+          types     : { admin: {}, thread: {}, participant: {}, chat: {} },
           structure : {
+            admin: {
+              $role    : true,
+              $actions : [{ role: 'admin', can: ['read', 'co-delete'] }],
+            },
             thread: {
               participant: {
                 $role    : true,
                 $actions : [{ role: 'thread/participant', can: ['read', 'create', 'co-delete'] }],
               },
               chat: {
-                $actions: [{ role: 'thread/participant', can: ['create', 'read', 'co-update', 'co-delete'] }],
+                $actions: [
+                  { role: 'admin', can: ['create', 'read'] },
+                  { role: 'thread/participant', can: ['create', 'read', 'co-update', 'co-delete'] },
+                ],
               },
             },
           },
@@ -229,11 +236,15 @@ export function testRecordsReadHandler(): void {
           recipient        : recipient.did,
           signer           : Jws.createSigner(owner),
         });
-        const [authorRole, readerRole, deleterRole] = await Promise.all([
-          createRole(author),
-          createRole(reader),
-          createRole(deleter),
-        ]);
+        const authorRole = await RecordsWrite.create({
+          data         : roleData,
+          dataFormat   : 'text/plain',
+          protocol,
+          protocolPath : 'admin',
+          recipient    : author.did,
+          signer       : Jws.createSigner(owner),
+        });
+        const [readerRole, deleterRole] = await Promise.all([createRole(reader), createRole(deleter)]);
         for (const role of [authorRole, readerRole, deleterRole]) {
           expect((await dwn.processMessage(owner.did, role.message, {
             dataStream: DataStream.fromBytes(roleData),
@@ -250,7 +261,7 @@ export function testRecordsReadHandler(): void {
           parentContextId  : thread.message.contextId,
           protocol,
           protocolPath     : 'thread/chat',
-          protocolRole     : 'thread/participant',
+          protocolRole     : 'admin',
           signer           : Jws.createSigner(author),
         });
         expect((await dwn.processMessage(owner.did, chat.message, {
@@ -267,7 +278,7 @@ export function testRecordsReadHandler(): void {
         })).status.code).toBe(202);
 
         const revokeAuthor = await RecordsDelete.create({
-          protocolRole : 'thread/participant',
+          protocolRole : 'admin',
           recordId     : authorRole.message.recordId,
           signer       : Jws.createSigner(author),
         });
@@ -287,10 +298,14 @@ export function testRecordsReadHandler(): void {
           (message.descriptor as { protocolPath?: string }).protocolPath === 'thread/participant');
         expect(roleEntries.map(({ message }): string => (message as RecordsWriteMessage).recordId)).toEqual([
           readerRole.message.recordId,
+        ]);
+        const authorRoleEntries = reply.support!.filter(({ message }): boolean =>
+          (message.descriptor as { protocolPath?: string }).protocolPath === 'admin');
+        expect(authorRoleEntries.map(({ message }): string => (message as RecordsWriteMessage).recordId)).toEqual([
           authorRole.message.recordId,
         ]);
-        expect(roleEntries[1].isLatestBaseState).toBe(false);
-        expect(roleEntries[1].encodedData).toBeUndefined();
+        expect(authorRoleEntries[0].isLatestBaseState).toBe(false);
+        expect(authorRoleEntries[0].encodedData).toBeUndefined();
         expect(reply.entry?.recordsWrite).toEqual(chatUpdate.message);
         expect(reply.entry?.data).toBeUndefined();
 
@@ -326,11 +341,131 @@ export function testRecordsReadHandler(): void {
           (message.descriptor as { protocolPath?: string }).protocolPath === 'thread/participant');
         expect(deletedRoleEntries.map(({ message }): string => (message as RecordsWriteMessage).recordId)).toEqual([
           readerRole.message.recordId,
-          authorRole.message.recordId,
           deleterRole.message.recordId,
         ]);
-        expect(deletedRoleEntries[1].isLatestBaseState).toBe(false);
-        expect(deletedRoleEntries[1].encodedData).toBeUndefined();
+        const deletedAuthorRoleEntries = deletedReply.support!.filter(({ message }): boolean =>
+          (message.descriptor as { protocolPath?: string }).protocolPath === 'admin');
+        expect(deletedAuthorRoleEntries.map(({ message }): string =>
+          (message as RecordsWriteMessage).recordId)).toEqual([authorRole.message.recordId]);
+        expect(deletedAuthorRoleEntries[0].isLatestBaseState).toBe(false);
+        expect(deletedAuthorRoleEntries[0].encodedData).toBeUndefined();
+      });
+
+      it('should use an ancestor role proof instead of a newer same-scope assignment', async () => {
+        const owner = await TestDataGenerator.generateDidKeyPersona();
+        const author = await TestDataGenerator.generateDidKeyPersona();
+        const reader = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = `http://nested-author-role-${crypto.randomUUID()}.xyz`;
+        const definition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : { thread: {}, participant: {}, viewer: {}, message: {} },
+          structure : {
+            thread: {
+              participant: {
+                $role   : true,
+                message : {
+                  $actions: [
+                    { role: 'thread/participant', can: ['create', 'read'] },
+                    { role: 'thread/viewer', can: ['read'] },
+                  ],
+                },
+              },
+              viewer: { $role: true },
+            },
+          },
+        };
+        const configure = await ProtocolsConfigure.create({ definition, signer: Jws.createSigner(owner) });
+        expect((await dwn.processMessage(owner.did, configure.message)).status.code).toBe(202);
+
+        const data = Encoder.stringToBytes('record');
+        const threadTimestamp = Time.createOffsetTimestamp({ seconds: -30 });
+        const thread = await RecordsWrite.create({
+          data             : data,
+          dataFormat       : 'text/plain',
+          dateCreated      : threadTimestamp,
+          messageTimestamp : threadTimestamp,
+          protocol,
+          protocolPath     : 'thread',
+          signer           : Jws.createSigner(owner),
+        });
+        expect((await dwn.processMessage(owner.did, thread.message, {
+          dataStream: DataStream.fromBytes(data),
+        })).status.code).toBe(202);
+        const createRole = (
+          protocolPath: string,
+          recipient: typeof author,
+          messageTimestamp: string,
+        ): Promise<RecordsWrite> =>
+          RecordsWrite.create({
+            data            : data,
+            dataFormat      : 'text/plain',
+            dateCreated     : messageTimestamp,
+            messageTimestamp,
+            parentContextId : thread.message.contextId,
+            protocol,
+            protocolPath,
+            recipient       : recipient.did,
+            signer          : Jws.createSigner(owner),
+          });
+        const initialRoleTimestamp = Time.createOffsetTimestamp({ seconds: -20 });
+        const [authorRole, readerRole] = await Promise.all([
+          createRole('thread/participant', author, initialRoleTimestamp),
+          createRole('thread/viewer', reader, initialRoleTimestamp),
+        ]);
+        for (const role of [authorRole, readerRole]) {
+          expect((await dwn.processMessage(owner.did, role.message, {
+            dataStream: DataStream.fromBytes(data),
+          })).status.code).toBe(202);
+        }
+        const messageTimestamp = Time.createOffsetTimestamp({ seconds: -15 });
+        const message = await RecordsWrite.create({
+          data            : data,
+          dataFormat      : 'text/plain',
+          dateCreated     : messageTimestamp,
+          messageTimestamp,
+          parentContextId : authorRole.message.contextId,
+          protocol,
+          protocolPath    : 'thread/participant/message',
+          protocolRole    : 'thread/participant',
+          signer          : Jws.createSigner(author),
+        });
+        expect((await dwn.processMessage(owner.did, message.message, {
+          dataStream: DataStream.fromBytes(data),
+        })).status.code).toBe(202);
+        const revokeAuthorRole = await RecordsDelete.create({
+          messageTimestamp : Time.createOffsetTimestamp({ seconds: -12 }),
+          recordId         : authorRole.message.recordId,
+          signer           : Jws.createSigner(owner),
+        });
+        expect((await dwn.processMessage(owner.did, revokeAuthorRole.message)).status.code).toBe(202);
+        const newerAuthorRole = await createRole(
+          'thread/participant',
+          author,
+          Time.createOffsetTimestamp({ seconds: -10 }),
+        );
+        const newerAuthorRoleReply = await dwn.processMessage(owner.did, newerAuthorRole.message, {
+          dataStream: DataStream.fromBytes(data),
+        });
+        expect(newerAuthorRoleReply.status).toEqual({ code: 202, detail: 'Accepted' });
+
+        const read = await RecordsRead.create({
+          filter                    : { recordId: message.message.recordId },
+          includeReplicationSupport : true,
+          protocolRole              : 'thread/viewer',
+          signer                    : Jws.createSigner(reader),
+        });
+        const reply = await dwn.processMessage(owner.did, read.message) as RecordsReadReply;
+
+        expect(reply.status.code).toBe(200);
+        const authorProofs = reply.support!.filter(({ message: supportMessage }): boolean =>
+          (supportMessage as RecordsWriteMessage).descriptor.protocolPath === 'thread/participant' &&
+          (supportMessage as RecordsWriteMessage).descriptor.recipient === author.did);
+        expect(authorProofs).toHaveLength(1);
+        expect((authorProofs[0].message as RecordsWriteMessage).recordId).toBe(authorRole.message.recordId);
+        expect((authorProofs[0].message as RecordsWriteMessage).recordId).not.toBe(newerAuthorRole.message.recordId);
+        expect(authorProofs[0].isLatestBaseState).toBe(false);
+        expect(authorProofs[0].encodedData).toBeUndefined();
       });
 
       it('should only allow delivery control reads by the recipient or writer', async () => {

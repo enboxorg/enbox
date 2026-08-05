@@ -12,10 +12,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
 import { deferred } from './utils/deferred.js';
-import { FollowedSourceNotReadyError } from '../src/sync-role-replication-support.js';
 import { resolveFollowedSyncRoleRoot } from '../src/followed-sync-source.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
+import { FollowedSourceNotReadyError, RoleReplicationSupportError } from '../src/sync-role-replication-support.js';
 
 const SOURCE_DID = 'did:example:owner';
 const PROTOCOL = 'https://example.com/notebooks';
@@ -1351,6 +1351,46 @@ describe('SyncEngineLevel — followed sources', () => {
       pull   : { contiguousAppliedToken: previousCheckpoint },
       status : 'paused',
     }]);
+  });
+
+  it('should park invalid role support until the normal settle pass', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const target = targetFor(followed);
+    const checkpoint = { epoch: 'epoch', position: '1', streamId: 'stream', messageCid: 'cid-before' };
+    await internal._followedSourceStore.replace(followed);
+    const link = await createRoleLink(engine, target);
+    link.pull.contiguousAppliedToken = checkpoint;
+    await internal.replicationLinkStore.persistCheckpoint(link, 'pull');
+    await internal.replicationLinkStore.setStatus(link, 'live');
+    const controller = internal.activateLink(linkKey(link), link);
+    controller.markReplicationReady();
+    internal._runtime = new SyncRuntime(true);
+    sinon.stub(internal._durableFeedReconciler, 'reconcile')
+      .rejects(new RoleReplicationSupportError('duplicate author-role proof'));
+    const schedule = sinon.stub(internal, 'scheduleFollowedSourceReconciliation');
+    const report = sinon.stub(console, 'error');
+
+    controller.executor.request('reconcile');
+    await internal._linkRecoveryCoordinator.resume(controller);
+
+    expect(report.calledOnce).toBe(true);
+    expect(schedule.notCalled).toBe(true);
+    expect(internal._runtime.hasTimers((key: string): boolean => key.startsWith('syncReconcile:'))).toBe(false);
+    expect(await internal._deadLetterStore.getForTenant(SOURCE_DID)).toEqual([]);
+    expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
+      pull   : { contiguousAppliedToken: checkpoint },
+      status : 'paused',
+    }]);
+
+    sinon.stub(internal._runCoordinator, 'settle').resolves();
+    sinon.stub(internal, 'reinitializeOrphanedLinkTargets').resolves();
+    await internal.runSettleCheck(internal._runtime);
+    expect(schedule.calledOnce).toBe(true);
+
+    internal._runtime.dispose();
+    await controller.dispose();
   });
 
   it('should retain an aged deferred role-feed entry for a later retry', async () => {

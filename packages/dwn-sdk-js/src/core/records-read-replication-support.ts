@@ -3,6 +3,7 @@ import type { GenericMessage } from '../types/message-types.js';
 import type { HandlerDependencies } from '../types/method-handler.js';
 import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
 import type { ResolvedProtocolRole } from './protocol-authorization-action.js';
+import type { RoleRecordIdentity } from '../utils/protocols.js';
 import type { RecordsDeleteMessage, RecordsReadReplicationSupportEntry, RecordsWriteMessage } from '../types/records-types.js';
 
 import { ENCRYPTION_CONTROL_DELIVERY_PATH } from './constants.js';
@@ -17,16 +18,12 @@ import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRoleAudienceContextId, getRoleContextPrefix, getRuleSetAtPath, isCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleAudienceContextId, getRoleRecordIdentity, getRuleSetAtPath, isCrossProtocolRef } from '../utils/protocols.js';
 
 const MAX_SUPPORT_RECORDS_PER_KIND = 16;
 const MAX_SUPPORT_PROTOCOL_CONFIGS = 64;
 
-type AuthorRoleSelector = {
-  contextIdPrefix: string | undefined;
-  protocolPath: string;
-  recipient: string;
-};
+type AuthorRoleSelector = RoleRecordIdentity;
 
 /** Builds the bounded, server-proven closure used to seed a nested role-holder replica. */
 export class RecordsReadReplicationSupport {
@@ -176,21 +173,22 @@ export class RecordsReadReplicationSupport {
       if (recipient === undefined) {
         throw RecordsReadReplicationSupport.unsupported('role-authored record has no logical author.');
       }
-      const contextIdPrefix = getRoleContextPrefix(protocolRole, contextId);
-      if (contextIdPrefix === undefined && protocolRole.includes('/')) {
+      const identity = getRoleRecordIdentity({
+        contextId,
+        protocol,
+        protocolPath: protocolRole,
+        recipient,
+      });
+      if (identity.contextIdPrefix === undefined && protocolRole.includes('/')) {
         throw RecordsReadReplicationSupport.unsupported(`record author role '${protocolRole}' has no context.`);
       }
       if (recipient === requester &&
         resolvedRole.protocol === protocol &&
         resolvedRole.protocolPath === protocolRole &&
-        resolvedRole.contextIdPrefix === contextIdPrefix) {
+        resolvedRole.contextIdPrefix === identity.contextIdPrefix) {
         return;
       }
-      selectors.set(JSON.stringify([protocolRole, recipient, contextIdPrefix]), {
-        contextIdPrefix,
-        protocolPath: protocolRole,
-        recipient,
-      });
+      selectors.set(identity.key, identity);
     };
 
     for (const record of [matchedRecordsWrite, ...recordChain]) {
@@ -212,11 +210,17 @@ export class RecordsReadReplicationSupport {
       );
     }
 
+    for (const ancestor of recordChain) {
+      const identity = RecordsReadReplicationSupport.roleRecordIdentity(ancestor);
+      if (identity !== undefined) {
+        selectors.delete(identity.key);
+      }
+    }
+
     return Promise.all([...selectors.values()].map(async (selector): Promise<RecordsWriteMessage> => {
       const initialWrite = await RecordsReadReplicationSupport.fetchAuthorRoleInitialWrite(
         deps,
         tenant,
-        protocol,
         selector,
       );
       if (initialWrite === undefined) {
@@ -231,13 +235,12 @@ export class RecordsReadReplicationSupport {
   private static async fetchAuthorRoleInitialWrite(
     deps: HandlerDependencies,
     tenant: string,
-    protocol: string,
     selector: AuthorRoleSelector,
   ): Promise<RecordsWriteMessage | undefined> {
     const filter: Filter = {
       interface    : DwnInterfaceName.Records,
       method       : DwnMethodName.Write,
-      protocol,
+      protocol     : selector.protocol,
       protocolPath : selector.protocolPath,
       recipient    : selector.recipient,
     };
@@ -250,12 +253,33 @@ export class RecordsReadReplicationSupport {
       { messageTimestamp: SortDirection.Descending },
     );
     for (const message of messages) {
-      if (Records.isRecordsWrite(message) && await RecordsWrite.isInitialWrite(message) &&
-        Records.getParentContextFromOfContextId(message.contextId) === selector.contextIdPrefix) {
+      if (!Records.isRecordsWrite(message) || !await RecordsWrite.isInitialWrite(message)) {
+        continue;
+      }
+      const candidate = RecordsReadReplicationSupport.roleRecordIdentity(message);
+      if (candidate === undefined) {
+        continue;
+      }
+      // Root roles intentionally match by protocol, path, and recipient only;
+      // unlike nested roles, they have no context dimension.
+      if (candidate.key === selector.key) {
         return message;
       }
     }
     return undefined;
+  }
+
+  private static roleRecordIdentity(message: RecordsWriteMessage): RoleRecordIdentity | undefined {
+    const { protocol, protocolPath, recipient } = message.descriptor;
+    if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
+      return undefined;
+    }
+    return getRoleRecordIdentity({
+      contextId: message.contextId,
+      protocol,
+      protocolPath,
+      recipient,
+    });
   }
 
   private static async fetchAudienceRecords(input: {

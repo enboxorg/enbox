@@ -15,6 +15,7 @@ import { beforeAll, describe, expect, it } from 'bun:test';
 import {
   ContentEncryptionAlgorithm,
   DataStream,
+  DwnErrorCode,
   Encoder,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
@@ -33,6 +34,7 @@ import {
   FollowedSourceRoleAbsentError,
   readFollowedRoleState,
   readRoleReplicationSupport,
+  RoleReplicationSupportError,
 } from '../src/sync-role-replication-support.js';
 
 const PROTOCOL = 'https://example.com/notebooks';
@@ -114,6 +116,53 @@ describe('readRoleReplicationSupport', () => {
     expect(result.dependencies.at(-1)?.bufferedData).toBeUndefined();
   });
 
+  it('accepts a root-level role proof for a record authored by another member', async () => {
+    const fixture = await createFixture();
+    const contextRoot = fixture.root;
+    const authorRole = await RecordsWrite.create({
+      data         : new TextEncoder().encode('peer admin'),
+      dataFormat   : 'text/plain',
+      protocol     : PROTOCOL,
+      protocolPath : 'admin',
+      recipient    : peer.uri,
+      signer       : ownerSigner,
+    });
+    fixture.rootData = new TextEncoder().encode('peer page');
+    fixture.root = await RecordsWrite.create({
+      data            : fixture.rootData,
+      dataFormat      : 'text/plain',
+      parentContextId : contextRoot.message.contextId,
+      protocol        : PROTOCOL,
+      protocolPath    : 'notebook/page',
+      protocolRole    : 'admin',
+      signer          : peerSigner,
+    });
+    fixture.read = await RecordsRead.create({
+      filter: {
+        contextId    : fixture.root.message.contextId,
+        protocol     : PROTOCOL,
+        protocolPath : 'notebook/page',
+        recordId     : fixture.root.message.recordId,
+      },
+      includeReplicationSupport : true,
+      protocolRole              : ROLE_PATH,
+      signer                    : actorSigner,
+    });
+    fixture.support.splice(1, 0, { isLatestBaseState: false, message: contextRoot.message });
+    const proof = await supportEntry(authorRole, false);
+    delete proof.encodedData;
+    fixture.support.push(proof);
+
+    const result = await readFixture(fixture);
+
+    expect(result.dependencies.map(({ message }) => message)).toEqual([
+      fixture.configure.message,
+      contextRoot.message,
+      fixture.role.message,
+      authorRole.message,
+    ]);
+  });
+
   it('rejects duplicate record-author role proofs', async () => {
     const fixture = await createFixture();
     const { authorRole } = await addPeerAuthoredPage(fixture);
@@ -121,7 +170,7 @@ describe('readRoleReplicationSupport', () => {
     delete proof.encodedData;
     fixture.support.push(proof, structuredClone(proof));
 
-    await expect(readFixture(fixture)).rejects.toThrow('invalid record-author role assignment');
+    await expect(readFixture(fixture)).rejects.toBeInstanceOf(RoleReplicationSupportError);
   });
 
   it('requires the author proof carried by an updated root initial write', async () => {
@@ -210,14 +259,16 @@ describe('readRoleReplicationSupport', () => {
   it('splits support metadata over WebSocket from record data over HTTP', async () => {
     const fixture = await createFixture();
     const agent = responseAgent(fixture) as any;
+    const supportCancel = sinon.spy();
+    const supportData = new ReadableStream<Uint8Array>({ cancel: supportCancel });
     agent.rpc.getServerInfo = sinon.stub().resolves({ webSocketSupport: true });
     agent.dwn.processRequest.callsFake(async ({ messageParams }: any) => ({
       message: (await RecordsRead.create({ ...messageParams, signer: actorSigner })).message,
     }));
     agent.rpc.sendDwnRequest.callsFake(({ dwnUrl }: { dwnUrl: string }) => Promise.resolve({
       entry: {
-        ...(dwnUrl.startsWith('http') ? { data: DataStream.fromBytes(fixture.rootData) } : {}),
-        recordsWrite: fixture.root.message,
+        data         : dwnUrl.startsWith('http') ? DataStream.fromBytes(fixture.rootData) : supportData,
+        recordsWrite : fixture.root.message,
       },
       roleRecordId : fixture.role.message.recordId,
       status       : { code: 200 },
@@ -230,6 +281,7 @@ describe('readRoleReplicationSupport', () => {
     expect(agent.rpc.sendDwnRequest.firstCall.args[0].message.descriptor.includeReplicationSupport).toBe(true);
     expect(agent.rpc.sendDwnRequest.secondCall.args[0].dwnUrl).toBe('https://owner.example.com');
     expect(agent.rpc.sendDwnRequest.secondCall.args[0].message.descriptor.includeReplicationSupport).toBe(false);
+    expect(supportCancel.calledOnce).toBe(true);
   });
 
   it('splits support metadata and record data on HTTP-only servers', async () => {
@@ -277,6 +329,23 @@ describe('readRoleReplicationSupport', () => {
     });
 
     await expect(readFixture(fixture, agent)).rejects.toThrow('WebSocket request failed');
+    expect(cancel.calledOnce).toBe(true);
+  });
+
+  it('cancels the support body when the HTTP record request fails', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    const cancel = sinon.spy();
+    const data = new ReadableStream<Uint8Array>({ cancel });
+    agent.rpc.getServerInfo = sinon.stub().resolves({ webSocketSupport: true });
+    agent.rpc.sendDwnRequest.callsFake(({ dwnUrl }: { dwnUrl: string }) => {
+      if (dwnUrl.startsWith('http')) {
+        return Promise.reject(new Error('HTTP request failed'));
+      }
+      return Promise.resolve({ entry: { data }, status: { code: 200 } });
+    });
+
+    await expect(readFixture(fixture, agent)).rejects.toThrow('HTTP request failed');
     expect(cancel.calledOnce).toBe(true);
   });
 
@@ -361,6 +430,23 @@ describe('readRoleReplicationSupport', () => {
       protocolRole   : ROLE_PATH,
       sourceDid      : owner.uri,
     })).rejects.not.toBeInstanceOf(FollowedSourceRoleAbsentError);
+  });
+
+  it('types only an unsupported support response as a support-contract failure', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    const read = (): ReturnType<typeof readRoleReplicationSupport> => readFixture(fixture, agent);
+    agent.rpc.sendDwnRequest.resolves({
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.RecordsReadReplicationSupportUnsupported}: unavailable proof`,
+      },
+    });
+
+    await expect(read()).rejects.toBeInstanceOf(RoleReplicationSupportError);
+
+    agent.rpc.sendDwnRequest.resolves({ status: { code: 400, detail: 'RecordsReadInvalidFilter' } });
+    await expect(read()).rejects.not.toBeInstanceOf(RoleReplicationSupportError);
   });
 
   it('reads the exact active state of a previously accepted role', async () => {

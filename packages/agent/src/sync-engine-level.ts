@@ -86,7 +86,7 @@ import { buildCurrentLinkIdentityKey, buildDurableLinkIdentityKey, buildLinkKey,
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor, SyncPullAbortedError } from './sync-messages.js';
-import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readFollowedRoleState, readRoleReplicationSupport, type RoleReplicationSupportBatch } from './sync-role-replication-support.js';
+import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readFollowedRoleState, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { followedSyncSourceActiveEqual, followedSyncSourcePolicyEqual, followedSyncSourceRoleRecordEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import { isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
@@ -2454,13 +2454,32 @@ export class SyncEngineLevel implements SyncEngine {
   private async transitionToPaused(
     linkKey: string,
     link: ReplicationLinkState,
+    reconcileFollowedSource = true,
   ): Promise<void> {
     const lostEstablishedRole = link.authorization.kind === 'role' &&
       (link.status === 'live' || link.status === 'repairing');
     await this._linkRecoveryCoordinator.transitionToPaused(linkKey, link);
-    if (lostEstablishedRole) {
+    if (lostEstablishedRole && reconcileFollowedSource) {
       this.scheduleFollowedSourceReconciliation();
     }
+  }
+
+  private async pauseRoleLinkForError(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    error: unknown,
+  ): Promise<void> {
+    if (link.status === 'paused') {
+      return;
+    }
+    const supportFailure = error instanceof RoleReplicationSupportError;
+    if (supportFailure) {
+      console.error(
+        `SyncEngineLevel: Invalid role replication support for ${target.did} -> ${target.dwnUrl}`,
+        error,
+      );
+    }
+    await this.transitionToPaused(this.getReplicationLinkKey(target, link), link, !supportFailure);
   }
 
   // ---------------------------------------------------------------------------
@@ -2866,7 +2885,7 @@ export class SyncEngineLevel implements SyncEngine {
           SyncEngineLevel.isRoleLinkPauseError(error)
     ) {
       if (link !== undefined) {
-        await this.transitionToPaused(this.getReplicationLinkKey(target, link), link);
+        await this.pauseRoleLinkForError(target, link, error);
       }
       return { status: LinkInitializationStatus.Failed };
     }
@@ -3853,14 +3872,18 @@ export class SyncEngineLevel implements SyncEngine {
         target.authorization.kind === 'role' &&
         SyncEngineLevel.isRoleLinkPauseError(error)
       ) {
-        await this.transitionToPaused(this.getReplicationLinkKey(target, link), link);
+        await this.pauseRoleLinkForError(target, link, error);
       }
       throw error;
     }
   }
 
   private static isRoleLinkPauseError(error: unknown): boolean {
-    if (error instanceof FollowedSourceRoleRecordMismatchError || error instanceof RoleFeedAdmissionError) {
+    if (
+      error instanceof FollowedSourceRoleRecordMismatchError ||
+      error instanceof RoleFeedAdmissionError ||
+      error instanceof RoleReplicationSupportError
+    ) {
       return true;
     }
     const detail = syncErrorMessage(error);

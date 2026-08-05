@@ -99,13 +99,14 @@ export {
   Protocols,
   getRoleAudienceContextId,
   getRoleContextPrefix,
+  getRoleRecordIdentity,
   getRuleSetAtPath,
   getTypeName,
   isCrossProtocolRef,
   parseCrossProtocolRef,
   resolveProtocolRoleContextScope,
 } from './utils/protocols.js';
-export type { CrossProtocolRef } from './utils/protocols.js';
+export type { CrossProtocolRef, RoleRecordIdentity } from './utils/protocols.js';
 export { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 export type { ProtocolsConfigureOptions } from './interfaces/protocols-configure.js';
 export { ProtocolsQuery } from './interfaces/protocols-query.js';

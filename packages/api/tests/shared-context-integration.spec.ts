@@ -17,6 +17,9 @@ const protocolDefinition = {
   protocol  : `https://example.com/shared-context-integration/${crypto.randomUUID()}` as string,
   published : true,
   types     : {
+    admin: {
+      dataFormats: ['application/json'],
+    },
     change: {
       dataFormats        : ['application/json'],
       encryptionRequired : true,
@@ -40,6 +43,10 @@ const protocolDefinition = {
     },
   },
   structure: {
+    admin: {
+      $actions : [{ who: 'recipient', can: ['co-delete'] }],
+      $role    : true,
+    },
     notebook: {
       page: {
         $actions: [
@@ -52,12 +59,16 @@ const protocolDefinition = {
               role : 'notebook/page/member',
               can  : ['create', 'read', 'update', 'delete', 'co-update', 'co-delete'],
             },
+            { role: 'admin', can: ['create', 'read'] },
             { role: 'notebook/page/viewer', can: ['read'] },
           ],
         },
         member: {
           $actions : [{ who: 'recipient', can: ['co-delete'] }],
           $role    : true,
+          change   : {
+            $actions: [{ role: 'notebook/page/member', can: ['create', 'read'] }],
+          },
         },
         title: {
           $actions: [
@@ -76,6 +87,7 @@ const protocolDefinition = {
 } as const satisfies ProtocolDefinition;
 
 const SharedNotebookProtocol = defineProtocol(protocolDefinition, {
+  admin    : recordCodecs.json<{ name: string }>(),
   change   : recordCodecs.json<{ body: string }>(),
   member   : recordCodecs.json<{ name: string }>(),
   notebook : recordCodecs.json<{ title: string }>(),
@@ -362,6 +374,10 @@ describe('shared context public API integration', () => {
       data : { name: 'peer' },
       role : 'notebook/page/member',
     });
+    await owner.records.create('admin', {
+      data      : { name: 'peer admin' },
+      recipient : peerDid,
+    });
     await ownerContextA.invite(peerDid, { preview: { title: 'Page A' } });
     await ownerHarness.agent.sync.sync('push');
     await peerHarness.agent.sync.sync('pull');
@@ -369,6 +385,32 @@ describe('shared context public API integration', () => {
     expect(peerInvitations).toHaveLength(1);
     const peerContextA = await peerInvitations[0].accept();
     await peerContextA.refresh();
+
+    const rootRoleChange = await peerTyped.records.create('notebook/page/change', {
+      data            : { body: 'created under a root role' },
+      from            : ownerDid,
+      parentContextId : contextIds[0],
+      protocolRole    : 'admin',
+    });
+    const peerAssignments = await owner.records.query('notebook/page/member', {
+      filter : { recipient: peerDid },
+      within : contextIds[0],
+    });
+    expect(peerAssignments.records).toHaveLength(1);
+    const roleDescendantChange = await peerTyped.records.create('notebook/page/member/change', {
+      data            : { body: 'created below the author role' },
+      from            : ownerDid,
+      parentContextId : peerAssignments.records[0].contextId,
+      protocolRole    : 'notebook/page/member',
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      const [rootRoleChanges, roleDescendantChanges] = await Promise.all([
+        contextA.records.query('notebook/page/change', { pagination: { limit: 100 } }),
+        contextA.records.query('notebook/page/member/change', { pagination: { limit: 100 } }),
+      ]);
+      expect(rootRoleChanges.records.some(record => record.id === rootRoleChange.id)).toBe(true);
+      expect(roleDescendantChanges.records.some(record => record.id === roleDescendantChange.id)).toBe(true);
+    }, Poller.pollRetrySleep, 30_000);
     await peerHarness.agent.sync.stopSync();
 
     await memberHarness.agent.sync.stopSync();
@@ -389,6 +431,16 @@ describe('shared context public API integration', () => {
       && call.args[0].target === ownerDid
       && call.args[0].messageParams.filter.recordId === largePageRecordId
     )).toBe(true);
+    const localRootRoleChanges = await contextA.records.query('notebook/page/change', {
+      pagination: { limit: 100 },
+    });
+    expect(await localRootRoleChanges.records.find(record => record.id === rootRoleChange.id)?.value())
+      .toEqual({ body: 'created under a root role' });
+    const localRoleDescendantChanges = await contextA.records.query('notebook/page/member/change', {
+      pagination: { limit: 100 },
+    });
+    expect(await localRoleDescendantChanges.records.find(record => record.id === roleDescendantChange.id)?.value())
+      .toEqual({ body: 'created below the author role' });
     offline.restore();
     localRequests.restore();
     await memberHarness.agent.sync.startSync();

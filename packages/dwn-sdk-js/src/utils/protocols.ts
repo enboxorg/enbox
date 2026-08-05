@@ -16,6 +16,18 @@ export type CrossProtocolRef = {
 };
 
 /**
+ * Canonical lookup identity of a protocol role assignment. Distinct role
+ * records that regrant the same role in the same scope intentionally share it.
+ */
+export type RoleRecordIdentity = {
+  contextIdPrefix: string | undefined;
+  key: string;
+  protocol: string;
+  protocolPath: string;
+  recipient: string;
+};
+
+/**
  * Parses a string that may be a cross-protocol reference in `alias:path` format.
  * Returns `undefined` if the string is a local (non-cross-protocol) reference.
  *
@@ -81,6 +93,29 @@ export function getRoleAudienceContextId(rolePath: string, contextId?: string): 
 export function getRoleContextPrefix(rolePath: string, contextId?: string): string | undefined {
   const roleAudienceContextId = getRoleAudienceContextId(rolePath, contextId);
   return roleAudienceContextId === '' ? undefined : roleAudienceContextId;
+}
+
+/**
+ * Returns the canonical lookup identity of a protocol role assignment. The
+ * supplied context may be either the role record context or a descendant
+ * context; root-level roles intentionally have no context dimension, and
+ * same-scope regrants intentionally resolve to the same identity.
+ */
+export function getRoleRecordIdentity(input: {
+  contextId?: string;
+  protocol: string;
+  protocolPath: string;
+  recipient: string;
+}): RoleRecordIdentity {
+  const { protocol, protocolPath, recipient } = input;
+  const contextIdPrefix = getRoleContextPrefix(protocolPath, input.contextId);
+  return {
+    contextIdPrefix,
+    key: JSON.stringify([protocol, protocolPath, recipient, contextIdPrefix]),
+    protocol,
+    protocolPath,
+    recipient,
+  };
 }
 
 /**
