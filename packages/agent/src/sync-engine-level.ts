@@ -1,12 +1,12 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsDeleteMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsDeleteMessage, RecordsQueryReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
 import { RateLimitError } from '@enbox/dwn-clients';
-import { BroadcastChannelWakePublisher, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
+import { BroadcastChannelWakePublisher, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 import { parseDurationInMilliseconds, runWithCrossContextLock, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -3234,7 +3234,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async pruneSupersededDurableLinksForIdentity(did: string, currentIdentityKeys: Set<string>): Promise<void> {
     const links = await this.replicationLinkStore.getLinksForTenant(did);
     await Promise.all(links.map(async link => {
-      if (currentIdentityKeys.has(this.getDurableLinkIdentityKey(link))) {
+      if (link.authorization.kind === 'role' || currentIdentityKeys.has(this.getDurableLinkIdentityKey(link))) {
         return;
       }
       await this.replicationLinkStore.deleteLink(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
@@ -4564,6 +4564,18 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'aborted' };
     }
 
+    // A role link only needs the retained current version. Its support closure
+    // carries the record's initial write and ancestors, while retained
+    // non-latest writes are deliberately dataless.
+    if (
+      target.authorization.kind === 'role' &&
+      entry.isLatestBaseState === false &&
+      entry.message !== undefined &&
+      Records.isRecordsWrite(entry.message)
+    ) {
+      return { kind: 'echo' };
+    }
+
     if (await this.hasDurableLocalPullEcho(target, entry)) {
       return { kind: 'echo' };
     }
@@ -4571,7 +4583,7 @@ export class SyncEngineLevel implements SyncEngine {
     const prefetched = await this.syncEntriesFromFeedEntry(target, entry);
     const fetchReplicationSupport = target.authorization.kind === 'role'
       ? (root: SyncMessageEntry): Promise<{ dependencies: SyncMessageEntry[]; root: SyncMessageEntry }> =>
-        this.readRoleReplicationSupport(target, root, shouldContinue)
+        this.readRoleReplicationSupport(target, root, entry.initialWrite, shouldContinue)
       : undefined;
     const outcome = await admitClosure(entry.messageCid, {
       did                : target.did,
@@ -4697,21 +4709,37 @@ export class SyncEngineLevel implements SyncEngine {
   private async readRoleReplicationSupport(
     target: SyncTarget,
     root: SyncMessageEntry,
+    initialWrite: RecordsWriteMessage | undefined,
     shouldContinue?: () => boolean,
   ): Promise<{ dependencies: SyncMessageEntry[]; root: SyncMessageEntry }> {
     const role = target.authorization.kind === 'role' ? target.authorization : undefined;
     const scope = target.scope.kind === 'context' ? target.scope : undefined;
     const message = root.message;
+    const isWrite = Records.isRecordsWrite(message);
+    const isDelete = message.descriptor.interface === DwnInterfaceName.Records &&
+      message.descriptor.method === DwnMethodName.Delete;
     if (
       role === undefined ||
       scope === undefined ||
-      message.descriptor.interface !== DwnInterfaceName.Records ||
-      message.descriptor.method !== DwnMethodName.Write
+      (!isWrite && !isDelete)
     ) {
-      throw new Error('SyncEngineLevel: role replication support requires a contextual RecordsWrite root.');
+      const descriptor = message.descriptor as GenericMessage['descriptor'] & { protocolPath?: string; recordId?: string };
+      throw new Error(
+        `SyncEngineLevel: role replication support requires a contextual record mutation; received ${descriptor.interface}/${descriptor.method} at '${descriptor.protocolPath ?? 'unknown'}' (${descriptor.recordId ?? 'unknown'}).`,
+      );
     }
 
-    const recordsWrite = message as GenericMessage & {
+    const rootRecordId = isWrite
+      ? message.recordId
+      : (message.descriptor as RecordsDeleteMessage['descriptor']).recordId;
+    const contextualWrite = isWrite
+      ? message
+      : initialWrite;
+    if (contextualWrite === undefined || !Records.isRecordsWrite(contextualWrite) ||
+      contextualWrite.recordId !== rootRecordId) {
+      throw new Error('SyncEngineLevel: role replication support requires the deleted record initial write.');
+    }
+    const recordsWrite = contextualWrite as GenericMessage & {
       contextId?: string;
       recordId?: string;
       descriptor: GenericMessage['descriptor'] & { protocol?: string; protocolPath?: string };
@@ -4728,21 +4756,25 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const batch = await readRoleReplicationSupport({
-      actorDid        : role.actorDid,
-      agent           : this.agent,
+      actorDid       : role.actorDid,
+      agent          : this.agent,
       contextId,
-      delegateDid     : target.delegateDid,
-      dwnUrl          : target.dwnUrl,
-      expectedRootCid : await Message.getCid(message),
-      permissionsApi  : this._permissionsApi,
+      delegateDid    : target.delegateDid,
+      dwnUrl         : target.dwnUrl,
+      expectedRoot   : message as RecordsDeleteMessage | RecordsWriteMessage,
+      permissionsApi : this._permissionsApi,
       protocol,
       protocolPath,
-      protocolRole    : role.protocolRole,
+      protocolRole   : role.protocolRole,
+      rootData       : root.bufferedData,
       shouldContinue,
-      sourceDid       : target.did,
+      sourceDid      : target.did,
     });
     SyncEngineLevel.assertRoleRecordId(target, batch.roleRecordId);
-    return { dependencies: batch.dependencies, root: batch.root };
+    return {
+      dependencies : batch.dependencies,
+      root         : { ...batch.root, isLatestBaseState: root.isLatestBaseState },
+    };
   }
 
   private static protocolFromFeedEntry(

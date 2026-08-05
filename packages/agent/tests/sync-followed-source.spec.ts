@@ -1584,6 +1584,27 @@ describe('SyncEngineLevel — followed sources', () => {
     await controller.dispose();
   });
 
+  it('should preserve another actor role link when its source identity unregisters', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const target = targetFor(followed);
+    await internal._identityStore.set(SOURCE_DID, { protocols: 'all' });
+    await internal._followedSourceStore.replace(followed);
+    const link = await createRoleLink(engine, target);
+    const checkpoint = { epoch: 'epoch', position: '11', streamId: 'stream', messageCid: 'cid-11' };
+    link.pull.contiguousAppliedToken = checkpoint;
+    await internal.replicationLinkStore.persistCheckpoint(link, 'pull');
+
+    await engine.unregisterIdentity(SOURCE_DID);
+
+    expect(await engine.getIdentityOptions(SOURCE_DID)).toBeUndefined();
+    expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
+      authorization : { actorDid: followed.actorDid, kind: 'role' },
+      pull          : { contiguousAppliedToken: checkpoint },
+    }]);
+  });
+
   it('should retain deferred role-feed work while the followed source is current', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
@@ -1621,6 +1642,34 @@ describe('SyncEngineLevel — followed sources', () => {
       { message: initial.message, isLatestBaseState: false },
       { message: deleted.message, isLatestBaseState: true },
     ]);
+  });
+
+  it('should advance past a retained non-latest role-feed write', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const retained = await TestDataGenerator.generateRecordsWrite({ protocol: PROTOCOL });
+    const hydrate = sinon.spy(engine as any, 'readRoleReplicationSupport');
+
+    const outcome = await (engine as any).admitRemoteFeedEntry(targetFor(source()), {
+      isLatestBaseState : false,
+      message           : retained.message,
+      messageCid        : await Message.getCid(retained.message),
+    });
+
+    expect(outcome).toEqual({ kind: 'echo' });
+    expect(hydrate.notCalled).toBe(true);
+  });
+
+  it('should not discard a role-feed write whose latest-state annotation is absent', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const retained = await TestDataGenerator.generateRecordsWrite({ protocol: PROTOCOL });
+    const continued = sinon.stub(engine as any, 'syncEntriesFromFeedEntry').rejects(new Error('continued'));
+
+    await expect((engine as any).admitRemoteFeedEntry(targetFor(source()), {
+      message    : retained.message,
+      messageCid : await Message.getCid(retained.message),
+    })).rejects.toThrow('continued');
+
+    expect(continued.calledOnce).toBe(true);
   });
 
   it('should delete only the selected role link when contexts share a source tenant', async () => {

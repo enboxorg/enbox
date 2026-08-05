@@ -547,6 +547,7 @@ export function testEndToEndScenarios(): void {
         'community/gatedChannel',
         rolePath,
         rolePath,
+        adminRolePath,
         '$encryption/audience',
         '$encryption/delivery',
         '$encryption/audience',
@@ -568,8 +569,17 @@ export function testEndToEndScenarios(): void {
       ]);
       expect(bootstrapReply.support?.slice(2, 4).every((entry): boolean => entry.encodedData === undefined)).toBe(true);
       expect(bootstrapReply.support?.[4].encodedData).toBeUndefined();
-      expect(bootstrapReply.support?.slice(5).every((entry): boolean => entry.encodedData !== undefined)).toBe(true);
-      const rootBytes = await DataStream.toBytes(bootstrapReply.entry!.data!);
+      expect(bootstrapReply.support?.[5].encodedData).toBeDefined();
+      expect(bootstrapReply.support?.[6].encodedData).toBeUndefined();
+      expect(bootstrapReply.support?.slice(7).every((entry): boolean => entry.encodedData !== undefined)).toBe(true);
+      expect(bootstrapReply.entry?.data).toBeUndefined();
+      const dataRead = await RecordsRead.create({
+        filter       : bootstrapRead.message.descriptor.filter,
+        protocolRole : rolePath,
+        signer       : Jws.createSigner(bob),
+      });
+      const dataReply = await dwn.processMessage(alice.did, dataRead.message) as RecordsReadReply;
+      const rootBytes = await DataStream.toBytes(dataReply.entry!.data!);
 
       await messageStore.clear();
       await dataStore.clear();

@@ -180,6 +180,33 @@ export class MessagesRoleAuthorization {
         FilterUtility.matchesSubtree(resolvedRole.contextIdPrefix, recordsWrite.contextId));
   }
 
+  /** Whether a role wake event also belongs to the caller's signed feed. */
+  public static eventMatchesFilters(event: SubscriptionEvent, filters: Filter[]): boolean {
+    const recordsWrite = Records.isRecordsWrite(event.event.message)
+      ? event.event.message
+      : event.event.initialWrite;
+    if (recordsWrite === undefined) {
+      return false;
+    }
+
+    const indexes: Record<string, string> = {
+      interface        : event.event.message.descriptor.interface,
+      method           : event.event.message.descriptor.method,
+      messageTimestamp : event.event.message.descriptor.messageTimestamp,
+    };
+    const { protocol, protocolPath } = recordsWrite.descriptor;
+    if (protocol !== undefined) {
+      indexes.protocol = protocol;
+    }
+    if (protocolPath !== undefined) {
+      indexes.protocolPath = protocolPath;
+    }
+    if (recordsWrite.contextId !== undefined) {
+      indexes.contextId = recordsWrite.contextId;
+    }
+    return FilterUtility.matchAnyFilter(indexes, filters);
+  }
+
   private static requireExactFilters(filters: MessagesFilter[], failureCode: DwnErrorCode): ExactRoleFilter[] {
     const exactFilters: ExactRoleFilter[] = [];
     for (const filter of filters) {

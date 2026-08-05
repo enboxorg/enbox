@@ -2,7 +2,7 @@ import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, RecordsReadReply, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
 
 import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
@@ -20,6 +20,7 @@ import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/enc
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { Message } from '../../src/core/message.js';
 import { RecordsReadHandler } from '../../src/handlers/records-read.js';
+import { RecordsReadReplicationSupport } from '../../src/core/records-read-replication-support.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -171,6 +172,165 @@ export function testRecordsReadHandler(): void {
         const replicationReply = await dwn.processMessage(alice.did, replicationRead.message);
         expect(replicationReply.status.code).toBe(400);
         expect(replicationReply.status.detail).toContain(DwnErrorCode.RecordsReadReplicationSupportUnsupported);
+      });
+
+      it('should include the historical role proof for a record authored by another member', async () => {
+        const owner = await TestDataGenerator.generateDidKeyPersona();
+        const author = await TestDataGenerator.generateDidKeyPersona();
+        const reader = await TestDataGenerator.generateDidKeyPersona();
+        const deleter = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = `http://multi-member-bootstrap-${crypto.randomUUID()}.xyz`;
+        const definition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : { thread: {}, participant: {}, chat: {} },
+          structure : {
+            thread: {
+              participant: {
+                $role    : true,
+                $actions : [{ role: 'thread/participant', can: ['read', 'create', 'co-delete'] }],
+              },
+              chat: {
+                $actions: [{ role: 'thread/participant', can: ['create', 'read', 'co-update', 'co-delete'] }],
+              },
+            },
+          },
+        };
+        const configure = await ProtocolsConfigure.create({
+          definition,
+          signer: Jws.createSigner(owner),
+        });
+        expect((await dwn.processMessage(owner.did, configure.message)).status.code).toBe(202);
+
+        const threadTimestamp = Time.createOffsetTimestamp({ seconds: -30 });
+        const threadData = Encoder.stringToBytes('thread');
+        const thread = await RecordsWrite.create({
+          dateCreated      : threadTimestamp,
+          data             : threadData,
+          dataFormat       : 'text/plain',
+          messageTimestamp : threadTimestamp,
+          protocol,
+          protocolPath     : 'thread',
+          signer           : Jws.createSigner(owner),
+        });
+        expect((await dwn.processMessage(owner.did, thread.message, {
+          dataStream: DataStream.fromBytes(threadData),
+        })).status.code).toBe(202);
+        const roleData = Encoder.stringToBytes('participant');
+        const roleTimestamp = Time.createOffsetTimestamp({ seconds: -5 });
+        const createRole = (recipient: typeof author): Promise<RecordsWrite> => RecordsWrite.create({
+          dateCreated      : roleTimestamp,
+          data             : roleData,
+          dataFormat       : 'text/plain',
+          messageTimestamp : roleTimestamp,
+          parentContextId  : thread.message.contextId,
+          protocol,
+          protocolPath     : 'thread/participant',
+          recipient        : recipient.did,
+          signer           : Jws.createSigner(owner),
+        });
+        const [authorRole, readerRole, deleterRole] = await Promise.all([
+          createRole(author),
+          createRole(reader),
+          createRole(deleter),
+        ]);
+        for (const role of [authorRole, readerRole, deleterRole]) {
+          expect((await dwn.processMessage(owner.did, role.message, {
+            dataStream: DataStream.fromBytes(roleData),
+          })).status.code).toBe(202);
+        }
+
+        const chatData = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(1);
+        const chatTimestamp = Time.createOffsetTimestamp({ seconds: -10 });
+        const chat = await RecordsWrite.create({
+          dateCreated      : chatTimestamp,
+          data             : chatData,
+          dataFormat       : 'text/plain',
+          messageTimestamp : chatTimestamp,
+          parentContextId  : thread.message.contextId,
+          protocol,
+          protocolPath     : 'thread/chat',
+          protocolRole     : 'thread/participant',
+          signer           : Jws.createSigner(author),
+        });
+        expect((await dwn.processMessage(owner.did, chat.message, {
+          dataStream: DataStream.fromBytes(chatData),
+        })).status.code).toBe(202);
+        const chatUpdate = await RecordsWrite.createFrom({
+          data                : chatData,
+          protocolRole        : 'thread/participant',
+          recordsWriteMessage : chat.message,
+          signer              : Jws.createSigner(reader),
+        });
+        expect((await dwn.processMessage(owner.did, chatUpdate.message, {
+          dataStream: DataStream.fromBytes(chatData),
+        })).status.code).toBe(202);
+
+        const revokeAuthor = await RecordsDelete.create({
+          protocolRole : 'thread/participant',
+          recordId     : authorRole.message.recordId,
+          signer       : Jws.createSigner(author),
+        });
+        expect((await dwn.processMessage(owner.did, revokeAuthor.message)).status.code).toBe(202);
+
+        const read = await RecordsRead.create({
+          filter                    : { recordId: chat.message.recordId },
+          includeReplicationSupport : true,
+          protocolRole              : 'thread/participant',
+          signer                    : Jws.createSigner(reader),
+        });
+        const reply = await dwn.processMessage(owner.did, read.message) as RecordsReadReply;
+
+        expect(reply.status.code).toBe(200);
+        expect(reply.roleRecordId).toBe(readerRole.message.recordId);
+        const roleEntries = reply.support!.filter(({ message }): boolean =>
+          (message.descriptor as { protocolPath?: string }).protocolPath === 'thread/participant');
+        expect(roleEntries.map(({ message }): string => (message as RecordsWriteMessage).recordId)).toEqual([
+          readerRole.message.recordId,
+          authorRole.message.recordId,
+        ]);
+        expect(roleEntries[1].isLatestBaseState).toBe(false);
+        expect(roleEntries[1].encodedData).toBeUndefined();
+        expect(reply.entry?.recordsWrite).toEqual(chatUpdate.message);
+        expect(reply.entry?.data).toBeUndefined();
+
+        const dataRead = sinon.spy(dataStore, 'get');
+        const supportBuild = sinon.stub(RecordsReadReplicationSupport, 'build').rejects(new Error('support failed'));
+        const failedReply = await dwn.processMessage(owner.did, read.message);
+        expect(failedReply.status.code).toBe(400);
+        expect(dataRead.notCalled).toBe(true);
+        supportBuild.restore();
+        dataRead.restore();
+
+        const deleteChat = await RecordsDelete.create({
+          protocolRole : 'thread/participant',
+          recordId     : chat.message.recordId,
+          signer       : Jws.createSigner(deleter),
+        });
+        expect((await dwn.processMessage(owner.did, deleteChat.message)).status.code).toBe(202);
+        const deletedRead = await RecordsRead.create({
+          filter                    : { recordId: chat.message.recordId },
+          includeReplicationSupport : true,
+          protocolRole              : 'thread/participant',
+          signer                    : Jws.createSigner(reader),
+        });
+        const deletedReply = await dwn.processMessage(owner.did, deletedRead.message) as RecordsReadReply;
+
+        expect(deletedReply.status.code).toBe(404);
+        expect(deletedReply.roleRecordId).toBe(readerRole.message.recordId);
+        expect(deletedReply.entry?.recordsDelete).toEqual(deleteChat.message);
+        expect(deletedReply.entry?.initialWrite?.recordId).toBe(chat.message.recordId);
+        expect('encodedData' in deletedReply.entry!.initialWrite!).toBe(false);
+        expect(deletedReply.entry?.data).toBeUndefined();
+        const deletedRoleEntries = deletedReply.support!.filter(({ message }): boolean =>
+          (message.descriptor as { protocolPath?: string }).protocolPath === 'thread/participant');
+        expect(deletedRoleEntries.map(({ message }): string => (message as RecordsWriteMessage).recordId)).toEqual([
+          readerRole.message.recordId,
+          authorRole.message.recordId,
+          deleterRole.message.recordId,
+        ]);
+        expect(deletedRoleEntries[1].isLatestBaseState).toBe(false);
+        expect(deletedRoleEntries[1].encodedData).toBeUndefined();
       });
 
       it('should only allow delivery control reads by the recipient or writer', async () => {

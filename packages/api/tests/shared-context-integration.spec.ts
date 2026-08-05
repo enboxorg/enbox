@@ -127,6 +127,7 @@ describe('shared context public API integration', () => {
   const ownerDataLocation = '__TESTDATA__/api-shared-context-owner';
   const memberPassword = 'member-shared-context-password';
   const ownerPassword = 'owner-shared-context-password';
+  const peerPassword = 'peer-shared-context-password';
   const largePage = { body: 'private page '.repeat(4_000) };
 
   let contextIds: [string, string];
@@ -138,6 +139,9 @@ describe('shared context public API integration', () => {
   let memberHarness: PlatformAgentTestHarness;
   let ownerDid: string;
   let ownerHarness: PlatformAgentTestHarness;
+  let peerAuth: AuthManager | undefined;
+  let peerDid: string;
+  let peerHarness: PlatformAgentTestHarness | undefined;
 
   beforeAll(async () => {
     ownerHarness = await AgentHarness.setup({
@@ -150,6 +154,7 @@ describe('shared context public API integration', () => {
     await (ownerHarness.agent as EnboxUserAgent).start({ password: ownerPassword });
     ownerDid = (await ownerHarness.createIdentity({ name: 'Shared context owner', testDwnUrls: [testDwnUrl] })).did.uri;
     memberDid = (await ownerHarness.createIdentity({ name: 'Shared context member', testDwnUrls: [testDwnUrl] })).did.uri;
+    peerDid = (await ownerHarness.createIdentity({ name: 'Shared context peer', testDwnUrls: [testDwnUrl] })).did.uri;
 
     memberHarness = await AgentHarness.setup({
       agentClass       : EnboxUserAgent,
@@ -263,6 +268,9 @@ describe('shared context public API integration', () => {
     await memberAuth?.shutdown().catch((): undefined => undefined);
     await memberHarness.clearStorage().catch((): undefined => undefined);
     await memberHarness.closeStorage().catch((): undefined => undefined);
+    await peerAuth?.shutdown().catch((): undefined => undefined);
+    await peerHarness?.clearStorage().catch((): undefined => undefined);
+    await peerHarness?.closeStorage().catch((): undefined => undefined);
     await ownerHarness.clearStorage().catch((): undefined => undefined);
     await ownerHarness.closeStorage().catch((): undefined => undefined);
   });
@@ -316,6 +324,52 @@ describe('shared context public API integration', () => {
     expect(contextB.role).toBe('notebook/page/viewer');
 
     await Promise.all([contextA.refresh(), contextB.refresh()]);
+    const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
+    peerHarness = await AgentHarness.setup({
+      agentClass       : EnboxUserAgent,
+      agentStores      : 'dwn',
+      testDataLocation : '__TESTDATA__/api-shared-context-peer',
+    });
+    await peerHarness.clearStorage();
+    peerAuth = await AuthManager.create({
+      agent          : peerHarness.agent as EnboxUserAgent,
+      password       : peerPassword,
+      storage        : new MemoryStorage(),
+      connectHandler : {
+        requestAccess: async ({ permissionRequests }) => {
+          const approval = await executeConnectApproval({
+            agent       : ownerHarness.agent,
+            providerDid : peerDid,
+            request     : { appName: 'Shared context peer', permissionRequests },
+            transport   : 'relay',
+          });
+          if (approval.delegatePortableDid === undefined) {
+            throw new Error('Expected the wallet to mint a peer delegate DID.');
+          }
+          return {
+            connectedDid        : peerDid,
+            delegateGrants      : approval.delegateGrants,
+            delegatePortableDid : approval.delegatePortableDid,
+            sessionRevocations  : approval.sessionRevocations,
+          };
+        },
+      },
+    });
+    const peerSession = await peerAuth.connect({ protocols: [SharedNotebookProtocol] });
+    const peerTyped = Enbox.fromSession(peerSession).using(SharedNotebookProtocol);
+    const ownerContextA = await owner.contexts.open('notebook/page', contextIds[0]);
+    await ownerContextA.members().set(peerDid, {
+      data : { name: 'peer' },
+      role : 'notebook/page/member',
+    });
+    await ownerContextA.invite(peerDid, { preview: { title: 'Page A' } });
+    await ownerHarness.agent.sync.sync('push');
+    await peerHarness.agent.sync.sync('pull');
+    const peerInvitations = await peerTyped.contexts.invitations.list();
+    expect(peerInvitations).toHaveLength(1);
+    const peerContextA = await peerInvitations[0].accept();
+    await peerContextA.refresh();
+    await peerHarness.agent.sync.stopSync();
 
     await memberHarness.agent.sync.stopSync();
     const localRequests = sinon.spy(memberHarness.agent, 'processDwnRequest');
@@ -392,7 +446,6 @@ describe('shared context public API integration', () => {
     });
     expect(subscribeRequest.messageParams.delegatedGrant).toBeDefined();
     expect(subscribeRequest.messageParams.permissionGrantIds).toBeUndefined();
-    const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
     const siblingChange = await owner.records.create('notebook/page/change', {
       data            : { body: 'live sibling change' },
       parentContextId : contextIds[1],
@@ -485,8 +538,6 @@ describe('shared context public API integration', () => {
     const view = await contextA.records.observe('notebook/page/change', { pagination: { limit: 10 } });
     const created = await contextA.records.create('notebook/page/change', { data: { body: 'created by member' } });
     expect(signerDid(created)).toBe(memberDelegateDid);
-    await waitForView(view, (state): boolean => state.records.some((record): boolean => record.id === created.id));
-
     await created.update({
       data : { body: 'updated by member' },
       tags : { revision: 'updated' },
@@ -494,6 +545,24 @@ describe('shared context public API integration', () => {
     await waitForView(view, (state): boolean => state.records.some((record): boolean =>
       record.id === created.id && record.tags?.revision === 'updated'
     ));
+    const deletedBeforePeerPull = await contextA.records.create('notebook/page/change', {
+      data: { body: 'deleted before peer pull' },
+    });
+    await deletedBeforePeerPull.delete();
+
+    await peerHarness.agent.sync.startSync();
+    await peerContextA.refresh();
+    await peerHarness.agent.sync.stopSync();
+    const peerOffline = sinon.stub(peerHarness.agent, 'sendDwnRequest').rejects(new Error('offline'));
+    const peerChanges = await peerContextA.records.query('notebook/page/change', { pagination: { limit: 100 } });
+    const peerCopy = peerChanges.records.find(record => record.id === created.id);
+    expect(await peerCopy?.value()).toEqual({ body: 'updated by member' });
+    expect(peerChanges.records.some(record => record.id === deletedBeforePeerPull.id)).toBe(false);
+    peerOffline.restore();
+    await peerHarness.agent.sync.startSync();
+    await ownerContextA.members().remove(peerDid);
+    await ownerHarness.agent.sync.sync('push');
+    await peerHarness.agent.sync.stopSync();
 
     const offlineAfterWrite = sinon.stub(memberHarness.agent, 'sendDwnRequest').rejects(new Error('offline'));
     expect(await created.value()).toEqual({ body: 'updated by member' });
@@ -585,5 +654,5 @@ describe('shared context public API integration', () => {
     expect(await siblingPages.records[0].value()).toEqual({ body: 'sibling page' });
     await sibling.leave();
     expect(await reopened.contexts.list()).toEqual([]);
-  }, 120_000);
+  }, 180_000);
 });

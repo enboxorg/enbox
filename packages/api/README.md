@@ -247,9 +247,9 @@ await view.ready();
 const unsubscribe = view.subscribe(render);
 render(view.getState()); // close the one-shot-to-live handoff
 
-// Consume later writes/deletes from one stream, discriminated by path
-const changes = await notes.records.subscribe(['note', 'attachment'], async (event) => {
-  if (event.type === 'write' && event.path === 'note') {
+// Consume later writes/deletes from one stream
+const changes = await notes.records.subscribe('note', async (event) => {
+  if (event.type === 'write') {
     console.log(await event.record.value());
   }
 });

@@ -2172,19 +2172,23 @@ export class TypedEnbox<
     );
     const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
     signal.throwIfAborted();
-    let detachOpeningAbort = (): void => {};
-    const cancelled = new Promise<never>((_resolve, reject): void => {
-      const onAbort = (): void => {
-        detachOpeningAbort();
-        reject(signal.reason);
-      };
-      signal.addEventListener('abort', onAbort, { once: true });
-      detachOpeningAbort = (): void => { signal.removeEventListener('abort', onAbort); };
-      if (signal.aborted) {
-        onAbort();
+    const whileOpening = async <T>(operation: Promise<T>): Promise<T> => {
+      signal.throwIfAborted();
+      let detachAbort = (): void => {};
+      const cancelled = new Promise<never>((_resolve, reject): void => {
+        const onAbort = (): void => reject(signal.reason);
+        signal.addEventListener('abort', onAbort, { once: true });
+        detachAbort = (): void => signal.removeEventListener('abort', onAbort);
+        if (signal.aborted) {
+          onAbort();
+        }
+      });
+      try {
+        return await Promise.race([operation, cancelled]);
+      } finally {
+        detachAbort();
       }
-    });
-    const whileOpening = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, cancelled]);
+    };
     const bufferedChanges: Change[] = [];
     let subscriptionError: Error | undefined;
     const assertActive = (): void => {
@@ -2211,15 +2215,16 @@ export class TypedEnbox<
     try {
       subscription = await whileOpening(this.subscribeToRecordPaths(selection, event => receive(event), signal));
     } catch (error: unknown) {
-      detachOpeningAbort();
       assertActive();
       throw error;
     }
     const requestedPaths = typeof selection === 'string' ? [selection] : [...selection];
     const paths = [...new Set(requestedPaths.map(normalizePath))];
+    let opening = true;
     const deliver = async (event: Event): Promise<void> => {
       assertActive();
-      await whileOpening(Promise.resolve(listener(event)));
+      const delivery = Promise.resolve(listener(event));
+      await (opening ? whileOpening(delivery) : delivery);
       assertActive();
     };
 
@@ -2241,7 +2246,6 @@ export class TypedEnbox<
           page = await whileOpening(page.next());
         }
       }
-      let opening = true;
       let deliveryTail = Promise.resolve();
       for (const change of bufferedChanges) {
         deliveryTail = deliveryTail.then(() => deliver(change));
@@ -2259,10 +2263,8 @@ export class TypedEnbox<
       await handoff;
       assertActive();
       opening = false;
-      detachOpeningAbort();
       return subscription;
     } catch (error: unknown) {
-      detachOpeningAbort();
       await subscription.close().catch((): void => {});
       assertActive();
       throw error;

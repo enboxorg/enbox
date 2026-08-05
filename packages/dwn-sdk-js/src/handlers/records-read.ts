@@ -99,30 +99,10 @@ export class RecordsReadHandler implements MethodHandler {
       return messageReplyFromError(error, 401);
     }
 
-    let data;
-    if (matchedRecordsWrite.encodedData === undefined) {
-      const result = await this.deps.dataStore!.get(tenant, matchedRecordsWrite.recordId, matchedRecordsWrite.descriptor.dataCid);
-      if (result?.dataStream === undefined) {
-        // The message envelope exists but the record data is unavailable (e.g., evicted
-        // by a storage-constrained node, or read proxying to peer endpoints failed).
-        // Return 410 with the recordsWrite so the requester can try an alternative endpoint.
-        return {
-          status : { code: 410, detail: 'Record data not available' },
-          entry  : { recordsWrite: matchedRecordsWrite },
-        };
-      }
-      data = result.dataStream;
-    } else {
-      const dataBytes = Encoder.base64UrlToBytes(matchedRecordsWrite.encodedData);
-      data = DataStream.fromBytes(dataBytes);
-      delete matchedRecordsWrite.encodedData;
-    }
-
     const recordsReadReply: RecordsReadReply = {
       status : { code: 200, detail: 'OK' },
       entry  : {
         recordsWrite: matchedRecordsWrite,
-        data
       }
     };
     if (resolvedRole?.roleRecordId !== undefined) {
@@ -158,6 +138,27 @@ export class RecordsReadHandler implements MethodHandler {
       } catch (error) {
         return messageReplyFromError(error, 400);
       }
+      const { message } = Messages.detachEncodedData(matchedRecordsWrite);
+      recordsReadReply.entry!.recordsWrite = message as RecordsQueryReplyEntry;
+      return recordsReadReply;
+    }
+
+    if (matchedRecordsWrite.encodedData === undefined) {
+      const result = await this.deps.dataStore!.get(tenant, matchedRecordsWrite.recordId, matchedRecordsWrite.descriptor.dataCid);
+      if (result?.dataStream === undefined) {
+        // The message envelope exists but the record data is unavailable (e.g., evicted
+        // by a storage-constrained node, or read proxying to peer endpoints failed).
+        // Return 410 with the recordsWrite so the requester can try an alternative endpoint.
+        return {
+          status : { code: 410, detail: 'Record data not available' },
+          entry  : { recordsWrite: matchedRecordsWrite },
+        };
+      }
+      recordsReadReply.entry!.data = result.dataStream;
+    } else {
+      const dataBytes = Encoder.base64UrlToBytes(matchedRecordsWrite.encodedData);
+      recordsReadReply.entry!.data = DataStream.fromBytes(dataBytes);
+      delete matchedRecordsWrite.encodedData;
     }
 
     return recordsReadReply;
@@ -219,7 +220,7 @@ export class RecordsReadHandler implements MethodHandler {
       return messageReplyFromError(error, 401);
     }
 
-    return {
+    const reply: RecordsReadReply = {
       status : { code: 404, detail: 'Not Found' },
       entry  : {
         recordsDelete: recordsDeleteMessage,
@@ -227,6 +228,29 @@ export class RecordsReadHandler implements MethodHandler {
       },
       ...(resolvedRole?.roleRecordId === undefined ? {} : { roleRecordId: resolvedRole.roleRecordId }),
     };
+    if (recordsRead.message.descriptor.includeReplicationSupport === true) {
+      if (resolvedRole?.roleRecordId === undefined) {
+        return messageReplyFromError(new DwnError(
+          DwnErrorCode.RecordsReadReplicationSupportUnsupported,
+          'replication support requires a resolved protocol role.',
+        ), 400);
+      }
+      try {
+        reply.support = await RecordsReadReplicationSupport.build({
+          deps                : this.deps,
+          matchedRecordsWrite : initialWrite,
+          recordsDelete       : recordsDeleteMessage,
+          requester           : recordsRead.author!,
+          resolvedRole,
+          tenant,
+        });
+      } catch (error) {
+        return messageReplyFromError(error, 400);
+      }
+      const { message: supportInitialWrite } = Messages.detachEncodedData(initialWrite);
+      reply.entry!.initialWrite = supportInitialWrite as RecordsQueryReplyEntry;
+    }
+    return reply;
   }
 
   /**

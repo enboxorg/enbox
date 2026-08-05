@@ -1,3 +1,4 @@
+import type { Filter } from '../types/query-types.js';
 import type { GuardedSubscriptionHandler } from './guarded-subscription.js';
 import type { MessagesRoleAuthorizationState } from '../core/messages-role-authorization.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
@@ -63,21 +64,22 @@ export class MessagesSubscribeHandler implements MethodHandler {
       return messageReplyFromError(error, 401);
     }
 
+    const { filters, cursor: eventLogCursor } = message.descriptor;
+    const includeShadowFilters = authorization.kind === 'owner'
+      || (authorization.kind === 'delegate' && !authorization.metadataOnly);
+    const callerMessageFilters = Messages.convertFilters(filters, this.deps.coreProtocols, includeShadowFilters);
+    const messagesFilters = [...callerMessageFilters];
+    if (authorization.kind === 'role') {
+      messagesFilters.push(MessagesRoleAuthorization.roleWakeFilter(authorization.state));
+    }
     const guardedHandler = MessagesSubscribeHandler.createAuthorizationGuard({
       authorization,
+      callerMessageFilters,
       deps: this.deps,
       messagesSubscribe,
       subscriptionHandler,
       tenant,
     });
-
-    const { filters, cursor: eventLogCursor } = message.descriptor;
-    const includeShadowFilters = authorization.kind === 'owner'
-      || (authorization.kind === 'delegate' && !authorization.metadataOnly);
-    const messagesFilters = Messages.convertFilters(filters, this.deps.coreProtocols, includeShadowFilters);
-    if (authorization.kind === 'role') {
-      messagesFilters.push(MessagesRoleAuthorization.roleWakeFilter(authorization.state));
-    }
     const messageCid = await Message.getCid(message);
 
     try {
@@ -94,13 +96,15 @@ export class MessagesSubscribeHandler implements MethodHandler {
       if (authorization.kind === 'role') {
         reply.roleRecordId = authorization.state.resolvedRole.roleRecordId;
       }
-      try {
-        await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, this.deps);
-      } catch {
-        // Best-effort enrichment: the subscription is live and correct
-        // without the snapshot — consumers feature-detect the fields. A
-        // failure reply here would orphan the just-installed listener, since
-        // close handles are registered only from successful replies.
+      if (authorization.kind !== 'role') {
+        try {
+          await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, this.deps);
+        } catch {
+          // Best-effort enrichment: the subscription is live and correct
+          // without the snapshot — consumers feature-detect the fields. A
+          // failure reply here would orphan the just-installed listener, since
+          // close handles are registered only from successful replies.
+        }
       }
 
       return reply;
@@ -205,12 +209,13 @@ export class MessagesSubscribeHandler implements MethodHandler {
 
   private static createAuthorizationGuard(input: {
     authorization: MessagesSubscribeAuthorization;
+    callerMessageFilters: Filter[];
     deps: HandlerDependencies;
     messagesSubscribe: MessagesSubscribe;
     subscriptionHandler: SubscriptionListener;
     tenant: string;
   }): GuardedSubscriptionHandler {
-    const { authorization, deps, messagesSubscribe, subscriptionHandler, tenant } = input;
+    const { authorization, callerMessageFilters, deps, messagesSubscribe, subscriptionHandler, tenant } = input;
     if (authorization.kind === 'owner') {
       return {
         listener        : subscriptionHandler,
@@ -260,7 +265,9 @@ export class MessagesSubscribeHandler implements MethodHandler {
           return undefined;
         }
 
-        if (authorization.kind === 'role' && MessagesRoleAuthorization.isRoleWakeEvent(subMessage, authorization.state)) {
+        if (authorization.kind === 'role' &&
+          MessagesRoleAuthorization.isRoleWakeEvent(subMessage, authorization.state) &&
+          !MessagesRoleAuthorization.eventMatchesFilters(subMessage, callerMessageFilters)) {
           return undefined;
         }
 

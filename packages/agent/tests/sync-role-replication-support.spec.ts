@@ -2,7 +2,10 @@ import type { BearerDid } from '@enbox/dids';
 import type {
   DwnEncryption,
   MessageSigner,
+  RecordsDeleteMessage,
+  RecordsReadMessage,
   RecordsReadReplicationSupportEntry,
+  RecordsWriteMessage,
   SourceRoleAudienceKeyEncryption,
 } from '@enbox/dwn-sdk-js';
 
@@ -16,6 +19,7 @@ import {
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyAgreementAlgorithm,
+  Message,
   ProtocolsConfigure,
   RecordsDelete,
   RecordsRead,
@@ -39,11 +43,17 @@ describe('readRoleReplicationSupport', () => {
   let actorSigner: MessageSigner;
   let owner: BearerDid;
   let ownerSigner: MessageSigner;
+  let peer: BearerDid;
+  let peerSigner: MessageSigner;
   let resolver: UniversalResolver;
 
   beforeAll(async () => {
-    [actor, owner] = await Promise.all([DidJwk.create(), DidJwk.create()]);
-    [actorSigner, ownerSigner] = await Promise.all([signerForDid(actor), signerForDid(owner)]);
+    [actor, owner, peer] = await Promise.all([DidJwk.create(), DidJwk.create(), DidJwk.create()]);
+    [actorSigner, ownerSigner, peerSigner] = await Promise.all([
+      signerForDid(actor),
+      signerForDid(owner),
+      signerForDid(peer),
+    ]);
     resolver = new UniversalResolver({ didResolvers: [DidJwk] });
   });
 
@@ -86,6 +96,117 @@ describe('readRoleReplicationSupport', () => {
     ]);
   });
 
+  it('accepts one ancestry-only role proof for a record authored by another member', async () => {
+    const fixture = await createFixture();
+    const { authorRole, contextRoot } = await addPeerAuthoredPage(fixture);
+    const authorRoleEntry = await supportEntry(authorRole, false);
+    delete authorRoleEntry.encodedData;
+    fixture.support.push(authorRoleEntry);
+
+    const result = await readFixture(fixture);
+
+    expect(result.dependencies.map(({ message }) => message)).toEqual([
+      fixture.configure.message,
+      contextRoot.message,
+      fixture.role.message,
+      authorRole.message,
+    ]);
+    expect(result.dependencies.at(-1)?.bufferedData).toBeUndefined();
+  });
+
+  it('rejects duplicate record-author role proofs', async () => {
+    const fixture = await createFixture();
+    const { authorRole } = await addPeerAuthoredPage(fixture);
+    const proof = await supportEntry(authorRole, false);
+    delete proof.encodedData;
+    fixture.support.push(proof, structuredClone(proof));
+
+    await expect(readFixture(fixture)).rejects.toThrow('invalid record-author role assignment');
+  });
+
+  it('requires the author proof carried by an updated root initial write', async () => {
+    const fixture = await createFixture();
+    const { authorRole } = await addPeerAuthoredPage(fixture);
+    fixture.rootInitialWrite = fixture.root;
+    fixture.rootData = new TextEncoder().encode('updated by requester');
+    fixture.root = await RecordsWrite.createFrom({
+      data                : fixture.rootData,
+      protocolRole        : ROLE_PATH,
+      recordsWriteMessage : fixture.root.message,
+      signer              : actorSigner,
+    });
+    const proof = await supportEntry(authorRole, false);
+    delete proof.encodedData;
+    fixture.support.push(proof);
+    const expectedRootCid = await Message.getCid(fixture.root.message);
+    const agent = responseAgent(fixture) as any;
+
+    const result = await readFixture(fixture, agent, fixture.root.message);
+
+    expect(result.dependencies.some(({ message }) => message === fixture.rootInitialWrite?.message)).toBe(true);
+    expect(result.dependencies.some(({ message }) => message === authorRole.message)).toBe(true);
+    expect(result.rootCid).toBe(expectedRootCid);
+  });
+
+  it('accepts a verified role-authored delete root without requesting record data', async () => {
+    const keyId = 'D'.repeat(43);
+    const fixture = await createFixture({
+      encryption: {
+        algorithm            : ContentEncryptionAlgorithm.A256CTR,
+        initializationVector : Encoder.bytesToBase64Url(new Uint8Array(16)),
+        keyEncryption        : [roleAudienceEncryption(ROLE_PATH, keyId)],
+      },
+    });
+    const audience = await controlRecord({
+      contextId    : fixture.root.message.contextId,
+      keyId,
+      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      rolePath     : ROLE_PATH,
+    });
+    fixture.support.push(await supportEntry(audience, true));
+    const deleterRole = await RecordsWrite.create({
+      data            : new TextEncoder().encode('peer viewer'),
+      dataFormat      : 'text/plain',
+      parentContextId : fixture.root.message.contextId,
+      protocol        : PROTOCOL,
+      protocolPath    : ROLE_PATH,
+      recipient       : peer.uri,
+      signer          : ownerSigner,
+    });
+    const proof = await supportEntry(deleterRole, false);
+    delete proof.encodedData;
+    fixture.support.push(proof);
+    const deletedInitialWrite = structuredClone(fixture.root.message);
+    delete deletedInitialWrite.encodedData;
+    const recordsDelete = await RecordsDelete.create({
+      protocolRole : ROLE_PATH,
+      recordId     : fixture.root.message.recordId,
+      signer       : peerSigner,
+    });
+    const agent = responseAgent(fixture) as any;
+    agent.rpc.sendDwnRequest.callsFake(() => Promise.resolve({
+      entry: {
+        initialWrite  : deletedInitialWrite,
+        recordsDelete : recordsDelete.message,
+      },
+      roleRecordId : fixture.role.message.recordId,
+      status       : { code: 404 },
+      support      : fixture.support,
+    }));
+
+    const result = await readFixture(fixture, agent, recordsDelete.message);
+
+    expect(agent.rpc.sendDwnRequest.callCount).toBe(1);
+    expect(result.root.message).toEqual(recordsDelete.message);
+    expect(result.root.dataStream).toBeUndefined();
+    expect(result.dependencies.some(({ message }) => message === deletedInitialWrite)).toBe(true);
+    expect(result.dependencies.some(({ message }) => message === deleterRole.message)).toBe(true);
+
+    agent.rpc.sendDwnRequest.resolves({ status: { code: 404 } });
+    await expect(readFixture(fixture, agent, recordsDelete.message))
+      .rejects.toThrow('did not contain a readable root record');
+  });
+
   it('splits support metadata over WebSocket from record data over HTTP', async () => {
     const fixture = await createFixture();
     const agent = responseAgent(fixture) as any;
@@ -108,6 +229,37 @@ describe('readRoleReplicationSupport', () => {
     expect(agent.rpc.sendDwnRequest.firstCall.args[0].dwnUrl).toBe('wss://owner.example.com/');
     expect(agent.rpc.sendDwnRequest.firstCall.args[0].message.descriptor.includeReplicationSupport).toBe(true);
     expect(agent.rpc.sendDwnRequest.secondCall.args[0].dwnUrl).toBe('https://owner.example.com');
+    expect(agent.rpc.sendDwnRequest.secondCall.args[0].message.descriptor.includeReplicationSupport).toBe(false);
+  });
+
+  it('splits support metadata and record data on HTTP-only servers', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    agent.rpc.getServerInfo = sinon.stub().resolves({ webSocketSupport: false });
+    agent.dwn.processRequest.callsFake(async ({ messageParams }: any) => ({
+      message: (await RecordsRead.create({ ...messageParams, signer: actorSigner })).message,
+    }));
+    agent.rpc.sendDwnRequest.callsFake(({ message }: { message: { descriptor: { includeReplicationSupport?: boolean } } }) =>
+      Promise.resolve({
+        entry: {
+          ...(message.descriptor.includeReplicationSupport === true
+            ? {}
+            : { data: DataStream.fromBytes(fixture.rootData) }),
+          recordsWrite: fixture.root.message,
+        },
+        roleRecordId : fixture.role.message.recordId,
+        status       : { code: 200 },
+        support      : fixture.support,
+      }));
+
+    await readFixture(fixture, agent);
+
+    expect(agent.rpc.sendDwnRequest.callCount).toBe(2);
+    expect(agent.rpc.sendDwnRequest.getCalls().map(call => call.args[0].dwnUrl)).toEqual([
+      'https://owner.example.com',
+      'https://owner.example.com',
+    ]);
+    expect(agent.rpc.sendDwnRequest.firstCall.args[0].message.descriptor.includeReplicationSupport).toBe(true);
     expect(agent.rpc.sendDwnRequest.secondCall.args[0].message.descriptor.includeReplicationSupport).toBe(false);
   });
 
@@ -501,6 +653,44 @@ describe('readRoleReplicationSupport', () => {
     await expect(readFixture(fixture)).rejects.toBeInstanceOf(FollowedSourceNotReadyError);
   });
 
+  async function addPeerAuthoredPage(
+    fixture: Awaited<ReturnType<typeof createFixture>>,
+  ): Promise<{ authorRole: RecordsWrite; contextRoot: RecordsWrite }> {
+    const contextRoot = fixture.root;
+    const authorRole = await RecordsWrite.create({
+      data            : new TextEncoder().encode('peer viewer'),
+      dataFormat      : 'text/plain',
+      parentContextId : contextRoot.message.contextId,
+      protocol        : PROTOCOL,
+      protocolPath    : ROLE_PATH,
+      recipient       : peer.uri,
+      signer          : ownerSigner,
+    });
+    fixture.rootData = new TextEncoder().encode('peer page');
+    fixture.root = await RecordsWrite.create({
+      data            : fixture.rootData,
+      dataFormat      : 'text/plain',
+      parentContextId : contextRoot.message.contextId,
+      protocol        : PROTOCOL,
+      protocolPath    : 'notebook/page',
+      protocolRole    : ROLE_PATH,
+      signer          : peerSigner,
+    });
+    fixture.read = await RecordsRead.create({
+      filter: {
+        contextId    : fixture.root.message.contextId,
+        protocol     : PROTOCOL,
+        protocolPath : 'notebook/page',
+        recordId     : fixture.root.message.recordId,
+      },
+      includeReplicationSupport : true,
+      protocolRole              : ROLE_PATH,
+      signer                    : actorSigner,
+    });
+    fixture.support.splice(1, 0, { isLatestBaseState: false, message: contextRoot.message });
+    return { authorRole, contextRoot };
+  }
+
   async function createFixture(options: {
     encryption?: DwnEncryption;
   } = {}): Promise<{
@@ -509,6 +699,7 @@ describe('readRoleReplicationSupport', () => {
     role: RecordsWrite;
     roleData: Uint8Array;
     root: RecordsWrite;
+    rootInitialWrite: RecordsWrite | undefined;
     rootData: Uint8Array;
     support: RecordsReadReplicationSupportEntry[];
   }> {
@@ -552,8 +743,9 @@ describe('readRoleReplicationSupport', () => {
       role,
       roleData,
       root,
+      rootInitialWrite : undefined as RecordsWrite | undefined,
       rootData,
-      support: [
+      support          : [
         {
           isLatestBaseState : true,
           message           : configure.message,
@@ -566,12 +758,14 @@ describe('readRoleReplicationSupport', () => {
   async function readFixture(
     fixture: Awaited<ReturnType<typeof createFixture>>,
     agent: any = responseAgent(fixture),
+    expectedRoot?: RecordsDeleteMessage | RecordsWriteMessage,
   ): ReturnType<typeof readRoleReplicationSupport> {
     return readRoleReplicationSupport({
       actorDid       : actor.uri,
       agent,
       contextId      : fixture.root.message.contextId,
       dwnUrl         : 'https://owner.example.com',
+      expectedRoot,
       permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
       protocol       : PROTOCOL,
       protocolPath   : fixture.root.message.descriptor.protocolPath!,
@@ -583,17 +777,26 @@ describe('readRoleReplicationSupport', () => {
   function responseAgent(fixture: Awaited<ReturnType<typeof createFixture>>): object {
     return {
       did : resolver,
-      dwn : { processRequest: sinon.stub().resolves({ message: fixture.read.message }) },
-      rpc : {
-        sendDwnRequest: sinon.stub().resolves({
+      dwn : {
+        processRequest: sinon.stub().callsFake(async ({ messageParams }: any) => ({
+          message: (await RecordsRead.create({ ...messageParams, signer: actorSigner })).message,
+        })),
+      },
+      rpc: {
+        sendDwnRequest: sinon.stub().callsFake(({ message }: { message: RecordsReadMessage }) => Promise.resolve({
           entry: {
-            data         : DataStream.fromBytes(fixture.rootData),
-            recordsWrite : fixture.root.message,
+            ...(message.descriptor.includeReplicationSupport === true
+              ? {}
+              : { data: DataStream.fromBytes(fixture.rootData) }),
+            ...(fixture.rootInitialWrite === undefined
+              ? {}
+              : { initialWrite: fixture.rootInitialWrite.message }),
+            recordsWrite: fixture.root.message,
           },
           roleRecordId : fixture.role.message.recordId,
           status       : { code: 200 },
           support      : fixture.support,
-        }),
+        })),
       },
     };
   }

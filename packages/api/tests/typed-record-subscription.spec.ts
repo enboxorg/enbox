@@ -359,6 +359,38 @@ describe('typed record subscriptions', () => {
     expect((await records.query('note')).records).toEqual([]);
   });
 
+  it('releases each opening abort race during a long initial replay', async () => {
+    const close = sinon.stub().resolves();
+    const initial = Array.from({ length: 150 }, (_, index) =>
+      testRecord(`initial-${index}`, `2026-01-01T00:00:00.${String(index).padStart(6, '0')}Z`));
+    const dwn = {
+      connectedDid          : 'did:example:alice',
+      followedContextId     : undefined,
+      followedSourceId      : undefined,
+      recordTenantDid       : 'did:example:alice',
+      records               : { query: async (): Promise<RecordsQueryResponse> => queryReply(initial) },
+      subscribeRecordFrames : async () => ({
+        status       : { code: 200, detail: 'OK' },
+        subscription : { id: 'long-initial-replay', close },
+      }),
+    } as unknown as DwnApi;
+    const records = contextRecords(dwn);
+    const controller = new AbortController();
+    const addAbort = sinon.spy(AbortSignal.prototype, 'addEventListener');
+    const removeAbort = sinon.spy(AbortSignal.prototype, 'removeEventListener');
+
+    try {
+      const subscription = await records.subscribe('note', { initial: true, signal: controller.signal }, (): void => {});
+      await subscription.close();
+
+      expect(addAbort.callCount).toBeGreaterThan(initial.length);
+      expect(removeAbort.callCount).toBe(addAbort.callCount);
+    } finally {
+      addAbort.restore();
+      removeAbort.restore();
+    }
+  });
+
   it('closes the live subscription when initial replay fails', async () => {
     const close = sinon.stub().resolves();
     const dwn = {

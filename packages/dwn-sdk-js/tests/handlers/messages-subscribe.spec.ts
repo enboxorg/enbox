@@ -280,6 +280,44 @@ export function testMessagesSubscribeHandler(): void {
         });
       });
 
+      it('delivers role wake events when the caller explicitly subscribed to the role path', async () => {
+        const { member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
+        const received: SubscriptionMessage[] = [];
+        const subscribe = await TestDataGenerator.generateMessagesSubscribe({
+          author  : member,
+          filters : [{
+            contextIdPrefix : thread.message.contextId!,
+            interface       : DwnInterfaceName.Records,
+            protocol        : protocolDefinition.protocol,
+            protocolPath    : 'thread/participant',
+          }],
+          protocolRole: 'thread/participant',
+        });
+        const reply = await dwn.processMessage(source.did, subscribe.message, {
+          subscriptionHandler: message => { received.push(message); },
+        });
+        expect(reply.status.code).toBe(200);
+        expect(reply.head).toBeUndefined();
+        expect(reply.fingerprint).toBeUndefined();
+
+        await Time.minimalSleep();
+        const roleUpdate = await RecordsWrite.createFrom({
+          data                : role.dataBytes!,
+          recordsWriteMessage : role.message,
+          signer              : Jws.createSigner(source),
+        });
+        expect((await dwn.processMessage(source.did, roleUpdate.message, {
+          dataStream: DataStream.fromBytes(role.dataBytes!),
+        })).status.code).toBe(202);
+
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          const events = received.filter(message => message.type === 'event');
+          expect(events).toHaveLength(1);
+          expect(events[0].event.message).toEqual(roleUpdate.message);
+        });
+        await reply.subscription!.close();
+      });
+
       it('should not allow non-tenant to subscribe to an event stream they are not authorized for', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
