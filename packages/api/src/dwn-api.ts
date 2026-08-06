@@ -28,7 +28,6 @@ import type { RecordDataAccess, RecordExecutionContext, RecordOptions, StoredRec
 import { captureRecordDataAccess } from './record-data-access.js';
 import { ContextNotReadyError } from './context-errors.js';
 import { dataToBlob } from './utils.js';
-import { DwnResponseError } from './dwn-response-error.js';
 import { invalidateRecordReplica } from './record-types.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
@@ -56,11 +55,6 @@ type RecordMutationReadResponse<T = unknown> = RecordsReadResponse<T> & {
   /** Whether the authority returned an existing tombstone, and whether it prunes descendants. */
   tombstonePrune?: boolean;
 };
-
-/** A delete converged only when this tombstone was stored or another tombstone already wins. */
-function isDurableRecordsDeleteStatus(code: number): boolean {
-  return (code >= 200 && code < 300) || code === 409;
-}
 
 /**
  * Represents the request payload for fetching permission requests from a Decentralized Web Node (DWN).
@@ -514,7 +508,12 @@ export class DwnApi {
     remoteTarget?: string,
   ): Promise<DwnResponse<T>> {
     return remoteTarget
-      ? this.agent.sendDwnRequest(request)
+      ? this.agent.sendDwnRequest({
+        ...request,
+        ...(this.recordExecutionContext?.remoteEndpoint === undefined
+          ? {}
+          : { remoteEndpoint: this.recordExecutionContext.remoteEndpoint }),
+      })
       : this.agent.processDwnRequest(request);
   }
 
@@ -832,34 +831,6 @@ export class DwnApi {
    */
   public queryRecordsWithRequiredGrant(request: RecordsQueryRequest): Promise<RecordsQueryResponse> {
     return this.queryRecords(request, 'reject', this.recordExecutionContext !== undefined);
-  }
-
-  /** @internal Delete at every hosted endpoint, then apply the exact signed tombstone locally. */
-  public async deleteRemoteRecordAndStoreLocal(
-    request: RecordsDeleteRequest & { from: string },
-  ): Promise<void> {
-    const { agentRequest, remoteTarget } = await this.prepareDeleteRecord(request);
-    if (remoteTarget === undefined) {
-      throw new TypeError('DwnApi: deleteRemoteRecordAndStoreLocal requires a remote target.');
-    }
-
-    const { message, replies } = await this.agent.sendDwnDeleteToAllRemoteEndpoints(agentRequest);
-    for (const { dwnUrl, reply } of replies) {
-      if (!isDurableRecordsDeleteStatus(reply.status.code)) {
-        throw new DwnResponseError(`Delete record at remote DWN '${dwnUrl}'`, reply.status);
-      }
-    }
-
-    const localResponse = await this.agent.processDwnRequest({
-      author      : this.connectedDid,
-      messageType : DwnInterface.RecordsDelete,
-      rawMessage  : message,
-      store       : true,
-      target      : agentRequest.target,
-    });
-    if (!isDurableRecordsDeleteStatus(localResponse.reply.status.code)) {
-      throw new DwnResponseError('Store remote RecordsDelete locally', localResponse.reply.status);
-    }
   }
 
   /**

@@ -8,11 +8,13 @@ export type FollowedSyncSource = {
   id: string;
   /** DID whose hosted DWN owns the shared context. */
   sourceDid: string;
+  /** Exact hosted DWN accepted as the authority for this context. */
+  remoteEndpoint: string;
   /** Member DID authorized by the role record. */
   actorDid: string;
   protocol: string;
   contextId: string;
-  /** Currently active role from `roles`. */
+  /** Role proven active when this context was accepted. */
   protocolRole: string;
   /** Exact role-readable paths derived from the accepted hosted protocol definition. */
   protocolPaths: [string, ...string[]];
@@ -21,10 +23,13 @@ export type FollowedSyncSource = {
 };
 
 /** Foreign context details supplied before its active role record is resolved. */
-export type FollowedSyncSourceInput = Omit<
+export type FollowedSyncSourceInput = Pick<
   FollowedSyncSource,
-  'acceptanceId' | 'id' | 'protocolPaths' | 'protocolRole'
->;
+  'actorDid' | 'contextId' | 'protocol' | 'sourceDid'
+> & {
+  /** Mutually-exclusive role paths tried strongest-first during this explicit follow. */
+  roles: [string, ...string[]];
+};
 
 /** One independently decoded entry returned by a {@link FollowedSyncSourceStore}. */
 export type FollowedSyncSourceStoreEntry = {
@@ -45,7 +50,7 @@ export interface FollowedSyncSourceStore {
   replace(source: FollowedSyncSource, replacedIds?: readonly string[]): Promise<void>;
 }
 
-/** Validates source details and its ordered role policy. */
+/** Validate the context coordinates and ordered roles used by an explicit follow. */
 export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput): FollowedSyncSourceInput {
   for (const [field, value] of Object.entries({
     actorDid  : source.actorDid,
@@ -72,11 +77,11 @@ export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput
   }
 
   return {
-    sourceDid : source.sourceDid,
     actorDid  : source.actorDid,
-    protocol  : source.protocol,
     contextId : source.contextId,
+    protocol  : source.protocol,
     roles,
+    sourceDid : source.sourceDid,
   };
 }
 
@@ -100,6 +105,9 @@ export function normalizeFollowedSyncSource(source: FollowedSyncSource): Followe
   if (!details.roles.includes(protocolRole)) {
     throw new TypeError('FollowedSyncSource: the active role must belong to \'roles\'.');
   }
+  if (typeof source.remoteEndpoint !== 'string' || source.remoteEndpoint.length === 0) {
+    throw new TypeError('FollowedSyncSource: \'remoteEndpoint\' must be a non-empty string.');
+  }
   const protocolPaths = normalizeProtocolPaths(source.protocolPaths);
   const { protocolPath } = resolveFollowedSyncRoleRoot(source.contextId, protocolRole);
   if (!protocolPaths.includes(protocolPath)) {
@@ -107,29 +115,32 @@ export function normalizeFollowedSyncSource(source: FollowedSyncSource): Followe
       `FollowedSyncSource: role '${protocolRole}' does not authorize its context root '${protocolPath}'.`,
     );
   }
-  return { acceptanceId: source.acceptanceId, id: source.id, ...details, protocolPaths, protocolRole };
+  return {
+    acceptanceId   : source.acceptanceId,
+    id             : source.id,
+    ...details,
+    protocolPaths,
+    protocolRole,
+    remoteEndpoint : source.remoteEndpoint,
+  };
 }
 
-/** Equality for the immutable signed role-record tuple, excluding its protocol-derived path policy. */
-export function followedSyncSourceRoleRecordEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+/** Equality for the exact remote authority represented by one accepted source. */
+export function followedSyncSourceAuthorityEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
   return a.id === b.id &&
     a.sourceDid === b.sourceDid &&
+    a.remoteEndpoint === b.remoteEndpoint &&
     a.actorDid === b.actorDid &&
     a.protocol === b.protocol &&
     a.contextId === b.contextId &&
-    a.protocolRole === b.protocolRole;
-}
-
-/** Equality for the role authorization and the ordered fallback policy accepted with it. */
-export function followedSyncSourcePolicyEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
-  return followedSyncSourceRoleRecordEqual(a, b) &&
+    a.protocolRole === b.protocolRole &&
     sameStrings(a.protocolPaths, b.protocolPaths) &&
     sameStrings(a.roles, b.roles);
 }
 
-/** Equality for one acceptance and its complete role policy. */
+/** Equality for one acceptance and its exact remote authority. */
 export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
-  return a.acceptanceId === b.acceptanceId && followedSyncSourcePolicyEqual(a, b);
+  return a.acceptanceId === b.acceptanceId && followedSyncSourceAuthorityEqual(a, b);
 }
 
 /** Resolve and validate the context root addressed by one role candidate. */

@@ -89,7 +89,7 @@ export const NotebookProtocol = defineProtocol(definition, {
   viewer   : recordCodecs.json<{ name: string }>(),
 }, {
   roleGroups: {
-    // Strongest to weakest. Enbox uses this order during role replacement.
+    // Strongest to weakest. Enbox uses this order for membership and follow.
     default: ['notebook/page/member', 'notebook/page/viewer'],
   },
 });
@@ -402,8 +402,8 @@ if (invitation === undefined) throw new Error('Invitation not found.');
 // accept() verifies current membership and begins exact-context replication.
 const shared = await invitation.accept();
 
-// Ensure the local replica is caught up before completeness-sensitive work.
-// This is a no-op when it is already current.
+// Pull the accepted context to the current remote feed head before
+// completeness-sensitive work.
 await shared.refresh();
 
 const title = await shared.records.read('notebook/page/title', titleRecordId);
@@ -430,10 +430,10 @@ owner DID, context ID, and group through another channel can bypass inbox
 discovery with `contexts.follow({ ownerDid, id, group })`; following still proves
 current membership before accepting the context.
 
-`refresh()` means “ensure current,” not “always fetch.” It reads the exact
-context links, performs at most one scoped pull when necessary, and uses a
-bounded wait for live initialization. It throws `ContextNotReadyError` when
-membership, decryption, registration, or replication is temporarily not ready.
+`refresh()` performs one scoped pull from the endpoint accepted by `follow()`
+and succeeds only when that feed reaches its current head while the acceptance
+remains active. It throws `ContextNotReadyError` when membership, decryption,
+registration, connectivity, or replication is not ready.
 Once records have replicated, member reads, queries, and views remain available
 offline. Member mutations are sent to the context owner's DWN and therefore
 require it to be reachable; Enbox does not queue those mutations offline.
@@ -480,12 +480,14 @@ operation needs replication freshness.
 
 ### Membership lifecycle and errors
 
-- `memberContext.leave()` withdraws the exact owner-hosted role record and then
-  retires the local acceptance. The role must authorize recipient `co-delete`.
+- `memberContext.leave()` withdraws the exact role record at the accepted
+  endpoint and then retires the local acceptance. The role must authorize
+  recipient `co-delete`.
 - `memberContext.forget()` removes only the local acceptance and does not change
   owner-hosted membership.
-- A role replacement or verified removal fences retained handles with
-  `ContextRetiredError`; reload the context from the catalog.
+- A replacement role proven at the accepted endpoint updates the catalog and
+  fences retained handles with `ContextRetiredError`; reload the context from
+  `contexts.list()` or `contexts.observe()`.
 - A temporarily incomplete establishment or refresh throws
   `ContextNotReadyError`; retry after connectivity, installation, or sync state
   changes.
@@ -494,8 +496,12 @@ operation needs replication freshness.
 
 Accepted contexts survive restart in the current agent. Acceptance does not yet
 replicate between a user's devices ([tracking issue](https://github.com/enboxorg/enbox/issues/1551)).
-Enbox re-resolves owner endpoints and role authority, replicates only the
-readable context paths, and keeps tenant DIDs, grants, progress cursors, and
+The verified endpoint and role group remain pinned until an explicit re-follow
+selects replacements. When a role link pauses, Enbox checks the group's roles strongest
+first at that endpoint and replaces or removes the catalog entry only from that
+authoritative result. If the endpoint is unavailable, refresh and remote
+mutations fail without silently removing the catalog row. Enbox replicates only
+the readable context paths and keeps tenant DIDs, grants, progress cursors, and
 encryption envelopes out of the dapp surface.
 
 For wallet-delegated member sessions, a foreign owner's DWN can enforce the

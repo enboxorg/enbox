@@ -101,6 +101,16 @@ export function testRecordsReadHandler(): void {
 
         const dataFetched = await DataStream.toBytes(readReply.entry!.data!);
         expect(ArrayUtility.byteArraysEqual(dataFetched, dataBytes!)).toBe(true);
+
+        const unsupportedSupportRead = await RecordsRead.create({
+          filter                    : { recordId: message.recordId },
+          includeReplicationSupport : true,
+          signer                    : Jws.createSigner(alice),
+        });
+        const unsupportedSupportReply = await dwn.processMessage(alice.did, unsupportedSupportRead.message);
+        expect(unsupportedSupportReply.status.code).toBe(400);
+        expect(unsupportedSupportReply.status.detail)
+          .toContain(DwnErrorCode.RecordsReadReplicationSupportUnsupported);
       });
 
       it('should not allow non-tenant to RecordsRead a record', async () => {

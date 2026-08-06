@@ -7,11 +7,10 @@ import type { FollowedSyncSource, FollowedSyncSourceStore } from './followed-syn
 export interface SyncTargetPlanningResolver {
   getEndpointUrls(did: string): Promise<string[]>;
   buildTargetsForEndpoint(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget[]>;
-  buildTargetsForSource(
+  buildTargetForSource(
     source: FollowedSyncSource,
     delegateDid?: string,
-    resolvedEndpoints?: readonly string[],
-  ): Promise<SyncTarget[]>;
+  ): Promise<SyncTarget>;
 }
 
 export type SyncTargetPlannerParams = {
@@ -124,19 +123,12 @@ export class SyncTargetPlanner {
         continue;
       }
 
-      try {
-        const identity = await this._identityStore.get(entry.source.actorDid);
-        if (identity === undefined) {
-          anyTargetUnavailable = true;
-          continue;
-        }
-        const resolved = await this._getTargetResolver().buildTargetsForSource(entry.source, identity.delegateDid);
-        targets.push(...resolved);
-        anyTargetUnavailable ||= resolved.length === 0;
-      } catch (error: unknown) {
+      const identity = await this._identityStore.get(entry.source.actorDid);
+      if (identity === undefined) {
         anyTargetUnavailable = true;
-        this._warn(`SyncEngineLevel: Unable to resolve followed source ${entry.source.id}, skipping source:`, error);
+        continue;
       }
+      targets.push(await this._getTargetResolver().buildTargetForSource(entry.source, identity.delegateDid));
     }
 
     await this.cacheCompleteTargets({

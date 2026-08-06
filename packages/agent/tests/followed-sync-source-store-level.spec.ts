@@ -24,23 +24,20 @@ describe('FollowedSyncSourceStoreLevel', () => {
 
   it('should persist a source under its role record ID with canonical paths', async () => {
     const source = followedSource({
-      protocolPaths : ['notebook/page/delta', 'notebook', 'notebook/page'] as [string, ...string[]],
-      roles         : ['notebook/viewer'],
+      protocolPaths: ['notebook/page/delta', 'notebook', 'notebook/page'] as [string, ...string[]],
     });
 
     await store.replace(source);
 
     expect(await store.get(source.id)).toEqual({
       ...source,
-      protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
-      roles         : ['notebook/viewer'],
+      protocolPaths: ['notebook', 'notebook/page', 'notebook/page/delta'],
     });
     expect((await store.list())[0]).toEqual({
       status : 'valid',
       source : {
         ...source,
-        protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
-        roles         : ['notebook/viewer'],
+        protocolPaths: ['notebook', 'notebook/page', 'notebook/page/delta'],
       },
     });
   });
@@ -137,18 +134,16 @@ function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSy
     ? ['notebook', 'notebook/page', 'notebook/page/delta']
     : ['notebook', 'notebook/page']);
   return {
-    acceptanceId : 'acceptance-a',
-    id           : 'role-a',
-    sourceDid    : 'did:example:owner',
-    actorDid     : 'did:example:member',
-    protocol     : 'https://example.com/notebooks',
-    contextId    : 'notebook-a',
+    acceptanceId   : 'acceptance-a',
+    id             : 'role-a',
+    sourceDid      : 'did:example:owner',
+    remoteEndpoint : 'https://owner.example/dwn',
+    actorDid       : 'did:example:member',
+    protocol       : 'https://example.com/notebooks',
+    contextId      : 'notebook-a',
     protocolRole,
     protocolPaths,
-    roles        : [
-      'notebook/collaborator',
-      'notebook/viewer',
-    ],
+    roles          : ['notebook/collaborator', 'notebook/viewer'],
     ...overrides,
   };
 }

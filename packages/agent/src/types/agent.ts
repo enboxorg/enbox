@@ -65,8 +65,8 @@ export type ResponseStatus = {
  * The Agent is responsible for handling decentralized identifier (DID) and decentralized web node
  * (DWN) requests.
  *
- * The `AgentDid` property represents the Enbox Agent's own DID, while the various process and send
- * methods enable the Agent to handle and initiate requests pertaining to DIDs and DWNs.
+ * The `agentDid` property represents the Enbox Agent's own DID. DID requests are processed locally,
+ * while DWN requests can be processed locally or sent to a remote node.
  */
 export interface EnboxAgent {
   /**
@@ -88,12 +88,6 @@ export interface EnboxAgent {
   processDidRequest<T extends DidInterface>(request: DidRequest<T>): Promise<DidResponse<T>>
 
   /**
-   * Sends a DID request to another entity or service, expecting a DID response, often used for
-   * interactions involving DIDs occurring over a network or between different agents.
-   */
-  sendDidRequest<T extends DidInterface>(request: DidRequest<T>): Promise<DidResponse<T>>;
-
-  /**
    * Processes a request related to a Decentralized Web Node (DWN) and returns a corresponding
    * response.
    */
@@ -105,10 +99,6 @@ export interface EnboxAgent {
    */
   sendDwnRequest<T extends DwnInterface>(request: SendDwnRequest<T>): Promise<DwnResponse<T>>;
 
-  /** @internal Sends one signed RecordsDelete to every endpoint advertised by the target DID. */
-  sendDwnDeleteToAllRemoteEndpoints(
-    request: ProcessDwnRequest<DwnInterface.RecordsDelete>,
-  ): ReturnType<AgentDwnApi['sendDeleteToAllRemoteEndpoints']>;
 }
 
 /**

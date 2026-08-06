@@ -798,9 +798,6 @@ export interface SyncEngine {
    */
   readonly hasActiveSubscriptions: boolean;
 
-  /** Whether the periodic live-sync runtime is active, including while its links initialize. */
-  readonly isLiveSyncRunning: boolean;
-
   /**
    * Register an identity to be managed by the SyncEngine for syncing.
    * Callers must explicitly specify which protocols to sync (`'all'` for a
@@ -856,9 +853,9 @@ export interface SyncEngine {
    */
   markFollowedSourcePullPending(source: FollowedSyncSource): Promise<boolean>;
   /**
-   * Pull one exact accepted foreign context from every endpoint advertised by
-   * its source DID. Returns `true` only when every endpoint reached its feed
-   * head while this acceptance and its actor registration remained current.
+   * Pull one exact accepted foreign context from its accepted hosted endpoint.
+   * Returns `true` only when that feed reached its head while the acceptance
+   * and actor registration remained current.
    *
    * @internal Used by the typed shared-context readiness boundary.
    */

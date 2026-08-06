@@ -1,7 +1,6 @@
 import type {
   AgentPermissionsApi,
   DwnDataEncodedRecordsWriteMessage,
-  DwnMessage,
   DwnResponse,
   EnboxAgent,
   ProcessDwnRequest } from '@enbox/agent';
@@ -12,11 +11,8 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { DwnInterface, PermissionGrantNotFoundError } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';
-import { DwnResponseError } from '../src/dwn-response-error.js';
-
 type AgentStub = {
   processDwnRequest: sinon.SinonStub;
-  sendDwnDeleteToAllRemoteEndpoints: sinon.SinonStub;
   sendDwnRequest: sinon.SinonStub;
 };
 
@@ -28,15 +24,10 @@ const connectedDid = 'did:example:alice';
 const delegateDid = 'did:example:delegate';
 const remoteDid = 'did:example:remote';
 const protocol = 'https://example.com/protocol';
-const deleteMessage = {
-  descriptor: { recordId: 'record-id' },
-} as unknown as DwnMessage[DwnInterface.RecordsDelete];
-
 function createAgentStub(): AgentStub {
   return {
-    processDwnRequest                 : sinon.stub(),
-    sendDwnDeleteToAllRemoteEndpoints : sinon.stub(),
-    sendDwnRequest                    : sinon.stub(),
+    processDwnRequest : sinon.stub(),
+    sendDwnRequest    : sinon.stub(),
   };
 }
 
@@ -68,18 +59,6 @@ function createErrorResponse<T extends DwnInterface>(messageCid: string): DwnRes
     messageCid,
     reply: { status: { code: 404, detail: 'Not Found' } },
   } as DwnResponse<T>;
-}
-
-function createDeleteFanout(
-  ...statuses: Array<{ code: number; detail: string }>
-): Awaited<ReturnType<EnboxAgent['sendDwnDeleteToAllRemoteEndpoints']>> {
-  return {
-    message : deleteMessage,
-    replies : statuses.map((status, index) => ({
-      dwnUrl : `https://${index + 1}.example`,
-      reply  : { status },
-    })),
-  };
 }
 
 function createDwnApi(agent: AgentStub, permissions: PermissionsStub, options?: { delegateDid?: string }): DwnApi {
@@ -333,80 +312,6 @@ describe('DwnApi record requests', () => {
 
     const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsDelete>;
     expect(request.messageParams).toEqual({ recordId: 'record-id', delegatedGrant });
-  });
-
-  it('should require every remote delete and replay the one signed message locally', async () => {
-    agent.sendDwnDeleteToAllRemoteEndpoints.resolves(createDeleteFanout(
-      { code: 202, detail: 'Accepted' },
-      { code: 409, detail: 'Conflict' },
-    ));
-    agent.processDwnRequest.resolves({ reply: { status: { code: 202, detail: 'Accepted' } } });
-    const dwn = createDwnApi(agent, permissions);
-
-    await dwn.deleteRemoteRecordAndStoreLocal({
-      from     : remoteDid,
-      recordId : 'record-id',
-    });
-
-    expect(agent.sendDwnDeleteToAllRemoteEndpoints.calledOnce).toBe(true);
-    expect(agent.sendDwnDeleteToAllRemoteEndpoints.firstCall.args[0]).toEqual({
-      author        : connectedDid,
-      messageParams : { recordId: 'record-id' },
-      messageType   : DwnInterface.RecordsDelete,
-      target        : remoteDid,
-    });
-    expect(agent.sendDwnRequest.notCalled).toBe(true);
-    expect(agent.processDwnRequest.calledOnce).toBe(true);
-    const localRequest = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsDelete>;
-    expect(localRequest).toEqual({
-      author      : connectedDid,
-      messageType : DwnInterface.RecordsDelete,
-      rawMessage  : deleteMessage,
-      store       : true,
-      target      : remoteDid,
-    });
-    expect(localRequest.rawMessage).toBe(deleteMessage);
-  });
-
-  it('should retain failure when an endpoint has no durable tombstone', async () => {
-    agent.sendDwnDeleteToAllRemoteEndpoints.resolves(createDeleteFanout(
-      { code: 202, detail: 'Accepted' },
-      { code: 404, detail: 'Not Found' },
-    ));
-    const dwn = createDwnApi(agent, permissions);
-
-    await expect(dwn.deleteRemoteRecordAndStoreLocal({
-      from     : remoteDid,
-      recordId : 'record-id',
-    })).rejects.toBeInstanceOf(DwnResponseError);
-
-    expect(agent.processDwnRequest.notCalled).toBe(true);
-  });
-
-  it('should retain failure when all-endpoint delivery fails', async () => {
-    agent.sendDwnDeleteToAllRemoteEndpoints.rejects(new Error('endpoint unavailable'));
-    const dwn = createDwnApi(agent, permissions);
-
-    await expect(dwn.deleteRemoteRecordAndStoreLocal({
-      from     : remoteDid,
-      recordId : 'record-id',
-    })).rejects.toThrow('endpoint unavailable');
-
-    expect(agent.processDwnRequest.notCalled).toBe(true);
-  });
-
-  it('should retain failure when the local replica does not store the remote tombstone', async () => {
-    agent.sendDwnDeleteToAllRemoteEndpoints.resolves(createDeleteFanout({ code: 202, detail: 'Accepted' }));
-    agent.processDwnRequest.resolves({ reply: { status: { code: 404, detail: 'Not Found' } } });
-    const dwn = createDwnApi(agent, permissions);
-
-    await expect(dwn.deleteRemoteRecordAndStoreLocal({
-      from     : remoteDid,
-      recordId : 'record-id',
-    })).rejects.toBeInstanceOf(DwnResponseError);
-
-    expect(agent.sendDwnDeleteToAllRemoteEndpoints.calledOnce).toBe(true);
-    expect(agent.processDwnRequest.calledOnce).toBe(true);
   });
 
   it('should author as the delegate when no delegated grant is available', async () => {

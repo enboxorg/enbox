@@ -24,7 +24,7 @@ type PlannerFixtureParams = {
 
 type PlannerFixture = {
   buildTargetsForEndpoint: SinonStub;
-  buildTargetsForSource: SinonStub;
+  buildTargetForSource: SinonStub;
   entries: SinonStub;
   getEndpointUrls: SinonStub;
   getIdentity: SinonStub;
@@ -47,15 +47,16 @@ function ownerTarget(did: string, dwnUrl: string): SyncTarget {
 
 function followedSource(id = 'role-a'): FollowedSyncSource {
   return {
-    acceptanceId  : `acceptance-${id}`,
+    acceptanceId   : `acceptance-${id}`,
     id,
-    sourceDid     : 'did:example:owner',
-    actorDid      : 'did:example:member',
-    protocol      : 'https://example.com/notebooks',
-    contextId     : 'notebook-a',
-    protocolRole  : 'notebook/viewer',
-    protocolPaths : ['notebook', 'notebook/page'],
-    roles         : ['notebook/viewer'],
+    sourceDid      : 'did:example:owner',
+    remoteEndpoint : 'https://owner.example.com',
+    actorDid       : 'did:example:member',
+    protocol       : 'https://example.com/notebooks',
+    contextId      : 'notebook-a',
+    protocolRole   : 'notebook/viewer',
+    protocolPaths  : ['notebook', 'notebook/page'],
+    roles          : ['notebook/collaborator', 'notebook/viewer'],
   };
 }
 
@@ -94,10 +95,10 @@ function createPlanner({
   const buildTargetsForEndpoint = sinon.stub().callsFake(
     async (did: string, dwnUrl: string): Promise<SyncTarget[]> => [ownerTarget(did, dwnUrl)],
   );
-  const buildTargetsForSource = sinon.stub().callsFake(async (
+  const buildTargetForSource = sinon.stub().callsFake(async (
     source: FollowedSyncSource,
     delegateDid?: string,
-  ): Promise<SyncTarget[]> => [{
+  ): Promise<SyncTarget> => ({
     did    : source.sourceDid,
     dwnUrl : 'https://owner.example.com',
     delegateDid,
@@ -115,8 +116,8 @@ function createPlanner({
     },
     authorizationEpoch : 'role-epoch',
     projectionId       : 'role-projection',
-  }]);
-  const resolver = { buildTargetsForEndpoint, buildTargetsForSource, getEndpointUrls };
+  }));
+  const resolver = { buildTargetsForEndpoint, buildTargetForSource, getEndpointUrls };
   const getTargetResolver = sinon.stub().returns(resolver);
   const warn = sinon.stub();
   let currentTime = 1_000;
@@ -131,7 +132,7 @@ function createPlanner({
 
   return {
     buildTargetsForEndpoint,
-    buildTargetsForSource,
+    buildTargetForSource,
     entries,
     getEndpointUrls,
     getIdentity : identityStore.get,
@@ -162,7 +163,7 @@ describe('SyncTargetPlanner', () => {
 
   it('should plan ordinary identities and followed context sources together', async () => {
     const source = followedSource();
-    const { buildTargetsForSource, planner } = createPlanner({
+    const { buildTargetForSource, planner } = createPlanner({
       identityOptions : { [source.actorDid]: { protocols: 'all' } },
       sourceEntries   : [{ status: 'valid', source }],
     });
@@ -170,14 +171,14 @@ describe('SyncTargetPlanner', () => {
     const targets = await planner.getTargets();
 
     expect(targets.map(({ did }) => did)).toEqual(['did:example:alice', source.sourceDid]);
-    expect(buildTargetsForSource.calledOnceWithExactly(source, undefined)).toBe(true);
+    expect(buildTargetForSource.calledOnceWithExactly(source, undefined)).toBe(true);
     expect(planner.lastResolutionComplete).toBe(true);
   });
 
   it('should resume a durable followed source with the actor current delegate', async () => {
     const source = followedSource();
     const delegateDid = 'did:example:new-delegate';
-    const { buildTargetsForSource, getIdentity, planner } = createPlanner({
+    const { buildTargetForSource, getIdentity, planner } = createPlanner({
       entries         : [],
       identityOptions : { [source.actorDid]: { protocols: 'all', delegateDid } },
       sourceEntries   : [{ status: 'valid', source }],
@@ -186,7 +187,7 @@ describe('SyncTargetPlanner', () => {
     const [target] = await planner.getTargets();
 
     expect(getIdentity.calledOnceWithExactly(source.actorDid)).toBe(true);
-    expect(buildTargetsForSource.calledOnceWithExactly(source, delegateDid)).toBe(true);
+    expect(buildTargetForSource.calledOnceWithExactly(source, delegateDid)).toBe(true);
     expect(target.delegateDid).toBe(delegateDid);
     expect(source).not.toHaveProperty('delegateDid');
   });
@@ -209,19 +210,6 @@ describe('SyncTargetPlanner', () => {
       'SyncEngineLevel: Corrupt followed source role-a, skipping source:',
       corruptError,
     )).toBe(true);
-  });
-
-  it('should leave a followed source with no discovered endpoint incomplete', async () => {
-    const source = followedSource();
-    const { buildTargetsForSource, planner } = createPlanner({
-      entries         : [],
-      identityOptions : { [source.actorDid]: { protocols: 'all' } },
-      sourceEntries   : [{ status: 'valid', source }],
-    });
-    buildTargetsForSource.resolves([]);
-
-    expect(await planner.getTargets()).toEqual([]);
-    expect(planner.lastResolutionComplete).toBe(false);
   });
 
   it('should refresh a complete snapshot when its TTL expires', async () => {

@@ -7,11 +7,9 @@ import type {
   FollowedSyncSource,
   FollowedSyncSourceInput,
   ProcessDwnRequest,
-  ReplicationLinkSnapshot,
   SyncEngine,
   SyncEvent,
   SyncEventListener,
-  SyncIdentityOptions,
 } from '@enbox/agent';
 
 import { CONTEXT_INVITATION_PATH } from '../src/context-invitations.js';
@@ -146,7 +144,6 @@ const NestedProtocol = defineProtocol(NestedDefinition, {
 type AgentStub = {
   decryptRecordData: sinon.SinonStub;
   processDwnRequest: sinon.SinonStub;
-  sendDwnDeleteToAllRemoteEndpoints: sinon.SinonStub;
   sendDwnRequest: sinon.SinonStub;
 };
 
@@ -163,14 +160,15 @@ function authorization(did: string): DwnMessage[DwnInterface.RecordsWrite]['auth
 
 function source(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource {
   return {
-    acceptanceId  : 'acceptance-a',
-    actorDid      : connectedDid,
+    acceptanceId   : 'acceptance-a',
+    actorDid       : connectedDid,
     contextId,
-    id            : 'role-record',
-    protocol      : SharedDefinition.protocol,
-    protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
+    id             : 'role-record',
+    protocol       : SharedDefinition.protocol,
+    protocolPaths  : ['workspace', 'workspace/note', 'workspace/title'],
     protocolRole,
-    roles         : [protocolRole],
+    remoteEndpoint : 'https://dwn.example',
+    roles          : [protocolRole, viewerRole],
     sourceDid,
     ...overrides,
   };
@@ -185,24 +183,6 @@ function followedContextChange(changed: FollowedSyncSource, active = true): Sync
     followedSourceId           : active ? changed.id : undefined,
     protocol                   : changed.protocol,
     tenantDid                  : changed.sourceDid,
-  };
-}
-
-function replicationLink(overrides: Partial<ReplicationLinkSnapshot> = {}): ReplicationLinkSnapshot {
-  return {
-    connectivity     : 'online',
-    followedSourceId : 'role-record',
-    isPullCurrent    : true,
-    remoteEndpoint   : 'https://dwn.example',
-    scope            : {
-      contextId,
-      kind          : 'context',
-      protocol      : SharedDefinition.protocol,
-      protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
-    },
-    status    : 'live',
-    tenantDid : sourceDid,
-    ...overrides,
   };
 }
 
@@ -332,13 +312,10 @@ describe('TypedEnbox contexts', () => {
   let follow: sinon.SinonStub;
   let get: sinon.SinonStub;
   let getRoleDelivery: sinon.SinonStub;
-  let links: ReplicationLinkSnapshot[];
   let list: sinon.SinonStub;
   let listeners: Set<SyncEventListener>;
-  let liveSyncRunning: boolean;
   let markFollowedSourcePullPending: sinon.SinonStub;
   let pullFollowedSource: sinon.SinonStub;
-  let registration: SyncIdentityOptions | undefined;
   let retryRoleDelivery: sinon.SinonStub;
   let typed: TypedEnbox<
     typeof SharedDefinition,
@@ -349,12 +326,9 @@ describe('TypedEnbox contexts', () => {
   beforeEach(() => {
     current = undefined;
     deliveryListeners = new Set();
-    links = [];
     listeners = new Set();
-    liveSyncRunning = false;
     markFollowedSourcePullPending = sinon.stub().resolves(true);
     pullFollowedSource = sinon.stub().resolves(true);
-    registration = { protocols: [SharedDefinition.protocol] };
     agent = {
       decryptRecordData : sinon.stub().callsFake(async ({ dataStream }) => dataStream),
       processDwnRequest : sinon.stub().callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
@@ -380,8 +354,7 @@ describe('TypedEnbox contexts', () => {
         }
         throw new Error(`Unexpected local request: ${request.messageType}`);
       }),
-      sendDwnDeleteToAllRemoteEndpoints : sinon.stub(),
-      sendDwnRequest                    : sinon.stub().callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      sendDwnRequest: sinon.stub().callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
         if (request.messageType !== DwnInterface.RecordsWrite) {
           throw new Error(`Unexpected remote request: ${request.messageType}`);
         }
@@ -397,7 +370,6 @@ describe('TypedEnbox contexts', () => {
       current = source({
         protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
         protocolRole  : active,
-        roles         : input.roles,
       });
       return current;
     });
@@ -429,12 +401,9 @@ describe('TypedEnbox contexts', () => {
       },
       sync: {
         deleteFollowedSource,
-        followSource       : follow,
-        getIdentityOptions : async (did: string): Promise<SyncIdentityOptions | undefined> =>
-          did === connectedDid ? registration : undefined,
+        followSource        : follow,
         getFollowedSource   : get,
-        getReplicationLinks : async (): Promise<ReplicationLinkSnapshot[]> => links,
-        get isLiveSyncRunning(): boolean { return liveSyncRunning; },
+        getIdentityOptions  : async (): Promise<undefined> => undefined,
         listFollowedSources : list,
         markFollowedSourcePullPending,
         on                  : (listener: SyncEventListener): (() => void) => {
@@ -522,7 +491,6 @@ describe('TypedEnbox contexts', () => {
     getRoleDelivery.callsFake(async (recordId: string) => recordId === preferredId
       ? preferredDelivery
       : { state: 'delivered' });
-    registration = undefined;
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
       if (request.messageType === DwnInterface.ProtocolsQuery) {
         return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
@@ -712,14 +680,8 @@ describe('TypedEnbox contexts', () => {
 
   it('makes a member mutation stale until the exact context is pulled locally', async () => {
     let replicated: DwnMessage<DwnInterface.RecordsWrite> | undefined;
-    links = [replicationLink()];
-    markFollowedSourcePullPending.callsFake(async (): Promise<boolean> => {
-      links = [replicationLink({ isPullCurrent: false })];
-      return true;
-    });
     pullFollowedSource.callsFake(async (): Promise<boolean> => {
       replicated = writeFrom(agent.sendDwnRequest.firstCall.args[0]);
-      links = [replicationLink()];
       return true;
     });
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
@@ -918,9 +880,7 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('does not expose internal source record IDs when following fails', async () => {
-    const cause = new Error(
-      'Followed context endpoints disagree on role secret-role-record-id and source secret-source-record-id.',
-    );
+    const cause = new Error('Role secret-role-record-id could not read source secret-source-record-id.');
     follow.rejects(cause);
 
     const error = await typed.contexts.follow({
@@ -1023,12 +983,12 @@ describe('TypedEnbox contexts', () => {
       throw new Error(`Unexpected local request: ${request.messageType}`);
     });
 
+    const opened = await typed.contexts.open('workspace', contextId);
+    const followed = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
     const catalog = await typed.contexts.list();
     expect(catalog).toHaveLength(2);
-    expect(catalog.find(context => context.access === 'owner'))
-      .toMatchObject({ id: contextId, ownerDid: connectedDid });
-    expect(catalog.find(context => context.access === 'member'))
-      .toMatchObject({ id: contextId, ownerDid: sourceDid });
+    expect(catalog.find(context => context.access === 'owner')).toBe(opened);
+    expect(catalog.find(context => context.access === 'member')).toBe(followed);
 
     current = source({ sourceDid: connectedDid });
     expect(await typed.contexts.list()).toMatchObject([
@@ -1376,8 +1336,7 @@ describe('TypedEnbox contexts', () => {
     await expect(shared.records.query('workspace/note')).rejects.toBeInstanceOf(ContextRetiredError);
 
     current = source({
-      protocolRole : viewerRole,
-      roles        : [viewerRole],
+      protocolRole: viewerRole,
     });
     await expect(shared.records.query('workspace/note')).rejects.toBeInstanceOf(ContextRetiredError);
 
@@ -1398,8 +1357,7 @@ describe('TypedEnbox contexts', () => {
 
   it('omits an accepted source whose active role is absent from the current definition', async () => {
     current = source({
-      protocolRole : 'workspace/retired',
-      roles        : ['workspace/retired'],
+      protocolRole: 'workspace/retired',
     });
 
     expect(await typed.contexts.list()).toEqual([]);
@@ -1413,7 +1371,6 @@ describe('TypedEnbox contexts', () => {
       contextId     : 'outsideRecord',
       protocolPaths : ['outside'],
       protocolRole  : outsideRole,
-      roles         : [outsideRole],
     });
 
     expect(await typed.contexts.list()).toEqual([]);
@@ -1422,7 +1379,7 @@ describe('TypedEnbox contexts', () => {
     await view.close();
   });
 
-  it('limits a pre-maintenance context to readable paths stored under its accepted definition', async () => {
+  it('limits a persisted context to readable paths stored under its accepted definition', async () => {
     current = source({ protocolPaths: ['workspace', 'workspace/note'] });
     const [shared] = await typed.contexts.list();
 
@@ -1631,7 +1588,6 @@ describe('TypedEnbox contexts', () => {
       id            : 'viewer-role-record',
       protocolRole  : viewerRole,
       protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
-      roles         : [viewerRole],
     });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -1680,16 +1636,8 @@ describe('TypedEnbox contexts', () => {
     await view.close();
   });
 
-  it('pulls only the exact followed source when its replica is not current', async () => {
+  it('refreshes only the exact followed source', async () => {
     current = source();
-    links = [
-      replicationLink({ followedSourceId: 'sibling-role' }),
-      replicationLink({ isPullCurrent: false }),
-    ];
-    pullFollowedSource.callsFake(async (): Promise<boolean> => {
-      links = [replicationLink()];
-      return true;
-    });
     const [shared] = await typed.contexts.list();
 
     await shared.refresh();
@@ -1697,92 +1645,7 @@ describe('TypedEnbox contexts', () => {
     expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 
-  it('accepts a completed one-shot pull when live replication remains stopped', async () => {
-    current = source();
-    links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
-    const [shared] = await typed.contexts.list();
-
-    await shared.refresh();
-
-    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
-  });
-
-  it('waits for an in-flight live link to publish exact currentness', async () => {
-    current = source();
-    liveSyncRunning = true;
-    links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
-    const [shared] = await typed.contexts.list();
-    let resolved = false;
-    const ready = shared.refresh().then((): void => { resolved = true; });
-
-    await new Promise(resolve => setTimeout(resolve, 0));
-    expect(resolved).toBe(false);
-    links = [replicationLink()];
-    for (const listener of [...listeners]) {
-      listener({
-        contextId,
-        from           : false,
-        protocol       : SharedDefinition.protocol,
-        protocols      : [SharedDefinition.protocol],
-        remoteEndpoint : 'https://dwn.example',
-        tenantDid      : sourceDid,
-        to             : true,
-        type           : 'pull:currentness-change',
-      });
-    }
-
-    await ready;
-    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
-    expect(listeners.size).toBe(0);
-  });
-
-  it('bounds the wait for a live link that never becomes current', async () => {
-    current = source();
-    liveSyncRunning = true;
-    links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
-    const [shared] = await typed.contexts.list();
-    const clock = sinon.useFakeTimers();
-    try {
-      const pending = shared.refresh().then(() => undefined, reason => reason as Error);
-
-      await clock.tickAsync(10_001);
-      const error = await pending;
-
-      expect(error).toBeInstanceOf(ContextNotReadyError);
-      expect((error?.cause as Error).message).toContain('within 10000 milliseconds');
-      expect(listeners.size).toBe(0);
-    } finally {
-      clock.restore();
-    }
-  });
-
-  it('rejects currentness when the member identity is not registered for sync', async () => {
-    current = source();
-    registration = undefined;
-    const [shared] = await typed.contexts.list();
-
-    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
-
-    expect(error).toBeInstanceOf(ContextNotReadyError);
-    expect((error?.cause as Error).message)
-      .toBe(`MemberContext.refresh: actor '${connectedDid}' is not registered for sync.`);
-    expect(pullFollowedSource.notCalled).toBe(true);
-  });
-
-  it('pulls the followed source when it has no replication link', async () => {
-    current = source();
-    pullFollowedSource.callsFake(async (): Promise<boolean> => {
-      links = [replicationLink()];
-      return true;
-    });
-    const [shared] = await typed.contexts.list();
-
-    await shared.refresh();
-
-    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
-  });
-
-  it('maps a failed followed-source pull with no context link to readiness', async () => {
+  it('maps a failed followed-source pull to readiness', async () => {
     const pullError = new Error('pull failed');
     current = source();
     pullFollowedSource.rejects(pullError);
@@ -1794,81 +1657,16 @@ describe('TypedEnbox contexts', () => {
     expect(error?.cause).toBe(pullError);
   });
 
-  it('does not treat an old same-role link as current after the readable scope changes', async () => {
+  it('maps an incomplete followed-source pull to readiness', async () => {
     current = source();
-    let resolved = false;
-    links = [replicationLink({
-      scope: {
-        kind          : 'context',
-        contextId,
-        protocol      : SharedDefinition.protocol,
-        protocolPaths : ['workspace', 'workspace/note'],
-      },
-    })];
-    pullFollowedSource.callsFake(async (): Promise<boolean> => {
-      expect(resolved).toBe(false);
-      links = [replicationLink()];
-      return true;
-    });
-    const [shared] = await typed.contexts.list();
-    const ready = shared.refresh().then((): void => { resolved = true; });
-
-    await ready;
-    expect(resolved).toBe(true);
-    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
-  });
-
-  it('rejects when one followed-source pull cannot establish a replication link', async () => {
-    current = source();
-    const [shared] = await typed.contexts.list();
-
-    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
-
-    expect(error).toBeInstanceOf(ContextNotReadyError);
-    expect((error?.cause as Error).message).toBe(
-      `MemberContext.refresh: no replication link is available for context '${contextId}' owned by '${sourceDid}'.`,
-    );
-    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
-  });
-
-  it('does not treat an incomplete stopped-runtime pull as current', async () => {
-    current = source();
-    links = [replicationLink({ isPullCurrent: false, status: 'initializing' })];
     pullFollowedSource.resolves(false);
     const [shared] = await typed.contexts.list();
 
     const error = await shared.refresh().then(() => undefined, reason => reason as Error);
 
     expect(error).toBeInstanceOf(ContextNotReadyError);
-    expect((error?.cause as Error).message).toContain('did not drain every endpoint');
-  });
-
-  it('reports paused context replication as retryable readiness', async () => {
-    current = source();
-    links = [replicationLink({ status: 'paused' })];
-    const [shared] = await typed.contexts.list();
-
-    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
-
-    expect(error).toBeInstanceOf(ContextNotReadyError);
-    expect((error?.cause as Error).message).toContain('replication is paused');
-    expect(pullFollowedSource.notCalled).toBe(true);
-  });
-
-  it('rechecks registration after the bounded pull', async () => {
-    current = source();
-    links = [replicationLink({ isPullCurrent: false })];
-    pullFollowedSource.callsFake(async (): Promise<boolean> => {
-      registration = undefined;
-      return false;
-    });
-    const [shared] = await typed.contexts.list();
-
-    const error = await shared.refresh().then(() => undefined, reason => reason as Error);
-
-    expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message)
-      .toBe(`MemberContext.refresh: actor '${connectedDid}' is not registered for sync.`);
+      .toContain('did not reach the feed head');
     expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 
@@ -1885,47 +1683,22 @@ describe('TypedEnbox contexts', () => {
 
   it('removes the followed source only after the exact role record is deleted', async () => {
     current = source();
-    const tombstone = {
-      authorization : authorization(connectedDid),
-      descriptor    : {
-        interface        : 'Records',
-        messageTimestamp : '2026-01-01T00:00:00.000000Z',
-        method           : 'Delete',
-        prune            : false,
-        recordId         : 'role-record',
-      },
-    } as DwnMessage[DwnInterface.RecordsDelete];
-    agent.sendDwnDeleteToAllRemoteEndpoints.onFirstCall().resolves({
-      message : tombstone,
-      replies : [{
-        dwnUrl : 'https://dwn.example',
-        reply  : { status: { code: 503, detail: 'Unavailable' } },
-      }],
-    });
-    agent.sendDwnDeleteToAllRemoteEndpoints.onSecondCall().resolves({
-      message : tombstone,
-      replies : [{
-        dwnUrl : 'https://dwn.example',
-        reply  : { status: { code: 409, detail: 'Conflict' } },
-      }],
-    });
-    agent.processDwnRequest.resolves({ reply: { status: { code: 202, detail: 'Accepted' } } });
+    agent.sendDwnRequest.resetBehavior();
+    agent.sendDwnRequest.onFirstCall().resolves({ reply: { status: { code: 503, detail: 'Unavailable' } } });
+    agent.sendDwnRequest.onSecondCall().resolves({ reply: { status: { code: 409, detail: 'Conflict' } } });
     const [shared] = await typed.contexts.list();
 
-    await expect(shared.leave()).rejects.toThrow(
-      'Delete record at remote DWN \'https://dwn.example\' failed (503): Unavailable',
-    );
+    await expect(shared.leave()).rejects.toThrow('MemberContext.leave failed (503): Unavailable');
     expect(deleteFollowedSource.notCalled).toBe(true);
 
     await shared.leave();
 
-    expect(agent.sendDwnDeleteToAllRemoteEndpoints.secondCall.args[0]).toMatchObject({
-      messageParams : { recordId: 'role-record' },
-      target        : sourceDid,
+    expect(agent.sendDwnRequest.secondCall.args[0]).toMatchObject({
+      messageParams  : { recordId: 'role-record' },
+      remoteEndpoint : source().remoteEndpoint,
+      target         : sourceDid,
     });
-    expect(agent.processDwnRequest.getCalls().some(call =>
-      call.args[0].rawMessage === tombstone && call.args[0].target === sourceDid
-    )).toBe(true);
+    expect(agent.sendDwnRequest.secondCall.args[0].messageParams.protocolRole).toBeUndefined();
     expect(deleteFollowedSource.calledOnceWith(source())).toBe(true);
   });
 });

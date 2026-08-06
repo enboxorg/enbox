@@ -170,6 +170,7 @@ export class RecordsReadHandler implements MethodHandler {
     matchedRecordsWrite: RecordsQueryReplyEntry,
     resolvedRole: ResolvedProtocolRole | undefined,
     reply: RecordsReadReply,
+    recordsDelete?: RecordsDeleteMessage,
   ): Promise<void> {
     if (recordsRead.author === undefined || resolvedRole === undefined) {
       throw new DwnError(
@@ -180,6 +181,7 @@ export class RecordsReadHandler implements MethodHandler {
     reply.support = await RecordsReadReplicationSupport.build({
       deps      : this.deps,
       matchedRecordsWrite,
+      ...(recordsDelete === undefined ? {} : { recordsDelete }),
       requester : recordsRead.author,
       resolvedRole,
       tenant,
@@ -229,21 +231,15 @@ export class RecordsReadHandler implements MethodHandler {
       ...(resolvedRole?.roleRecordId === undefined ? {} : { roleRecordId: resolvedRole.roleRecordId }),
     };
     if (recordsRead.message.descriptor.includeReplicationSupport === true) {
-      if (resolvedRole?.roleRecordId === undefined) {
-        return messageReplyFromError(new DwnError(
-          DwnErrorCode.RecordsReadReplicationSupportUnsupported,
-          'replication support requires a resolved protocol role.',
-        ), 400);
-      }
       try {
-        reply.support = await RecordsReadReplicationSupport.build({
-          deps                : this.deps,
-          matchedRecordsWrite : initialWrite,
-          recordsDelete       : recordsDeleteMessage,
-          requester           : recordsRead.author!,
-          resolvedRole,
+        await this.attachReplicationSupport(
           tenant,
-        });
+          recordsRead,
+          initialWrite,
+          resolvedRole,
+          reply,
+          recordsDeleteMessage,
+        );
       } catch (error) {
         return messageReplyFromError(error, 400);
       }

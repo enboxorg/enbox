@@ -8,11 +8,9 @@ import type { RecordData } from './record-data.js';
 
 import { invalidateRecordReplica } from './record-types.js';
 import type {
-  DwnDateSort,
   DwnMessage,
   DwnMessageDescriptor,
   DwnMessageParams,
-  DwnPaginationCursor,
   DwnResponseStatus,
   EnboxAgent,
   PermissionsApi,
@@ -34,10 +32,8 @@ import type {
 import {
   AgentPermissionsApi,
   DwnInterface,
-  getPaginationCursor,
   getRecordAuthor,
   getRecordProtocolRole,
-  isDwnMessage,
 } from '@enbox/agent';
 import { Convert, isEmptyObject, removeUndefinedProperties, Stream } from '@enbox/common';
 
@@ -534,19 +530,6 @@ export class Record<T = unknown> implements RecordModel {
   }
 
   /**
-   * Returns a pagination cursor for the current record given a sort order.
-   * Created sorts use {@link Record.dateCreated}, published sorts use
-   * {@link Record.datePublished}, and updated sorts use {@link Record.timestamp}.
-   *
-   * @param sort the sort order to use for the pagination cursor.
-   * @returns A promise that resolves to a pagination cursor for the current record.
-   * @throws If a published-date sort is requested for an unpublished record.
-   */
-  async paginationCursor(sort: DwnDateSort): Promise<DwnPaginationCursor | undefined> {
-    return isDwnMessage(DwnInterface.RecordsWrite, this.rawMessage) ? getPaginationCursor(this.rawMessage, sort) : undefined;
-  }
-
-  /**
    * Update the current record on the DWN.
    *
    * On success, this instance is mutated in place and returned.
@@ -640,7 +623,12 @@ export class Record<T = unknown> implements RecordModel {
     await this.applyDelegateGrant(requestOptions);
 
     const agentResponse = isRemote ?
-      await this._agent.sendDwnRequest(requestOptions) :
+      await this._agent.sendDwnRequest({
+        ...requestOptions,
+        ...(this._executionContext?.remoteEndpoint === undefined
+          ? {}
+          : { remoteEndpoint: this._executionContext.remoteEndpoint }),
+      }) :
       await this._agent.processDwnRequest(requestOptions);
 
     const { message: responseMessage, reply, data: responseData } = agentResponse;
@@ -795,7 +783,12 @@ export class Record<T = unknown> implements RecordModel {
     await this.applyDelegateGrant(deleteOptions);
 
     const agentResponse = isRemote
-      ? await this._agent.sendDwnRequest(deleteOptions)
+      ? await this._agent.sendDwnRequest({
+        ...deleteOptions,
+        ...(this._executionContext?.remoteEndpoint === undefined
+          ? {}
+          : { remoteEndpoint: this._executionContext.remoteEndpoint }),
+      })
       : await this._agent.processDwnRequest(deleteOptions);
     const { message, reply } = agentResponse;
     requireDwnSuccess('Record.delete', reply);
