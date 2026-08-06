@@ -79,7 +79,7 @@ import {
 } from './context-invitations.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { DateSort, getRuleSetAtPath, getTypeName, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
-import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
+import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
 import {
   FollowedSourceNotReadyError,
   followedSyncSourceActiveEqual,
@@ -820,13 +820,6 @@ type TypedCreateOptions<
    */
   tags?: globalThis.Record<string, string | number | boolean | string[] | number[]>;
 
-  /**
-   * Whether to persist the record to the local DWN immediately.
-   *
-   * Defaults to `true`. Set to `false` to create the record in memory
-   * only — you can call {@link Record.store | record.store()} later.
-   */
-  store?: boolean;
 };
 
 /**
@@ -2314,7 +2307,6 @@ export class TypedEnbox<
     const result = await dwn.records.write({
       data                   : encoded.data,
       from                   : request.from,
-      store                  : request.store,
       parentContextId,
       published              : request.published,
       datePublished          : request.datePublished,
@@ -2584,16 +2576,9 @@ export class TypedEnbox<
 
   /** Delete every duplicate represented by one invitation handle; absence is already dismissed. */
   private async dismissContextInvitationRecords(records: readonly Record[]): Promise<void> {
-    await Promise.all(records.map(async (record): Promise<void> => {
-      const result = await this._dwn.records.delete({
-        protocol     : this._definition.protocol,
-        protocolPath : CONTEXT_INVITATION_PATH,
-        recordId     : record.id,
-      });
-      if (result.status.code !== 404) {
-        requireDwnSuccess('ContextInvitation.dismiss', result);
-      }
-    }));
+    await Promise.all(records.map((record): Promise<void> =>
+      this.records.delete(CONTEXT_INVITATION_PATH as ProtocolPaths<D> & string, { recordId: record.id })
+    ));
   }
 
   /** Bind owner membership tasks to one context and one declared role-precedence group. */
@@ -3589,10 +3574,6 @@ function normalizeContextInvitationLimit(limit: number = 50): number {
 function isCanonicalRecordConflict(error: unknown): error is DwnResponseError {
   return error instanceof DwnResponseError
     && isCanonicalConflictStatus(error.status);
-}
-
-function isCanonicalConflictStatus(status: DwnResponseStatus['status']): boolean {
-  return status.code === 409 && status.detail === 'Conflict' && status.errorCode === undefined;
 }
 
 function normalizeContextInvitationPreview(

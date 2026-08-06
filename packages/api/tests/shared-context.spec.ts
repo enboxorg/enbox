@@ -1150,8 +1150,8 @@ describe('TypedEnbox contexts', () => {
         return { reply: { entries, status: { code: 200, detail: 'OK' } } };
       }
       if (request.messageType === DwnInterface.RecordsDelete) {
-        const code = request.messageParams.recordId === 'invite-old' ? 404 : 202;
-        return { reply: { status: { code, detail: code === 404 ? 'Not Found' : 'Accepted' } } };
+        const code = request.messageParams.recordId === 'invite-old' ? 404 : 409;
+        return { reply: { status: { code, detail: code === 404 ? 'Not Found' : 'Conflict' } } };
       }
       throw new Error(`Unexpected local request: ${request.messageType}`);
     });
@@ -1168,8 +1168,10 @@ describe('TypedEnbox contexts', () => {
     });
     await invitations[0].dismiss();
     await invitations[0].dismiss();
-    expect(agent.processDwnRequest.getCalls()
-      .filter(call => call.args[0].messageType === DwnInterface.RecordsDelete)).toHaveLength(2);
+    const deletes = agent.processDwnRequest.getCalls()
+      .filter(call => call.args[0].messageType === DwnInterface.RecordsDelete);
+    expect(deletes.map(call => call.args[0].messageParams.recordId).sort())
+      .toEqual(['invite-current', 'invite-old']);
     await expect(invitations[0].accept()).rejects.toThrow('invitation is no longer pending');
     expect(follow.notCalled).toBe(true);
   });

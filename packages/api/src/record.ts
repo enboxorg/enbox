@@ -12,11 +12,9 @@ import type {
   DwnMessageDescriptor,
   DwnMessageParams,
   DwnResponse,
-  DwnResponseStatus,
   EnboxAgent,
   PermissionsApi,
   ProcessDwnRequest,
-  SendDwnRequest,
 } from '@enbox/agent';
 
 import type {
@@ -40,9 +38,9 @@ import { Convert, isEmptyObject, removeUndefinedProperties, Stream } from '@enbo
 
 import { captureRecordDataAccess } from './record-data-access.js';
 import { createRecordData } from './record-data.js';
-import { requireDwnSuccess } from './dwn-response-error.js';
-import { dataToBlob, SendCache } from './utils.js';
+import { dataToBlob } from './utils.js';
 import { encodeRecordValue, getRecordCodecBinding } from './record-codec.js';
+import { isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
 
 type StoredRecordDataReadParams = {
   agent: EnboxAgent;
@@ -101,12 +99,6 @@ export type MaterializedRecord<T = unknown> = Readonly<{
  * @beta
  */
 export class Record<T = unknown> implements RecordModel {
-  /**
-   * Cache to minimize the amount of redundant two-phase commits we do in store() and send()
-   * Retains awareness of the last 100 records stored/sent for up to 100 target DIDs each.
-   */
-  private static readonly _sendCache = SendCache;
-
   // Record instance metadata.
 
   /** The {@link EnboxAgent} instance that handles DWNs requests. */
@@ -115,7 +107,7 @@ export class Record<T = unknown> implements RecordModel {
   private readonly _connectedDid: string;
   /** The optional DID that is delegated to act on behalf of the connectedDid */
   private readonly _delegateDid?: string;
-  /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
+  /** Cache for fetching a permission grant, keyed by message type and protocol. */
   private readonly _permissionsApi: PermissionsApi;
   /** Optional default target for mutations of a locally replicated foreign record. */
   private readonly _executionContext?: RecordExecutionContext;
@@ -149,9 +141,7 @@ export class Record<T = unknown> implements RecordModel {
   /** Initial state of the record before any updates. */
   private _initialWrite: RecordOptions['initialWrite'];
   /** Flag indicating if the initial write has been stored, to prevent duplicates. */
-  private _initialWriteStored: boolean;
-  /** Flag indicating if the initial write has been signed by the owner. */
-  private _initialWriteSigned: boolean;
+  private _initialWriteStored: boolean = false;
   /** Unique identifier of the record. */
   private readonly _recordId: string;
   /** Role under which the record is written. */
@@ -374,109 +364,6 @@ export class Record<T = unknown> implements RecordModel {
   }
 
   /**
-   * Stores the current record state as well as any initial write to the owner's DWN.
-   *
-   * @param importRecord - if true, the record will signed by the owner before storing it to the owner's DWN. Defaults to false.
-   * @returns A promise that resolves when the record is stored.
-   *
-   * @beta
-   */
-  async store(importRecord: boolean = false): Promise<void> {
-    await this._executionContext?.assertActive();
-    if (this._executionContext !== undefined) {
-      throw new TypeError('Context-bound records cannot be stored manually.');
-    }
-    // if we are importing the record we sign it as the owner
-    const result = await this.processRecord({ signAsOwner: importRecord, store: true });
-    requireDwnSuccess('Record.store', result);
-  }
-
-  /**
-   * Signs the current record state as well as any initial write and optionally stores it to the owner's DWN.
-   * This is useful when importing a record that was signed by someone else into your own DWN.
-   *
-   * @param store - if true, the record will be stored to the owner's DWN after signing. Defaults to true.
-   * @returns A promise that resolves when the record is imported.
-   *
-   * @beta
-   */
-  async import(store: boolean = true): Promise<void> {
-    await this._executionContext?.assertActive();
-    if (this._executionContext !== undefined) {
-      throw new TypeError('Context-bound records cannot be imported.');
-    }
-    const result = await this.processRecord({ store, signAsOwner: true });
-    requireDwnSuccess('Record.import', result);
-  }
-
-  /**
-   * Send the current record to a remote DWN by specifying their DID.
-   * If no DID is specified, the target is assumed to be the owner (connectedDID).
-   *
-   * If the record is in a deleted state, a `RecordsDelete` message is sent
-   * so the remote DWN reflects the deletion.
-   *
-   * If an initial write is present and the Record class send cache has no
-   * awareness of it, the initial write is sent first (vs waiting for the
-   * regular DWN sync).
-   *
-   * @param target - the optional DID to send the record to, if none is set it is sent to the connectedDid
-   * @returns A promise that resolves when the record is sent.
-   *
-   * @beta
-   */
-  async send(target?: string): Promise<void> {
-    await this._executionContext?.assertActive();
-    if (this._executionContext !== undefined) {
-      throw new TypeError('Context-bound records cannot be sent manually.');
-    }
-    const initialWrite = this._initialWrite;
-    target ??= this._connectedDid;
-
-    // Is there an initial write? Do we know if we've already sent it to this target?
-    if (initialWrite && !Record._sendCache.check(this._recordId, target)){
-      // We do have an initial write, so prepare it for sending to the target.
-      const rawMessage = {
-        ...initialWrite
-      };
-      removeUndefinedProperties(rawMessage);
-
-      // Send the initial write to the target.
-      await this._agent.sendDwnRequest({
-        messageType : DwnInterface.RecordsWrite,
-        author      : this._connectedDid,
-        target      : target,
-        rawMessage
-      });
-
-      // Set the cache to maintain awareness that we don't need to send the initial write next time.
-      Record._sendCache.set(this._recordId, target);
-    }
-
-    let sendRequestOptions: SendDwnRequest<DwnInterface.RecordsWrite | DwnInterface.RecordsDelete>;
-    if (this.deleted) {
-      sendRequestOptions = {
-        messageType : DwnInterface.RecordsDelete,
-        author      : this._connectedDid,
-        target      : target,
-        rawMessage  : { ...this.rawMessage }
-      };
-    } else {
-      sendRequestOptions = {
-        messageType : DwnInterface.RecordsWrite,
-        author      : this._connectedDid,
-        target      : target,
-        dataStream  : await this.openStoredData(),
-        rawMessage  : { ...this.rawMessage }
-      };
-    }
-
-    // Send the current/latest state to the target.
-    const { reply } = await this._agent.sendDwnRequest(sendRequestOptions);
-    requireDwnSuccess('Record.send', reply);
-  }
-
-  /**
    * Returns a JSON representation of the Record instance.
    * It's called by `JSON.stringify(...)` automatically.
    */
@@ -535,8 +422,9 @@ export class Record<T = unknown> implements RecordModel {
    *
    * On success, this instance is mutated in place and returned.
    *
-   * By default the update targets the connected DID's local DWN — even for
-   * records that were read from a remote tenant. Pass
+   * By default the update targets the connected DID's local DWN and therefore
+   * requires the record's base state to exist there, normally through sync.
+   * Pass
    * {@link RecordUpdateParams.from} with another tenant's DID to dispatch
    * the update to that tenant's remote DWN instead (e.g. a role-authorized
    * co-update of a record owned by another tenant).
@@ -548,7 +436,7 @@ export class Record<T = unknown> implements RecordModel {
    * @beta
    */
   async update(
-    { timestamp, data, protocolRole, store = true, recipientRolePublicKey, from, ...params }: RecordUpdateParams<T>
+    { timestamp, data, protocolRole, recipientRolePublicKey, from, ...params }: RecordUpdateParams<T>
   ): Promise<Record<T>> {
 
     await this._executionContext?.assertActive();
@@ -617,7 +505,7 @@ export class Record<T = unknown> implements RecordModel {
       messageParams : { ...updateMessage },
       messageType   : DwnInterface.RecordsWrite,
       target,
-      store,
+      store         : true,
       recipientRolePublicKey,
     };
 
@@ -641,13 +529,6 @@ export class Record<T = unknown> implements RecordModel {
     const dataAccess = this._executionContext !== undefined
       ? this._dataAccess
       : captureRecordDataAccess(requestOptions, isRemote);
-    // A stored metadata-only update should re-open the accepted state from its
-    // new target. A non-stored update has no target copy to reopen, so retain
-    // the existing exact-CID source until the constructed message is sent.
-    const storedData = responseData ?? (
-      !store && this._storedData?.dataCid === msg.descriptor.dataCid ? this._storedData : undefined
-    );
-
     // Mutate this record's internal state so callers keep one canonical handle.
     // A cross-tenant update re-homes the authoritative copy on the target
     // tenant, so later lazy data reads must target it.
@@ -660,7 +541,7 @@ export class Record<T = unknown> implements RecordModel {
     this._protocolRole = effectiveProtocolRole;
     this._author = updatedAuthor;
     this._dataAccess = dataAccess;
-    this._storedData = this.createStoredDataSource(storedData);
+    this._storedData = this.createStoredDataSource(responseData);
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
     await invalidateRecordReplica(this._executionContext);
 
@@ -708,15 +589,14 @@ export class Record<T = unknown> implements RecordModel {
    * To delete from another tenant, use `TypedEnbox.records.delete(path, { from, ... })`.
    *
    * @param params - Parameters to delete the record.
-   * @returns A promise that resolves after this record reflects the accepted tombstone.
+   * @returns A promise that resolves after an accepted tombstone, or after a context authority
+   *   reports that another tombstone already won. In the latter case this retained snapshot is
+   *   unchanged because the authority did not return the winning tombstone.
    */
   async delete(deleteParams?: RecordDeleteParams): Promise<void> {
     await this._executionContext?.assertActive();
-    const { protocolRole, store = true, signAsOwner, timestamp } = deleteParams || {};
+    const { protocolRole, timestamp } = deleteParams || {};
     const effectiveProtocolRole = this.resolveProtocolRole(protocolRole);
-
-    const signAsOwnerValue = signAsOwner && this._delegateDid === undefined;
-    const signAsOwnerDelegate = signAsOwner && this._delegateDid !== undefined;
 
     if (this.deleted && !this._initialWrite) {
       throw new Error('Record: Record is in an invalid state, initial write is missing.');
@@ -732,7 +612,7 @@ export class Record<T = unknown> implements RecordModel {
     const target = this._executionContext?.tenantDid ?? this._connectedDid;
     const isRemote = target !== this._connectedDid;
     if (!isRemote) {
-      await this.processInitialWriteIfNeeded({ store, signAsOwner });
+      await this.storeInitialWriteIfNeeded();
     }
 
     // prepare delete options
@@ -740,9 +620,7 @@ export class Record<T = unknown> implements RecordModel {
       messageType : DwnInterface.RecordsDelete,
       author      : this._connectedDid,
       target,
-      signAsOwner : signAsOwnerValue,
-      signAsOwnerDelegate,
-      store
+      store       : true,
     };
 
     // A cached tombstone can only be reused under the role that signed it.
@@ -778,6 +656,10 @@ export class Record<T = unknown> implements RecordModel {
 
     const agentResponse = await this.dispatchMutation(deleteOptions);
     const { message, reply } = agentResponse;
+    if (this._executionContext !== undefined && isCanonicalConflictStatus(reply.status)) {
+      await invalidateRecordReplica(this._executionContext);
+      return;
+    }
     requireDwnSuccess('Record.delete', reply);
 
     // Advance this handle to the accepted tombstone.
@@ -808,94 +690,24 @@ export class Record<T = unknown> implements RecordModel {
     });
   }
 
-  /**
-   * Process the initial write, if it hasn't already been processed, with the options set for storing and/or signing as the owner.
-   */
-  private async processInitialWriteIfNeeded({ store, signAsOwner }:{ store: boolean, signAsOwner: boolean }): Promise<void> {
-    if (this.initialWrite && ((signAsOwner && !this._initialWriteSigned) || (store && !this._initialWriteStored))) {
-      const signAsOwnerValue = signAsOwner && this._delegateDid === undefined;
-      const signAsOwnerDelegate = signAsOwner && this._delegateDid !== undefined;
-
+  /** Store the initial write before a local delete so the tombstone has a base state. */
+  private async storeInitialWriteIfNeeded(): Promise<void> {
+    if (this.initialWrite !== undefined && !this._initialWriteStored) {
       const initialWriteRequest: ProcessDwnRequest<DwnInterface.RecordsWrite> = {
         messageType : DwnInterface.RecordsWrite,
         rawMessage  : this.initialWrite,
         author      : this._connectedDid,
         target      : this._connectedDid,
-        signAsOwner : signAsOwnerValue,
-        signAsOwnerDelegate,
-        store,
+        store       : true,
       };
 
       await this.applyDelegateGrant(initialWriteRequest);
 
-      // Process the prepared initial write, with the options set for storing and/or signing as the owner.
-      const agentResponse = await this._agent.processDwnRequest(initialWriteRequest);
-
-      const { message, reply: { status } } = agentResponse;
-      const responseMessage = message;
-
-      if (200 <= status.code && status.code <= 299) {
-        if (store) {this._initialWriteStored = true;}
-        if (signAsOwner) {
-          this._initialWriteSigned = true;
-          this.initialWrite.authorization = responseMessage.authorization;
-        }
+      const { reply: { status } } = await this._agent.processDwnRequest(initialWriteRequest);
+      if (status.code >= 200 && status.code < 300) {
+        this._initialWriteStored = true;
       }
     }
-  }
-
-  /**
-   * Handles the various conditions around there being an initial write, whether to store initial/current state,
-   * and whether to add an owner signature to the initial write to enable storage when protocol rules require it.
-   */
-  private async processRecord({ store, signAsOwner }:{ store: boolean, signAsOwner: boolean }): Promise<DwnResponseStatus> {
-    const signAsOwnerValue = signAsOwner && this._delegateDid === undefined;
-    const signAsOwnerDelegate = signAsOwner && this._delegateDid !== undefined;
-
-    await this.processInitialWriteIfNeeded({ store, signAsOwner });
-
-    let requestOptions: ProcessDwnRequest<DwnInterface.RecordsWrite | DwnInterface.RecordsDelete>;
-    // Now that we've processed a potential initial write, we can process the current record state.
-    // If the record has been deleted, we need to send a delete request. Otherwise, we send a write request.
-    if (this.deleted) {
-      requestOptions = {
-        messageType : DwnInterface.RecordsDelete,
-        rawMessage  : this.rawMessage,
-        author      : this._connectedDid,
-        target      : this._connectedDid,
-        signAsOwner : signAsOwnerValue,
-        signAsOwnerDelegate,
-        store,
-      };
-    } else {
-      requestOptions = {
-        messageType : DwnInterface.RecordsWrite,
-        rawMessage  : this.rawMessage,
-        author      : this._connectedDid,
-        target      : this._connectedDid,
-        dataStream  : await this.openStoredData(),
-        signAsOwner : signAsOwnerValue,
-        signAsOwnerDelegate,
-        store,
-      };
-    }
-
-    await this.applyDelegateGrant(requestOptions);
-
-    const agentResponse = await this._agent.processDwnRequest(requestOptions);
-    const { message, reply: { status } } = agentResponse;
-    const responseMessage = message;
-
-    if (200 <= status.code && status.code <= 299) {
-      // If we are signing as the owner, make sure to update the current record state's
-      // authorization, because now it will have the owner's signature on it.
-      if (signAsOwner) {
-        this._authorization = responseMessage.authorization;
-        this._rawMessageDirty = true;
-      }
-    }
-
-    return { status };
   }
 
   /** Creates a version-pinned source for raw bytes supplied inline or fetched lazily. */

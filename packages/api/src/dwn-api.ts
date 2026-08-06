@@ -8,8 +8,6 @@ import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-
 
 import type {
   AudienceKeyDeliveryOutcome,
-  CreateGrantParams,
-  CreateRequestParams,
   DwnMessage,
   DwnMessageParams,
   DwnPaginationCursor,
@@ -17,8 +15,6 @@ import type {
   DwnResponse,
   DwnResponseStatus,
   EnboxAgent,
-  FetchPermissionRequestParams,
-  FetchPermissionsParams,
   ProcessDwnRequest } from '@enbox/agent';
 
 import type { MessagesFilter, MessagesSubscribeReply, RecordsSubscribeReply } from '@enbox/dwn-sdk-js';
@@ -29,8 +25,6 @@ import { captureRecordDataAccess } from './record-data-access.js';
 import { ContextNotReadyError } from './context-errors.js';
 import { dataToBlob } from './utils.js';
 import { invalidateRecordReplica } from './record-types.js';
-import { PermissionGrant } from './permission-grant.js';
-import { PermissionRequest } from './permission-request.js';
 import { Protocol } from './protocol.js';
 import { Record } from './record.js';
 import { Records } from '@enbox/dwn-sdk-js';
@@ -54,27 +48,6 @@ type MissingReadGrantPolicy = 'fallback' | 'reject';
 type RecordMutationReadResponse<T = unknown> = RecordsReadResponse<T> & {
   /** Whether the authority returned an existing tombstone, and whether it prunes descendants. */
   tombstonePrune?: boolean;
-};
-
-/**
- * Represents the request payload for fetching permission requests from a Decentralized Web Node (DWN).
- *
- * Optionally, specify a remote DWN target in the `from` property to fetch requests from.
- */
-export type FetchRequestsRequest = Omit<FetchPermissionRequestParams, 'author' | 'target' | 'remote'> & {
-  /** Optional DID specifying the remote target DWN tenant to be queried. */
-  from?: string;
-};
-
-/**
- * Represents the request payload for fetching permission grants from a Decentralized Web Node (DWN).
- *
- * Optionally, specify a remote DWN target in the `from` property to fetch requests from.
- * Set `checkRevoked: true` to perform explicit per-grant revocation checks.
- */
-export type FetchGrantsRequest = Omit<FetchPermissionsParams, 'author' | 'target' | 'remote'> & {
-  /** Optional DID specifying the remote target DWN tenant to be queried. */
-  from?: string;
 };
 
 /**
@@ -853,122 +826,14 @@ export class DwnApi {
       target      : this.connectedDid,
     });
 
-    const { messageCid, reply: { status } } = agentResponse;
+    const { reply: { status } } = agentResponse;
     const response: ProtocolsConfigureResponse = { status };
 
     if (status.code < 300 || status.code === 409) {
-      const metadata = { author: this.connectedDid, messageCid };
-      response.protocol = new Protocol(this.agent, protocolsConfigureMessage, metadata);
+      response.protocol = new Protocol(protocolsConfigureMessage);
     }
 
     return response;
-  }
-
-  /**
-   * API to interact with Grants
-   *
-   * NOTE: This is an EXPERIMENTAL API that will change behavior.
-   *
-   * Currently only supports issuing requests, grants, revokes and queries on behalf without permissions or impersonation.
-   * If the agent is connected to a delegateDid, the delegateDid will be used to sign/author the underlying records.
-   * If the agent is not connected to a delegateDid, the connectedDid will be used to sign/author the underlying records.
-   *
-   * @beta
-   */
-  get permissions(): {
-      request: (request: Omit<CreateRequestParams, 'author'>) => Promise<PermissionRequest>;
-      grant: (request: Omit<CreateGrantParams, 'author'>) => Promise<PermissionGrant>;
-      queryRequests: (request?: FetchRequestsRequest) => Promise<PermissionRequest[]>;
-      queryGrants: (request?: FetchGrantsRequest) => Promise<PermissionGrant[]>;
-      } {
-    return {
-      /**
-       * Request permission for a specific scope.
-       */
-      request: async(request: Omit<CreateRequestParams, 'author'>): Promise<PermissionRequest> => {
-        const { message } = await this.permissionsApi.createRequest({
-          ...request,
-          author: this.delegateDid ?? this.connectedDid,
-        });
-
-        const requestParams = {
-          connectedDid : this.delegateDid ?? this.connectedDid,
-          agent        : this.agent,
-          message,
-        };
-
-        return PermissionRequest.parse(requestParams);
-      },
-      /**
-       * Grant permission for a specific scope to a grantee DID.
-       */
-      grant: async(request: Omit<CreateGrantParams, 'author'>): Promise<PermissionGrant> => {
-        const { message } = await this.permissionsApi.createGrant({
-          ...request,
-          author: this.delegateDid ?? this.connectedDid,
-        });
-
-        const grantParams = {
-          connectedDid : this.delegateDid ?? this.connectedDid,
-          agent        : this.agent,
-          message,
-        };
-
-        return PermissionGrant.parse(grantParams);
-      },
-      /**
-       * Query permission requests. You can filter by protocol and specify if you want to query a remote DWN.
-       */
-      queryRequests: async(request: FetchRequestsRequest= {}): Promise<PermissionRequest[]> => {
-        const { from, ...params } = request;
-        const fetchResponse = await this.permissionsApi.fetchRequests({
-          ...params,
-          author : this.delegateDid ?? this.connectedDid,
-          target : from ?? this.delegateDid ?? this.connectedDid,
-          remote : from !== undefined,
-        });
-
-        const requests: PermissionRequest[] = [];
-        for (const permission of fetchResponse) {
-          const requestParams = {
-            connectedDid : this.delegateDid ?? this.connectedDid,
-            agent        : this.agent,
-            message      : permission.message,
-          };
-          requests.push(PermissionRequest.parse(requestParams));
-        }
-
-        return requests;
-      },
-      /**
-       * Query permission grants. You can filter by grantee, grantor, protocol and specify if you want to query a remote DWN.
-       */
-      queryGrants: async(request: FetchGrantsRequest = {}): Promise<PermissionGrant[]> => {
-        const { from, ...params } = request;
-        const remote = from !== undefined;
-        const author = this.delegateDid ?? this.connectedDid;
-        const target = from ?? this.delegateDid ?? this.connectedDid;
-        const fetchResponse = await this.permissionsApi.fetchGrants({
-          ...params,
-          author,
-          target,
-          remote,
-        });
-
-        const grants: PermissionGrant[] = [];
-        for (const permission of fetchResponse) {
-          const grantParams = {
-            connectedDid : this.delegateDid ?? this.connectedDid,
-            agent        : this.agent,
-            message      : permission.message,
-          };
-
-          grants.push(PermissionGrant.parse(grantParams));
-        }
-
-        return grants;
-      }
-    };
   }
 
   /**
@@ -1008,12 +873,11 @@ export class DwnApi {
 
         const agentResponse = await this.agent.processDwnRequest(agentRequest);
 
-        const { message, messageCid, reply: { status } } = agentResponse;
+        const { message, reply: { status } } = agentResponse;
         const response: ProtocolsConfigureResponse = { status };
 
         if (status.code < 300) {
-          const metadata = { author: this.connectedDid, messageCid };
-          response.protocol = new Protocol(this.agent, message, metadata);
+          response.protocol = new Protocol(message);
         }
 
         return response;
@@ -1069,10 +933,7 @@ export class DwnApi {
         const reply = agentResponse.reply;
         const { entries = [], status } = reply;
 
-        const protocols = entries.map((entry) => {
-          const metadata = { author: this.connectedDid };
-          return new Protocol(this.agent, entry, metadata);
-        });
+        const protocols = entries.map(entry => new Protocol(entry));
 
         return { protocols, status };
       }

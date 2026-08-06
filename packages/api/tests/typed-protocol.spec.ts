@@ -366,17 +366,14 @@ describe('TypedProtocol API', () => {
         ...TodoProtocolDefinition,
         protocol: `https://example.com/protocols/delegate-import/${crypto.randomUUID()}`,
       };
-      const { message, messageCid } = await testHarness.agent.processDwnRequest({
+      const { message } = await testHarness.agent.processDwnRequest({
         author        : aliceDid.uri,
         messageParams : { definition },
         messageType   : DwnInterface.ProtocolsConfigure,
         store         : false,
         target        : aliceDid.uri,
       });
-      const remoteProtocol = new Protocol(testHarness.agent, message!, {
-        author: aliceDid.uri,
-        messageCid,
-      });
+      const remoteProtocol = new Protocol(message!);
       const delegateDid = await testHarness.agent.did.create({ store: true, method: 'jwk' });
       const delegateDwn = new DwnApi({
         agent        : testHarness.agent,

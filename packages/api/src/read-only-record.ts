@@ -37,8 +37,7 @@ export type ReadOnlyRecordOptions = {
  *
  * `ReadOnlyRecord` is returned by {@link DwnReaderApi} methods and provides
  * access to the record's metadata and data without any mutation capabilities.
- * There are no `update()`, `delete()`, `send()`, `store()`, or `import()`
- * methods — the compiler prevents accidental writes.
+ * There are no `update()` or `delete()` methods — the compiler prevents accidental writes.
  *
  * Data access works identically to the full {@link Record} class:
  * - If the data was inlined (small payloads from query replies), it is

@@ -48,46 +48,6 @@ describe('Protocol', () => {
     await testHarness.closeStorage();
   });
 
-  describe('send()', () => {
-    it('configures protocols on remote DWNs for your own DID', async () => {
-      // Alice configures a protocol on her agent connected DWN.
-      const protocolUri = `http://example.com/protocol/${TestDataGenerator.randomString(15)}`;
-      const { status: aliceEmailStatus, protocol: aliceEmailProtocol } = await dwnAlice.protocols.configure({
-        definition: {
-          ...emailProtocolDefinition,
-          protocol: protocolUri
-        }
-      });
-
-      expect(aliceEmailStatus.code).toBe(202);
-      expect(aliceEmailProtocol.definition).toEqual({
-        ...emailProtocolDefinition,
-        protocol: protocolUri
-      });
-
-      // Attempt to configure the protocol on Alice's remote DWN.
-      const { status } = await aliceEmailProtocol.send(aliceDid.uri);
-      expect(status.code).toBe(202);
-
-      // Query Alices's remote DWN for `email` schema records.
-      const aliceRemoteQueryResult = await dwnAlice.protocols.query({
-        from   : aliceDid.uri,
-        filter : {
-          protocol: protocolUri,
-        }
-      });
-
-      expect(aliceRemoteQueryResult.status.code).toBe(200);
-      expect(aliceRemoteQueryResult.protocols).toBeDefined();
-      expect(aliceRemoteQueryResult.protocols).toHaveLength(1);
-      const [ aliceRemoteEmailProtocol ] = aliceRemoteQueryResult.protocols;
-      expect(aliceRemoteEmailProtocol.definition).toEqual({
-        ...emailProtocolDefinition,
-        protocol: protocolUri
-      });
-    });
-  });
-
   describe('toJSON()', () => {
     it('should return all defined properties', async () => {
       const protocolUri = `http://example.com/protocol/${TestDataGenerator.randomString(15)}`;
