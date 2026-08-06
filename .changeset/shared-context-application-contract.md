@@ -26,11 +26,19 @@ Typed records add cursor-free pages, bounded initial change replay, shallow
 conflict-aware patches, idempotent deletes, and one observable view lifecycle.
 Shared internal implementations replace duplicate canonicalization, protocol
 walking, configure lookup, encryption-control matching, connection-status
-reads, and permission-record wrappers. Remove the unimplemented VC facade.
+reads. Remove the obsolete high-level permission-record wrappers; advanced
+permission operations remain available through `Enbox.agent.permissions`.
+Remove the manual `Record.send()`, `Record.store()`, `Record.import()`, and
+`Protocol.send()` lifecycle. High-level creates and mutations now always
+persist; their `store` and `signAsOwner` controls are removed. Exact-message
+workflows remain available through the raw agent and `DwnApi`. Remove the
+unimplemented VC facade.
 
 Pre-release contract changes: use `RecordPage.next()` instead of supplying raw
 pagination cursors or deriving them from a `Record`; use view `ready()` for
 local usability and `current` for freshness; replication state is `syncing`,
 `caught-up`, or `error`; and a cached delete tombstone is reused only when its
-signing role and requested prune behavior still match. Remove the unimplemented
-`EnboxAgent.sendDidRequest()` stub; DID operations remain on `agent.did`.
+signing role and requested prune behavior still match. A context-bound delete
+also treats a canonical conflict with an existing tombstone as converged while
+invalidating its replica. Remove the unimplemented `EnboxAgent.sendDidRequest()`
+stub; DID operations remain on `agent.did`.

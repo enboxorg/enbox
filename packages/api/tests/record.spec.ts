@@ -11,9 +11,8 @@ import { Stream } from '@enbox/common';
 import {
   createPermissionGrants, DwnConstant, DwnContentEncryptionAlgorithm, DwnInterface, DwnKeyAgreementAlgorithm,
   DwnKeyDerivationScheme, dwnMessageConstructors, EnboxUserAgent, getRecordAuthor, getRecordProtocolRole,
-  isDwnMessage,
 } from '@enbox/agent';
-import { DwnErrorCode, Jws, Poller, Time } from '@enbox/dwn-sdk-js';
+import { Jws, Poller, Time } from '@enbox/dwn-sdk-js';
 import { processConnectedGrants, WalletConnect } from '@enbox/auth';
 
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
@@ -26,6 +25,7 @@ import { Enbox } from '../src/enbox.js';
 import { Record } from '../src/record.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
+import { publishProtocol, publishRecord, publishUnstoredRecord } from './utils/test-dwn-operations.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -41,24 +41,6 @@ describe('Record', () => {
   let protocolDefinition: DwnProtocolDefinition;
 
   let consoleWarn;
-
-  function rehydrateExternalDeletedRecordForAlice(deletedRecord: Record): Record {
-    if (!deletedRecord.deleted || deletedRecord.initialWrite === undefined) {
-      throw new Error('Test fixture requires a deleted record with its initial write.');
-    }
-
-    return new Record(testHarness.agent, {
-      author       : deletedRecord.author,
-      connectedDid : aliceDid.uri,
-      dataAccess   : {
-        author : aliceDid.uri,
-        remote : true,
-        target : aliceDid.uri,
-      },
-      initialWrite: deletedRecord.initialWrite,
-      ...deletedRecord.rawMessage,
-    });
-  }
 
   beforeAll(async () => {
     // Suppress console.warn output due to default password warnings
@@ -110,13 +92,17 @@ describe('Record', () => {
     });
     expect(aliceProtocolStatus.code).toBe(202);
     expect(aliceProtocol).toBeDefined();
-    const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
+    const { status: aliceProtocolSendStatus } = await publishProtocol(
+      testHarness.agent, aliceProtocol, aliceDid.uri, aliceDid.uri
+    );
     expect(aliceProtocolSendStatus.code).toBe(202);
 
     const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ definition: protocolDefinition });
     expect(bobProtocolStatus.code).toBe(202);
     expect(bobProtocol).toBeDefined();
-    const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
+    const { status: bobProtocolSendStatus } = await publishProtocol(
+      testHarness.agent, bobProtocol, bobDid.uri, bobDid.uri
+    );
     expect(bobProtocolSendStatus.code).toBe(202);
 
     // Install free-for-all protocol for tests that write records without a specific protocol.
@@ -128,11 +114,15 @@ describe('Record', () => {
     };
     const { status: aliceFfaStatus, protocol: aliceFfaProtocol } = await dwnAlice.protocols.configure({ definition: freeForAllDefinition });
     expect(aliceFfaStatus.code).toBe(202);
-    const { status: aliceFfaSendStatus } = await aliceFfaProtocol.send(aliceDid.uri);
+    const { status: aliceFfaSendStatus } = await publishProtocol(
+      testHarness.agent, aliceFfaProtocol, aliceDid.uri, aliceDid.uri
+    );
     expect(aliceFfaSendStatus.code).toBe(202);
     const { status: bobFfaStatus, protocol: bobFfaProtocol } = await dwnBob.protocols.configure({ definition: freeForAllDefinition });
     expect(bobFfaStatus.code).toBe(202);
-    const { status: bobFfaSendStatus } = await bobFfaProtocol.send(bobDid.uri);
+    const { status: bobFfaSendStatus } = await publishProtocol(
+      testHarness.agent, bobFfaProtocol, bobDid.uri, bobDid.uri
+    );
     expect(bobFfaSendStatus.code).toBe(202);
   });
 
@@ -207,12 +197,16 @@ describe('Record', () => {
         definition: notesProtocol
       });
       expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
+      const { status: aliceNotesProtocolSend } = await publishProtocol(
+        testHarness.agent, aliceNotesProtocol, aliceDid.uri, aliceDid.uri
+      );
       expect(aliceNotesProtocolSend.code).toBe(202);
 
       const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ definition: notesProtocol });
       expect(bobConfigStatus.code).toBe(202);
-      const { status: bobNotesProtocolSend } = await bobNotesProtocol!.send(bobDid.uri);
+      const { status: bobNotesProtocolSend } = await publishProtocol(
+        testHarness.agent, bobNotesProtocol!, bobDid.uri, bobDid.uri
+      );
       expect(bobNotesProtocolSend.code).toBe(202);
 
       const grants = await createPermissionGrants(
@@ -305,8 +299,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
 
-      // alice sends the record to her remote
-      await record!.send();
+      await publishRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       // alice device queries alice remote for the record
       const aliceDeviceRemoteQuery = await delegateDwn.records.query({
@@ -326,8 +319,7 @@ describe('Record', () => {
       const deletedRecord = aliceRecord;
       expect(deletedRecord.deleted).toBe(true);
 
-      // send the delete to the remote DWN
-      await deletedRecord.send();
+      await publishRecord(delegateHarness.agent, deletedRecord, aliceDid.uri, aliceDid.uri);
 
       // expect the delete to be signed by the delegateDid
       const deleteSignature = Jws.getSignerDid(deletedRecord.rawMessage.authorization.signature.signatures[0]);
@@ -364,111 +356,6 @@ describe('Record', () => {
         expect(error).toBeInstanceOf(DwnResponseError);
         expect((error as DwnResponseError).status.code).toBe(409);
       }
-    });
-
-    it('should import a record with a delegated grant', async () => {
-      // bob writes a note with alice as the recipient
-      const { status: bobWriteStatus, record: bobRecord } = await dwnBob.records.write({
-        data         : 'Hello, Alice!',
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
-        recipient    : aliceDid.uri
-      });
-      expect(bobWriteStatus.code).toBe(202);
-
-      // bob sends it to his remote DWN
-      await bobRecord!.send();
-
-      // confirm that alice delegate does not have it stored locally
-      let aliceDeviceLocal = await delegateDwn.records.query({
-        filter: {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-        }
-      });
-      expect(aliceDeviceLocal.status.code).toBe(200);
-      expect(aliceDeviceLocal.records).toHaveLength(0);
-
-      // alice delegate is able to query for the note
-      const { records: aliceQueryFromBobRecords, status: aliceQueryFromBobStatus } = await delegateDwn.records.query({
-        from   : bobDid.uri,
-        filter : {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-        }
-      });
-      expect(aliceQueryFromBobStatus.code).toBe(200);
-      expect(aliceQueryFromBobRecords).toBeDefined();
-      expect(aliceQueryFromBobRecords).toHaveLength(1);
-
-      const recordFromBob = aliceQueryFromBobRecords[0];
-      // alice delegate imports the note
-      await recordFromBob.import();
-
-      // confirm the note is stored locally
-      aliceDeviceLocal = await delegateDwn.records.query({
-        filter: {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-        }
-      });
-      expect(aliceDeviceLocal.status.code).toBe(200);
-      expect(aliceDeviceLocal.records).toHaveLength(1);
-      expect(aliceDeviceLocal.records[0].id).toBe(recordFromBob.id);
-    });
-
-    it('should store a record with a delegated grant', async () => {
-      // alice writes a note
-      const { status: aliceWritesStatus, record: aliceRecord } = await dwnAlice.records.write({
-        data         : 'Hello, From Alice!',
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
-      });
-      expect(aliceWritesStatus.code).toBe(202);
-
-      // alice sends it to her remote DWN
-      await aliceRecord!.send();
-
-      // sanity: alice delegate does not have the note stored locally
-      let aliceDelegateResults = await delegateDwn.records.query({
-        filter: {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-        }
-      });
-      expect(aliceDelegateResults.status.code).toBe(200);
-      expect(aliceDelegateResults.records).toHaveLength(0);
-
-      // alice delegate is able to query for the note
-      const { records: aliceQueryFromBobRecords, status: aliceQueryFromBobStatus } = await delegateDwn.records.query({
-        from   : aliceDid.uri,
-        filter : {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-        }
-      });
-      expect(aliceQueryFromBobStatus.code).toBe(200);
-      expect(aliceQueryFromBobRecords).toBeDefined();
-      expect(aliceQueryFromBobRecords).toHaveLength(1);
-
-      const recordFromBob = aliceQueryFromBobRecords[0];
-
-      // alicedevice stores the note locally
-      await recordFromBob.store();
-
-      // confirm the note is stored locally
-      aliceDelegateResults = await delegateDwn.records.query({
-        filter: {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-        }
-      });
-      expect(aliceDelegateResults.status.code).toBe(200);
-      expect(aliceDelegateResults.records).toHaveLength(1);
     });
 
     it('should read large data payloads as a stream with a delegated grant', async () => {
@@ -513,7 +400,9 @@ describe('Record', () => {
         protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
       } });
       expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
+      const { status: aliceOtherProtocolSend } = await publishProtocol(
+        testHarness.agent, aliceOtherProtocol, aliceDid.uri, aliceDid.uri
+      );
       expect(aliceOtherProtocolSend.code).toBe(202);
 
       // alice writes a private and public note with a large data payload
@@ -527,7 +416,7 @@ describe('Record', () => {
         dataFormat   : 'application/json',
       });
       expect(aliceWritesStatus.code).toBe(202);
-      await aliceRecord!.send();
+      await publishRecord(testHarness.agent, aliceRecord!, aliceDid.uri, aliceDid.uri);
 
       const largeDataJson2 = TestDataGenerator.randomJson(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
       const publicRecordDataBytes = new TextEncoder().encode(JSON.stringify(largeDataJson2));
@@ -541,7 +430,7 @@ describe('Record', () => {
         dataFormat   : 'application/json',
       });
       expect(aliceWritesStatus2.code).toBe(202);
-      await alicePublicRecord!.send();
+      await publishRecord(testHarness.agent, alicePublicRecord!, aliceDid.uri, aliceDid.uri);
 
       // the delegate attempts to read the public note
       const { records: publicRecords, status: publicStatus } = await delegateDwn.records.query({
@@ -579,109 +468,6 @@ describe('Record', () => {
         expect(error.message).toContain('Record: Unable to read stored data:');
       }
     });
-  });
-
-  it('imports a record that another user wrote', async () => {
-    // Alice creates a new large record and stores it on her own dwn
-    const { status: aliceThreadStatus, record: aliceThreadRecord } = await dwnAlice.records.write({
-      data         : TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000),
-      recipient    : bobDid.uri,
-      protocol     : protocolDefinition.protocol,
-      protocolPath : 'thread',
-      schema       : 'http://email-protocol.xyz/schema/thread',
-    });
-    expect(aliceThreadStatus.code).toBe(202);
-    await aliceThreadRecord!.send(aliceDid.uri);
-
-    // Bob queries for the record on his own DWN (should not find it)
-    let bobQueryBobDwn = await dwnBob.records.query({
-      from   : bobDid.uri,
-      filter : {
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-      }
-    });
-    expect(bobQueryBobDwn.status.code).toBe(200);
-    expect(bobQueryBobDwn.records).toHaveLength(0); // no results
-
-    // Bob queries for the record that was just created on Alice's remote DWN.
-    let bobQueryAliceDwn = await dwnBob.records.query({
-      from   : aliceDid.uri,
-      filter : {
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-      }
-    });
-    expect(bobQueryAliceDwn.status.code).toBe(200);
-    expect(bobQueryAliceDwn.records).toHaveLength(1);
-
-    // Bob imports the record.
-    const importRecord = bobQueryAliceDwn.records[0];
-    await importRecord.import();
-
-    // Bob sends the record to his remote DWN.
-    await importRecord!.send();
-
-    // Bob queries for the record on his own DWN (should now return it)
-    bobQueryBobDwn = await dwnBob.records.query({
-      from   : bobDid.uri,
-      filter : {
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-      }
-    });
-    expect(bobQueryBobDwn.status.code).toBe(200);
-    expect(bobQueryBobDwn.records).toHaveLength(1);
-    expect(bobQueryBobDwn.records[0].id).toBe(importRecord.id);
-
-    // Alice updates her record
-    const aliceThreadUpdated1 = await aliceThreadRecord.update({
-      data: TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000)
-    });
-    expect(aliceThreadUpdated1).toBe(aliceThreadRecord);
-    await aliceThreadUpdated1.send();
-
-    await aliceThreadUpdated1.send(bobDid.uri);
-
-    // Alice updates her record and sends it to her own DWN again
-    const updatedText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
-    const aliceThreadUpdated2 = await aliceThreadUpdated1.update({
-      data: updatedText
-    });
-    expect(aliceThreadUpdated2).toBe(aliceThreadUpdated1);
-    await aliceThreadUpdated2.send();
-
-    // Bob queries for the updated record on alice's DWN
-    bobQueryAliceDwn = await dwnBob.records.query({
-      from   : aliceDid.uri,
-      filter : {
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-      }
-    });
-    expect(bobQueryAliceDwn.status.code).toBe(200);
-    expect(bobQueryAliceDwn.records).toHaveLength(1);
-    const updatedRecord = bobQueryAliceDwn.records[0];
-
-    // Bob stores the record on his own DWN.
-    await updatedRecord.store();
-    expect(await updatedRecord.data.text()).toBe(updatedText);
-
-    // sends the record to his own DWN
-    await updatedRecord.send();
-
-    // Bob queries for the updated record on his own DWN.
-    bobQueryBobDwn = await dwnBob.records.query({
-      from   : bobDid.uri,
-      filter : {
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-      }
-    });
-    expect(bobQueryBobDwn.status.code).toBe(200);
-    expect(bobQueryBobDwn.records).toHaveLength(1);
-    expect(bobQueryBobDwn.records[0].id).toBe(importRecord.id);
-    expect(await bobQueryBobDwn.records[0].data.text()).toBe(updatedText);
   });
 
   it('should retain all defined properties', async () => {
@@ -1394,7 +1180,7 @@ describe('Record', () => {
       const dataJson = TestDataGenerator.randomJson(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
-      // Create a large record but do NOT store it on the local, agent-connected DWN.
+      // Keep the record out of the local DWN so lazy data must use the captured remote route.
       const { record, status } = await dwnAlice.records.write({
         store        : false,
         data         : dataJson,
@@ -1404,7 +1190,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      await record!.send(aliceDid.uri);
+      await publishUnstoredRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       // Query for the record that was just created on the remote DWN.
       const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
@@ -1425,7 +1211,7 @@ describe('Record', () => {
       const dataJson = TestDataGenerator.randomJson(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
-      // Create a large record but do NOT store it on the local, agent-connected DWN.
+      // Keep the record out of the local DWN so lazy data must use the captured remote route.
       const { record, status } = await dwnAlice.records.write({
         store        : false,
         data         : dataJson,
@@ -1435,7 +1221,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      await record!.send(aliceDid.uri);
+      await publishUnstoredRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       // Read the record that was just created on the remote DWN.
       const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
@@ -1578,7 +1364,7 @@ describe('Record', () => {
       const dataJson = TestDataGenerator.randomJson(1000);
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
-      // Create a large record but do NOT store it on the local, agent-connected DWN.
+      // Keep the record out of the local DWN so repeated reads cannot fall back locally.
       const { record, status } = await dwnAlice.records.write({
         store        : false,
         data         : dataJson,
@@ -1588,7 +1374,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      await record!.send(aliceDid.uri);
+      await publishUnstoredRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       // Read the record that was just created on the remote DWN.
       const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
@@ -1618,7 +1404,7 @@ describe('Record', () => {
       const dataJson = TestDataGenerator.randomJson(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
-      // Create a large record but do NOT store it on the local, agent-connected DWN.
+      // Keep the record out of the local DWN so repeated reads cannot fall back locally.
       const { record, status } = await dwnAlice.records.write({
         store        : false,
         data         : dataJson,
@@ -1628,7 +1414,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      await record!.send(aliceDid.uri);
+      await publishUnstoredRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       // Read the record that was just created on the remote DWN.
       const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
@@ -1659,7 +1445,7 @@ describe('Record', () => {
       const dataJson = TestDataGenerator.randomJson(1000);
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
-      // Create a large record but do NOT store it on the local, agent-connected DWN.
+      // Keep the record out of the local DWN so repeated reads cannot fall back locally.
       const { record, status } = await dwnAlice.records.write({
         store        : false,
         data         : dataJson,
@@ -1669,7 +1455,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      await record!.send(aliceDid.uri);
+      await publishUnstoredRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       // Read the record that was just created on the remote DWN.
       const { records: queriedRecords, status: queriedRecordStatus } = await dwnAlice.records.query({
@@ -1702,7 +1488,7 @@ describe('Record', () => {
       const dataJson = TestDataGenerator.randomJson(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
-      // Create a large record but do NOT store it on the local, agent-connected DWN.
+      // Keep the record out of the local DWN so repeated reads cannot fall back locally.
       const { record, status } = await dwnAlice.records.write({
         store        : false,
         data         : dataJson,
@@ -1712,7 +1498,7 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
-      await record!.send(aliceDid.uri);
+      await publishUnstoredRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       // Query for the record that was just created on the remote DWN.
       const { records: queriedRecords, status: queriedRecordStatus } = await dwnAlice.records.query({
@@ -1776,7 +1562,9 @@ describe('Record', () => {
         });
         expect(carolProtocolStatus.code).toBe(202);
         expect(carolProtocol).toBeDefined();
-        const { status: carolProtocolSendStatus } = await carolProtocol.send(carolDid.uri);
+        const { status: carolProtocolSendStatus } = await publishProtocol(
+          testHarnessCarol.agent, carolProtocol, carolDid.uri, carolDid.uri
+        );
         expect(carolProtocolSendStatus.code).toBe(202);
       });
 
@@ -1812,11 +1600,10 @@ describe('Record', () => {
          *
          * TEST STEPS:
          *
-         *   1. Alice creates a record but does NOT store it her local, agent-connected DWN.
+         *   1. Alice creates a record locally.
          */
         const { record, status } = await dwnAlice.records.write({
           data         : dataTextExceedingMaxSize,
-          store        : false,
           protocol     : protocolDefinition.protocol,
           protocolPath : 'thread',
           schema       : protocolDefinition.types.thread.schema
@@ -1825,7 +1612,7 @@ describe('Record', () => {
         /**
          *   2. Alice writes the record to Carol's remote DWN.
          */
-        await record!.send(carolDid.uri);
+        await publishRecord(testHarness.agent, record!, aliceDid.uri, carolDid.uri);
         /**
          *   3. Carol queries his remote DWN for the record that Alice just wrote.
          */
@@ -1868,11 +1655,10 @@ describe('Record', () => {
          *
          * TEST STEPS:
          *
-         *   1. Alice creates a record but does NOT store it her local, agent-connected DWN.
+         *   1. Alice creates a record locally.
          */
         const { record, status } = await dwnAlice.records.write({
           data         : dataTextExceedingMaxSize,
-          store        : false,
           protocol     : protocolDefinition.protocol,
           protocolPath : 'thread',
           schema       : protocolDefinition.types.thread.schema
@@ -1881,7 +1667,7 @@ describe('Record', () => {
         /**
          *   2. Alice writes the record to Carol's remote DWN.
          */
-        await record!.send(carolDid.uri);
+        await publishRecord(testHarness.agent, record!, aliceDid.uri, carolDid.uri);
         /**
          *   3. Carol queries her remote DWN for the record that Alice just wrote.
          */
@@ -1893,7 +1679,7 @@ describe('Record', () => {
         /**
          *   4. Validate that Carol is able to write the record to Alice's remote DWN.
          */
-        await queryRecordsFrom[0]!.send(aliceDid.uri);
+        await publishRecord(testHarnessCarol.agent, queryRecordsFrom[0]!, carolDid.uri, aliceDid.uri);
         /**
          *  5. Alice queries her remote DWN for the record that Carol just wrote.
          */
@@ -1907,485 +1693,6 @@ describe('Record', () => {
          */
         const recordData = await queryRecordsTo[0].data.text();
         expect(recordData).toEqual(dataTextExceedingMaxSize);
-      });
-    });
-  });
-
-  describe('send()', () => {
-    it('writes small records to remote DWNs for your own DID', async () => {
-      const dataString = 'Hello, world!';
-
-      // Alice writes a message to her agent connected DWN.
-      const { status: aliceEmailStatus, record: aliceEmailRecord } = await dwnAlice.records.write({
-        data         : dataString,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'email',
-      });
-
-      expect(aliceEmailStatus.code).toBe(202);
-      expect(await aliceEmailRecord?.data.text()).toBe(dataString);
-
-      // Query Alice's agent connected DWN for `email` schema records.
-      const aliceAgentQueryResult = await dwnAlice.records.query({
-        filter: {
-          schema: 'email'
-        }
-      });
-
-      expect(aliceAgentQueryResult.status.code).toBe(200);
-      expect(aliceAgentQueryResult.records).toHaveLength(1);
-      const [ aliceAgentEmailRecord ] = aliceAgentQueryResult.records;
-      expect(await aliceAgentEmailRecord.data.text()).toBe(dataString);
-
-      // Attempt to write the record to Alice's remote DWN.
-      await aliceEmailRecord!.send(aliceDid.uri);
-
-      // Query Alices's remote DWN for `email` schema records.
-      const aliceRemoteQueryResult = await dwnAlice.records.query({
-        from   : aliceDid.uri,
-        filter : {
-          schema: 'email'
-        }
-      });
-
-      expect(aliceRemoteQueryResult.status.code).toBe(200);
-      expect(aliceRemoteQueryResult.records).toBeDefined();
-      expect(aliceRemoteQueryResult.records).toHaveLength(1);
-      const [ aliceRemoteEmailRecord ] = aliceAgentQueryResult.records;
-      expect(await aliceRemoteEmailRecord.data.text()).toBe(dataString);
-    });
-
-    it('writes large records to remote DWNs that were initially queried from a local DWN', async () => {
-      /** Generate data that exceeds the DWN encoded data limit to ensure that the data will have to
-       * be fetched with a RecordsRead when record.send() is executed. */
-      const dataText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
-
-      // Alice writes a message to her agent connected DWN.
-      const { status: aliceEmailStatus } = await dwnAlice.records.write({
-        data         : dataText,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'email',
-      });
-      expect(aliceEmailStatus.code).toBe(202);
-
-      // Query Alice's local, agent connected DWN for `email` schema records.
-      const aliceAgentQueryResult = await dwnAlice.records.query({
-        filter: {
-          schema: 'email'
-        }
-      });
-
-      expect(aliceAgentQueryResult.status.code).toBe(200);
-      expect(aliceAgentQueryResult.records).toHaveLength(1);
-      const [ aliceAgentEmailRecord ] = aliceAgentQueryResult.records;
-
-      // Attempt to write the record to Alice's remote DWN.
-      await aliceAgentEmailRecord!.send(aliceDid.uri);
-    });
-
-    it('writes large records to remote DWNs that were initially read from a local DWN', async () => {
-      /** Generate data that exceeds the DWN encoded data limit to ensure that the data will have to
-       * be fetched with a RecordsRead when record.send() is executed. */
-      const dataText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
-
-      // Alice writes a message to her agent connected DWN.
-      const { status: aliceEmailStatus, record: aliceEmailRecord } = await dwnAlice.records.write({
-        data         : dataText,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'email',
-      });
-      expect(aliceEmailStatus.code).toBe(202);
-
-      // Read from Alice's local, agent connected DWN for the record that was just created.
-      const aliceAgentReadResult = await dwnAlice.records.read({
-        filter: {
-          recordId: aliceEmailRecord.id
-        }
-      });
-
-      expect(aliceAgentReadResult.status.code).toBe(200);
-      expect(aliceAgentReadResult.record).toBeDefined();
-
-      // Attempt to write the record to Alice's remote DWN.
-      await aliceAgentReadResult.record.send(aliceDid.uri);
-    });
-
-    it('writes updated records to a remote DWN', async () => {
-      /**
-       * NOTE: The issue that this test was added to cover was intermittently failing the first
-       * time the updated record is sent to the remote DWN. However, it always failed on the second
-       * attempt to send the updated record to the remote DWN. As a result, this test was written
-       * to update the record twice and send it to the remote DWN after each update to ensure that
-       * the issue is covered.
-       */
-
-      // Alice writes a message to her agent connected DWN.
-      const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
-      });
-      expect(status.code).toBe(202);
-
-      // Write the record to Alice's remote DWN.
-      await record.send(aliceDid.uri);
-
-      // Update the record by mutating the data property.
-      const updatedRecord = await record!.update({ data: 'hi' });
-      expect(updatedRecord).toBe(record);
-
-      // Write the updated record to Alice's remote DWN a second time.
-      await updatedRecord.send(aliceDid.uri);
-
-      // Update the record again.
-      const updatedAgain = await updatedRecord.update({ data: 'bye' });
-      expect(updatedAgain).toBe(record);
-
-      // Write the updated record to Alice's remote DWN a third time.
-      await updatedAgain.send(aliceDid.uri);
-    });
-
-    it('automatically sends the initial write and update of a record to a remote DWN', async () => {
-      // Alice writes a message to her agent connected DWN.
-      const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
-      });
-      expect(status.code).toBe(202);
-
-      // Update the record by mutating the data property.
-      const updatedRecord = await record!.update({ data: 'hi' });
-      expect(updatedRecord).toBe(record);
-
-      // Write the updated record to Alice's remote DWN a second time.
-      await updatedRecord.send(aliceDid.uri);
-    });
-
-    it('writes large records to remote DWNs that were initially queried from a remote DWN', async () => {
-      /** Generate data that exceeds the DWN encoded data limit to ensure that the data will have to
-       * be fetched with a RecordsRead when record.data.blob() is executed. */
-      const dataText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
-
-      // Alice creates a new large record but does not store it in her local DWN.
-      const { status: aliceEmailStatus, record: aliceEmailRecord } = await dwnAlice.records.write({
-        store        : false,
-        data         : dataText,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        schema       : protocolDefinition.types.thread.schema
-      });
-      expect(aliceEmailStatus.code).toBe(202);
-
-      // Alice writes the large record to her own remote DWN.
-      await aliceEmailRecord!.send(aliceDid.uri);
-
-      // Alice queries for the record that was just created on her remote DWN.
-      const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
-        from   : aliceDid.uri,
-        filter : { recordId: aliceEmailRecord!.id }
-      });
-      expect(queryRecordStatus.code).toBe(200);
-
-      // Attempt to write the record to Bob's DWN.
-      const [ queryRecord ] = queryRecords;
-      await queryRecord!.send(bobDid.uri);
-
-      // Confirm Bob can query his own remote DWN for the created record.
-      const bobQueryResult = await dwnBob.records.query({
-        from   : bobDid.uri,
-        filter : {
-          protocol : protocolDefinition.protocol,
-          schema   : protocolDefinition.types.thread.schema
-        }
-      });
-      expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records).toBeDefined();
-      expect(bobQueryResult.records).toHaveLength(1);
-    });
-
-    it('writes large records to remote DWNs that were initially read from a remote DWN', async () => {
-      /** Generate data that exceeds the DWN encoded data limit to ensure that the data will have to
-       * be fetched with a RecordsRead when record.data.blob() is executed. */
-      const dataText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
-
-      // Alice creates a new large record but does not store it in her local DWN.
-      const { status: aliceEmailStatus, record: aliceEmailRecord } = await dwnAlice.records.write({
-        store        : false,
-        data         : dataText,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        schema       : protocolDefinition.types.thread.schema
-      });
-      expect(aliceEmailStatus.code).toBe(202);
-
-      // Alice writes the large record to her own remote DWN.
-      await aliceEmailRecord!.send(aliceDid.uri);
-
-      // Alice queries for the record that was just created on her remote DWN.
-      const { record: queryRecord, status: queryRecordStatus } = await dwnAlice.records.read({
-        from   : aliceDid.uri,
-        filter : { recordId: aliceEmailRecord!.id }
-      });
-      expect(queryRecordStatus.code).toBe(200);
-
-      // Attempt to write the record to Bob's DWN.
-      await queryRecord!.send(bobDid.uri);
-
-      // Confirm Bob can query his own remote DWN for the created record.
-      const bobQueryResult = await dwnBob.records.query({
-        from   : bobDid.uri,
-        filter : {
-          protocol : protocolDefinition.protocol,
-          schema   : protocolDefinition.types.thread.schema
-        }
-      });
-      expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records).toBeDefined();
-      expect(bobQueryResult.records).toHaveLength(1);
-    });
-
-    it(`writes records to remote DWNs for someone else's DID`, async () => {
-      const dataString = 'Hello, world!';
-
-      // Alice writes a message to her own DWN.
-      const { status: aliceEmailStatus, record: aliceEmailRecord } = await dwnAlice.records.write({
-        data         : dataString,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        schema       : protocolDefinition.types.thread.schema
-      });
-
-      expect(aliceEmailStatus.code).toBe(202);
-
-      // Attempt to write the message to Bob's DWN.
-      await aliceEmailRecord!.send(bobDid.uri);
-
-      // Query Bob's remote DWN for `thread` schema records.
-      const bobQueryResult = await dwnBob.records.query({
-        from   : bobDid.uri,
-        filter : {
-          protocol : protocolDefinition.protocol,
-          schema   : protocolDefinition.types.thread.schema
-        }
-      });
-
-      expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records).toBeDefined();
-      expect(bobQueryResult.records).toHaveLength(1);
-      const [ bobRemoteEmailRecord ] = bobQueryResult.records;
-      expect(await bobRemoteEmailRecord.data.text()).toBe(dataString);
-    });
-
-    describe('with store: false', () => {
-      it('sends encrypted ciphertext returned by a non-stored write without re-reading', async () => {
-        const encryptedProtocol: DwnProtocolDefinition = {
-          protocol  : `http://encrypted-store-false.xyz/${TestDataGenerator.randomString(15)}`,
-          published : true,
-          types     : {
-            note: {
-              dataFormats        : ['text/plain'],
-              schema             : 'https://schemas.xyz/encrypted-store-false-note',
-              encryptionRequired : true,
-            },
-          },
-          structure: { note: {} },
-        };
-        const { status: configureStatus, protocol } = await dwnAlice.protocols.configure({
-          definition: encryptedProtocol,
-        });
-        expect(configureStatus.code).toBe(202);
-        expect((await protocol!.send(aliceDid.uri)).status.code).toBe(202);
-
-        const plaintext = 'ciphertext must be the repeatable stored source';
-        const writeResult = await dwnAlice.records.write({
-          data         : plaintext,
-          dataFormat   : 'text/plain',
-          protocol     : encryptedProtocol.protocol,
-          protocolPath : 'note',
-          schema       : encryptedProtocol.types.note.schema,
-          store        : false,
-        });
-        expect(writeResult.status.code).toBe(202);
-        expect(writeResult.record!.encryption).toBeDefined();
-
-        const processRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-        await writeResult.record!.send(aliceDid.uri);
-        expect(processRequestSpy.getCalls().some(
-          (call) => call.args[0].messageType === DwnInterface.RecordsRead
-        )).toBe(false);
-
-        const remoteRead = await dwnAlice.records.read({
-          from   : aliceDid.uri,
-          filter : { recordId: writeResult.record!.id },
-        });
-        expect(remoteRead.status.code).toBe(200);
-        expect(await remoteRead.record!.data.text()).toBe(plaintext);
-      });
-
-      it('writes records to your own remote DWN but not your local DWN', async () => {
-        // Alice creates a record but does not store it on her local DWN with `store: false`.
-        const dataString = 'Hello, world!';
-        const writeResult = await dwnAlice.records.write({
-          store        : false,
-          data         : dataString,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : protocolDefinition.types.thread.schema
-        });
-
-        // Confirm that the request was accepted and a Record instance was returned.
-        expect(writeResult.status.code).toBe(202);
-        expect(writeResult.status.detail).toBe('Accepted');
-        expect(writeResult.record).toBeDefined();
-        expect(await writeResult.record?.data.text()).toBe(dataString);
-
-        // Query Alice's agent DWN for `text/plain` records.
-        const queryResult = await dwnAlice.records.query({
-          filter: {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema
-          }
-        });
-
-        // Confirm no `email` schema records were written.
-        expect(queryResult.status.code).toBe(200);
-        expect(queryResult.records).toBeDefined();
-        expect(queryResult.records).toHaveLength(0);
-
-        // Alice writes the message to her remote DWN.
-        await writeResult.record.send(aliceDid.uri);
-
-        // Query Alice's remote DWN for `plain/text` records.
-        const aliceRemoteQueryResult = await dwnAlice.records.query({
-          from   : aliceDid.uri,
-          filter : {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema
-          }
-        });
-
-        // Confirm `email` schema record was written to Alice's remote DWN.
-        expect(aliceRemoteQueryResult.status.code).toBe(200);
-        expect(aliceRemoteQueryResult.records).toBeDefined();
-        expect(aliceRemoteQueryResult.records).toHaveLength(1);
-        const [ aliceRemoteEmailRecord ] = aliceRemoteQueryResult.records;
-        expect(await aliceRemoteEmailRecord.data.text()).toBe(dataString);
-      });
-
-      it(`writes records to someone else's remote DWN but not your agent DWN`, async () => {
-        // Alice writes a message to her agent DWN with `store: false`.
-        const dataString = 'Hello, world!';
-        const writeResult = await dwnAlice.records.write({
-          store        : false,
-          data         : dataString,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : protocolDefinition.types.thread.schema
-        });
-
-        // Confirm that the request was accepted and a Record instance was returned.
-        expect(writeResult.status.code).toBe(202);
-        expect(writeResult.status.detail).toBe('Accepted');
-        expect(writeResult.record).toBeDefined();
-        expect(await writeResult.record?.data.text()).toBe(dataString);
-
-        // Query Alice's agent DWN for `thread` schema records.
-        const queryResult = await dwnAlice.records.query({
-          filter: {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema
-          }
-        });
-
-        // Confirm no `thread` schema records were written.
-        expect(queryResult.status.code).toBe(200);
-        expect(queryResult.records).toBeDefined();
-        expect(queryResult.records).toHaveLength(0);
-
-        // Alice writes the message to Bob's remote DWN.
-        await writeResult.record.send(bobDid.uri);
-
-        // Query Bobs's remote DWN for `thread` schema records.
-        const bobQueryResult = await dwnBob.records.query({
-          from   : bobDid.uri,
-          filter : {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema
-          }
-        });
-
-        // Confirm `thread` schema record was written to Bob's remote DWN.
-        expect(bobQueryResult.status.code).toBe(200);
-        expect(bobQueryResult.records).toBeDefined();
-        expect(bobQueryResult.records).toHaveLength(1);
-        const [ bobRemoteEmailRecord ] = bobQueryResult.records;
-        expect(await bobRemoteEmailRecord.data.text()).toBe(dataString);
-      });
-
-      it('has no effect if `store: true`', async () => {
-        // Alice writes a message to her agent DWN with `store: true`.
-        const dataString = 'Hello, world!';
-        const writeResult = await dwnAlice.records.write({
-          store        : true,
-          data         : dataString,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : protocolDefinition.types.thread.schema
-        });
-
-        // Confirm that the request was accepted and a Record instance was returned.
-        expect(writeResult.status.code).toBe(202);
-        expect(writeResult.status.detail).toBe('Accepted');
-        expect(writeResult.record).toBeDefined();
-        expect(await writeResult.record?.data.text()).toBe(dataString);
-
-        // Query Alice's agent DWN for `text/plain` records.
-        const queryResult = await dwnAlice.records.query({
-          filter: {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema
-          }
-        });
-
-        // Confirm the `email` schema records was written.
-        expect(queryResult.status.code).toBe(200);
-        expect(queryResult.records).toBeDefined();
-        expect(queryResult.records).toHaveLength(1);
-        const [ aliceAgentRecord ] = queryResult.records;
-        expect(await aliceAgentRecord.data.text()).toBe(dataString);
-
-        // Alice writes the message to her remote DWN.
-        await writeResult.record.send(aliceDid.uri);
-
-        // Query Alice's remote DWN for `plain/text` records.
-        const aliceRemoteQueryResult = await dwnAlice.records.query({
-          from   : aliceDid.uri,
-          filter : {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema
-          }
-        });
-
-        // Confirm `email` schema record was written to Alice's remote DWN.
-        expect(aliceRemoteQueryResult.status.code).toBe(200);
-        expect(aliceRemoteQueryResult.records).toBeDefined();
-        expect(aliceRemoteQueryResult.records).toHaveLength(1);
-        const [ aliceRemoteEmailRecord ] = aliceRemoteQueryResult.records;
-        expect(await aliceRemoteEmailRecord.data.text()).toBe(dataString);
       });
     });
   });
@@ -2621,12 +1928,16 @@ describe('Record', () => {
         definition: notesProtocol
       });
       expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
+      const { status: aliceNotesProtocolSend } = await publishProtocol(
+        testHarness.agent, aliceNotesProtocol, aliceDid.uri, aliceDid.uri
+      );
       expect(aliceNotesProtocolSend.code).toBe(202);
 
       const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ definition: notesProtocol });
       expect(bobConfigStatus.code).toBe(202);
-      const { status: bobNotesProtocolSend } = await bobNotesProtocol!.send(bobDid.uri);
+      const { status: bobNotesProtocolSend } = await publishProtocol(
+        testHarness.agent, bobNotesProtocol!, bobDid.uri, bobDid.uri
+      );
       expect(bobNotesProtocolSend.code).toBe(202);
 
     });
@@ -2678,7 +1989,7 @@ describe('Record', () => {
       expect(record).toBeDefined();
 
       // send the record to alice's DWN
-      await record!.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       // bob reads the record to confirm it is published
       const readResult = await dwnBob.records.read({
@@ -2696,7 +2007,7 @@ describe('Record', () => {
       expect(updatedRecord).toBe(record);
 
       // send the updated record to alice's DWN
-      await updatedRecord.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, updatedRecord, aliceDid.uri, aliceDid.uri);
 
       // bob attempts to read the record again but it should not be authorized as it's unpublished
       const readResultAfterUpdate = await dwnBob.records.read({
@@ -2706,173 +2017,6 @@ describe('Record', () => {
         }
       });
       expect(readResultAfterUpdate.status.code).toBe(401);
-    });
-
-    it('allows to update a record locally that was initially read from a remote DWN if store() is issued', async () => {
-      // Create a record but do not store it on the local DWN.
-      const { status, record } = await dwnAlice.records.write({
-        store        : false,
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
-      });
-      expect(status.code).toBe(202);
-      expect(record).toBeDefined();
-
-      // Store the data CID of the record before it is updated.
-      const dataCidBeforeDataUpdate = record!.dataCid;
-
-      // Write the record to a remote DWN.
-      await record!.send(aliceDid.uri);
-
-      // Read the record from the remote DWN.
-      let readResult = await dwnAlice.records.read({
-        from   : aliceDid.uri,
-        filter : {
-          recordId: record!.id
-        }
-      });
-      expect(readResult.status.code).toBe(200);
-      expect(readResult.record).toBeDefined();
-
-      const readRecord = readResult.record;
-
-      // Attempt to update the record without storing, should fail
-      try {
-        await readRecord.update({ data: 'bye' });
-        throw new Error('Expected an unstored remote record update to fail.');
-      } catch (error) {
-        expect(error).toBeInstanceOf(DwnResponseError);
-        expect((error as DwnResponseError).status.code).toBe(400);
-      }
-
-      // store the record locally
-      await readRecord.store();
-
-      // Attempt to update the record, which should write the updated record the local DWN.
-      const updatedRecord = await readRecord.update({ data: 'bye' });
-      expect(updatedRecord).toBe(readRecord);
-
-      // Confirm that the record was written to the local DWN.
-      readResult = await dwnAlice.records.read({
-        filter: {
-          recordId: record!.id
-        }
-      });
-      expect(readResult.status.code).toBe(200);
-      expect(readResult.record).toBeDefined();
-
-      // Confirm that the data CID of the record was updated.
-      expect(readResult.record.dataCid).not.toBe(dataCidBeforeDataUpdate);
-      expect(readResult.record.dataCid).toBe(updatedRecord.dataCid);
-    });
-
-    it('updates a record that was queried from a remote DWN without storing it', async () => {
-      // Create a record but do not store it on the local DWN.
-      const { status, record } = await dwnAlice.records.write({
-        store        : false,
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
-      });
-      expect(status.code).toBe(202);
-      expect(record).toBeDefined();
-
-      // Store the data CID of the record before it is updated.
-      const _dataCidBeforeDataUpdate = record!.dataCid;
-
-      // Write the record to a remote DWN.
-      await record!.send(aliceDid.uri);
-
-      // Query the record from the remote DWN.
-      let queryResult = await dwnAlice.records.query({
-        from   : aliceDid.uri,
-        filter : {
-          recordId: record!.id
-        }
-      });
-      expect(queryResult.status.code).toBe(200);
-      expect(queryResult.records).toBeDefined();
-      expect(queryResult.records).toHaveLength(1);
-
-      // Attempt to update the queried record
-      const [ queriedRecord ] = queryResult.records;
-      const updatedRecord = await queriedRecord!.update({ data: 'Updated, world!', store: false });
-      expect(updatedRecord).toBe(queriedRecord);
-
-      // confirm that the record does not exist locally
-      queryResult = await dwnAlice.records.read({
-        filter: {
-          recordId: record!.id
-        }
-      });
-      expect(queryResult.status.code).toBe(404);
-    });
-
-    it('updates a record which has a parent reference from a remote DWN without storing it or its parent', async () => {
-      // create a parent thread
-      const { status: threadStatus, record: threadRecord } = await dwnAlice.records.write({
-        store        : false,
-        data         : 'Hello, world!',
-        protocol     : protocolDefinition.protocol,
-        schema       : protocolDefinition.types.thread.schema,
-        protocolPath : 'thread'
-      });
-
-      expect(threadStatus.code).toBe(202);
-      expect(threadRecord).toBeDefined();
-
-      await threadRecord.send();
-
-      // create an email with the thread as a parent
-      const { status: emailStatus, record: emailRecord } = await dwnAlice.records.write({
-        store           : false,
-        data            : 'Hello, world!',
-        parentContextId : threadRecord.contextId,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/email',
-        schema          : protocolDefinition.types.email.schema
-      });
-      expect(emailStatus.code).toBe(202);
-      expect(emailRecord).toBeDefined();
-
-      await emailRecord!.send();
-
-      // update email record
-      const updatedEmailRecord = await emailRecord!.update({ data: 'updated email record', store: false });
-      expect(updatedEmailRecord).toBe(emailRecord);
-
-      await updatedEmailRecord.send();
-
-      let readResult = await dwnAlice.records.read({
-        from   : aliceDid.uri,
-        filter : {
-          recordId: emailRecord.id
-        }
-      });
-
-      expect(readResult.status.code).toBe(200);
-      expect(readResult.record).toBeDefined();
-      expect(await readResult.record.data.text()).toBe('updated email record');
-
-      // confirm that records do not exist locally
-      readResult = await dwnAlice.records.read({
-        filter: {
-          recordId: emailRecord.id
-        }
-      });
-      expect(readResult.status.code).toBe(404);
-
-      readResult = await dwnAlice.records.read({
-        filter: {
-          recordId: threadRecord.id
-        }
-      });
-      expect(readResult.status.code).toBe(404);
     });
 
     it('updates a record which has a parent reference', async () => {
@@ -2995,9 +2139,7 @@ describe('Record', () => {
     });
 
     it('throws if attempting to revive a deleted record', async () => {
-      // create a record but do not store it
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        store        : false,
         data         : 'Hello, world!',
         protocol     : 'http://free-for-all.xyz',
         protocolPath : 'post',
@@ -3148,7 +2290,7 @@ describe('Record', () => {
       });
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
-      await record.send();
+      await publishRecord(testHarness.agent, record, aliceDid.uri, aliceDid.uri);
 
       // bob reads the record
       const readResult = await dwnBob.records.read({
@@ -3161,11 +2303,8 @@ describe('Record', () => {
       expect(readResult.record).toBeDefined();
 
       const bobRecord = readResult.record;
-      await bobRecord!.store();
-      const updatedBobRecord = await bobRecord.update({ data: 'Hello, Alice!' });
+      const updatedBobRecord = await bobRecord.update({ data: 'Hello, Alice!', from: aliceDid.uri });
       expect(updatedBobRecord).toBe(bobRecord);
-
-      await updatedBobRecord.send(aliceDid.uri);
 
       // alice reads the record
       const readResultAlice = await dwnAlice.records.read({
@@ -3199,7 +2338,9 @@ describe('Record', () => {
         definition: protocol
       });
       expect(bobProtocolStatus.code).toBe(202);
-      const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
+      const { status: bobProtocolSendStatus } = await publishProtocol(
+        testHarness.agent, bobProtocol, bobDid.uri, bobDid.uri
+      );
       expect(bobProtocolSendStatus.code).toBe(202);
 
       // Alice must also configure the protocol to make updates.
@@ -3209,7 +2350,9 @@ describe('Record', () => {
         definition: protocol
       });
       expect(aliceProtocolStatus.code).toBe(202);
-      const { status: aliceProtocolSend } = await aliceProtocol.send(aliceDid.uri);
+      const { status: aliceProtocolSend } = await publishProtocol(
+        testHarness.agent, aliceProtocol, aliceDid.uri, aliceDid.uri
+      );
       expect(aliceProtocolSend.code).toBe(202);
 
       // Bob creates a few notes ensuring that the data is larger than the max encoded size
@@ -3225,7 +2368,7 @@ describe('Record', () => {
           dataFormat   : 'text/plain',
         });
         expect(noteCreateStatus.code).toBe(202);
-        await noteRecord.send();
+        await publishRecord(testHarness.agent, noteRecord, bobDid.uri, bobDid.uri);
         records.add(noteRecord.id);
       }
 
@@ -3239,7 +2382,7 @@ describe('Record', () => {
         dataFormat   : 'text/plain'
       });
       expect(friendCreateStatus.code).toBe(202);
-      await friendRecord.send(bobDid.uri);
+      await publishRecord(testHarness.agent, friendRecord, bobDid.uri, bobDid.uri);
 
       // Bob makes alice a 'coAuthor' of one of his notes
       const aliceCoAuthorNoteId = records.keys().next().value;
@@ -3253,7 +2396,7 @@ describe('Record', () => {
         dataFormat      : 'text/plain'
       });
       expect(coAuthorStatus.code).toBe(202);
-      await coAuthorRecord.send(bobDid.uri);
+      await publishRecord(testHarness.agent, coAuthorRecord, bobDid.uri, bobDid.uri);
 
       // Alice querying for bob's notes using her friend role
       const { status: aliceQueryStatus, records: bobNotesAliceQuery } = await dwnAlice.records.query({
@@ -3272,44 +2415,30 @@ describe('Record', () => {
       const coAuthorNote = bobNotesAliceQuery.find((record) => record.id === aliceCoAuthorNoteId);
       expect(coAuthorNote).toBeDefined();
 
-      // Alice must import the record to be able to update it
-      // NOTE this should be removed after: https://github.com/enboxorg/enbox/issues/955
-      await coAuthorNote.import();
-
-      // Alice updates the co-author note without providing a new role
-      const updatedNote = await coAuthorNote!.update({ data: 'updated note' });
-      expect(updatedNote).toBe(coAuthorNote);
-
-      // spy on sendDwnRequest to ensure that the protocolRole is used to read the data of the notes
+      // Capture the exact remote request so the role inherited from the query is pinned.
       const sendDwnRequestSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
 
-      // confirm that it starts with 0 calls
-      expect(sendDwnRequestSpy.callCount).toBe(0);
-
-      // This is accepted locally but will fail when sending the update to the remote DWN
       try {
-        await updatedNote.send(bobDid.uri);
+        await coAuthorNote!.update({ data: 'updated note', from: bobDid.uri });
         throw new Error('Expected the friend role update to be rejected.');
       } catch (error) {
         expect(error).toBeInstanceOf(DwnResponseError);
         expect((error as DwnResponseError).status.code).toBe(401);
       }
-      expect(sendDwnRequestSpy.callCount).toBe(2); // the first call is for the initialWrite
-      let record = (sendDwnRequestSpy.secondCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
-      let sendAuthorizationRole = getRecordProtocolRole(record);
-      expect(sendAuthorizationRole).toBe('friend');
-
-      const updatedNoteCoAuthor = await updatedNote.update({ data: 'updated note', protocolRole: 'note/coAuthor' });
-      expect(updatedNoteCoAuthor).toBe(updatedNote);
+      expect(sendDwnRequestSpy.callCount).toBe(1);
+      expect((sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>)
+        .messageParams?.protocolRole).toBe('friend');
 
       sendDwnRequestSpy.resetHistory();
 
-      // Now update the record with the correct role
-      await updatedNoteCoAuthor.send(bobDid.uri);
-      expect(sendDwnRequestSpy.callCount).toBe(1); // the initialWrite was already sent and added to the sent-cache, only the update is sent
-      record = (sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
-      sendAuthorizationRole = getRecordProtocolRole(record);
-      expect(sendAuthorizationRole).toBe('note/coAuthor');
+      const updatedNote = await coAuthorNote!.update({
+        data         : 'updated note',
+        from         : bobDid.uri,
+        protocolRole : 'note/coAuthor',
+      });
+      expect(updatedNote).toBe(coAuthorNote);
+      expect(sendDwnRequestSpy.callCount).toBe(1);
+      expect(getRecordProtocolRole(updatedNote.rawMessage)).toBe('note/coAuthor');
     });
 
     it('should auto-re-encrypt data when updating an encrypted record', async () => {
@@ -3535,12 +2664,16 @@ describe('Record', () => {
         definition: notesProtocol
       });
       expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
+      const { status: aliceNotesProtocolSend } = await publishProtocol(
+        testHarness.agent, aliceNotesProtocol, aliceDid.uri, aliceDid.uri
+      );
       expect(aliceNotesProtocolSend.code).toBe(202);
 
       const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ definition: notesProtocol });
       expect(bobConfigStatus.code).toBe(202);
-      const { status: bobNotesProtocolSend } = await bobNotesProtocol!.send(bobDid.uri);
+      const { status: bobNotesProtocolSend } = await publishProtocol(
+        testHarness.agent, bobNotesProtocol!, bobDid.uri, bobDid.uri
+      );
       expect(bobNotesProtocolSend.code).toBe(202);
 
     });
@@ -3584,6 +2717,28 @@ describe('Record', () => {
       expect(readResult.status.code).toBe(404);
     });
 
+    it('stores the initial write before deleting an unstored record', async () => {
+      const { status, record } = await dwnAlice.records.write({
+        data         : 'Hello, world!',
+        dataFormat   : 'text/plain',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        store        : false,
+      });
+      expect(status.code).toBe(202);
+
+      await record.delete();
+      expect(record.deleted).toBe(true);
+
+      try {
+        await record.delete();
+        throw new Error('Expected the standing tombstone to reject the second delete.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnResponseError);
+        expect((error as DwnResponseError).status.code).toBe(409);
+      }
+    });
+
     it('deletes a record on the remote DWN', async () => {
       const { status: writeStatus, record } = await dwnAlice.records.write({
         data         : 'Hello, world!',
@@ -3597,7 +2752,7 @@ describe('Record', () => {
       expect(record).toBeDefined();
 
       // Write the record to Alice's remote DWN.
-      await record!.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       // confirm the record has been written to the remote DWN
       const readResult = await dwnAlice.records.read({
@@ -3618,7 +2773,7 @@ describe('Record', () => {
       expect(deletedRecord.deleted).toBe(true);
 
       // send the delete request to the remote DWN
-      await deletedRecord.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, deletedRecord, aliceDid.uri, aliceDid.uri);
 
       // confirm the record has been deleted
       const readResultDeleted = await dwnAlice.records.read({
@@ -3740,12 +2895,13 @@ describe('Record', () => {
         }
       });
       expect(protocolStatus.code).toBe(202);
-      const { status: protocolSendStatus } = await protocol.send(aliceDid.uri);
+      const { status: protocolSendStatus } = await publishProtocol(
+        testHarness.agent, protocol, aliceDid.uri, aliceDid.uri
+      );
       expect(protocolSendStatus.code).toBe(202);
 
-      // Write a parent record.
+      // Write the records locally before publishing them remotely.
       const { status: parentWriteStatus, record: parentRecord } = await dwnAlice.records.write({
-        store        : false,
         data         : 'Hello, world!',
         protocol     : protocol.definition.protocol,
         protocolPath : 'foo',
@@ -3754,11 +2910,10 @@ describe('Record', () => {
       });
       expect(parentWriteStatus.code).toBe(202);
       expect(parentRecord).toBeDefined();
-      await parentRecord.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, parentRecord, aliceDid.uri, aliceDid.uri);
 
       // Write a child record.
       const { status: child1WriteStatus, record: childRecord1 } = await dwnAlice.records.write({
-        store           : false,
         data            : 'Hello, world!',
         protocol        : protocol.definition.protocol,
         protocolPath    : 'foo/bar',
@@ -3768,11 +2923,10 @@ describe('Record', () => {
       });
       expect(child1WriteStatus.code).toBe(202);
       expect(childRecord1).toBeDefined();
-      await childRecord1.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, childRecord1, aliceDid.uri, aliceDid.uri);
 
       // Write a second child record.
       const { status: child2WriteStatus, record: childRecord2 } = await dwnAlice.records.write({
-        store           : false,
         data            : 'Hello, world!',
         protocol        : protocol.definition.protocol,
         protocolPath    : 'foo/bar',
@@ -3782,7 +2936,7 @@ describe('Record', () => {
       });
       expect(child2WriteStatus.code).toBe(202);
       expect(childRecord2).toBeDefined();
-      await childRecord2.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, childRecord2, aliceDid.uri, aliceDid.uri);
 
       // query for child records to confirm it exists
       const { status: childrenStatus, records: childrenRecords } = await dwnAlice.records.query({
@@ -3799,10 +2953,10 @@ describe('Record', () => {
       expect(childrenRecords.map(r => r.id)).toEqual(expect.arrayContaining([childRecord1.id, childRecord2.id]));
 
       // Delete the parent record and its children.
-      await parentRecord.delete({ store: false, prune: true });
+      await parentRecord.delete({ prune: true });
       const deletedParentRecord = parentRecord;
       expect(deletedParentRecord.deleted).toBe(true);
-      await deletedParentRecord.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, deletedParentRecord, aliceDid.uri, aliceDid.uri);
 
       // query for child records to confirm it was deleted
       const { status: childrenStatusAfterDelete, records: childrenRecordsAfterDelete } = await dwnAlice.records.query({
@@ -3819,9 +2973,7 @@ describe('Record', () => {
     });
 
     it('throws if a record status is deleted and initialWrite is not set', async () => {
-      // create a record but do not store it
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        store        : false,
         data         : 'Hello, world!',
         protocol     : 'http://free-for-all.xyz',
         protocolPath : 'post',
@@ -3830,8 +2982,7 @@ describe('Record', () => {
       });
       expect(writeStatus.code).toBe(202);
 
-      // delete the record but do not store it
-      await record.delete({ store: false });
+      await record.delete();
       const deletedRecord = record;
 
       // purposefully delete the _initialWrite property
@@ -4015,7 +3166,7 @@ describe('Record', () => {
       expect(bobWriteStatus.code).toBe(202);
 
       // send the record to alice's DWN
-      await bobWriteRecord.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, bobWriteRecord, bobDid.uri, aliceDid.uri);
 
       let bobsRecordToDelete: Record | undefined;
       await Poller.pollUntilSuccessOrTimeout(async () => {
@@ -4036,38 +3187,6 @@ describe('Record', () => {
       expect(deletedBobRecord.author).toBe(aliceDid.uri);
     });
 
-    it('deletes a record as owner from someone else', async () => {
-      // bob writes a record for alice, alice deletes it and stores it
-      const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
-        data         : 'Hello, world!',
-        recipient    : aliceDid.uri,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain'
-      });
-      expect(bobWriteStatus.code).toBe(202);
-
-      // send the record to alice's DWN
-      await bobWriteRecord.send(bobDid.uri);
-
-      let bobsRecordToDelete: Record | undefined;
-      await Poller.pollUntilSuccessOrTimeout(async () => {
-        const { records } = await dwnAlice.records.query({
-          from   : bobDid.uri,
-          filter : { protocol: notesProtocol.protocol, recordId: bobWriteRecord.id },
-        });
-        bobsRecordToDelete = records[0];
-        expect(bobsRecordToDelete?.id).toBe(bobWriteRecord.id);
-      });
-
-      expect(bobsRecordToDelete!.deleted).toBe(false);
-
-      await bobsRecordToDelete!.delete({ signAsOwner: true });
-      const deletedBobRecord = bobsRecordToDelete!;
-      expect(deletedBobRecord.deleted).toBe(true);
-    });
-
     it('deletes a record using a different protocolRole than the one used when querying for/reading the record', async () => {
       // scenario: Bob has a notes protocol that has friends who can read/query/subscribe to notes, but coAuthors that can update/delete notes.
       // When Alice uses her friend role to query for notes, she cannot delete them with that same role. Instead she uses her coAuthor role to delete.
@@ -4082,7 +3201,9 @@ describe('Record', () => {
         definition: protocol
       });
       expect(bobProtocolStatus.code).toBe(202);
-      const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
+      const { status: bobProtocolSendStatus } = await publishProtocol(
+        testHarness.agent, bobProtocol, bobDid.uri, bobDid.uri
+      );
       expect(bobProtocolSendStatus.code).toBe(202);
 
       // Alice must also configure the protocol to make updates.
@@ -4092,7 +3213,9 @@ describe('Record', () => {
         definition: protocol
       });
       expect(aliceProtocolStatus.code).toBe(202);
-      const { status: aliceProtocolSend } = await aliceProtocol.send(aliceDid.uri);
+      const { status: aliceProtocolSend } = await publishProtocol(
+        testHarness.agent, aliceProtocol, aliceDid.uri, aliceDid.uri
+      );
       expect(aliceProtocolSend.code).toBe(202);
 
       // Bob creates a few notes ensuring that the data is larger than the max encoded size
@@ -4108,7 +3231,7 @@ describe('Record', () => {
           dataFormat   : 'text/plain',
         });
         expect(noteCreateStatus.code).toBe(202);
-        await noteRecord.send();
+        await publishRecord(testHarness.agent, noteRecord, bobDid.uri, bobDid.uri);
         records.add(noteRecord.id);
       }
 
@@ -4122,7 +3245,7 @@ describe('Record', () => {
         dataFormat   : 'text/plain'
       });
       expect(friendCreateStatus.code).toBe(202);
-      await friendRecord.send(bobDid.uri);
+      await publishRecord(testHarness.agent, friendRecord, bobDid.uri, bobDid.uri);
 
       // Bob makes alice a 'coAuthor' of one of his notes
       const aliceCoAuthorNoteId = records.keys().next().value;
@@ -4136,7 +3259,7 @@ describe('Record', () => {
         dataFormat      : 'text/plain'
       });
       expect(coAuthorStatus.code).toBe(202);
-      await coAuthorRecord.send(bobDid.uri);
+      await publishRecord(testHarness.agent, coAuthorRecord, bobDid.uri, bobDid.uri);
 
       // Alice querying for bob's notes using her friend role
       const { status: aliceQueryStatus, records: bobNotesAliceQuery } = await dwnAlice.records.query({
@@ -4155,574 +3278,39 @@ describe('Record', () => {
       const coDeleteNote = bobNotesAliceQuery.find((record) => record.id === aliceCoAuthorNoteId);
       expect(coDeleteNote).toBeDefined();
 
-      // spy on sendDwnRequest to ensure that the protocolRole is used to read the data of the notes
       const sendDwnRequestSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
 
-      // confirm that it starts with 0 calls
-      expect(sendDwnRequestSpy.callCount).toBe(0);
-
-      await coDeleteNote.delete({ store: false });
-      const deletedNote = coDeleteNote;
-
-      try {
-        await deletedNote.send(bobDid.uri);
-        throw new Error('Expected the friend role delete to be rejected.');
-      } catch (error) {
-        expect(error).toBeInstanceOf(DwnResponseError);
-        expect((error as DwnResponseError).status.code).toBe(401);
-      }
-
-      expect(sendDwnRequestSpy.callCount).toBe(2); // the first call is for the initialWrite
-      let record = (sendDwnRequestSpy.secondCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
-      let sendAuthorizationRole = getRecordProtocolRole(record);
-      expect(sendAuthorizationRole).toBe('friend');
+      const friendDelete = await dwnAlice.records.delete({
+        from         : bobDid.uri,
+        protocol     : protocol.protocol,
+        protocolPath : 'note',
+        protocolRole : 'friend',
+        recordId     : coDeleteNote!.id,
+      });
+      expect(friendDelete.status.code).toBe(401);
+      expect(sendDwnRequestSpy.callCount).toBe(1);
+      expect((sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsDelete>)
+        .messageParams?.protocolRole).toBe('friend');
 
       sendDwnRequestSpy.resetHistory();
 
-      // Now delete the record with the correct role
-      await deletedNote.delete({ protocolRole: 'note/coAuthor', store: false });
-      const deletedNoteCoAuthor = deletedNote;
-
-      await deletedNoteCoAuthor.send(bobDid.uri);
-
-      expect(sendDwnRequestSpy.callCount).toBe(1); // the initialWrite was already sent and added to the sent-cache, only the update is sent
-      record = (sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
-      sendAuthorizationRole = getRecordProtocolRole(record);
-      expect(sendAuthorizationRole).toBe('note/coAuthor');
-    });
-  });
-
-  describe('store()', () => {
-    let notesProtocol: DwnProtocolDefinition;
-
-    beforeEach(async () => {
-      const protocolUri = `http://example.com/notes-${TestDataGenerator.randomString(15)}`;
-      notesProtocol = {
-        published : true,
-        protocol  : protocolUri,
-        types     : {
-          note: {
-            schema: 'http://example.com/note'
-          },
-          request: {
-            schema: 'http://example.com/request'
-          },
-        },
-        structure: {
-          request: {
-            $actions: [{
-              who : 'anyone',
-              can : ['create', 'update', 'delete']
-            }]
-          },
-          note: {
-          }
-        }
-      };
-
-      // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
-        definition: notesProtocol
-      });
-      expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
-      expect(aliceNotesProtocolSend.code).toBe(202);
-
-      const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ definition: notesProtocol });
-      expect(bobConfigStatus.code).toBe(202);
-      const { status: bobNotesProtocolSend } = await bobNotesProtocol!.send(bobDid.uri);
-      expect(bobNotesProtocolSend.code).toBe(202);
-    });
-
-    it('should store an external record if it has been imported by the dwn owner', async () => {
-      // Scenario: Alice creates a record.
-      //           Bob queries for the record from Alice's DWN and then stores it to their own DWN.
-
-      // alice creates a record and sends it to their DWN
-      const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        published    : true,
-        protocol     : notesProtocol.protocol,
+      const coAuthorDelete = await dwnAlice.records.delete({
+        from         : bobDid.uri,
+        protocol     : protocol.protocol,
         protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema
+        protocolRole : 'note/coAuthor',
+        recordId     : coDeleteNote!.id,
       });
-      expect(status.code).toBe(202, status.detail);
-      await record.send();
+      expect(coAuthorDelete.status.code).toBe(202);
+      expect(sendDwnRequestSpy.callCount).toBe(1);
+      expect((sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsDelete>)
+        .messageParams?.protocolRole).toBe('note/coAuthor');
 
-      // Bob queries Alice's DWN for the record.
-      const aliceQueryResult = await dwnBob.records.query({
-        from   : aliceDid.uri,
-        filter : {
-          recordId: record.id
-        }
+      const deletedRead = await dwnBob.records.read({
+        from   : bobDid.uri,
+        filter : { recordId: coDeleteNote!.id },
       });
-      expect(aliceQueryResult.status.code).toBe(200);
-      expect(aliceQueryResult.records).toHaveLength(1);
-      const queriedRecord = aliceQueryResult.records[0];
-
-      // Bob queries his own DWN for the record, which should not return any results.
-      let bobQueryResult = await dwnBob.records.query({
-        filter: {
-          recordId: record.id
-        }
-      });
-      expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records).toHaveLength(0);
-
-      // Attempts to store the record without importing it, which should fail.
-      try {
-        await queriedRecord.store();
-        throw new Error('Expected storing an external record without importing it to fail.');
-      } catch (error) {
-        expect(error).toBeInstanceOf(DwnResponseError);
-        expect((error as DwnResponseError).status.code).toBe(401);
-      }
-
-      // Attempts to store the record flagging it for import.
-      await queriedRecord.store(true);
-
-      // Bob queries his own DWN for the record, which should return the record.
-      bobQueryResult = await dwnBob.records.query({
-        filter: {
-          recordId: record.id
-        }
-      });
-      expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records).toHaveLength(1);
-      const storedRecord = bobQueryResult.records[0];
-      expect(storedRecord.id).toBe(record.id);
-    });
-
-    it('stores an updated record to the local DWN along with the initial write', async () => {
-      // Scenario: Alice creates a record and then updates it.
-      //           Bob queries for the record from Alice's DWN and then stores the updated record along with it's initial write.
-
-      // Alice creates a public record then sends it to her remote DWN.
-      const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        published    : true,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema
-      });
-      expect(status.code).toBe(202, status.detail);
-      const updatedText = 'updated text';
-      const updatedRecord = await record!.update({ data: updatedText });
-      expect(updatedRecord).toBe(record);
-
-      await updatedRecord.send();
-
-      // Bob queries for the record from his own node, should not return any results
-      let queryResult = await dwnBob.records.query({
-        filter: {
-          recordId: record.id
-        }
-      });
-      expect(queryResult.status.code).toBe(200);
-      expect(queryResult.records).toHaveLength(0);
-
-      // Bob queries for the record from Alice's remote DWN.
-      const queryResultFromAlice = await dwnBob.records.query({
-        from   : aliceDid.uri,
-        filter : {
-          recordId: record.id
-        }
-      });
-      expect(queryResultFromAlice.status.code).toBe(200);
-      expect(queryResultFromAlice.records).toHaveLength(1);
-      const queriedRecord = queryResultFromAlice.records[0];
-      expect(await queriedRecord.data.text()).toBe(updatedText);
-
-      // Attempts to store the record without signing it, which should fail.
-      try {
-        await queriedRecord.store();
-        throw new Error('Expected storing an unsigned external update to fail.');
-      } catch (error) {
-        expect(error).toBeInstanceOf(DwnResponseError);
-        expect((error as DwnResponseError).status.code).toBe(400);
-        expect((error as DwnResponseError).status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
-      }
-
-      // Stores the record in Bob's DWN, the importRecord parameter is set to true so that Bob
-      // signs the record before storing it.
-      await queriedRecord.store(true);
-
-      // The record should now exist on Bob's DWN.
-      queryResult = await dwnBob.records.query({
-        filter: {
-          recordId: record.id
-        }
-      });
-      expect(queryResult.status.code).toBe(200);
-      expect(queryResult.records).toHaveLength(1);
-      const storedRecord = queryResult.records[0];
-      expect(storedRecord.id).toBe(record!.id);
-      expect(await storedRecord.data.text()).toBe(updatedText);
-    });
-
-    it('stores a deleted record to the local DWN along with the initial write', async () => {
-      // spy on the processMessage method to confirm it is called twice by the `store()` method
-      // once for the initial write and once for the delete
-      const processMessageSpy = sinon.spy(testHarness.dwn, 'processMessage');
-
-      // create a record
-      const { status: writeStatus, record } = await dwnAlice.records.write({
-        store        : false,
-        data         : 'Hello, world!',
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema
-      });
-      expect(writeStatus.code).toBe(202);
-      expect(record).toBeDefined();
-
-      // delete the record without storing
-      await record.delete({ store: false });
-      const deletedRecord = record;
-
-      // check that the record is in a deleted state
-      expect(deletedRecord.deleted).toBe(true);
-
-      const storedRecordCallCount = (): number => processMessageSpy.getCalls()
-        .filter((call): boolean =>
-          isDwnMessage(DwnInterface.RecordsWrite, call.args[1]) ||
-          isDwnMessage(DwnInterface.RecordsDelete, call.args[1])
-        ).length;
-
-      // Policy resolution may query the local DWN, but neither record message
-      // has been stored yet.
-      expect(storedRecordCallCount()).toBe(0);
-
-      // store the record
-      await deletedRecord.store();
-
-      // check that it was called once for initial write and once for the delete
-      expect(storedRecordCallCount()).toBe(2);
-    });
-
-    it('stores an externally signed deleted record as the owner', async () => {
-      const { status: writeStatus, record } = await dwnBob.records.write({
-        data         : 'Hello, world!',
-        recipient    : aliceDid.uri,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'request',
-        schema       : notesProtocol.types.request.schema,
-      });
-      expect(writeStatus.code).toBe(202);
-
-      await record.delete();
-      const deletedRecord = record;
-
-      const receivedRecord = rehydrateExternalDeletedRecordForAlice(deletedRecord);
-      expect(receivedRecord.deleted).toBe(true);
-
-      await receivedRecord.store(true);
-
-      const readResult = await dwnAlice.records.read({ filter: { recordId: receivedRecord.id } });
-      expect(readResult.status.code).toBe(404);
-    });
-
-  });
-
-  describe('import()', () => {
-    let notesProtocol: DwnProtocolDefinition;
-
-    beforeEach(async () => {
-      const protocolUri = `https://example.com/protocol/${TestDataGenerator.randomString(15)}`;
-      notesProtocol = {
-        published : true,
-        protocol  : protocolUri,
-        types     : {
-          note: {
-            schema: 'http://example.com/note'
-          },
-          request: {
-            schema: 'http://example.com/request'
-          }
-        },
-        structure: {
-          request: {
-            $actions: [{
-              who : 'anyone',
-              can : ['create', 'update', 'delete']
-            }]
-          },
-          note: {
-          }
-        }
-      };
-
-      // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
-        definition: notesProtocol
-      });
-      expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
-      expect(aliceNotesProtocolSend.code).toBe(202);
-
-      const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ definition: notesProtocol });
-      expect(bobConfigStatus.code).toBe(202);
-      const { status: bobNotesProtocolSend } = await bobNotesProtocol!.send(bobDid.uri);
-      expect(bobNotesProtocolSend.code).toBe(202);
-
-    });
-
-    it('should import an external record without storing it', async () => {
-      // Scenario: Alice creates a record.
-      //           Bob queries for the record from Alice's DWN and then imports it without storing
-      //           Bob then .stores() it without specifying import explicitly as it's already been imported.
-
-      // Alice creates a record and sends it to her DWN.
-      const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        published    : true,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-      });
-      expect(status.code).toBe(202, status.detail);
-      await record.send();
-
-      // Bob queries Alice's DWN for the record.
-      const aliceQueryResult = await dwnBob.records.query({
-        from   : aliceDid.uri,
-        filter : {
-          recordId: record.id
-        }
-      });
-      expect(aliceQueryResult.status.code).toBe(200);
-      expect(aliceQueryResult.records).toHaveLength(1);
-      const queriedRecord = aliceQueryResult.records[0];
-
-      // Imports the record without storing it.
-      await queriedRecord.import();
-
-      // Bob queries his own DWN for the record, which should return the record.
-      const bobQueryResult = await dwnBob.records.query({
-        filter: {
-          recordId: record.id
-        }
-      });
-      expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records).toHaveLength(1);
-      const storedRecord = bobQueryResult.records[0];
-      expect(storedRecord.id).toBe(record.id);
-    });
-
-    it('import an external record along with the initial write', async () => {
-      // Scenario: Alice creates a record and then updates it.
-      //           Bob queries for the record from Alice's DWN and then stores the updated record along with it's initial write.
-
-      // Alice creates a public record then sends it to her remote DWN.
-      const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        published    : true,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-      });
-      expect(status.code).toBe(202, status.detail);
-      const updatedText = 'updated text';
-      const updatedRecord = await record!.update({ data: updatedText });
-      expect(updatedRecord).toBe(record);
-      await updatedRecord.send();
-
-      // Bob queries Alice's DWN for the record.
-      const aliceQueryResult = await dwnBob.records.query({
-        from   : aliceDid.uri,
-        filter : {
-          recordId: record.id
-        }
-      });
-      expect(aliceQueryResult.status.code).toBe(200);
-      expect(aliceQueryResult.records).toHaveLength(1);
-      const queriedRecord = aliceQueryResult.records[0];
-
-      // Imports the record without storing it.
-      await queriedRecord.import();
-
-      // Bob queries his own DWN for the record, which should return the record.
-      const bobQueryResult = await dwnBob.records.query({
-        filter: {
-          recordId: record.id
-        }
-      });
-      expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records).toHaveLength(1);
-      const storedRecord = bobQueryResult.records[0];
-      expect(storedRecord.id).toBe(record.id);
-    });
-
-    it('signs and imports an externally signed deleted record as the owner', async () => {
-      const { status: writeStatus, record } = await dwnBob.records.write({
-        data         : 'Hello, world!',
-        dataFormat   : 'text/plain',
-        recipient    : aliceDid.uri,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'request',
-        schema       : notesProtocol.types.request.schema,
-      });
-      expect(writeStatus.code).toBe(202);
-
-      await record.delete();
-      const deletedRecord = record;
-
-      const receivedRecord = rehydrateExternalDeletedRecordForAlice(deletedRecord);
-      expect(receivedRecord.deleted).toBe(true);
-
-      await receivedRecord.import();
-
-      const readResult = await dwnAlice.records.read({ filter: { recordId: receivedRecord.id } });
-      expect(readResult.status.code).toBe(404);
-    });
-
-
-    describe('store: false', () => {
-      it('should import an external record without storing it', async () => {
-        // Scenario: Alice creates a record.
-        //           Bob queries for the record from Alice's DWN and then imports it without storing
-        //           Bob then .stores() it without specifying import explicitly as it's already been imported.
-
-        // Alice creates a record and sends it to her DWN.
-        const { status, record } = await dwnAlice.records.write({
-          data         : 'Hello, world!',
-          published    : true,
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-          schema       : notesProtocol.types.note.schema
-        });
-        expect(status.code).toBe(202, status.detail);
-        await record.send();
-
-        // Bob queries Alice's DWN for the record.
-        const aliceQueryResult = await dwnBob.records.query({
-          from   : aliceDid.uri,
-          filter : {
-            recordId: record.id
-          }
-        });
-        expect(aliceQueryResult.status.code).toBe(200);
-        expect(aliceQueryResult.records).toHaveLength(1);
-        const queriedRecord = aliceQueryResult.records[0];
-
-        // Imports the record without storing it.
-        await queriedRecord.import(false);
-
-        // Queries for the record from Bob's DWN, which should not return any results.
-        let bobQueryResult = await dwnBob.records.query({
-          filter: {
-            recordId: record.id
-          }
-        });
-        expect(bobQueryResult.status.code).toBe(200);
-        expect(bobQueryResult.records).toHaveLength(0);
-
-        // Attempts to store the record without explicitly marking it for import as it's already
-        // been imported
-        await queriedRecord.store();
-
-        // Bob queries his own DWN for the record, which should return the record.
-        bobQueryResult = await dwnBob.records.query({
-          filter: {
-            recordId: record.id
-          }
-        });
-        expect(bobQueryResult.status.code).toBe(200);
-        expect(bobQueryResult.records).toHaveLength(1);
-        const storedRecord = bobQueryResult.records[0];
-        expect(storedRecord.id).toBe(record.id);
-      });
-
-      it('import an external record along with the initial write', async () => {
-        // Scenario: Alice creates a record and then updates it.
-        //           Bob queries for the record from Alice's DWN and then stores the updated record along with it's initial write.
-
-        // Alice creates a public record then sends it to her remote DWN.
-        const { status, record } = await dwnAlice.records.write({
-          data         : 'Hello, world!',
-          published    : true,
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-          schema       : notesProtocol.types.note.schema
-        });
-        expect(status.code).toBe(202, status.detail);
-        const updatedText = 'updated text';
-        const updatedRecord = await record.update({ data: updatedText });
-        expect(updatedRecord).toBe(record);
-        await updatedRecord.send();
-
-        // Bob queries Alice's DWN for the record.
-        const aliceQueryResult = await dwnBob.records.query({
-          from   : aliceDid.uri,
-          filter : {
-            recordId: record.id
-          }
-        });
-        expect(aliceQueryResult.status.code).toBe(200);
-        expect(aliceQueryResult.records).toHaveLength(1);
-        const queriedRecord = aliceQueryResult.records[0];
-
-        // Imports the record without storing it.
-        await queriedRecord.import(false);
-
-        // Queries for the record from Bob's DWN, which should not return any results.
-        let bobQueryResult = await dwnBob.records.query({
-          filter: {
-            recordId: record.id
-          }
-        });
-        expect(bobQueryResult.status.code).toBe(200);
-        expect(bobQueryResult.records).toHaveLength(0);
-
-        // Attempts to store the record without explicitly marking it for import as it's already been imported.
-        await queriedRecord.store();
-
-        // Bob queries his own DWN for the record, which should return the record.
-        bobQueryResult = await dwnBob.records.query({
-          filter: {
-            recordId: record.id
-          }
-        });
-        expect(bobQueryResult.status.code).toBe(200);
-        expect(bobQueryResult.records).toHaveLength(1);
-        const storedRecord = bobQueryResult.records[0];
-        expect(storedRecord.id).toBe(record.id);
-      });
-
-      it('signs an externally deleted record before storing it as the owner', async () => {
-        const { status: writeStatus, record } = await dwnBob.records.write({
-          data         : 'Hello, world!',
-          dataFormat   : 'text/plain',
-          recipient    : aliceDid.uri,
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'request',
-          schema       : notesProtocol.types.request.schema,
-        });
-        expect(writeStatus.code).toBe(202);
-
-        await record.delete();
-        const deletedRecord = record;
-
-        const receivedRecord = rehydrateExternalDeletedRecordForAlice(deletedRecord);
-        expect(receivedRecord.deleted).toBe(true);
-
-        const processMessageSpy = sinon.spy(testHarness.dwn, 'processMessage');
-        const storedRecordCallCount = (): number => processMessageSpy.getCalls()
-          .filter((call): boolean =>
-            isDwnMessage(DwnInterface.RecordsWrite, call.args[1]) ||
-            isDwnMessage(DwnInterface.RecordsDelete, call.args[1])
-          ).length;
-
-        await receivedRecord.import(false);
-        expect(storedRecordCallCount()).toBe(0);
-
-        await receivedRecord.store();
-        expect(storedRecordCallCount()).toBe(2);
-
-        const readResult = await dwnAlice.records.read({ filter: { recordId: receivedRecord.id } });
-        expect(readResult.status.code).toBe(404);
-      });
-
+      expect(deletedRead.status.code).toBe(404);
     });
   });
 
@@ -4794,41 +3382,6 @@ describe('Record', () => {
       }
 
       stub.restore();
-    });
-  });
-
-  describe('processRecord() deleted branch', () => {
-    it('should send a RecordsDelete when storing a deleted record', async () => {
-      // Create a record without storing it.
-      const { status: writeStatus, record } = await dwnAlice.records.write({
-        store        : false,
-        data         : 'Hello, world!',
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        schema       : protocolDefinition.types.thread.schema,
-        dataFormat   : 'text/plain',
-      });
-      expect(writeStatus.code).toBe(202);
-
-      // Delete the record without storing.
-      await record.delete({ store: false });
-      const deletedRecord = record;
-      expect(deletedRecord.deleted).toBe(true);
-
-      // Spy on processDwnRequest to verify the deleted branch sends RecordsDelete.
-      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-
-      // Store the deleted record — this should invoke processRecord() which takes the deleted branch.
-      await deletedRecord.store();
-
-      // The spy should have been called: once for the initial write and once for the delete.
-      // Find the RecordsDelete call.
-      const deleteCall = processSpy.getCalls().find(
-        (call) => call.args[0].messageType === DwnInterface.RecordsDelete
-      );
-      expect(deleteCall).toBeDefined();
-
-      processSpy.restore();
     });
   });
 });

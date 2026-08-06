@@ -10,6 +10,7 @@ import { AuthManager, MemoryStorage } from '@enbox/auth';
 import { DwnConstant, Jws, Poller } from '@enbox/dwn-sdk-js';
 import { DwnInterface, EnboxUserAgent, executeConnectApproval } from '@enbox/agent';
 
+import { publishProtocol } from './utils/test-dwn-operations.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { defineProtocol, Enbox, recordCodecs } from '../src/index.js';
 
@@ -178,7 +179,8 @@ describe('shared context public API integration', () => {
     const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
     const configured = await owner.configure();
     expect(configured.status.code).toBe(202);
-    expect((await configured.protocol!.send(ownerDid)).status).toEqual({ code: 202, detail: 'Accepted' });
+    expect((await publishProtocol(ownerHarness.agent, configured.protocol!, ownerDid, ownerDid)).status)
+      .toEqual({ code: 202, detail: 'Accepted' });
 
     memberAuth = await AuthManager.create({
       agent          : memberHarness.agent as EnboxUserAgent,

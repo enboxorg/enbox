@@ -13,6 +13,7 @@ import { DwnInterface } from '@enbox/agent';
 
 import { ContextNotReadyError } from '../src/context-errors.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { DwnResponseError } from '../src/dwn-response-error.js';
 
 type AgentStub = {
   decryptRecordData: sinon.SinonStub;
@@ -124,7 +125,7 @@ describe('context record execution', () => {
     };
   });
 
-  it('confines owner context routing and retained handles at runtime', async () => {
+  it('confines owner context routing at runtime', async () => {
     agent.processDwnRequest.resolves({
       reply: {
         entry  : { recordsWrite: createRecordsWrite(), encodedData: btoa('{}') },
@@ -139,11 +140,6 @@ describe('context record execution', () => {
     await expect(dwn.records.read({ filter: { recordId }, protocolRole })).rejects.toThrow(
       'Context-bound operations cannot invoke another protocol role.',
     );
-
-    const { record } = await dwn.records.read({ filter: { recordId } });
-    await expect(record!.send()).rejects.toThrow('Context-bound records cannot be sent manually.');
-    await expect(record!.store()).rejects.toThrow('Context-bound records cannot be stored manually.');
-    await expect(record!.import()).rejects.toThrow('Context-bound records cannot be imported.');
     expect(agent.sendDwnRequest.notCalled).toBe(true);
   });
 
@@ -284,6 +280,63 @@ describe('context record execution', () => {
       .resolves.toEqual({ status: { code: 202, detail: 'Accepted' } });
 
     expect(invalidateReplica.callCount).toBe(4);
+  });
+
+  it('treats an existing authority tombstone as a converged context delete', async () => {
+    const invalidateReplica = sinon.stub().resolves();
+    const recordsWrite = createRecordsWrite();
+    const attemptedDelete = {
+      authorization : createAuthorization(connectedDid),
+      descriptor    : {
+        interface        : 'Records',
+        messageTimestamp : '2026-01-01T00:00:01.000000Z',
+        method           : 'Delete',
+        recordId,
+      },
+    } as DwnMessage[DwnInterface.RecordsDelete];
+    agent.processDwnRequest.resolves({
+      reply: {
+        entry        : { recordsWrite, encodedData: btoa('{}') },
+        roleRecordId : 'role-record',
+        status       : { code: 200, detail: 'OK' },
+      },
+    });
+    agent.sendDwnRequest.resolves({
+      message    : attemptedDelete,
+      messageCid : 'attempted-delete-cid',
+      reply      : { status: { code: 409, detail: 'Conflict' } },
+    });
+    const dwn = createApi(agent, { invalidateReplica });
+    const { record } = await dwn.records.read({ filter: { recordId } });
+    const originalMessage = record!.rawMessage;
+    const originalTimestamp = record!.timestamp;
+
+    await expect(record!.delete()).resolves.toBeUndefined();
+
+    expect(record!.deleted).toBe(false);
+    expect(record!.rawMessage).toEqual(originalMessage);
+    expect(record!.timestamp).toBe(originalTimestamp);
+    expect(invalidateReplica.calledOnce).toBe(true);
+  });
+
+  it('rejects noncanonical context delete conflicts', async () => {
+    const invalidateReplica = sinon.stub().resolves();
+    agent.processDwnRequest.resolves({
+      reply: {
+        entry        : { recordsWrite: createRecordsWrite(), encodedData: btoa('{}') },
+        roleRecordId : 'role-record',
+        status       : { code: 200, detail: 'OK' },
+      },
+    });
+    agent.sendDwnRequest.resolves({
+      messageCid : 'attempted-delete-cid',
+      reply      : { status: { code: 409, detail: 'Conflict', errorCode: 'UnexpectedConflict' } },
+    });
+    const dwn = createApi(agent, { invalidateReplica });
+    const { record } = await dwn.records.read({ filter: { recordId } });
+
+    await expect(record!.delete()).rejects.toBeInstanceOf(DwnResponseError);
+    expect(invalidateReplica.notCalled).toBe(true);
   });
 
   it('preserves an authorized tombstone for context-bound prune escalation', async () => {

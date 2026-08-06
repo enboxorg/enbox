@@ -202,9 +202,6 @@ export type RecordUpdateParams<T = unknown> = {
    */
   dataCid?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['dataCid'];
 
-  /** Whether or not to store the updated message. */
-  store?: boolean;
-
   /** The size of the data in bytes. */
   dataSize?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['dataSize'];
 
@@ -241,12 +238,6 @@ export type RecordUpdateParams<T = unknown> = {
  * @beta
  */
 export type RecordDeleteParams = {
-  /** Whether or not to store the message. */
-  store?: boolean;
-
-  /** Whether or not to sign the delete as an owner in order to import it. */
-  signAsOwner?: boolean;
-
   /** Whether or not to prune any children this record may have. */
   prune?: DwnMessageDescriptor[DwnInterface.RecordsDelete]['prune'];
 

@@ -22,6 +22,7 @@ import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
+import { publishProtocol, publishRecord } from './utils/test-dwn-operations.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -92,7 +93,12 @@ describe('cross-tenant writes (#973)', () => {
   async function installProtocolForAlice(): Promise<void> {
     const { status, protocol } = await dwnAlice.protocols.configure({ definition: protocolDefinition });
     expect(status.code).toBe(202);
-    const { status: sendStatus } = await protocol!.send(aliceDid.uri);
+    const { status: sendStatus } = await publishProtocol(
+      testHarness.agent,
+      protocol!,
+      aliceDid.uri,
+      aliceDid.uri,
+    );
     expect(sendStatus.code).toBe(202);
   }
 
@@ -107,7 +113,7 @@ describe('cross-tenant writes (#973)', () => {
       dataFormat   : 'text/plain',
     });
     expect(status.code).toBe(202);
-    await record!.send(aliceDid.uri);
+    await publishRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
   }
 
   describe('records.write with from', () => {
@@ -320,7 +326,7 @@ describe('cross-tenant writes (#973)', () => {
         dataFormat   : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
-      await record!.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
 
       const readResult = await dwnAlice.records.read({
         from   : aliceDid.uri,
@@ -360,7 +366,12 @@ describe('cross-tenant writes (#973)', () => {
       };
       const { status: aliceConfig, protocol } = await dwnAlice.protocols.configure({ definition: coUpdateProtocol });
       expect(aliceConfig.code).toBe(202);
-      const { status: aliceProtocolSend } = await protocol!.send(aliceDid.uri);
+      const { status: aliceProtocolSend } = await publishProtocol(
+        testHarness.agent,
+        protocol!,
+        aliceDid.uri,
+        aliceDid.uri,
+      );
       expect(aliceProtocolSend.code).toBe(202);
       const { status: bobConfig } = await dwnBob.protocols.configure({ definition: coUpdateProtocol });
       expect(bobConfig.code).toBe(202);
@@ -378,7 +389,7 @@ describe('cross-tenant writes (#973)', () => {
         dataFormat   : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
-      await alicesRecord!.send(aliceDid.uri);
+      await publishRecord(testHarness.agent, alicesRecord!, aliceDid.uri, aliceDid.uri);
 
       // Bob reads it from Alice's remote and stores a local copy, then
       // re-queries locally so the new reference captures local data access.
@@ -387,7 +398,15 @@ describe('cross-tenant writes (#973)', () => {
         filter : { recordId: alicesRecord!.id },
       });
       expect(bobRead.status.code).toBe(200);
-      await bobRead.record!.store();
+      const imported = await testHarness.agent.processDwnRequest({
+        author      : bobDid.uri,
+        dataStream  : await bobRead.record!.data.stream(),
+        messageType : DwnInterface.RecordsWrite,
+        rawMessage  : bobRead.record!.rawMessage as DwnMessage[DwnInterface.RecordsWrite],
+        store       : true,
+        target      : bobDid.uri,
+      });
+      expect(imported.reply.status.code).toBe(202);
 
       const bobLocalQuery = await dwnBob.records.query({ filter: { recordId: alicesRecord!.id } });
       expect(bobLocalQuery.status.code).toBe(200);
@@ -496,7 +515,12 @@ describe('cross-tenant writes (#973)', () => {
       };
       const { status: configStatus, protocol } = await dwnAlice.protocols.configure({ definition: notesProtocol });
       expect(configStatus.code).toBe(202);
-      const { status: protocolSendStatus } = await protocol!.send(aliceDid.uri);
+      const { status: protocolSendStatus } = await publishProtocol(
+        testHarness.agent,
+        protocol!,
+        aliceDid.uri,
+        aliceDid.uri,
+      );
       expect(protocolSendStatus.code).toBe(202);
 
       // Alice grants a device did:jwk delegated write/read for the protocol;
@@ -580,7 +604,12 @@ describe('cross-tenant writes (#973)', () => {
       for (const ownerDwn of [dwnAlice, dwnBob]) {
         const { status, protocol } = await ownerDwn.protocols.configure({ definition: roleProtocol });
         expect(status.code).toBe(202);
-        const { status: sendStatus } = await protocol!.send(ownerDwn.connectedDid);
+        const { status: sendStatus } = await publishProtocol(
+          testHarness.agent,
+          protocol!,
+          ownerDwn.connectedDid,
+          ownerDwn.connectedDid,
+        );
         expect(sendStatus.code).toBe(202);
       }
 
@@ -592,7 +621,7 @@ describe('cross-tenant writes (#973)', () => {
         dataFormat   : 'text/plain',
       });
       expect(threadStatus.code).toBe(202);
-      await thread!.send(bobDid.uri);
+      await publishRecord(testHarness.agent, thread!, bobDid.uri, bobDid.uri);
 
       const { status: participantStatus, record: participant } = await dwnBob.records.write({
         data            : 'participant',
@@ -604,7 +633,7 @@ describe('cross-tenant writes (#973)', () => {
         dataFormat      : 'text/plain',
       });
       expect(participantStatus.code).toBe(202);
-      await participant!.send(bobDid.uri);
+      await publishRecord(testHarness.agent, participant!, bobDid.uri, bobDid.uri);
 
       const sessionData = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
       const { status: sessionStatus, record: session } = await dwnBob.records.write({
@@ -616,7 +645,7 @@ describe('cross-tenant writes (#973)', () => {
         dataFormat      : 'text/plain',
       });
       expect(sessionStatus.code).toBe(202);
-      await session!.send(bobDid.uri);
+      await publishRecord(testHarness.agent, session!, bobDid.uri, bobDid.uri);
 
       const { enbox } = await createDelegatedEnbox(roleProtocol, ['read', 'delete']);
       const typed = new TypedEnbox(

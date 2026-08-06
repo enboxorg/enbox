@@ -336,8 +336,6 @@ void queried.then(async (page): Promise<void> => {
   void continued;
   // @ts-expect-error plain query results retain context-bound handles.
   void page.records[0]?.rawMessage;
-  // @ts-expect-error pagination continuations retain context-bound handles.
-  await next?.records[0]?.send('did:example:other');
 });
 
 void read.then((record): void => {
@@ -435,16 +433,8 @@ void created.then(async (record): Promise<void> => {
   await record.update({ data: { text: 'wrong tenant' }, from: 'did:example:other' });
   // @ts-expect-error context updates cannot override their role.
   await record.update({ data: { text: 'wrong role' }, protocolRole: 'workspace/other' });
-  // @ts-expect-error context updates cannot control DWN storage.
-  await record.update({ data: { text: 'not stored' }, store: false });
   // @ts-expect-error partial updates belong to context.records.patch().
   await record.patch({ text: 'patched' });
-  // @ts-expect-error context deletes cannot sign as the source owner.
-  await record.delete({ signAsOwner: true });
-  // @ts-expect-error context records cannot be sent manually.
-  await record.send('did:example:other');
-  // @ts-expect-error context records cannot be stored manually.
-  await record.store();
   // @ts-expect-error context records cannot expose their raw serialization.
   void record.toJSON();
   // @ts-expect-error context records do not expose raw DWN messages.
@@ -455,8 +445,6 @@ void created.then(async (record): Promise<void> => {
 void context.records.create('workspace/note', { data: { text: 'hello' }, from: 'did:example:other' });
 // @ts-expect-error context creates cannot override their role.
 void context.records.create('workspace/note', { data: { text: 'hello' }, protocolRole: 'workspace/other' });
-// @ts-expect-error context creates cannot control DWN storage.
-void context.records.create('workspace/note', { data: { text: 'hello' }, store: false });
 // @ts-expect-error context creates cannot inject audience keys.
 void context.records.create('workspace/note', { data: { text: 'hello' }, recipientRolePublicKey: {} });
 void context.records.create('workspace/note', {

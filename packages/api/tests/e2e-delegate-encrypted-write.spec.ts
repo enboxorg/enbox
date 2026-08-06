@@ -52,6 +52,7 @@ import { DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Jws, WRAP
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Enbox } from '../src/enbox.js';
+import { publishProtocol } from './utils/test-dwn-operations.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -199,7 +200,12 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
     // Send the protocol (with `$keyAgreement`) to the wallet's remote DWN.
     // This is what real wallets do in `prepareProtocol()`.
-    const { status: sendStatus } = await walletProtocol!.send(walletDid.uri);
+    const { status: sendStatus } = await publishProtocol(
+      walletHarness.agent,
+      walletProtocol!,
+      walletDid.uri,
+      walletDid.uri,
+    );
     expect(sendStatus.code).toBe(202);
 
     // 2. Create a delegate did:jwk (same as the wallet DWeb Connect handler).
@@ -508,7 +514,7 @@ class InProcessWalletHandler implements ConnectHandler {
       }
 
       // Send to the wallet's remote DWN (same as a real wallet does).
-      await walletProtocol!.send(this.ownerDid);
+      await publishProtocol(this.walletAgent, walletProtocol!, this.ownerDid, this.ownerDid);
 
       // Create permission grants.
       const grants = await createPermissionGrants(
