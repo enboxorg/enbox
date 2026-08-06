@@ -34,6 +34,8 @@ export type RecordExecutionContext = Readonly<{
   followedSourceId?: string;
   /** Role invoked for every operation when this is a followed context. */
   protocolRole?: string;
+  /** Hosted endpoint accepted for authoritative followed-context mutations. */
+  remoteEndpoint?: string;
   /** Tenant that owns the context. */
   tenantDid: string;
 }>;

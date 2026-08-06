@@ -19,7 +19,7 @@ import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRoleAudienceContextId, getRoleRecordIdentity, getRuleSetAtPath, isCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleAudienceContextId, getRoleRecordIdentity, isCrossProtocolRef } from '../utils/protocols.js';
 
 const MAX_SUPPORT_RECORDS_PER_KIND = 16;
 const MAX_SUPPORT_PROTOCOL_CONFIGS = 64;
@@ -151,25 +151,16 @@ export class RecordsReadReplicationSupport {
     const { deps, matchedRecordsWrite, recordsDelete, requester, resolvedRole, tenant } = input;
     const protocol = matchedRecordsWrite.descriptor.protocol;
     const selectors = new Map<string, AuthorRoleSelector>();
-    const addSelector = async (
+    const addSelector = (
       protocolRole: string | undefined,
       recipient: string | undefined,
       contextId: string | undefined,
-      messageTimestamp: string,
-    ): Promise<void> => {
+    ): void => {
       if (protocolRole === undefined) {
         return;
       }
       if (isCrossProtocolRef(protocolRole)) {
         throw RecordsReadReplicationSupport.unsupported('cross-protocol author role proofs are not supported.');
-      }
-      const definition = await deps.validationStateReader.fetchProtocolDefinition(
-        tenant,
-        protocol,
-        messageTimestamp,
-      );
-      if (getRuleSetAtPath(protocolRole, definition.structure)?.$role !== true) {
-        throw RecordsReadReplicationSupport.unsupported(`record author invoked non-role path '${protocolRole}'.`);
       }
       if (recipient === undefined) {
         throw RecordsReadReplicationSupport.unsupported('role-authored record has no logical author.');
@@ -194,20 +185,18 @@ export class RecordsReadReplicationSupport {
 
     for (const record of [matchedRecordsWrite, ...recordChain]) {
       const parsed = await RecordsWrite.parse(record);
-      await addSelector(
+      addSelector(
         parsed.signaturePayload?.protocolRole,
         parsed.author,
         record.contextId,
-        record.descriptor.messageTimestamp,
       );
     }
     if (recordsDelete !== undefined) {
       const parsed = await RecordsDelete.parse(recordsDelete);
-      await addSelector(
+      addSelector(
         parsed.signaturePayload?.protocolRole,
         parsed.author,
         matchedRecordsWrite.contextId,
-        recordsDelete.descriptor.messageTimestamp,
       );
     }
 

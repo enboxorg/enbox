@@ -3,7 +3,6 @@
  * - send() with deleted records (lines 421-427)
  * - send() with initialWrite present (lines 401-418)
  * - send() default target (line 398)
- * - paginationCursor() for deleted records (lines 494-503)
  * - readRecordData() remote branch (lines 812-813)
  * - readRecordData() delegate grant fallback (lines 798-810)
  * - processRecord() signAsOwner branch (lines 759-765)
@@ -16,7 +15,7 @@ import type { EnboxAgent } from '@enbox/agent';
 import sinon from 'sinon';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import { DwnDateSort, DwnInterface } from '@enbox/agent';
+import { DwnInterface } from '@enbox/agent';
 
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Record } from '../src/record.js';
@@ -483,26 +482,6 @@ describe('Record — coverage gaps (stubbed)', () => {
       const record = new Record(agentStub as unknown as EnboxAgent, options);
       // When no initialWrite, creator = author.
       expect(record.creator).toBe('did:example:alice');
-    });
-  });
-
-  describe('paginationCursor() — deleted record', () => {
-    it('should return undefined for a deleted record', async () => {
-      const options = createRecordOptions({
-        descriptor   : createDeleteDescriptor('rec-001'),
-        initialWrite : {
-          recordId      : 'rec-001',
-          descriptor    : createRecordOptions().descriptor,
-          authorization : createValidAuthorization(),
-        },
-        storedData: undefined,
-      });
-
-      const record = new Record(agentStub as unknown as EnboxAgent, options);
-      expect(record.deleted).toBe(true);
-
-      const cursor = await record.paginationCursor(DwnDateSort.CreatedAscending);
-      expect(cursor).toBeUndefined();
     });
   });
 

@@ -100,22 +100,10 @@ export class TestAgent<TKeyManager extends AgentKeyManager> implements EnboxPlat
     return this.dwn.processRequest(request);
   }
 
-  public async sendDidRequest<T extends DidInterface>(
-    _request: DidRequest<T>
-  ): Promise<DidResponse<T>> {
-    throw new Error('Not implemented');
-  }
-
   public async sendDwnRequest<T extends DwnInterface>(
     request: SendDwnRequest<T>
   ): Promise<DwnResponse<T>> {
     return this.dwn.sendRequest(request);
-  }
-
-  public sendDwnDeleteToAllRemoteEndpoints(
-    request: ProcessDwnRequest<DwnInterface.RecordsDelete>,
-  ): ReturnType<AgentDwnApi['sendDeleteToAllRemoteEndpoints']> {
-    return this.dwn.sendDeleteToAllRemoteEndpoints(request);
   }
 
   public async start(_params: { passphrase: string; }): Promise<void> {

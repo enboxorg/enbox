@@ -1171,10 +1171,19 @@ export class AgentDwnApi {
       );
     }
 
-    // Bypass local discovery when the caller needs the hosted DWN's state.
-    const dwnEndpointUrls = request.remoteEndpointsOnly
-      ? await this.requireRemoteDwnEndpointUrls(request.target)
-      : await this.getDwnEndpointUrlsForTarget(request.target);
+    if (request.remoteEndpoint !== undefined && request.remoteEndpointsOnly === true) {
+      throw new TypeError('AgentDwnApi: remoteEndpoint and remoteEndpointsOnly are mutually exclusive.');
+    }
+    if (request.remoteEndpoint !== undefined && this._localDwnStrategy === 'only') {
+      throw new Error(
+        `AgentDwnApi: remoteEndpoint cannot be used while localDwnStrategy is 'only'.`
+      );
+    }
+    const dwnEndpointUrls = request.remoteEndpoint !== undefined
+      ? [request.remoteEndpoint]
+      : request.remoteEndpointsOnly
+        ? await this.requireRemoteDwnEndpointUrls(request.target)
+        : await this.getDwnEndpointUrlsForTarget(request.target);
     if (dwnEndpointUrls.length === 0) {
       throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${request.target}#dwn`);
     }
@@ -1229,42 +1238,6 @@ export class AgentDwnApi {
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
     return { reply, message, messageCid, ...(responseData ? { data: responseData } : {}) };
-  }
-
-  /** @internal Construct one RecordsDelete and send it to every hosted endpoint. */
-  public async sendDeleteToAllRemoteEndpoints(
-    request: ProcessDwnRequest<DwnInterface.RecordsDelete>,
-  ): Promise<{
-    message: DwnMessage[DwnInterface.RecordsDelete];
-    replies: Array<{
-      dwnUrl: string;
-      reply: DwnMessageReply[DwnInterface.RecordsDelete];
-    }>;
-  }> {
-    const dwnEndpointUrls = await this.requireRemoteDwnEndpointUrls(request.target);
-    const { message } = await this.constructDwnMessage({
-      request,
-      protocolDefinitionSource: 'remote',
-    });
-    const outcomes = await Promise.allSettled(dwnEndpointUrls.map(async (dwnUrl) => {
-      const reply = await this.agent.rpc.sendDwnRequest({
-        dwnUrl,
-        targetDid: request.target,
-        message,
-      }) as DwnMessageReply[DwnInterface.RecordsDelete];
-      return { dwnUrl, reply };
-    }));
-    const replies: Array<{
-      dwnUrl: string;
-      reply: DwnMessageReply[DwnInterface.RecordsDelete];
-    }> = [];
-    for (const outcome of outcomes) {
-      if (outcome.status === 'rejected') {
-        throw outcome.reason;
-      }
-      replies.push(outcome.value);
-    }
-    return { message, replies };
   }
 
   /** Reconstruct and re-sign a subscription at its last transport cursor. */

@@ -145,16 +145,11 @@ export class SyncTargetResolver {
     })));
   }
 
-  /** Build every exact-context target represented by one accepted role record. */
-  public async buildTargetsForSource(
+  /** Build the exact-context target represented by one accepted role record. */
+  public async buildTargetForSource(
     source: FollowedSyncSource,
     delegateDid?: string,
-    resolvedEndpoints?: readonly string[],
-  ): Promise<SyncTarget[]> {
-    const endpoints = resolvedEndpoints ?? await this.getRemoteEndpointUrls(source.sourceDid);
-    if (endpoints.length === 0) {
-      return [];
-    }
+  ): Promise<SyncTarget> {
     const scope = {
       kind          : 'context' as const,
       protocol      : source.protocol,
@@ -171,15 +166,15 @@ export class SyncTargetResolver {
 
     const authorizationEpoch = await computeAuthorizationEpoch(authorization);
     const projectionId = await computeProjectionId(source.sourceDid, scope);
-    return endpoints.map((dwnUrl): SyncTarget => ({
-      did: source.sourceDid,
-      dwnUrl,
+    return {
+      did    : source.sourceDid,
+      dwnUrl : source.remoteEndpoint,
       delegateDid,
       projectionId,
       scope,
       authorization,
       authorizationEpoch,
-    }));
+    };
   }
 
   /** Attach the current full delegate grant immediately before a role request. */

@@ -297,18 +297,16 @@ describe('SyncTargetResolver', () => {
       )).rejects.toThrow('No active protocol-root Messages.Read permission');
     });
 
-    it('should discover a followed source and bind its actor role authorization', async () => {
+    it('should bind a followed source to its accepted endpoint and actor role', async () => {
       const source = followedSource();
-      const { getRemoteDwnEndpointUrls, resolver } = createResolver({
-        remoteEndpoints: ['https://owner.example.com/', 'https://owner.example.com'],
-      });
+      const { getRemoteDwnEndpointUrls, resolver } = createResolver();
 
-      const [target] = await resolver.buildTargetsForSource(source);
+      const target = await resolver.buildTargetForSource(source);
 
-      expect(getRemoteDwnEndpointUrls.calledOnceWith(source.sourceDid)).toBe(true);
+      expect(getRemoteDwnEndpointUrls.notCalled).toBe(true);
       expect(target).toMatchObject({
         did    : source.sourceDid,
-        dwnUrl : 'https://owner.example.com/',
+        dwnUrl : source.remoteEndpoint,
         scope  : {
           kind          : 'context',
           protocol      : source.protocol,
@@ -326,22 +324,6 @@ describe('SyncTargetResolver', () => {
       expect(typeof target.authorizationEpoch).toBe('string');
     });
 
-    it('should build a followed target from an already-authoritative endpoint snapshot', async () => {
-      const source = followedSource();
-      const { getRemoteDwnEndpointUrls, resolver } = createResolver({
-        remoteEndpoints: ['https://stale.example.com'],
-      });
-
-      const [target] = await resolver.buildTargetsForSource(
-        source,
-        undefined,
-        ['https://current.example.com'],
-      );
-
-      expect(target.dwnUrl).toBe('https://current.example.com');
-      expect(getRemoteDwnEndpointUrls.notCalled).toBe(true);
-    });
-
     it('should keep transient delegate grants out of followed-source target identity', async () => {
       const delegateDid = 'did:example:delegate';
       const source = followedSource();
@@ -349,7 +331,7 @@ describe('SyncTargetResolver', () => {
         remoteEndpoints: ['https://owner.example.com'],
       });
 
-      const [target] = await resolver.buildTargetsForSource(source, delegateDid);
+      const target = await resolver.buildTargetForSource(source, delegateDid);
 
       expect(getPermissionForRequest.notCalled).toBe(true);
       expect(target.delegateDid).toBe(delegateDid);
@@ -372,7 +354,7 @@ describe('SyncTargetResolver', () => {
         remoteEndpoints: ['https://owner.example.com'],
       });
       getPermissionForRequest.resolves(initialGrant);
-      const [target] = await resolver.buildTargetsForSource(source, delegateDid);
+      const target = await resolver.buildTargetForSource(source, delegateDid);
       getPermissionForRequest.resetHistory();
       getPermissionForRequest.onFirstCall().resolves(initialGrant);
       getPermissionForRequest.onSecondCall().resolves(refreshedGrant);
@@ -394,15 +376,16 @@ describe('SyncTargetResolver', () => {
 
 function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource {
   return {
-    acceptanceId  : 'acceptance-a',
-    id            : 'role-a',
-    sourceDid     : 'did:example:owner',
-    actorDid      : 'did:example:member',
-    protocol      : 'https://example.com/notebooks',
-    contextId     : 'notebook-a',
-    protocolRole  : 'notebook/viewer',
-    protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
-    roles         : ['notebook/viewer'],
+    acceptanceId   : 'acceptance-a',
+    id             : 'role-a',
+    sourceDid      : 'did:example:owner',
+    remoteEndpoint : 'https://owner.example.com',
+    actorDid       : 'did:example:member',
+    protocol       : 'https://example.com/notebooks',
+    contextId      : 'notebook-a',
+    protocolRole   : 'notebook/viewer',
+    protocolPaths  : ['notebook', 'notebook/page', 'notebook/page/delta'],
+    roles          : ['notebook/collaborator', 'notebook/viewer'],
     ...overrides,
   };
 }

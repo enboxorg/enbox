@@ -212,20 +212,6 @@ describe('EnboxUserAgent', () => {
           });
         });
 
-        describe('sendDidRequest()', () => {
-          it('throws an error', async () => {
-            try {
-              await testHarness.agent.sendDidRequest({
-                messageType   : DidInterface.Create,
-                messageParams : { method: 'jwk' }
-              });
-              throw new Error('Expected an error');
-            } catch (error) {
-              expect(error).toHaveProperty('message', 'Not implemented');
-            }
-          });
-        });
-
         describe('sendDwnRequest()', () => {
           beforeEach(async () => {
             const testPortableIdentity: PortableIdentity = {

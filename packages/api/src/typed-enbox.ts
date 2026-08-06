@@ -38,7 +38,6 @@ import type {
   DwnPublicKeyJwk,
   DwnResponseStatus,
   FollowedSyncSource,
-  ReplicationLinkSnapshot,
   SyncEngine,
 } from '@enbox/agent';
 import type {
@@ -84,14 +83,8 @@ import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
 import {
   FollowedSourceNotReadyError,
   followedSyncSourceActiveEqual,
-  syncEventCoversProtocol,
 } from '@enbox/agent';
-import {
-  projectReplicationCurrentness,
-  type ReplicationCurrentness,
-} from './replication-currentness.js';
 
-const DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS = 10_000;
 const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
 
@@ -1424,7 +1417,7 @@ export class TypedEnbox<
       .sort(compareCodeUnits) as Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>[];
     const contextRoles = new Set(Object.values(this._roleGroups).flat());
     type CatalogContext = { access: 'member' | 'owner'; id: string; ownerDid: string };
-    const boundMembers = new Map<string, { context: CatalogContext; source: FollowedSyncSource }>();
+    const boundMembers = new Map<string, { context: MemberContext<D, C>; source: FollowedSyncSource }>();
     const boundOwners = new Map<string, CatalogContext>();
 
     const listSources = async (): Promise<FollowedSyncSource[]> => {
@@ -1464,13 +1457,18 @@ export class TypedEnbox<
         if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
         throw new Error('TypedEnbox.contexts.follow could not establish the requested context.', { cause: error });
       }
-      return this.bindMemberContext(source);
+      return bindMemberContext(source);
     };
 
     const bindOwnedContext = <Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
       normalizedPath: Root,
       id: string,
     ): OwnedContext<D, C, Root, G> => {
+      const key = contextKey(this._dwn.connectedDid, id);
+      const existing = boundOwners.get(key);
+      if (existing !== undefined) {
+        return existing as OwnedContext<D, C, Root, G>;
+      }
       const protocolPaths = new Set(
         [...this._validPaths]
           .filter((candidate): boolean =>
@@ -1500,7 +1498,7 @@ export class TypedEnbox<
       const canInvite = Object.keys(this._roleGroups).some(group =>
         this.resolveContextRoleGroup(group).contextPath === normalizedPath
       );
-      return Object.freeze({
+      const context = Object.freeze({
         access: 'owner',
         id,
         ...(canInvite ? {
@@ -1528,6 +1526,8 @@ export class TypedEnbox<
         path     : normalizedPath,
         records,
       }) as OwnedContext<D, C, Root, G>;
+      boundOwners.set(key, context);
+      return context;
     };
 
     const openContext = async <Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
@@ -1546,13 +1546,13 @@ export class TypedEnbox<
       return bindOwnedContext(normalizedPath, id);
     };
 
-    const bindListedMember = (source: FollowedSyncSource): CatalogContext => {
+    const bindMemberContext = (source: FollowedSyncSource): MemberContext<D, C> => {
       const key = contextKey(source.sourceDid, source.contextId);
       const existing = boundMembers.get(key);
       if (existing !== undefined && followedSyncSourceActiveEqual(existing.source, source)) {
         return existing.context;
       }
-      const context = this.bindMemberContext(source) as unknown as CatalogContext;
+      const context = this.bindMemberContext(source);
       boundMembers.set(key, { context, source });
       return context;
     };
@@ -1587,13 +1587,7 @@ export class TypedEnbox<
         Promise.all(contextRoots.map(async (path): Promise<CatalogContext[]> => {
           const contexts: CatalogContext[] = [];
           for (const contextId of await listOwnedRootContextIds(path)) {
-            const key = contextKey(this._dwn.connectedDid, contextId);
-            let context = boundOwners.get(key);
-            if (context === undefined) {
-              context = bindOwnedContext(path, contextId);
-              boundOwners.set(key, context);
-            }
-            contexts.push(context);
+            contexts.push(bindOwnedContext(path, contextId));
           }
           return contexts;
         })),
@@ -1615,7 +1609,9 @@ export class TypedEnbox<
       }
       for (const source of sources) {
         const key = contextKey(source.sourceDid, source.contextId);
-        if (!contexts.has(key)) { contexts.set(key, bindListedMember(source)); }
+        if (!contexts.has(key)) {
+          contexts.set(key, bindMemberContext(source) as unknown as CatalogContext);
+        }
       }
       return [...contexts.values()].sort(compareProtocolContexts);
     };
@@ -2814,19 +2810,28 @@ export class TypedEnbox<
       invalidateReplica          : async (): Promise<void> => {
         await sync.markFollowedSourcePullPending(source);
       },
-      protocolRole : source.protocolRole,
-      tenantDid    : source.sourceDid,
+      protocolRole   : source.protocolRole,
+      remoteEndpoint : source.remoteEndpoint,
+      tenantDid      : source.sourceDid,
+    });
+    const membershipDwn = this._dwn.withRecordExecutionContext({
+      assertActive,
+      contextId      : source.contextId,
+      remoteEndpoint : source.remoteEndpoint,
+      tenantDid      : source.sourceDid,
     });
     const retire = async (leave: boolean): Promise<void> => {
       if (leave) {
         await assertActive();
-        await this._dwn.deleteRemoteRecordAndStoreLocal({
+        const result = await membershipDwn.records.delete({
           contextId    : source.contextId,
-          from         : source.sourceDid,
           protocol     : source.protocol,
           protocolPath : source.protocolRole,
           recordId     : source.id,
         });
+        if (result.status.code !== 404 && !isCanonicalConflictStatus(result.status)) {
+          requireDwnSuccess('MemberContext.leave', result);
+        }
       } else {
         this._options.signal?.throwIfAborted();
       }
@@ -2834,136 +2839,22 @@ export class TypedEnbox<
       controller.abort(new ContextRetiredError(source.contextId));
     };
     const refresh = async (): Promise<void> => {
-      const readCurrentness = async (): Promise<{
-        links: ReplicationLinkSnapshot[];
-        state: ReplicationCurrentness;
-      }> => {
-        const links = (await sync.getReplicationLinks(source.sourceDid))
-          .filter((link): boolean => link.followedSourceId === source.id
-            && link.scope.kind === 'context'
-            && link.scope.protocol === source.protocol
-            && link.scope.contextId === source.contextId
-            && sameStrings(link.scope.protocolPaths, source.protocolPaths));
-        signal.throwIfAborted();
-        return { links, state: projectReplicationCurrentness(links) };
-      };
-      const assertRegistered = async (): Promise<void> => {
-        if (await sync.getIdentityOptions(source.actorDid) === undefined) {
-          throw new ContextNotReadyError(
-            new Error(`MemberContext.refresh: actor '${source.actorDid}' is not registered for sync.`),
-          );
-        }
-      };
-      const assertNotPaused = (state: ReplicationCurrentness): void => {
-        if (state !== 'error') {
-          return;
-        }
-        throw new ContextNotReadyError(
-          new Error(
-            `MemberContext.refresh: replication is paused for context '${source.contextId}' ` +
-            `owned by '${source.sourceDid}'.`,
-          ),
-        );
-      };
-
       await assertActive();
-      await assertRegistered();
-      let currentness = await readCurrentness();
-      assertNotPaused(currentness.state);
-      if (currentness.state === 'caught-up') {
-        return;
-      }
-
-      let pullDrained = false;
-      let pullFailure: unknown;
       try {
-        pullDrained = await sync.pullFollowedSource(source);
-      } catch (error: unknown) {
-        pullFailure = error;
-      }
-
-      await assertActive();
-      await assertRegistered();
-      currentness = await readCurrentness();
-      assertNotPaused(currentness.state);
-      if (currentness.state === 'caught-up') {
-        return;
-      }
-      if (currentness.links.length === 0) {
-        throw new ContextNotReadyError(
-          pullFailure ?? new Error(
-            `MemberContext.refresh: no replication link is available for context '${source.contextId}' ` +
-            `owned by '${source.sourceDid}'.`,
-          ),
-        );
-      }
-      // A stopped live runtime reconciles the durable link directly. It has
-      // no controller snapshot to mark ready, so the completed pull is the
-      // point-in-time currentness proof.
-      if (!sync.isLiveSyncRunning) {
-        if (pullDrained) {
-          return;
-        }
-        throw new ContextNotReadyError(
-          pullFailure ?? new Error(
-            `MemberContext.refresh: replication did not drain every endpoint for context ` +
+        if (!await sync.pullFollowedSource(source)) {
+          throw new Error(
+            `MemberContext.refresh: replication did not reach the feed head for context ` +
             `'${source.contextId}' owned by '${source.sourceDid}'.`,
-          ),
-        );
-      }
-
-      const deadline = Date.now() + DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS;
-      while (true) {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) {
-          throw new ContextNotReadyError(
-            pullFailure ?? new Error(
-              `MemberContext.refresh: replication did not become current within ` +
-              `${DEFAULT_CONTEXT_CURRENT_TIMEOUT_MS} milliseconds.`,
-            ),
           );
         }
-
-        let detachSync = (): void => {};
-        let detachAbort = (): void => {};
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const wake = new Promise<void>((resolve): void => {
-          const onWake = (): void => { resolve(); };
-          const onAbort = (): void => { resolve(); };
-          detachSync = sync.on((event): void => {
-            if (
-              (event.type === 'identity:registration-change' && event.tenantDid === source.actorDid) ||
-              (
-                event.type !== 'identity:registration-change' &&
-                event.tenantDid === source.sourceDid &&
-                event.contextId === source.contextId &&
-                syncEventCoversProtocol(event, source.protocol)
-              )
-            ) {
-              onWake();
-            }
-          });
-          signal.addEventListener('abort', onAbort, { once: true });
-          detachAbort = (): void => { signal.removeEventListener('abort', onAbort); };
-          timer = setTimeout(onWake, remaining);
-        });
-        try {
-          await assertActive();
-          await assertRegistered();
-          currentness = await readCurrentness();
-          assertNotPaused(currentness.state);
-          if (currentness.state === 'caught-up') {
-            return;
-          }
-          await wake;
-        } finally {
-          detachSync();
-          detachAbort();
-          if (timer !== undefined) {
-            clearTimeout(timer);
-          }
+      } catch (error: unknown) {
+        await assertActive();
+        if (error instanceof ContextNotReadyError) {
+          throw error;
         }
+        throw new ContextNotReadyError(error);
       }
+      await assertActive();
     };
 
     return Object.freeze({
@@ -3864,10 +3755,6 @@ function projectRoleDeliveryOutcome(outcome: AudienceKeyDeliveryOutcome): RoleDe
 /** Stable identity for one validated DWN keyset cursor. */
 function paginationCursorKey(cursor: DwnPaginationCursor): string {
   return JSON.stringify([cursor.messageCid, cursor.value]);
-}
-
-function sameStrings(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function contextKey(ownerDid: string, contextId: string): string {
