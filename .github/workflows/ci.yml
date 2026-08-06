@@ -15,6 +15,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  PKARR_RELAY_IMAGE: synonymsoft/pkarr-relay@sha256:779353eb69f20be93f5c3d740a633045ef80f8a480467085da19cc8ea57251a4
+
 jobs:
   # ---------------------------------------------------------------------------
   # Detect whether source code changed. Docs-only PRs skip the entire pipeline
@@ -541,15 +544,17 @@ jobs:
 
       - name: Start Pkarr relay
         run: |
-          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr-relay pkarr-relay --testnet
+          docker run -d --name pkarr-relay -p 7527:15411 "$PKARR_RELAY_IMAGE" pkarr-relay --testnet
           echo "Waiting for Pkarr relay..."
           for i in $(seq 1 20); do
-            if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
+            if curl -sf http://localhost:7527/ >/dev/null 2>&1; then
               echo "Pkarr relay is ready"
-              break
+              exit 0
             fi
             sleep 2
           done
+          docker logs pkarr-relay
+          exit 1
 
       - name: Start dwn-server
         run: |
@@ -573,10 +578,11 @@ jobs:
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3000/info >/dev/null 2>&1; then
               echo "dwn-server is ready"
-              break
+              exit 0
             fi
             sleep 2
           done
+          exit 1
 
       - name: Run agent tests with coverage (shard ${{ matrix.shard }}/3)
         run: |
@@ -681,15 +687,17 @@ jobs:
 
       - name: Start Pkarr relay
         run: |
-          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr-relay pkarr-relay --testnet
+          docker run -d --name pkarr-relay -p 7527:15411 "$PKARR_RELAY_IMAGE" pkarr-relay --testnet
           echo "Waiting for Pkarr relay..."
           for i in $(seq 1 20); do
-            if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
+            if curl -sf http://localhost:7527/ >/dev/null 2>&1; then
               echo "Pkarr relay is ready"
-              break
+              exit 0
             fi
             sleep 2
           done
+          docker logs pkarr-relay
+          exit 1
 
       - name: Start dwn-server
         run: |
@@ -713,10 +721,11 @@ jobs:
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3000/info >/dev/null 2>&1; then
               echo "dwn-server is ready"
-              break
+              exit 0
             fi
             sleep 2
           done
+          exit 1
 
       - name: Run tests with coverage
         run: |
@@ -809,15 +818,17 @@ jobs:
 
       - name: Start Pkarr relay
         run: |
-          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr-relay pkarr-relay --testnet
+          docker run -d --name pkarr-relay -p 7527:15411 "$PKARR_RELAY_IMAGE" pkarr-relay --testnet
           echo "Waiting for Pkarr relay..."
           for i in $(seq 1 20); do
-            if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
+            if curl -sf http://localhost:7527/ >/dev/null 2>&1; then
               echo "Pkarr relay is ready"
-              break
+              exit 0
             fi
             sleep 2
           done
+          docker logs pkarr-relay
+          exit 1
 
       - name: Start dwn-server
         run: |
@@ -839,10 +850,11 @@ jobs:
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3000/info >/dev/null 2>&1; then
               echo "dwn-server is ready"
-              break
+              exit 0
             fi
             sleep 2
           done
+          exit 1
 
       - name: Run e2e tests
         run: |

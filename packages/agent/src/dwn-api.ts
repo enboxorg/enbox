@@ -1179,11 +1179,14 @@ export class AgentDwnApi {
         `AgentDwnApi: remoteEndpoint cannot be used while localDwnStrategy is 'only'.`
       );
     }
-    const dwnEndpointUrls = request.remoteEndpoint !== undefined
-      ? [request.remoteEndpoint]
-      : request.remoteEndpointsOnly
-        ? await this.requireRemoteDwnEndpointUrls(request.target)
-        : await this.getDwnEndpointUrlsForTarget(request.target);
+    let dwnEndpointUrls: string[];
+    if (request.remoteEndpoint !== undefined) {
+      dwnEndpointUrls = [request.remoteEndpoint];
+    } else if (request.remoteEndpointsOnly) {
+      dwnEndpointUrls = await this.requireRemoteDwnEndpointUrls(request.target);
+    } else {
+      dwnEndpointUrls = await this.getDwnEndpointUrlsForTarget(request.target);
+    }
     if (dwnEndpointUrls.length === 0) {
       throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${request.target}#dwn`);
     }
