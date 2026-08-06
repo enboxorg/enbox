@@ -397,6 +397,9 @@ const dwn = new DwnApi({
 });
 ```
 
+Permission request, grant, and revocation administration remains available at
+`enbox.agent.permissions`; `DwnApi` does not duplicate that agent-level surface.
+
 ## Browser Builds
 
 Browser apps typically use `@enbox/browser`, which re-exports the main app APIs
