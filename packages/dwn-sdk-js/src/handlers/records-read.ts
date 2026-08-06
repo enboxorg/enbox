@@ -285,13 +285,6 @@ export class RecordsReadHandler implements MethodHandler {
       return ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
     }
 
-    if (recordsRead.message.descriptor.includeReplicationSupport === true) {
-      throw new DwnError(
-        DwnErrorCode.RecordsReadReplicationSupportUnsupported,
-        'replication support requires an authenticated protocol-role invocation.'
-      );
-    }
-
     if (recordsRead.author === tenant) {
       // if author is the same as the target tenant, we can directly grant access
       return undefined;
