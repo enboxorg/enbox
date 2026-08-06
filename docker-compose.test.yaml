@@ -86,7 +86,7 @@ services:
       - /data
 
   pkarr-relay:
-    image: synonymsoft/pkarr-relay
+    image: synonymsoft/pkarr-relay@sha256:779353eb69f20be93f5c3d740a633045ef80f8a480467085da19cc8ea57251a4
     container_name: enbox-test-pkarr
     command: ["pkarr-relay", "--testnet"]
     ports:

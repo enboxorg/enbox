@@ -364,6 +364,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
       await first.deleteFollowedSource(replacement);
       await waitFor(() => events.includes(undefined));
+      expect(events).toContain(undefined);
     } finally {
       (first as any).closeFollowedSourceWakePublisher();
       secondInternal.closeFollowedSourceWakePublisher();

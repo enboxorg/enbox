@@ -1517,11 +1517,12 @@ export class SyncEngineLevel implements SyncEngine {
           continue;
         }
         const source = next ?? previous;
-        if (source !== undefined) {
-          changes.push({ source, followedSourceId: next?.id });
-          if (next !== undefined) {
-            activated.push(next);
-          }
+        if (source === undefined) {
+          continue;
+        }
+        changes.push({ source, followedSourceId: next?.id });
+        if (next !== undefined) {
+          activated.push(next);
         }
       }
       this._followedSourceSnapshot.clear();

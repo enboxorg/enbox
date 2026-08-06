@@ -11,6 +11,7 @@ import type {
   DwnMessage,
   DwnMessageDescriptor,
   DwnMessageParams,
+  DwnResponse,
   DwnResponseStatus,
   EnboxAgent,
   PermissionsApi,
@@ -622,14 +623,7 @@ export class Record<T = unknown> implements RecordModel {
 
     await this.applyDelegateGrant(requestOptions);
 
-    const agentResponse = isRemote ?
-      await this._agent.sendDwnRequest({
-        ...requestOptions,
-        ...(this._executionContext?.remoteEndpoint === undefined
-          ? {}
-          : { remoteEndpoint: this._executionContext.remoteEndpoint }),
-      }) :
-      await this._agent.processDwnRequest(requestOptions);
+    const agentResponse = await this.dispatchMutation(requestOptions);
 
     const { message: responseMessage, reply, data: responseData } = agentResponse;
     requireDwnSuccess('Record.update', reply);
@@ -782,14 +776,7 @@ export class Record<T = unknown> implements RecordModel {
 
     await this.applyDelegateGrant(deleteOptions);
 
-    const agentResponse = isRemote
-      ? await this._agent.sendDwnRequest({
-        ...deleteOptions,
-        ...(this._executionContext?.remoteEndpoint === undefined
-          ? {}
-          : { remoteEndpoint: this._executionContext.remoteEndpoint }),
-      })
-      : await this._agent.processDwnRequest(deleteOptions);
+    const agentResponse = await this.dispatchMutation(deleteOptions);
     const { message, reply } = agentResponse;
     requireDwnSuccess('Record.delete', reply);
 
@@ -805,6 +792,20 @@ export class Record<T = unknown> implements RecordModel {
     this._storedData = undefined;
     this._rawMessageDirty = true;
     await invalidateRecordReplica(this._executionContext);
+  }
+
+  private dispatchMutation<I extends DwnInterface.RecordsWrite | DwnInterface.RecordsDelete>(
+    request: ProcessDwnRequest<I>,
+  ): Promise<DwnResponse<I>> {
+    if (request.target === this._connectedDid) {
+      return this._agent.processDwnRequest(request);
+    }
+
+    const remoteEndpoint = this._executionContext?.remoteEndpoint;
+    return this._agent.sendDwnRequest({
+      ...request,
+      ...(remoteEndpoint === undefined ? {} : { remoteEndpoint }),
+    });
   }
 
   /**

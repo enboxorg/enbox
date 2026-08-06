@@ -95,16 +95,8 @@ export class MessagesSubscribeHandler implements MethodHandler {
       };
       if (authorization.kind === 'role') {
         reply.roleRecordId = authorization.state.resolvedRole.roleRecordId;
-      }
-      if (authorization.kind !== 'role') {
-        try {
-          await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, this.deps);
-        } catch {
-          // Best-effort enrichment: the subscription is live and correct
-          // without the snapshot — consumers feature-detect the fields. A
-          // failure reply here would orphan the just-installed listener, since
-          // close handles are registered only from successful replies.
-        }
+      } else {
+        await MessagesSubscribeHandler.attachFeedSnapshotBestEffort(reply, tenant, filters, this.deps);
       }
 
       return reply;
@@ -117,6 +109,20 @@ export class MessagesSubscribeHandler implements MethodHandler {
         };
       }
       return messageReplyFromError(error, 500);
+    }
+  }
+
+  private static async attachFeedSnapshotBestEffort(
+    reply: MessagesSubscribeReply,
+    tenant: string,
+    filters: MessagesFilter[],
+    deps: HandlerDependencies,
+  ): Promise<void> {
+    try {
+      await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, deps);
+    } catch {
+      // The subscription remains usable without this optional snapshot. Returning
+      // an error here would orphan its already-installed listener.
     }
   }
 

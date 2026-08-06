@@ -1,3 +1,10 @@
+function compareUtf16(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+}
+
 /**
  * Recursively canonicalizes a JSON-compatible value into a deterministic
  * shape: object keys are sorted by UTF-16 code unit and entries with
@@ -12,7 +19,7 @@ export function canonicalizeJson(value: unknown): unknown {
   if (value !== null && typeof value === 'object') {
     const object = value as Record<string, unknown>;
     const canonical: Record<string, unknown> = {};
-    for (const key of Object.keys(object).sort()) {
+    for (const key of Object.keys(object).sort(compareUtf16)) {
       const entry = object[key];
       if (entry === undefined) {
         continue;
