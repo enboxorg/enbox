@@ -107,7 +107,7 @@ export class Record<T = unknown> implements RecordModel {
   private readonly _connectedDid: string;
   /** The optional DID that is delegated to act on behalf of the connectedDid */
   private readonly _delegateDid?: string;
-  /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
+  /** Cache for fetching a permission grant, keyed by message type and protocol. */
   private readonly _permissionsApi: PermissionsApi;
   /** Optional default target for mutations of a locally replicated foreign record. */
   private readonly _executionContext?: RecordExecutionContext;
