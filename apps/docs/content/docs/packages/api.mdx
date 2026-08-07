@@ -430,6 +430,23 @@ owner DID, context ID, and group through another channel can bypass inbox
 discovery with `contexts.follow({ ownerDid, id, group })`; following still proves
 current membership before accepting the context.
 
+<Callout type="warn" title="The invitation inbox is an open write endpoint">
+A protocol that declares any encrypted type carries a reserved
+`enboxContextInvitation` path that any DID may write to — that is what lets a
+stranger offer you a context. Records are capped at 8 KB and are immutable, but
+their number is not capped, so an attacker who knows your DID and has the
+protocol installed on your DWN can consume storage and crowd the discovery bound
+indefinitely. Fresh DIDs are cheap, so per-author limits alone would not close
+it, and a global `$recordLimit` would let an attacker fill the cap and block
+real invitations. There is no mitigation in Enbox today.
+
+Apps that do not need open discovery should not call
+`contexts.invitations`; distribute the owner DID, context ID, and group over a
+channel you control and accept with `contexts.follow()` instead. Apps that do
+need it should treat inbox growth as untrusted input: prune dismissed and
+malformed records, and consider rate limiting at the hosted DWN.
+</Callout>
+
 `refresh()` performs one scoped pull from the endpoint accepted by `follow()`
 and succeeds only when that feed reaches its current head while the acceptance
 remains active. It throws `ContextNotReadyError` when membership, decryption,
