@@ -399,6 +399,8 @@ const dwn = new DwnApi({
 
 Permission request, grant, and revocation administration remains available at
 `enbox.agent.permissions`; `DwnApi` does not duplicate that agent-level surface.
+High-level typed mutations persist automatically. Use the raw agent request
+methods only when an advanced workflow must preserve an exact signed message.
 
 ## Browser Builds
 
