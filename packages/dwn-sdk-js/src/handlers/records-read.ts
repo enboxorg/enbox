@@ -281,6 +281,16 @@ export class RecordsReadHandler implements MethodHandler {
       await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.validationStateReader);
     }
 
+    // Owner authority and published data authorize a read on their own, so an invoked role
+    // never has to resolve for them. A replication-support read is the one exception: its
+    // response closure is scoped to the invoked role, so that role must resolve even when
+    // another rule would already have allowed the read.
+    const requiresResolvedRole = recordsRead.message.descriptor.includeReplicationSupport === true;
+    if (!requiresResolvedRole && (recordsRead.author === tenant || descriptor.published === true)) {
+      // The tenant may read its own records, and published data needs no authorization.
+      return undefined;
+    }
+
     if (recordsRead.signaturePayload?.protocolRole !== undefined) {
       return ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
     }

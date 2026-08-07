@@ -1482,7 +1482,11 @@ export function testRecordsReadHandler(): void {
             expect(chatReadReply.roleRecordId).toBe(friendRoleRecord.message.recordId);
           });
 
-          it('requires an explicitly invoked role even when the record is published', async () => {
+          it('reads a published record without resolving an unheld invoked role', async () => {
+            // scenario: Bob reads Alice's published chat record while invoking a 'friend' role he
+            //           does not hold. Published data authorizes the read on its own, so the
+            //           unusable role invocation neither authorizes nor blocks it.
+
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
             const protocolDefinition = friendRoleProtocolDefinition;
@@ -1509,8 +1513,91 @@ export function testRecordsReadHandler(): void {
               signer       : Jws.createSigner(bob),
             });
             const chatReadReply = await dwn.processMessage(alice.did, readChatRecord.message);
-            expect(chatReadReply.status.code).toBe(401);
-            expect(chatReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+            expect(chatReadReply.status.code).toBe(200);
+            // No role resolved, so the reply carries no active role assignment.
+            expect(chatReadReply.roleRecordId).toBeUndefined();
+          });
+
+          it('reads the tenant\'s own record without resolving an unheld invoked role', async () => {
+            // scenario: Alice reads her own chat record while invoking a 'friend' role that names
+            //           nobody. Owner authority alone authorizes the read.
+
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const protocolDefinition = friendRoleProtocolDefinition;
+
+            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition,
+            });
+            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+            expect(protocolsConfigureReply.status.code).toBe(202);
+
+            const chatRecord = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'chat',
+            });
+            const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
+            expect(chatReply.status.code).toBe(202);
+
+            const readChatRecord = await RecordsRead.create({
+              filter       : { recordId: chatRecord.message.recordId },
+              protocolRole : 'friend',
+              signer       : Jws.createSigner(alice),
+            });
+            const chatReadReply = await dwn.processMessage(alice.did, readChatRecord.message);
+            expect(chatReadReply.status.code).toBe(200);
+            expect(chatReadReply.roleRecordId).toBeUndefined();
+          });
+
+          it('still resolves the invoked role for a replication-support read of a published record', async () => {
+            // scenario: Bob invokes his 'friend' role on a replication-support read of a published
+            //           record. The published short-circuit must not answer it, because the
+            //           response closure is scoped to the invoked role.
+
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const bob = await TestDataGenerator.generateDidKeyPersona();
+            const protocolDefinition = friendRoleProtocolDefinition;
+
+            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition,
+            });
+            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+            expect(protocolsConfigureReply.status.code).toBe(202);
+
+            const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              recipient    : bob.did,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'friend',
+              data         : new TextEncoder().encode('Bob is my friend'),
+            });
+            const friendRoleReply = await dwn.processMessage(
+              alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream },
+            );
+            expect(friendRoleReply.status.code).toBe(202);
+
+            const chatRecord = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'chat',
+              published    : true,
+            });
+            const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
+            expect(chatReply.status.code).toBe(202);
+
+            const supportRead = await RecordsRead.create({
+              filter                    : { recordId: chatRecord.message.recordId },
+              includeReplicationSupport : true,
+              protocolRole              : 'friend',
+              signer                    : Jws.createSigner(bob),
+            });
+            const supportReply = await dwn.processMessage(alice.did, supportRead.message);
+            // A root-level role has no context, so this closure is still unsupported — but the
+            // rejection proves the role resolved rather than the published short-circuit answering.
+            expect(supportReply.status.code).toBe(400);
+            expect(supportReply.status.detail).toContain(DwnErrorCode.RecordsReadReplicationSupportUnsupported);
           });
 
           it('rejects root-level role authorized reads if the protocolRole is not a valid protocol path to an active role record', async () => {
