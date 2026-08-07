@@ -8,7 +8,7 @@ import {
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionProtocol,
   getRoleAudienceContextId,
-  getRoleContextPrefix,
+  getRoleRecordIdentity,
   isCrossProtocolRef,
   Jws,
   Message,
@@ -124,7 +124,12 @@ function getContextId(message: GenericMessage): string | undefined {
 }
 
 export function getRoleKey(protocol: string, protocolPath: string, recipient: string, contextPrefix?: string): string {
-  return `${protocol}|${protocolPath}|${recipient}|${contextPrefix ?? ''}`;
+  return getRoleRecordIdentity({
+    contextId: contextPrefix,
+    protocol,
+    protocolPath,
+    recipient,
+  }).key;
 }
 
 function getRoleRecordKey(message: GenericMessage): string | undefined {
@@ -138,7 +143,7 @@ function getRoleRecordKey(message: GenericMessage): string | undefined {
     return undefined;
   }
 
-  return getRoleKey(protocol, protocolPath, recipient, getRoleContextPrefix(protocolPath, getContextId(message)));
+  return getRoleKey(protocol, protocolPath, recipient, getContextId(message));
 }
 
 function getSourceAudienceKeyFromTags(tags: SourceAudienceTags): string {
@@ -162,7 +167,7 @@ function getSourceDeliveryRoleKey(message: GenericMessage): string | undefined {
     return undefined;
   }
 
-  return getRoleKey(tags.protocol, tags.rolePath, recipient, tags.contextId === '' ? undefined : tags.contextId);
+  return getRoleKey(tags.protocol, tags.rolePath, recipient, tags.contextId);
 }
 
 function getSourceEncryptionControlTags(
@@ -250,7 +255,7 @@ function getInvokedRoleKey(
     roleProtocolPath = parsed.protocolPath;
   }
 
-  return getRoleKey(roleProtocol, roleProtocolPath, recipient, getRoleContextPrefix(roleProtocolPath, contextId));
+  return getRoleKey(roleProtocol, roleProtocolPath, recipient, contextId);
 }
 
 function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] {

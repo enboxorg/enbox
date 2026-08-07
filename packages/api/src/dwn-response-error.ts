@@ -12,6 +12,11 @@ export class DwnResponseError extends Error {
   }
 }
 
+/** @internal Whether another canonical record mutation already won DWN ordering. */
+export function isCanonicalConflictStatus(status: DwnResponseStatus['status']): boolean {
+  return status.code === 409 && status.detail === 'Conflict' && status.errorCode === undefined;
+}
+
 /** @internal Throw when a raw DWN response is not successful. */
 export function requireDwnSuccess(operation: string, response: DwnResponseStatus): void {
   const { code } = response.status;

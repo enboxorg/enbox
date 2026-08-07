@@ -10,10 +10,10 @@ import type {
   SyncHealthSummary,
 } from './types/sync.js';
 
-import { buildDurableLinkIdentityKey } from './sync-link-key.js';
+import { buildCurrentLinkIdentityKey } from './sync-link-key.js';
 import { lexicographicalCompare } from './types/sync.js';
 
-/** Current durable identities, or `undefined` when resolution was incomplete. */
+/** Current link identities, or `undefined` when target resolution was incomplete. */
 export type SyncStatusCurrentKeySet = ReadonlySet<string> | undefined;
 
 /** Durable link row with current replication-session facts overlaid by the engine. */
@@ -146,6 +146,7 @@ export class SyncStatusReporter {
       connectivity   : link.connectivity,
       isPullCurrent  : link.isPullCurrent,
       ...(link.delegateDid === undefined ? {} : { delegateDid: link.delegateDid }),
+      ...(link.authorization.kind === 'role' ? { followedSourceId: link.authorization.roleRecordId } : {}),
       ...(pullPosition === undefined ? {} : { pullPosition }),
       ...(pushPosition === undefined ? {} : { pushPosition }),
       ...(link.lastActivityAt === undefined ? {} : { lastActivityAt: link.lastActivityAt }),
@@ -210,13 +211,15 @@ export class SyncStatusReporter {
     currentIdentityKeys: SyncStatusCurrentKeySet,
   ): boolean {
     if (currentIdentityKeys === undefined) {
-      return true;
+      return link.authorization.kind !== 'role';
     }
 
-    return currentIdentityKeys.has(buildDurableLinkIdentityKey(
+    return currentIdentityKeys.has(buildCurrentLinkIdentityKey(
       link.tenantDid,
+      link.remoteEndpoint,
       link.projectionId,
       link.authorizationEpoch,
+      link.authorization.kind,
     ));
   }
 

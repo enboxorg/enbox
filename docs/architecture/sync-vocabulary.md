@@ -18,11 +18,16 @@ the code, not an entry missing from this table.
 | Reconciling one target's durable feeds | **`reconcileTarget`** | `syncTargetWithDurableFeeds` |
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
+| Identity proving that a durable link belongs to the current target plan | **`currentLinkIdentityKey`** — endpoint-specific for role-authorized foreign contexts, endpoint-independent for owned projections | using `durableLinkIdentityKey` as foreign-authority endpoint proof |
 | Durable replication-link store | **`replicationLinkStore`** | `getLinkStore`, `ledger` |
 | Authoritative in-engine owner of one active link object, both wake subscriptions, its link executor, replication generation, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
 | Per-link subscription and reconciliation fence — ONE generation for the subscription pair and link executor | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Deterministic identity of one tenant-and-scope projection, independent of endpoint and authorization | **`projectionId`** — `computeProjectionId` | endpoint identity, authorization identity |
+| One logical foreign context followed by an actor, independent of its current role | **followed context** — exact `(sourceDid, actorDid, protocol, contextId)` tuple | followed source |
+| Durable local catalog row for a followed context, combining its acceptance, exact hosted endpoint, active role authorization, and readable paths | **followed source** — `FollowedSyncSource` | source incarnation, role incarnation |
+| One local handle-fencing lifetime for a followed context | **acceptance** — `acceptanceId`; re-following after removal creates a new acceptance even when the role-record ID is unchanged | acceptance incarnation, source incarnation |
+| Mutually-exclusive candidate role authorizations for one context root, ordered strongest to weakest and declared once as `TypedProtocol.roleGroups`; follow and paused-link recovery try that order at one endpoint, persisting the verified active role | **role group** | unordered role set, every direct role under a root |
 | Sole serializer for work owned by one active replication session | **link executor** — `SyncLinkExecutor` | link mailbox, direction reconciliation queue, `enqueueDirection`, `enqueueShared` |
 | Runtime-owned scheduling for one active replication session | **link scheduler** — `SyncRuntime.armTimeout` / `armTimeoutIfEarlier`, keyed by `syncRepairRetry:<linkKey>` or `syncReconcile:<linkKey>` | controller timer handles, due-time fields, `set*Timer` / `consume*Timer` pairs |
 | Runtime-owned Retry-After scheduling before a replication session exists | **link initialization retry** — `scheduleLinkInitRetry`, keyed by `linkInitRetry:<linkKey>` | link scheduler, which requires an active replication session |
@@ -63,6 +68,18 @@ the code, not an entry missing from this table.
 | **closure** | One root message plus the transitive dependency set required to make it applicable | Scope closure — always spelled out as *scope closure* |
 | **scope** | Always qualified data selection: *sync scope* (`SyncScope`) or emitted *event scope* (`SyncEventScope`) | The runtime or lock namespace (`_lockNamespace`) |
 | **shared** | One execution and result joined by several callers, such as the queued `sync()` follow-up in `joinPendingSyncRun` | A work mark or distinct caller-specific executor call |
+| **incarnation** | Retired: name the exact concept as an *acceptance*, *followed source*, or *role authorization* | A generic synonym for any of those lifetimes |
+
+## Application-facing freshness
+
+- A record or context view is **`ready`** once its first local materialization is
+  usable. `RecordView.current` separately says whether the relevant replica is
+  caught up; context catalog views do not currently expose freshness.
+- `ReplicationCurrentness` is **`syncing`**, **`caught-up`**, or **`error`**.
+  `ready` is not a replication state.
+- **`caught-up`** means every selected replication link is live, online, and
+  pull-current. A registered replica that does not meet that predicate is
+  **`syncing`**, whether or not it was caught up previously.
 
 ## Verb conventions
 

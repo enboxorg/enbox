@@ -1,7 +1,11 @@
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
+import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
+import { canonicalJsonStringify } from '@enbox/common';
 import { KeyDerivationScheme } from '../utils/hd-key.js';
+import { lexicographicalCompare } from './string.js';
+import { ProtocolAction } from '../types/protocols-types.js';
 
 /**
  * Result of parsing a cross-protocol reference in `alias:path` format.
@@ -11,6 +15,18 @@ export type CrossProtocolRef = {
   alias: string;
   /** The protocol path within the referenced protocol. */
   protocolPath: string;
+};
+
+/**
+ * Canonical lookup identity of a protocol role assignment. Distinct role
+ * records that regrant the same role in the same scope intentionally share it.
+ */
+export type RoleRecordIdentity = {
+  contextIdPrefix: string | undefined;
+  key: string;
+  protocol: string;
+  protocolPath: string;
+  recipient: string;
 };
 
 /**
@@ -82,6 +98,76 @@ export function getRoleContextPrefix(rolePath: string, contextId?: string): stri
 }
 
 /**
+ * Returns the canonical lookup identity of a protocol role assignment. The
+ * supplied context may be either the role record context or a descendant
+ * context; root-level roles intentionally have no context dimension, and
+ * same-scope regrants intentionally resolve to the same identity.
+ */
+export function getRoleRecordIdentity(input: {
+  contextId?: string;
+  protocol: string;
+  protocolPath: string;
+  recipient: string;
+}): RoleRecordIdentity {
+  const { protocol, protocolPath, recipient } = input;
+  const contextIdPrefix = getRoleContextPrefix(protocolPath, input.contextId);
+  return {
+    contextIdPrefix,
+    key: JSON.stringify([protocol, protocolPath, recipient, contextIdPrefix]),
+    protocol,
+    protocolPath,
+    recipient,
+  };
+}
+
+/**
+ * Returns the canonical role identity described by a RecordsWrite, or
+ * `undefined` when the required descriptor fields are absent.
+ */
+export function getRecordsWriteRoleIdentity(message: RecordsWriteMessage): RoleRecordIdentity | undefined {
+  const { protocol, protocolPath, recipient } = message.descriptor;
+  if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
+    return undefined;
+  }
+
+  return getRoleRecordIdentity({
+    contextId: message.contextId,
+    protocol,
+    protocolPath,
+    recipient,
+  });
+}
+
+/**
+ * Removes runtime-injected encryption metadata before comparing authored
+ * protocol policy. Returns a new value without mutating the definition.
+ */
+function stripProtocolEncryptionMetadata(value: unknown): unknown {
+  if (value === null || value === undefined || typeof value !== 'object') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => stripProtocolEncryptionMetadata(item));
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (key === '$encryption' || key === '$keyAgreement') {
+      continue;
+    }
+    result[key] = stripProtocolEncryptionMetadata(entry);
+  }
+  return result;
+}
+
+/** Whether two protocol definitions have the same authored policy. */
+export function authoredProtocolDefinitionsEqual(left: ProtocolDefinition, right: ProtocolDefinition): boolean {
+  return canonicalJsonStringify(stripProtocolEncryptionMetadata(left))
+    === canonicalJsonStringify(stripProtocolEncryptionMetadata(right));
+}
+
+/**
  * Gets the rule set at a given protocol path within a protocol definition's structure tree.
  * Returns `undefined` if the path does not exist.
  */
@@ -99,6 +185,76 @@ export function getRuleSetAtPath(protocolPath: string, structure: { [key: string
   }
 
   return current;
+}
+
+/**
+ * Walks every non-directive rule set in a protocol structure in pre-order,
+ * visiting each node with its slash-joined protocol path. Recursion into a
+ * node is skipped when its value is not a plain record, so malformed input
+ * fails the caller's own validation rather than the walk itself.
+ */
+export function walkProtocolRuleSets(
+  structure: ProtocolRuleSet,
+  visit: (protocolPath: string, ruleSet: ProtocolRuleSet) => void,
+): void {
+  const walk = (ruleSet: ProtocolRuleSet, parentPath: string): void => {
+    for (const [name, child] of Object.entries(ruleSet)) {
+      if (name.startsWith('$')) {
+        continue;
+      }
+      const path = parentPath === '' ? name : `${parentPath}/${name}`;
+      visit(path, child as ProtocolRuleSet);
+      if (child !== null && typeof child === 'object' && !Array.isArray(child)) {
+        walk(child as ProtocolRuleSet, path);
+      }
+    }
+  };
+  walk(structure, '');
+}
+
+/** Resolve the non-role content scope governed by one nested protocol role. */
+export function resolveProtocolRoleContextScope(
+  definition: ProtocolDefinition,
+  rolePath: string,
+): {
+  allowedPaths: ReadonlySet<string>;
+  protocolPath: string;
+  readablePaths: [string, ...string[]];
+} {
+  if (getRuleSetAtPath(rolePath, definition.structure)?.$role !== true) {
+    throw new TypeError(`Context role '${rolePath}' is not a protocol role path.`);
+  }
+
+  const protocolPath = rolePath.split('/').slice(0, -1).join('/');
+  if (protocolPath === '') {
+    throw new TypeError('Context roles must be nested below a context root.');
+  }
+  const allowedPaths: string[] = [];
+  const readablePaths: string[] = [];
+  walkProtocolRuleSets(definition.structure as ProtocolRuleSet, (path, child): void => {
+    const contentPath = child.$role !== true &&
+      (path === protocolPath || path.startsWith(`${protocolPath}/`));
+    if (contentPath) {
+      const actions = (child.$actions ?? []).filter(rule => rule.role === rolePath);
+      if (actions.length > 0) {
+        allowedPaths.push(path);
+      }
+      if (actions.some(rule => rule.can.includes(ProtocolAction.Read))) {
+        readablePaths.push(path);
+      }
+    }
+  });
+  allowedPaths.sort(lexicographicalCompare);
+  readablePaths.sort(lexicographicalCompare);
+  if (!readablePaths.includes(protocolPath)) {
+    throw new TypeError(`Context role '${rolePath}' must authorize reading its parent context '${protocolPath}'.`);
+  }
+
+  return {
+    allowedPaths  : new Set(allowedPaths),
+    protocolPath,
+    readablePaths : readablePaths as [string, ...string[]],
+  };
 }
 
 /**

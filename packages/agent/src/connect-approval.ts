@@ -29,12 +29,12 @@ import { Did, DidJwk } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
-import { isRecordPermissionScope } from './dwn-api.js';
 import {
   createGrantKeyRecordsForGrants,
   getEncryptionKeyInfo,
 } from './dwn-encryption.js';
 import { hasEncryptedProtocolTypes, prepareProtocol } from './connect-protocol-preparation.js';
+import { isMessagesPermissionScope, isRecordPermissionScope } from './dwn-api.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 
 // ---------------------------------------------------------------------------
@@ -427,7 +427,7 @@ export async function createPermissionGrants(
 
   const permissionGrants = await Promise.all(
     scopes.map((scope) => permissionsApi.createGrant({
-      delegated      : isRecordPermissionScope(scope),
+      delegated      : isRecordPermissionScope(scope) || isMessagesPermissionScope(scope),
       store          : true,
       grantedTo      : delegateDid,
       scope,

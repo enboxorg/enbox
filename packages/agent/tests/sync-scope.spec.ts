@@ -3,13 +3,16 @@ import { describe, expect, it } from 'bun:test';
 import { getProtocolClosureEdges } from '../src/sync-scope-closure.js';
 import {
   areReplicationLinksCurrent,
+  canonicalizeSyncScope,
   computeAuthorizationEpoch,
   computeProjectionId,
+  messageFeedFiltersForSyncScope,
   normalizeSyncProtocols,
   protocolsForSyncScope,
   singleProtocolForSyncScope,
   SYNC_PROJECTION_ROOT_VERSION,
   syncEventCoversProtocol,
+  syncEventScope,
   syncRegistrationCoversProtocol,
   syncScopeCoversProtocol,
   syncScopeFromProtocols,
@@ -36,7 +39,9 @@ describe('sync scope identity', () => {
   });
 
   it('derives full and protocol-set scopes from identity options', () => {
-    expect(syncScopeFromProtocols('all')).toEqual({ kind: 'full' });
+    const fullScope = syncScopeFromProtocols('all');
+    expect(fullScope).toEqual({ kind: 'full' });
+    expect(messageFeedFiltersForSyncScope(fullScope)).toBeUndefined();
 
     const scope = syncScopeFromProtocols([
       'https://example.com/b',
@@ -47,12 +52,78 @@ describe('sync scope identity', () => {
       protocols : ['https://example.com/a', 'https://example.com/b'],
     });
     expect(protocolsForSyncScope(scope)).toEqual(['https://example.com/a', 'https://example.com/b']);
+    expect(messageFeedFiltersForSyncScope(scope)).toEqual([
+      { protocol: 'https://example.com/a' },
+      { protocol: 'https://example.com/b' },
+    ]);
     expect(singleProtocolForSyncScope(scope)).toBeUndefined();
   });
 
   it('returns a single protocol label only for one-protocol scopes', () => {
     const scope = syncScopeFromProtocols(['https://example.com/profile']);
     expect(singleProtocolForSyncScope(scope)).toBe('https://example.com/profile');
+  });
+
+  it('projects an exact-context scope without widening it to the protocol root', () => {
+    const scope = {
+      kind          : 'context' as const,
+      protocol      : 'https://example.com/notebooks',
+      contextId     : 'notebook-a',
+      protocolPaths : ['notebook/page', 'notebook/page/delta'] as [string, ...string[]],
+    };
+
+    expect(protocolsForSyncScope(scope)).toEqual([scope.protocol]);
+    expect(singleProtocolForSyncScope(scope)).toBe(scope.protocol);
+    expect(syncScopeCoversProtocol(scope, scope.protocol)).toBe(true);
+    expect(syncScopeCoversProtocol(scope, 'https://example.com/other')).toBe(false);
+    expect(messageFeedFiltersForSyncScope(scope)).toEqual([
+      {
+        interface       : 'Records',
+        protocol        : scope.protocol,
+        protocolPath    : 'notebook/page',
+        contextIdPrefix : scope.contextId,
+      },
+      {
+        interface       : 'Records',
+        protocol        : scope.protocol,
+        protocolPath    : 'notebook/page/delta',
+        contextIdPrefix : scope.contextId,
+      },
+    ]);
+    expect(syncEventScope(scope)).toEqual({
+      contextId : scope.contextId,
+      protocol  : scope.protocol,
+      protocols : [scope.protocol],
+    });
+  });
+
+  it('canonicalizes exact-context scopes and includes the context in projection identity', async () => {
+    const tenantDid = 'did:example:alice';
+    const protocol = 'https://example.com/notebooks';
+    const scope = {
+      kind          : 'context' as const,
+      protocol,
+      contextId     : 'notebook-a',
+      protocolPaths : ['notebook/page', 'notebook/page/delta'] as [string, ...string[]],
+    };
+    const reorderedScope = {
+      contextId     : 'notebook-a',
+      protocol,
+      kind          : 'context' as const,
+      protocolPaths : ['notebook/page/delta', 'notebook/page'] as [string, ...string[]],
+    };
+
+    expect(JSON.stringify(canonicalizeSyncScope(scope)))
+      .toBe(
+        `{"contextId":"notebook-a","kind":"context","protocol":"${protocol}",` +
+        `"protocolPaths":["notebook/page","notebook/page/delta"]}`,
+      );
+    expect(await computeProjectionId(tenantDid, scope))
+      .toBe(await computeProjectionId(tenantDid, reorderedScope));
+    expect(await computeProjectionId(tenantDid, scope))
+      .not.toBe(await computeProjectionId(tenantDid, { ...scope, contextId: 'notebook-b' }));
+    expect(await computeProjectionId(tenantDid, scope))
+      .not.toBe(await computeProjectionId(tenantDid, { ...scope, protocolPaths: ['notebook/page'] }));
   });
 
   it('shares protocol coverage across registrations, links, and event scopes', () => {
@@ -141,6 +212,25 @@ describe('sync scope identity', () => {
     });
 
     expect(epoch1).toBe(epoch2);
+  });
+
+  it('changes role authorization epochs with membership authority but not transient grants', async () => {
+    const authorization = {
+      kind         : 'role' as const,
+      actorDid     : 'did:example:member',
+      protocolRole : 'notebook/viewer',
+      roleRecordId : 'role-a',
+    };
+    const epoch = await computeAuthorizationEpoch(authorization);
+
+    const changedEpochs = await Promise.all([
+      computeAuthorizationEpoch({ ...authorization, actorDid: 'did:example:other' }),
+      computeAuthorizationEpoch({ ...authorization, protocolRole: 'notebook/editor' }),
+      computeAuthorizationEpoch({ ...authorization, roleRecordId: 'role-b' }),
+    ]);
+    expect(changedEpochs.every(changed => changed !== epoch)).toBe(true);
+    expect(await computeAuthorizationEpoch({ ...authorization, delegateDid: 'did:example:other' } as any)).toBe(epoch);
+    expect(await computeAuthorizationEpoch({ ...authorization, delegateGrant: { id: 'ignored' } } as any)).toBe(epoch);
   });
 
   it('keeps projection ID stable while changing authorization epoch for a re-grant of the same scope', async () => {

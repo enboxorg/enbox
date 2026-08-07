@@ -108,6 +108,14 @@ void typed.records.observe('note', {
   protocolRole : 'member',
 });
 
+// @ts-expect-error typed pagination continuations are private to RecordPage.next().
+void typed.records.query('note', { pagination: { cursor: { messageCid: 'bafy-page', value: 1 } } });
+
+void typed.records.observe('note', {
+  // @ts-expect-error observed views start from their canonical selection rather than a raw cursor.
+  pagination: { limit: 20, cursor: { messageCid: 'bafy-page', value: 1 } },
+});
+
 // @ts-expect-error observed views require an explicit retained-result bound.
 void typed.records.observe('note', {});
 

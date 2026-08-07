@@ -636,10 +636,9 @@ describe('Enbox.anonymous()', () => {
     expect(anonApi.dwn).toBeDefined();
     expect(anonApi.dwn).toBeInstanceOf(DwnReaderApi);
 
-    // Verify no agent, did, or vc properties exist.
+    // Verify no agent or did properties exist.
     expect((anonApi as any).agent).toBeUndefined();
     expect((anonApi as any).did).toBeUndefined();
-    expect((anonApi as any).vc).toBeUndefined();
   });
 
   it('should accept custom DID resolvers', () => {

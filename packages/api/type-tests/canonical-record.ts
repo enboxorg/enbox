@@ -4,6 +4,7 @@ import type {
   RecordData,
   RecordPage,
   RecordPatch,
+  RecordSubscription,
   RecordUpdateParams,
   RecordView,
   TypedEnbox,
@@ -63,7 +64,6 @@ declare const typed: TypedEnbox<
 const recordData: RecordData = record.data;
 const payload: Promise<TaskData> = record.value();
 const rawPayload: Promise<unknown> = untypedRecord.data.json();
-const rawPatch: Promise<Record<unknown>> = untypedRecord.patch({ arbitrary: true });
 // @ts-expect-error record handles preserve their existing representation.
 untypedRecord.update({ dataFormat: 'text/plain' });
 const replacement: RecordUpdateParams<TaskData> = {
@@ -73,7 +73,6 @@ const patch: RecordPatch<TaskData> = { note: null };
 void recordData;
 void payload;
 void rawPayload;
-void rawPatch;
 void replacement;
 void patch;
 
@@ -82,20 +81,10 @@ record.value<{ wrong: true }>();
 
 // @ts-expect-error update data is a complete replacement payload.
 record.update({ data: { title: 'missing required completed field' } });
-
-// @ts-expect-error required fields cannot be deleted by a patch.
-record.patch({ title: null });
-
-// @ts-expect-error patches cannot introduce fields outside the payload type.
-record.patch({ missing: true });
-
-declare const attachment: Record<Blob>;
-// @ts-expect-error known binary payloads cannot use the JSON-object patch operation.
-attachment.patch({});
+// @ts-expect-error partial updates belong to TypedEnbox.records.patch().
+record.patch({ completed: true });
 
 declare const nullableRecord: Record<{ value: string | null }>;
-// @ts-expect-error null is the patch deletion sentinel and cannot delete a required field.
-nullableRecord.patch({ value: null });
 nullableRecord.update({ data: { value: null } });
 
 async function assertCanonicalRecordFlow(): Promise<void> {
@@ -127,11 +116,62 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   const readRecord: Record<TaskData> | undefined = await typed.records.read('task', 'record-id');
   void readRecord;
 
+  const patchedRecord: Record<TaskData> = await typed.records.patch('task', 'record-id', {
+    note: null,
+  });
+  const producerPatchedRecord: Record<TaskData> = await typed.records.patch(
+    'task',
+    'record-id',
+    async (current) => {
+      const currentTask: TaskData = current;
+      void currentTask;
+      return current.completed ? undefined : { completed: true };
+    },
+  );
+  void patchedRecord;
+  void producerPatchedRecord;
+
+  // @ts-expect-error records.patch cannot delete a required field.
+  await typed.records.patch('task', 'record-id', { title: null });
+  // @ts-expect-error records.patch cannot introduce fields outside the payload type.
+  await typed.records.patch('task', 'record-id', { missing: true });
+  // @ts-expect-error known binary paths cannot use the JSON-object patch operation.
+  await typed.records.patch('attachment', 'attachment-id', {});
+
   const view: RecordView<Record<TaskData>> = await typed.records.observe('task', {
     pagination: { limit: 10 },
   });
-  const observedRecord: Record<TaskData> | undefined = view.getSnapshot().records[0];
+  const observedRecord: Record<TaskData> | undefined = view.getState().records[0];
   void observedRecord;
+
+  const subscription: RecordSubscription = await typed.records.subscribe('task', async (event): Promise<void> => {
+    if (event.type === 'write') {
+      const path: 'task' = event.path;
+      const changed: Record<TaskData> = event.record;
+      const value: TaskData = await changed.value();
+      void path;
+      void value;
+    }
+  });
+  await subscription.close();
+
+  const selectedPaths: Array<'attachment' | 'task'> = ['task', 'attachment'];
+  await typed.records.subscribe(selectedPaths, async (event): Promise<void> => {
+    if (event.type === 'error') { return; }
+    if (event.path === 'task') {
+      const task: TaskData = await event.record.value();
+      void task;
+      return;
+    }
+    const attachment: Blob = await event.record.value();
+    void attachment;
+  });
+
+  // @ts-expect-error initial replay requires a context-bound records surface.
+  await typed.records.subscribe('task', { initial: true }, (): void => {});
+
+  // @ts-expect-error subscribe has no query/routing options; use observe for filtered state.
+  await typed.records.subscribe('task', (): void => {}, { from: 'did:example:other' });
 
   // @ts-expect-error typed operations do not expose raw DWN response envelopes.
   created.status;

@@ -1,6 +1,7 @@
-import type { ProgressToken } from '@enbox/dwn-sdk-js';
+import type { MessagesFilter, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
+import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
 
 /** Deterministic bytewise string comparator for hash inputs and canonical IDs. */
 export function lexicographicalCompare(a: string, b: string): number {
@@ -46,7 +47,7 @@ export type SyncConnectivityState = 'online' | 'offline' | 'unknown';
 // ---------------------------------------------------------------------------
 
 /**
- * Root algorithm used by durable message-feed full/protocol sync scopes.
+ * Root algorithm used by durable message-feed replication scopes.
  */
 export const SYNC_PROJECTION_ROOT_VERSION = 'replication-log-feed-v1';
 
@@ -65,9 +66,7 @@ export type NonEmptyStringArray = [string, ...string[]];
 /**
  * Describes the primary CID set a replication link syncs.
  *
- * Full and protocol-set sync use durable message-feed filters and replication
- * fingerprints. Narrow protocolPath/contextId sync is not represented here; a
- * delegate must have grant coverage for every full protocol in the protocol set.
+ * Full, protocol-set, and exact-context sync use durable message-feed filters.
  */
 export type SyncScope = {
   /** Full-tenant scope. Valid only for owner sync or unscoped delegated grants. */
@@ -76,11 +75,18 @@ export type SyncScope = {
   /** Protocol-set scope over one or more protocol roots. */
   kind: 'protocolSet';
   protocols: NonEmptyStringArray;
+} | {
+  /** One contextual record tree, restricted to exact role-readable paths. */
+  kind: 'context';
+  protocol: string;
+  contextId: string;
+  protocolPaths: NonEmptyStringArray;
 };
 
 /**
  * Authorization context for a link. Owner links do not invoke grants. Delegate
- * links carry the active Messages.Read grants that authorize the scope union.
+ * links carry target-issued Messages.Read grants, while role links read a
+ * foreign context as the member named by an accepted role record.
  */
 export type SyncAuthorization =
   | { kind: 'owner' }
@@ -88,13 +94,22 @@ export type SyncAuthorization =
     kind: 'delegate';
     delegateDid: string;
     permissionGrantIds: NonEmptyStringArray;
-  };
+  }
+  | SyncRoleAuthorization;
 
 /** Grant metadata that participates in delegated authorization-epoch hashing. */
 export type SyncAuthorizationGrant = {
   id: string;
   dateExpires: string;
   dateGranted?: string;
+};
+
+/** Role authority used to read one foreign context as a member. */
+export type SyncRoleAuthorization = {
+  kind: 'role';
+  actorDid: string;
+  protocolRole: string;
+  roleRecordId: string;
 };
 
 /**
@@ -109,7 +124,9 @@ export function normalizeSyncProtocols(protocols: [string, ...string[]] | string
 }
 
 /** Converts persisted identity options into the canonical sync scope. */
-export function syncScopeFromProtocols(protocols: SyncIdentityOptions['protocols']): SyncScope {
+export function syncScopeFromProtocols(
+  protocols: SyncIdentityOptions['protocols'],
+): Exclude<SyncScope, { kind: 'context' }> {
   return protocols === 'all'
     ? { kind: 'full' }
     : { kind: 'protocolSet', protocols: normalizeSyncProtocols(protocols) };
@@ -120,17 +137,37 @@ export function protocolsForSyncScope(scope: SyncScope): NonEmptyStringArray | u
   if (scope.kind === 'full') {
     return undefined;
   }
-  return scope.protocols;
+  return scope.kind === 'context' ? [scope.protocol] : scope.protocols;
 }
 
 /** Whether a replication scope includes a protocol. */
 export function syncScopeCoversProtocol(scope: SyncScope, protocol: string): boolean {
-  return scope.kind === 'full' || scope.protocols.includes(protocol);
+  return scope.kind === 'full'
+    || (scope.kind === 'context' ? scope.protocol === protocol : scope.protocols.includes(protocol));
 }
 
-/** Returns the single protocol root covered by a protocol-set scope, if any. */
+/** Returns the single protocol root covered by a context or one-protocol scope, if any. */
 export function singleProtocolForSyncScope(scope: SyncScope): string | undefined {
+  if (scope.kind === 'context') {
+    return scope.protocol;
+  }
   return scope.kind === 'protocolSet' && scope.protocols.length === 1 ? scope.protocols[0] : undefined;
+}
+
+/** Projects a sync scope into the filters used by durable message-feed operations. */
+export function messageFeedFiltersForSyncScope(scope: SyncScope): MessagesFilter[] | undefined {
+  if (scope.kind === 'full') {
+    return undefined;
+  }
+  if (scope.kind === 'context') {
+    return scope.protocolPaths.map(protocolPath => ({
+      interface       : 'Records',
+      protocol        : scope.protocol,
+      protocolPath,
+      contextIdPrefix : scope.contextId,
+    }));
+  }
+  return scope.protocols.map(protocol => ({ protocol }));
 }
 
 /**
@@ -162,6 +199,14 @@ export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
   if (scope.kind === 'full') {
     return { kind: 'full' };
   }
+  if (scope.kind === 'context') {
+    return {
+      contextId     : scope.contextId,
+      kind          : 'context',
+      protocol      : scope.protocol,
+      protocolPaths : normalizeSyncProtocols(scope.protocolPaths),
+    };
+  }
   return { kind: 'protocolSet', protocols: normalizeSyncProtocols(scope.protocols) };
 }
 
@@ -185,18 +230,30 @@ export async function computeProjectionId(tenantDid: string, scope: SyncScope): 
 /**
  * Computes the authorization epoch for a link.
  *
- * Owner epochs are stable for owner sync. Delegate epochs are derived
- * from the delegate DID plus the active grant IDs and expiry metadata. A changed
- * grant set creates a new link key even when the projection ID is unchanged.
+ * Owner epochs are stable for owner sync. Delegate epochs cover the active
+ * target-issued grant set. Role epochs cover the member, role record, role
+ * path. Actor-to-delegate grants are resolved immediately before each request;
+ * rotating one does not change the durable foreign-context authority.
  */
 export async function computeAuthorizationEpoch(input:
   | { kind: 'owner' }
   | { kind: 'delegate'; delegateDid: string; grants: [SyncAuthorizationGrant, ...SyncAuthorizationGrant[]] }
+  | SyncRoleAuthorization
 ): Promise<string> {
   if (input.kind === 'owner') {
     return hashCanonicalObject({
       kind    : 'owner',
       version : SYNC_AUTHORIZATION_EPOCH_VERSION,
+    });
+  }
+
+  if (input.kind === 'role') {
+    return hashCanonicalObject({
+      actorDid     : input.actorDid,
+      kind         : 'role',
+      protocolRole : input.protocolRole,
+      roleRecordId : input.roleRecordId,
+      version      : SYNC_AUTHORIZATION_EPOCH_VERSION,
     });
   }
 
@@ -251,9 +308,9 @@ export type SyncDirection = 'push' | 'pull';
  */
 export type SyncRunOptions = {
   /**
-   * Restrict the run to one registered identity's replication targets. The
-   * run reconciles only that identity's endpoints; every other registered
-   * identity is untouched. Rejects when the DID is not registered.
+   * Restrict the run to one registered identity's owned and role-authorized
+   * replication targets; every other registered identity is untouched.
+   * Rejects when the DID is not registered.
    */
   did?: string;
 
@@ -480,9 +537,11 @@ export type SyncDrainResult = {
 
 /** Sync scope metadata attached to observability events. */
 export type SyncEventScope = {
+  /** Present only when the event belongs to an exact-context link. */
+  contextId?: string;
   /** Present only when the event belongs to a single-protocol link. */
   protocol?: string;
-  /** Present when the event belongs to a protocol-set link. */
+  /** Present when the event belongs to a protocol-bounded link. */
   protocols?: NonEmptyStringArray;
 };
 
@@ -490,6 +549,10 @@ export type SyncEventScope = {
 export function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
   if (scope === undefined) {
     return {};
+  }
+
+  if (scope.kind === 'context') {
+    return { contextId: scope.contextId, protocol: scope.protocol, protocols: [scope.protocol] };
   }
 
   const coveredProtocols = protocolsForSyncScope(scope);
@@ -549,6 +612,17 @@ export type SyncMessageDescriptor = {
 export type SyncEvent =
   /** Durable sync registration was added, changed, or removed for one identity. */
   | { type: 'identity:registration-change'; tenantDid: string; options?: SyncIdentityOptions }
+  /** The durable accepted-context catalog changed for one actor. */
+  | {
+    type: 'followed-context:change';
+    actorDid: string;
+    contextId: string;
+    /** Opaque local acceptance carried by this transition. */
+    followedSourceAcceptanceId: string;
+    followedSourceId: string | undefined;
+    protocol: string;
+    tenantDid: string;
+  }
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
   /** Whether accepted remote-feed wakes are covered by a completed durable pull pass. */
@@ -682,6 +756,8 @@ export type ReplicationLinkSnapshot = {
   isPullCurrent: boolean;
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;
+  /** Role-record ID represented by this role-authorized link. */
+  followedSourceId?: string;
   /** Durable pull checkpoint position (remote → local), when advanced past the stream start. */
   pullPosition?: string;
   /** Durable push checkpoint position (local → remote), when advanced past the stream start. */
@@ -761,6 +837,29 @@ export interface SyncEngine {
     params: { did: string, options: SyncIdentityOptions },
     lifecycleOptions?: SyncLifecycleOptions,
   ): Promise<void>;
+  /** Resolve and follow one role-authorized foreign context. */
+  followSource(source: FollowedSyncSourceInput): Promise<FollowedSyncSource>;
+  /** Read one followed foreign context by accepted role-record ID. */
+  getFollowedSource(id: string): Promise<FollowedSyncSource | undefined>;
+  /** List followed foreign contexts, excluding corrupt private store entries. */
+  listFollowedSources(): Promise<FollowedSyncSource[]>;
+  /** Stop following one exact followed source. */
+  deleteFollowedSource(source: FollowedSyncSource): Promise<void>;
+  /**
+   * Mark one exact followed source's live links pull-pending after a remote
+   * mutation is accepted. Returns false when that acceptance is no longer active.
+   *
+   * @internal Used by the typed shared-context mutation boundary.
+   */
+  markFollowedSourcePullPending(source: FollowedSyncSource): Promise<boolean>;
+  /**
+   * Pull one exact accepted foreign context from its accepted hosted endpoint.
+   * Returns `true` only when that feed reached its head while the acceptance
+   * and actor registration remained current.
+   *
+   * @internal Used by the typed shared-context readiness boundary.
+   */
+  pullFollowedSource(source: FollowedSyncSource): Promise<boolean>;
   /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *
@@ -777,7 +876,7 @@ export interface SyncEngine {
    *
    * @param direction which direction you'd like to perform the sync operation.
    * @param options optional scoping — `did` restricts the run to one
-   * registered identity's replication targets (its endpoints only), which
+   * registered identity's owned and role-authorized targets, which
    * keeps an app-triggered "pull my inbox now" from re-reconciling every
    * other identity.
    *

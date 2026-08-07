@@ -156,6 +156,31 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
     await fixture.controller.dispose();
   });
 
+  it('should pull a role baseline instead of adopting a synthetic two-way fingerprint match', async () => {
+    const fixture = createBaselineFixture(db);
+    const roleAuthorization = {
+      kind         : 'role' as const,
+      actorDid     : 'did:example:member',
+      protocolRole : 'notebook/viewer',
+      roleRecordId : 'role-a',
+    };
+    fixture.controller.link.authorization = roleAuthorization;
+    fixture.target.authorization = roleAuthorization;
+    attachSubscriptionSnapshots(
+      fixture.controller,
+      { fingerprint: 'same-feed', head: tokenIn('remote-stream', 'remote-epoch', '7') },
+      { fingerprint: 'same-feed', head: tokenIn('local-stream', 'local-epoch', '11') },
+    );
+
+    expect(await establishBaseline(fixture)).toMatchObject({ pullDrained: true });
+
+    expect(fixture.reconcile.calledOnce).toBe(true);
+    expect(fixture.reconcile.firstCall.args[2]).toEqual({ direction: 'pull', verifyConvergence: false });
+    expect(fixture.persistCheckpoints.notCalled).toBe(true);
+    expect(fixture.controller.link.push.contiguousAppliedToken).toBeUndefined();
+    await fixture.controller.dispose();
+  });
+
   const reconciliationCases: Array<{
     name: string;
     pullSnapshot?: SyncFeedSnapshot;

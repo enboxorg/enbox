@@ -7,16 +7,46 @@
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import type { ProtocolPathTypeNames, ProtocolRecordCodecs, TypedProtocol } from './protocol-types.js';
+import type {
+  ContextRoleGroup,
+  ContextRoleGroups,
+  ContextRolePath,
+  ProtocolPathTypeNames,
+  ProtocolRecordCodecs,
+  TypedProtocol,
+} from './protocol-types.js';
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
-import { getTypeName } from '@enbox/dwn-sdk-js';
-import { assertTypedProtocolStructureSupported, collectProtocolPaths } from './protocol-paths.js';
+import {
+  addContextInvitationProtocol,
+  assertContextInvitationNameAvailable,
+  hasContextInvitationProtocol,
+} from './context-invitations.js';
+import {
+  assertTypedProtocolStructureSupported,
+  collectProtocolPaths,
+  isEncryptedRoleAudiencePath,
+} from './protocol-paths.js';
+import { getTypeName, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 
 type ExactProtocolCodecs<
   D extends ProtocolDefinition,
   C extends RecordCodecMap,
 > = Exclude<Extract<keyof C, string>, ProtocolPathTypeNames<D>> extends never ? C : never;
+
+type DefineProtocolOptions<D extends ProtocolDefinition> = Readonly<{
+  roleGroups: ContextRoleGroups<ContextRolePath<D>> & {
+    readonly default: ContextRoleGroup<ContextRolePath<D>>;
+  };
+}>;
+
+type FrozenRoleGroups<G extends ContextRoleGroups> = Readonly<{
+  [Name in keyof G]: Readonly<G[Name]>;
+}>;
+
+type RoleGroupsFromOptions<O> = O extends { readonly roleGroups: infer G extends ContextRoleGroups }
+  ? FrozenRoleGroups<G>
+  : {};
 
 /**
  * Creates a {@link TypedProtocol} from a plain DWN protocol definition and
@@ -24,7 +54,8 @@ type ExactProtocolCodecs<
  *
  * @param definition - A standard `ProtocolDefinition` object.
  * @param codecs - One runtime codec for every type reachable through the structure.
- * @returns A `TypedProtocol` containing the definition and codecs.
+ * @param options - Application-only context role groups, ordered strongest to weakest.
+ * @returns A `TypedProtocol` containing the definition, codecs, and application role groups.
  *
  * @example
  * ```ts
@@ -33,7 +64,7 @@ type ExactProtocolCodecs<
  *   attachment : recordCodecs.blob(),
  * });
  *
- * // notes.definition is the raw ProtocolDefinition
+ * // notes.definition is the effective ProtocolDefinition
  * // TypedEnbox infers paths like 'note' | 'note/attachment' and
  * // data types from the codecs.
  * ```
@@ -41,13 +72,29 @@ type ExactProtocolCodecs<
 export function defineProtocol<
   const D extends ProtocolDefinition,
   const C extends ProtocolRecordCodecs<D>,
+  const O extends DefineProtocolOptions<D> | undefined = undefined,
 >(
   definition : D,
   codecs : ExactProtocolCodecs<D, C>,
-): TypedProtocol<D, C> {
+  options?: O,
+): TypedProtocol<D, C, RoleGroupsFromOptions<O>> {
+  assertContextInvitationNameAvailable(definition);
   assertTypedProtocolComponents(definition, codecs);
+  const roleGroups = prepareRoleGroups(
+    definition,
+    options === undefined ? {} : options.roleGroups,
+  ) as RoleGroupsFromOptions<O>;
 
-  return { definition, codecs };
+  if (!hasEncryptedRoleAudience(definition)) {
+    return { definition, codecs, roleGroups } as TypedProtocol<D, C, RoleGroupsFromOptions<O>>;
+  }
+
+  const augmented = addContextInvitationProtocol(definition, codecs);
+  return {
+    definition : augmented.definition as D,
+    codecs     : augmented.codecs as C,
+    roleGroups,
+  } as TypedProtocol<D, C, RoleGroupsFromOptions<O>>;
 }
 
 /** @internal Whether a runtime value satisfies the protocol shape required by typed APIs. */
@@ -58,10 +105,67 @@ export function isTypedProtocol(value: unknown): value is TypedProtocol {
 
   try {
     assertTypedProtocolComponents(value.definition, value.codecs);
+    prepareRoleGroups(value.definition as ProtocolDefinition, value.roleGroups);
+    const carriesInvitations = hasContextInvitationProtocol(
+      value.definition as ProtocolDefinition,
+      value.codecs as RecordCodecMap,
+    );
+    if (hasEncryptedRoleAudience(value.definition as ProtocolDefinition)) {
+      return carriesInvitations;
+    }
+    assertContextInvitationNameAvailable(value.definition as ProtocolDefinition);
     return true;
   } catch {
     return false;
   }
+}
+
+/** Whether protocol semantics require the deterministic managed invitation path. */
+function hasEncryptedRoleAudience(definition: ProtocolDefinition): boolean {
+  return [...collectProtocolPaths(definition.structure)]
+    .some(protocolPath => isEncryptedRoleAudiencePath(definition, protocolPath));
+}
+
+/** Validate and freeze application role precedence without changing the DWN definition. */
+function prepareRoleGroups(
+  definition: ProtocolDefinition,
+  value: unknown,
+): ContextRoleGroups {
+  if (!isObjectRecord(value)) {
+    throw new TypeError('defineProtocol: roleGroups must be an object.');
+  }
+  const groups = Object.entries(value);
+  if (groups.length > 0 && !Object.hasOwn(value, 'default')) {
+    throw new TypeError('defineProtocol: roleGroups must declare a \'default\' group.');
+  }
+
+  const prepared = groups.map(([name, candidate]): [string, readonly [string, ...string[]]] => {
+    if (name.length === 0) {
+      throw new TypeError('defineProtocol: role group names must be non-empty.');
+    }
+    if (!Array.isArray(candidate) || candidate.length === 0 || candidate.some(role => typeof role !== 'string')) {
+      throw new TypeError(`defineProtocol: roleGroups['${name}'] must contain at least one role path.`);
+    }
+    const roles = candidate as string[];
+    if (new Set(roles).size !== roles.length) {
+      throw new TypeError(`defineProtocol: roleGroups['${name}'] must not contain duplicate roles.`);
+    }
+
+    let contextPath: string | undefined;
+    for (const role of roles) {
+      if (!isEncryptedRoleAudiencePath(definition, role)) {
+        throw new TypeError(`defineProtocol: roleGroups['${name}'] role '${role}' is not an encrypted audience.`);
+      }
+      const scope = resolveProtocolRoleContextScope(definition, role);
+      contextPath ??= scope.protocolPath;
+      if (scope.protocolPath !== contextPath) {
+        throw new TypeError(`defineProtocol: roleGroups['${name}'] roles must share one context root.`);
+      }
+    }
+
+    return [name, Object.freeze([...roles]) as readonly [string, ...string[]]];
+  });
+  return Object.freeze(Object.fromEntries(prepared)) as ContextRoleGroups;
 }
 
 /** Validate the definition shape and exact runtime codec map shared by both public entry points. */

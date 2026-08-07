@@ -18,7 +18,6 @@ import type {
   ProcessDwnRequest,
   SendDwnRequest,
 } from '../../src/types/dwn.js';
-import type { ProcessVcRequest, SendVcRequest, VcResponse } from '../../src/types/vc.js';
 
 import { InMemorySecretStore } from '../../src/secret-store.js';
 
@@ -101,24 +100,10 @@ export class TestAgent<TKeyManager extends AgentKeyManager> implements EnboxPlat
     return this.dwn.processRequest(request);
   }
 
-  public async processVcRequest(_request: ProcessVcRequest): Promise<VcResponse> {
-    throw new Error('Not implemented');
-  }
-
-  public async sendDidRequest<T extends DidInterface>(
-    _request: DidRequest<T>
-  ): Promise<DidResponse<T>> {
-    throw new Error('Not implemented');
-  }
-
   public async sendDwnRequest<T extends DwnInterface>(
     request: SendDwnRequest<T>
   ): Promise<DwnResponse<T>> {
     return this.dwn.sendRequest(request);
-  }
-
-  public async sendVcRequest(_request: SendVcRequest): Promise<VcResponse> {
-    throw new Error('Not implemented');
   }
 
   public async start(_params: { passphrase: string; }): Promise<void> {

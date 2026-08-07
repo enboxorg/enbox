@@ -1,4 +1,9 @@
-import type { AgentPermissionsApi, DwnDataEncodedRecordsWriteMessage, DwnResponse, EnboxAgent, ProcessDwnRequest } from '@enbox/agent';
+import type {
+  AgentPermissionsApi,
+  DwnDataEncodedRecordsWriteMessage,
+  DwnResponse,
+  EnboxAgent,
+  ProcessDwnRequest } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
@@ -6,7 +11,6 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { DwnInterface, PermissionGrantNotFoundError } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';
-
 type AgentStub = {
   processDwnRequest: sinon.SinonStub;
   sendDwnRequest: sinon.SinonStub;
@@ -20,7 +24,6 @@ const connectedDid = 'did:example:alice';
 const delegateDid = 'did:example:delegate';
 const remoteDid = 'did:example:remote';
 const protocol = 'https://example.com/protocol';
-
 function createAgentStub(): AgentStub {
   return {
     processDwnRequest : sinon.stub(),

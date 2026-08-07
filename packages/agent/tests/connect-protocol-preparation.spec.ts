@@ -10,7 +10,6 @@ import {
   getProtocolSetupStatus,
   hasEncryptedProtocolTypes,
   prepareProtocol,
-  protocolDefinitionsMatch,
 } from '../src/connect-protocol-preparation.js';
 
 /** The signed local ProtocolsQuery message reused for remote verification. */
@@ -169,7 +168,6 @@ describe('connect protocol preparation', () => {
     });
 
     it('should treat owner-injected encryption metadata as policy-identical', () => {
-      expect(protocolDefinitionsMatch(installedEncryptedProtocol, encryptedProtocol)).toBe(true);
       expect(getProtocolSetupStatus(installedEncryptedProtocol, encryptedProtocol)).toBe('configured');
     });
 

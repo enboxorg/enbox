@@ -6,12 +6,13 @@ import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
+import { createMessagesRoleContext } from '../utils/messages-role-test-utils.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { Message } from '../../src/core/message.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, PermissionsProtocol, Replication } from '../../src/index.js';
+import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Jws, PermissionsProtocol, Replication, Time } from '../../src/index.js';
 
 function getFeedReader(messageStore: MessageStore): ReplicationFeedReader | undefined {
   const candidate = messageStore as Partial<ReplicationFeedReader>;
@@ -255,6 +256,46 @@ export function testMessagesQueryHandler(): void {
       expect(reply.error?.reason).toBe('stream_mismatch');
     });
 
+    it('rejects a signed grant query whose exact path is paired with a broader path prefix', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'http://messages-query-ambiguous-path-filter';
+      const grant = await TestDataGenerator.generateGrantCreate({
+        author    : alice,
+        grantedTo : bob,
+        scope     : {
+          interface    : DwnInterfaceName.Messages,
+          method       : DwnMethodName.Read,
+          protocol,
+          protocolPath : 'post/attachment',
+        },
+      });
+      expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+      const query = await TestDataGenerator.generateMessagesQuery({
+        author             : bob,
+        filters            : [{ protocol, protocolPath: 'post/attachment' }],
+        permissionGrantIds : [grant.message.recordId],
+      });
+      const descriptor = {
+        ...query.message.descriptor,
+        filters: [{
+          protocol,
+          protocolPath       : 'post/attachment',
+          protocolPathPrefix : 'post',
+        }],
+      };
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer             : Jws.createSigner(bob),
+        permissionGrantIds : [grant.message.recordId],
+      });
+
+      const reply = await dwn.processMessage(alice.did, { descriptor, authorization });
+      expect(reply.status.code).toBe(400);
+      expect(reply.status.detail).toContain(DwnErrorCode.SchemaValidatorFailure);
+    });
+
     it.skipIf(!supportsReplicationFeed)('applies broad and subtree grant visibility to delegated queries', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -423,6 +464,115 @@ export function testMessagesQueryHandler(): void {
       const coreReply = await dwn.processMessage(alice.did, coreQuery);
       expect(coreReply.status.code).toBe(401);
       expect(coreReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
+    });
+
+    it.skipIf(!supportsReplicationFeed)('authorizes exact context feeds through a protocol role and author delegate', async () => {
+      const { delegate, member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
+      const chat = await TestDataGenerator.generateRecordsWrite({
+        author          : source,
+        parentContextId : thread.message.contextId,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'thread/chat',
+      });
+      expect((await dwn.processMessage(source.did, chat.message, { dataStream: chat.dataStream })).status.code).toBe(202);
+
+      const filter = {
+        contextIdPrefix : thread.message.contextId!,
+        interface       : DwnInterfaceName.Records,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'thread/chat',
+      };
+      const memberQuery = await TestDataGenerator.generateMessagesQuery({
+        author       : member,
+        filters      : [filter],
+        protocolRole : 'thread/participant',
+      });
+      const memberReply = await dwn.processMessage(source.did, memberQuery.message);
+      expect(memberReply.status.code).toBe(200);
+      expect(memberReply.roleRecordId).toBe(role.message.recordId);
+      expect(memberReply.entries?.map(entry => entry.messageCid)).toEqual([await Message.getCid(chat.message)]);
+      expect(memberReply.entries?.[0].encodedData).toBe(Encoder.bytesToBase64Url(chat.dataBytes!));
+
+      const delegatedGrant = await PermissionsProtocol.createGrant({
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        delegated   : true,
+        grantedTo   : delegate.did,
+        scope       : {
+          interface    : DwnInterfaceName.Messages,
+          method       : DwnMethodName.Read,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'thread/chat',
+        },
+        signer: Jws.createSigner(member),
+      });
+      const delegatedQuery = await TestDataGenerator.generateMessagesQuery({
+        author         : delegate,
+        delegatedGrant : delegatedGrant.dataEncodedMessage,
+        filters        : [filter],
+        protocolRole   : 'thread/participant',
+      });
+      const delegatedReply = await dwn.processMessage(source.did, delegatedQuery.message);
+      expect(delegatedReply.status.code).toBe(200);
+      expect(delegatedReply.roleRecordId).toBe(role.message.recordId);
+      expect(delegatedReply.entries?.map(entry => entry.messageCid)).toEqual([await Message.getCid(chat.message)]);
+      expect(delegatedReply.entries?.[0].encodedData).toBeUndefined();
+    });
+
+    it.skipIf(!supportsReplicationFeed)('rejects mixed unauthorized paths and the wrong role context', async () => {
+      const { member, otherThread, protocolDefinition, source, thread } = await createMessagesRoleContext(dwn);
+      const exactFilter = {
+        contextIdPrefix : thread.message.contextId!,
+        interface       : DwnInterfaceName.Records,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'thread/chat',
+      };
+      const mixedQuery = await TestDataGenerator.generateMessagesQuery({
+        author       : member,
+        filters      : [exactFilter, { ...exactFilter, protocolPath: 'thread/admin' }],
+        protocolRole : 'thread/participant',
+      });
+      expect((await dwn.processMessage(source.did, mixedQuery.message)).status.code).toBe(401);
+
+      const wrongContextQuery = await TestDataGenerator.generateMessagesQuery({
+        author       : member,
+        filters      : [{ ...exactFilter, contextIdPrefix: otherThread.message.contextId! }],
+        protocolRole : 'thread/participant',
+      });
+      const wrongContextReply = await dwn.processMessage(source.did, wrongContextQuery.message);
+      expect(wrongContextReply.status.code).toBe(401);
+      expect(wrongContextReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+    });
+
+    it.skipIf(!supportsReplicationFeed)('includes the initial write with an exact-context delete entry', async () => {
+      const { member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
+      const chat = await TestDataGenerator.generateRecordsWrite({
+        author          : source,
+        parentContextId : thread.message.contextId,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'thread/chat',
+      });
+      expect((await dwn.processMessage(source.did, chat.message, { dataStream: chat.dataStream })).status.code).toBe(202);
+      const chatDelete = await TestDataGenerator.generateRecordsDelete({ author: source, recordId: chat.message.recordId });
+      expect((await dwn.processMessage(source.did, chatDelete.message)).status.code).toBe(202);
+
+      const query = await TestDataGenerator.generateMessagesQuery({
+        author  : member,
+        filters : [{
+          contextIdPrefix : thread.message.contextId!,
+          interface       : DwnInterfaceName.Records,
+          method          : DwnMethodName.Delete,
+          protocol        : protocolDefinition.protocol,
+          protocolPath    : 'thread/chat',
+        }],
+        protocolRole: 'thread/participant',
+      });
+      const reply = await dwn.processMessage(source.did, query.message);
+      expect(reply.status.code).toBe(200);
+      expect(reply.roleRecordId).toBe(role.message.recordId);
+      expect(reply.entries).toHaveLength(1);
+      expect(reply.entries?.[0].message?.descriptor.method).toBe(DwnMethodName.Delete);
+      expect(reply.entries?.[0].initialWrite?.recordId).toBe(chat.message.recordId);
+      expect((reply.entries?.[0].initialWrite as { encodedData?: string }).encodedData).toBeUndefined();
     });
 
     it.skipIf(!supportsReplicationFeed)('transports delivery control events and accumulator fingerprints for delegated MessagesQuery', async () => {

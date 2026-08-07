@@ -2,7 +2,9 @@ import type {
   ComputeConnectionStatusOptions,
   ConnectionStatus,
   ConnectionStatusGrant,
+  GetConnectionStatusOptions,
 } from '../types.js';
+import type { PermissionGrantEntry, PermissionsApi } from '@enbox/agent';
 
 import { DwnErrorCode, Time } from '@enbox/dwn-sdk-js';
 
@@ -79,6 +81,54 @@ export function computeConnectionStatus(
   }
 
   return deriveConnectionStatusFromGroup(newest, nowMs, threshold);
+}
+
+/**
+ * Fetches the owner- and delegate-partition grant copies for one connected
+ * identity and computes its connection lifecycle state. Revocation detection
+ * is best-effort and reflects revocation records that have reached the local
+ * agent.
+ */
+export async function fetchConnectionStatus(input: {
+  connectedDid: string;
+  delegateDid: string;
+  options?: GetConnectionStatusOptions;
+  permissions: Pick<PermissionsApi, 'fetchGrants'>;
+}): Promise<ConnectionStatus> {
+  const { connectedDid, delegateDid, permissions } = input;
+  const options = input.options ?? {};
+
+  const query = {
+    author  : delegateDid,
+    grantor : connectedDid,
+    grantee : delegateDid,
+  };
+  const [ownerGrantEntries, activeOwnerGrantEntries, delegateGrantEntries] = await Promise.all([
+    permissions.fetchGrants({ ...query, target: connectedDid }),
+    options.checkRevoked === false
+      ? Promise.resolve(undefined)
+      : permissions.fetchGrants({ ...query, target: connectedDid, checkRevoked: true }),
+    permissions.fetchGrants({ ...query, target: delegateDid }),
+  ]);
+  const activeOwnerGrantIds = activeOwnerGrantEntries === undefined
+    ? undefined
+    : new Set<string>(activeOwnerGrantEntries.map(({ grant }) => grant.id));
+  const toStatusGrant = ({ grant }: PermissionGrantEntry): ConnectionStatusGrant => ({
+    id             : grant.id,
+    grantor        : grant.grantor,
+    grantee        : grant.grantee,
+    dateExpires    : grant.dateExpires,
+    connectSession : grant.connectSession,
+  });
+  const grants = reconcileConnectionStatusGrants({
+    ownerGrants    : ownerGrantEntries.map(toStatusGrant),
+    delegateGrants : delegateGrantEntries.map(toStatusGrant),
+    activeOwnerGrantIds,
+  });
+
+  return computeConnectionStatus(grants, {
+    expiringSoonThresholdSeconds: options.expiringSoonThresholdSeconds,
+  });
 }
 
 /**

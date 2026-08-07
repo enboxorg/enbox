@@ -34,7 +34,7 @@ export type EnboxAnonymousOptions = {
 /**
  * The result of calling {@link Enbox.anonymous}.
  *
- * Contains only a read-only `dwn` property — no `did`, `vc`, or `agent`.
+ * Contains only a read-only `dwn` property — no `did` or `agent`.
  *
  * @beta
  */
@@ -54,7 +54,7 @@ export type EnboxAnonymousApi = {
  * name used throughout `@enbox/api` for the tenant DID.
  */
 export type EnboxParams = Omit<AgentSessionPrimitives, 'did' | 'signal'> & {
-  /** The DID of the tenant under which all DID, DWN, and VC requests are being performed. */
+  /** The DID of the tenant under which all DID and DWN requests are being performed. */
   connectedDid: string;
 
   /** Optional owning-session lifetime. Aborting it fences session-scoped resources. */

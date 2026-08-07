@@ -1,6 +1,7 @@
 export type * from './types.js';
 
 export * from './cache.js';
+export * from './canonical-json.js';
 export * from './convert.js';
 export * from './cross-context-lock.js';
 export * from './logger.js';

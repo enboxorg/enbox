@@ -59,10 +59,11 @@ export class SyncRunCoordinator {
   public async run(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
     let targets = await this._operations.getTargets();
     if (options?.did !== undefined) {
-      // Scoped run: reconcile only the requested identity's targets. The
-      // engine validates registration before dispatching, so an empty list
-      // here means the identity has no resolvable endpoints — a no-op run.
-      targets = targets.filter(target => target.did === options.did);
+      // A followed target is hosted by its source DID but belongs to the
+      // member identity that invokes its role authorization.
+      targets = targets.filter(target => target.authorization.kind === 'role'
+        ? target.authorization.actorDid === options.did
+        : target.did === options.did);
     }
     const summary = await this.runTargetGroups(
       targets,

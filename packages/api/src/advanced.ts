@@ -11,8 +11,6 @@
 export { DwnApi } from './dwn-api.js';
 
 export type {
-  FetchGrantsRequest,
-  FetchRequestsRequest,
   MessagesSubscribeRequest,
   MessagesSubscribeResponse,
   ProtocolsConfigureRequest,

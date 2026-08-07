@@ -14,6 +14,8 @@ export type ReconcileAudienceKeyDeliveryProtocolParams = Readonly<{
   sourceDid: string;
 }>;
 
+export type AudienceKeyDeliveryChange = Readonly<Pick<AudienceKeyDeliveryIntent, 'protocol' | 'sourceDid'>>;
+
 /** Internal persistence contract for reconstructable audience-key delivery state. */
 export interface AudienceKeyDeliveryStore {
   clear(): Promise<void>;
@@ -21,6 +23,7 @@ export interface AudienceKeyDeliveryStore {
   get(sourceDid: string, roleRecordId: string): Promise<AudienceKeyDeliveryState | undefined>;
   reconcileProtocol(params: ReconcileAudienceKeyDeliveryProtocolParams): Promise<AudienceKeyDeliveryState[]>;
   record(params: RecordAudienceKeyDeliveryParams): Promise<void>;
+  subscribe(listener: (change: AudienceKeyDeliveryChange) => void): () => void;
 }
 
 export function audienceKeyDeliveryProjectionKey(sourceDid: string, roleRecordId: string): string {

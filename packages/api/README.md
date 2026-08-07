@@ -64,15 +64,13 @@ const unsubscribe = store.subscribe((snapshot) => {
 await store.initialize();
 ```
 
-`sync` uses the same `loading`, `ready`, `stale`, and `error` terms as observed
-record views. `loading` means a registered replica has not completed its first
-baseline; `ready` means every current link is caught up (or the identity is
-local-only); `stale` retains a previously reached baseline while a link is no
-longer current; and `error` reports paused replication or an unreadable local
-status projection. `connectivity` is `unknown`, `online`, or `offline`, and
-`lastActivityAt` is the newest activity time recorded by the sync engine.
-`loading` has no timeout: a registered identity with no established links
-remains there until the engine reports new state.
+Connection snapshots report replication as `syncing`, `caught-up`, or `error`.
+`syncing` covers any registered replica that is not current, including an
+identity with no established links. `caught-up` means every current link is
+caught up, or that the identity is local-only. `error` reports paused
+replication or an unreadable local status projection. `connectivity` is
+`unknown`, `online`, or `offline`, and `lastActivityAt` is the newest activity
+time recorded by the sync engine.
 
 For registered identities, connectivity uses the sync engine's existing
 aggregation rule: any online link makes the identity online; otherwise an
@@ -200,7 +198,7 @@ The lower-level
 
 Typed protocol composition through `$ref` is not inferred from incomplete
 local metadata. `defineProtocol()` rejects it for now; use the raw `enbox.dwn`
-API until the explicit composition contract tracked in #1462 is available.
+API when an application needs explicit protocol composition.
 
 ## Integration Testing
 
@@ -242,8 +240,18 @@ const nextPage = await page.next(); // undefined after the final page
 
 // Observe one bounded materialization
 const view = await notes.records.observe('note', selection);
-const unsubscribe = view.subscribe((snapshot) => {
-  console.log(snapshot.state, snapshot.records, snapshot.hasMore);
+const render = (state) => {
+  console.log(state.status, state.records, state.hasMore);
+};
+await view.ready();
+const unsubscribe = view.subscribe(render);
+render(view.getState()); // close the one-shot-to-live handoff
+
+// Consume later writes/deletes from one stream
+const changes = await notes.records.subscribe('note', async (event) => {
+  if (event.type === 'write') {
+    console.log(await event.record.value());
+  }
 });
 
 // Count the same selection before pagination
@@ -261,19 +269,30 @@ await found.update({
   data: { title: 'Launch', body: 'Shipped' },
 });
 
-// Delete
-await found.delete();
+// Derive a partial update from the latest value, with one conflict retry
+await notes.records.patch('note', found.id, (current) =>
+  current.body === 'Shipped' ? undefined : { body: 'Shipped' }
+);
+
+// Delete by intent; an existing tombstone also resolves successfully
+await notes.records.delete('note', { recordId: found.id });
 
 unsubscribe();
 await view.close();
+await changes.close();
 ```
 
 Typed record operations return application values directly: `create()` returns
 a `Record`, `query()` returns a `RecordPage`, `count()` returns a number, and
-`read()` returns a `Record` or `undefined`. `Record.update()` and `patch()`
-return the same updated handle; successful delete, store, import, and send
-operations resolve without a value. Other non-success DWN statuses throw a
-`DwnResponseError` with the original status:
+`read()` returns a `Record` or `undefined`. `Record.update()` mutates and returns
+the same handle, while `TypedEnbox.records.patch()` returns the freshly read and
+updated record. Successful delete operations resolve without a value.
+Context-bound deletion requires authority-backed proof: an authorized existing
+tombstone is idempotent, while a plain scoped 404 remains a 404 because the ID
+may name a record outside the context.
+
+Other non-success DWN statuses throw a `DwnResponseError` with the original
+status:
 
 ```ts
 import { DwnResponseError } from '@enbox/api';
@@ -287,35 +306,63 @@ try {
 }
 ```
 
+### Delta history compaction
+
+The typed records API exposes the timestamp and `squash` primitives needed by
+delta-based applications. The canonical [API guide](https://enbox-docs.pages.dev/docs/packages/api)
+documents the bounded rebase recipe and machine-readable squash backstop.
+
 Returned records are canonical `Record<T>` instances. `value()` decodes the
 typed application value through the protocol codec, while `data.json()`,
 `data.text()`, `data.bytes()`, `data.blob()`, and `data.stream()` expose the
 raw representation without wrapping a second record object. `update({ data })`
-replaces the full payload; use `patch()` for a shallow partial object update.
+replaces the full payload; use `records.patch(path, recordId, patch)` for
+a shallow partial object update with one bounded conflict retry.
 
 `observe()` watches the connected tenant by default; pass `from` and, when
 required, `protocolRole` to watch a foreign tenant. Subscription events are
-wake hints: every immutable snapshot is rebuilt from the same canonical query.
-Its required pagination limit bounds retained records. Local views report
-replica currentness; a successful foreign query is `ready`.
-When the owning session ends, a view publishes one terminal `error` snapshot
+wake hints: every immutable view state is rebuilt from the same canonical query.
+Its required pagination limit bounds retained records.
+When the owning session ends, a view publishes one terminal `error` state
 and closes. After automatic grant refresh, `ConnectionStore` publishes a
 replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
 from the replacement `AuthManager.session` announced by `session-start`.
 
-Before the first query, every view is `loading`; a local view also remains
-`loading` until its configured replicas complete their required pull. An empty
-`ready` snapshot is therefore authoritatively empty, not still bootstrapping.
-After a local view has been ready, an offline or catching-up source makes it
-`stale`. Successful local queries continue to update stale snapshots, so
-offline writes remain visible. Query, authorization, and terminal sync failures
-publish `error` while retaining the latest successful records.
+Before the first query, every view is `loading`. After the first local
+materialization it is `ready`, including for an empty or offline result.
+`current` separately reports whether the relevant replication links are caught
+up. Successful local queries continue to update a non-current state, so offline
+writes remain visible. Query, authorization, and terminal sync failures publish
+`error` while retaining the latest successful records.
 `hasMore` is always present: it is `false` before the first query and whenever
-the latest bounded result has no continuation cursor.
+the latest bounded result has no next page.
 
-The snapshot object and records array are immutable. Each `Record<T>` handle
+`ready({ signal })` resolves after the first local query makes its result
+usable. It rejects the first error state, caller abort, or closure; callers may
+wait again after a recoverable error, and later states continue through
+`subscribe()`. Do not treat an empty result as authoritative remote absence
+until `current` is true.
+
+The state object and records array are immutable. Each `Record<T>` handle
 represents the queried version until the caller explicitly uses that handle's
 normal `update()` or `delete()` method; record data remains lazily read.
+
+`subscribe()` delivers later writes and deletes for one exact path or one
+non-empty path set as codec-bound, path-discriminated events. A path set uses
+one underlying stream, and inline frame data is reused when present. Use
+`observe()` when the application needs bounded current collection truth.
+Change delivery is at least once, so consumers should tolerate duplicates.
+
+## Contexts
+
+Typed contexts provide the same confined records API to owners and members,
+plus declarative membership, invitations, live catalogs, exact-context
+replication, and explicit `refresh()`, `forget()`, and `leave()` lifecycle
+operations. Tenant routing, role records, grants, delivery keys, and feed
+cursors remain internal.
+
+The complete owner/member workflow and current limitations live in the
+canonical [API guide](https://enbox-docs.pages.dev/docs/packages/api).
 
 ## Anonymous Reads
 
@@ -350,6 +397,11 @@ const dwn = new DwnApi({
 });
 ```
 
+Permission request, grant, and revocation administration remains available at
+`enbox.agent.permissions`; `DwnApi` does not duplicate that agent-level surface.
+High-level typed mutations persist automatically. Use the raw agent request
+methods only when an advanced workflow must preserve an exact signed message.
+
 ## Browser Builds
 
 Browser apps typically use `@enbox/browser`, which re-exports the main app APIs
@@ -377,8 +429,12 @@ coordinates writes across browser contexts.
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
-| `RecordPage<Item>` | One page of selected record items with `next()` and its optional raw continuation cursor. |
-| `RecordView<Item>` | Closeable bounded query view with immutable snapshots. |
+| `RecordPage<Item>` | One page of selected record items with cursor-free `next()` pagination. |
+| `RecordView<Item>` | Closeable bounded query view with immutable state. |
+| `ContextView` | Closeable live catalog of owned and accepted member contexts. |
+| `ProtocolContext` | Discriminated owner/member entry returned by a context catalog. |
+| `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
+| `ContextMember` | One owner-managed member and its audience-key delivery state. |
 | `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |

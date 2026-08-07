@@ -1,13 +1,18 @@
+import type { Filter } from '../types/query-types.js';
+import type { GuardedSubscriptionHandler } from './guarded-subscription.js';
+import type { MessagesRoleAuthorizationState } from '../core/messages-role-authorization.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
-import type { EventSubscription, ProgressGapInfo, ProgressToken, ReplicationFeedReader, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesFilter, MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
+import type { ProgressGapInfo, ProgressToken, ReplicationFeedReader, SubscriptionEvent, SubscriptionListener } from '../types/subscriptions.js';
 
 import { authenticate } from '../core/auth.js';
+import { createGuardedSubscriptionHandler } from './guarded-subscription.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
+import { MessagesRoleAuthorization } from '../core/messages-role-authorization.js';
 import { MessagesSubscribe } from '../interfaces/messages-subscribe.js';
 import { Replication } from '../utils/replication.js';
 import { Time } from '../utils/time.js';
@@ -15,6 +20,7 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 type MessagesSubscribeAuthorization =
   | { kind: 'owner' }
+  | { kind: 'role'; state: MessagesRoleAuthorizationState }
   | {
     kind: 'delegate';
     expectedGrantor: string;
@@ -22,11 +28,6 @@ type MessagesSubscribeAuthorization =
     permissionGrants: PermissionGrant[];
     metadataOnly: boolean;
   };
-
-type GuardedSubscriptionHandler = {
-  listener: SubscriptionListener;
-  setSubscription(subscription: EventSubscription): Promise<void>;
-};
 
 export class MessagesSubscribeHandler implements MethodHandler {
 
@@ -63,16 +64,22 @@ export class MessagesSubscribeHandler implements MethodHandler {
       return messageReplyFromError(error, 401);
     }
 
+    const { filters, cursor: eventLogCursor } = message.descriptor;
+    const includeShadowFilters = authorization.kind === 'owner'
+      || (authorization.kind === 'delegate' && !authorization.metadataOnly);
+    const callerMessageFilters = Messages.convertFilters(filters, this.deps.coreProtocols, includeShadowFilters);
+    const messagesFilters = [...callerMessageFilters];
+    if (authorization.kind === 'role') {
+      messagesFilters.push(MessagesRoleAuthorization.roleWakeFilter(authorization.state));
+    }
     const guardedHandler = MessagesSubscribeHandler.createAuthorizationGuard({
       authorization,
+      callerMessageFilters,
       deps: this.deps,
       messagesSubscribe,
       subscriptionHandler,
+      tenant,
     });
-
-    const { filters, cursor: eventLogCursor } = message.descriptor;
-    const includeShadowFilters = authorization.kind === 'owner' || !authorization.metadataOnly;
-    const messagesFilters = Messages.convertFilters(filters, this.deps.coreProtocols, includeShadowFilters);
     const messageCid = await Message.getCid(message);
 
     try {
@@ -86,13 +93,10 @@ export class MessagesSubscribeHandler implements MethodHandler {
         status: { code: 200, detail: 'OK' },
         subscription,
       };
-      try {
-        await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, this.deps);
-      } catch {
-        // Best-effort enrichment: the subscription is live and correct
-        // without the snapshot — consumers feature-detect the fields. A
-        // failure reply here would orphan the just-installed listener, since
-        // close handles are registered only from successful replies.
+      if (authorization.kind === 'role') {
+        reply.roleRecordId = authorization.state.resolvedRole.roleRecordId;
+      } else {
+        await MessagesSubscribeHandler.attachFeedSnapshotBestEffort(reply, tenant, filters, this.deps);
       }
 
       return reply;
@@ -105,6 +109,20 @@ export class MessagesSubscribeHandler implements MethodHandler {
         };
       }
       return messageReplyFromError(error, 500);
+    }
+  }
+
+  private static async attachFeedSnapshotBestEffort(
+    reply: MessagesSubscribeReply,
+    tenant: string,
+    filters: MessagesFilter[],
+    deps: HandlerDependencies,
+  ): Promise<void> {
+    try {
+      await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, deps);
+    } catch {
+      // The subscription remains usable without this optional snapshot. Returning
+      // an error here would orphan its already-installed listener.
     }
   }
 
@@ -166,6 +184,16 @@ export class MessagesSubscribeHandler implements MethodHandler {
     messagesSubscribe: MessagesSubscribe,
     deps: HandlerDependencies
   ): Promise<MessagesSubscribeAuthorization> {
+    if (MessagesRoleAuthorization.isRoleInvocation(tenant, messagesSubscribe)) {
+      const state = await MessagesRoleAuthorization.authorize({
+        tenant,
+        request               : messagesSubscribe,
+        validationStateReader : deps.validationStateReader,
+        failureCode           : DwnErrorCode.MessagesSubscribeAuthorizationFailed,
+      });
+      return { kind: 'role', state };
+    }
+
     const grantSet = await MessagesGrantAuthorization.authorizeQueryOrSubscribeInvocation({
       tenant                : tenant,
       incomingMessage       : messagesSubscribe.message,
@@ -187,11 +215,13 @@ export class MessagesSubscribeHandler implements MethodHandler {
 
   private static createAuthorizationGuard(input: {
     authorization: MessagesSubscribeAuthorization;
+    callerMessageFilters: Filter[];
     deps: HandlerDependencies;
     messagesSubscribe: MessagesSubscribe;
     subscriptionHandler: SubscriptionListener;
+    tenant: string;
   }): GuardedSubscriptionHandler {
-    const { authorization, deps, messagesSubscribe, subscriptionHandler } = input;
+    const { authorization, callerMessageFilters, deps, messagesSubscribe, subscriptionHandler, tenant } = input;
     if (authorization.kind === 'owner') {
       return {
         listener        : subscriptionHandler,
@@ -199,107 +229,62 @@ export class MessagesSubscribeHandler implements MethodHandler {
       };
     }
 
-    let subscription: EventSubscription | undefined;
-    let closeRequested = false;
-    let terminalErrorEmitted = false;
-    let deliveryQueue: Promise<void> = Promise.resolve();
-
-    const closeSubscription = (): void => {
-      if (closeRequested) {
-        return;
-      }
-      closeRequested = true;
-      Promise.resolve(subscription?.close()).catch(() => {});
-    };
-
-    const emitTerminalDeliveryError = (cursor: SubscriptionEvent['cursor'], code: DwnErrorCode, detail: string): void => {
-      if (terminalErrorEmitted) {
-        return;
-      }
-      terminalErrorEmitted = true;
-      subscriptionHandler({
-        type  : 'error',
-        cursor,
-        error : {
-          code,
-          detail,
-        },
-      });
-    };
-
     // Deliberately do not cache delivery authorization here. Subscribe-open
     // authorization validates static grant shape and filter scope; this per-event
     // check revalidates dynamic grant state so expiry or revocation stops delivery
     // before the next event is forwarded. Future throughput optimizations should
     // split static and dynamic checks explicitly and document any bounded staleness
     // introduced by caching revocation lookups.
-    const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {
-      try {
-        await MessagesGrantAuthorization.authorizeSubscribeDelivery({
-          messagesSubscribeMessage : messagesSubscribe.message,
-          expectedGrantor          : authorization.expectedGrantor,
-          expectedGrantee          : authorization.expectedGrantee,
-          permissionGrants         : authorization.permissionGrants,
-          validationStateReader    : deps.validationStateReader,
-          deliveryTimestamp        : Time.getCurrentTimestamp(),
-        });
-      } catch (error) {
-        if (error instanceof DwnError) {
-          emitTerminalDeliveryError(
-            subMessage.cursor,
-            DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
-            'subscription authorization failed during delivery',
-          );
-        } else {
-          emitTerminalDeliveryError(
-            subMessage.cursor,
-            DwnErrorCode.MessagesSubscribeDeliveryFailed,
-            'subscription delivery failed',
-          );
+    return createGuardedSubscriptionHandler({
+      listener     : subscriptionHandler,
+      processEvent : async (subMessage, fail): Promise<SubscriptionEvent | undefined> => {
+        try {
+          if (authorization.kind === 'role') {
+            await MessagesRoleAuthorization.authorizeDelivery({
+              authorization          : authorization.state,
+              authorizationTimestamp : Time.getCurrentTimestamp(),
+              tenant,
+              validationStateReader  : deps.validationStateReader,
+            });
+          } else {
+            await MessagesGrantAuthorization.authorizeSubscribeDelivery({
+              messagesSubscribeMessage : messagesSubscribe.message,
+              expectedGrantor          : authorization.expectedGrantor,
+              expectedGrantee          : authorization.expectedGrantee,
+              permissionGrants         : authorization.permissionGrants,
+              validationStateReader    : deps.validationStateReader,
+              deliveryTimestamp        : Time.getCurrentTimestamp(),
+            });
+          }
+        } catch (error) {
+          if (error instanceof DwnError) {
+            fail(
+              DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
+              'subscription authorization failed during delivery',
+            );
+          } else {
+            fail(
+              DwnErrorCode.MessagesSubscribeDeliveryFailed,
+              'subscription delivery failed',
+            );
+          }
+          return undefined;
         }
-        closeSubscription();
-        return;
-      }
 
-      if (!closeRequested) {
-        subscriptionHandler(authorization.metadataOnly
+        if (authorization.kind === 'role' &&
+          MessagesRoleAuthorization.isRoleWakeEvent(subMessage, authorization.state) &&
+          !MessagesRoleAuthorization.eventMatchesFilters(subMessage, callerMessageFilters)) {
+          return undefined;
+        }
+
+        const metadataOnly = authorization.kind === 'delegate'
+          ? authorization.metadataOnly
+          : authorization.state.metadataOnly;
+        return metadataOnly
           ? MessagesSubscribeHandler.toMetadataOnlyEvent(subMessage)
-          : subMessage);
-      }
-    };
-
-    const deliverQueuedMessage = async (subMessage: SubscriptionMessage): Promise<void> => {
-      if (closeRequested) {
-        return;
-      }
-
-      if (subMessage.type !== 'event') {
-        subscriptionHandler(subMessage);
-        return;
-      }
-
-      await authorizeAndDeliverEvent(subMessage);
-    };
-
-    const enqueueDelivery = (subMessage: SubscriptionMessage): void => {
-      deliveryQueue = deliveryQueue
-        .then(() => deliverQueuedMessage(subMessage))
-        .catch(() => {});
-    };
-
-    const listener: SubscriptionListener = (subMessage: SubscriptionMessage): void => {
-      enqueueDelivery(subMessage);
-    };
-
-    return {
-      listener,
-      setSubscription: async (eventSubscription: EventSubscription): Promise<void> => {
-        subscription = eventSubscription;
-        if (closeRequested) {
-          await eventSubscription.close();
-        }
+          : subMessage;
       },
-    };
+    });
   }
 
   private static toMetadataOnlyEvent(event: SubscriptionEvent): SubscriptionEvent {

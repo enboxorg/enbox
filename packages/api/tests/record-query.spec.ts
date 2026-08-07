@@ -83,7 +83,7 @@ describe('RecordQuery', () => {
       from         : 'did:example:remote',
       filter,
       dateSort     : DateSort.PublishedDescending,
-      pagination   : { limit: 2, cursor: { messageCid: 'bafy-page', value: '2026-01-01T00:00:00Z' } },
+      pagination   : { limit: 2 },
       protocolRole : 'editor',
       within       : 'root',
     };
@@ -153,7 +153,6 @@ describe('RecordQuery', () => {
     };
     expect(queryRequests[0]).toEqual(expectedRequest);
 
-    firstPage.cursor!.messageCid = 'bafy-mutated';
     const secondPage = await firstPage.next();
     expect(queryRequests[1]).toEqual({
       ...expectedRequest,
@@ -270,6 +269,12 @@ describe('RecordQuery', () => {
     await expect(typed.records.query('note', invalidPagination)).rejects.toThrow('pagination.limit');
     await expect(typed.records.count('note', invalidPagination)).rejects.toThrow('pagination.limit');
 
+    const rawCursor = {
+      pagination: { cursor: { messageCid: 'bafy-page', value: 1 } },
+    } as unknown as RecordQuery<typeof QueryDefinition, 'note'>;
+    await expect(typed.records.query('note', rawCursor)).rejects.toThrow('pagination must contain only limit');
+    await expect(typed.records.count('note', rawCursor)).rejects.toThrow('pagination must contain only limit');
+
     expect(queryRequests).toHaveLength(0);
     expect(countRequests).toHaveLength(0);
   });
@@ -280,9 +285,7 @@ describe('RecordQuery', () => {
       { unexpected: true },
       { limit: Number.POSITIVE_INFINITY },
       { cursor: null },
-      { cursor: { messageCid: 7, value: '2026-01-01T00:00:00Z' } },
-      { cursor: { messageCid: 'bafy-page', value: Number.NaN } },
-      { cursor: { messageCid: 'bafy-page', value: 1, unexpected: true } },
+      { limit: 1, cursor: { messageCid: 'bafy-page', value: 1 } },
     ];
 
     for (const pagination of invalidPaginationValues) {

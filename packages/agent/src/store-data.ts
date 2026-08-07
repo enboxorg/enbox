@@ -1,5 +1,5 @@
 import type { Jwk } from '@enbox/crypto';
-import type { ProtocolDefinition, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, RecordsQueryReplyEntry, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
 
 import { Convert, parseDurationInMilliseconds, Stream, TtlCache } from '@enbox/common';
 
@@ -41,7 +41,7 @@ export interface AgentDataStore<TStoreObject> {
   set(params: DataStoreSetParams<TStoreObject>): Promise<void>;
 }
 
-export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implements AgentDataStore<TStoreObject> {
+export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implements AgentDataStore<TStoreObject> {
   protected name = 'DwnDataStore';
 
   /**
@@ -73,16 +73,17 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   /**
    * The protocol assigned to this storage instance.
    */
-  protected _recordProtocolDefinition!: ProtocolDefinition;
+  protected abstract _recordProtocolDefinition: ProtocolDefinition;
 
   /**
    * Properties to use when writing and querying records with the DWN store.
-   * Subclasses MUST override this to include `protocol` and `protocolPath`.
+   * Includes the protocol and protocol path owned by the concrete store.
    */
-  protected _recordProperties: { dataFormat: string; protocol: string; protocolPath: string; schema?: string } = {
-    dataFormat   : 'application/json',
-    protocol     : '', // overridden by subclass
-    protocolPath : '', // overridden by subclass
+  protected abstract _recordProperties: {
+    dataFormat: string;
+    protocol: string;
+    protocolPath: string;
+    schema?: string;
   };
 
   public async delete({ id, agent, tenant }: DataStoreDeleteParams): Promise<boolean> {
@@ -135,9 +136,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     const tenantDid = await getDataStoreTenant({ tenant, agent });
 
     // Query the DWN for all stored record objects.
-    const storedRecords = await this.getAllRecords({ agent, tenantDid });
-
-    return storedRecords;
+    return this.queryAllStoredRecords({ agent, tenantDid });
   }
 
   public async set({ id, data, tenant, agent, preventDuplicates = true, updateExisting = false, useCache = false }:
@@ -231,12 +230,73 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     this._protocolInitializedCache.set(tenantDid, true);
   }
 
-  protected async getAllRecords(_params: {
+  /**
+   * Queries every record of this store's record type for the tenant and
+   * rebuilds the index and object cache from the results. Per-store behavior
+   * is supplied by {@link readStoredObject} and {@link getStoredObjectId}.
+   */
+  private async queryAllStoredRecords({ agent, tenantDid }: {
     agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<TStoreObject[]> {
-    throw new Error('Not implemented: Classes extending DwnDataStore must implement getAllRecords()');
+    // Clear the index since it will be rebuilt from the query results.
+    this._index.clear();
+
+    // Query the DWN for all stored objects.
+    const { reply: queryReply } = await agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: { ...this._recordProperties } }
+    });
+
+    // Loop through all of the stored records and accumulate the store objects.
+    const storedObjects: TStoreObject[] = [];
+    for (const record of queryReply.entries ?? []) {
+      const storedObject = await this.readStoredObject({ agent, record, tenantDid });
+      if (storedObject !== undefined) {
+        // Update the index with the matching record ID and cache the object.
+        const indexKey = `${tenantDid}${TENANT_SEPARATOR}${this.getStoredObjectId(storedObject)}`;
+        this._index.set(indexKey, record.recordId);
+        this._cache.set(record.recordId, storedObject);
+        storedObjects.push(storedObject);
+      }
+    }
+
+    return storedObjects;
   }
+
+  /**
+   * Reads and validates one query entry into its store object, returning
+   * `undefined` when the entry does not hold a valid store object. The
+   * default expects a small record with inline `encodedData`; stores with
+   * encrypted or large records override this.
+   */
+  protected async readStoredObject({ record }: {
+    agent: EnboxPlatformAgent;
+    record: RecordsQueryReplyEntry;
+    tenantDid: string;
+  }): Promise<TStoreObject | undefined> {
+    // Store records are expected to be small enough such that the data is returned with the
+    // query results. If a record is returned without `encodedData` this is unexpected so throw
+    // an error.
+    if (!record.encodedData) {
+      throw new Error(`${this.name}: Expected 'encodedData' to be present in the DWN query result entry`);
+    }
+
+    const storedObject = Convert.base64Url(record.encodedData).toObject() as TStoreObject;
+    return this.isStoredObject(storedObject) ? storedObject : undefined;
+  }
+
+  /**
+   * Returns the store identifier of one stored object for index bookkeeping.
+   */
+  protected abstract getStoredObjectId(storedObject: TStoreObject): string;
+
+  /**
+   * Validates a parsed stored record payload.
+   */
+  protected abstract isStoredObject(value: unknown): value is TStoreObject;
 
   private async getRecord({ recordId, tenantDid, agent, useCache }: {
     recordId: string;
@@ -314,7 +374,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     // If no matching record ID was found in the index...
     if (!recordId) {
       // Query the DWN for all stored objects, which rebuilds the index.
-      await this.getAllRecords({ agent, tenantDid });
+      await this.queryAllStoredRecords({ agent, tenantDid });
 
       // Check the index again for a matching ID.
       recordId = this._index.get(`${tenantDid}${TENANT_SEPARATOR}${id}`);

@@ -309,6 +309,37 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('repairs a role link with a pull pass and remote subscription only', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const state = link('repairing');
+    state.authorization = {
+      kind         : 'role',
+      actorDid     : 'did:example:member',
+      protocolRole : 'notebook/viewer',
+      roleRecordId : 'role-a',
+    };
+    state.scope = {
+      kind          : 'context',
+      protocol      : 'https://example.com/notebooks',
+      contextId     : 'notebook-a',
+      protocolPaths : ['notebook/page'],
+    };
+    const controller = activate(fixture, state);
+    fixture.operations.reconcileTarget.resolves({ pullDrained: true });
+
+    await runRepair(fixture, controller);
+
+    const repairTarget = fixture.operations.reconcileTarget.firstCall.args[1];
+    expect(fixture.operations.reconcileTarget.firstCall.args[2]).toBeUndefined();
+    expect(fixture.operations.openPullSubscription.calledOnceWithExactly(repairTarget, controller)).toBe(true);
+    expect(fixture.operations.openPushSubscription.notCalled).toBe(true);
+    expect(state.status).toBe('live');
+    expect(controller.isReplicationReady).toBe(true);
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
   it('emits protocol-scoped repair-completion events without leaking runtime internals', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();

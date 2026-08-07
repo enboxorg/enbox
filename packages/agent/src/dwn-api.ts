@@ -26,7 +26,6 @@ import {
   DataStream,
   DurableEventLog,
   Dwn,
-  DwnInterfaceName,
   DwnMethodName,
   Encoder,
   Encryption,
@@ -34,7 +33,6 @@ import {
   EncryptionControl,
   EncryptionControlDeliveryRecipientAuthority,
   EncryptionProtocol,
-  getGrantKeyDeliveryScopes,
   getRoleAudienceContextId,
   getRuleSetAtPath,
   getTypeName,
@@ -150,6 +148,15 @@ type PreparedDwnData = {
 };
 
 type ProtocolDefinitionSource = 'local' | 'remote';
+
+function audienceKeyDeliveryFailure(error: unknown, recipientDid: string): AudienceKeyDeliveryOutcome {
+  return {
+    delivered : false,
+    failure   : classifyAudienceKeyDeliveryFailure(error),
+    reason    : error instanceof Error ? error.message : String(error),
+    recipientDid,
+  };
+}
 
 /** Re-provision inputs after normalization: the audience context id and the resolved recipient wrap target. */
 type ExecuteAudienceKeyDeliveryReprovisionInput = Omit<ReprovisionAudienceKeyDeliveryParams, 'contextId' | 'recipientRolePublicKey'> & {
@@ -497,6 +504,20 @@ export class AgentDwnApi {
    */
   public async getRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
     return getDwnServiceEndpointUrls(targetDid, this.agent.did);
+  }
+
+  /** Resolve hosted endpoints for an operation that must not fall back to a local DWN. */
+  private async requireRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
+    if (this._localDwnStrategy === 'only') {
+      throw new Error(
+        `AgentDwnApi: remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'.`
+      );
+    }
+    const endpoints = await this.getRemoteDwnEndpointUrls(targetDid);
+    if (endpoints.length === 0) {
+      throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${targetDid}#dwn`);
+    }
+    return endpoints;
   }
 
   /** Lazily retrieves the local DWN server endpoint via discovery. */
@@ -914,13 +935,7 @@ export class AgentDwnApi {
       // is reported here; the already-accepted `$role` write is never unwound. A caller
       // that treats delivery as required inspects this outcome and compensates with the
       // authority it holds (e.g. deleting the record with its own delete grant).
-      const detail = error instanceof Error ? error.message : String(error);
-      return {
-        delivered    : false,
-        failure      : classifyAudienceKeyDeliveryFailure(error),
-        recipientDid : recordsWrite.descriptor.recipient ?? '',
-        reason       : detail,
-      };
+      return audienceKeyDeliveryFailure(error, recordsWrite.descriptor.recipient ?? '');
     }
   }
 
@@ -1013,7 +1028,6 @@ export class AgentDwnApi {
     params: {
       granteeDid?: string;
       protocol: string;
-      rolePaths: ReadonlySet<string>;
       signal: AbortSignal;
       target: string;
     },
@@ -1026,15 +1040,6 @@ export class AgentDwnApi {
 
     const protocolDefinition = await this.getProtocolDefinition(params.target, params.protocol, params.granteeDid);
     if (protocolDefinition === undefined) {
-      return false;
-    }
-    const installedRolePaths = new Set(getGrantKeyDeliveryScopes({
-      interface : DwnInterfaceName.Records,
-      method    : DwnMethodName.Write,
-      protocol  : params.protocol,
-    }, protocolDefinition).flatMap(scope => scope.protocolPath === undefined ? [] : [scope.protocolPath]));
-    if (installedRolePaths.size !== params.rolePaths.size ||
-        [...params.rolePaths].some(rolePath => !installedRolePaths.has(rolePath))) {
       return false;
     }
     const states = await store.reconcileProtocol({
@@ -1080,7 +1085,7 @@ export class AgentDwnApi {
     }
 
     const links = (await this.agent.sync.getReplicationLinks(target)).filter(link =>
-      syncScopeCoversProtocol(link.scope, protocol)
+      link.scope.kind !== 'context' && syncScopeCoversProtocol(link.scope, protocol)
     );
     if (!areReplicationLinksCurrent(links)) {
       throw new AudienceKeyDeliveryReplicaNotCurrentError();
@@ -1166,16 +1171,22 @@ export class AgentDwnApi {
       );
     }
 
-    if (request.remoteEndpointsOnly && this._localDwnStrategy === 'only') {
+    if (request.remoteEndpoint !== undefined && request.remoteEndpointsOnly === true) {
+      throw new TypeError('AgentDwnApi: remoteEndpoint and remoteEndpointsOnly are mutually exclusive.');
+    }
+    if (request.remoteEndpoint !== undefined && this._localDwnStrategy === 'only') {
       throw new Error(
-        `AgentDwnApi: remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'.`
+        `AgentDwnApi: remoteEndpoint cannot be used while localDwnStrategy is 'only'.`
       );
     }
-
-    // Bypass local discovery when the caller needs the hosted DWN's state.
-    const dwnEndpointUrls = request.remoteEndpointsOnly
-      ? await this.getRemoteDwnEndpointUrls(request.target)
-      : await this.getDwnEndpointUrlsForTarget(request.target);
+    let dwnEndpointUrls: string[];
+    if (request.remoteEndpoint !== undefined) {
+      dwnEndpointUrls = [request.remoteEndpoint];
+    } else if (request.remoteEndpointsOnly) {
+      dwnEndpointUrls = await this.requireRemoteDwnEndpointUrls(request.target);
+    } else {
+      dwnEndpointUrls = await this.getDwnEndpointUrlsForTarget(request.target);
+    }
     if (dwnEndpointUrls.length === 0) {
       throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${request.target}#dwn`);
     }
@@ -1402,17 +1413,26 @@ export class AgentDwnApi {
     return this.getAudienceKeyDeliveryState(params);
   }
 
+  /** @internal Subscribe to committed delivery-projection changes for one tenant and protocol. */
+  public subscribeAudienceKeyDeliveryChanges(params: {
+    listener: () => void;
+    protocol: string;
+    target: string;
+  }): () => void {
+    return this.requireAudienceKeyDeliveryStore().subscribe(change => {
+      if (change.sourceDid === params.target && change.protocol === params.protocol) {
+        params.listener();
+      }
+    });
+  }
+
   private requireAudienceKeyDeliveryCoordinator(
     protocol: string,
     signal: AbortSignal,
     target: string,
   ): AudienceKeyDeliveryCoordinator {
     signal.throwIfAborted();
-    if (this._audienceKeyDeliveryStore === undefined) {
-      throw new Error(
-        'AgentDwnApi: audience-key delivery state requires the \'audienceKeyDeliveryStore\' constructor option.',
-      );
-    }
+    this.requireAudienceKeyDeliveryStore();
     const coordinator = [...this._audienceKeyDeliveryCoordinators].find(candidate =>
       candidate.protocol === protocol && candidate.sessionSignal === signal && candidate.targetDid === target
     );
@@ -1422,10 +1442,20 @@ export class AgentDwnApi {
     return coordinator;
   }
 
+  private requireAudienceKeyDeliveryStore(): AudienceKeyDeliveryStore {
+    if (this._audienceKeyDeliveryStore === undefined) {
+      throw new Error(
+        'AgentDwnApi: audience-key delivery state requires the \'audienceKeyDeliveryStore\' constructor option.',
+      );
+    }
+    return this._audienceKeyDeliveryStore;
+  }
+
   /** @internal Registers one protocol with the active session's background delivery coordinator. */
   public registerAudienceKeyDeliveryProtocol(params: {
     granteeDid?: string;
     protocol: string;
+    /** Authored role paths used only to wake on relevant local writes. */
     rolePaths: readonly string[];
     signal: AbortSignal;
     target: string;
@@ -1448,7 +1478,6 @@ export class AgentDwnApi {
       run      : (includeDormant): Promise<boolean> => this.runAudienceKeyDeliveryPass({
         granteeDid : params.granteeDid,
         protocol   : params.protocol,
-        rolePaths,
         signal     : params.signal,
         target     : params.target,
       }, includeDormant),
@@ -1479,8 +1508,7 @@ export class AgentDwnApi {
         ?? await this.getRecipientRolePublicKey({ protocol, recipientDid, rolePath });
       recipientRoleKeyId = await Encryption.getKeyId(recipientRolePublicKey);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      return { delivered: false, failure: classifyAudienceKeyDeliveryFailure(error), reason: detail, recipientDid };
+      return audienceKeyDeliveryFailure(error, recipientDid);
     }
     const executionInput = { ...params, contextId, recipientRoleKeyId, recipientRolePublicKey };
     const hasExplicitAuthorizationContext = params.granteeDid !== undefined ||
@@ -1567,8 +1595,7 @@ export class AgentDwnApi {
       });
       return { delivered: true, recipientDid };
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      return { delivered: false, failure: classifyAudienceKeyDeliveryFailure(error), reason: detail, recipientDid };
+      return audienceKeyDeliveryFailure(error, recipientDid);
     }
   }
 

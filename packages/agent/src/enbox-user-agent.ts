@@ -5,9 +5,14 @@ import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
 import type { SecretStore } from './secret-store.js';
 import type { SyncEngine } from './types/sync.js';
-import type { DecryptRecordDataParams, DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
+import type {
+  DecryptRecordDataParams,
+  DwnInterface,
+  DwnResponse,
+  ProcessDwnRequest,
+  SendDwnRequest,
+} from './types/dwn.js';
 import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
-import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js';
 
 import { AgentCryptoApi } from './crypto-api.js';
 import { AgentDidApi } from './did-api.js';
@@ -288,24 +293,10 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     return this.dwn.processRequest(request);
   }
 
-  public async processVcRequest(_request: ProcessVcRequest): Promise<VcResponse> {
-    throw new Error('Not implemented');
-  }
-
-  public async sendDidRequest<T extends DidInterface>(
-    _request: DidRequest<T>
-  ): Promise<DidResponse<T>> {
-    throw new Error('Not implemented');
-  }
-
   public async sendDwnRequest<T extends DwnInterface>(
     request: SendDwnRequest<T>
   ): Promise<DwnResponse<T>> {
     return this.dwn.sendRequest(request);
-  }
-
-  public async sendVcRequest(_request: SendVcRequest): Promise<VcResponse> {
-    throw new Error('Not implemented');
   }
 
   public async start({ password }: AgentInitializeParams): Promise<void> {

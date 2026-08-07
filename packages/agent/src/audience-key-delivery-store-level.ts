@@ -2,11 +2,13 @@ import type { AbstractLevel } from 'abstract-level';
 
 import type { AudienceKeyDeliveryState } from './audience-key-delivery.js';
 import type {
+  AudienceKeyDeliveryChange,
   AudienceKeyDeliveryStore,
   ReconcileAudienceKeyDeliveryProtocolParams,
   RecordAudienceKeyDeliveryParams,
 } from './audience-key-delivery-store.js';
 
+import { BroadcastChannelWakePublisher } from '@enbox/dwn-sdk-js';
 import { Level } from 'level';
 import { runSerializedByKey, runWithCrossContextLock } from '@enbox/common';
 
@@ -20,12 +22,14 @@ type LevelKey = string | Buffer | Uint8Array;
 /** Level-backed audience-key delivery projection store. */
 export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
   private readonly _db: AbstractLevel<LevelKey>;
+  private readonly _changes: BroadcastChannelWakePublisher;
   private readonly _lockNamespace: string;
   private readonly _pendingOperations = new Map<string, Promise<void>>();
   private readonly _states: AbstractLevel<LevelKey, string, string>;
 
   public constructor(location: string) {
     this._db = new Level<string, string>(location);
+    this._changes = new BroadcastChannelWakePublisher(`enbox:audience-delivery:${location}`);
     this._lockNamespace = location;
     this._states = this._db.sublevel('audienceDeliveryProjections');
   }
@@ -37,6 +41,8 @@ export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
 
   public async close(): Promise<void> {
     await this.waitForPendingOperations();
+    this._changes.clear();
+    this._changes.close();
     await this._db.close();
   }
 
@@ -86,7 +92,14 @@ export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
       const next = recordAudienceKeyDeliveryProjection(await this.getEntry(key), params);
       if (next !== undefined) {
         await this._states.put(key, JSON.stringify(next));
+        this._changes.publish({ tenant: next.sourceDid, seq: next.protocol });
       }
+    });
+  }
+
+  public subscribe(listener: (change: AudienceKeyDeliveryChange) => void): () => void {
+    return this._changes.subscribe(({ tenant, seq }): void => {
+      listener({ sourceDid: tenant, protocol: seq });
     });
   }
 

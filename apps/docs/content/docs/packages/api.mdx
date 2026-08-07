@@ -1,578 +1,573 @@
 ---
 title: "@enbox/api"
-description: The high-level TypeScript SDK for decentralized identity and data — typed protocols, record operations, and anonymous queries.
+description: The application-facing TypeScript API for typed records, live views, and encrypted shared contexts.
 ---
 
-`@enbox/api` is the main package developers use to interact with the Enbox network. It provides a type-safe, protocol-scoped API for creating, reading, querying, counting, updating, and deleting records stored in Decentralized Web Nodes (DWNs).
+`@enbox/api` is the main package for Enbox applications. It turns a protocol
+definition into typed record collections and managed collaboration APIs. App
+code works with records, contexts, members, invitations, and views; tenant
+routing, role records, grants, encryption keys, delivery retries, and sync
+cursors stay inside Enbox.
 
 ## Installation
 
 ```bash
-bun add @enbox/api
+bun add @enbox/browser
 ```
 
-## Core concepts
+`@enbox/browser` re-exports this API and adds browser connection handlers and
+storage defaults. Non-browser applications can install `@enbox/api` directly.
 
-### Enbox
+## Application bootstrap
 
-The `Enbox` class is the entry point. You create an instance with `Enbox.connect()`:
+A typical app declares its data model once, registers it in an application
+manifest, and lets a connection store own session and protocol readiness.
 
-```ts
-import { Enbox } from '@enbox/api';
+### 1. Define the model
 
-const { enbox, session } = await Enbox.connect({ createIdentity: true });
-```
-
-`Enbox.connect()` creates the default auth/session lifecycle and returns the `Enbox` API, active session, and underlying auth manager. If you manage sessions yourself with `@enbox/auth` or `@enbox/agent`, pass the session directly:
-
-```ts
-const enbox = Enbox.fromSession(session);
-```
-
-For raw agent integration, use the public constructor: `new Enbox({ agent, connectedDid })`.
-
-The `Enbox` instance exposes:
-
-| Property / Method | Description |
-|---|---|
-| `enbox.using(protocol)` | Returns a `TypedEnbox` scoped to a protocol |
-| `enbox.did` | DID API — create and resolve DIDs |
-| `enbox.vc` | Verifiable Credentials API |
-| `enbox.agent` | The underlying `EnboxAgent` |
-| `enbox.getConnectionStatus()` | Reports active, expiring, expired, or revoked delegated grants |
-| `enbox.refresh({ protocols })` | Requests fresh grants for the same delegate on instances returned by `Enbox.connect()` |
-| `enbox.disconnect()` | Stops sync and clears cached instances |
-
-There is **no public `dwn` property** on the `Enbox` instance. All DWN access goes through `enbox.using(protocol)`.
-
-## Browser imports
-
-Browser apps can import `@enbox/api` directly, but most apps should use
-`@enbox/browser` because it re-exports the API and adds browser connect helpers:
+This example makes each `notebook/page` an encrypted collaborative context.
+Members can edit; viewers can read. `roleGroups` records that policy once so
+owner and member call sites do not repeat role paths or precedence.
 
 ```ts
-import { BrowserConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enbox/browser';
-```
+import { defineProtocol, recordCodecs } from '@enbox/browser';
 
-The `@enbox/api` root export also has a browser condition for bundlers that
-consume it directly. See [Browser & bundlers](/docs/guides/browser-bundlers) for
-service-worker and storage details.
-
-### defineProtocol
-
-`defineProtocol()` pairs a protocol definition with the runtime codec for each record type:
-
-```ts
-import { defineProtocol, recordCodecs } from '@enbox/api';
-
-interface TaskData {
-  title: string;
-  done: boolean;
-}
-
-const TaskProtocol = defineProtocol({
-  protocol:  'https://example.com/tasks',
-  published: true,
-  types: {
-    task: {
-      schema:      'https://example.com/schemas/task',
-      dataFormats: ['application/json'],
-    },
-    member: {
-      dataFormats: ['application/json'],
-    },
+const definition = {
+  protocol  : 'https://example.com/protocols/notebooks',
+  published : true,
+  types     : {
+    notebook : { dataFormats: ['application/json'] },
+    page     : { dataFormats: ['application/json'], encryptionRequired: true },
+    title    : { dataFormats: ['application/json'], encryptionRequired: true },
+    change   : { dataFormats: ['application/json'], encryptionRequired: true },
+    member   : { dataFormats: ['application/json'] },
+    viewer   : { dataFormats: ['application/json'] },
   },
   structure: {
-    task: {
-      $tags: {
-        done: { type: 'boolean' },
+    notebook: {
+      page: {
+        $actions: [
+          { role: 'notebook/page/member', can: ['read'] },
+          { role: 'notebook/page/viewer', can: ['read'] },
+        ],
+        title: {
+          $actions: [
+            { role: 'notebook/page/member', can: ['read', 'co-update'] },
+            { role: 'notebook/page/viewer', can: ['read'] },
+          ],
+          $recordLimit: { max: 1 },
+        },
+        change: {
+          $squash: true,
+          $actions: [
+            {
+              role : 'notebook/page/member',
+              can  : ['create', 'read', 'update', 'delete', 'co-update', 'co-delete'],
+            },
+            { role: 'notebook/page/viewer', can: ['read'] },
+          ],
+        },
+        member: {
+          $actions : [{ who: 'recipient', can: ['co-delete'] }],
+          $role    : true,
+        },
+        viewer: {
+          $actions : [{ who: 'recipient', can: ['co-delete'] }],
+          $role    : true,
+        },
       },
-      member: { $role: true },
     },
   },
+} as const;
+
+export const NotebookProtocol = defineProtocol(definition, {
+  notebook : recordCodecs.json<{ name: string }>(),
+  page     : recordCodecs.json<{ summary: string }>(),
+  title    : recordCodecs.json<{ title: string }>(),
+  change   : recordCodecs.json<{ body: string }>(),
+  member   : recordCodecs.json<{ name: string }>(),
+  viewer   : recordCodecs.json<{ name: string }>(),
 }, {
-  member: recordCodecs.json<{ label: string }>(),
-  task: recordCodecs.json<TaskData>(),
+  roleGroups: {
+    // Strongest to weakest. Enbox uses this order for membership and follow.
+    default: ['notebook/page/member', 'notebook/page/viewer'],
+  },
 });
 ```
 
-The same codec encodes writes and decodes `record.value()`. Protocol declarations therefore carry their runtime behavior and TypeScript value types in one place.
+The codec for each type encodes writes and decodes `record.value()`. Encrypted
+types use the managed audience-key lifecycle. Dapp code does not provision or
+deliver those keys directly.
 
-### TypedEnbox
-
-`TypedEnbox` is the **primary developer interface**. You get one by calling `enbox.using(protocol)`:
+### 2. Register and connect the application
 
 ```ts
-const tasks = enbox.using(TaskProtocol);
+import {
+  BrowserConnectHandler,
+  createConnectionStore,
+  defineApplicationManifest,
+} from '@enbox/browser';
+import { NotebookProtocol } from './notebook-protocol.js';
+
+export const application = defineApplicationManifest({
+  protocols: [NotebookProtocol],
+} as const);
+
+const store = createConnectionStore({
+  application,
+  connectHandler: BrowserConnectHandler({ appName: 'Notebook' }),
+  monitor: { autoRefresh: {} },
+});
+
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connect();
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+
+const notebooks = snapshot.enbox!.using(NotebookProtocol);
 ```
 
-Instances are cached by typed-protocol object identity — calling `using()` repeatedly with the same exported protocol constant returns the same instance.
+Browser apps must also register a service worker that calls
+`activatePolyfills()` so DRL-backed data resolves. See
+[Browser & bundlers](/docs/guides/browser-bundlers) for the required wiring.
 
-`TypedEnbox` **auto-configures** the protocol on the first record operation — it queries the local DWN for an existing installation and installs one if needed. You can start using records immediately without any setup step.
+The manifest is the canonical list of protocols and delegated permissions.
+The store restores sessions, requests the required grants, installs protocols
+locally, registers sync, and publishes a replacement `enbox` when a refreshed
+session replaces the old one. Use `store.subscribe()` and `getSnapshot()` with
+React `useSyncExternalStore` or the equivalent primitive in another framework.
+Connection sync is `syncing`, `caught-up`, or `error`; `ready` is reserved for
+views whose local data is usable. `RecordView.current` separately indicates
+whether its replica is caught up.
 
-If you need explicit control (for example, to check the status code or to pre-install before any reads), call `configure()` manually:
+Owner connections are local-first. Use `store.connectVault()` for an explicit
+owner/vault flow. Hosted protocol publication is opt-in through
+`requireHostedReadiness`; an offline or endpoint-less owner can otherwise use
+the app locally. Invitation receiving does require the protocol to have been
+installed on the recipient's hosted DWN, so apps should perform hosted
+readiness when enabling receiving and surface delivery failures for retry.
+
+## Typed records
+
+`enbox.using(NotebookProtocol).records` is the ordinary collection API. It
+injects the protocol URI, path, schema, codec, and active tenant.
 
 ```ts
-const { status } = await tasks.configure();
-// status.code: 200 (already installed) or 202 (newly installed)
+// Create
+const notebook = await notebooks.records.create('notebook', {
+  data: { name: 'Launch notes' },
+});
+
+const pageRecord = await notebooks.records.create('notebook/page', {
+  data            : { summary: 'Release planning' },
+  parentContextId : notebook.contextId,
+});
+
+// Read
+const found = await notebooks.records.read('notebook/page', pageRecord.id);
+if (found !== undefined) {
+  console.log((await found.value()).summary);
+}
+
+// Query and continue a captured selection
+const first = await notebooks.records.query('notebook/page', {
+  within     : notebook.contextId,
+  pagination : { limit: 25 },
+});
+const second = await first.next();
+
+// Replace a complete value
+await pageRecord.update({ data: { summary: 'Ready to ship' } });
+
+// Derive a shallow partial update from the latest value, with one conflict retry
+await notebooks.records.patch('notebook/page', pageRecord.id, (current) => ({
+  summary: `${current.summary}!`,
+}));
+
+// Delete by intent
+await notebooks.records.delete('notebook/page', { recordId: pageRecord.id });
 ```
 
-### TypedEnbox.records
+The main operations are:
 
-All record methods auto-inject `protocol`, `protocolPath`, and `schema` — you only provide the path and your data:
+| Method | Result |
+|---|---|
+| `create(path, request)` | A typed `Record<T>` |
+| `read(path, idOrRequest)` | `Record<T> \| undefined` |
+| `query(path, selection?)` | A `RecordPage` with `next()` |
+| `count(path, selection?)` | The full matching count before pagination |
+| `set(path, request)` | Create or replace a `$recordLimit.max: 1` record |
+| `patch(path, id, patch)` | A freshly read and updated record |
+| `delete(path, request)` | `void` when the requested delete is proven complete |
+| `observe(path, selection)` | A bounded materialized `RecordView` |
+| `subscribe(paths, listener)` | An incremental change stream |
 
-Typed record methods return application values instead of raw DWN response
-envelopes. `create()` returns a `Record`, `query()` returns a `RecordPage`,
-`count()` returns a number, and `read()` returns a `Record` or `undefined`.
-`Record.update()` and `patch()` return the same updated handle; successful
-delete, store, import, and send operations resolve without a value. A
-non-success DWN status throws `DwnResponseError` (except a missing read, which
-returns `undefined`):
+`record.value()` decodes the application value. `record.data.text()`,
+`json()`, `bytes()`, `blob()`, and `stream()` expose the raw representation.
+`update({ data })` replaces the full value; `patch()` performs a shallow merge
+and may invoke its side-effect-free producer twice when retrying one conflict.
+
+A missing read returns `undefined`; other non-success statuses normally throw
+`DwnResponseError`. An unbound typed delete also treats an already-absent record
+or a canonical tombstone conflict as complete. Context-bound deletion is
+stricter: its initial authority miss requires an authorized tombstone because
+the ID may identify a record outside that context.
+
+### Compact a delta history
+
+Declare `$squash: true` on an append-only protocol path. Every delta and snapshot
+on that path must use one monotonic application clock with identical explicit
+`dateCreated` and `messageTimestamp` values; the squash backstop applies to both.
+Create an ordinary delta and a full-state snapshot like this:
 
 ```ts
-import { DwnResponseError } from '@enbox/api';
+import { DwnResponseError } from '@enbox/browser';
+
+const writeDelta = (data, timestamp) => notebooks.records.create(
+  'notebook/page/change',
+  {
+    data,
+    parentContextId : pageContextId,
+    dateCreated     : timestamp,
+    messageTimestamp: timestamp,
+  },
+);
+
+const writeSnapshot = (data, timestamp) => notebooks.records.create(
+  'notebook/page/change',
+  {
+    data,
+    parentContextId : pageContextId,
+    squash          : true,
+    dateCreated     : timestamp,
+    messageTimestamp: timestamp,
+  },
+);
 
 try {
-  await tasks.records.delete('task', { recordId: taskId });
+  await writeSnapshot(compactedState, nextDwnTimestampAfter());
 } catch (error) {
-  if (error instanceof DwnResponseError) {
-    console.error(error.status.code, error.status.errorCode, error.status.detail);
+  if (!(error instanceof DwnResponseError)
+    || error.status.errorCode !== 'ProtocolAuthorizationSquashBackstop') {
+    throw error;
   }
+
+  const floor = error.status.info?.squashFloorTimestamp;
+  if (typeof floor !== 'string') throw error;
+
+  const authoritative = await readAuthoritativeHistory();
+  const rebased = applyPendingChanges(authoritative, pendingChanges);
+  await writeSnapshot(rebased, nextDwnTimestampAfter(floor));
 }
 ```
 
-Use the low-level DWN API when you need exact response envelopes and status
-codes.
+A successful squash removes older siblings and establishes a temporal floor.
+`nextDwnTimestampAfter()` represents an application helper that produces a
+DWN-compatible timestamp strictly newer than both wall-clock now and the
+provided floor. If the rebased write also races, repeat the authoritative
+read/rebase/write sequence with a bounded retry count. Never blindly retry the
+rejected snapshot.
 
-#### create
+### Query, observe, or subscribe?
+
+| Need | API |
+|---|---|
+| One snapshot or paginated search | `query()` |
+| A bounded collection that stays correct as records enter or leave a filter | `observe()` |
+| Incremental append/delete events, including replay | `subscribe()` |
+
+`observe()` installs its wake subscription before the first query and rebuilds
+the complete bounded result after matching changes. Event payloads are hints;
+the canonical query remains collection truth.
 
 ```ts
-const record = await tasks.records.create('task', {
-  data : { title: 'Buy milk', done: false },
-  tags : { done: false },
+const view = await notebooks.records.observe('notebook/page', {
+  within     : notebook.contextId,
+  pagination : { limit: 25 },
 });
-// record is Record<TaskData>
-```
 
-Create options:
-
-| Field | Type | Description |
-|---|---|---|
-| `data` | `T` (type-checked) | The record payload |
-| `parentContextId` | `string?` | Link to a parent record's `contextId` |
-| `published` | `boolean?` | Whether the record is publicly readable |
-| `recipient` | `string` on `$role` paths, otherwise `string?` | DID of the intended recipient or role holder |
-| `protocolRole` | `string?` | Role for permission-scoped writes |
-| `tags` | `Record<string, ...>?` | Indexed key-value metadata |
-| `store` | `boolean?` | Persist locally (default `true`) |
-
-#### query
-
-```ts
-const page = await tasks.records.query('task');
-
-for (const r of page.records) {
-  const data = await r.value(); // TaskData
-  console.log(data.title, data.done);
-}
-```
-
-Query with filters, sorting, and pagination:
-
-```ts
-import { DateSort } from '@enbox/dwn-sdk-js';
-
-const selection = {
-  filter: { tags: { done: false } },
-  dateSort: DateSort.CreatedDescending,
-  pagination: { limit: 25 },
+const renderView = (next) => {
+  if (next.status === 'error') report(next.error);
+  else renderPages(next.records, next.current);
 };
-
-const page = await tasks.records.query('task', selection);
-
-// Continue the same captured selection
-const nextPage = await page.next();
-if (nextPage) {
-  console.log(nextPage.records);
-}
-```
-
-Eagerly decode a bounded page when application code needs values immediately:
-
-```ts
-const { records } = await tasks.records.query('task', {
-  materialize: true,
-  pagination: { limit: 25 },
-});
-
-for (const item of records) {
-  console.log(item.value.title);
-  await item.record.delete();
-}
-```
-
-Each materialized item contains exactly `{ record, value }`. A `children`
-property is added only when the request explicitly selects child paths; each
-selected child has the same two-field `{ record, value }` shape.
-
-For a direct child whose protocol rule declares `$recordLimit: { max: 1 }`,
-`materialize: { children: [...] }` fetches that child path once for the whole
-parent page. Each selected key is present and is `undefined` when that parent
-has no visible child. Query and observe publish the same shape.
-Materialization decodes eagerly and may buffer codec output; omit it for large
-payloads and consume `record.data.stream()` instead.
-
-#### observe
-
-`observe()` is the normal reactive collection primitive. It installs a
-wake subscription before its first query, then rematerializes that same query
-after matching changes. The required limit makes retained collection size
-explicit:
-
-```ts
-const view = await tasks.records.observe('task', {
-  filter: { tags: { done: false } },
-  dateSort: DateSort.CreatedDescending,
-  pagination: { limit: 25 },
-});
-
-const unsubscribe = view.subscribe((snapshot) => {
-  // state is loading | ready | stale | error
-  renderTasks(snapshot.records, snapshot.state, snapshot.hasMore);
-});
-
-// getSnapshot() is useful for the initial render and framework adapters.
-const initial = view.getSnapshot();
-renderTasks(initial.records, initial.state, initial.hasMore);
+const unsubscribe = view.subscribe(renderView);
+renderView(view.getState());
+await view.ready();
 
 unsubscribe();
 await view.close();
 ```
 
-Pass `from`—and `protocolRole` when authorization requires one—to observe the
-same bounded selection on a foreign tenant. Foreign views use the remote query
-and subscription paths; successful queries are `ready` because local
-replication currentness does not describe their source.
+Every observable view uses the same lifecycle:
 
-Subscription payloads never mutate collection truth directly, and record data
-continues to decrypt lazily through each `Record<T>`. Views created through
-`enbox.using()` publish one terminal `error` snapshot and close when that Enbox
-session ends. After automatic grant refresh, `ConnectionStore` publishes a
-replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
-from the replacement `AuthManager.session` announced by `session-start`.
+- `status: 'loading'` means the first local materialization has not completed.
+- `status: 'ready'` means the local result, including an empty result, can be rendered.
+- `status: 'error'` retains the last result and exposes the failure.
+- `ready({ signal })` waits for the first locally usable result.
+- `close()` is async, idempotent, and stops owned subscriptions.
 
-Before the first query, every view is `loading`; a local view also remains
-`loading` until its configured replicas complete their required pull. An empty
-`ready` snapshot is therefore an authoritative empty result. After the first
-ready local snapshot, an offline or catching-up source reports `stale`;
-successful local materializations still update its records so offline writes
-remain visible. Query, authorization, or terminal sync failures report `error`
-while retaining the latest successful records. `hasMore` is always a boolean
-and is false until the first query completes.
+`RecordView` additionally exposes `current`. `false` means the rendered local
+replica is still catching up or is offline; `true` means the relevant
+replication links are caught up. Local usability and remote freshness are
+separate, so an app can remain useful offline. Do not treat an empty result as
+authoritative remote absence until `current` is true.
 
-Snapshots and their record arrays are immutable. A `Record<T>` represents
-the queried version until the caller explicitly invokes that handle's regular
-`update()` or `delete()` method; its data is still read lazily.
-
-#### set
-
-`set()` is the one create-or-replace operation. It is available only on paths
-whose protocol rule declares `$recordLimit: { max: 1 }`:
+For append-only histories, a context-bound subscription can replay existing
+records before handing off to live delivery:
 
 ```ts
-const title = await library.records.set('book/title', {
-  data: 'The Left Hand of Darkness',
-  within: book.contextId,
+const changes = await page.records.subscribe(
+  'notebook/page/change',
+  { initial: true },
+  async (event) => {
+    if (event.type === 'write') applyChange(await event.record.value());
+  },
+);
+
+// When the consuming component is released:
+await changes.close();
+```
+
+The live stream opens before replay. The handoff is at least once, so consumers
+must tolerate duplicate events, but writes accepted during replay are not
+missed. Enbox keeps cursors private, bounds the overlap buffer, and closes the
+stream if setup or the async listener fails.
+
+## Shared contexts
+
+A context binds the existing records API to one owner, protocol root, and
+context ID. Owner and member handles expose the same `context.records` verbs;
+app code does not pass `from`, `protocolRole`, grants, or root `within` values.
+
+### Owner workflow
+
+```ts
+const page = await notebooks.contexts.open(
+  'notebook/page',
+  pageRecord.contextId!,
+);
+
+await page.records.set('notebook/page/title', {
+  data: { title: 'Launch plan' },
 });
-```
+await page.records.create('notebook/page/change', {
+  data: { body: 'First draft' },
+});
 
-Nested singleton paths require their direct-parent context; root singletons do
-not accept one. This operation targets only the connected tenant's local replica
-and does not accept remote targets or protocol-role invocation. Because `set()`
-first selects the current occupant, callers need both read and write
-authorization; a delegate's Records.Read grant must cover RecordsQuery.
-Concurrent first creates retain the DWN's normal deterministic visibility
-semantics rather than adding a lock.
+const members = page.members();
+let alice = await members.set(aliceDid, {
+  role : 'notebook/page/member',
+  data : { name: 'Alice' },
+});
 
-#### count
-
-`count()` accepts the same typed selection as `query()` and counts the full
-authorized population before pagination. This makes one query reusable
-for a page and its total:
-
-```ts
-const selection = {
-  filter: { tags: { done: false } },
-  pagination: { limit: 25 },
-};
-
-const page = await tasks.records.query('task', selection);
-const count = await tasks.records.count('task', selection);
-// page.records.length <= 25; count covers every matching task
-```
-
-#### read
-
-Read a specific record by ID:
-
-```ts
-const record = await tasks.records.read('task', taskId);
-
-if (record === undefined) {
-  throw new Error('Task not found');
+if (alice.delivery.state === 'awaiting-recipient-install') {
+  showInstallPrompt(aliceDid);
+  // After the recipient reports that installation completed:
+  alice = await members.retryDelivery(aliceDid) ?? alice;
 }
 
-const data = await record.value(); // TaskData
+if (alice.delivery.state === 'delivered') {
+  await page.invite(aliceDid, {
+    preview: { title: 'Launch plan' },
+  });
+}
 ```
 
-Read from a remote DWN:
+`members().set()` creates or replaces the preferred assignment, provisions the
+audience key, attempts key delivery, and returns queryable delivery state.
+`get()`, `list()`, `observe()`, `remove()`, and `retryDelivery()` use DIDs and
+typed role data; role-record IDs and duplicate cleanup remain internal.
+
+Removing membership prevents future authorization but does not erase plaintext
+already learned by a former member. Forward-secure removal still requires
+audience-key rotation.
+
+### Recipient workflow
 
 ```ts
-const remote = await tasks.records.read('task', {
-  from: 'did:dht:alice...',
-  filter: { recordId: taskId },
-});
-```
+const inbox = await notebooks.contexts.invitations.observe();
+const renderInbox = (state) => {
+  if (state.status === 'error') report(state.error);
+  else showInvitations(state.records, state.current);
+};
+const unsubscribeInbox = inbox.subscribe(renderInbox);
+renderInbox(inbox.getState());
 
-#### delete
+const [invitation] = (await inbox.ready()).records;
+if (invitation === undefined) throw new Error('Invitation not found.');
 
-Delete via the `TypedEnbox` API:
+// accept() verifies current membership and begins exact-context replication.
+const shared = await invitation.accept();
 
-```ts
-await tasks.records.delete('task', {
-  recordId: record.id,
-});
-```
+// Pull the accepted context to the current remote feed head before
+// completeness-sensitive work.
+await shared.refresh();
 
-Or delete via the record instance:
-
-```ts
-await record.delete();
-```
-
-#### protocol roles
-
-A protocol role is an ordinary record on a path declared with `$role: true`.
-Its `recipient` is the role holder, so typed creates require a recipient on
-those paths. Grant, list, and revoke roles through the same Records lifecycle
-as application data—there is no separate permission-record API:
-
-```ts
-const task = await tasks.records.create('task', {
-  data: { title: 'Ship typed roles', done: false },
-});
-const assignment = await tasks.records.create('task/member', {
-  data            : { label: 'maintainer' },
-  parentContextId : task.contextId,
-  recipient       : memberDid,
+const title = await shared.records.read('notebook/page/title', titleRecordId);
+await shared.records.create('notebook/page/change', {
+  data: { body: 'Reviewed by Alice' },
 });
 
-const { records: members } = await tasks.records.query('task/member', {
-  filter : { recipient: memberDid },
-  within : task.contextId,
+unsubscribeInbox();
+await inbox.close();
+```
+
+Invitation preview fields are untrusted display text. Acceptance does not trust
+the invitation as membership proof: it resolves the owner-hosted role record,
+protocol, context root, and audience key before admitting the context. A failed
+accept remains retryable. `dismiss()` removes only the inbox item.
+
+Invitation discovery is a bounded newest-first query: it reads 50 raw inbox
+records by default and accepts limits up to 100. Malformed, duplicate, or
+unsolicited records consume that bound and can crowd out older valid
+invitations. Pagination continuation and automatic junk cleanup are not
+available yet. Apps that receive the owner DID, context ID, and group through
+another channel can bypass inbox discovery with
+`contexts.follow({ ownerDid, id, group })`; following still proves current
+membership before accepting the context.
+
+<Callout type="warn" title="The invitation inbox is an open write endpoint">
+A protocol that declares any encrypted type carries a reserved
+`enboxContextInvitation` path that any DID may write to — that is what lets a
+stranger offer you a context. Records are capped at 8 KB and are immutable, but
+their number is not capped, so an attacker who knows your DID and has the
+protocol installed on your DWN can consume storage and crowd the discovery bound
+indefinitely. Fresh DIDs are cheap, so per-author limits alone would not close
+it, and a global `$recordLimit` would let an attacker fill the cap and block
+real invitations. There is no mitigation in Enbox today.
+
+Apps that do not need open discovery should not call
+`contexts.invitations`; distribute the owner DID, context ID, and group over a
+channel you control and accept with `contexts.follow()` instead. Apps that do
+need it should treat inbox growth as untrusted input: prune dismissed and
+malformed records, and consider rate limiting at the hosted DWN.
+</Callout>
+
+`refresh()` performs one scoped pull from the endpoint accepted by `follow()`
+and succeeds only when that feed reaches its current head while the acceptance
+remains active. It throws `ContextNotReadyError` when membership, decryption,
+registration, connectivity, or replication is not ready.
+Once records have replicated, member reads, queries, and views remain available
+offline. Member mutations are sent to the context owner's DWN and therefore
+require it to be reachable; Enbox does not queue those mutations offline.
+
+### One owned-and-shared catalog
+
+```ts
+// Read once:
+const all = await notebooks.contexts.list();
+
+for (const context of all) {
+  if (context.access === 'owner') {
+    showOwnerControls(context.members());
+  } else {
+    showMemberRole(context.role);
+  }
+}
+
+// Or keep the same catalog live:
+const catalog = await notebooks.contexts.observe();
+const renderCatalog = ({ status, contexts, error }) => {
+  if (status === 'error') report(error);
+  else renderNotebooks(contexts);
+};
+const unsubscribeCatalog = catalog.subscribe(renderCatalog);
+renderCatalog(catalog.getState());
+await catalog.ready();
+
+unsubscribeCatalog();
+await catalog.close();
+```
+
+`contexts.list()` and `contexts.observe()` include both declared collaboration
+roots owned by the connected identity and accepted member contexts. If the
+same `(ownerDid, contextId)` appears through both routes, owner access wins.
+Owned roots are discovered from local records at roots named by `roleGroups`;
+accepted member contexts come from the durable followed-source catalog.
+`contexts.open()` remains available for binding any non-role context path, but
+only declared collaboration roots are automatically enumerated.
+
+The catalog's `ready` state means its first local materialization completed.
+Record views expose `current`, and member contexts expose `refresh()`, when an
+operation needs replication freshness.
+
+### Membership lifecycle and errors
+
+- `memberContext.leave()` withdraws the exact role record at the accepted
+  endpoint and then retires the local acceptance. The role must authorize
+  recipient `co-delete`.
+- `memberContext.forget()` removes only the local acceptance and does not change
+  owner-hosted membership.
+- A replacement role proven at the accepted endpoint updates the catalog and
+  fences retained handles with `ContextRetiredError`; reload the context from
+  `contexts.list()` or `contexts.observe()`.
+- A temporarily incomplete establishment or refresh throws
+  `ContextNotReadyError`; retry after connectivity, installation, or sync state
+  changes.
+- Other `follow()` failures use a sanitized message but preserve the original
+  error as `cause` for diagnostics.
+
+Accepted contexts survive restart in the current agent. Acceptance does not yet
+replicate between a user's devices.
+The verified endpoint and role group remain pinned until an explicit re-follow
+selects replacements. When a role link pauses, Enbox checks the group's roles strongest
+first at that endpoint and replaces or removes the catalog entry only from that
+authoritative result. If the endpoint is unavailable, refresh and remote
+mutations fail without silently removing the catalog row. Enbox replicates only
+the readable context paths and keeps tenant DIDs, grants, progress cursors, and
+encryption envelopes out of the dapp surface.
+
+For wallet-delegated member sessions, a foreign owner's DWN can enforce the
+embedded grant's expiry but does not receive revocations stored only on the
+member's own DWNs. Treat revocation of a compromised delegate as expiry-bounded
+until foreign-context revocation is made verifier-visible.
+
+## Advanced entry points
+
+Most applications should use a manifest-backed connection store. Lower-level
+entry points remain available when another layer owns lifecycle:
+
+```ts
+const { enbox, session, auth } = await Enbox.connect({
+  password,
+  createIdentity: true,
+  dwnEndpoints: ['https://dwn.example'],
 });
 
-await assignment.delete();
+const fromExistingSession = Enbox.fromSession(session);
+const fromAgent = new Enbox({ agent, connectedDid });
 ```
 
-`ProtocolRolePaths<typeof TaskProtocol.definition>` exposes the definition's
-exact role paths for reusable typed helpers. The DWN rejects a second active
-assignment for the same role path, direct-parent context, and recipient with
-`ProtocolAuthorizationDuplicateRoleRecipient`; delete the current assignment
-before creating its replacement. Encrypted role records use the normal Records
-encryption and best-effort role-audience key-delivery path; callers can provide
-`recipientRolePublicKey` when the recipient key is supplied out of band.
-
-## Record&lt;T&gt;
-
-`Record<T>` is the one mutable record class. `TypedEnbox` returns the same
-runtime `Record` used by the lower-level DWN API while carrying the selected
-protocol payload type as `T`; there is no second wrapper or `rawRecord` escape
-hatch.
-
-### Data accessors
-
-```ts
-const task = await record.value();        // Promise<TaskData>
-const raw  = await record.data.text();    // Promise<string>
-const blob = await record.data.blob();    // Promise<Blob>
-const bytes = await record.data.bytes();  // Promise<Uint8Array>
-const stream = await record.data.stream(); // Promise<ReadableStream>
-```
-
-When consuming multiple representations, capture `const data = record.data`.
-Convenience calls on that accessor cache up to 10 MB without re-reading from
-the DWN. Direct `stream()` calls remain streaming and are not eagerly buffered.
-
-### Metadata
-
-| Property | Type | Description |
-|---|---|---|
-| `record.id` | `string` | Unique, stable record ID |
-| `record.contextId` | `string?` | Hierarchical grouping ID |
-| `record.dateCreated` | `string` | ISO 8601 creation timestamp (immutable) |
-| `record.timestamp` | `string` | ISO 8601 timestamp of last mutation |
-| `record.author` | `string` | DID of the current message signer |
-| `record.creator` | `string` | DID of the original author |
-| `record.protocol` | `string?` | Protocol URI |
-| `record.protocolPath` | `string?` | Path within the protocol structure |
-| `record.schema` | `string?` | Schema URI from the protocol type |
-| `record.dataFormat` | `string?` | MIME type of the payload |
-| `record.dataSize` | `number?` | Payload size in bytes |
-| `record.tags` | `object?` | Indexed key-value metadata |
-| `record.published` | `boolean?` | Whether publicly readable |
-| `record.deleted` | `boolean` | Whether the record has been deleted |
-| `record.parentId` | `string?` | Parent record ID |
-| `record.recipient` | `string?` | Recipient DID |
-
-### Mutation methods
-
-#### update
-
-```ts
-const updated = await record.update({
-  data: { title: 'Buy oat milk', done: false },  // complete TaskData
-  tags: { priority: 'high' },
-});
-```
-
-`update({ data })` replaces the payload wholesale, so `data` must contain the
-complete `T`. Omitting a field removes it from the stored payload. Both the
-returned value and the original variable reference the same updated `Record`.
-
-#### patch
-
-Use `patch()` when only part of a JSON object should change:
-
-```ts
-const updated = await record.patch({
-  done: true,
-});
-```
-
-`patch()` reads the current JSON object, performs a shallow merge, and writes
-the complete merged payload. Nested objects are replaced rather than
-deep-merged, `undefined` leaves a field unchanged, and `null` deletes an
-optional field. Set a required nullable field to `null` with a complete
-`update()` instead. Like any read-merge-write operation, `patch()` can overwrite
-a concurrent update that lands between its read and write.
-
-#### delete
-
-```ts
-await record.delete();
-```
-
-Delete with options:
-
-```ts
-await record.delete({ prune: true });  // also delete child records
-```
-
-### Lifecycle methods
-
-| Method | Description |
-|---|---|
-| `record.send(target?)` | Push the record to a remote DWN. Defaults to your own remote DWN. |
-| `record.store(importRecord?)` | Persist to local DWN (for records created with `store: false`) |
-| `record.import(store?)` | Re-sign under your identity and optionally store (for importing others' records) |
-| `record.rawMessage` | Exact `RecordsWrite` or `RecordsDelete` message backing the current record state |
-
-## Anonymous queries
-
-`Enbox.anonymous()` creates a lightweight, read-only instance for querying **published** records without authentication:
+For published, unsigned reads without an identity:
 
 ```ts
 const { dwn } = Enbox.anonymous();
-
 const { records } = await dwn.records.query({
-  from: 'did:dht:alice...',
-  filter: {
-    protocol: 'https://blog.example/posts',
-    protocolPath: 'post',
+  from   : authorDid,
+  filter : {
+    protocol     : 'https://example.com/public-blog',
+    protocolPath : 'post',
   },
 });
-
-for (const record of records) {
-  console.log(record.id, await record.data.text());
-}
 ```
 
-No identity, vault, password, or signing keys are required. Only unsigned (anonymous) DWN messages are supported — you can query and read, but not write.
+Raw DWN methods, explicit foreign-tenant routing, protocol-role invocation,
+and exact response envelopes are advanced escape hatches. Managed shared
+contexts should use `contexts`, `members`, and `context.records` instead of
+hand-writing role records or key delivery.
 
-## Hierarchical records
+## Cleanup
 
-Protocols can define nested structures. Use `parentContextId` to create child records:
+Close views and subscriptions when their UI owner is released. When the user
+signs out, disconnect and dispose the connection store:
 
 ```ts
-const NotebookProtocol = defineProtocol({
-  protocol:  'https://example.com/notebooks',
-  published: true,
-  types: {
-    notebook: {
-      schema:      'https://example.com/schemas/notebook',
-      dataFormats: ['application/json'],
-    },
-    page: {
-      schema:      'https://example.com/schemas/page',
-      dataFormats: ['application/json'],
-    },
-  },
-  structure: {
-    notebook: {
-      page: {},
-    },
-  },
-}, {
-  notebook: recordCodecs.json<{ name: string }>(),
-  page: recordCodecs.json<{ title: string; body: string }>(),
-});
-
-const notebooks = enbox.using(NotebookProtocol);
-
-// Create a parent
-const notebook = await notebooks.records.create('notebook', {
-  data: { name: 'Travel Notes' },
-});
-
-// Create a child under the parent
-const page = await notebooks.records.create('notebook/page', {
-  data: { title: 'Day 1', body: 'Arrived in Tokyo...' },
-  parentContextId: notebook.contextId,
-});
-
-// Query children of a specific parent
-const { records: pages } = await notebooks.records.query('notebook/page', {
-  within: notebook.contextId,
-});
+await store.disconnect();
+await store.dispose();
 ```
 
-## Disconnecting
-
-When the user signs out, call `disconnect()` for the full sign-out flow:
-
-```ts
-await enbox.disconnect();
-```
-
-When `Enbox.connect()` built the agent itself (i.e. you did not pass an `agent` option), `disconnect()` does three things:
-
-1. **Stop sync** — halt the background DWN sync engine.
-2. **Sign out** — send delegate-grant revocations to the connected DWN, clear session restore markers (so the next `Enbox.connect()` does not silently restore the signed-out session), and clear the in-memory delegate decryption key cache.
-3. **Release resources** — lock the vault, close the sync engine, and close the storage adapter.
-
-If you passed a pre-built `agent` to `Enbox.connect({ agent })`, only step 1 runs — your agent and its `AuthManager` keep their lifecycle, and you are responsible for calling `auth.disconnect()` and `auth.shutdown()` on your own handle when you are done:
-
-```ts
-const auth = await AuthManager.create({ /* ... */ });
-const session = await auth.connectVault({ createIdentity: true });
-const enbox = Enbox.fromSession(session);
-
-// ... user uses the app ...
-
-await enbox.disconnect();   // stops sync + clears typed-enbox cache only
-await auth.disconnect();    // sign out: revoke grants, clear markers
-await auth.shutdown();      // release: lock vault, close storage
-```
-
-After calling `disconnect()`, the `Enbox` instance should not be reused. Create a new one with `Enbox.connect()` for the next session.
+After disconnect, use the replacement `enbox` from a later connected snapshot;
+do not retain APIs or context handles from the ended session.

@@ -24,6 +24,24 @@ function target(): SyncTarget {
   };
 }
 
+function roleTarget(): SyncTarget {
+  return {
+    ...target(),
+    authorization: {
+      kind         : 'role',
+      actorDid     : 'did:example:member',
+      protocolRole : 'notebook/collaborator',
+      roleRecordId : 'role-record',
+    },
+    scope: {
+      kind          : 'context',
+      contextId     : 'context',
+      protocol      : 'https://example.com/notebook',
+      protocolPaths : ['notebook/page'],
+    },
+  };
+}
+
 function protocolMessage(messageTimestamp: string): GenericMessage {
   return {
     descriptor: {
@@ -257,6 +275,25 @@ describe('SyncEngineLevel durable pull admission', () => {
       remoteEndpoint : REMOTE,
       tenantDid      : DID,
     })).toBe(true);
+  });
+
+  it('leaves terminal role admission failures retryable instead of persisting a dead letter', async () => {
+    const message = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const messageCid = await Message.getCid(message);
+    const engine = new SyncEngineLevel({
+      agent: {
+        dwn: { applyReplicatedMessage: sinon.stub().resolves({ kind: 'Invalid', reason: 'bad signature' }), isRemoteMode: false },
+      } as never,
+      db: {} as never,
+    });
+    const recordDeadLetter = sinon.stub(engine as any, 'recordDeadLetter').resolves();
+
+    await expect((engine as any).admitRemoteFeedEntry(roleTarget(), {
+      isLatestBaseState: true,
+      message,
+      messageCid,
+    })).rejects.toThrow(`role feed message ${messageCid} could not be admitted`);
+    expect(recordDeadLetter.notCalled).toBe(true);
   });
 
   it('hydrates inline durable-query data without a second remote read or a hint cache', async () => {

@@ -212,31 +212,6 @@ describe('EnboxUserAgent', () => {
           });
         });
 
-        describe('processVcRequest()', () => {
-          it('throws an error', async () => {
-            try {
-              await testHarness.agent.processVcRequest({});
-              throw new Error('Expected an error');
-            } catch (error) {
-              expect(error).toHaveProperty('message', 'Not implemented');
-            }
-          });
-        });
-
-        describe('sendDidRequest()', () => {
-          it('throws an error', async () => {
-            try {
-              await testHarness.agent.sendDidRequest({
-                messageType   : DidInterface.Create,
-                messageParams : { method: 'jwk' }
-              });
-              throw new Error('Expected an error');
-            } catch (error) {
-              expect(error).toHaveProperty('message', 'Not implemented');
-            }
-          });
-        });
-
         describe('sendDwnRequest()', () => {
           beforeEach(async () => {
             const testPortableIdentity: PortableIdentity = {
@@ -393,17 +368,6 @@ describe('EnboxUserAgent', () => {
             const writeReply = writeResponse.reply;
             expect(writeReply).toHaveProperty('status');
             expect(writeReply.status.code).toBe(202);
-          });
-        });
-
-        describe('sendVcRequest()', () => {
-          it('throws an error', async () => {
-            try {
-              await testHarness.agent.sendVcRequest({});
-              throw new Error('Expected an error');
-            } catch (error) {
-              expect(error).toHaveProperty('message', 'Not implemented');
-            }
           });
         });
 

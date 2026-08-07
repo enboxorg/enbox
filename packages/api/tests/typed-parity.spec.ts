@@ -215,6 +215,21 @@ describe('typed api parity batch', () => {
       });
       expect(remainingTasks).toHaveLength(1);
     });
+
+    it('should escalate a context-bound plain tombstone to a prune', async () => {
+      const { typed } = makeTyped();
+      const list = await typed.records.create('list', { data: { name: 'archive' } });
+      await typed.records.create('list/task', {
+        data            : { title: 'retained by the plain delete' },
+        parentContextId : list.contextId,
+      });
+      await typed.records.delete('list', { recordId: list.id });
+      const context = await typed.contexts.open('list', list.contextId!);
+
+      await context.records.delete('list', { prune: true, recordId: list.id });
+
+      expect((await typed.records.query('list/task', { within: list.contextId })).records).toHaveLength(0);
+    });
   });
 
   describe('public accessors', () => {
@@ -256,7 +271,6 @@ describe('typed api parity batch', () => {
       const selection = { pagination: { limit: 2 } };
       const firstPage = await typed.records.query('list', selection);
       expect(firstPage.records).toHaveLength(2);
-      expect(firstPage.cursor).toBeDefined();
 
       const secondPage = await firstPage.next();
       expect(secondPage).toBeDefined();

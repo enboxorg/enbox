@@ -1863,6 +1863,25 @@ export function audienceDeliveryWrapsKeyId(message: RecordsWriteMessage, keyId: 
   return message.encryption?.keyEncryption.some((entry): boolean => entry.keyId === keyId) === true;
 }
 
+/**
+ * Whether a record is the encryption-control record at `protocolPath` tagged for the given
+ * audience context — the read-side projection of the tag shape written when audience and
+ * delivery records are created.
+ */
+export function isEncryptionControlRecordFor(
+  message: RecordsWriteMessage,
+  protocolPath: string,
+  audience: { protocol: string; rolePath: string; contextId: string },
+): boolean {
+  const tags = message.descriptor.tags;
+  return message.descriptor.protocol === audience.protocol
+    && message.descriptor.protocolPath === protocolPath
+    && tags?.protocol === audience.protocol
+    && tags.rolePath === audience.rolePath
+    && tags.contextId === audience.contextId
+    && typeof tags.keyId === 'string';
+}
+
 async function hydrateAudienceKeyFromDeliveries(input: {
   audienceRecord: AudienceRecordCandidate;
   deliveryDecrypters: KeyDecrypter[];

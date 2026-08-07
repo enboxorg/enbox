@@ -1,3 +1,5 @@
+import type { DwnDataEncodedRecordsWriteMessage } from './types/dwn.js';
+import type { FollowedSyncSource } from './followed-sync-source.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type {
@@ -43,6 +45,8 @@ export type SyncTarget = {
   scope: SyncScope;
   authorization: SyncAuthorization;
   authorizationEpoch: string;
+  /** Current embedded actor-to-delegate grant. Never persisted on the durable link. */
+  authorDelegatedGrant?: DwnDataEncodedRecordsWriteMessage;
   permissionGrantIds?: NonEmptyStringArray;
 };
 
@@ -118,25 +122,14 @@ export class SyncTargetResolver {
       resolvedEndpoints = [];
     }
 
-    const endpointsByKey = new Map<string, string>();
-    for (const endpoint of [supplementalEndpoint, ...resolvedEndpoints]) {
-      if (endpoint === undefined) {
-        continue;
-      }
+    return SyncTargetResolver.deduplicateEndpointUrls([supplementalEndpoint, ...resolvedEndpoints]);
+  }
 
-      let key = endpoint;
-      try {
-        key = normalizeDwnEndpoint(endpoint);
-      } catch {
-        // Endpoint validation still occurs at the transport boundary. This key
-        // is only used to avoid duplicating an equivalent supplemental URL.
-      }
-      if (!endpointsByKey.has(key)) {
-        endpointsByKey.set(key, endpoint);
-      }
-    }
-
-    return [...endpointsByKey.values()];
+  /** Resolve only DID-advertised endpoints for a foreign authority source. */
+  public async getRemoteEndpointUrls(did: string): Promise<string[]> {
+    return SyncTargetResolver.deduplicateEndpointUrls(
+      await this._getEndpointDiscovery().getRemoteDwnEndpointUrls(did),
+    );
   }
 
   /** Build every canonical target for one identity and endpoint. */
@@ -152,10 +145,59 @@ export class SyncTargetResolver {
     })));
   }
 
+  /** Build the exact-context target represented by one accepted role record. */
+  public async buildTargetForSource(
+    source: FollowedSyncSource,
+    delegateDid?: string,
+  ): Promise<SyncTarget> {
+    const scope = {
+      kind          : 'context' as const,
+      protocol      : source.protocol,
+      contextId     : source.contextId,
+      protocolPaths : source.protocolPaths,
+    };
+
+    const authorization: Extract<SyncAuthorization, { kind: 'role' }> = {
+      kind         : 'role',
+      actorDid     : source.actorDid,
+      protocolRole : source.protocolRole,
+      roleRecordId : source.id,
+    };
+
+    const authorizationEpoch = await computeAuthorizationEpoch(authorization);
+    const projectionId = await computeProjectionId(source.sourceDid, scope);
+    return {
+      did    : source.sourceDid,
+      dwnUrl : source.remoteEndpoint,
+      delegateDid,
+      projectionId,
+      scope,
+      authorization,
+      authorizationEpoch,
+    };
+  }
+
+  /** Attach the current full delegate grant immediately before a role request. */
+  public async withCurrentRoleGrant(target: SyncTarget): Promise<SyncTarget> {
+    if (target.authorization.kind !== 'role' || target.delegateDid === undefined) {
+      return target;
+    }
+
+    const { message } = await this._permissionsApi.getPermissionForRequest({
+      connectedDid : target.authorization.actorDid,
+      delegateDid  : target.delegateDid,
+      delegate     : true,
+      forceRefresh : true,
+      messageType  : DwnInterface.MessagesQuery,
+      protocol     : target.scope.kind === 'context' ? target.scope.protocol : undefined,
+    });
+    return { ...target, authorDelegatedGrant: message };
+  }
+
   /** Resolve the scopes and authorization epochs represented by identity options. */
   public async buildTargetResolutions(
     did: string,
-    requestedScope: SyncScope,
+    requestedScope: ReturnType<typeof syncScopeFromProtocols>,
     options: SyncIdentityOptions,
   ): Promise<SyncTargetResolution[]> {
     const { delegateDid } = options;
@@ -198,6 +240,27 @@ export class SyncTargetResolver {
         permissionGrantIds,
       };
     }));
+  }
+
+  private static deduplicateEndpointUrls(endpoints: (string | undefined)[]): string[] {
+    const endpointsByKey = new Map<string, string>();
+    for (const endpoint of endpoints) {
+      if (endpoint === undefined) {
+        continue;
+      }
+
+      let key = endpoint;
+      try {
+        key = normalizeDwnEndpoint(endpoint);
+      } catch {
+        // Endpoint validation still occurs at the transport boundary. This key
+        // is only used to avoid scheduling an equivalent endpoint twice.
+      }
+      if (!endpointsByKey.has(key)) {
+        endpointsByKey.set(key, endpoint);
+      }
+    }
+    return [...endpointsByKey.values()];
   }
 }
 

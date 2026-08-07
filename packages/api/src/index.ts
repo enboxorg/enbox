@@ -1,8 +1,8 @@
 /**
- * Enbox SDK — high-level API for Decentralized Web Nodes, DIDs, and VCs.
+ * Enbox SDK — high-level API for Decentralized Web Nodes and DIDs.
  *
  * The SDK provides protocol-scoped access to DWN records with compile-time
- * type safety, DID management, and Verifiable Credential operations.
+ * type safety and DID management.
  *
  * Common authentication and identity setup is available through
  * `Enbox.connect()`. Advanced session management can use `@enbox/auth` or
@@ -24,19 +24,24 @@
 
 export * from './application-manifest.js';
 export * from './connection-store.js';
+export * from './context-errors.js';
+export type {
+  ContextInvitationPreview,
+} from './context-invitations.js';
+export type { ContextView, ContextViewListener, ContextViewState } from './context-view.js';
 export { defineProtocol } from './define-protocol.js';
 export * from './did-api.js';
 export { DwnResponseError } from './dwn-response-error.js';
 export * from './dwn-reader-api.js';
 export * from './enbox.js';
 export type * from './enbox-types.js';
-export * from './grant-revocation.js';
-export * from './permission-grant.js';
-export * from './permission-request.js';
 export * from './protocol.js';
 export { ProtocolReadinessError } from './protocol-readiness.js';
 export type { EnsureProtocolsReadyOptions, ProtocolReadinessApi } from './protocol-readiness.js';
 export type {
+  ContextRoleGroup,
+  ContextRoleGroups,
+  ContextRolePath,
   DataFormatAtPath,
   ProtocolPaths,
   ProtocolPathTypeNames,
@@ -61,10 +66,12 @@ export {
   type RecordValidator,
 } from './record-codec.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
-export type { RecordView, RecordViewListener, RecordViewSnapshot, RecordViewState } from './record-view.js';
+export { RecordConflictError } from './record-conflict-error.js';
+export type { RecordView, RecordViewListener, RecordViewState } from './record-view.js';
 export type { ReplicationCurrentness } from './replication-currentness.js';
 export * from './record.js';
 export * from './typed-enbox.js';
-export * from './vc-api.js';
-
-export { AudienceDecryptError, type AudienceDecryptFailureCause } from '@enbox/agent';
+export {
+  AudienceDecryptError,
+  type AudienceDecryptFailureCause,
+} from '@enbox/agent';

@@ -92,7 +92,6 @@ describe('Enbox API', () => {
         });
         expect(enbox).toBeDefined();
         expect(enbox).toHaveProperty('did');
-        expect(enbox).toHaveProperty('vc');
         expect(enbox).toHaveProperty('using');
         expect((enbox as any)._dwn.permissionsApi).toBe(testHarness.agent.permissions);
       });
@@ -180,7 +179,7 @@ describe('Enbox API', () => {
         expect(first).toBe(second); // same reference
         expect(registerDelivery.notCalled).toBe(true);
 
-        const roles = enbox.using(RoleProtocol);
+        enbox.using(RoleProtocol);
 
         expect(registerDelivery.calledOnce).toBe(true);
         expect(registerDelivery.firstCall.args[0]).toMatchObject({
@@ -190,34 +189,6 @@ describe('Enbox API', () => {
           target     : identity.did.uri,
         });
         expect(registerDelivery.firstCall.args[0].signal).toBeInstanceOf(AbortSignal);
-
-        const roleRecordId = 'role-record';
-        sinon.stub(roles.records, 'read').resolves({} as any);
-        const projection = {
-          contextId    : '',
-          protocol     : RoleProtocolDef.protocol,
-          recipientDid : 'did:example:bob',
-          rolePath     : 'member',
-          roleRecordId,
-          sourceDid    : identity.did.uri,
-        };
-        const getDelivery = sinon.stub(testHarness.agent.dwn, 'getAudienceKeyDeliveryState').resolves({
-          ...projection, reason: 'waiting', state: 'pending',
-        });
-        const retryDelivery = sinon.stub(testHarness.agent.dwn, 'retryAudienceKeyDeliveryState').resolves({
-          ...projection, state: 'delivered',
-        });
-        const deliveryParams = {
-          protocol : RoleProtocolDef.protocol,
-          roleRecordId,
-          signal   : registerDelivery.firstCall.args[0].signal,
-          target   : identity.did.uri,
-        };
-
-        expect(await roles.records.deliveryState('member', roleRecordId)).toEqual({ reason: 'waiting', state: 'pending' });
-        expect(getDelivery.calledOnceWith(deliveryParams)).toBe(true);
-        expect(await roles.records.retryDelivery('member', roleRecordId)).toEqual({ state: 'delivered' });
-        expect(retryDelivery.calledOnceWith(deliveryParams)).toBe(true);
       });
 
       it('should return different TypedEnbox instances for different protocols', async () => {

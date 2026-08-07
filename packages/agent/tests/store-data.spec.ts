@@ -6,17 +6,16 @@ import type { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } fr
 import { Convert } from '@enbox/common';
 import { DidJwk, isPortableDid } from '@enbox/dids';
 
-import type { EnboxPlatformAgent } from '../src/types/agent.js';
-import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreSetParams, DataStoreTenantParams } from '../src/store-data.js';
+import type { AgentDataStore } from '../src/store-data.js';
 
 import { AgentDidApi } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
+import { getDataStoreTenant } from '../src/utils-internal.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { DwnDataStore, InMemoryDataStore } from '../src/store-data.js';
-import { getDataStoreTenant, TENANT_SEPARATOR } from '../src/utils-internal.js';
 
-class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<PortableDid> {
+class DwnTestStore extends DwnDataStore<PortableDid> {
   protected name = 'DwnTestStore';
 
   protected _recordProtocolDefinition: ProtocolDefinition = {
@@ -43,82 +42,17 @@ class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<P
     schema       : this._recordProtocolDefinition.types.foo.schema
   };
 
-  public async delete(params: DataStoreDeleteParams): Promise<boolean> {
-    return await super.delete(params);
+  protected getStoredObjectId(storedObject: PortableDid): string {
+    return storedObject.uri;
   }
 
-  public async get(params: DataStoreGetParams): Promise<PortableDid | undefined> {
-    return await super.get(params);
-  }
-
-  public async set(params: DataStoreSetParams<PortableDid>): Promise<void> {
-    return await super.set(params);
-  }
-
-  public async list(params: DataStoreTenantParams): Promise<PortableDid[]> {
-    return await super.list(params);
-  }
-
-  protected async getAllRecords({ agent, tenantDid }: {
-    agent: EnboxPlatformAgent;
-    tenantDid: string;
-  }): Promise<PortableDid[]> {
-    // Clear the index since it will be rebuilt from the query results.
-    this._index.clear();
-
-    // Query the DWN for all stored PortableDid objects.
-    const { reply: queryReply } = await agent.dwn.processRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { ...this._recordProperties } }
-    });
-
-    // Loop through all of the stored PortableDid records and accumulate the objects.
-    const storedObjects: PortableDid[] = [];
-    for (const record of queryReply.entries ?? []) {
-      // All PortableDid records are expected to be small enough such that the data is returned
-      // with the query results. If a record is returned without `encodedData` this is unexpected so
-      // throw an error.
-      if (!record.encodedData) {
-        throw new Error(`${this.name}: Expected 'encodedData' to be present in the DWN query result entry`);
-      }
-
-      const storedObject = Convert.base64Url(record.encodedData).toObject() as PortableDid;
-      if (isPortableDid(storedObject)) {
-        // Update the index with the matching record ID.
-        const indexKey = `${tenantDid}${TENANT_SEPARATOR}${storedObject.uri}`;
-        this._index.set(indexKey, record.recordId);
-
-        // Add the stored Identity to the cache.
-        this._cache.set(record.recordId, storedObject);
-
-        storedObjects.push(storedObject);
-      }
-    }
-
-    return storedObjects;
+  protected isStoredObject(value: unknown): value is PortableDid {
+    return isPortableDid(value);
   }
 }
 
-class InMemoryTestStore extends InMemoryDataStore<PortableDid> implements AgentDataStore<PortableDid> {
+class InMemoryTestStore extends InMemoryDataStore<PortableDid> {
   protected name = 'InMemoryTestStore';
-
-  public async delete(params: DataStoreDeleteParams): Promise<boolean> {
-    return await super.delete(params);
-  }
-
-  public async get(params: DataStoreGetParams): Promise<PortableDid | undefined> {
-    return await super.get(params);
-  }
-
-  public async list(params: DataStoreTenantParams): Promise<PortableDid[]> {
-    return await super.list(params);
-  }
-
-  public async set(params: DataStoreSetParams<PortableDid>): Promise<void> {
-    return await super.set(params);
-  }
 }
 
 describe('AgentDataStore', () => {
@@ -143,31 +77,6 @@ describe('AgentDataStore', () => {
     mock.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
-  });
-
-  describe('Concrete implementations', () => {
-    it('must implement the getAllRecords() method', async () => {
-      class InvalidStore extends DwnDataStore<PortableDid> implements AgentDataStore<PortableDid> {
-        protected name = 'InvalidStore';
-        protected _recordProtocolDefinition = {
-          protocol  : 'http://example.org/protocols/web5/test-data',
-          published : false,
-          types     : {},
-          structure : {}
-        };
-      }
-
-      try {
-        const invalidStore = new InvalidStore();
-        await invalidStore.set({ id: 'test', data: {} as PortableDid, agent: testHarness.agent });
-
-        throw new Error('Expected an error to be thrown');
-
-      } catch (error: any) {
-        expect(error.message).toContain('Not implemented');
-        expect(error.message).toContain('must implement getAllRecords()');
-      }
-    });
   });
 
   [DwnTestStore, InMemoryTestStore].forEach((TestStore) => {

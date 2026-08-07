@@ -1,8 +1,17 @@
+import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import { describe, expect, it } from 'bun:test';
 
 import fc from 'fast-check';
 
-import { getRoleAudienceContextId, getRoleContextPrefix, getTypeName, isCrossProtocolRef, parseCrossProtocolRef } from '../../src/utils/protocols.js';
+import {
+  authoredProtocolDefinitionsEqual,
+  getRoleAudienceContextId,
+  getRoleContextPrefix,
+  getRoleRecordIdentity,
+  getTypeName,
+  isCrossProtocolRef,
+  parseCrossProtocolRef,
+} from '../../src/utils/protocols.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 100;
 
@@ -105,6 +114,58 @@ describe('Protocol utility functions — fuzz', () => {
     it('should return undefined when a nested role path has no covering context id', () => {
       expect(getRoleContextPrefix('thread/member')).toBeUndefined();
       expect(getRoleContextPrefix('thread/message/member', 'thread-record')).toBeUndefined();
+    });
+  });
+
+  describe('getRoleRecordIdentity', () => {
+    it('normalizes root and nested role contexts into stable keys', () => {
+      const rootFromRecord = getRoleRecordIdentity({
+        contextId    : 'role-record',
+        protocol     : 'https://example.com/forum',
+        protocolPath : 'admin',
+        recipient    : 'did:example:alice',
+      });
+      const rootFromContent = getRoleRecordIdentity({
+        contextId    : 'thread/message',
+        protocol     : 'https://example.com/forum',
+        protocolPath : 'admin',
+        recipient    : 'did:example:alice',
+      });
+      const nestedFromRole = getRoleRecordIdentity({
+        contextId    : 'thread/role-record',
+        protocol     : 'https://example.com/forum',
+        protocolPath : 'thread/participant',
+        recipient    : 'did:example:alice',
+      });
+      const nestedFromContent = getRoleRecordIdentity({
+        contextId    : 'thread/role-record/message',
+        protocol     : 'https://example.com/forum',
+        protocolPath : 'thread/participant',
+        recipient    : 'did:example:alice',
+      });
+
+      expect(rootFromRecord.contextIdPrefix).toBeUndefined();
+      expect(rootFromRecord.key).toBe(rootFromContent.key);
+      expect(nestedFromRole.contextIdPrefix).toBe('thread');
+      expect(nestedFromRole.key).toBe(nestedFromContent.key);
+    });
+  });
+
+  describe('protocol definition policy equality', () => {
+    it('ignores injected encryption metadata without mutating the definition', () => {
+      const authored: ProtocolDefinition = {
+        protocol  : 'https://example.com/protocol',
+        published : true,
+        structure : { note: {} },
+        types     : { note: {} },
+      };
+      const installed = structuredClone(authored);
+      installed.structure.note.$keyAgreement = {
+        publicKeyJwk: { crv: 'X25519', kty: 'OKP', x: 'key' },
+      };
+
+      expect(authoredProtocolDefinitionsEqual(authored, installed)).toBe(true);
+      expect(installed.structure.note.$keyAgreement).toBeDefined();
     });
   });
 });

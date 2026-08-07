@@ -1,322 +1,95 @@
-import type { BearerDid } from '@enbox/dids';
-import type { DwnProtocolDefinition } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import sinon from 'sinon';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 
-import { PlatformAgentTestHarness } from '@enbox/agent/test';
-import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
-
+import { createEnboxTestContext } from '../src/testing.js';
+import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineProtocol } from '../src/define-protocol.js';
-import { DwnApi } from '../src/dwn-api.js';
 import { recordCodecs } from '../src/record-codec.js';
-import { TestDataGenerator } from './utils/test-data-generator.js';
-import { testDwnUrl } from './utils/test-config.js';
-import { TypedEnbox } from '../src/typed-enbox.js';
 
-const testDwnUrls: string[] = [testDwnUrl];
-
-// ---------------------------------------------------------------------------
-// Record.patch() — the read-merge-write partial-update
-// idiom. update({ data }) REPLACES the payload (full payloads required for
-// encrypted records); patch() merges changed fields over the current data and
-// writes the FULL merged payload through update().
-// ---------------------------------------------------------------------------
-
-describe('Record.patch()', () => {
-  let aliceDid: BearerDid;
-  let dwnAlice: DwnApi;
-  let testHarness: PlatformAgentTestHarness;
-  let protocolUri: string;
-
-  beforeAll(async () => {
-    testHarness = await PlatformAgentTestHarness.setup({
-      agentClass       : EnboxUserAgent,
-      agentStores      : 'memory',
-      testDataLocation : '__TESTDATA__/record-patch',
-    });
-
-    await testHarness.clearStorage();
-    await testHarness.createAgentDid();
-
-    const alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
-    aliceDid = alice.did;
-
-    dwnAlice = new DwnApi({ agent: testHarness.agent, connectedDid: aliceDid.uri });
-  });
-
-  beforeEach(async () => {
-    sinon.restore();
-    await testHarness.syncStore.clear();
-    await testHarness.dwnDataStore.clear();
-    await testHarness.dwnMessageStore.clear();
-    await testHarness.dwnResumableTaskStore.clear();
-    await testHarness.agent.permissions.clear();
-    testHarness.dwnStores.clear();
-
-    protocolUri = `http://patch-protocol.xyz/${TestDataGenerator.randomString(15)}`;
-  });
-
-  afterAll(async () => {
-    sinon.restore();
-    await testHarness.clearStorage();
-    await testHarness.closeStorage();
-  });
-
-  /** Installs a plain (non-encrypted) `note` protocol at `protocolUri`. */
-  async function installNoteProtocol(): Promise<void> {
-    const definition: DwnProtocolDefinition = {
-      published : true,
-      protocol  : protocolUri,
+describe('TypedEnbox.records.patch() integration', () => {
+  it('stores the complete shallow-merged value through a real local DWN', async () => {
+    const definition = {
+      published : false,
+      protocol  : 'https://example.com/protocols/record-patch-integration',
       types     : {
         note: {
-          schema      : `${protocolUri}/schemas/note`,
+          schema      : 'https://example.com/schemas/record-patch-integration-note',
           dataFormats : ['application/json'],
         },
       },
-      structure: {
-        note: {},
-      },
+      structure: { note: {} },
+    } as const satisfies ProtocolDefinition;
+    type Note = {
+      body: string;
+      meta: { a: number; b?: number };
+      subtitle?: string;
+      title: string;
     };
-    const { status } = await dwnAlice.protocols.configure({ definition });
-    expect(status.code).toBe(202);
-  }
-
-  it('should shallow-merge patched fields over the current payload', async () => {
-    await installNoteProtocol();
-
-    const { status, record } = await dwnAlice.records.write({
-      data         : { title: 'v1', body: 'unchanged body', count: 1 },
-      protocol     : protocolUri,
-      protocolPath : 'note',
-      schema       : `${protocolUri}/schemas/note`,
-      dataFormat   : 'application/json',
+    const protocol = defineProtocol(definition, { note: recordCodecs.json<Note>() });
+    const context = await createEnboxTestContext({
+      application: defineApplicationManifest({ protocols: [protocol] }),
     });
-    expect(status.code).toBe(202);
 
-    const patched = await record!.patch({ title: 'v2' });
+    try {
+      const notes = context.enbox.using(protocol);
+      const created = await notes.records.create('note', {
+        data: {
+          body     : 'kept',
+          meta     : { a: 1, b: 2 },
+          subtitle : 'remove me',
+          title    : 'before',
+        },
+      });
 
-    // Only the patched field changed — every omitted field survived.
-    expect(await patched.data.json()).toEqual({ title: 'v2', body: 'unchanged body', count: 1 });
-    // patch() preserves the canonical handle and mutates it in place.
-    expect(patched).toBe(record);
-    expect(await record!.data.json()).toEqual({ title: 'v2', body: 'unchanged body', count: 1 });
+      const patched = await notes.records.patch('note', created.id, {
+        body     : undefined,
+        meta     : { a: 9 },
+        subtitle : null,
+        title    : 'after',
+      });
+
+      expect(await patched.value()).toEqual({ body: 'kept', meta: { a: 9 }, title: 'after' });
+      expect(await notes.records.read('note', created.id).then(record => record?.value()))
+        .toEqual({ body: 'kept', meta: { a: 9 }, title: 'after' });
+    } finally {
+      await context.close();
+    }
   });
 
-  it('should write the FULL merged payload to the agent request (not the partial)', async () => {
-    await installNoteProtocol();
-
-    const { record } = await dwnAlice.records.write({
-      data         : { title: 'v1', body: 'kept', tagsCount: 3 },
-      protocol     : protocolUri,
-      protocolPath : 'note',
-      schema       : `${protocolUri}/schemas/note`,
-      dataFormat   : 'application/json',
-    });
-
-    const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-
-    await record!.patch({ title: 'v2' });
-
-    // Asserted at the agent request: the write's dataStream carries the full
-    // merged object, not the partial the caller passed.
-    const writeCall = processSpy.getCalls().find((call) => call.args[0].messageType === DwnInterface.RecordsWrite);
-    expect(writeCall).toBeDefined();
-    const dataStream = writeCall!.args[0].dataStream as Blob;
-    expect(dataStream).toBeInstanceOf(Blob);
-    expect(JSON.parse(await dataStream.text())).toEqual({ title: 'v2', body: 'kept', tagsCount: 3 });
-  });
-
-  it('should delete fields patched with an explicit null and ignore undefined', async () => {
-    await installNoteProtocol();
-
-    const { record } = await dwnAlice.records.write({
-      data         : { title: 'v1', subtitle: 'optional', body: 'kept' },
-      protocol     : protocolUri,
-      protocolPath : 'note',
-      schema       : `${protocolUri}/schemas/note`,
-      dataFormat   : 'application/json',
-    });
-
-    const patched = await record!.patch({
-      subtitle : null, // explicit null → field deleted
-      body     : undefined, // undefined → ignored, no change
-    });
-
-    const patchedData = await patched.data.json() as Record<string, unknown>;
-    expect(patchedData).toEqual({ title: 'v1', body: 'kept' });
-    expect('subtitle' in patchedData).toBe(false);
-  });
-
-  it('should replace nested objects wholesale (shallow merge, not deep)', async () => {
-    await installNoteProtocol();
-
-    const { record } = await dwnAlice.records.write({
-      data         : { title: 'v1', meta: { a: 1, b: 2 } },
-      protocol     : protocolUri,
-      protocolPath : 'note',
-      schema       : `${protocolUri}/schemas/note`,
-      dataFormat   : 'application/json',
-    });
-
-    const patched = await record!.patch({ meta: { a: 9 } });
-
-    // The nested object is replaced as a unit — `b` does NOT survive.
-    expect(await patched.data.json()).toEqual({ title: 'v1', meta: { a: 9 } });
-  });
-
-  it('should throw when the current data is not a JSON object', async () => {
-    await installNoteProtocol();
-
-    const { record } = await dwnAlice.records.write({
-      data         : ['not', 'an', 'object'],
-      protocol     : protocolUri,
-      protocolPath : 'note',
-      schema       : `${protocolUri}/schemas/note`,
-      dataFormat   : 'application/json',
-    });
-
-    await expect(record!.patch({ title: 'v2' }))
-      .rejects.toThrow('patch() requires the record\'s current value to be a plain object');
-  });
-
-  it('should throw when patching a deleted record', async () => {
-    await installNoteProtocol();
-
-    const { record } = await dwnAlice.records.write({
-      data         : { title: 'v1' },
-      protocol     : protocolUri,
-      protocolPath : 'note',
-      schema       : `${protocolUri}/schemas/note`,
-      dataFormat   : 'application/json',
-    });
-    await record!.delete();
-    expect(record!.deleted).toBe(true);
-
-    await expect(record!.patch({ title: 'v2' })).rejects.toThrow('Cannot patch a deleted record');
-  });
-
-  it('should re-encrypt the full merged payload when patching an encrypted record', async () => {
-    const encProtocol: DwnProtocolDefinition = {
-      published : true,
-      protocol  : protocolUri,
+  it('re-encrypts the complete merged value through a real local DWN', async () => {
+    const definition = {
+      published : false,
+      protocol  : 'https://example.com/protocols/encrypted-record-patch-integration',
       types     : {
-        note: {
-          schema             : `${protocolUri}/schemas/note`,
+        secret: {
+          schema             : 'https://example.com/schemas/encrypted-record-patch-integration-secret',
           dataFormats        : ['application/json'],
           encryptionRequired : true,
         },
       },
-      structure: {
-        note: {},
-      },
-    };
-
-    const { status: configStatus } = await dwnAlice.protocols.configure({
-      definition: encProtocol,
+      structure: { secret: {} },
+    } as const satisfies ProtocolDefinition;
+    type Secret = { pin: string; title: string };
+    const protocol = defineProtocol(definition, { secret: recordCodecs.json<Secret>() });
+    const context = await createEnboxTestContext({
+      application: defineApplicationManifest({ protocols: [protocol] }),
     });
-    expect(configStatus.code).toBe(202);
 
-    const { status: writeStatus, record } = await dwnAlice.records.write({
-      data         : { title: 'secret v1', body: 'confidential body' },
-      protocol     : protocolUri,
-      protocolPath : 'note',
-      schema       : `${protocolUri}/schemas/note`,
-      dataFormat   : 'application/json',
-    });
-    expect(writeStatus.code).toBe(202);
-    expect(record!.encryption).toBeDefined();
-    const originalIV = record!.encryption!.initializationVector;
-
-    const patched = await record!.patch({ title: 'secret v2' });
-    expect(patched).toBe(record);
-
-    // The patched record is re-encrypted (fresh envelope), full payload intact.
-    expect(patched.encryption).toBeDefined();
-    expect(patched.encryption!.initializationVector).not.toBe(originalIV);
-
-    // Read back decrypted from the DWN: the omitted field survived because
-    // patch wrote the FULL merged payload (encrypted updates require it).
-    const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
-      filter: { recordId: record!.id },
-    });
-    expect(readStatus.code).toBe(200);
-    expect(await readRecord!.data.json()).toEqual({ title: 'secret v2', body: 'confidential body' });
-  });
-
-  describe('typed Record.patch()', () => {
-    it('should merge typed patches, honor null-deletes, and preserve the typed Record', async () => {
-      const definition: ProtocolDefinition = {
-        protocol  : protocolUri,
-        published : true,
-        types     : {
-          page: { schema: `${protocolUri}/schemas/page`, dataFormats: ['application/json'] },
-        },
-        structure: {
-          page: { $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
-        },
-      };
-      type PageData = { title: string; body: string; subtitle?: string };
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {
-        page: recordCodecs.json<PageData>(),
-      }));
-
-      const record = await typed.records.create('page', {
-        data: { title: 'v1', body: 'kept', subtitle: 'optional' },
+    try {
+      const secrets = context.enbox.using(protocol);
+      const created = await secrets.records.create('secret', {
+        data: { pin: '1234', title: 'before' },
       });
+      const originalIv = created.encryption?.initializationVector;
 
-      const patched = await record.patch({
-        title    : 'v2',
-        subtitle : null,
-      });
-      expect(patched).toBe(record);
+      const patched = await secrets.records.patch('secret', created.id, { title: 'after' });
 
-      const data: PageData = await patched.value();
-      expect(data).toEqual({ title: 'v2', body: 'kept' });
-
-      // The protocol-derived type flows through the patch result.
-      expect(patched.protocolPath).toBe('page');
-    });
-
-    it('should patch an auto-encrypted typed record with the full merged payload', async () => {
-      const definition: ProtocolDefinition = {
-        protocol  : protocolUri,
-        published : true,
-        types     : {
-          secret: {
-            schema             : `${protocolUri}/schemas/secret`,
-            dataFormats        : ['application/json'],
-            encryptionRequired : true,
-          },
-        },
-        structure: {
-          secret: {},
-        },
-      };
-      type SecretData = { title: string; pin: string };
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {
-        secret: recordCodecs.json<SecretData>(),
-      }));
-
-      // configure() auto-derives + injects $keyAgreement for encrypted types.
-      const { status: configStatus } = await typed.configure();
-      expect(configStatus.code).toBe(202);
-
-      const record = await typed.records.create('secret', {
-        data: { title: 'vault', pin: '1234' },
-      });
-      expect(record.encryption).toBeDefined();
-
-      const patched = await record.patch({ title: 'vault v2' });
-      expect(patched).toBe(record);
-      expect(patched.encryption).toBeDefined();
-
-      // The omitted encrypted field survives the patch round-trip.
-      const readRecord = await typed.records.read('secret', {
-        filter: { recordId: record!.id },
-      });
-      expect(await readRecord!.value()).toEqual({ title: 'vault v2', pin: '1234' });
-    });
+      expect(originalIv).toBeDefined();
+      expect(patched.encryption?.initializationVector).not.toBe(originalIv);
+      expect(await patched.value()).toEqual({ pin: '1234', title: 'after' });
+    } finally {
+      await context.close();
+    }
   });
 });

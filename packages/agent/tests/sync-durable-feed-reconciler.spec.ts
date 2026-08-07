@@ -319,6 +319,34 @@ describe('SyncDurableFeedReconciler', () => {
     expect(fixture.operations.commitCheckpoint.secondCall.args).toEqual([fixture.link, 'pull']);
   });
 
+  it('should start a role pull from the remote feed without querying local role state', async () => {
+    const roleTarget: SyncTarget = {
+      authorization: {
+        kind         : 'role',
+        actorDid     : 'did:example:member',
+        protocolRole : 'notebook/viewer',
+        roleRecordId : 'role-a',
+      },
+      authorizationEpoch : 'role-epoch',
+      did                : 'did:example:owner',
+      dwnUrl             : 'https://owner.example',
+      projectionId       : 'notebook-projection',
+      scope              : {
+        kind          : 'context',
+        protocol      : 'https://example.com/notebooks',
+        contextId     : 'notebook-a',
+        protocolPaths : ['notebook/page'],
+      },
+    };
+    const fixture = createReconciler(roleTarget);
+
+    const result = await fixture.reconciler.pull(roleTarget, fixture.link);
+
+    expect(result.pullDrained).toBe(true);
+    expect(fixture.queryFeed.calledOnce).toBe(true);
+    expect(fixture.queryFeed.firstCall.args[0]).toMatchObject({ source: 'remote', target: roleTarget });
+  });
+
   it('should commit a drained no-change pull page even when its checkpoint position repeats', async () => {
     const fixture = createReconciler();
     fixture.link.pull.contiguousAppliedToken = token(7);

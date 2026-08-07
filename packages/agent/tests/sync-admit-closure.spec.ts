@@ -692,6 +692,68 @@ describe('admitClosure', () => {
     expect(agent.dwn.applyReplicatedMessage.called).toBe(false);
   });
 
+  it('hydrates a role root through the replication-support hook instead of an owner-shaped fetch', async () => {
+    const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+      data     : new Uint8Array([1, 2, 3]),
+      protocol : 'https://example.com/protocol',
+    });
+    const rootCid = await Message.getCid(recordsWrite.message);
+    const agent = createMockAgent();
+    const fetchReplicationSupport = sinon.stub().resolves({
+      dependencies : [],
+      root         : {
+        bufferedData      : recordsWrite.dataBytes,
+        isLatestBaseState : true,
+        message           : recordsWrite.message,
+      },
+    });
+    agent.dwn.applyReplicatedMessage.resolves({ kind: 'Applied' });
+
+    const outcome = await admitClosure(rootCid, {
+      did        : 'did:example:owner',
+      dwnUrl     : 'https://dwn.example.com',
+      agent,
+      fetchReplicationSupport,
+      prefetched : [{ message: recordsWrite.message, isLatestBaseState: true }],
+    });
+
+    expect(outcome.kind).toBe('admitted');
+    expect(fetchReplicationSupport.calledOnce).toBe(true);
+    expect(agent.rpc.sendDwnRequest.notCalled).toBe(true);
+  });
+
+  it('requests role replication support only after local admission reports a missing dependency', async () => {
+    const protocol = 'https://example.com/protocol';
+    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const configure = await TestDataGenerator.generateProtocolsConfigure({
+      author             : root.author,
+      protocolDefinition : { protocol, published: true, structure: {}, types: {} },
+    });
+    const rootCid = await Message.getCid(root.message);
+    const configureCid = await Message.getCid(configure.message);
+    const agent = createMockAgent();
+    const fetchReplicationSupport = sinon.stub().resolves({
+      dependencies : [{ message: configure.message, isLatestBaseState: true }],
+      root         : { bufferedData: root.dataBytes, isLatestBaseState: true, message: root.message },
+    });
+    agent.dwn.applyReplicatedMessage
+      .onFirstCall().resolves({ kind: 'Incomplete', missing: [{ type: 'Protocol', protocol }] })
+      .onSecondCall().resolves({ kind: 'Applied' })
+      .onThirdCall().resolves({ kind: 'Applied' });
+
+    const outcome = await admitClosure(rootCid, {
+      did        : root.author.did,
+      dwnUrl     : 'https://dwn.example.com',
+      agent,
+      fetchReplicationSupport,
+      prefetched : [{ bufferedData: root.dataBytes, isLatestBaseState: true, message: root.message }],
+    });
+
+    expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [configureCid, rootCid] });
+    expect(fetchReplicationSupport.calledOnce).toBe(true);
+    expect(agent.rpc.sendDwnRequest.notCalled).toBe(true);
+  });
+
   it('fetches the newest tenant protocol config', async () => {
     const protocol = 'https://example.com/protocol';
     const definition = {

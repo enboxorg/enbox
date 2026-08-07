@@ -116,6 +116,23 @@ export type ProtocolRolePaths<D extends ProtocolDefinition> = {
     : never;
 }[ProtocolPaths<D>];
 
+type EncryptedTypeNames<D extends ProtocolDefinition> = {
+  [Name in keyof D['types']]: D['types'][Name] extends { readonly encryptionRequired: true } ? Name : never;
+}[keyof D['types']];
+
+/** Any encrypted contextual role in a protocol. */
+export type ContextRolePath<D extends ProtocolDefinition> = EncryptedTypeNames<D> extends never
+  ? never
+  : Extract<ProtocolRolePaths<D> & string, `${string}/${string}`>;
+
+/** One non-empty, precedence-ordered group of contextual roles. */
+export type ContextRoleGroup<Role extends string = string> = readonly [Role, ...Role[]];
+
+/** Application-declared context role groups, keyed by protocol-global group name. */
+export type ContextRoleGroups<Role extends string = string> = Readonly<
+  globalThis.Record<string, ContextRoleGroup<Role>>
+>;
+
 // ---------------------------------------------------------------------------
 // Singleton extraction
 // ---------------------------------------------------------------------------
@@ -194,15 +211,19 @@ export type ProtocolRecordCodecs<D extends ProtocolDefinition> = {
 
 /**
  * The return type of `defineProtocol()`. Bundles the raw protocol definition
- * with the runtime codecs that also carry its application value types.
+ * with runtime codecs and application-only context policy.
  */
 export type TypedProtocol<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
+  G extends ContextRoleGroups = {},
 > = {
-  /** The raw DWN protocol definition (JSON-compatible). */
+  /** The effective DWN protocol definition, including Enbox-managed protocol paths. */
   readonly definition: D;
 
   /** Application codecs keyed by protocol type name. */
   readonly codecs: C;
+
+  /** Application-only context membership policy; never included in DWN protocol messages. */
+  readonly roleGroups: G;
 };

@@ -1,5 +1,7 @@
 import type { BearerDid } from '@enbox/dids';
+import type { ContextMembersApi } from '../src/typed-enbox.js';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { RecordDeleteParams } from '../src/record-types.js';
 import type {
   EncodedRecordData,
   RecordCodec,
@@ -9,20 +11,21 @@ import type {
 
 import sinon from 'sinon';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
-
-import { PlatformAgentTestHarness } from '@enbox/agent/test';
-import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
-
-import { defineProtocol } from '../src/define-protocol.js';
+import { ContextNotReadyError } from '../src/context-errors.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { Protocol } from '../src/protocol.js';
 import { Record } from '../src/record.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { definitionsEqual, TypedEnbox } from '../src/typed-enbox.js';
+import { TypedEnbox } from '../src/typed-enbox.js';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { CONTEXT_INVITATION_PATH, contextInvitationCodec } from '../src/context-invitations.js';
+import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
+import { defineProtocol, isTypedProtocol } from '../src/define-protocol.js';
+import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 // ---------------------------------------------------------------------------
 // Test protocol definition
@@ -113,6 +116,58 @@ describe('TypedProtocol API', () => {
   });
 
   describe('defineProtocol()', () => {
+    const RoleGroupDefinition = {
+      protocol  : 'https://example.com/protocols/role-groups',
+      published : true,
+      types     : {
+        blind     : { dataFormats: ['application/json'] },
+        member    : { dataFormats: ['application/json'] },
+        note      : { dataFormats: ['application/json'], encryptionRequired: true },
+        outsider  : { dataFormats: ['application/json'] },
+        project   : { dataFormats: ['application/json'] },
+        viewer    : { dataFormats: ['application/json'] },
+        workspace : { dataFormats: ['application/json'] },
+      },
+      structure: {
+        project: {
+          $actions : [{ role: 'project/outsider', can: ['read'] }],
+          outsider : { $role: true },
+        },
+        workspace: {
+          $actions: [
+            { role: 'workspace/member', can: ['read'] },
+            { role: 'workspace/viewer', can: ['read'] },
+          ],
+          blind  : { $role: true },
+          member : { $role: true },
+          note   : {},
+          viewer : { $role: true },
+        },
+      },
+    } as const satisfies ProtocolDefinition;
+    const RoleGroupCodecs = {
+      blind     : recordCodecs.json<unknown>(),
+      member    : recordCodecs.json<unknown>(),
+      note      : recordCodecs.json<unknown>(),
+      outsider  : recordCodecs.json<unknown>(),
+      project   : recordCodecs.json<unknown>(),
+      viewer    : recordCodecs.json<unknown>(),
+      workspace : recordCodecs.json<unknown>(),
+    };
+    const defineRoleGroups = (roleGroups: unknown): {
+      codecs: globalThis.Record<string, RecordCodec<unknown>>;
+      definition: ProtocolDefinition;
+      roleGroups: Readonly<globalThis.Record<string, readonly string[]>>;
+    } => (defineProtocol as unknown as (
+      definition: ProtocolDefinition,
+      codecs: typeof RoleGroupCodecs,
+      options: { roleGroups: unknown },
+    ) => {
+      codecs: globalThis.Record<string, RecordCodec<unknown>>;
+      definition: ProtocolDefinition;
+      roleGroups: Readonly<globalThis.Record<string, readonly string[]>>;
+    })(RoleGroupDefinition, RoleGroupCodecs, { roleGroups });
+
     it('should return a TypedProtocol with the original definition', () => {
       expect(TodoProtocol.definition).toBe(TodoProtocolDefinition);
       expect(TodoProtocol.definition.protocol).toBe('https://example.com/protocols/todo');
@@ -140,6 +195,108 @@ describe('TypedProtocol API', () => {
         TodoProtocolDefinition,
         invalid as unknown as typeof TodoProtocol.codecs,
       )).toThrow('invalid: task');
+    });
+
+    it('validates context role groups once at the protocol boundary', () => {
+      const invalid: Array<[unknown, string]> = [
+        [{ viewers: ['workspace/viewer'] }, 'must declare a \'default\' group'],
+        [{ default: [] }, 'must contain at least one role path'],
+        [{ default: ['workspace/member', 'workspace/member'] }, 'must not contain duplicate roles'],
+        [{ default: ['workspace/note'] }, 'role \'workspace/note\' is not an encrypted audience'],
+        [{ default: ['workspace/blind'] }, 'must authorize reading its parent context \'workspace\''],
+        [{ default: ['workspace/member', 'project/outsider'] }, 'roles must share one context root'],
+      ];
+
+      for (const [roleGroups, message] of invalid) {
+        expect(() => defineRoleGroups(roleGroups)).toThrow(message);
+      }
+    });
+
+    it('copies role precedence and adds one isolated invitation inbox without mutating authored inputs', () => {
+      const roles = ['workspace/member', 'workspace/viewer'];
+      const input = { default: roles };
+      const protocol = defineRoleGroups(input);
+
+      roles.reverse();
+      expect(protocol.definition).not.toBe(RoleGroupDefinition);
+      expect(RoleGroupDefinition.types).not.toHaveProperty(CONTEXT_INVITATION_PATH);
+      expect(RoleGroupDefinition.structure).not.toHaveProperty(CONTEXT_INVITATION_PATH);
+      expect(RoleGroupCodecs).not.toHaveProperty(CONTEXT_INVITATION_PATH);
+      expect(protocol.definition.types[CONTEXT_INVITATION_PATH]).toMatchObject({
+        dataFormats : ['application/json'],
+        schema      : 'https://enbox.id/schemas/context-invitation',
+      });
+      expect(protocol.definition.structure[CONTEXT_INVITATION_PATH]).toEqual({
+        $actions   : [{ who: 'anyone', can: ['create'] }],
+        $immutable : true,
+        $size      : { max: 8_192 },
+      });
+      expect(protocol.codecs[CONTEXT_INVITATION_PATH]).toBe(contextInvitationCodec);
+      expect(protocol.roleGroups).not.toBe(input);
+      expect(protocol.roleGroups.default).not.toBe(roles);
+      expect(protocol.roleGroups.default).toEqual(['workspace/member', 'workspace/viewer']);
+      expect(Object.isFrozen(protocol.roleGroups)).toBe(true);
+      expect(Object.isFrozen(protocol.roleGroups.default)).toBe(true);
+      expect(isTypedProtocol(protocol)).toBe(true);
+
+      const other = defineRoleGroups({ default: ['workspace/member'] });
+      expect(other.definition.types[CONTEXT_INVITATION_PATH])
+        .not.toBe(protocol.definition.types[CONTEXT_INVITATION_PATH]);
+      expect(other.definition.structure[CONTEXT_INVITATION_PATH])
+        .not.toBe(protocol.definition.structure[CONTEXT_INVITATION_PATH]);
+    });
+
+    it('derives the managed invitation inbox from the protocol definition instead of role groups', () => {
+      const withoutRoleGroups = defineProtocol(RoleGroupDefinition, RoleGroupCodecs);
+      const withRoleGroups = defineRoleGroups({ default: ['workspace/member'] });
+
+      expect(withoutRoleGroups.definition).toEqual(withRoleGroups.definition);
+      expect(withoutRoleGroups.codecs).toEqual(withRoleGroups.codecs);
+      expect(withoutRoleGroups.roleGroups).toEqual({});
+      expect(isTypedProtocol(withoutRoleGroups)).toBe(true);
+      expect(new TypedEnbox(dwnAlice, withoutRoleGroups).contexts).not.toHaveProperty('invitations');
+      expect(new TypedEnbox(dwnAlice, withRoleGroups).contexts).toHaveProperty('invitations');
+      expect(isTypedProtocol({
+        definition : RoleGroupDefinition,
+        codecs     : RoleGroupCodecs,
+        roleGroups : {},
+      })).toBe(false);
+    });
+
+    it('rejects managed invitation fragments with altered semantics', () => {
+      const protocol = defineRoleGroups({ default: ['workspace/member'] });
+      const type = protocol.definition.types[CONTEXT_INVITATION_PATH];
+      const rule = protocol.definition.structure[CONTEXT_INVITATION_PATH];
+
+      expect(isTypedProtocol({
+        ...protocol,
+        definition: {
+          ...protocol.definition,
+          types: { ...protocol.definition.types, [CONTEXT_INVITATION_PATH]: { ...type, encryptionRequired: true } },
+        },
+      })).toBe(false);
+      expect(isTypedProtocol({
+        ...protocol,
+        definition: {
+          ...protocol.definition,
+          structure: { ...protocol.definition.structure, [CONTEXT_INVITATION_PATH]: { ...rule, $role: true } },
+        },
+      })).toBe(false);
+    });
+
+    it('reserves the invitation type name at the protocol boundary', () => {
+      for (const property of ['types', 'structure'] as const) {
+        const definition = {
+          ...TodoProtocolDefinition,
+          [property]: {
+            ...TodoProtocolDefinition[property],
+            [CONTEXT_INVITATION_PATH]: {},
+          },
+        } as unknown as typeof TodoProtocolDefinition;
+        expect(() => defineProtocol(definition, TodoProtocol.codecs)).toThrow(
+          `'${CONTEXT_INVITATION_PATH}' is reserved for shared-context invitations`,
+        );
+      }
     });
   });
 
@@ -209,17 +366,14 @@ describe('TypedProtocol API', () => {
         ...TodoProtocolDefinition,
         protocol: `https://example.com/protocols/delegate-import/${crypto.randomUUID()}`,
       };
-      const { message, messageCid } = await testHarness.agent.processDwnRequest({
+      const { message } = await testHarness.agent.processDwnRequest({
         author        : aliceDid.uri,
         messageParams : { definition },
         messageType   : DwnInterface.ProtocolsConfigure,
         store         : false,
         target        : aliceDid.uri,
       });
-      const remoteProtocol = new Protocol(testHarness.agent, message!, {
-        author: aliceDid.uri,
-        messageCid,
-      });
+      const remoteProtocol = new Protocol(message!);
       const delegateDid = await testHarness.agent.did.create({ store: true, method: 'jwk' });
       const delegateDwn = new DwnApi({
         agent        : testHarness.agent,
@@ -462,29 +616,6 @@ describe('TypedProtocol API', () => {
         expect(decodeCalls).toBe(3);
       });
 
-      it('should not treat class values from a custom codec as patchable records', async () => {
-        const definition = {
-          protocol  : 'https://example.com/protocols/date-codec',
-          published : true,
-          types     : {
-            event: { dataFormats: ['text/plain'] },
-          },
-          structure: { event: {} },
-        } as const satisfies ProtocolDefinition;
-        const codec: RecordCodec<Date> = {
-          encode(value: Date): EncodedRecordData {
-            return { data: new Blob([value.toISOString()]), dataFormat: 'text/plain' };
-          },
-          async decode(data): Promise<Date> {
-            return new Date(await data.text());
-          },
-        };
-        const calendar = new TypedEnbox(dwnAlice, defineProtocol(definition, { event: codec }));
-        const event = await calendar.records.create('event', { data: new Date('2026-07-24T00:00:00.000Z') });
-
-        await expect(event.patch({})).rejects.toThrow('current value to be a plain object');
-      });
-
     });
 
     describe('create() with $squash (#972)', () => {
@@ -618,6 +749,72 @@ describe('TypedProtocol API', () => {
         member    : recordCodecs.json<{ label: string }>(),
         workspace : recordCodecs.json<{ name: string }>(),
       });
+      const DeliveryDefinition = {
+        ...RoleDefinition,
+        protocol : `${RoleDefinition.protocol}/delivery`,
+        types    : {
+          ...RoleDefinition.types,
+          blind  : { dataFormats: ['application/json'] },
+          member : { ...RoleDefinition.types.member, encryptionRequired: true },
+          viewer : { dataFormats: ['application/json'] },
+        },
+        structure: {
+          workspace: {
+            $actions: [
+              { role: 'workspace/member', can: ['read'] },
+              { role: 'workspace/viewer', can: ['read'] },
+            ],
+            blind  : { $role: true },
+            member : { $role: true },
+            viewer : { $role: true },
+          },
+        },
+      } as const satisfies ProtocolDefinition;
+      const DeliveryProtocol = defineProtocol(DeliveryDefinition, {
+        ...RoleProtocol.codecs,
+        blind  : recordCodecs.json<{ note: string }>(),
+        viewer : recordCodecs.json<{ readonly: boolean }>(),
+      }, {
+        roleGroups: {
+          default: ['workspace/member', 'workspace/viewer'],
+        },
+      });
+      type DeliveryRole = 'workspace/member' | 'workspace/viewer';
+      type DeliveryMembers = ContextMembersApi<
+        typeof DeliveryDefinition,
+        typeof DeliveryProtocol.codecs,
+        DeliveryRole
+      >;
+      const recipient = 'did:example:bob';
+      const createDeliveryMembers = async (): Promise<DeliveryMembers> => {
+        const roleDelivery = {
+          get       : sinon.stub().resolves({ state: 'delivered' as const }),
+          retry     : sinon.stub().resolves({ state: 'delivered' as const }),
+          subscribe : (): (() => void) => (): void => {},
+        };
+        const roles = new TypedEnbox(dwnAlice, DeliveryProtocol, { roleDelivery });
+        await roles.configure();
+        const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
+        sinon.stub(testHarness.agent.dwn as any, 'provisionAudienceKeyDeliveryForReply').resolves({
+          delivered    : false,
+          failure      : 'awaiting-recipient-install',
+          recipientDid : recipient,
+          reason       : 'recipient protocol not installed',
+        });
+        return (await roles.contexts.open('workspace', workspace.contextId)).members();
+      };
+      const failRoleDeletion = (cause: Error, deleteFirst: boolean = false): void => {
+        const deleteRecord = Record.prototype.delete;
+        sinon.stub(Record.prototype, 'delete').callsFake(async function (
+          this: Record,
+          params?: RecordDeleteParams,
+        ): Promise<void> {
+          if (deleteFirst) {
+            await deleteRecord.call(this, params);
+          }
+          throw cause;
+        });
+      };
 
       it('rejects a missing role recipient before issuing a DWN request', async () => {
         const roles = new TypedEnbox(dwnAlice, RoleProtocol);
@@ -683,43 +880,140 @@ describe('TypedProtocol API', () => {
         expect(reassigned.recipient).toBe(recipient);
       });
 
-      it('reads and retries persisted delivery state for active encrypted role records', async () => {
-        const DeliveryDefinition = {
-          ...RoleDefinition,
-          protocol : `${RoleDefinition.protocol}/delivery`,
-          types    : {
-            ...RoleDefinition.types,
-            member: { ...RoleDefinition.types.member, encryptionRequired: true },
-          },
-        } as const satisfies ProtocolDefinition;
+      it('manages encrypted context membership without exposing role records', async () => {
         const get = sinon.stub().resolves(undefined);
         const retry = sinon.stub().resolves({ state: 'delivered' as const });
-        const roles = new TypedEnbox(dwnAlice, defineProtocol(DeliveryDefinition, RoleProtocol.codecs), {
-          roleDelivery: { get, retry },
+        const roles = new TypedEnbox(dwnAlice, DeliveryProtocol, {
+          roleDelivery: {
+            get,
+            retry,
+            subscribe: (): (() => void) => {
+              return (): void => {};
+            },
+          },
         });
         await roles.configure();
-        sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-          .rejects(new Error('recipient protocol not installed'));
 
         const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
-        const assignment = await roles.records.create('workspace/member', {
-          data            : { label: 'maintainer' },
-          parentContextId : workspace.contextId,
-          recipient       : 'did:example:bob',
+        const owned = await roles.contexts.open('workspace', workspace.contextId);
+        const members = owned.members();
+        sinon.stub(testHarness.agent.dwn as any, 'provisionAudienceKeyDeliveryForReply').resolves({
+          delivered    : false,
+          failure      : 'awaiting-recipient-install',
+          recipientDid : recipient,
+          reason       : 'recipient protocol not installed',
         });
 
-        expect(await roles.records.deliveryState('workspace/member', assignment.id)).toEqual({ state: 'pending' });
-        expect(get.calledOnceWith(assignment.id)).toBe(true);
-        expect(await roles.records.retryDelivery('workspace/member', assignment.id)).toEqual({ state: 'delivered' });
-        expect(retry.calledOnceWith(assignment.id)).toBe(true);
+        const assigned = await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+        expect(assigned).toMatchObject({
+          data     : { label: 'maintainer' },
+          did      : recipient,
+          role     : 'workspace/member',
+          delivery : {
+            reason : 'recipient protocol not installed',
+            state  : 'awaiting-recipient-install',
+          },
+        });
+        expect(Object.keys(assigned).sort()).toEqual(['data', 'delivery', 'did', 'role']);
+        expect(get.notCalled).toBe(true);
 
-        await roles.records.delete('workspace/member', { recordId: assignment.id });
-        expect(await roles.records.deliveryState('workspace/member', assignment.id)).toBeUndefined();
-        expect(get.calledOnce).toBe(true);
+        await roles.records.create('workspace/viewer', {
+          data            : { readonly: true },
+          parentContextId : workspace.contextId,
+          recipient,
+        });
+        expect((await members.get(recipient))?.role).toBe('workspace/member');
 
-        await expect((roles.records.deliveryState as (path: string, id: string) => Promise<unknown>)(
-          'workspace', workspace.id,
-        )).rejects.toThrow('does not have an encrypted role audience');
+        const changed = await members.set(recipient, {
+          data : { readonly: true },
+          role : 'workspace/viewer',
+        });
+        expect(changed).toMatchObject({
+          data     : { readonly: true },
+          did      : recipient,
+          role     : 'workspace/viewer',
+          delivery : { state: 'pending' },
+        });
+        expect((await members.list()).map(member => member.did)).toEqual([recipient]);
+
+        expect(await members.retryDelivery(recipient)).toMatchObject({ delivery: { state: 'delivered' } });
+        expect(retry.calledOnce).toBe(true);
+
+        await members.remove(recipient);
+        await members.remove(recipient);
+        expect(await members.get(recipient)).toBeUndefined();
+        await expect(members.set('not-a-did', {
+          data : { label: 'invalid' },
+          role : 'workspace/member',
+        })).rejects.toThrow('is not a DID');
+      }, 15000);
+
+      it('returns a role change when cleanup fails after the requested role becomes effective', async () => {
+        const members = await createDeliveryMembers();
+        await members.set(recipient, {
+          data : { readonly: true },
+          role : 'workspace/viewer',
+        });
+        const cleanupError = new Error('viewer cleanup failed');
+        failRoleDeletion(cleanupError);
+
+        const changed = await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+
+        expect(changed).toMatchObject({ did: recipient, role: 'workspace/member' });
+        expect((await members.get(recipient))?.role).toBe('workspace/member');
+      }, 15000);
+
+      it('makes an incomplete role change retryable when the previous stronger role remains effective', async () => {
+        const members = await createDeliveryMembers();
+        await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+        const cleanupError = new Error('member cleanup failed');
+        failRoleDeletion(cleanupError);
+
+        const error = await members.set(recipient, {
+          data : { readonly: true },
+          role : 'workspace/viewer',
+        }).then(() => undefined, reason => reason as Error);
+
+        expect(error).toBeInstanceOf(ContextNotReadyError);
+        expect(error?.cause).toBe(cleanupError);
+        expect((await members.get(recipient))?.role).toBe('workspace/member');
+      }, 15000);
+
+      it('accepts a failed removal only when its reread proves the member absent', async () => {
+        const members = await createDeliveryMembers();
+        await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+        failRoleDeletion(new Error('delete response was lost'), true);
+
+        await expect(members.remove(recipient)).resolves.toBeUndefined();
+        expect(await members.get(recipient)).toBeUndefined();
+      }, 15000);
+
+      it('makes a failed removal retryable while the member remains effective', async () => {
+        const members = await createDeliveryMembers();
+        await members.set(recipient, {
+          data : { label: 'maintainer' },
+          role : 'workspace/member',
+        });
+        const cleanupError = new Error('member removal failed');
+        failRoleDeletion(cleanupError);
+
+        const error = await members.remove(recipient).then(() => undefined, reason => reason as Error);
+
+        expect(error).toBeInstanceOf(ContextNotReadyError);
+        expect(error?.cause).toBe(cleanupError);
+        expect((await members.get(recipient))?.role).toBe('workspace/member');
       }, 15000);
     });
 
@@ -995,7 +1289,7 @@ describe('TypedProtocol API', () => {
     });
 
     describe('helper functions (via public API)', () => {
-      describe('definitionsEqual()', () => {
+      describe('protocol definition comparison', () => {
         it('should detect equal definitions with different key ordering', async () => {
           // Create a protocol with the same fields but potentially different order.
           // The first configure() stores the definition. A second configure() with an
@@ -1029,14 +1323,6 @@ describe('TypedProtocol API', () => {
           expect(result.status.code).toBe(202);
         });
 
-        it('should ignore injected key agreement metadata', () => {
-          const installedDefinition = structuredClone(TodoProtocolDefinition);
-          installedDefinition.structure.list.$keyAgreement = {
-            publicKeyJwk: { crv: 'X25519', kty: 'OKP', x: 'mock-key' },
-          };
-
-          expect(definitionsEqual(installedDefinition, TodoProtocolDefinition)).toBe(true);
-        });
       });
 
       describe('normalizePath()', () => {

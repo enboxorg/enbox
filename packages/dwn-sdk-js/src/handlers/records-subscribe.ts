@@ -1,11 +1,13 @@
+import type { GuardedSubscriptionHandler } from './guarded-subscription.js';
 import type { RecordsCollectionVisibility } from './records-collection.js';
 import type { ResolvedProtocolRole } from '../core/protocol-authorization-action.js';
-import type { EventSubscription, ProgressGapInfo, ProgressToken, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
+import type { ProgressGapInfo, ProgressToken, SubscriptionEvent, SubscriptionListener } from '../types/subscriptions.js';
 import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
 
 import { attachInitialWrites } from '../utils/initial-write-attachment.js';
+import { createGuardedSubscriptionHandler } from './guarded-subscription.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { GrantAuthorization } from '../core/grant-authorization.js';
 import { isRecordLimitOccupant } from '../utils/record-limit-occupancy.js';
@@ -39,11 +41,6 @@ type RecordsSubscribeDeliveryAuthorization = {
   authorDelegate?: RecordsSubscribeEmbeddedGrantAuthorization;
   resolvedRole?: ResolvedProtocolRole;
   targetGrant?: RecordsSubscribeStoredGrantAuthorization;
-};
-
-type GuardedRecordsSubscriptionHandler = {
-  listener: SubscriptionListener;
-  setSubscription(subscription: EventSubscription): Promise<void>;
 };
 
 export class RecordsSubscribeHandler implements MethodHandler {
@@ -191,7 +188,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     messageCid: string,
     eventFilters: Filter[],
     eventLogCursor: ProgressToken,
-    guardedSubscriptionHandler: GuardedRecordsSubscriptionHandler,
+    guardedSubscriptionHandler: GuardedSubscriptionHandler,
   ): Promise<RecordsSubscribeReply> {
     try {
       const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, guardedSubscriptionHandler.listener, {
@@ -226,7 +223,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     recordsSubscribe: RecordsSubscribe,
     eventFilters: Filter[],
     visibility: RecordsCollectionVisibility,
-    guardedSubscriptionHandler: GuardedRecordsSubscriptionHandler,
+    guardedSubscriptionHandler: GuardedSubscriptionHandler,
   ): Promise<RecordsSubscribeReply> {
     // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
     const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, guardedSubscriptionHandler.listener, {
@@ -275,39 +272,12 @@ export class RecordsSubscribeHandler implements MethodHandler {
     recordsSubscribe: RecordsSubscribe;
     subscriptionHandler: SubscriptionListener;
     tenant: string;
-  }): GuardedRecordsSubscriptionHandler {
+  }): GuardedSubscriptionHandler {
     const { deliveryAuthorization, deps, eventFilters, recordsSubscribe, subscriptionHandler, tenant } = input;
     const requester = Message.getRequester(recordsSubscribe.message);
-    let subscription: EventSubscription | undefined;
-    let closeRequested = false;
-    let terminalErrorEmitted = false;
-    let deliveryQueue: Promise<void> = Promise.resolve();
-
-    const closeSubscription = (): void => {
-      if (closeRequested) {
-        return;
-      }
-      closeRequested = true;
-      Promise.resolve(subscription?.close()).catch(() => {});
-    };
-
-    const emitTerminalDeliveryError = (cursor: SubscriptionEvent['cursor'], code: DwnErrorCode, detail: string): void => {
-      if (terminalErrorEmitted) {
-        return;
-      }
-      terminalErrorEmitted = true;
-      closeSubscription();
-      subscriptionHandler({
-        type  : 'error',
-        cursor,
-        error : {
-          code,
-          detail,
-        },
-      });
-    };
-
-    const authorizeDelivery = async (subscriptionEvent: SubscriptionEvent): Promise<boolean> => {
+    const authorizeDelivery = async (
+      fail: (code: DwnErrorCode, detail: string) => void,
+    ): Promise<boolean> => {
       if (deliveryAuthorization === undefined) {
         return true;
       }
@@ -356,8 +326,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
         // so a not-yet-active delivery check is retryable while other authorization failures are terminal.
         const authorizationFailure = error instanceof DwnError
           && error.code !== DwnErrorCode.GrantAuthorizationGrantNotYetActive;
-        emitTerminalDeliveryError(
-          subscriptionEvent.cursor,
+        fail(
           authorizationFailure
             ? DwnErrorCode.RecordsSubscribeDeliveryAuthorizationFailed
             : DwnErrorCode.RecordsSubscribeDeliveryFailed,
@@ -371,9 +340,12 @@ export class RecordsSubscribeHandler implements MethodHandler {
       return true;
     };
 
-    const deliverProjectedEvent = async (subscriptionEvent: SubscriptionEvent): Promise<void> => {
-      if (!await authorizeDelivery(subscriptionEvent)) {
-        return;
+    const deliverProjectedEvent = async (
+      subscriptionEvent: SubscriptionEvent,
+      fail: (code: DwnErrorCode, detail: string) => void,
+    ): Promise<SubscriptionEvent | undefined> => {
+      if (!await authorizeDelivery(fail)) {
+        return undefined;
       }
 
       const { message } = subscriptionEvent.event;
@@ -386,7 +358,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
           validationStateReader : deps.validationStateReader,
         });
         if (visibleMessages.length === 0) {
-          return;
+          return undefined;
         }
 
         const projectedMessages = await EncryptionControl.projectCurrentAudienceRecords({
@@ -396,7 +368,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
           bypassFilters        : eventFilters,
         });
         if (projectedMessages.length === 0) {
-          return;
+          return undefined;
         }
 
         let isOccupant: boolean;
@@ -409,54 +381,25 @@ export class RecordsSubscribeHandler implements MethodHandler {
             messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
           });
         } catch {
-          emitTerminalDeliveryError(
-            subscriptionEvent.cursor,
+          fail(
             DwnErrorCode.RecordsSubscribeProjectionFailed,
             'record-limit occupancy projection failed during delivery',
           );
-          return;
+          return undefined;
         }
 
         if (!isOccupant) {
-          return;
+          return undefined;
         }
       }
 
-      if (!closeRequested) {
-        subscriptionHandler(subscriptionEvent);
-      }
+      return subscriptionEvent;
     };
 
-    const deliverQueuedMessage = async (subscriptionMessage: SubscriptionMessage): Promise<void> => {
-      if (closeRequested) {
-        return;
-      }
-
-      if (subscriptionMessage.type !== 'event') {
-        subscriptionHandler(subscriptionMessage);
-        return;
-      }
-
-      await deliverProjectedEvent(subscriptionMessage);
-    };
-
-    const enqueueDelivery = (subscriptionMessage: SubscriptionMessage): void => {
-      deliveryQueue = deliveryQueue
-        .then(() => deliverQueuedMessage(subscriptionMessage))
-        .catch(() => {});
-    };
-
-    return {
-      listener: (subscriptionMessage: SubscriptionMessage): void => {
-        enqueueDelivery(subscriptionMessage);
-      },
-      setSubscription: async (eventSubscription: EventSubscription): Promise<void> => {
-        subscription = eventSubscription;
-        if (closeRequested) {
-          await eventSubscription.close();
-        }
-      },
-    };
+    return createGuardedSubscriptionHandler({
+      listener     : subscriptionHandler,
+      processEvent : deliverProjectedEvent,
+    });
   }
 
 }

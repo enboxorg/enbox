@@ -318,7 +318,7 @@ describe('createConnectionStore()', () => {
       const engine = createSyncStatusEngine();
       engine.connectivityState = 'offline';
       const { store } = await connectWithSync(engine);
-      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('loading'); });
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('syncing'); });
       expect(store.getSnapshot().sync?.connectivity).toBe('offline');
       expect(Object.isFrozen(store.getSnapshot().sync)).toBe(true);
 
@@ -344,12 +344,12 @@ describe('createConnectionStore()', () => {
         from           : false,
         to             : true,
       });
-      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('ready'); });
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('caught-up'); });
 
-      const ready = store.getSnapshot().sync;
-      expect(ready?.connectivity).toBe('online');
-      expect(ready?.lastActivityAt).toBe('2026-07-29T11:00:00.000Z');
-      expect('links' in (ready as object)).toBe(false);
+      const caughtUp = store.getSnapshot().sync;
+      expect(caughtUp?.connectivity).toBe('online');
+      expect(caughtUp?.lastActivityAt).toBe('2026-07-29T11:00:00.000Z');
+      expect('links' in (caughtUp as object)).toBe(false);
 
       const settledReads = engine.settledLinkReads;
       engine.emit({
@@ -359,7 +359,7 @@ describe('createConnectionStore()', () => {
         position       : '1',
       });
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
-      expect(store.getSnapshot().sync).toBe(ready);
+      expect(store.getSnapshot().sync).toBe(caughtUp);
 
       engine.links = [
         syncLink({
@@ -376,7 +376,7 @@ describe('createConnectionStore()', () => {
         from           : 'online',
         to             : 'offline',
       });
-      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('stale'); });
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('syncing'); });
       expect(store.getSnapshot().sync?.connectivity).toBe('online');
 
       const mixedRead = engine.settledLinkReads;
@@ -403,13 +403,13 @@ describe('createConnectionStore()', () => {
       expect(store.getSnapshot().sync?.error?.message).toContain('paused');
     });
 
-    it('should treat an identity without a sync registration as locally ready', async () => {
+    it('should treat an identity without a sync registration as locally caught up', async () => {
       const engine = createSyncStatusEngine();
       engine.options = undefined;
       const { store } = await connectWithSync(engine);
-      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('ready'); });
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('caught-up'); });
 
-      expect(store.getSnapshot().sync).toEqual({ state: 'ready', connectivity: 'unknown' });
+      expect(store.getSnapshot().sync).toEqual({ state: 'caught-up', connectivity: 'unknown' });
       expect(engine.linkReads).toBe(0);
 
       engine.options = { protocols: 'all' };
@@ -418,7 +418,7 @@ describe('createConnectionStore()', () => {
         tenantDid : OWNER_DID,
         options   : engine.options,
       });
-      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('loading'); });
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('syncing'); });
       expect(engine.linkReads).toBe(1);
     });
 
@@ -431,7 +431,7 @@ describe('createConnectionStore()', () => {
         lastActivityAt : '2026-07-29T11:00:00.000Z',
       })];
       const { store } = await connectWithSync(engine);
-      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('ready'); });
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('caught-up'); });
 
       engine.readLinks = async (): Promise<ReplicationLinkSnapshot[]> => {
         throw new Error('local status unavailable');
@@ -481,7 +481,7 @@ describe('createConnectionStore()', () => {
       auth.session = replacementSession;
       auth.emitter.emit('session-start', {});
       await waitFor(() => { expect(store.getSnapshot().identityDid).toBe(replacementSession.did); });
-      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('ready'); });
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('caught-up'); });
       expect(engine.listenerCount()).toBe(0);
       expect(replacementEngine.listenerCount()).toBe(1);
 
@@ -512,7 +512,7 @@ describe('createConnectionStore()', () => {
       engine.options = undefined;
       const lifetime = new AbortController();
       const { store } = await connectWithSync(engine, { signal: lifetime.signal });
-      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('ready'); });
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('caught-up'); });
 
       let notifications = 0;
       store.subscribe(() => { notifications++; });

@@ -1,11 +1,12 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsQueryReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsDeleteMessage, RecordsQueryReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
+import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
 import { RateLimitError } from '@enbox/dwn-clients';
-import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
+import { BroadcastChannelWakePublisher, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 import { parseDurationInMilliseconds, runWithCrossContextLock, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -37,7 +38,6 @@ import type {
   SyncIdentityOptions,
   SyncLifecycleOptions,
   SyncRunOptions,
-  SyncScope,
 } from './types/sync.js';
 import type {
   SyncDurableFeedPageAdmissionResult as FeedPageAdmissionResult,
@@ -47,6 +47,7 @@ import type {
   SyncDurableFeedReconcileOptions as SyncReconcileOptions,
   SyncDurableFeedReconcileResult as SyncReconcileResult,
 } from './sync-durable-feed-reconciler.js';
+import type { FollowedSyncSource, FollowedSyncSourceInput, FollowedSyncSourceStore } from './followed-sync-source.js';
 import type { SyncDeferredPullState, SyncDeferredPullStore } from './sync-deferred-pull-store.js';
 import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.js';
 import type { SyncIdentityTaskRunner, SyncLifecycleDeadline } from './sync-lifecycle-coordinator.js';
@@ -61,6 +62,7 @@ import { AgentPermissionsApi } from './permissions-api.js';
 
 import { admitClosure } from './sync-admit-closure.js';
 import { DwnInterface } from './types/dwn.js';
+import { FollowedSyncSourceStoreLevel } from './followed-sync-source-store-level.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
 import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';
@@ -80,14 +82,16 @@ import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
-import { buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
-import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
+import { buildCurrentLinkIdentityKey, buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
+import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor } from './sync-messages.js';
+import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
+import { followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { isTerminalSyncAuthorizationFailure, SyncRunCancelledError } from './sync-runtime-errors.js';
+import { isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
-import { normalizeDwnEndpoint, SyncTargetResolver } from './sync-target-resolver.js';
+import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from './sync-target-resolver.js';
 
 export type SyncEngineLevelParams = {
   agent?: EnboxPlatformAgent;
@@ -118,9 +122,32 @@ enum LinkInitializationStatus {
   Failed = 'failed',
 }
 
+class FollowedSourceRoleRecordMismatchError extends Error {
+  public constructor(expected: string, actual: string | undefined) {
+    super(`SyncEngineLevel: followed role record changed from ${expected} to ${actual ?? 'none'}.`);
+    this.name = 'FollowedSourceRoleRecordMismatchError';
+  }
+}
+
+class RoleFeedAdmissionError extends Error {
+  public constructor(messageCid: string) {
+    super(`SyncEngineLevel: role feed message ${messageCid} could not be admitted; the replica cannot become current.`);
+    this.name = 'RoleFeedAdmissionError';
+  }
+}
+
 type LinkInitializationResult =
   | { status: LinkInitializationStatus.Active; durableLinkIdentityKey: string }
   | { status: LinkInitializationStatus.Failed };
+
+type PreparedFollowedSource = {
+  batch: RoleReplicationSupportBatch;
+  source: FollowedSyncSource;
+};
+
+type FollowedSourceChangeEvent = Extract<SyncEvent, { type: 'followed-context:change' }>;
+
+type FollowedContextKey = Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'protocol' | 'sourceDid'>;
 
 /** Accumulated shape of every `sync()` request joined into one queued follow-up run. */
 type MergedSyncRunRequest = {
@@ -164,6 +191,7 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _endpointStore: SyncEndpointStore;
   private readonly _durableFeedReconciler: SyncDurableFeedReconciler;
   private readonly _feedConvergenceManager: SyncFeedConvergenceManager;
+  private readonly _followedSourceStore: FollowedSyncSourceStore;
   private readonly _identityStore: SyncIdentityStore;
   private readonly _lifecycle = new SyncLifecycleCoordinator();
   private readonly _linkRecoveryCoordinator: SyncLinkRecoveryCoordinator;
@@ -191,6 +219,9 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Active replication-session controllers; their keyed scheduling lives in `_runtime`. */
   private readonly _linkControllers: Map<string, SyncLinkController> = new Map();
+
+  /** Concurrent requests for one link share its subscription and baseline setup. */
+  private readonly _linkInitializations: Map<string, Promise<LinkInitializationResult>> = new Map();
 
   /**
    * Subscription closes that outlived a lifecycle deadline, grouped by tenant.
@@ -227,6 +258,17 @@ export class SyncEngineLevel implements SyncEngine {
   /** In-flight Retry-now target reconciliations, keyed by complete replication link. */
   private readonly _quotaRetryInFlight: Map<string, Promise<void>> = new Map();
 
+  /** One coalesced refresh of durable followed-context catalog changes. */
+  private _followedSourceRefresh?: Promise<void>;
+  private _followedSourceRefreshPending = false;
+
+  /** Last catalog state applied to this engine's events and replication sessions. */
+  private readonly _followedSourceSnapshot: Map<string, FollowedSyncSource> = new Map();
+  private _followedSourceSnapshotInitialized = false;
+
+  /** Cross-context durable-catalog wake, present for path-addressed stores. */
+  private readonly _followedSourceWakePublisher?: BroadcastChannelWakePublisher;
+
   /** Serializes public Retry-now operations with each other before they acquire the sync lock. */
   private _retryRemoteQueue: Promise<void> = Promise.resolve();
 
@@ -248,6 +290,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._deadLetterStore = new SyncDeadLetterStoreLevel(this._db);
     this._deferredPullStore = new SyncDeferredPullStoreLevel(this._db);
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
+    this._followedSourceStore = new FollowedSyncSourceStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
 
     // Collaborators. Policy managers precede their direct consumers. The
@@ -265,6 +308,15 @@ export class SyncEngineLevel implements SyncEngine {
     this._targetPlanner = this.createTargetPlanner();
     this._statusReporter = this.createStatusReporter();
     this._linkRecoveryCoordinator = this.createLinkRecoveryCoordinator();
+
+    if (dataPath !== undefined) {
+      this._followedSourceWakePublisher = new BroadcastChannelWakePublisher(
+        `enbox:sync-followed-source:${this._lockNamespace}`,
+      );
+      this._followedSourceWakePublisher.subscribe(
+        (): void => { this.scheduleFollowedSourceRefresh(); },
+      );
+    }
   }
 
   /** Wire SyncDrainCoordinator to this engine. */
@@ -370,7 +422,7 @@ export class SyncEngineLevel implements SyncEngine {
           messageCids,
         }),
         recordTerminalFailure: (target, failure): Promise<void> =>
-          this.recordTerminalQuotaFailure(target, failure),
+          this.recordTerminalPushFailure(target, failure),
       },
     });
   }
@@ -428,6 +480,7 @@ export class SyncEngineLevel implements SyncEngine {
     return new SyncTargetPlanner({
       getTargetResolver : (): SyncTargetResolver => this.targetResolver,
       identityStore     : this._identityStore,
+      sourceStore       : this._followedSourceStore,
       warn              : (message, error): void => { console.warn(message, error); },
     });
   }
@@ -438,7 +491,7 @@ export class SyncEngineLevel implements SyncEngine {
       quotaManager : this._quotaManager,
       operations   : {
         getConnectivityState       : (): SyncConnectivityState => this.connectivityState,
-        getCurrentLinkIdentityKeys : (): Promise<Set<string> | undefined> => this.getCurrentDurableLinkIdentityKeys(),
+        getCurrentLinkIdentityKeys : (): Promise<Set<string> | undefined> => this.getCurrentLinkIdentityKeys(),
         getCurrentQuotaLinkKeys    : (): Promise<Set<string> | undefined> => this.getCurrentQuotaLinkKeys(),
         getDeadLetters             : (): Promise<DeadLetterEntry[]> => this._deadLetterStore.getAll(),
         getLinks                   : (): Promise<SyncStatusLink[]> => this.getLinksForStatusReporting(),
@@ -700,7 +753,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Emit a sync event to all registered listeners. */
   private emitEvent(event: SyncEvent): void {
-    for (const listener of this._eventListeners) {
+    for (const listener of Array.from(this._eventListeners)) {
       try {
         listener(event);
       } catch {
@@ -729,8 +782,15 @@ export class SyncEngineLevel implements SyncEngine {
     await this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
       await this.stopSyncRuntime(activeDeadline);
       await this.runDestructivePhase(async (): Promise<void> => {
+        const followedSources = await this.readFollowedSources();
         await this._permissionsApi.clear();
         await this.clearSyncDb();
+        this._followedSourceSnapshot.clear();
+        this._followedSourceSnapshotInitialized = true;
+        this.invalidateSyncTargetsCache();
+        for (const source of followedSources) {
+          this.emitFollowedSourceChange(source, undefined, true);
+        }
       }, activeDeadline);
     }, deadline);
   }
@@ -739,10 +799,17 @@ export class SyncEngineLevel implements SyncEngine {
     const deadline = SyncEngineLevel.createLifecycleDeadline(options);
     await this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
       await this.stopSyncRuntime(activeDeadline);
+      this.closeFollowedSourceWakePublisher();
       await this.runDestructivePhase(async (): Promise<void> => {
         await this._db.close();
       }, activeDeadline);
     }, deadline);
+  }
+
+  /** Stop cross-context catalog wakes before closing their shared store. */
+  private closeFollowedSourceWakePublisher(): void {
+    this._followedSourceWakePublisher?.clear();
+    this._followedSourceWakePublisher?.close();
   }
 
   /**
@@ -840,6 +907,7 @@ export class SyncEngineLevel implements SyncEngine {
     );
     await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
+    await this.refreshRoleLinksForActor(did, options.delegateDid);
     this.emitEvent({ type: 'identity:registration-change', tenantDid: did, options: structuredClone(options) });
 
     // If live sync is active, hot-add subscriptions for this identity.
@@ -887,6 +955,7 @@ export class SyncEngineLevel implements SyncEngine {
     // hot-remove above can be skipped entirely). Its captured target is now
     // unregistered — cancel it unconditionally.
     this.cancelLinkInitRetriesForDid(did);
+    await this.pauseRoleLinksForActor(did);
 
     // Tenant-scoped deletion runs first; the identity marker is deleted LAST
     // as the durable commit point. A failure at any earlier step — including
@@ -979,6 +1048,7 @@ export class SyncEngineLevel implements SyncEngine {
     // update runs to completion and is never abandoned halfway through.
     await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
+    await this.refreshRoleLinksForActor(did, options.delegateDid);
     this.emitEvent({ type: 'identity:registration-change', tenantDid: did, options: structuredClone(options) });
 
     // Rebuild live subscriptions with the new options. Delegate/scope changes
@@ -991,6 +1061,641 @@ export class SyncEngineLevel implements SyncEngine {
     } else {
       await this.tryPruneSupersededDurableLinksForRegisteredIdentity(did, options);
     }
+  }
+
+  /** Rebind stable role links after their actor-to-delegate authorization is refreshed. */
+  private async refreshRoleLinksForActor(
+    actorDid: string,
+    delegateDid?: string,
+    followedSourceId?: string,
+  ): Promise<void> {
+    const targets: SyncTarget[] = [];
+    for (const link of await this.replicationLinkStore.getAllLinks()) {
+      if (
+        link.authorization.kind !== 'role' ||
+        link.authorization.actorDid !== actorDid ||
+        (followedSourceId !== undefined && link.authorization.roleRecordId !== followedSourceId) ||
+        (link.status !== 'paused' && link.delegateDid === delegateDid)
+      ) {
+        continue;
+      }
+
+      const target = { ...syncTargetFromLink(link), delegateDid };
+      if (!await this.isFollowedTargetRunnable(target)) {
+        continue;
+      }
+
+      const linkKey = this.getReplicationLinkKey(target, link);
+      this.removeLinkController(linkKey);
+      const refreshed = await this.getOrCreateReplicationLink(target);
+      if (!await this.isFollowedTargetCurrent(target)) {
+        await this.replicationLinkStore.deleteLink(
+          refreshed.tenantDid,
+          refreshed.remoteEndpoint,
+          refreshed.projectionId,
+          refreshed.authorizationEpoch,
+        );
+        continue;
+      }
+      await this.replicationLinkStore.setStatus(refreshed, 'initializing');
+      targets.push(target);
+    }
+
+    if (this._runtime.live) {
+      await Promise.allSettled(targets.map(target => this.initializeLinkTargetWithRetry(target)));
+    }
+  }
+
+  /** Park foreign-context links while their actor has no registered execution identity. */
+  private async pauseRoleLinksForActor(actorDid: string): Promise<void> {
+    for (const link of await this.replicationLinkStore.getAllLinks()) {
+      if (link.authorization.kind !== 'role' || link.authorization.actorDid !== actorDid) {
+        continue;
+      }
+      const linkKey = this.getReplicationLinkKey(syncTargetFromLink(link), link);
+      this._runtime.cancelTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
+      await this._linkRecoveryCoordinator.transitionToPaused(
+        linkKey,
+        this.getLinkController(linkKey)?.link ?? link,
+      );
+    }
+  }
+
+  public async followSource(input: FollowedSyncSourceInput): Promise<FollowedSyncSource> {
+    const normalized = normalizeFollowedSyncSourceInput(input);
+    const transitionFence = this.captureTransitionFence();
+    const assertTransitionCurrent = (): void => {
+      if (!transitionFence()) {
+        throw new FollowedSourceNotReadyError('the local sync lifecycle changed while accepting the context');
+      }
+    };
+
+    assertTransitionCurrent();
+    const identity = await this._identityStore.get(normalized.actorDid);
+    if (identity === undefined) {
+      throw new FollowedSourceNotReadyError(`actor '${normalized.actorDid}' is not registered for sync`);
+    }
+    const prepared = await this.resolveFollowedSource(normalized, identity.delegateDid, transitionFence);
+    assertTransitionCurrent();
+
+    let accepted = prepared.source;
+    let replaced: FollowedSyncSource[] = [];
+    await this.runExclusiveIdentityMutation(normalized.sourceDid, async (): Promise<void> => {
+      assertTransitionCurrent();
+      const currentIdentity = await this._identityStore.get(normalized.actorDid);
+      if (currentIdentity?.delegateDid !== identity.delegateDid) {
+        throw new FollowedSourceNotReadyError('the member sync registration changed while accepting the context');
+      }
+      const current = (await this.readFollowedSources()).filter(candidate =>
+        SyncEngineLevel.sameFollowedContext(candidate, normalized)
+      );
+      const sameAuthority = current.find(candidate =>
+        followedSyncSourceAuthorityEqual(candidate, prepared.source)
+      );
+      if (sameAuthority !== undefined) {
+        accepted = { ...prepared.source, acceptanceId: sameAuthority.acceptanceId };
+      }
+      await this.admitFollowedSource({ ...prepared, source: accepted }, transitionFence);
+      assertTransitionCurrent();
+      replaced = await this.commitFollowedSource(accepted);
+    }, {});
+    assertTransitionCurrent();
+
+    await this.removeFollowedSourceLinksForSources(replaced);
+    this.activateFollowedSource(accepted, identity.delegateDid);
+    return accepted;
+  }
+
+  /** Resolve the strongest role that one reachable hosted endpoint proves. */
+  private async resolveFollowedSource(
+    input: FollowedSyncSourceInput,
+    delegateDid: string | undefined,
+    shouldContinue?: () => boolean,
+  ): Promise<PreparedFollowedSource> {
+    const endpoints = await this.targetResolver.getRemoteEndpointUrls(input.sourceDid);
+    if (endpoints.length === 0) {
+      throw new FollowedSourceNotReadyError(`source '${input.sourceDid}' has no remote DWN endpoint`);
+    }
+
+    let unresolved: unknown;
+    for (const remoteEndpoint of endpoints) {
+      try {
+        const prepared = await this.resolveFollowedSourceAtEndpoint(
+          input,
+          delegateDid,
+          remoteEndpoint,
+          shouldContinue,
+        );
+        if (prepared !== undefined) {
+          return prepared;
+        }
+      } catch (error: unknown) {
+        unresolved ??= error;
+      }
+    }
+    if (unresolved !== undefined) {
+      throw unresolved;
+    }
+    throw new FollowedSourceNotReadyError('none of the requested roles is available yet');
+  }
+
+  /** Resolve the strongest active role at one exact hosted endpoint. */
+  private async resolveFollowedSourceAtEndpoint(
+    input: FollowedSyncSourceInput,
+    delegateDid: string | undefined,
+    remoteEndpoint: string,
+    shouldContinue?: () => boolean,
+  ): Promise<PreparedFollowedSource | undefined> {
+    for (const role of input.roles) {
+      const { protocolPath } = resolveFollowedSyncRoleRoot(input.contextId, role);
+      try {
+        const batch = await readRoleReplicationSupport({
+          ...input,
+          agent          : this.agent,
+          delegateDid,
+          dwnUrl         : remoteEndpoint,
+          permissionsApi : this._permissionsApi,
+          protocolPath,
+          protocolRole   : role,
+          shouldContinue,
+        });
+        const protocolPaths = resolveProtocolRoleContextScope(
+          batch.protocolDefinition,
+          role,
+        ).readablePaths;
+        return {
+          batch,
+          source: normalizeFollowedSyncSource({
+            acceptanceId : CryptoUtils.randomUuid(),
+            actorDid     : input.actorDid,
+            contextId    : input.contextId,
+            id           : batch.roleRecordId,
+            protocol     : input.protocol,
+            protocolPaths,
+            protocolRole : role,
+            remoteEndpoint,
+            roles        : input.roles,
+            sourceDid    : input.sourceDid,
+          }),
+        };
+      } catch (error: unknown) {
+        if (error instanceof FollowedSourceRoleAbsentError) {
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
+  /** Admit the verified role closure before making it the active durable source. */
+  private async admitFollowedSource(
+    prepared: PreparedFollowedSource,
+    shouldContinue?: () => boolean,
+  ): Promise<void> {
+    const { batch, source } = prepared;
+    const outcome = await admitClosure(batch.rootCid, {
+      agent                   : this.agent,
+      did                     : source.sourceDid,
+      dwnUrl                  : source.remoteEndpoint,
+      fetchReplicationSupport : async () => batch,
+      prefetched              : [...batch.dependencies, batch.root],
+      scope                   : {
+        kind          : 'context',
+        contextId     : source.contextId,
+        protocol      : source.protocol,
+        protocolPaths : source.protocolPaths,
+      },
+      shouldContinue,
+    });
+    if (outcome.kind !== 'admitted') {
+      throw new Error(
+        outcome.detail ?? (outcome.kind === 'failed' ? outcome.reason : 'incomplete followed-context bootstrap'),
+      );
+    }
+  }
+
+  /** Commit one followed source without coupling durable truth to link cleanup. */
+  private async commitFollowedSource(source: FollowedSyncSource): Promise<FollowedSyncSource[]> {
+    const sources = await this.readFollowedSources();
+    this.initializeFollowedSourceSnapshot(sources);
+    const existing = sources.find(candidate => candidate.id === source.id);
+    if (existing !== undefined && !SyncEngineLevel.sameFollowedContext(existing, source)) {
+      throw new Error(`SyncEngineLevel: Followed source ${source.id} is already registered with different details.`);
+    }
+
+    const replaced = sources.filter(entry =>
+      entry.id !== source.id && SyncEngineLevel.sameFollowedContext(entry, source)
+    );
+    if (existing !== undefined && !followedSyncSourceActiveEqual(existing, source)) {
+      replaced.push(existing);
+    }
+    const changed = existing === undefined || !followedSyncSourceActiveEqual(existing, source) || replaced.length > 0;
+    if (changed) {
+      await this._followedSourceStore.replace(source, replaced.map(previous => previous.id));
+      this._followedSourceSnapshot.set(SyncEngineLevel.followedContextKey(source), source);
+      this.invalidateSyncTargetsCache();
+      this.emitFollowedSourceChange(source, source.id, true);
+    }
+    return replaced;
+  }
+
+  /** Remove links for followed sources replaced by a durable commit. */
+  private async removeFollowedSourceLinksForSources(sources: readonly FollowedSyncSource[]): Promise<void> {
+    await Promise.allSettled(sources.map(async source => this.removeFollowedSourceLink(
+      await this.targetResolver.buildTargetForSource(source),
+    )));
+  }
+
+  /** Activate an already-committed source without extending its mutation lock. */
+  private activateFollowedSource(
+    source: FollowedSyncSource,
+    delegateDid: string | undefined,
+  ): void {
+    if (!this._runtime.live) {
+      return;
+    }
+
+    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(source.actorDid);
+    void runIdentityTask(async (): Promise<void> => {
+      await this.refreshRoleLinksForActor(source.actorDid, delegateDid, source.id);
+      await this.initializeLinkTargetWithRetry(
+        await this.targetResolver.buildTargetForSource(source, delegateDid),
+      );
+    });
+  }
+
+  public getFollowedSource(id: string): Promise<FollowedSyncSource | undefined> {
+    return this._followedSourceStore.get(id);
+  }
+
+  public async listFollowedSources(): Promise<FollowedSyncSource[]> {
+    const sources = await this.readFollowedSources();
+    this.initializeFollowedSourceSnapshot(sources);
+    return sources;
+  }
+
+  /** Establish a complete baseline before applying point catalog mutations. */
+  private initializeFollowedSourceSnapshot(sources: readonly FollowedSyncSource[]): void {
+    if (this._followedSourceSnapshotInitialized) {
+      return;
+    }
+    for (const source of sources) {
+      this._followedSourceSnapshot.set(SyncEngineLevel.followedContextKey(source), source);
+    }
+    this._followedSourceSnapshotInitialized = true;
+  }
+
+  /** Decode the durable catalog without changing this engine's applied snapshot. */
+  private async readFollowedSources(): Promise<FollowedSyncSource[]> {
+    const sources: FollowedSyncSource[] = [];
+    for (const entry of await this._followedSourceStore.list()) {
+      if (entry.status === 'valid') {
+        sources.push(entry.source);
+      } else {
+        console.warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping source:`, entry.error);
+      }
+    }
+    return sources;
+  }
+
+  public async deleteFollowedSource(source: FollowedSyncSource): Promise<void> {
+    const normalized = normalizeFollowedSyncSource(source);
+    await this.runExclusiveIdentityMutation(
+      normalized.sourceDid,
+      async (): Promise<void> => {
+        const current = await this._followedSourceStore.get(normalized.id);
+        if (current === undefined || !followedSyncSourceActiveEqual(current, normalized)) {
+          return;
+        }
+        await this.removeFollowedSourceLinksForSources([current]);
+        await this.commitFollowedSourceRemoval(current);
+      },
+      {},
+    );
+  }
+
+  /** Mark one exact followed source stale and request its active replication sessions to pull. */
+  public async markFollowedSourcePullPending(source: FollowedSyncSource): Promise<boolean> {
+    const expected = normalizeFollowedSyncSource(source);
+    const current = await this._followedSourceStore.get(expected.id);
+    if (current === undefined || !followedSyncSourceActiveEqual(current, expected)) {
+      return false;
+    }
+
+    for (const controller of this._linkControllers.values()) {
+      if (!SyncEngineLevel.followedSourceCoversTarget(expected, syncTargetFromLink(controller.link))) {
+        continue;
+      }
+      this.markPullPending(controller);
+      controller.executor.request('pull');
+      if (controller.isReplicationReady) {
+        const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(expected.sourceDid);
+        void runIdentityTask(() => this._linkRecoveryCoordinator.resume(controller));
+      }
+    }
+    return true;
+  }
+
+  /** Pull one exact accepted source from its verified hosted endpoint. */
+  public async pullFollowedSource(source: FollowedSyncSource): Promise<boolean> {
+    const expected = normalizeFollowedSyncSource(source);
+    const transitionFence = this.captureTransitionFence();
+    const identity = await this._identityStore.get(expected.actorDid);
+    if (identity === undefined) {
+      return false;
+    }
+    const accepted = await this._followedSourceStore.get(expected.id);
+    if (accepted === undefined || !followedSyncSourceActiveEqual(accepted, expected)) {
+      return false;
+    }
+    const target = await this.targetResolver.buildTargetForSource(expected, identity.delegateDid);
+    if (this._runtime.live &&
+      (await this.initializeLinkTargetWithRetry(target)).status !== LinkInitializationStatus.Active) {
+      return false;
+    }
+
+    let result: SyncReconcileResult;
+    await this._lifecycle.acquireSync();
+    try {
+      const current = await this._followedSourceStore.get(expected.id);
+      const currentIdentity = await this._identityStore.get(expected.actorDid);
+      if (
+        !transitionFence() ||
+        current === undefined ||
+        !followedSyncSourceActiveEqual(current, expected) ||
+        currentIdentity?.delegateDid !== identity.delegateDid
+      ) {
+        return false;
+      }
+      result = await this.reconcileTarget(
+        target,
+        { direction: 'pull' },
+        transitionFence,
+      );
+    } finally {
+      this._lifecycle.releaseSync();
+    }
+    const current = await this._followedSourceStore.get(expected.id);
+    const currentIdentity = await this._identityStore.get(expected.actorDid);
+    return result.pullDrained === true &&
+      transitionFence() &&
+      current !== undefined &&
+      followedSyncSourceActiveEqual(current, expected) &&
+      currentIdentity?.delegateDid === identity.delegateDid;
+  }
+
+  private async commitFollowedSourceRemoval(source: FollowedSyncSource): Promise<void> {
+    this.initializeFollowedSourceSnapshot(await this.readFollowedSources());
+    await this._followedSourceStore.delete(source.id);
+    this._followedSourceSnapshot.delete(SyncEngineLevel.followedContextKey(source));
+    this.invalidateSyncTargetsCache();
+    this.emitFollowedSourceChange(source, undefined, true);
+  }
+
+  private emitFollowedSourceChange(
+    source: FollowedSyncSource,
+    followedSourceId: string | undefined,
+    publishWake = false,
+  ): void {
+    const event: FollowedSourceChangeEvent = {
+      type                       : 'followed-context:change',
+      tenantDid                  : source.sourceDid,
+      actorDid                   : source.actorDid,
+      protocol                   : source.protocol,
+      contextId                  : source.contextId,
+      followedSourceAcceptanceId : source.acceptanceId,
+      followedSourceId           : followedSourceId,
+    };
+    this.emitEvent(event);
+    if (publishWake) {
+      this._followedSourceWakePublisher?.publish({ tenant: source.sourceDid, seq: source.acceptanceId });
+    }
+  }
+
+  private async removeFollowedSourceLink(target: SyncTarget): Promise<void> {
+    this.deactivateFollowedSourceLink(target);
+    await this.replicationLinkStore.deleteLink(
+      target.did,
+      target.dwnUrl,
+      target.projectionId,
+      target.authorizationEpoch,
+    );
+  }
+
+  /** Fence a followed link before any fallible durable cleanup. */
+  private deactivateFollowedSourceLink(target: SyncTarget): void {
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    this.removeLinkController(linkKey);
+    this._runtime.cancelTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
+    this._feedConvergenceManager.clearLink(linkKey);
+  }
+
+  private static sameFollowedContext(
+    a: FollowedContextKey,
+    b: FollowedContextKey,
+  ): boolean {
+    return SyncEngineLevel.followedContextKey(a) === SyncEngineLevel.followedContextKey(b);
+  }
+
+  private static followedContextKey(source: FollowedContextKey): string {
+    return JSON.stringify([source.sourceDid, source.actorDid, source.protocol, source.contextId]);
+  }
+
+  /** Apply durable catalog changes to this engine's events and replication sessions. */
+  private async refreshFollowedSourceState(): Promise<FollowedSyncSource[]> {
+    let sources: FollowedSyncSource[];
+    const activated: FollowedSyncSource[] = [];
+    await this._lifecycle.acquireSync();
+    try {
+      sources = await this.readFollowedSources();
+      const current = new Map(sources.map(source => [SyncEngineLevel.followedContextKey(source), source]));
+      const changes: Array<{ source: FollowedSyncSource; followedSourceId: string | undefined }> = [];
+      for (const key of new Set([...this._followedSourceSnapshot.keys(), ...current.keys()])) {
+        const previous = this._followedSourceSnapshot.get(key);
+        const next = current.get(key);
+        if (previous !== undefined && next !== undefined && followedSyncSourceActiveEqual(previous, next)) {
+          continue;
+        }
+        const source = next ?? previous;
+        if (source === undefined) {
+          continue;
+        }
+        changes.push({ source, followedSourceId: next?.id });
+        if (next !== undefined) {
+          activated.push(next);
+        }
+      }
+      this._followedSourceSnapshot.clear();
+      for (const [key, source] of current) {
+        this._followedSourceSnapshot.set(key, source);
+      }
+      this._followedSourceSnapshotInitialized = true;
+      if (changes.length > 0) {
+        this.invalidateSyncTargetsCache();
+        for (const change of changes) {
+          this.emitFollowedSourceChange(change.source, change.followedSourceId);
+        }
+      }
+    } finally {
+      this._lifecycle.releaseSync();
+    }
+    await this.removeObsoleteFollowedSourceLinks();
+    for (const source of activated) {
+      const identity = await this._identityStore.get(source.actorDid);
+      if (identity !== undefined) {
+        this.activateFollowedSource(source, identity.delegateDid);
+      }
+    }
+    return sources;
+  }
+
+  /** Remove durable role links that no longer belong to an accepted source. */
+  private async removeObsoleteFollowedSourceLinks(): Promise<void> {
+    await this._lifecycle.acquireSync();
+    try {
+      const candidates = new Map<string, { id: string; sourceDid: string; target: SyncTarget }>();
+      const collect = (link: ReplicationLinkState): void => {
+        if (link.authorization.kind !== 'role') {
+          return;
+        }
+        const target = syncTargetFromLink(link);
+        const key = buildLinkKey(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
+        candidates.set(key, {
+          id        : link.authorization.roleRecordId,
+          sourceDid : link.tenantDid,
+          target,
+        });
+      };
+      for (const controller of this._linkControllers.values()) {
+        collect(controller.link);
+      }
+      for (const link of await this.replicationLinkStore.getAllLinks()) {
+        collect(link);
+      }
+      await Promise.all([...candidates.values()].map(({ id, sourceDid, target }) =>
+        this.runIdentityLifecycle(sourceDid, async (): Promise<void> => {
+          const current = await this._followedSourceStore.get(id);
+          if (current === undefined || !SyncEngineLevel.followedSourceCoversTarget(current, target)) {
+            await this.removeFollowedSourceLink(target);
+          }
+        })
+      ));
+    } finally {
+      this._lifecycle.releaseSync();
+    }
+  }
+
+  /** Re-resolve paused roles at their already-accepted endpoint. */
+  private async reconcileFollowedSources(runtime: SyncRuntime): Promise<void> {
+    const sources = await this.refreshFollowedSourceState();
+    if (!runtime.live) {
+      return;
+    }
+    const pausedRoleIds = new Set<string>();
+    for (const link of await this.replicationLinkStore.getAllLinks()) {
+      if (link.status === 'paused' && link.authorization.kind === 'role') {
+        pausedRoleIds.add(link.authorization.roleRecordId);
+      }
+    }
+    for (const source of sources) {
+      if (runtime.disposed) {
+        return;
+      }
+      if (!pausedRoleIds.has(source.id)) {
+        continue;
+      }
+      try {
+        await this.refreshFollowedSourceAuthority(runtime, source);
+      } catch (error: unknown) {
+        if (!runtime.disposed) {
+          console.error(`SyncEngineLevel: Followed context ${source.contextId} refresh failed`, error);
+        }
+      }
+    }
+  }
+
+  /** Replace or retire one role only after its exact accepted endpoint proves the new state. */
+  private async refreshFollowedSourceAuthority(
+    runtime: SyncRuntime,
+    expected: FollowedSyncSource,
+  ): Promise<void> {
+    const identity = await this._identityStore.get(expected.actorDid);
+    if (identity === undefined || runtime.disposed) {
+      return;
+    }
+    const shouldContinue = (): boolean => !runtime.disposed;
+    const prepared = await this.resolveFollowedSourceAtEndpoint({
+      actorDid  : expected.actorDid,
+      contextId : expected.contextId,
+      protocol  : expected.protocol,
+      roles     : expected.roles,
+      sourceDid : expected.sourceDid,
+    }, identity.delegateDid, expected.remoteEndpoint, shouldContinue);
+    if (runtime.disposed) {
+      return;
+    }
+    if (prepared === undefined) {
+      await this.deleteFollowedSource(expected);
+      return;
+    }
+    if (followedSyncSourceAuthorityEqual(prepared.source, expected)) {
+      this.activateFollowedSource(expected, identity.delegateDid);
+      return;
+    }
+
+    let accepted: FollowedSyncSource | undefined;
+    let replaced: FollowedSyncSource[] = [];
+    await this.runExclusiveIdentityMutation(expected.sourceDid, async (): Promise<void> => {
+      const current = await this._followedSourceStore.get(expected.id);
+      const currentIdentity = await this._identityStore.get(expected.actorDid);
+      if (
+        runtime.disposed ||
+        current === undefined ||
+        !followedSyncSourceActiveEqual(current, expected) ||
+        currentIdentity?.delegateDid !== identity.delegateDid
+      ) {
+        return;
+      }
+      await this.admitFollowedSource(prepared, shouldContinue);
+      accepted = prepared.source;
+      replaced = await this.commitFollowedSource(prepared.source);
+    }, {});
+    if (accepted === undefined || runtime.disposed) {
+      return;
+    }
+    await this.removeFollowedSourceLinksForSources(replaced);
+    this.activateFollowedSource(accepted, identity.delegateDid);
+  }
+
+  /** Coalesce catalog wakes and paused-role recovery onto one runtime task. */
+  private scheduleFollowedSourceRefresh(): void {
+    const runtime = this._runtime;
+    if (runtime.disposed) {
+      return;
+    }
+    if (this._followedSourceRefresh !== undefined) {
+      this._followedSourceRefreshPending = true;
+      return;
+    }
+
+    const task = this._lifecycle.runBackgroundTask(async (): Promise<void> => {
+      do {
+        this._followedSourceRefreshPending = false;
+        await this.reconcileFollowedSources(runtime);
+      } while (!runtime.disposed && this._followedSourceRefreshPending);
+    });
+    this._followedSourceRefresh = task;
+    const clear = (): void => {
+      if (this._followedSourceRefresh === task) {
+        const rerun = !runtime.disposed && this._followedSourceRefreshPending;
+        this._followedSourceRefresh = undefined;
+        this._followedSourceRefreshPending = false;
+        if (rerun) {
+          this.scheduleFollowedSourceRefresh();
+        }
+      }
+    };
+    void task.then(clear, clear);
   }
 
   // ---------------------------------------------------------------------------
@@ -1160,8 +1865,8 @@ export class SyncEngineLevel implements SyncEngine {
   // startSync / stopSync
   // ---------------------------------------------------------------------------
 
-  public startSync(params: StartSyncParams = {}): Promise<void> {
-    return this._lifecycle.runTransition(async (): Promise<void> => {
+  public async startSync(params: StartSyncParams = {}): Promise<void> {
+    await this._lifecycle.runTransition(async (): Promise<void> => {
       await this.startSyncRuntime(params);
     });
   }
@@ -1229,6 +1934,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._pendingSyncRun = undefined;
     this._lifecycle.pauseTaskIntake();
     this._runtime.dispose();
+    this._linkInitializations.clear();
     this.installDisposedRuntime();
     this.invalidateSyncTargetsCache();
   }
@@ -1341,6 +2047,7 @@ export class SyncEngineLevel implements SyncEngine {
       // Each target's link initialization is independent — process
       // concurrently; a transient discovery failure must not reject
       // startSync or strand the runtime.
+      await this.listFollowedSources();
       const syncTargets = await this.getSyncTargets();
       await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
     } catch (error) {
@@ -1381,6 +2088,11 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     await this.reinitializeOrphanedLinkTargets(runtime);
+    if ([...this._linkControllers.values()].some(({ link }) =>
+      link.status === 'paused' && link.authorization.kind === 'role'
+    )) {
+      this.scheduleFollowedSourceRefresh();
+    }
   }
 
   /**
@@ -1460,11 +2172,36 @@ export class SyncEngineLevel implements SyncEngine {
   /** Maximum age for a repeatedly deferred pull entry before it is dead-lettered and skipped. */
   private static readonly DEFERRED_PULL_DEAD_LETTER_AFTER_MS = 24 * 60 * 60 * 1000;
 
-  private transitionToPaused(
+  private async transitionToPaused(
     linkKey: string,
     link: ReplicationLinkState,
+    refreshAuthority = true,
   ): Promise<void> {
-    return this._linkRecoveryCoordinator.transitionToPaused(linkKey, link);
+    const refreshFollowedSource = link.authorization.kind === 'role' && link.status !== 'paused';
+    await this._linkRecoveryCoordinator.transitionToPaused(linkKey, link);
+    if (refreshFollowedSource && refreshAuthority) {
+      this.scheduleFollowedSourceRefresh();
+    }
+  }
+
+  private async pauseRoleLinkForError(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    error: unknown,
+  ): Promise<void> {
+    if (link.status === 'paused') {
+      return;
+    }
+    const supportFailure = error instanceof RoleReplicationSupportError;
+    if (supportFailure) {
+      console.error(
+        `SyncEngineLevel: Invalid role replication support for ${target.did} -> ${target.dwnUrl}`,
+        error,
+      );
+    }
+    const refreshAuthority = error instanceof FollowedSourceRoleRecordMismatchError ||
+      SyncEngineLevel.isMissingRoleAuthorization(syncErrorMessage(error));
+    await this.transitionToPaused(this.getReplicationLinkKey(target, link), link, refreshAuthority);
   }
 
   // ---------------------------------------------------------------------------
@@ -1536,16 +2273,46 @@ export class SyncEngineLevel implements SyncEngine {
    * Initialize a single replication link target: create or resume the durable
    * link, open pull + push subscriptions, and transition the link to `'live'`.
    */
-  private async initializeLinkTarget(target: SyncTarget): Promise<LinkInitializationResult> {
+  private initializeLinkTarget(target: SyncTarget): Promise<LinkInitializationResult> {
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    const existing = this._linkInitializations.get(linkKey);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const initialization = this.initializeLinkTargetAttempt(target);
+    this._linkInitializations.set(linkKey, initialization);
+    const release = (): void => {
+      if (this._linkInitializations.get(linkKey) === initialization) {
+        this._linkInitializations.delete(linkKey);
+      }
+    };
+    void initialization.then(release, release);
+    return initialization;
+  }
+
+  private async initializeLinkTargetAttempt(target: SyncTarget): Promise<LinkInitializationResult> {
     const runtime = this._runtime;
     let link: ReplicationLinkState | undefined;
     let controller: SyncLinkController | undefined;
     try {
+      if (!await this.isFollowedTargetRunnable(target)) {
+        return { status: LinkInitializationStatus.Failed };
+      }
       link = await this.getOrCreateReplicationLink(target);
       if (runtime.disposed) {
         return { status: LinkInitializationStatus.Failed };
       }
       const linkKey = this.getReplicationLinkKey(target, link);
+      if (!await this.isFollowedTargetRunnable(target)) {
+        await this.replicationLinkStore.deleteLink(
+          link.tenantDid,
+          link.remoteEndpoint,
+          link.projectionId,
+          link.authorizationEpoch,
+        );
+        return { status: LinkInitializationStatus.Failed };
+      }
 
       // Idempotence: an ACTIVE controller for this key means live, repair,
       // or pause ownership already exists. The settle-check re-init and the
@@ -1559,6 +2326,16 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       controller = this.activateLink(linkKey, link);
+      if (!await this.isFollowedTargetRunnable(target)) {
+        this.removeLinkController(linkKey, controller);
+        await this.replicationLinkStore.deleteLink(
+          link.tenantDid,
+          link.remoteEndpoint,
+          link.projectionId,
+          link.authorizationEpoch,
+        );
+        return { status: LinkInitializationStatus.Failed };
+      }
       return await this.initializeActivatedLinkTarget(target, linkKey, link, controller);
     } catch (error: any) {
       if (runtime.disposed) {
@@ -1566,6 +2343,41 @@ export class SyncEngineLevel implements SyncEngine {
       }
       return this.handleInitializeLinkTargetError(target, link, controller, error);
     }
+  }
+
+  /** A role target remains schedulable only while its exact source registration exists. */
+  private async isFollowedTargetCurrent(target: SyncTarget): Promise<boolean> {
+    if (target.authorization.kind !== 'role') {
+      return true;
+    }
+    const source = await this._followedSourceStore.get(target.authorization.roleRecordId);
+    return source !== undefined && SyncEngineLevel.followedSourceCoversTarget(source, target);
+  }
+
+  private static followedSourceCoversTarget(source: FollowedSyncSource, target: SyncTarget): boolean {
+    const { scope } = target;
+    return target.authorization.kind === 'role' &&
+      scope.kind === 'context' &&
+      source.sourceDid === target.did &&
+      source.remoteEndpoint === target.dwnUrl &&
+      source.actorDid === target.authorization.actorDid &&
+      source.protocol === scope.protocol &&
+      source.contextId === scope.contextId &&
+      source.protocolRole === target.authorization.protocolRole &&
+      source.protocolPaths.length === scope.protocolPaths.length &&
+      source.protocolPaths.every((path, index) => path === scope.protocolPaths[index]);
+  }
+
+  /** A current role target runs only under its actor's current delegate registration. */
+  private async isFollowedTargetRunnable(target: SyncTarget): Promise<boolean> {
+    if (target.authorization.kind !== 'role') {
+      return true;
+    }
+    if (!await this.isFollowedTargetCurrent(target)) {
+      return false;
+    }
+    const identity = await this._identityStore.get(target.authorization.actorDid);
+    return identity !== undefined && identity.delegateDid === target.delegateDid;
   }
 
   /** Open subscriptions and establish the reconciliation baseline for one newly activated link. */
@@ -1576,6 +2388,9 @@ export class SyncEngineLevel implements SyncEngine {
     controller: SyncLinkController,
   ): Promise<LinkInitializationResult> {
     if (link.status === 'paused') {
+      if (link.authorization.kind === 'role') {
+        this.scheduleFollowedSourceRefresh();
+      }
       return this.activeLinkInitializationResultIfOwned(controller, link);
     }
 
@@ -1691,6 +2506,9 @@ export class SyncEngineLevel implements SyncEngine {
       await closeOwnAttempt();
       return LinkSubscriptionOpenResult.Inactive;
     }
+    if (target.authorization.kind === 'role') {
+      return LinkSubscriptionOpenResult.ReadyForLive;
+    }
 
     try {
       const pushOpened = await this.openLocalPushSubscription(target, controller, openReplicationGeneration);
@@ -1719,6 +2537,14 @@ export class SyncEngineLevel implements SyncEngine {
     const { link } = controller;
     const isCurrent = (): boolean =>
       !this._runtime.disposed && controller.isReplicationGenerationCurrent(expectedReplicationGeneration);
+    if (target.authorization.kind === 'role') {
+      const result = await this.reconcileOwnedTarget(controller, target, undefined, isCurrent);
+      if (result.pullDrained === true && isCurrent()) {
+        this.markPullCurrent(controller, expectedReplicationGeneration);
+      }
+      return result;
+    }
+
     const pullSnapshot = controller.pullSnapshot;
     const pushSnapshot = controller.pushSnapshot;
     if (
@@ -1744,7 +2570,7 @@ export class SyncEngineLevel implements SyncEngine {
       return { converged: true };
     }
 
-    const result = await this._durableFeedReconciler.reconcile(target, link, undefined, isCurrent);
+    const result = await this.reconcileDurableTarget(target, link, undefined, isCurrent);
     if (result.pullDrained === true && isCurrent()) {
       this.markPullCurrent(controller, expectedReplicationGeneration);
     }
@@ -1795,6 +2621,16 @@ export class SyncEngineLevel implements SyncEngine {
     error: any,
   ): Promise<LinkInitializationResult> {
     if (controller !== undefined && !controller.isActive) {
+      return { status: LinkInitializationStatus.Failed };
+    }
+
+    if (
+      target.authorization.kind === 'role' &&
+          SyncEngineLevel.isRoleLinkPauseError(error)
+    ) {
+      if (link !== undefined) {
+        await this.pauseRoleLinkForError(target, link, error);
+      }
       return { status: LinkInitializationStatus.Failed };
     }
 
@@ -2161,7 +2997,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async pruneSupersededDurableLinksForIdentity(did: string, currentIdentityKeys: Set<string>): Promise<void> {
     const links = await this.replicationLinkStore.getLinksForTenant(did);
     await Promise.all(links.map(async link => {
-      if (currentIdentityKeys.has(this.getDurableLinkIdentityKey(link))) {
+      if (link.authorization.kind === 'role' || currentIdentityKeys.has(this.getDurableLinkIdentityKey(link))) {
         return;
       }
       await this.replicationLinkStore.deleteLink(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
@@ -2218,15 +3054,13 @@ export class SyncEngineLevel implements SyncEngine {
     controller: SyncLinkController,
     subscriptionReplicationGeneration: number,
   ): Promise<boolean> {
-    const { did, delegateDid, dwnUrl } = target;
+    const { did, dwnUrl } = target;
     const eventScope = syncEventScope(target.scope);
 
     const linkKey = target.linkKey;
     const { link } = controller;
 
-    const filters = target.scope.kind === 'protocolSet'
-      ? target.scope.protocols.map(protocol => ({ protocol }))
-      : [];
+    const filters = messageFeedFiltersForSyncScope(target.scope) ?? [];
 
     const runtime = this._runtime;
 
@@ -2253,16 +3087,29 @@ export class SyncEngineLevel implements SyncEngine {
     // dwnUrl via WebSocket.  We do NOT use agent.dwn.sendRequest() because
     // that resolves endpoints from the DID document and picks the first one
     // — which may be a different server than the one this sync target needs.
-    const subscribeRequest = {
-      store         : false as const,
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSubscribe as const,
-      granteeDid    : delegateDid,
-      messageParams : { filters, permissionGrantIds: toMessagesPermissionGrantIds(target.permissionGrantIds) },
+    const createSubscribeRequest = async (): Promise<Parameters<typeof this.agent.dwn.processRequest>[0]> => {
+      const currentTarget = await this.targetResolver.withCurrentRoleGrant(target);
+      const roleAuthorization = currentTarget.authorization.kind === 'role'
+        ? currentTarget.authorization
+        : undefined;
+      return {
+        store         : false as const,
+        author        : roleAuthorization?.actorDid ?? did,
+        target        : did,
+        messageType   : DwnInterface.MessagesSubscribe as const,
+        granteeDid    : currentTarget.delegateDid,
+        messageParams : {
+          filters,
+          permissionGrantIds: toMessagesPermissionGrantIds(currentTarget.permissionGrantIds),
+          ...(roleAuthorization === undefined ? {} : { protocolRole: roleAuthorization.protocolRole }),
+          ...(currentTarget.authorDelegatedGrant === undefined
+            ? {}
+            : { delegatedGrant: currentTarget.authorDelegatedGrant }),
+        },
+      };
     };
 
-    const { message } = await this.agent.dwn.processRequest(subscribeRequest);
+    const { message } = await this.agent.dwn.processRequest(await createSubscribeRequest());
     if (!controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration)) { return false; }
     if (!message) {
       throw new Error(`SyncEngineLevel: Failed to construct MessagesSubscribe for ${dwnUrl}`);
@@ -2272,7 +3119,7 @@ export class SyncEngineLevel implements SyncEngine {
     // The `reconnected` lifecycle signal requests durable pull and push passes,
     // which recover the disconnected interval from persisted checkpoints.
     const resubscribeFactory: ResubscribeFactory = async () => {
-      const { message: resumeMsg } = await this.agent.dwn.processRequest(subscribeRequest);
+      const { message: resumeMsg } = await this.agent.dwn.processRequest(await createSubscribeRequest());
       if (!resumeMsg) {
         throw new Error(`SyncEngineLevel: Failed to construct resume MessagesSubscribe for ${dwnUrl}`);
       }
@@ -2292,6 +3139,12 @@ export class SyncEngineLevel implements SyncEngine {
     }) as MessagesSubscribeReply;
     if (reply.status.code !== 200 || !reply.subscription) {
       throw new Error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
+    }
+    try {
+      SyncEngineLevel.assertRoleRecordId(target, reply.roleRecordId);
+    } catch (error: unknown) {
+      await reply.subscription.close();
+      throw error;
     }
 
     const close = async (): Promise<void> => { await reply.subscription!.close(); };
@@ -2358,7 +3211,9 @@ export class SyncEngineLevel implements SyncEngine {
   private async requestDurableReconnectPasses(context: LivePullWakeContext): Promise<void> {
     const { controller } = context;
     controller.executor.request('pull');
-    controller.executor.request('push');
+    if (controller.link.authorization.kind !== 'role') {
+      controller.executor.request('push');
+    }
     if (!controller.isReplicationReady || context.isStale()) {
       return;
     }
@@ -2367,13 +3222,26 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async handleLivePullError(context: LivePullWakeContext, errorCode: string): Promise<void> {
-    if (isTerminalSyncAuthorizationFailure(errorCode)) {
+    const roleAuthorization = context.link.authorization.kind === 'role'
+      ? context.link.authorization
+      : undefined;
+    if (roleAuthorization !== undefined && SyncEngineLevel.isMissingRoleAuthorization(errorCode)) {
       console.warn(
-        `SyncEngineLevel: sync authorization for ${context.did} -> ${context.dwnUrl} was revoked or expired — ` +
-        'pausing link (reconnect to resume).',
+        `SyncEngineLevel: role authorization for ${context.did} -> ${context.dwnUrl} is no longer active — ` +
+        'pausing this endpoint link.',
       );
       if (!context.isStale()) {
         await this.transitionToPaused(context.linkKey, context.link);
+      }
+      return;
+    }
+    if (isTerminalSyncAuthorizationFailure(errorCode)) {
+      const detail = roleAuthorization === undefined
+        ? `sync authorization for ${context.did} -> ${context.dwnUrl} was revoked or expired`
+        : `role authorization for ${context.did} -> ${context.dwnUrl} is no longer active`;
+      console.warn(`SyncEngineLevel: ${detail} — pausing link (reconnect to resume).`);
+      if (!context.isStale()) {
+        await this.transitionToPaused(context.linkKey, context.link, false);
       }
       return;
     }
@@ -2500,9 +3368,7 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<boolean> {
     const { did, delegateDid } = target;
 
-    const filters = target.scope.kind === 'protocolSet'
-      ? target.scope.protocols.map(protocol => ({ protocol }))
-      : [];
+    const filters = messageFeedFiltersForSyncScope(target.scope) ?? [];
 
     const runtime = this._runtime;
 
@@ -2615,20 +3481,13 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       await this._quotaManager.clearBlock(target, failure.cid);
-      await this.recordDeadLetter({
-        messageCid     : failure.cid,
-        tenantDid      : target.did,
-        remoteEndpoint : target.dwnUrl,
-        protocol       : failure.protocol ?? singleProtocolForSyncScope(target.scope),
-        errorCode      : failure.kind ?? 'Invalid',
-        errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
-      });
+      await this.recordTerminalPushFailure(target, failure);
     }
 
     return retryableFailures;
   }
 
-  private recordTerminalQuotaFailure(target: SyncTarget, failure: PushFailure): Promise<void> {
+  private recordTerminalPushFailure(target: SyncTarget, failure: PushFailure): Promise<void> {
     return this.recordDeadLetter({
       messageCid     : failure.cid,
       tenantDid      : target.did,
@@ -2660,11 +3519,15 @@ export class SyncEngineLevel implements SyncEngine {
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
+    const effectiveOptions = SyncEngineLevel.reconcileOptionsForTarget(target, options);
+    if (effectiveOptions === 'skip') {
+      return { aborted: true };
+    }
     const link = await this.getOrCreateReplicationLink(target);
     const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
     const controller = this.getLinkController(linkKey);
     if (controller?.isActive !== true) {
-      return this._durableFeedReconciler.reconcile(target, link, options, shouldContinue);
+      return this.reconcileDurableTarget(target, link, effectiveOptions, shouldContinue);
     }
 
     if (controller.link.status === 'paused') {
@@ -2680,7 +3543,7 @@ export class SyncEngineLevel implements SyncEngine {
         if (!controller.isActive || controller.link.status !== 'live' || !controller.isReplicationReady) {
           return Promise.resolve({ aborted: true });
         }
-        return this.reconcileOwnedTarget(controller, target, options, shouldContinue);
+        return this.reconcileOwnedTarget(controller, target, effectiveOptions, shouldContinue);
       },
     );
     return result ?? { aborted: true };
@@ -2693,6 +3556,10 @@ export class SyncEngineLevel implements SyncEngine {
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
+    const effectiveOptions = SyncEngineLevel.reconcileOptionsForTarget(target, options);
+    if (effectiveOptions === 'skip') {
+      return { aborted: true };
+    }
     if (!controller.isActive) {
       return { aborted: true };
     }
@@ -2702,12 +3569,12 @@ export class SyncEngineLevel implements SyncEngine {
     const replicationGeneration = controller.replicationGeneration;
     const isCurrent = (): boolean =>
       controller.isReplicationGenerationCurrent(replicationGeneration) && (shouldContinue?.() ?? true);
-    const includesPull = options?.direction !== 'push';
+    const includesPull = effectiveOptions?.direction !== 'push';
     if (includesPull) {
       this.markPullPending(controller);
     }
 
-    const result = await this._durableFeedReconciler.reconcile(target, controller.link, options, isCurrent);
+    const result = await this.reconcileDurableTarget(target, controller.link, effectiveOptions, isCurrent);
     // A repair reconciles before its cursorless subscriptions reopen. The
     // post-repair gap pass owns currentness because it covers writes between
     // that reconciliation head and transport attachment.
@@ -2722,6 +3589,55 @@ export class SyncEngineLevel implements SyncEngine {
     return result;
   }
 
+  /** Apply role links' one-way pull policy at each engine reconciliation boundary. */
+  private static reconcileOptionsForTarget(
+    target: SyncTarget,
+    options?: SyncReconcileOptions,
+  ): SyncReconcileOptions | 'skip' | undefined {
+    if (target.authorization.kind !== 'role') {
+      return options;
+    }
+    return options?.direction === 'push'
+      ? 'skip'
+      : { ...options, direction: 'pull', verifyConvergence: false };
+  }
+
+  /** Run one already-policy-checked durable pass and park terminal role authority failures. */
+  private async reconcileDurableTarget(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    options?: SyncReconcileOptions,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult> {
+    try {
+      return await this._durableFeedReconciler.reconcile(target, link, options, shouldContinue);
+    } catch (error: unknown) {
+      if (
+        target.authorization.kind === 'role' &&
+        SyncEngineLevel.isRoleLinkPauseError(error)
+      ) {
+        await this.pauseRoleLinkForError(target, link, error);
+      }
+      throw error;
+    }
+  }
+
+  private static isRoleLinkPauseError(error: unknown): boolean {
+    if (
+      error instanceof FollowedSourceRoleRecordMismatchError ||
+      error instanceof RoleFeedAdmissionError ||
+      error instanceof RoleReplicationSupportError
+    ) {
+      return true;
+    }
+    const detail = syncErrorMessage(error);
+    return SyncEngineLevel.isMissingRoleAuthorization(detail) || isTerminalSyncAuthorizationFailure(detail);
+  }
+
+  private static isMissingRoleAuthorization(detail: string): boolean {
+    return detail.includes(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+  }
+
   private verifyFeedConvergence(
     target: SyncTarget,
     shouldContinue?: () => boolean,
@@ -2731,6 +3647,10 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Probe one active session through its link executor. */
   private async probeFeedConvergence(target: SyncTarget): Promise<SyncReconcileResult> {
+    if (target.authorization.kind === 'role') {
+      const result = await this.reconcileTarget(target);
+      return result.pullDrained === true ? { ...result, converged: true } : result;
+    }
     await this.getOrCreateReplicationLink(target);
     const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
     const controller = this.getLinkController(linkKey);
@@ -2764,27 +3684,48 @@ export class SyncEngineLevel implements SyncEngine {
     return result ?? { aborted: true };
   }
 
-  private queryDurableFeed({
+  private async queryDurableFeed({
     cidsOnly,
     cursor,
     limit,
     source,
     target,
   }: SyncDurableFeedQuery): Promise<MessagesQueryReply> {
+    const currentTarget = await this.targetResolver.withCurrentRoleGrant(target);
+    const roleAuthorization = currentTarget.authorization.kind === 'role'
+      ? currentTarget.authorization
+      : undefined;
     const params = {
-      did                : target.did,
-      delegateDid        : target.delegateDid,
-      permissionGrantIds : target.permissionGrantIds,
-      filters            : SyncEngineLevel.messageFeedFiltersForScope(target.scope),
+      did                : currentTarget.did,
+      authorDid          : roleAuthorization?.actorDid,
+      delegateDid        : currentTarget.delegateDid,
+      delegatedGrant     : currentTarget.authorDelegatedGrant,
+      permissionGrantIds : currentTarget.permissionGrantIds,
+      protocolRole       : roleAuthorization?.protocolRole,
+      filters            : messageFeedFiltersForSyncScope(currentTarget.scope),
       cursor,
       cidsOnly,
       limit,
       agent              : this.agent,
     };
 
-    return source === 'local'
+    const reply = source === 'local'
       ? queryLocalMessageFeed(params)
-      : queryRemoteMessageFeed({ ...params, dwnUrl: target.dwnUrl });
+      : queryRemoteMessageFeed({ ...params, dwnUrl: currentTarget.dwnUrl });
+    const result = await reply;
+    if (result.status.code === 200) {
+      SyncEngineLevel.assertRoleRecordId(currentTarget, result.roleRecordId);
+    }
+    return result;
+  }
+
+  private static assertRoleRecordId(target: SyncTarget, roleRecordId: string | undefined): void {
+    if (
+      target.authorization.kind === 'role' &&
+      roleRecordId !== target.authorization.roleRecordId
+    ) {
+      throw new FollowedSourceRoleRecordMismatchError(target.authorization.roleRecordId, roleRecordId);
+    }
   }
 
   private async bootstrapRemotePermissionGrants(
@@ -3135,8 +4076,10 @@ export class SyncEngineLevel implements SyncEngine {
    * checkpoint at that CID and the next pass retries. The one exception is a
    * deferred entry that has aged past
    * {@link DEFERRED_PULL_DEAD_LETTER_AFTER_MS}: it is dead-lettered and the
-   * page continues, so a single permanently unresolvable message cannot
-   * wedge the link forever.
+   * page continues for ordinary links, so a single permanently unresolvable
+   * message cannot wedge the link forever. Role links retain deferred work
+   * because pull drainage is their only currentness proof and the dependency
+   * may become available later.
    */
   private async admitRemoteFeedPage(
     target: SyncTarget,
@@ -3146,7 +4089,8 @@ export class SyncEngineLevel implements SyncEngine {
     const admittedCids: string[] = [];
 
     for (const entry of entries) {
-      if (await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
+      if (target.authorization.kind !== 'role' &&
+          await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
         continue;
       }
 
@@ -3162,6 +4106,9 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
       if (outcome.kind === 'echo') {
+        continue;
+      }
+      if (outcome.kind === 'dead-lettered') {
         continue;
       }
 
@@ -3197,12 +4144,12 @@ export class SyncEngineLevel implements SyncEngine {
    * Retire a deferred pull entry if it can no longer make progress.
    *
    * @returns `true` when the caller should SKIP this entry and continue the
-   *   page — either because it aged past
+   *   page — either because an ordinary link aged past
    *   {@link DEFERRED_PULL_DEAD_LETTER_AFTER_MS} and was dead-lettered, or
    *   because the tenant was unregistered underneath us (in which case
    *   nothing is dead-lettered and the deferred work is simply abandoned).
-   *   `false` means the entry is still within its retry window and the page
-   *   must stop on it.
+   *   `false` means the page must stop on it. Role-feed entries remain
+   *   deferred regardless of age because they cannot be skipped safely.
    */
   private async tryRetireDeferredPull(
     target: SyncTarget,
@@ -3210,14 +4157,19 @@ export class SyncEngineLevel implements SyncEngine {
     detail: string | undefined,
   ): Promise<boolean> {
     return this.runDeferredPullLifecycle(target.did, async (): Promise<boolean> => {
-      // Stale work fence: after an unregister commits (inside this same
-      // per-tenant lock), deferred work for the tenant must yield rather
-      // than re-create retry state or dead letters.
-      if (await this.getIdentityOptions(target.did) === undefined) {
+      // Foreign role sources are registered independently from owned/delegated
+      // identities. Fence each kind against the registration that owns it.
+      const isCurrent = target.authorization.kind === 'role'
+        ? await this.isFollowedTargetCurrent(target)
+        : await this.getIdentityOptions(target.did) !== undefined;
+      if (!isCurrent) {
         return true;
       }
 
       const state = await this.recordDeferredPull(target, entry.messageCid, detail);
+      if (target.authorization.kind === 'role') {
+        return false;
+      }
       const firstDeferredAt = Date.parse(state.firstDeferredAt);
       if (!Number.isFinite(firstDeferredAt) || Date.now() - firstDeferredAt < SyncEngineLevel.DEFERRED_PULL_DEAD_LETTER_AFTER_MS) {
         return false;
@@ -3379,11 +4331,27 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'aborted' };
     }
 
+    // A role link only needs the retained current version. Its support closure
+    // carries the record's initial write and ancestors, while retained
+    // non-latest writes are deliberately dataless.
+    if (
+      target.authorization.kind === 'role' &&
+      entry.isLatestBaseState === false &&
+      entry.message !== undefined &&
+      Records.isRecordsWrite(entry.message)
+    ) {
+      return { kind: 'echo' };
+    }
+
     if (await this.hasDurableLocalPullEcho(target, entry)) {
       return { kind: 'echo' };
     }
 
     const prefetched = await this.syncEntriesFromFeedEntry(target, entry);
+    const fetchReplicationSupport = target.authorization.kind === 'role'
+      ? (root: SyncMessageEntry): Promise<{ dependencies: SyncMessageEntry[]; root: SyncMessageEntry }> =>
+        this.readRoleReplicationSupport(target, root, entry.initialWrite, shouldContinue)
+      : undefined;
     const outcome = await admitClosure(entry.messageCid, {
       did                : target.did,
       dwnUrl             : target.dwnUrl,
@@ -3396,6 +4364,7 @@ export class SyncEngineLevel implements SyncEngine {
       },
       permissionsApi: this._permissionsApi,
       prefetched,
+      fetchReplicationSupport,
       shouldContinue,
     });
 
@@ -3405,6 +4374,10 @@ export class SyncEngineLevel implements SyncEngine {
 
     if (outcome.kind === 'deferred') {
       return { kind: 'deferred', detail: outcome.detail };
+    }
+
+    if (target.authorization.kind === 'role') {
+      throw new RoleFeedAdmissionError(entry.messageCid);
     }
 
     await this.recordDeadLetter({
@@ -3449,6 +4422,9 @@ export class SyncEngineLevel implements SyncEngine {
     entry: MessagesQueryReplyEntry,
   ): Promise<SyncMessageEntry[]> {
     if (entry.message === undefined) {
+      if (target.authorization.kind === 'role') {
+        throw new Error(`SyncEngineLevel: role feed entry '${entry.messageCid}' did not include its message.`);
+      }
       const fetched = await fetchRemoteMessages({
         did                : target.did,
         dwnUrl             : target.dwnUrl,
@@ -3465,6 +4441,9 @@ export class SyncEngineLevel implements SyncEngine {
 
     const message = { ...entry.message };
     delete message.encodedData;
+    const entries: SyncMessageEntry[] = entry.initialWrite === undefined
+      ? []
+      : [{ message: entry.initialWrite, isLatestBaseState: false }];
     const syncEntry: SyncMessageEntry = {
       message,
       isLatestBaseState: entry.isLatestBaseState,
@@ -3472,7 +4451,10 @@ export class SyncEngineLevel implements SyncEngine {
     const encodedData = entry.encodedData;
     if (encodedData !== undefined) {
       syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
-    } else if (SyncEngineLevel.recordsWriteRequiresRemoteData(message)) {
+    } else if (
+      target.authorization.kind !== 'role' &&
+      SyncEngineLevel.recordsWriteRequiresRemoteData(message)
+    ) {
       syncEntry.dataStreamFactory = async (): Promise<ReadableStream<Uint8Array> | undefined> => {
         const fetched = await fetchRemoteMessages({
           did                : target.did,
@@ -3486,15 +4468,80 @@ export class SyncEngineLevel implements SyncEngine {
       };
     }
 
-    return [syncEntry];
+    entries.push(syncEntry);
+    return entries;
   }
 
-  private static messageFeedFiltersForScope(scope: SyncScope): MessagesFilter[] | undefined {
-    if (scope.kind === 'full') {
-      return undefined;
+  /** Read one missing role root/data/key closure from the same endpoint as its feed. */
+  private async readRoleReplicationSupport(
+    target: SyncTarget,
+    root: SyncMessageEntry,
+    initialWrite: RecordsWriteMessage | undefined,
+    shouldContinue?: () => boolean,
+  ): Promise<{ dependencies: SyncMessageEntry[]; root: SyncMessageEntry }> {
+    const role = target.authorization.kind === 'role' ? target.authorization : undefined;
+    const scope = target.scope.kind === 'context' ? target.scope : undefined;
+    const message = root.message;
+    const isWrite = Records.isRecordsWrite(message);
+    const isDelete = message.descriptor.interface === DwnInterfaceName.Records &&
+      message.descriptor.method === DwnMethodName.Delete;
+    if (
+      role === undefined ||
+      scope === undefined ||
+      (!isWrite && !isDelete)
+    ) {
+      const descriptor = message.descriptor as GenericMessage['descriptor'] & { protocolPath?: string; recordId?: string };
+      throw new Error(
+        `SyncEngineLevel: role replication support requires a contextual record mutation; received ${descriptor.interface}/${descriptor.method} at '${descriptor.protocolPath ?? 'unknown'}' (${descriptor.recordId ?? 'unknown'}).`,
+      );
     }
 
-    return scope.protocols.map(protocol => ({ protocol }));
+    const rootRecordId = isWrite
+      ? message.recordId
+      : (message.descriptor as RecordsDeleteMessage['descriptor']).recordId;
+    const contextualWrite = isWrite
+      ? message
+      : initialWrite;
+    if (contextualWrite === undefined || !Records.isRecordsWrite(contextualWrite) ||
+      contextualWrite.recordId !== rootRecordId) {
+      throw new Error('SyncEngineLevel: role replication support requires the deleted record initial write.');
+    }
+    const recordsWrite = contextualWrite as GenericMessage & {
+      contextId?: string;
+      recordId?: string;
+      descriptor: GenericMessage['descriptor'] & { protocol?: string; protocolPath?: string };
+    };
+    const { contextId, recordId } = recordsWrite;
+    const { protocol, protocolPath } = recordsWrite.descriptor;
+    if (
+      contextId === undefined ||
+      recordId === undefined ||
+      protocol !== scope.protocol ||
+      protocolPath === undefined
+    ) {
+      throw new Error('SyncEngineLevel: role feed root does not identify an exact record in its followed protocol.');
+    }
+
+    const batch = await readRoleReplicationSupport({
+      actorDid       : role.actorDid,
+      agent          : this.agent,
+      contextId,
+      delegateDid    : target.delegateDid,
+      dwnUrl         : target.dwnUrl,
+      expectedRoot   : message as RecordsDeleteMessage | RecordsWriteMessage,
+      permissionsApi : this._permissionsApi,
+      protocol,
+      protocolPath,
+      protocolRole   : role.protocolRole,
+      rootData       : root.bufferedData,
+      shouldContinue,
+      sourceDid      : target.did,
+    });
+    SyncEngineLevel.assertRoleRecordId(target, batch.roleRecordId);
+    return {
+      dependencies : batch.dependencies,
+      root         : { ...batch.root, isLatestBaseState: root.isLatestBaseState },
+    };
   }
 
   private static protocolFromFeedEntry(
@@ -3718,26 +4765,60 @@ export class SyncEngineLevel implements SyncEngine {
     await retry;
   }
 
-  private async getCurrentDurableLinkIdentityKeys(): Promise<Set<string> | undefined> {
+  private async getCurrentLinkIdentityKeys(): Promise<Set<string> | undefined> {
     try {
       const identityKeys = new Set<string>();
-      for await (const entry of this._identityStore.entries()) {
-        if (entry.status === 'corrupt') {
-          console.warn(`SyncEngineLevel: Corrupt sync options for ${entry.did}, skipping health target:`, entry.error);
-          continue;
-        }
+      await this.addCurrentRegisteredIdentityKeys(identityKeys);
+      await this.addCurrentFollowedSourceKeys(identityKeys);
+      return identityKeys;
+    } catch (error: unknown) {
+      console.warn('SyncEngineLevel: Failed to resolve current link identities for health; excluding unproven role links', error);
+      return undefined;
+    }
+  }
 
+  private async addCurrentRegisteredIdentityKeys(identityKeys: Set<string>): Promise<void> {
+    for await (const entry of this._identityStore.entries()) {
+      if (entry.status === 'corrupt') {
+        console.warn(`SyncEngineLevel: Corrupt sync options for ${entry.did}, skipping health target:`, entry.error);
+        continue;
+      }
+
+      try {
         const scope = syncScopeFromProtocols(entry.options.protocols);
         const resolutions = await this.targetResolver.buildTargetResolutions(entry.did, scope, entry.options);
         for (const resolution of resolutions) {
           const projectionId = await computeProjectionId(entry.did, resolution.scope);
           identityKeys.add(buildDurableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
         }
+      } catch (error: unknown) {
+        console.warn(
+          `SyncEngineLevel: Failed to resolve current link identities for ${entry.did}; retaining its durable links`,
+          error,
+        );
+        for (const link of await this.replicationLinkStore.getLinksForTenant(entry.did)) {
+          if (link.authorization.kind !== 'role') {
+            identityKeys.add(this.getDurableLinkIdentityKey(link));
+          }
+        }
       }
-      return identityKeys;
-    } catch (error: unknown) {
-      console.warn('SyncEngineLevel: Failed to resolve current durable link identity keys for health; falling back to all durable links', error);
-      return undefined;
+    }
+  }
+
+  private async addCurrentFollowedSourceKeys(identityKeys: Set<string>): Promise<void> {
+    for (const entry of await this._followedSourceStore.list()) {
+      if (entry.status === 'corrupt') {
+        console.warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping health target:`, entry.error);
+        continue;
+      }
+      const target = await this.targetResolver.buildTargetForSource(entry.source);
+      identityKeys.add(buildCurrentLinkIdentityKey(
+        target.did,
+        target.dwnUrl,
+        target.projectionId,
+        target.authorizationEpoch,
+        target.authorization.kind,
+      ));
     }
   }
 

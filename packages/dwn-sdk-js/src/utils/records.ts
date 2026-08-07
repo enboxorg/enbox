@@ -3,6 +3,7 @@ import type { KeyDecrypter } from '../types/encryption-types.js';
 import type { X25519KeyEncryption } from './encryption.js';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
 import type { GenericMessage, GenericSignaturePayload, MessageSort } from '../types/message-types.js';
+import type { MessagesQueryMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 import type { RecordsCountMessage, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteDescriptor, RecordsWriteMessage, RecordsWriteTags, RecordsWriteTagsFilter } from '../types/records-types.js';
 
 import { Cid } from './cid.js';
@@ -22,6 +23,16 @@ import { Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from './encryption.js';
 import { ENCRYPTION_CONTROL_PATHS, isEncryptionControlPath } from '../core/constants.js';
 import { HdKey, KeyDerivationScheme } from './hd-key.js';
 import { normalizeProtocolUrl, normalizeSchemaUrl } from './url.js';
+
+type AuthorDelegableMessage =
+  | MessagesQueryMessage
+  | MessagesSubscribeMessage
+  | RecordsCountMessage
+  | RecordsDeleteMessage
+  | RecordsQueryMessage
+  | RecordsReadMessage
+  | RecordsSubscribeMessage
+  | RecordsWriteMessage;
 
 /**
  * Class containing useful utilities related to the Records interface.
@@ -443,7 +454,7 @@ export class Records {
    *                              Passed purely as a performance optimization so we don't have to decode the owner signature payload again.
    */
   public static async validateDelegatedGrantReferentialIntegrity(
-    message: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsWriteMessage | RecordsDeleteMessage | RecordsSubscribeMessage,
+    message: AuthorDelegableMessage,
     authorSignaturePayload: GenericSignaturePayload | undefined,
     ownerSignaturePayload?: GenericSignaturePayload | undefined
   ): Promise<void> {
@@ -458,7 +469,7 @@ export class Records {
    * Extracted from `validateDelegatedGrantReferentialIntegrity()` to keep its cognitive complexity low.
    */
   private static async validateAuthorDelegatedGrantReferentialIntegrity(
-    message: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsWriteMessage | RecordsDeleteMessage | RecordsSubscribeMessage,
+    message: AuthorDelegableMessage,
     authorSignaturePayload: GenericSignaturePayload | undefined,
   ): Promise<void> {
     // `deletedGrantId` in the payload of the message signature and `authorDelegatedGrant` in `authorization` must both exist or be both undefined
@@ -511,7 +522,7 @@ export class Records {
    * Extracted from `validateDelegatedGrantReferentialIntegrity()` to keep its cognitive complexity low.
    */
   private static async validateOwnerDelegatedGrantReferentialIntegrity(
-    message: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsWriteMessage | RecordsDeleteMessage | RecordsSubscribeMessage,
+    message: AuthorDelegableMessage,
     ownerSignaturePayload: GenericSignaturePayload | undefined,
   ): Promise<void> {
     // `deletedGrantId` in the payload of the owner signature and `ownerDelegatedGrant` in `authorization` must both exist or be both undefined

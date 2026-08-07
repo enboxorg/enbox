@@ -3,6 +3,8 @@ import type { SyncQuotaManager } from './sync-quota-manager.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { DeadLetterEntry, ReplicationLinkState, SyncScope } from './types/sync.js';
 
+import { syncScopeCoversProtocol } from './types/sync.js';
+
 export type SyncFeedConvergenceLinkContext = {
   link: ReplicationLinkState;
   linkKey: string;
@@ -176,10 +178,7 @@ export class SyncFeedConvergenceManager {
   }
 
   private static deadLetterMatchesScope(entry: DeadLetterEntry, scope: SyncScope): boolean {
-    if (scope.kind === 'full') {
-      return true;
-    }
-    return entry.protocol === undefined || scope.protocols.includes(entry.protocol);
+    return entry.protocol === undefined || syncScopeCoversProtocol(scope, entry.protocol);
   }
 
   private static failureSignature(

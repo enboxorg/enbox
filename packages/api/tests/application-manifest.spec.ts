@@ -64,6 +64,7 @@ describe('application manifest', () => {
     expect(first[0]).toBe(NotesDefinition);
     expect(first[1]).toEqual({ definition: PhotosDefinition, permissions: ['read'] });
     expect(first[1]).not.toHaveProperty('codecs');
+    expect(first[1]).not.toHaveProperty('roleGroups');
     expect((first[1] as { definition: object }).definition).not.toHaveProperty('codecs');
 
     const explicit = first[1] as { permissions: Array<'read' | 'write' | 'delete'> };
@@ -118,30 +119,41 @@ describe('application manifest', () => {
   });
 
   it('should reject malformed runtime TypedProtocol values at their stable index', () => {
+    const roleGroups = {};
     const malformedProtocols = [
+      {
+        definition : NotesDefinition,
+        codecs     : NotesProtocol.codecs,
+      },
       {
         definition : { structure: NotesDefinition.structure, types: NotesDefinition.types },
         codecs     : NotesProtocol.codecs,
+        roleGroups,
       },
       {
         definition : { protocol: NotesDefinition.protocol, structure: NotesDefinition.structure },
         codecs     : NotesProtocol.codecs,
+        roleGroups,
       },
       {
         definition : { ...NotesDefinition, types: [] },
         codecs     : NotesProtocol.codecs,
+        roleGroups,
       },
       {
         definition : { protocol: NotesDefinition.protocol, types: NotesDefinition.types },
         codecs     : NotesProtocol.codecs,
+        roleGroups,
       },
       {
         definition : NotesDefinition,
         codecs     : { note: { encode: NotesProtocol.codecs.note.encode } },
+        roleGroups,
       },
       {
         definition : NotesDefinition,
         codecs     : {},
+        roleGroups,
       },
       {
         definition: {
@@ -150,14 +162,17 @@ describe('application manifest', () => {
           types     : NotesDefinition.types,
         },
         codecs: NotesProtocol.codecs,
+        roleGroups,
       },
       {
         definition : { ...NotesDefinition, types: {} },
         codecs     : NotesProtocol.codecs,
+        roleGroups,
       },
       {
         definition : { ...NotesDefinition, structure: { note: true } },
         codecs     : NotesProtocol.codecs,
+        roleGroups,
       },
     ];
 

@@ -1,17 +1,23 @@
 import type { SyncIdentityOptions } from './types/sync.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncTarget } from './sync-target-resolver.js';
+import type { FollowedSyncSource, FollowedSyncSourceStore } from './followed-sync-source.js';
 
 /** Target-resolution surface required to plan registered sync targets. */
 export interface SyncTargetPlanningResolver {
   getEndpointUrls(did: string): Promise<string[]>;
   buildTargetsForEndpoint(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget[]>;
+  buildTargetForSource(
+    source: FollowedSyncSource,
+    delegateDid?: string,
+  ): Promise<SyncTarget>;
 }
 
 export type SyncTargetPlannerParams = {
   cacheTtlMs?: number;
   getTargetResolver: () => SyncTargetPlanningResolver;
   identityStore: SyncIdentityStore;
+  sourceStore: FollowedSyncSourceStore;
   now?: () => number;
   warn?: (message: string, error: unknown) => void;
 };
@@ -44,6 +50,7 @@ export class SyncTargetPlanner {
   private readonly _cacheTtlMs: number;
   private readonly _getTargetResolver: () => SyncTargetPlanningResolver;
   private readonly _identityStore: SyncIdentityStore;
+  private readonly _sourceStore: FollowedSyncSourceStore;
   private _lastResolutionComplete = false;
   private readonly _now: () => number;
   private _topologyGeneration = 0;
@@ -53,12 +60,14 @@ export class SyncTargetPlanner {
     cacheTtlMs = SyncTargetPlanner.DEFAULT_CACHE_TTL_MS,
     getTargetResolver,
     identityStore,
+    sourceStore,
     now = (): number => Date.now(),
     warn = (message, error): void => { console.warn(message, error); },
   }: SyncTargetPlannerParams) {
     this._cacheTtlMs = cacheTtlMs;
     this._getTargetResolver = getTargetResolver;
     this._identityStore = identityStore;
+    this._sourceStore = sourceStore;
     this._now = now;
     this._warn = warn;
   }
@@ -89,12 +98,12 @@ export class SyncTargetPlanner {
 
     const topologyGenerationAtStart = this._topologyGeneration;
     const targets: SyncTarget[] = [];
-    let hasRegisteredIdentities = false;
+    let hasRegistrations = false;
     let anyTargetUnavailable = false;
     this._lastResolutionComplete = false;
 
     for await (const entry of this._identityStore.entries()) {
-      hasRegisteredIdentities = true;
+      hasRegistrations = true;
       if (entry.status === 'corrupt') {
         this._warn(`SyncEngineLevel: Corrupt sync options for ${entry.did}, skipping identity:`, entry.error);
         anyTargetUnavailable = true;
@@ -106,11 +115,27 @@ export class SyncTargetPlanner {
       anyTargetUnavailable ||= resolved.unavailable;
     }
 
+    for (const entry of await this._sourceStore.list()) {
+      hasRegistrations = true;
+      if (entry.status === 'corrupt') {
+        this._warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping source:`, entry.error);
+        anyTargetUnavailable = true;
+        continue;
+      }
+
+      const identity = await this._identityStore.get(entry.source.actorDid);
+      if (identity === undefined) {
+        anyTargetUnavailable = true;
+        continue;
+      }
+      targets.push(await this._getTargetResolver().buildTargetForSource(entry.source, identity.delegateDid));
+    }
+
     await this.cacheCompleteTargets({
       anyTargetUnavailable,
       beforeCache,
       topologyGenerationAtStart,
-      hasRegisteredIdentities,
+      hasRegistrations,
       targets,
     });
     return targets;
@@ -139,18 +164,18 @@ export class SyncTargetPlanner {
     anyTargetUnavailable,
     beforeCache,
     topologyGenerationAtStart,
-    hasRegisteredIdentities,
+    hasRegistrations,
     targets,
   }: {
     anyTargetUnavailable: boolean;
     beforeCache: SyncTargetPlanningOptions['beforeCache'];
     topologyGenerationAtStart: number;
-    hasRegisteredIdentities: boolean;
+    hasRegistrations: boolean;
     targets: SyncTarget[];
   }): Promise<void> {
     const topologyGenerationIsCurrent = this._topologyGeneration === topologyGenerationAtStart;
     this._lastResolutionComplete = !anyTargetUnavailable && topologyGenerationIsCurrent;
-    const isComplete = hasRegisteredIdentities && this._lastResolutionComplete;
+    const isComplete = hasRegistrations && this._lastResolutionComplete;
     if (targets.length === 0 || !isComplete) {
       return;
     }

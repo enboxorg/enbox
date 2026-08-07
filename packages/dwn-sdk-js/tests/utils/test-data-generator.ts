@@ -247,9 +247,11 @@ export type GenerateRecordsDeleteOutput = {
 
 export type GenerateMessagesSubscribeInput = {
   author: Persona;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
   filters?: MessagesFilter[];
   messageTimestamp?: string;
   permissionGrantIds?: string[];
+  protocolRole?: string;
   /** Progress token for catch-up + EOSE subscribe. */
   cursor?: ProgressToken;
 };
@@ -262,9 +264,11 @@ export type GenerateMessagesSubscribeOutput = {
 
 export type GenerateMessagesQueryInput = {
   author: Persona;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
   filters?: MessagesFilter[];
   messageTimestamp?: string;
   permissionGrantIds?: string[];
+  protocolRole?: string;
   cursor?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
@@ -868,9 +872,11 @@ export class TestDataGenerator {
     const signer = Jws.createSigner(author);
 
     const options: MessagesSubscribeOptions = {
+      delegatedGrant     : input?.delegatedGrant,
       filters            : input?.filters,
       messageTimestamp   : input?.messageTimestamp,
       permissionGrantIds : input?.permissionGrantIds,
+      protocolRole       : input?.protocolRole,
       cursor             : input?.cursor,
       signer,
     };
@@ -894,9 +900,11 @@ export class TestDataGenerator {
     const signer = Jws.createSigner(author);
 
     const options: MessagesQueryOptions = {
+      delegatedGrant     : input?.delegatedGrant,
       filters            : input?.filters,
       messageTimestamp   : input?.messageTimestamp,
       permissionGrantIds : input?.permissionGrantIds,
+      protocolRole       : input?.protocolRole,
       cursor             : input?.cursor,
       limit              : input?.limit,
       cidsOnly           : input?.cidsOnly,

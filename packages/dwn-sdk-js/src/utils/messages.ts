@@ -72,7 +72,7 @@ export class Messages {
 
       messagesQueryFilters.push(this.convertFilter(filter));
 
-      // When protocolPathPrefix is used with a protocol, inject a shadow filter for ProtocolsConfigure events.
+      // When a protocol path or context scope is used with a protocol, inject a shadow filter for ProtocolsConfigure events.
       const metadataFilter = this.constructProtocolConfigureShadowFilter(filter);
       if (metadataFilter !== undefined) {
         messagesQueryFilters.push(metadataFilter);
@@ -104,14 +104,17 @@ export class Messages {
   }
 
   /**
-   * When protocolPathPrefix or contextIdPrefix is used with a protocol, constructs a shadow filter
+   * When protocolPath, protocolPathPrefix, or contextIdPrefix is used with a protocol, constructs a shadow filter
    * for ProtocolsConfigure events. Without this, protocol metadata updates would be excluded
    * (ProtocolsConfigure indexes have no protocolPath). This mirrors the core-protocol additional-filter
    * pattern above. The messageTimestamp constraint is carried over so time-bounded queries
    * (including cursor-based subscriptions) also apply to the shadow filter.
    */
   private static constructProtocolConfigureShadowFilter(filter: MessagesFilter): Filter | undefined {
-    if ((filter.protocolPathPrefix === undefined && filter.contextIdPrefix === undefined) || filter.protocol === undefined) {
+    if (
+      (filter.protocolPath === undefined && filter.protocolPathPrefix === undefined && filter.contextIdPrefix === undefined)
+      || filter.protocol === undefined
+    ) {
       return undefined;
     }
 

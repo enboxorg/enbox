@@ -225,6 +225,23 @@ export type RecordsReadReply = GenericMessageReply & {
    * `undefined` if no data needs to be returned.
    */
   entry?: RecordsReadReplyEntry;
+
+  /** @internal Server-proven dependencies for seeding a role-holder replica. */
+  support?: RecordsReadReplicationSupportEntry[];
+
+  /** @internal Active role assignment that authorized the read. */
+  roleRecordId?: string;
+};
+
+/**
+ * A response-local dependency envelope without a feed position or redundant
+ * protocol index; the signed message carries its protocol metadata.
+ * @internal
+ */
+export type RecordsReadReplicationSupportEntry = {
+  isLatestBaseState: boolean;
+  message: GenericMessage;
+  encodedData?: string;
 };
 
 /**
@@ -258,6 +275,8 @@ export type RecordsReadDescriptor = {
   filter: RecordsFilter;
   messageTimestamp: string;
   permissionGrantId?: string;
+  /** @internal Requests a bounded role-replication dependency closure. */
+  includeReplicationSupport?: boolean;
   dateSort?: DateSort;
 };
 

@@ -13,6 +13,7 @@ import { AuthManager, MemoryStorage } from '@enbox/auth';
 import { describe, expect, it } from 'bun:test';
 
 import { compileRecordQuery } from '../src/record-query.js';
+import { ContextRetiredError } from '../src/context-errors.js';
 import { createRecordView } from '../src/record-view.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
@@ -101,7 +102,10 @@ function createHarness(query: QueryFactory): ViewHarness {
 
   const dwn = {
     connectedDid                  : TENANT_DID,
+    followedContextId             : undefined,
+    followedSourceId              : undefined,
     queryRecordsWithRequiredGrant : runQuery,
+    recordTenantDid               : TENANT_DID,
     records                       : {
       query     : runQuery,
       subscribe : async (request: RecordsSubscribeRequest) => {
@@ -385,8 +389,8 @@ describe('RecordView', () => {
       within       : 'root',
     });
 
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
-    expect(view.getSnapshot().records[0]?.children.label?.value).toBe('important');
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
+    expect(view.getState().records[0]?.children.label?.value).toBe('important');
     expect(fakeSync.listenerCount()).toBe(0);
     expect(harness.subscribeRequests).toHaveLength(2);
     for (const request of harness.subscribeRequests) {
@@ -406,6 +410,94 @@ describe('RecordView', () => {
     harness.emit(recordEvent(), 1);
     await waitFor(() => { expect(harness.queryRequests).toHaveLength(4); });
     await view.close();
+  });
+
+  it('resolves a locally materialized result before replication becomes current', async () => {
+    const cached = testRecord('cached');
+    const harness = createHarness(async () => ok([cached]));
+    const fakeSync = createSync();
+    fakeSync.links = [link('initializing', 'online', false)];
+    const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+
+    const state = await view.ready();
+
+    expect(state).toBe(view.getState());
+    expect(state).toMatchObject({ status: 'ready', current: false });
+    expect(state.records).toEqual([cached]);
+    await view.close();
+  });
+
+  it('makes an empty local result usable before replication becomes current', async () => {
+    const harness = createHarness(async () => ok([]));
+    const fakeSync = createSync();
+    fakeSync.links = [link('initializing', 'online', false)];
+    const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    const state = await view.ready();
+    expect(state).toMatchObject({ status: 'ready', current: false, records: [] });
+
+    fakeSync.links = [link('live')];
+    fakeSync.emit({
+      type           : 'pull:currentness-change',
+      tenantDid      : TENANT_DID,
+      remoteEndpoint : 'https://dwn.example',
+      protocol       : ViewDefinition.protocol,
+      protocols      : [ViewDefinition.protocol],
+      from           : false,
+      to             : true,
+    });
+
+    await waitFor(() => { expect(view.getState().current).toBe(true); });
+    expect(view.getState()).toMatchObject({ status: 'ready', current: true, records: [], hasMore: false });
+    await view.close();
+  });
+
+  it('rejects a ready waiter on a published error or caller abort', async () => {
+    const failedHarness = createHarness(async () => ({
+      status  : { code: 500, detail: 'query failed' },
+      records : [],
+    }));
+    const failedView = await createTyped(failedHarness).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    await expect(failedView.ready()).rejects.toBeInstanceOf(DwnResponseError);
+    await failedView.close();
+
+    let finishQuery!: (response: RecordsQueryResponse) => void;
+    const pendingHarness = createHarness(() => new Promise((resolve) => { finishQuery = resolve; }));
+    const pendingView = await createTyped(pendingHarness).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    const alreadyAborted = new AbortController();
+    const earlyReason = new Error('consumer was already stopped');
+    alreadyAborted.abort(earlyReason);
+    await expect(pendingView.ready({ signal: alreadyAborted.signal })).rejects.toBe(earlyReason);
+
+    const controller = new AbortController();
+    const reason = new Error('consumer stopped waiting');
+    const pending = pendingView.ready({ signal: controller.signal });
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    finishQuery(ok([]));
+    await pendingView.close();
+  });
+
+  it('rejects a ready waiter when the view closes', async () => {
+    let finishQuery!: (response: RecordsQueryResponse) => void;
+    const harness = createHarness(() => new Promise((resolve) => { finishQuery = resolve; }));
+    const view = await createTyped(harness).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    const pending = view.ready();
+
+    await view.close();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    finishQuery(ok([]));
   });
 
   it('rejects an already-aborted session without acquiring view resources', async () => {
@@ -460,7 +552,7 @@ describe('RecordView', () => {
 
     await waitFor(() => {
       expect(harness.queryRequests).toHaveLength(1);
-      expect(view.getSnapshot().records[0]).toBe(committedRecord);
+      expect(view.getState().records[0]).toBe(committedRecord);
     });
     expect(handlerReturn).toBeUndefined();
     expect(harness.subscribeRequests).toHaveLength(1);
@@ -513,7 +605,7 @@ describe('RecordView', () => {
       materializeRecords,
       query      : compileRecordQuery(ViewDefinition, 'note', { pagination: { limit: 10 } }),
     });
-    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['initial']); });
+    await waitFor(() => { expect(view.getState().records).toEqual(['initial']); });
 
     expect(harness.subscribeRequests.map((request) => request.filter)).toEqual([
       {
@@ -528,14 +620,14 @@ describe('RecordView', () => {
     ]);
 
     harness.emit(recordEvent(), 1);
-    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['updated']); });
+    await waitFor(() => { expect(view.getState().records).toEqual(['updated']); });
     expect(materializeRecords.callCount).toBe(2);
 
     await view.close();
     expect(harness.closeCount()).toBe(2);
   });
 
-  it('keeps the prior snapshot when page materialization fails and recovers on the next wake', async () => {
+  it('keeps the prior state when page materialization fails and recovers on the next wake', async () => {
     const retained = testRecord('retained');
     const rejected = testRecord('rejected');
     const recovered = testRecord('recovered');
@@ -559,11 +651,11 @@ describe('RecordView', () => {
       },
       query: compileRecordQuery(ViewDefinition, 'note', { pagination: { limit: 10 } }),
     });
-    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['retained']); });
+    await waitFor(() => { expect(view.getState().records).toEqual(['retained']); });
 
     harness.emit(recordEvent());
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
-    expect(view.getSnapshot()).toMatchObject({
+    await waitFor(() => { expect(view.getState().status).toBe('error'); });
+    expect(view.getState()).toMatchObject({
       records : ['retained'],
       hasMore : true,
       error   : materializationError,
@@ -571,7 +663,7 @@ describe('RecordView', () => {
 
     harness.emit(recordEvent());
     await waitFor(() => {
-      expect(view.getSnapshot()).toMatchObject({ state: 'ready', records: ['recovered'], hasMore: false });
+      expect(view.getState()).toMatchObject({ status: 'ready', records: ['recovered'], hasMore: false });
     });
     await view.close();
   });
@@ -597,11 +689,11 @@ describe('RecordView', () => {
       materializeRecords,
       query      : compileRecordQuery(ViewDefinition, 'note', { pagination: { limit: 10 } }),
     });
-    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['initial']); });
+    await waitFor(() => { expect(view.getState().records).toEqual(['initial']); });
     const publications: string[] = [];
-    view.subscribe((snapshot): void => {
-      if (snapshot.records[0] !== undefined) {
-        publications.push(snapshot.records[0]);
+    view.subscribe((state): void => {
+      if (state.records[0] !== undefined) {
+        publications.push(state.records[0]);
       }
     });
 
@@ -610,7 +702,7 @@ describe('RecordView', () => {
     harness.emit(recordEvent());
     releaseStale();
 
-    await waitFor(() => { expect(view.getSnapshot().records).toEqual(['latest']); });
+    await waitFor(() => { expect(view.getState().records).toEqual(['latest']); });
     expect(publications).toEqual(['latest']);
     await view.close();
   });
@@ -622,15 +714,13 @@ describe('RecordView', () => {
         tags: { status: 'draft' as 'draft' | 'published' },
       },
       pagination: {
-        limit  : 1,
-        cursor : { messageCid: 'bafy-original', value: 'original-position' },
+        limit: 1,
       },
     };
 
     const opening = createTyped(harness).records.observe('note', request);
     request.filter.tags.status = 'published';
     request.pagination.limit = 100;
-    request.pagination.cursor.messageCid = 'bafy-mutated';
     const view = await opening;
     await waitFor(() => { expect(harness.queryRequests).toHaveLength(1); });
 
@@ -639,13 +729,11 @@ describe('RecordView', () => {
         tags: { status: 'draft' },
       },
       pagination: {
-        limit  : 1,
-        cursor : { messageCid: 'bafy-original', value: 'original-position' },
+        limit: 1,
       },
     });
 
     request.filter.tags.status = 'draft';
-    request.pagination.cursor.value = 'another-position';
     harness.emit(recordEvent());
     await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
     expect(harness.queryRequests[1]).toEqual(harness.queryRequests[0]);
@@ -659,14 +747,14 @@ describe('RecordView', () => {
       filter     : { tags: { status: 'draft' } },
       pagination : { limit: 10 },
     });
-    await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(1); });
+    await waitFor(() => { expect(view.getState().records).toHaveLength(1); });
 
     // The broad structural subscription sees the same record after its status
     // changes to `done`; the canonical query, not the event, removes it.
     harness.emit(recordEvent());
 
-    await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(0); });
-    expect(view.getSnapshot().state).toBe('ready');
+    await waitFor(() => { expect(view.getState().records).toHaveLength(0); });
+    expect(view.getState().status).toBe('ready');
     await view.close();
   });
 
@@ -680,7 +768,7 @@ describe('RecordView', () => {
       pagination : { limit: 1 },
       within     : 'f1/s1/i1',
     });
-    await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(1); });
+    await waitFor(() => { expect(view.getState().records).toHaveLength(1); });
 
     expect(harness.subscribeRequests[0]?.filter).toEqual({
       contextId    : 'f1/s1',
@@ -691,13 +779,13 @@ describe('RecordView', () => {
     // Two earlier-ranked siblings fill the max:2 group. Their write wakes
     // this targeted view, whose canonical query now projects the target out.
     harness.emit(recordEvent());
-    await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(0); });
+    await waitFor(() => { expect(view.getState().records).toHaveLength(0); });
 
     // Deleting either occupying sibling wakes the same group and promotes
     // the still-stored target without requiring a second event for it.
     harness.emit(recordEvent());
     await waitFor(() => {
-      expect(view.getSnapshot().records[0]).toBe(target);
+      expect(view.getState().records[0]).toBe(target);
       expect(harness.queryRequests).toHaveLength(3);
     });
     await view.close();
@@ -736,10 +824,10 @@ describe('RecordView', () => {
       return ok([latest]);
     });
     const view = await createTyped(harness).records.observe('note', { pagination: { limit: 10 } });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
     const published: string[] = [];
-    view.subscribe((snapshot): void => {
-      const record = snapshot.records[0];
+    view.subscribe((state): void => {
+      const record = state.records[0];
       if (record !== undefined) {
         published.push(record.id);
       }
@@ -754,28 +842,28 @@ describe('RecordView', () => {
 
     await waitFor(() => {
       expect(harness.queryRequests).toHaveLength(3);
-      expect(view.getSnapshot().records[0]).toBe(latest);
+      expect(view.getState().records[0]).toBe(latest);
     });
     expect(published).toEqual(['latest']);
     await view.close();
   });
 
-  it('publishes immutable bounded snapshots without consuming record data', async () => {
+  it('publishes immutable bounded states without consuming record data', async () => {
     const record = testRecord('bounded');
     const harness = createHarness(async () => ok([record], { messageCid: 'next', value: '2' }));
     const view = await createTyped(harness).records.observe('note', { pagination: { limit: 1 } });
 
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
-    const snapshot = view.getSnapshot();
-    expect(snapshot.hasMore).toBe(true);
-    expect(Object.isFrozen(snapshot)).toBe(true);
-    expect(Object.isFrozen(snapshot.records)).toBe(true);
-    expect(snapshot.records[0]).toBe(record);
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
+    const state = view.getState();
+    expect(state.hasMore).toBe(true);
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Object.isFrozen(state.records)).toBe(true);
+    expect(state.records[0]).toBe(record);
 
-    const { getSnapshot, subscribe } = view;
+    const { getState, subscribe } = view;
     let notified = false;
     const unsubscribe = subscribe((): void => { notified = true; });
-    expect(getSnapshot()).toBe(snapshot);
+    expect(getState()).toBe(state);
     harness.emit(recordEvent());
     await waitFor(() => { expect(notified).toBe(true); });
     unsubscribe();
@@ -790,24 +878,24 @@ describe('RecordView', () => {
       return ok([call === 1 ? initial : call === 2 ? firstWake : secondWake]);
     });
     const view = await createTyped(harness).records.observe('note', { pagination: { limit: 10 } });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
 
     const notifications: string[] = [];
     let lateListenerAdded = false;
     let unsubscribeSecond = (): void => {};
-    view.subscribe((snapshot): void => {
-      notifications.push(`first:${snapshot.records[0]?.id}`);
+    view.subscribe((state): void => {
+      notifications.push(`first:${state.records[0]?.id}`);
       unsubscribeSecond();
       if (!lateListenerAdded) {
         lateListenerAdded = true;
-        view.subscribe((laterSnapshot): void => {
-          notifications.push(`late:${laterSnapshot.records[0]?.id}`);
+        view.subscribe((laterState): void => {
+          notifications.push(`late:${laterState.records[0]?.id}`);
         });
       }
       throw new Error('consumer failed');
     });
-    unsubscribeSecond = view.subscribe((snapshot): void => {
-      notifications.push(`second:${snapshot.records[0]?.id}`);
+    unsubscribeSecond = view.subscribe((state): void => {
+      notifications.push(`second:${state.records[0]?.id}`);
     });
 
     harness.emit(recordEvent());
@@ -837,8 +925,8 @@ describe('RecordView', () => {
       pagination: { limit: 10 },
     });
 
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
-    expect(view.getSnapshot()).toMatchObject({ records: [], hasMore: false });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
+    expect(view.getState()).toMatchObject({ records: [], hasMore: false });
     await view.close();
   });
 
@@ -852,14 +940,14 @@ describe('RecordView', () => {
       pagination: { limit: 10 },
     });
 
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
-    const snapshot = view.getSnapshot();
-    expect(snapshot.records[0]).toBe(local);
-    expect(snapshot.hasMore).toBe(true);
-    if (snapshot.state !== 'error') {
-      throw new Error(`expected an error snapshot, received '${snapshot.state}'`);
+    await waitFor(() => { expect(view.getState().status).toBe('error'); });
+    const state = view.getState();
+    expect(state.records[0]).toBe(local);
+    expect(state.hasMore).toBe(true);
+    if (state.status !== 'error') {
+      throw new Error(`expected an error state, received '${state.status}'`);
     }
-    expect(snapshot.error.message).toContain('replication is paused');
+    expect(state.error.message).toContain('replication is paused');
     await view.close();
   });
 
@@ -874,21 +962,21 @@ describe('RecordView', () => {
     const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
       pagination: { limit: 10 },
     });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
 
     fakeSync.links = [link('paused', 'offline')];
     harness.emit(recordEvent());
 
     await waitFor(() => {
-      expect(view.getSnapshot().state).toBe('error');
-      expect(view.getSnapshot().records[0]).toBe(local);
+      expect(view.getState().status).toBe('error');
+      expect(view.getState().records[0]).toBe(local);
     });
-    const snapshot = view.getSnapshot();
-    expect(snapshot.hasMore).toBe(true);
-    if (snapshot.state !== 'error') {
-      throw new Error(`expected an error snapshot, received '${snapshot.state}'`);
+    const state = view.getState();
+    expect(state.hasMore).toBe(true);
+    if (state.status !== 'error') {
+      throw new Error(`expected an error state, received '${state.status}'`);
     }
-    expect(snapshot.error.message).toContain('replication is paused');
+    expect(state.error.message).toContain('replication is paused');
     await view.close();
   });
 
@@ -905,8 +993,8 @@ describe('RecordView', () => {
     const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
       pagination: { limit: 10 },
     });
-    await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(1); });
-    expect(view.getSnapshot().state).toBe('loading');
+    await waitFor(() => { expect(view.getState().records).toHaveLength(1); });
+    expect(view.getState()).toMatchObject({ status: 'ready', current: false });
 
     fakeSync.links[1] = {
       ...fakeSync.links[1],
@@ -921,7 +1009,7 @@ describe('RecordView', () => {
       from           : false,
       to             : true,
     });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState()).toMatchObject({ status: 'ready', current: true }); });
 
     fakeSync.links[0] = { ...fakeSync.links[0], isPullCurrent: false };
     fakeSync.emit({
@@ -933,7 +1021,143 @@ describe('RecordView', () => {
       from           : true,
       to             : false,
     });
-    expect(view.getSnapshot().state).toBe('stale');
+    await waitFor(() => { expect(view.getState()).toMatchObject({ status: 'ready', current: false }); });
+    await view.close();
+  });
+
+  it('projects currentness from the exact followed context instead of the connected tenant', async () => {
+    const sourceDid = 'did:example:source';
+    const contextId = 'sharedRoot';
+    const harness = createHarness(async () => ok([testRecord('shared')]));
+    Object.assign(harness.dwn, {
+      followedContextId : contextId,
+      followedSourceId  : 'current-role',
+      recordTenantDid   : sourceDid,
+    });
+    const fakeSync = createSync();
+    fakeSync.options = undefined;
+    fakeSync.links = [{
+      tenantDid      : sourceDid,
+      remoteEndpoint : 'https://source-dwn.example',
+      scope          : {
+        kind          : 'context',
+        protocol      : ViewDefinition.protocol,
+        contextId,
+        protocolPaths : ['note'],
+      },
+      status           : 'live',
+      connectivity     : 'online',
+      followedSourceId : 'current-role',
+      isPullCurrent    : true,
+    }, {
+      tenantDid      : sourceDid,
+      remoteEndpoint : 'https://old-source-dwn.example',
+      scope          : {
+        kind          : 'context',
+        protocol      : ViewDefinition.protocol,
+        contextId,
+        protocolPaths : ['note'],
+      },
+      status           : 'paused',
+      connectivity     : 'offline',
+      followedSourceId : 'old-role',
+      isPullCurrent    : false,
+    }, {
+      ...link('paused', 'offline'),
+      tenantDid      : TENANT_DID,
+      remoteEndpoint : 'https://member-dwn.example',
+    }];
+    const view = await createRecordView<string>({
+      definition         : ViewDefinition,
+      dwn                : harness.dwn,
+      materializeRecords : async (records): Promise<readonly string[]> => records.map(record => record.id),
+      query              : compileRecordQuery(ViewDefinition, 'note', {
+        from       : sourceDid,
+        pagination : { limit: 10 },
+        within     : contextId,
+      }),
+      sync: fakeSync.sync,
+    });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
+
+    fakeSync.emit({
+      type           : 'pull:currentness-change',
+      tenantDid      : sourceDid,
+      remoteEndpoint : 'https://sibling-dwn.example',
+      protocol       : ViewDefinition.protocol,
+      protocols      : [ViewDefinition.protocol],
+      contextId      : 'siblingRoot',
+      from           : true,
+      to             : false,
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(harness.queryRequests).toHaveLength(1);
+
+    fakeSync.links[0] = { ...fakeSync.links[0], isPullCurrent: false };
+    fakeSync.emit({
+      type           : 'pull:currentness-change',
+      tenantDid      : sourceDid,
+      remoteEndpoint : 'https://source-dwn.example',
+      protocol       : ViewDefinition.protocol,
+      protocols      : [ViewDefinition.protocol],
+      contextId,
+      from           : true,
+      to             : false,
+    });
+    await waitFor(() => { expect(view.getState()).toMatchObject({ status: 'ready', current: false }); });
+    await view.close();
+  });
+
+  it('publishes ContextRetiredError when a followed-context acceptance changes', async () => {
+    const sourceDid = 'did:example:source';
+    const contextId = 'sharedRoot';
+    const harness = createHarness(async () => ok([testRecord('shared')]));
+    Object.assign(harness.dwn, {
+      followedContextId          : contextId,
+      followedSourceAcceptanceId : 'acceptance-a',
+      followedSourceId           : 'current-role',
+      recordTenantDid            : sourceDid,
+    });
+    const fakeSync = createSync();
+    fakeSync.links = [{
+      connectivity     : 'online',
+      followedSourceId : 'current-role',
+      isPullCurrent    : true,
+      remoteEndpoint   : 'https://source-dwn.example',
+      scope            : {
+        kind          : 'context',
+        contextId,
+        protocol      : ViewDefinition.protocol,
+        protocolPaths : ['note'],
+      },
+      status    : 'live',
+      tenantDid : sourceDid,
+    }];
+    const view = await createRecordView<string>({
+      definition         : ViewDefinition,
+      dwn                : harness.dwn,
+      materializeRecords : async (records): Promise<readonly string[]> => records.map(record => record.id),
+      query              : compileRecordQuery(ViewDefinition, 'note', {
+        from       : sourceDid,
+        pagination : { limit: 10 },
+        within     : contextId,
+      }),
+      sync: fakeSync.sync,
+    });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
+
+    fakeSync.emit({
+      type                       : 'followed-context:change',
+      actorDid                   : TENANT_DID,
+      contextId,
+      followedSourceAcceptanceId : 'acceptance-b',
+      followedSourceId           : 'current-role',
+      protocol                   : ViewDefinition.protocol,
+      tenantDid                  : sourceDid,
+    });
+
+    await waitFor(() => { expect(view.getState().status).toBe('error'); });
+    expect(view.getState().error).toBeInstanceOf(ContextRetiredError);
     await view.close();
   });
 
@@ -955,8 +1179,8 @@ describe('RecordView', () => {
     const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
       pagination: { limit: 10 },
     });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
-    const initialSnapshot = view.getSnapshot();
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
+    const initialState = view.getState();
     let publications = 0;
     view.subscribe((): void => { publications += 1; });
 
@@ -981,7 +1205,7 @@ describe('RecordView', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.queryRequests).toHaveLength(1);
-    expect(view.getSnapshot()).toBe(initialSnapshot);
+    expect(view.getState()).toBe(initialState);
     expect(publications).toBe(0);
 
     // Scope-less events cover full-replica links and must wake the view.
@@ -996,7 +1220,7 @@ describe('RecordView', () => {
       expect(harness.queryRequests).toHaveLength(2);
       expect(publications).toBe(1);
     });
-    expect(view.getSnapshot().state).toBe('ready');
+    expect(view.getState().status).toBe('ready');
     await view.close();
   });
 
@@ -1006,17 +1230,17 @@ describe('RecordView', () => {
       ? { status: { code: 500, detail: 'query failed' }, records: [] }
       : ok([recovered]));
     const view = await createTyped(harness).records.observe('note', { pagination: { limit: 10 } });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
-    expect(view.getSnapshot().error).toBeInstanceOf(DwnResponseError);
-    expect((view.getSnapshot().error as DwnResponseError).status).toEqual({
+    await waitFor(() => { expect(view.getState().status).toBe('error'); });
+    expect(view.getState().error).toBeInstanceOf(DwnResponseError);
+    expect((view.getState().error as DwnResponseError).status).toEqual({
       code   : 500,
       detail : 'query failed',
     });
 
     harness.emit(recordEvent());
     await waitFor(() => {
-      expect(view.getSnapshot().state).toBe('ready');
-      expect(view.getSnapshot().records[0]).toBe(recovered);
+      expect(view.getState().status).toBe('ready');
+      expect(view.getState().records[0]).toBe(recovered);
     });
     await view.close();
   });
@@ -1024,9 +1248,9 @@ describe('RecordView', () => {
   it('publishes a terminal subscription error before closing the view', async () => {
     const harness = createHarness(async () => ok([testRecord('retained')]));
     const view = await createTyped(harness).records.observe('note', { pagination: { limit: 10 } });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
     const published: string[] = [];
-    view.subscribe((snapshot): void => { published.push(snapshot.state); });
+    view.subscribe((state): void => { published.push(state.status); });
 
     harness.emit({
       type   : 'error',
@@ -1036,9 +1260,9 @@ describe('RecordView', () => {
 
     await waitFor(() => { expect(harness.closeCount()).toBe(1); });
     expect(published).toEqual(['error']);
-    expect(view.getSnapshot().state).toBe('error');
-    expect(view.getSnapshot().records[0]?.id).toBe('retained');
-    expect(view.getSnapshot().error?.message).toContain('GrantRevoked');
+    expect(view.getState().status).toBe('error');
+    expect(view.getState().records[0]?.id).toBe('retained');
+    expect(view.getState().error?.message).toContain('GrantRevoked');
   });
 
   it('publishes one terminal error and fences an in-flight query when the session aborts', async () => {
@@ -1052,19 +1276,19 @@ describe('RecordView', () => {
     const view = await createTyped(harness, { signal: abortController.signal }).records.observe('note', {
       pagination: { limit: 10 },
     });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
     const published: string[] = [];
-    view.subscribe((snapshot): void => { published.push(snapshot.state); });
+    view.subscribe((state): void => { published.push(state.status); });
 
     harness.emit(recordEvent());
     await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
     const abortReason = new Error('session replaced');
     abortController.abort(abortReason);
-    const abortedSnapshot = view.getSnapshot();
-    expect(abortedSnapshot.state).toBe('error');
-    expect(abortedSnapshot.records[0]).toBe(initial);
-    expect(abortedSnapshot.error?.message).toBe('RecordView: owning session ended.');
-    expect(abortedSnapshot.error?.cause).toBe(abortReason);
+    const abortedState = view.getState();
+    expect(abortedState.status).toBe('error');
+    expect(abortedState.records[0]).toBe(initial);
+    expect(abortedState.error?.message).toBe('RecordView: owning session ended.');
+    expect(abortedState.error?.cause).toBe(abortReason);
     expect(published).toEqual(['error']);
 
     await waitFor(() => { expect(harness.closeCount()).toBe(1); });
@@ -1072,7 +1296,7 @@ describe('RecordView', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(view.getSnapshot()).toBe(abortedSnapshot);
+    expect(view.getState()).toBe(abortedState);
     expect(published).toEqual(['error']);
     harness.emit(recordEvent());
     expect(harness.queryRequests).toHaveLength(2);
@@ -1183,7 +1407,7 @@ describe('RecordView', () => {
     };
 
     const view = await createTyped(harness).records.observe('note', { pagination: { limit: 10 } });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
     const first = view.close();
     const second = view.close();
     expect(second).toBe(first);
@@ -1198,7 +1422,7 @@ describe('RecordView', () => {
     expect(settled).toBe(true);
   });
 
-  it('invalidates a local-only ready snapshot when a replication registration is added', async () => {
+  it('invalidates a local-only ready state when a replication registration is added', async () => {
     let releaseRegistrationQuery!: (response: RecordsQueryResponse) => void;
     const local = testRecord('local');
     const harness = createHarness(async (_request, call) => call === 2
@@ -1209,7 +1433,7 @@ describe('RecordView', () => {
     const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
       pagination: { limit: 10 },
     });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
 
     fakeSync.options = { protocols: [ViewDefinition.protocol] };
     fakeSync.links = [];
@@ -1218,10 +1442,10 @@ describe('RecordView', () => {
       tenantDid : TENANT_DID,
       options   : { protocols: [ViewDefinition.protocol] },
     });
-    expect(view.getSnapshot().state).toBe('loading');
+    expect(view.getState()).toMatchObject({ status: 'ready', current: false });
     await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
     releaseRegistrationQuery(ok([local]));
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('loading'); });
+    await waitFor(() => { expect(view.getState()).toMatchObject({ status: 'ready', current: false }); });
 
     fakeSync.links = [link('live')];
     fakeSync.emit({
@@ -1233,7 +1457,7 @@ describe('RecordView', () => {
       from           : false,
       to             : true,
     });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
     await view.close();
   });
 
@@ -1247,10 +1471,10 @@ describe('RecordView', () => {
       pagination: { limit: 10 },
     });
     await waitFor(() => {
-      expect(view.getSnapshot().state).toBe('loading');
-      expect(view.getSnapshot().records).toHaveLength(1);
+      expect(view.getState()).toMatchObject({ status: 'ready', current: false });
+      expect(view.getState().records).toHaveLength(1);
     });
-    expect(view.getSnapshot().records[0]).toBe(first);
+    expect(view.getState().records[0]).toBe(first);
 
     fakeSync.links = [link('live')];
     fakeSync.emit({
@@ -1262,8 +1486,8 @@ describe('RecordView', () => {
       from           : false,
       to             : true,
     });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
-    const readyRecords = view.getSnapshot().records;
+    await waitFor(() => { expect(view.getState()).toMatchObject({ status: 'ready', current: true }); });
+    const readyRecords = view.getState().records;
 
     fakeSync.links = [link('live', 'offline')];
     fakeSync.emit({
@@ -1275,12 +1499,12 @@ describe('RecordView', () => {
       from           : 'online',
       to             : 'offline',
     });
-    expect(view.getSnapshot().state).toBe('stale');
-    expect(view.getSnapshot().records).toEqual(readyRecords);
+    expect(view.getState()).toMatchObject({ status: 'ready', current: false });
+    expect(view.getState().records).toEqual(readyRecords);
     await waitFor(() => {
-      expect(view.getSnapshot().records[0]).toBe(offlineResult);
+      expect(view.getState().records[0]).toBe(offlineResult);
     });
-    expect(view.getSnapshot().state).toBe('stale');
+    expect(view.getState()).toMatchObject({ status: 'ready', current: false });
 
     fakeSync.links = [link('paused', 'offline')];
     fakeSync.emit({
@@ -1292,9 +1516,9 @@ describe('RecordView', () => {
       from           : 'repairing',
       to             : 'paused',
     });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
-    expect(view.getSnapshot().error?.message).toContain('replication is paused');
-    expect(view.getSnapshot().records[0]).toBe(offlineResult);
+    await waitFor(() => { expect(view.getState().status).toBe('error'); });
+    expect(view.getState().error?.message).toContain('replication is paused');
+    expect(view.getState().records[0]).toBe(offlineResult);
     await view.close();
   });
 
@@ -1316,7 +1540,7 @@ describe('RecordView', () => {
     const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
       pagination: { limit: 10 },
     });
-    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    await waitFor(() => { expect(view.getState().status).toBe('ready'); });
 
     harness.emit(recordEvent());
     await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
@@ -1330,9 +1554,9 @@ describe('RecordView', () => {
       from           : 'repairing',
       to             : 'paused',
     });
-    const pausedSnapshot = view.getSnapshot();
-    expect(pausedSnapshot.state).toBe('error');
-    expect(pausedSnapshot.records[0]).toBe(initial);
+    const pausedState = view.getState();
+    expect(pausedState.status).toBe('error');
+    expect(pausedState.records[0]).toBe(initial);
 
     fakeSync.emit({
       type           : 'link:connectivity-change',
@@ -1343,13 +1567,13 @@ describe('RecordView', () => {
       from           : 'online',
       to             : 'offline',
     });
-    expect(view.getSnapshot()).toBe(pausedSnapshot);
+    expect(view.getState()).toBe(pausedState);
 
     releaseQuery(ok([testRecord('superseded')]));
     await waitFor(() => {
-      expect(view.getSnapshot().records[0]).toBe(localWhilePaused);
+      expect(view.getState().records[0]).toBe(localWhilePaused);
     });
-    expect(view.getSnapshot().state).toBe('error');
+    expect(view.getState().status).toBe('error');
     await view.close();
   });
 });
@@ -1391,7 +1615,7 @@ describe('RecordView session lifecycle integration', () => {
       sinon.stub(typed.dwn, 'records').get(() => queryHarness.dwn.records);
 
       const view = await typed.records.observe('note', { pagination: { limit: 10 } });
-      await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+      await waitFor(() => { expect(view.getState().status).toBe('ready'); });
       let publications = 0;
       view.subscribe((): void => { publications += 1; });
       queryHarness.emit(recordEvent());
@@ -1402,17 +1626,17 @@ describe('RecordView session lifecycle integration', () => {
       expect(session.signal.aborted).toBe(true);
       expect(replacementSignal).not.toBe(session.signal);
       expect(replacementSignal.aborted).toBe(false);
-      const abortedSnapshot = view.getSnapshot();
-      expect(abortedSnapshot.state).toBe('error');
-      expect(abortedSnapshot.records[0]).toBe(initial);
-      expect(abortedSnapshot.error?.message).toBe('RecordView: owning session ended.');
-      expect((abortedSnapshot.error?.cause as Error).name).toBe('AbortError');
+      const abortedState = view.getState();
+      expect(abortedState.status).toBe('error');
+      expect(abortedState.records[0]).toBe(initial);
+      expect(abortedState.error?.message).toBe('RecordView: owning session ended.');
+      expect((abortedState.error?.cause as Error).name).toBe('AbortError');
       expect(publications).toBe(1);
       await waitFor(() => { expect(queryHarness.closeCount()).toBe(1); });
 
       releaseQuery(ok([late]));
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(view.getSnapshot()).toBe(abortedSnapshot);
+      expect(view.getState()).toBe(abortedState);
       expect(publications).toBe(1);
     } finally {
       await auth?.shutdown().catch((): void => {});

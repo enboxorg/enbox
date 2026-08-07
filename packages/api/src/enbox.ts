@@ -1,7 +1,3 @@
-/**
- * NOTE: Added reference types here to avoid a `pnpm` bug during build.
- * https://github.com/enboxorg/enbox/pull/507
- */
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type { EnboxPlatformAgent } from '@enbox/agent';
@@ -10,7 +6,6 @@ import type {
   AuthManagerOptions,
   AuthSession,
   ConnectionStatus,
-  ConnectionStatusGrant,
   ConnectOptions,
   GetConnectionStatusOptions,
   HandlerConnectOptions,
@@ -21,7 +16,7 @@ import type {
 import type { ProtocolReadinessApi } from './protocol-readiness.js';
 import type { RecordCodecMap } from './record-codec.js';
 import type { RoleDeliveryState } from './typed-enbox.js';
-import type { TypedProtocol } from './protocol-types.js';
+import type { ContextRoleGroups, TypedProtocol } from './protocol-types.js';
 import type {
   EnboxAnonymousApi,
   EnboxAnonymousOptions,
@@ -34,8 +29,8 @@ import type {
 import { AnonymousDwnApi } from '@enbox/agent';
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
+import { fetchConnectionStatus } from '@enbox/auth';
 import { omitUndefined } from '@enbox/common';
-import { computeConnectionStatus, reconcileConnectionStatusGrants } from '@enbox/auth';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
 import { createProtocolReadinessApi } from './protocol-readiness.js';
@@ -43,7 +38,6 @@ import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
 import { TypedEnbox } from './typed-enbox.js';
-import { VcApi } from './vc-api.js';
 import { collectProtocolPaths, isEncryptedRoleAudiencePath } from './protocol-paths.js';
 
 /**
@@ -64,8 +58,7 @@ const inflightConnects = new Map<string, Promise<unknown>>();
 
 /**
  * The main Enbox API interface. It provides protocol-scoped access to
- * Decentralized Web Nodes (DWNs), Decentralized Identifiers (DIDs),
- * and Verifiable Credentials (VCs).
+ * Decentralized Web Nodes (DWNs) and Decentralized Identifiers (DIDs).
  *
  * For common app flows, use the asynchronous {@link Enbox.connect} helper.
  * For custom auth/session flows, use {@link Enbox.fromSession} with an
@@ -119,9 +112,6 @@ export class Enbox {
    */
   private readonly _typedInstances = new Map<object, unknown>();
 
-  /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs. */
-  public vc: VcApi;
-
   /** Application protocol installation and hosted-publication lifecycle. */
   public protocols: ProtocolReadinessApi;
 
@@ -159,7 +149,6 @@ export class Enbox {
       delegateDid,
       using: this.using.bind(this),
     });
-    this.vc = new VcApi({ agent, connectedDid });
   }
 
   /**
@@ -209,40 +198,11 @@ export class Enbox {
       return { state: 'none' };
     }
 
-    const query = {
-      author  : this._delegateDid,
-      grantor : this._connectedDid,
-      grantee : this._delegateDid,
-    };
-    const [ownerGrantEntries, activeOwnerGrantEntries, delegateGrantEntries] = await Promise.all([
-      this.agent.permissions.fetchGrants({ ...query, target: this._connectedDid }),
-      options.checkRevoked === false
-        ? Promise.resolve(undefined)
-        : this.agent.permissions.fetchGrants({
-          ...query,
-          target       : this._connectedDid,
-          checkRevoked : true,
-        }),
-      this.agent.permissions.fetchGrants({ ...query, target: this._delegateDid }),
-    ]);
-    const activeOwnerGrantIds = activeOwnerGrantEntries === undefined
-      ? undefined
-      : new Set<string>(activeOwnerGrantEntries.map(({ grant }) => grant.id as string));
-    const toStatusGrant = ({ grant }: typeof ownerGrantEntries[number]): ConnectionStatusGrant => ({
-      id             : grant.id,
-      grantor        : grant.grantor,
-      grantee        : grant.grantee,
-      dateExpires    : grant.dateExpires,
-      connectSession : grant.connectSession,
-    });
-    const grants = reconcileConnectionStatusGrants({
-      ownerGrants    : ownerGrantEntries.map(toStatusGrant),
-      delegateGrants : delegateGrantEntries.map(toStatusGrant),
-      activeOwnerGrantIds,
-    });
-
-    return computeConnectionStatus(grants, {
-      expiringSoonThresholdSeconds: options.expiringSoonThresholdSeconds,
+    return fetchConnectionStatus({
+      connectedDid : this._connectedDid,
+      delegateDid  : this._delegateDid,
+      options,
+      permissions  : this.agent.permissions,
     });
   }
 
@@ -295,8 +255,6 @@ export class Enbox {
    * ```ts
    * const notes = enbox.using(NotesProtocol);
    *
-   * await notes.configure();
-   *
    * const record = await notes.records.create('note', {
    *   data: { title: 'Hello', body: 'Typed data' },
    * });
@@ -304,14 +262,18 @@ export class Enbox {
    * const { records } = await notes.records.query('note');
    * ```
    */
-  public using<D extends ProtocolDefinition, C extends RecordCodecMap>(
-    protocol: TypedProtocol<D, C>,
-  ): TypedEnbox<D, C> {
+  public using<
+    D extends ProtocolDefinition,
+    C extends RecordCodecMap,
+    G extends ContextRoleGroups,
+  >(
+    protocol: TypedProtocol<D, C, G>,
+  ): TypedEnbox<D, C, G> {
     const cached = this._typedInstances.get(protocol);
 
     if (cached) {
       // Object identity ties the erased cache value back to this exact typed protocol.
-      return cached as TypedEnbox<D, C>;
+      return cached as TypedEnbox<D, C, G>;
     }
 
     const deliverySession = {
@@ -319,7 +281,7 @@ export class Enbox {
       signal   : this._lifetimeSignal,
       target   : this._connectedDid,
     };
-    const instance = new TypedEnbox<D, C>(this._dwn, protocol, {
+    const instance = new TypedEnbox<D, C, G>(this._dwn, protocol, {
       roleDelivery: {
         get: (roleRecordId): Promise<RoleDeliveryState | undefined> => this.agent.dwn.getAudienceKeyDeliveryState({
           ...deliverySession,
@@ -328,6 +290,10 @@ export class Enbox {
         retry: (roleRecordId): Promise<RoleDeliveryState | undefined> => this.agent.dwn.retryAudienceKeyDeliveryState({
           ...deliverySession,
           roleRecordId,
+        }),
+        subscribe: (listener): (() => void) => this.agent.dwn.subscribeAudienceKeyDeliveryChanges({
+          ...deliverySession,
+          listener,
         }),
       },
       signal : this._lifetimeSignal,

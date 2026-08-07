@@ -1,4 +1,3 @@
-import type { DwnPaginationCursor } from '@enbox/agent';
 import type { DataFormatAtPath, ProtocolPaths, TagKeys, TagsAtPath } from './protocol-types.js';
 import type { Pagination, ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 
@@ -122,8 +121,8 @@ export type RecordQuery<
   /** Existing DWN created, published, or updated date ordering. */
   dateSort?: DateSort;
 
-  /** Keyset pagination for `query()`; validated but excluded from `count()`. */
-  pagination?: { limit?: number; cursor?: DwnPaginationCursor };
+  /** Maximum records returned by one `query()` page. Continue through `RecordPage.next()`. */
+  pagination?: { limit?: number };
 
   /** Protocol role used to authorize the operation. */
   protocolRole?: string;
@@ -149,7 +148,7 @@ export function compileRecordQuery(
     from?: string;
     filter?: RecordFilterInput;
     dateSort?: DateSort;
-    pagination?: Pagination;
+    pagination?: { limit?: number };
     protocolRole?: string;
     within?: string;
   } = {},
@@ -171,11 +170,10 @@ export function compileRecordFilter(
   definition: ProtocolDefinition,
   protocolPath: string,
   filter: RecordFilterInput | undefined,
-  dateSort?: DateSort,
   within?: string,
 ): RecordsFilter & { protocol: string; protocolPath: string } {
   assertValidRecordWithin(protocolPath, within, false);
-  return buildRecordFilter(definition, protocolPath, filter, dateSort, within);
+  return buildRecordFilter(definition, protocolPath, filter, undefined, within);
 }
 
 function buildRecordFilter(
@@ -250,30 +248,22 @@ export function assertValidRecordWithin(
   }
 }
 
-function assertValidQueryControls(dateSort: DateSort | undefined, pagination: Pagination | undefined): void {
+function assertValidQueryControls(
+  dateSort: DateSort | undefined,
+  pagination: { limit?: number } | undefined,
+): void {
   if (dateSort !== undefined && !dateSortValues.has(dateSort)) {
     throw new TypeError(`RecordQuery: unsupported dateSort '${dateSort}'.`);
   }
   if (pagination === undefined) {
     return;
   }
-  if (!isPlainObject(pagination) || hasUnexpectedKeys(pagination, ['limit', 'cursor'])) {
-    throw new TypeError('RecordQuery: pagination must contain only limit and cursor.');
+  if (!isPlainObject(pagination) || hasUnexpectedKeys(pagination, ['limit'])) {
+    throw new TypeError('RecordQuery: pagination must contain only limit.');
   }
   if (pagination.limit !== undefined
     && (typeof pagination.limit !== 'number' || !Number.isFinite(pagination.limit) || pagination.limit < 1)) {
     throw new TypeError('RecordQuery: pagination.limit must be a finite number greater than or equal to 1.');
-  }
-  if (pagination.cursor === undefined) {
-    return;
-  }
-
-  const cursor = pagination.cursor;
-  if (!isPlainObject(cursor)
-    || hasUnexpectedKeys(cursor, ['messageCid', 'value'])
-    || typeof cursor.messageCid !== 'string'
-    || (typeof cursor.value !== 'string' && (typeof cursor.value !== 'number' || !Number.isFinite(cursor.value)))) {
-    throw new TypeError('RecordQuery: pagination.cursor must contain a string messageCid and a string or finite number value.');
   }
 }
 

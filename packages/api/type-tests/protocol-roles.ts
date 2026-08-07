@@ -1,5 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { ProtocolRolePaths, RoleDeliveryState, TypedCreateRequest, TypedEnbox } from '@enbox/api';
+import type { ProtocolRolePaths, TypedCreateRequest, TypedEnbox } from '@enbox/api';
 
 import { defineProtocol, recordCodecs } from '@enbox/api';
 
@@ -11,16 +11,25 @@ const RoleDefinition = {
       dataFormats: ['application/json'],
     },
     workspace: {
-      dataFormats: ['application/json'],
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
     },
     member: {
+      dataFormats: ['application/json'],
+    },
+    viewer: {
       dataFormats: ['application/json'],
     },
   },
   structure: {
     admin     : { $role: true },
     workspace : {
-      member: { $role: true },
+      $actions: [
+        { role: 'workspace/member', can: ['read'] },
+        { role: 'workspace/viewer', can: ['read'] },
+      ],
+      member : { $role: true },
+      viewer : { $role: true },
     },
   },
 } as const satisfies ProtocolDefinition;
@@ -28,24 +37,37 @@ const RoleDefinition = {
 const RoleProtocol = defineProtocol(RoleDefinition, {
   admin     : recordCodecs.json<{ label: string }>(),
   member    : recordCodecs.json<{ label: string }>(),
+  viewer    : recordCodecs.json<{ label: string }>(),
   workspace : recordCodecs.json<{ name: string }>(),
+}, {
+  roleGroups: {
+    default : ['workspace/member', 'workspace/viewer'],
+    viewers : ['workspace/viewer'],
+  },
 });
 void RoleProtocol;
 
-const EncryptedRoleDefinition = {
-  ...RoleDefinition,
-  types: {
-    ...RoleDefinition.types,
-    member: { ...RoleDefinition.types.member, encryptionRequired: true },
-  },
-} as const satisfies ProtocolDefinition;
-void EncryptedRoleDefinition;
+const mutableRoles: ['workspace/member', 'workspace/viewer'] = ['workspace/member', 'workspace/viewer'];
+const MutableRoleProtocol = defineProtocol(RoleDefinition, RoleProtocol.codecs, {
+  roleGroups: { default: mutableRoles },
+});
+// @ts-expect-error defineProtocol copies and freezes mutable role-group inputs.
+MutableRoleProtocol.roleGroups.default.reverse();
+
+// @ts-expect-error role groups accept only encrypted contextual role paths.
+defineProtocol(RoleDefinition, RoleProtocol.codecs, { roleGroups: { default: ['workspace'] } });
+
+// @ts-expect-error a non-empty role-group declaration must include the protocol-global default.
+defineProtocol(RoleDefinition, RoleProtocol.codecs, { roleGroups: { viewers: ['workspace/viewer'] } });
 
 type RolePath = ProtocolRolePaths<typeof RoleDefinition>;
 type RoleCodecs = typeof RoleProtocol.codecs;
 
-declare const typed: TypedEnbox<typeof RoleDefinition, RoleCodecs>;
-declare const encryptedTyped: TypedEnbox<typeof EncryptedRoleDefinition, RoleCodecs>;
+declare const typed: TypedEnbox<
+  typeof RoleDefinition,
+  RoleCodecs,
+  typeof RoleProtocol.roleGroups
+>;
 declare const roleOrRecordPath: 'admin' | 'workspace';
 
 const rootRolePath: RolePath = 'admin';
@@ -78,21 +100,41 @@ void typed.records.create(roleOrRecordPath, {
   recipient : 'did:example:alice',
 });
 
-const deliveryState: Promise<RoleDeliveryState | undefined> = encryptedTyped.records.deliveryState('admin', 'role-id');
-void deliveryState;
-void encryptedTyped.records.retryDelivery('workspace/member', 'role-id');
+const sharedContext = typed.contexts.follow({
+  id       : 'workspace-id',
+  ownerDid : 'did:example:owner',
+});
+void sharedContext.then(context => context.records.query('workspace'));
+void sharedContext.then(context => {
+  const access: 'member' = context.access;
+  const path: 'workspace' = context.path;
+  const role: 'workspace/member' | 'workspace/viewer' = context.role;
+  void access;
+  void path;
+  void role;
+  // @ts-expect-error member contexts expose only their root and descendants.
+  void context.records.query('admin');
+  return context.refresh();
+});
 
-// @ts-expect-error unencrypted roles have no audience-key delivery lifecycle.
-void typed.records.deliveryState('admin', 'role-id');
+const viewerContext = typed.contexts.follow({
+  id       : 'workspace-id',
+  ownerDid : 'did:example:owner',
+  group    : 'viewers',
+});
+void viewerContext.then(context => {
+  const role: 'workspace/viewer' = context.role;
+  void role;
+});
 
-// @ts-expect-error unencrypted roles have no audience-key delivery lifecycle.
-void typed.records.retryDelivery('workspace/member', 'role-id');
+// @ts-expect-error undeclared role groups cannot be followed.
+void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', group: 'missing' });
 
-// @ts-expect-error delivery diagnostics are restricted to role paths.
-void encryptedTyped.records.deliveryState('workspace', 'record-id');
+// @ts-expect-error callers no longer supply role arrays.
+void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', roles: ['workspace/member'] });
 
-// @ts-expect-error delivery retry is restricted to role paths.
-void encryptedTyped.records.retryDelivery('workspace', 'record-id');
+// @ts-expect-error the singular role contract was removed.
+void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', role: 'workspace/member' });
 
 // @ts-expect-error role-record creates require a recipient.
 void typed.records.create('admin', { data: { label: 'administrator' } });

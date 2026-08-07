@@ -1,4 +1,5 @@
 import type {
+  DataEncodedRecordsWriteMessage,
   DependencyRef,
   GenericMessage,
   MessagesFilter,
@@ -101,8 +102,11 @@ export function syncMessageDescriptor(message: GenericMessage): SyncMessageDescr
 
 type MessageFeedQuery = {
   did: string;
+  authorDid?: string;
   delegateDid?: string;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
   permissionGrantIds?: string[];
+  protocolRole?: string;
   filters?: MessagesFilter[];
   cursor?: ProgressToken;
   limit?: number;
@@ -110,7 +114,7 @@ type MessageFeedQuery = {
   agent: EnboxPlatformAgent;
 };
 
-type MessageFeedParams = Omit<MessageFeedQuery, 'did' | 'delegateDid' | 'agent'>;
+type MessageFeedParams = Omit<MessageFeedQuery, 'authorDid' | 'did' | 'delegateDid' | 'agent'>;
 
 type FetchLocalMessageResult =
   | { kind: 'found'; entry: SyncMessageEntry }
@@ -327,14 +331,18 @@ function buildMessageFeedParams({
   cursor,
   limit,
   cidsOnly,
+  delegatedGrant,
   permissionGrantIds,
+  protocolRole,
 }: MessageFeedParams): Omit<MessagesQueryOptions, 'signer'> {
   return {
     filters,
     cursor,
     limit,
     cidsOnly,
-    permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantIds)
+    permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantIds),
+    ...(delegatedGrant === undefined ? {} : { delegatedGrant }),
+    ...(protocolRole === undefined ? {} : { protocolRole }),
   };
 }
 
@@ -343,9 +351,12 @@ function buildMessageFeedParams({
  */
 export async function queryRemoteMessageFeed({
   did,
+  authorDid,
   dwnUrl,
   delegateDid,
+  delegatedGrant,
   permissionGrantIds,
+  protocolRole,
   filters,
   cursor,
   limit,
@@ -354,11 +365,19 @@ export async function queryRemoteMessageFeed({
 }: MessageFeedQuery & { dwnUrl: string }): Promise<MessagesQueryReply> {
   const messagesQuery = await agent.processDwnRequest({
     store         : false,
-    author        : did,
+    author        : authorDid ?? did,
     target        : did,
     messageType   : DwnInterface.MessagesQuery,
     granteeDid    : delegateDid,
-    messageParams : buildMessageFeedParams({ filters, cursor, limit, cidsOnly, permissionGrantIds })
+    messageParams : buildMessageFeedParams({
+      filters,
+      cursor,
+      limit,
+      cidsOnly,
+      delegatedGrant,
+      permissionGrantIds,
+      protocolRole,
+    })
   });
 
   return await agent.rpc.sendDwnRequest({
@@ -373,8 +392,11 @@ export async function queryRemoteMessageFeed({
  */
 export async function queryLocalMessageFeed({
   did,
+  authorDid,
   delegateDid,
+  delegatedGrant,
   permissionGrantIds,
+  protocolRole,
   filters,
   cursor,
   limit,
@@ -382,11 +404,19 @@ export async function queryLocalMessageFeed({
   agent,
 }: MessageFeedQuery): Promise<MessagesQueryReply> {
   const { reply } = await agent.dwn.processRequest({
-    author        : did,
+    author        : authorDid ?? did,
     target        : did,
     messageType   : DwnInterface.MessagesQuery,
     granteeDid    : delegateDid,
-    messageParams : buildMessageFeedParams({ filters, cursor, limit, cidsOnly, permissionGrantIds })
+    messageParams : buildMessageFeedParams({
+      filters,
+      cursor,
+      limit,
+      cidsOnly,
+      delegatedGrant,
+      permissionGrantIds,
+      protocolRole,
+    })
   });
 
   return reply;
@@ -663,7 +693,7 @@ class RemoteApplyPushContext {
             return { kind: 'failed', failure: result.failure };
         }
       }
-      pending = await dedupeEntries(retry);
+      pending = await dedupeSyncMessageEntries(retry);
     }
 
     if (pending.length > 0) {
@@ -1113,7 +1143,7 @@ class RemoteApplyPushContext {
       entries.push(await this.entryForRecordsQueryMessage(message, encodedData));
     }
 
-    const dedupedEntries = await dedupeEntries(entries);
+    const dedupedEntries = await dedupeSyncMessageEntries(entries);
     await this.rememberEntries(dedupedEntries);
     return dedupedEntries;
   }
@@ -1216,7 +1246,7 @@ async function resolvePushPayload(entry: SyncMessageEntry): Promise<Blob | Reada
   return entry.dataStream;
 }
 
-async function dedupeEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {
+export async function dedupeSyncMessageEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {
   const byCid = new Map<string, SyncMessageEntry>();
   for (const entry of entries) {
     byCid.set(await getMessageCid(entry.message), entry);

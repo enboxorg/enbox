@@ -14,6 +14,41 @@ import type {
   DwnPublicKeyJwk,
 } from '@enbox/agent';
 
+/**
+ * Package-internal execution context for records bound to one tenant and
+ * application context. Foreign-context reads stay in the local replica while
+ * their mutations target the authoritative tenant.
+ *
+ * @internal
+ */
+export type RecordExecutionContext = Readonly<{
+  /** Reject operations after this context has been left or removed. */
+  assertActive(): Promise<void>;
+  /** Mark the local replica stale after its authority may have changed. */
+  invalidateReplica?(): Promise<void>;
+  /** Root context that bounds every operation. */
+  contextId: string;
+  /** Opaque local acceptance when this is a followed context. */
+  followedSourceAcceptanceId?: string;
+  /** Role record backing this followed context. */
+  followedSourceId?: string;
+  /** Role invoked for every operation when this is a followed context. */
+  protocolRole?: string;
+  /** Hosted endpoint accepted for authoritative followed-context mutations. */
+  remoteEndpoint?: string;
+  /** Tenant that owns the context. */
+  tenantDid: string;
+}>;
+
+/** @internal Best-effort invalidation cannot change an already-completed mutation's outcome. */
+export async function invalidateRecordReplica(context?: RecordExecutionContext): Promise<void> {
+  try {
+    await context?.invalidateReplica?.();
+  } catch {
+    // Background sync can repair missed invalidation; the authority mutation is already final.
+  }
+}
+
 /** Authorization and routing context used when opening a record's raw stored bytes. */
 export type RecordDataAccess = Pick<
   DecryptRecordDataParams,
@@ -135,8 +170,9 @@ export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.
  */
 export type RecordUpdateParams<T = unknown> = {
   /**
-   * The complete replacement payload for the record. Use {@link Record.patch}
-   * when changing only part of a JSON object.
+   * The complete replacement payload for the record. Use
+   * `TypedEnbox.records.patch(path, recordId, patch)` when changing only part
+   * of a JSON object.
    */
   data?: T;
 
@@ -165,9 +201,6 @@ export type RecordUpdateParams<T = unknown> = {
    * associated with the record.
    */
   dataCid?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['dataCid'];
-
-  /** Whether or not to store the updated message. */
-  store?: boolean;
 
   /** The size of the data in bytes. */
   dataSize?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['dataSize'];
@@ -205,12 +238,6 @@ export type RecordUpdateParams<T = unknown> = {
  * @beta
  */
 export type RecordDeleteParams = {
-  /** Whether or not to store the message. */
-  store?: boolean;
-
-  /** Whether or not to sign the delete as an owner in order to import it. */
-  signAsOwner?: boolean;
-
   /** Whether or not to prune any children this record may have. */
   prune?: DwnMessageDescriptor[DwnInterface.RecordsDelete]['prune'];
 

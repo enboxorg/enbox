@@ -92,7 +92,7 @@ describe('createEnboxTestContext()', () => {
 
       expect(context.session.signal.aborted).toBe(true);
       expect(stopSync.calledOnce).toBe(true);
-      expect(view.getSnapshot().state).toBe('error');
+      expect(view.getState().status).toBe('error');
     } finally {
       stopSync.restore();
       await context.close();

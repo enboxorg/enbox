@@ -236,7 +236,47 @@ describe('AgentDwnApi audience key delivery primitives', () => {
   });
 
   describe('automatic audience-key delivery', () => {
-    it('does not reconcile an installed-only retired role audience', async () => {
+    it('uses only owned replication links to establish delivery-feed currentness', async () => {
+      const protocol = 'https://protocol.test/delivery-currentness';
+      sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves({ protocols: [protocol] });
+      const getLinks = sinon.stub(testHarness.agent.sync, 'getReplicationLinks');
+      getLinks.onFirstCall().resolves([{
+        tenantDid      : alice.did.uri,
+        remoteEndpoint : testDwnUrls[0],
+        scope          : { kind: 'protocolSet', protocols: [protocol] },
+        status         : 'live',
+        connectivity   : 'online',
+        isPullCurrent  : true,
+      }, {
+        tenantDid        : alice.did.uri,
+        remoteEndpoint   : testDwnUrls[0],
+        scope            : { kind: 'context', protocol, contextId: 'sibling', protocolPaths: ['thread'] },
+        status           : 'paused',
+        connectivity     : 'offline',
+        followedSourceId : 'sibling-role',
+        isPullCurrent    : false,
+      }]);
+      getLinks.onSecondCall().resolves([{
+        tenantDid        : alice.did.uri,
+        remoteEndpoint   : testDwnUrls[0],
+        scope            : { kind: 'context', protocol, contextId: 'shared', protocolPaths: ['thread'] },
+        status           : 'live',
+        connectivity     : 'online',
+        followedSourceId : 'shared-role',
+        isPullCurrent    : true,
+      }]);
+
+      await expect((testHarness.agent.dwn as any).assertAudienceKeyDeliveryFeedCurrent(
+        alice.did.uri,
+        protocol,
+      )).resolves.toBeUndefined();
+      await expect((testHarness.agent.dwn as any).assertAudienceKeyDeliveryFeedCurrent(
+        alice.did.uri,
+        protocol,
+      )).rejects.toThrow('waiting for the local replica to become current');
+    });
+
+    it('reconciles from the installed definition instead of treating authored wake paths as authority', async () => {
       const chat = chatProtocolDefinition();
       chat.types.retired = { dataFormats: ['application/json'] };
       (chat.structure.thread as ProtocolRuleSet).retired = { $role: true };
@@ -244,14 +284,13 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const reconcile = sinon.spy(testHarness.audienceKeyDeliveryStore, 'reconcileProtocol');
 
       const retry = await (testHarness.agent.dwn as any).runAudienceKeyDeliveryPass({
-        protocol  : chat.protocol,
-        rolePaths : new Set([ROLE_PATH]),
-        signal    : new AbortController().signal,
-        target    : alice.did.uri,
+        protocol : chat.protocol,
+        signal   : new AbortController().signal,
+        target   : alice.did.uri,
       }, true);
 
       expect(retry).toBe(false);
-      expect(reconcile.notCalled).toBe(true);
+      expect(reconcile.calledOnce).toBe(true);
     }, 30000);
 
     it('waits for a current replica, repairs after recipient install, and removes deleted roles', async () => {
@@ -383,12 +422,20 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         signal   : session.signal,
         target   : alice.did.uri,
       })).toMatchObject({ state: 'failed' });
+      const deliveryWake = sinon.spy();
+      const unsubscribe = testHarness.agent.dwn.subscribeAudienceKeyDeliveryChanges({
+        listener : deliveryWake,
+        protocol : chat.protocol,
+        target   : alice.did.uri,
+      });
       expect(await testHarness.agent.dwn.retryAudienceKeyDeliveryState({
         protocol : chat.protocol,
         roleRecordId,
         signal   : session.signal,
         target   : alice.did.uri,
       })).toMatchObject({ state: 'delivered' });
+      expect(deliveryWake.calledOnce).toBe(true);
+      unsubscribe();
       session.abort();
       await expect(testHarness.agent.dwn.getAudienceKeyDeliveryState({
         protocol : chat.protocol,

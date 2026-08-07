@@ -5,6 +5,9 @@ export type * from './types/identity-vault.js';
 export type * from './types/key-manager.js';
 export type * from './types/permissions.js';
 export type * from './types/sync.js';
+export type { FollowedSyncSource, FollowedSyncSourceInput } from './followed-sync-source.js';
+export { followedSyncSourceActiveEqual } from './followed-sync-source.js';
+export { FollowedSourceNotReadyError } from './sync-role-replication-support.js';
 export {
   areReplicationLinksCurrent,
   computeAuthorizationEpoch,
@@ -19,8 +22,6 @@ export {
 } from './types/sync.js';
 export { SyncRunCancelledError } from './sync-runtime-errors.js';
 export { resolveSyncConnectivityState } from './sync-connectivity-manager.js';
-export type * from './types/vc.js';
-
 export * from './agent-session.js';
 export * from './anonymous-dwn-api.js';
 export * from './bearer-identity.js';

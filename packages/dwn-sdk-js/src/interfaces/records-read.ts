@@ -29,6 +29,9 @@ export type RecordsReadOptions = {
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.
    */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
+
+  /** @internal Includes the bounded dependency closure needed to seed a role-holder replica. */
+  includeReplicationSupport?: boolean;
 };
 
 export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
@@ -80,11 +83,12 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
     }
 
     const descriptor: RecordsReadDescriptor = {
-      interface        : DwnInterfaceName.Records,
-      method           : DwnMethodName.Read,
-      filter           : Records.normalizeFilter(filter),
-      messageTimestamp : options.messageTimestamp ?? currentTime,
+      interface                 : DwnInterfaceName.Records,
+      method                    : DwnMethodName.Read,
+      filter                    : Records.normalizeFilter(filter),
+      messageTimestamp          : options.messageTimestamp ?? currentTime,
       dateSort,
+      includeReplicationSupport : options.includeReplicationSupport,
       ...permissionGrantInvocation,
     };
 

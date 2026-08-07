@@ -1,24 +1,23 @@
 import type { compileRecordQuery } from './record-query.js';
 import type { DwnApi } from './dwn-api.js';
 import type { Record } from './record.js';
-import type { ReplicationCurrentness } from './replication-currentness.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { SyncEngine, SyncEvent } from '@enbox/agent';
 
+import { ContextRetiredError } from './context-errors.js';
+import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
+import { ObservedView } from './observed-view.js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
-
-/** Currentness of one materialized records view. */
-export type RecordViewState = ReplicationCurrentness;
 
 type RecordViewContents<Item> = Readonly<{
   /**
    * Items from the latest publishable query result.
    *
-   * The array and snapshot are immutable. The query selects each item's
+   * The array and view state are immutable. The query selects each item's
    * record or materialized-record representation.
    */
   records: readonly Item[];
@@ -27,37 +26,50 @@ type RecordViewContents<Item> = Readonly<{
   hasMore: boolean;
 }>;
 
-/** Immutable materialization published by a {@link RecordView}. */
-export type RecordViewSnapshot<Item = Record> = RecordViewContents<Item> & Readonly<
+/** Immutable materialization state published by a {@link RecordView}. */
+export type RecordViewState<Item = Record> = RecordViewContents<Item> & Readonly<
   | {
-    /** Whether the materialization is current with its source. */
-    state: Exclude<RecordViewState, 'error'>;
+    /** The first local query has not completed. */
+    status: 'loading';
+    current: false;
     error?: never;
   }
   | {
-    state: 'error';
+    /** Local records are usable. `current` reports whether replication is caught up. */
+    status: 'ready';
+    current: boolean;
+    error?: never;
+  }
+  | {
+    status: 'error';
+    current: false;
     /** The query, authorization, terminal subscription, replication, or owning-session termination. */
     error: Error;
   }
 >;
 
-/** Listener notified after a records view publishes a new snapshot. */
-export type RecordViewListener<Item = Record> = (snapshot: RecordViewSnapshot<Item>) => void;
+type ReadyRecordViewState<Item> = Extract<RecordViewState<Item>, { status: 'ready' }>;
+
+/** Listener notified after a records view publishes new state. */
+export type RecordViewListener<Item = Record> = (state: RecordViewState<Item>) => void;
 
 /**
  * A closeable materialized view over one canonical record query.
  *
  * Subscription events are wake signals only. Consumers render immutable
- * snapshots and never maintain collection truth from event payloads.
+ * states and never maintain collection truth from event payloads.
  */
 export interface RecordView<Item = Record> {
-  /** Return the current immutable snapshot. Safe to pass as a bare callback. */
-  getSnapshot: () => RecordViewSnapshot<Item>;
+  /** Return the current immutable state. Safe to pass as a bare callback. */
+  getState: () => RecordViewState<Item>;
 
-  /** Subscribe to later snapshot publications. Safe to pass as a bare callback. */
+  /** Subscribe to later state publications. Safe to pass as a bare callback. */
   subscribe: (listener: RecordViewListener<Item>) => () => void;
 
-  /** Fence callbacks and close the underlying local subscriptions without publishing a new snapshot. */
+  /** Resolve after the first local query makes records, including an empty result, usable. */
+  ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<ReadyRecordViewState<Item>>;
+
+  /** Fence callbacks and close the underlying local subscriptions without publishing new state. */
   close(): Promise<void>;
 }
 
@@ -71,12 +83,13 @@ type RecordViewOptions<Item> = {
   materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   query: CompiledRecordQuery;
   signal?: AbortSignal;
+  subscribeToWakes?: (wake: () => void) => () => void;
   sync?: SyncEngine;
 };
 
 type RecordViewCurrentness =
-  | { state: Exclude<RecordViewState, 'error'> }
-  | { state: 'error'; error: Error };
+  | { current: boolean }
+  | { status: 'error'; error: Error };
 
 type RegistrationChangeEvent = Extract<SyncEvent, { type: 'identity:registration-change' }>;
 type LinkStatusChangeEvent = Extract<SyncEvent, { type: 'link:status-change' }>;
@@ -94,30 +107,25 @@ export async function createRecordView<Item = Record>(
 }
 
 /** One serialized, wake-driven materialization resource. */
-class ObservedRecordView<Item> implements RecordView<Item> {
+class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> implements RecordView<Item> {
   private readonly _additionalWakeFilters: readonly RecordsFilter[];
   private readonly _definition: ProtocolDefinition;
   private readonly _dwn: DwnApi;
-  private readonly _listeners = new Set<RecordViewListener<Item>>();
   private readonly _materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   private readonly _query: CompiledRecordQuery;
   private readonly _signal?: AbortSignal;
+  private readonly _subscribeToWakes?: (wake: () => void) => () => void;
   private readonly _sync?: SyncEngine;
+  private readonly _tenantDid: string;
+  private readonly _followedContextId?: string;
+  private readonly _followedSourceAcceptanceId?: string;
+  private readonly _followedSourceId?: string;
 
-  private _closed = false;
-  private _closePromise?: Promise<void>;
-  private _hasPublishedReady = false;
-  private _isMaterializing = false;
+  private _hasMaterialized = false;
   private _isOpen = false;
-  private _materializationRequested = false;
-  private _requestGeneration = 0;
-  private _snapshot: RecordViewSnapshot<Item> = immutableSnapshot({
-    state   : 'loading',
-    records : [],
-    hasMore : false,
-  });
   private readonly _subscriptions: { close(): Promise<void> }[] = [];
   private _syncUnsubscribe?: () => void;
+  private _wakeUnsubscribe?: () => void;
 
   private readonly _handleAbort = (): void => {
     this.publishError(new Error('RecordView: owning session ended.', { cause: this._signal?.reason }));
@@ -125,13 +133,26 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   };
 
   public constructor(options: RecordViewOptions<Item>) {
+    super(immutableState({
+      status  : 'loading',
+      records : [],
+      hasMore : false,
+      current : false,
+    }));
     this._additionalWakeFilters = options.additionalWakeFilters ?? [];
     this._definition = options.definition;
     this._dwn = options.dwn;
     this._materializeRecords = options.materializeRecords;
     this._query = options.query;
     this._signal = options.signal;
-    this._sync = options.query.from === undefined ? options.sync : undefined;
+    this._subscribeToWakes = options.subscribeToWakes;
+    this._sync = options.dwn.followedSourceId !== undefined || options.query.from === undefined
+      ? options.sync
+      : undefined;
+    this._tenantDid = options.dwn.recordTenantDid;
+    this._followedContextId = options.dwn.followedContextId;
+    this._followedSourceAcceptanceId = options.dwn.followedSourceAcceptanceId;
+    this._followedSourceId = options.dwn.followedSourceId;
 
     this._signal?.addEventListener('abort', this._handleAbort, { once: true });
     this._syncUnsubscribe = this._sync?.on((event): void => {
@@ -153,43 +174,24 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       for (const filter of wakeFilters) {
         await this.openSubscription(filter, subscriptionHandler);
       }
+      this._wakeUnsubscribe = this._subscribeToWakes?.((): void => { this.requestMaterialization(); });
 
       this._isOpen = true;
       this.requestMaterialization();
     } catch (error: unknown) {
-      if (!this._closed) {
+      if (!this.isClosed) {
         await this.close();
       }
       throw error;
     }
   }
 
-  public readonly getSnapshot = (): RecordViewSnapshot<Item> => {
-    return this._snapshot;
-  };
-
-  public readonly subscribe = (listener: RecordViewListener<Item>): (() => void) => {
-    if (this._closed) {
-      return (): void => {};
-    }
-
-    this._listeners.add(listener);
-    return (): void => { this._listeners.delete(listener); };
-  };
-
-  public close(): Promise<void> {
-    this._closePromise ??= this.closeOwnedResources();
-    return this._closePromise;
-  }
-
-  private async closeOwnedResources(): Promise<void> {
-    this._closed = true;
-    this._requestGeneration += 1;
-    this._materializationRequested = false;
+  protected async closeOwnedResources(): Promise<void> {
+    this._wakeUnsubscribe?.();
+    this._wakeUnsubscribe = undefined;
     this._syncUnsubscribe?.();
     this._syncUnsubscribe = undefined;
     this._signal?.removeEventListener('abort', this._handleAbort);
-    this._listeners.clear();
 
     const subscriptions = this._subscriptions.splice(0);
     await Promise.all(subscriptions.map(async (subscription): Promise<void> => subscription.close()));
@@ -208,7 +210,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
       subscriptionHandler,
     });
 
-    if (this._closed) {
+    if (this.isClosed) {
       await reply.subscription?.close();
       this._signal?.throwIfAborted();
       throw new Error('RecordView: closed while opening the subscription.');
@@ -229,7 +231,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
   /** Keep transport acknowledgements independent from query latency. */
   private handleSubscriptionMessage(message: DwnSubscriptionMessage): void {
-    if (this._closed) {
+    if (this.isClosed) {
       return;
     }
 
@@ -246,16 +248,37 @@ class ObservedRecordView<Item> implements RecordView<Item> {
 
   /** Wake only for sync transitions that can change this local materialization. */
   private handleSyncEvent(event: SyncEvent): void {
-    if (this._closed || event.tenantDid !== this._dwn.connectedDid) {
+    if (this.isClosed || event.tenantDid !== this._tenantDid) {
       return;
     }
 
     if (event.type === 'identity:registration-change') {
-      this.handleRegistrationChange(event);
+      if (this._followedContextId === undefined) {
+        this.handleRegistrationChange(event);
+      }
       return;
     }
 
-    if (!syncEventCoversProtocol(event, this._query.filter.protocol)) {
+    if (!syncEventCoversProtocol(event, this._query.filter.protocol)
+      || (this._followedContextId !== undefined && event.contextId !== this._followedContextId)) {
+      return;
+    }
+
+    // An exact source change retires this view; other context changes requery.
+    if (this._followedSourceId !== undefined) {
+      if (
+        event.type === 'followed-context:change' &&
+        event.actorDid === this._dwn.connectedDid &&
+        followedContextChangeRetiresSource({
+          acceptanceId : this._followedSourceAcceptanceId!,
+          id           : this._followedSourceId,
+        }, event)
+      ) {
+        this.publishError(new ContextRetiredError(this._followedContextId!));
+        void this.close().catch((): void => {});
+        return;
+      }
+      this.requestMaterialization();
       return;
     }
 
@@ -275,12 +298,7 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   /** A changed registration defines a new baseline for its selected protocols. */
   private handleRegistrationChange(event: RegistrationChangeEvent): void {
     if (syncRegistrationCoversProtocol(event.options, this._query.filter.protocol)) {
-      this._hasPublishedReady = false;
-      this.publish(immutableSnapshot({
-        state   : 'loading',
-        records : this._snapshot.records,
-        hasMore : this._snapshot.hasMore,
-      }));
+      this.publishProvisionalReplicationCurrentness();
     }
     this.requestMaterialization();
   }
@@ -307,56 +325,28 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     this.requestMaterialization();
   }
 
-  /** Coalesce arbitrary wakes into one active and at most one trailing pass. */
-  private requestMaterialization(): void {
-    if (this._closed) {
-      return;
-    }
-
-    this._requestGeneration += 1;
-    this._materializationRequested = true;
-    if (!this._isOpen || this._isMaterializing) {
-      return;
-    }
-
-    this._isMaterializing = true;
-    void this.drainMaterializations();
-  }
-
-  private async drainMaterializations(): Promise<void> {
-    try {
-      while (!this._closed && this._materializationRequested) {
-        await this.materializeRequestedGeneration();
-      }
-    } finally {
-      this._isMaterializing = false;
-    }
+  /** The first pass may start only after every wake subscription is installed. */
+  protected override mayStartMaterialization(): boolean {
+    return this._isOpen;
   }
 
   /** Execute and publish one generation without owning the outer drain loop. */
-  private async materializeRequestedGeneration(): Promise<void> {
-    this._materializationRequested = false;
-    const generation = this._requestGeneration;
-
+  protected async materialize(generation: number): Promise<void> {
     try {
       const result = await this._dwn.records.query(this._query);
       requireDwnSuccess('RecordView query', result);
       const records = await this._materializeRecords(result.records);
 
       const currentness = await this.resolveCurrentness();
-      if (!this.canPublishGeneration(generation)) {
+      if (!this.canPublishMaterialization(generation)) {
         return;
       }
       this.publishMaterialization(records, result.cursor !== undefined, currentness);
     } catch (error: unknown) {
-      if (this.canPublishGeneration(generation)) {
+      if (this.canPublishMaterialization(generation)) {
         this.publishError(toError(error));
       }
     }
-  }
-
-  private canPublishGeneration(generation: number): boolean {
-    return !this._closed && generation === this._requestGeneration;
   }
 
   private publishMaterialization(
@@ -364,63 +354,72 @@ class ObservedRecordView<Item> implements RecordView<Item> {
     hasMore: boolean,
     currentness: RecordViewCurrentness,
   ): void {
-    if (currentness.state === 'error') {
-      this.publish(immutableSnapshot({
-        state : 'error',
-        records,
+    if ('status' in currentness) {
+      this.publish(immutableState({
+        status  : 'error',
+        records : records,
         hasMore,
-        error : currentness.error,
+        current : false,
+        error   : currentness.error,
       }));
       return;
     }
 
-    if (currentness.state === 'ready') {
-      this._hasPublishedReady = true;
-    }
-    this.publish(immutableSnapshot({
-      state: currentness.state,
+    this._hasMaterialized = true;
+    this.publish(immutableState({
+      status  : 'ready',
       records,
       hasMore,
+      current : currentness.current,
     }));
   }
 
   /** Resolve whether this protocol has completed its configured remote baseline. */
   private async resolveCurrentness(): Promise<RecordViewCurrentness> {
     if (this._sync === undefined) {
-      return { state: 'ready' };
+      return { current: true };
     }
 
-    const registration = await this._sync.getIdentityOptions(this._dwn.connectedDid);
-    if (!syncRegistrationCoversProtocol(registration, this._query.filter.protocol)) {
-      return { state: 'ready' };
+    if (this._followedContextId === undefined) {
+      const registration = await this._sync.getIdentityOptions(this._tenantDid);
+      if (!syncRegistrationCoversProtocol(registration, this._query.filter.protocol)) {
+        return { current: true };
+      }
     }
 
-    const links = (await this._sync.getReplicationLinks(this._dwn.connectedDid))
-      .filter((link): boolean => syncScopeCoversProtocol(link.scope, this._query.filter.protocol));
-    const state = projectReplicationCurrentness(links, this._hasPublishedReady);
-    if (state === 'error') {
+    const links = (await this._sync.getReplicationLinks(this._tenantDid))
+      .filter((link): boolean => this._followedContextId === undefined
+        ? syncScopeCoversProtocol(link.scope, this._query.filter.protocol)
+        : link.scope.kind === 'context'
+          && link.scope.protocol === this._query.filter.protocol
+          && link.scope.contextId === this._followedContextId
+          && link.followedSourceId === this._followedSourceId
+          && link.scope.protocolPaths.includes(this._query.filter.protocolPath));
+    const status = projectReplicationCurrentness(links);
+    if (status === 'error') {
       return this.resolveUnavailableCurrentness(true);
     }
-    return { state };
+    return { current: status === 'caught-up' };
   }
 
   /** Resolve a provisional unavailable state or attach the RecordView-specific pause error. */
   private resolveUnavailableCurrentness(isPaused: boolean): RecordViewCurrentness {
     if (isPaused) {
       return {
-        state : 'error',
-        error : new Error(`RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`),
+        status : 'error',
+        error  : new Error(`RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`),
       };
     }
 
-    return { state: this._hasPublishedReady ? 'stale' : 'loading' };
+    return { current: false };
   }
 
   private publishError(error: Error): void {
-    this.publish(immutableSnapshot({
-      state   : 'error',
-      records : this._snapshot.records,
-      hasMore : this._snapshot.hasMore,
+    this.publish(immutableState({
+      status  : 'error',
+      records : this.getState().records,
+      hasMore : this.getState().hasMore,
+      current : false,
       error,
     }));
   }
@@ -428,43 +427,29 @@ class ObservedRecordView<Item> implements RecordView<Item> {
   /** Degrade synchronously without letting partial link evidence clear an existing error. */
   private publishProvisionalReplicationCurrentness(isPaused = false): void {
     const currentness = this.resolveUnavailableCurrentness(isPaused);
-    if (this._snapshot.state === 'error' && currentness.state !== 'error') {
+    if (this.getState().status === 'error' && !('status' in currentness)) {
       return;
     }
 
-    if (currentness.state === 'error') {
+    if ('status' in currentness) {
       this.publishError(currentness.error);
       return;
     }
 
-    this.publish(immutableSnapshot({
-      state   : currentness.state,
-      records : this._snapshot.records,
-      hasMore : this._snapshot.hasMore,
-    }));
-  }
-
-  private publish(snapshot: RecordViewSnapshot<Item>): void {
-    if (this._closed) {
-      return;
-    }
-
-    this._snapshot = snapshot;
-    // Listener mutations apply to later publications, never the one already in progress.
-    const listeners = [...this._listeners];
-    for (const listener of listeners) {
-      try {
-        listener(snapshot);
-      } catch {
-        // A consumer cannot poison the view or prevent other notifications.
-      }
+    if (this._hasMaterialized) {
+      this.publish(immutableState({
+        status  : 'ready',
+        records : this.getState().records,
+        hasMore : this.getState().hasMore,
+        current : false,
+      }));
     }
   }
 }
 
-function immutableSnapshot<Item>(snapshot: RecordViewSnapshot<Item>): RecordViewSnapshot<Item> {
-  const records = Object.freeze([...snapshot.records]);
-  return Object.freeze({ ...snapshot, records });
+function immutableState<Item>(state: RecordViewState<Item>): RecordViewState<Item> {
+  const records = Object.freeze([...state.records]);
+  return Object.freeze({ ...state, records });
 }
 
 /** Project the canonical query to the structural scope containing every dependency of its result. */
