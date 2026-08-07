@@ -97,6 +97,8 @@ export { PrivateKeySigner } from './utils/private-key-signer.js';
 export type { PrivateKeySignerOptions } from './utils/private-key-signer.js';
 export {
   Protocols,
+  authoredProtocolDefinitionsEqual,
+  getRecordsWriteRoleIdentity,
   getRoleAudienceContextId,
   getRoleContextPrefix,
   getRoleRecordIdentity,

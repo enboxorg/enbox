@@ -6,8 +6,8 @@ import { waitForViewReady } from './view-ready.js';
  * @internal Listener fan-out, idempotent close, and a serialized
  * rematerialization drain shared by the observed views. Subclasses own their
  * subscriptions (released from {@link closeOwnedResources}) and their state
- * computation ({@link materialize}); stale-pass fencing is available through
- * the monotonic {@link ObservedView._requestGeneration} counter.
+ * computation ({@link materialize}); stale passes are fenced by the request
+ * generation supplied to each materialization.
  */
 export abstract class ObservedView<TState extends ViewState> {
   protected readonly _closeController = new AbortController();
@@ -19,8 +19,7 @@ export abstract class ObservedView<TState extends ViewState> {
   private _materializationRequested = false;
   private _state: TState;
 
-  /** Monotonic materialization request counter for subclasses that fence stale passes. */
-  protected _requestGeneration = 0;
+  private _requestGeneration = 0;
 
   protected constructor(initialState: TState) {
     this._state = initialState;
@@ -58,11 +57,6 @@ export abstract class ObservedView<TState extends ViewState> {
     return this._closed;
   }
 
-  /** Whether a newer pass has been requested behind one in flight. */
-  protected get isMaterializationRequested(): boolean {
-    return this._materializationRequested;
-  }
-
   /** Coalesce arbitrary wakes into one active and at most one trailing pass. */
   protected requestMaterialization(): void {
     if (this._closed) {
@@ -84,7 +78,7 @@ export abstract class ObservedView<TState extends ViewState> {
       while (!this._closed && this._materializationRequested) {
         // Clear before the pass so a wake during it schedules a trailing pass.
         this._materializationRequested = false;
-        await this.materialize();
+        await this.materialize(this._requestGeneration);
       }
     } finally {
       this._materializing = false;
@@ -109,6 +103,11 @@ export abstract class ObservedView<TState extends ViewState> {
     }
   }
 
+  /** Whether a materialization is still the newest requested pass. */
+  protected canPublishMaterialization(generation: number): boolean {
+    return !this._closed && generation === this._requestGeneration;
+  }
+
   private async closeView(): Promise<void> {
     if (this._closed) {
       return;
@@ -126,7 +125,7 @@ export abstract class ObservedView<TState extends ViewState> {
   protected abstract closeOwnedResources(): Promise<void>;
 
   /** Execute and publish one requested pass without owning the outer drain loop. */
-  protected abstract materialize(): Promise<void>;
+  protected abstract materialize(generation: number): Promise<void>;
 
   /** Whether a requested pass may start now; subclasses gate on open state. */
   protected mayStartMaterialization(): boolean {

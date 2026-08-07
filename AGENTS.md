@@ -666,7 +666,8 @@ AgentDataStore<T> (interface)
     InMemoryIdentityStore
 ```
 
-Subclasses override: `name`, `_recordProtocolDefinition`, `_recordProperties`, `getAllRecords()`.
+Subclasses define `_recordProtocolDefinition`, `_recordProperties`, `getStoredObjectId()`, and `isStoredObject()`;
+stores with custom payload loading override `readStoredObject()`.
 
 ### Agent DID vs tenant DID
 

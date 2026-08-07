@@ -1,6 +1,8 @@
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
+import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
+import { canonicalJsonStringify } from '@enbox/common';
 import { KeyDerivationScheme } from '../utils/hd-key.js';
 import { lexicographicalCompare } from './string.js';
 import { ProtocolAction } from '../types/protocols-types.js';
@@ -116,6 +118,53 @@ export function getRoleRecordIdentity(input: {
     protocolPath,
     recipient,
   };
+}
+
+/**
+ * Returns the canonical role identity described by a RecordsWrite, or
+ * `undefined` when the required descriptor fields are absent.
+ */
+export function getRecordsWriteRoleIdentity(message: RecordsWriteMessage): RoleRecordIdentity | undefined {
+  const { protocol, protocolPath, recipient } = message.descriptor;
+  if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
+    return undefined;
+  }
+
+  return getRoleRecordIdentity({
+    contextId: message.contextId,
+    protocol,
+    protocolPath,
+    recipient,
+  });
+}
+
+/**
+ * Removes runtime-injected encryption metadata before comparing authored
+ * protocol policy. Returns a new value without mutating the definition.
+ */
+function stripProtocolEncryptionMetadata(value: unknown): unknown {
+  if (value === null || value === undefined || typeof value !== 'object') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => stripProtocolEncryptionMetadata(item));
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (key === '$encryption' || key === '$keyAgreement') {
+      continue;
+    }
+    result[key] = stripProtocolEncryptionMetadata(entry);
+  }
+  return result;
+}
+
+/** Whether two protocol definitions have the same authored policy. */
+export function authoredProtocolDefinitionsEqual(left: ProtocolDefinition, right: ProtocolDefinition): boolean {
+  return canonicalJsonStringify(stripProtocolEncryptionMetadata(left))
+    === canonicalJsonStringify(stripProtocolEncryptionMetadata(right));
 }
 
 /**

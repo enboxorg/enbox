@@ -22,6 +22,7 @@ import {
   Encoder,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
+  getRecordsWriteRoleIdentity,
   getRoleAudienceContextId,
   getRoleRecordIdentity,
   getRuleSetAtPath,
@@ -573,19 +574,6 @@ function isExpectedAncestor(
     message.descriptor.protocolPath === ancestor.protocolPath &&
     entry.isLatestBaseState === false &&
     entry.encodedData === undefined;
-}
-
-function getRecordsWriteRoleIdentity(message: RecordsWriteMessage): RoleRecordIdentity | undefined {
-  const { protocol, protocolPath, recipient } = message.descriptor;
-  if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
-    return undefined;
-  }
-  return getRoleRecordIdentity({
-    contextId: message.contextId,
-    protocol,
-    protocolPath,
-    recipient,
-  });
 }
 
 function assertRoleAudienceReady(

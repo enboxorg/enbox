@@ -539,7 +539,7 @@ describe('KeyStore', () => {
       });
     });
 
-    describe('getAllRecords() error handling', () => {
+    describe('list() error handling', () => {
       afterEach(() => {
         mock.restore();
       });

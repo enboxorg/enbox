@@ -91,14 +91,14 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
     this._wakeSubscription = undefined;
   }
 
-  protected async materialize(): Promise<void> {
+  protected async materialize(generation: number): Promise<void> {
     try {
       const contexts = await this._list();
-      if (this.canPublishPass()) {
+      if (this.canPublishMaterialization(generation)) {
         this.publish(immutableState({ status: 'ready', contexts }));
       }
     } catch (error: unknown) {
-      if (this.canPublishPass()) {
+      if (this.canPublishMaterialization(generation)) {
         this.publishError(error instanceof Error ? error : new Error(String(error)));
       }
     }
@@ -106,10 +106,6 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
 
   protected statesEqual(previous: ContextViewState<Context>, next: ContextViewState<Context>): boolean {
     return statesEqual(previous, next);
-  }
-
-  private canPublishPass(): boolean {
-    return !this.isClosed && !this.isMaterializationRequested;
   }
 
   private publishError(error: Error): void {

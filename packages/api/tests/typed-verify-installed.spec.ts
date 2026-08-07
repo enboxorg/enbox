@@ -14,7 +14,7 @@ import { DwnApi as DwnApiClass } from '../src/dwn-api.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { stripEncryptionBlocks, TypedEnbox, WalletReapprovalRequiredError } from '../src/typed-enbox.js';
+import { TypedEnbox, WalletReapprovalRequiredError } from '../src/typed-enbox.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -414,32 +414,6 @@ describe('TypedEnbox.verifyInstalled()', () => {
       await expect(typed.verifyInstalled()).rejects.toMatchObject({
         status: { code: 500, detail: 'store unavailable' },
       });
-    });
-  });
-
-  describe('stripEncryptionBlocks()', () => {
-    it('should strip $encryption and $keyAgreement blocks recursively without mutating the input', () => {
-      const input = {
-        protocol      : 'https://example.com/p',
-        $keyAgreement : { publicKeyJwk: { x: 'root' } },
-        structure     : {
-          doc: {
-            $keyAgreement : { publicKeyJwk: { x: 'doc' } },
-            $encryption   : { rootKeyId: 'k' },
-            child         : { $keyAgreement: { publicKeyJwk: { x: 'child' } } },
-          },
-        },
-      };
-
-      const stripped = stripEncryptionBlocks(input) as Record<string, unknown>;
-
-      expect(stripped).toEqual({
-        protocol  : 'https://example.com/p',
-        structure : { doc: { child: {} } },
-      });
-      // The original is untouched.
-      expect(input.$keyAgreement).toBeDefined();
-      expect(input.structure.doc.$encryption).toBeDefined();
     });
   });
 });

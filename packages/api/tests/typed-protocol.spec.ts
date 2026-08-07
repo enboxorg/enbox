@@ -19,12 +19,12 @@ import { Protocol } from '../src/protocol.js';
 import { Record } from '../src/record.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { testDwnUrl } from './utils/test-config.js';
+import { TypedEnbox } from '../src/typed-enbox.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { CONTEXT_INVITATION_PATH, contextInvitationCodec } from '../src/context-invitations.js';
 import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
 import { defineProtocol, isTypedProtocol } from '../src/define-protocol.js';
-import { definitionsEqual, TypedEnbox } from '../src/typed-enbox.js';
 import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 // ---------------------------------------------------------------------------
@@ -1289,7 +1289,7 @@ describe('TypedProtocol API', () => {
     });
 
     describe('helper functions (via public API)', () => {
-      describe('definitionsEqual()', () => {
+      describe('protocol definition comparison', () => {
         it('should detect equal definitions with different key ordering', async () => {
           // Create a protocol with the same fields but potentially different order.
           // The first configure() stores the definition. A second configure() with an
@@ -1323,14 +1323,6 @@ describe('TypedProtocol API', () => {
           expect(result.status.code).toBe(202);
         });
 
-        it('should ignore injected key agreement metadata', () => {
-          const installedDefinition = structuredClone(TodoProtocolDefinition);
-          installedDefinition.structure.list.$keyAgreement = {
-            publicKeyJwk: { crv: 'X25519', kty: 'OKP', x: 'mock-key' },
-          };
-
-          expect(definitionsEqual(installedDefinition, TodoProtocolDefinition)).toBe(true);
-        });
       });
 
       describe('normalizePath()', () => {

@@ -1,7 +1,3 @@
-/**
- * NOTE: Added reference types here to avoid a `pnpm` bug during build.
- * https://github.com/enboxorg/enbox/pull/507
- */
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type { AnonymousDwnApi } from '@enbox/agent';

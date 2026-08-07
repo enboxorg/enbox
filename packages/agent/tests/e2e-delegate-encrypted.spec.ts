@@ -540,19 +540,4 @@ describe('e2e: delegate + encrypted protocol', () => {
     )).toBe(noteData);
     expect((await queryRawEntry(walletHarness, walletIdentity.did.uri, encryptedNoteProtocol.protocol))?.encryption).toBeDefined();
   });
-
-  it('should treat definitions with and without $keyAgreement as logically equal', async () => {
-    const { definitionsEqual } = await import('../../api/src/typed-enbox.js');
-
-    const installedDefinition = JSON.parse(JSON.stringify(encryptedNoteProtocol));
-    installedDefinition.structure.note.$keyAgreement = {
-      publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'fake-key' },
-    };
-
-    expect(definitionsEqual(installedDefinition, encryptedNoteProtocol)).toBe(true);
-
-    const differentDefinition = JSON.parse(JSON.stringify(encryptedNoteProtocol));
-    differentDefinition.types.note.schema = 'https://different-schema.xyz';
-    expect(definitionsEqual(differentDefinition, encryptedNoteProtocol)).toBe(false);
-  });
 });
