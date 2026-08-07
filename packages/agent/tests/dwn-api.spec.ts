@@ -1423,6 +1423,10 @@ describe('AgentDwnApi', () => {
       });
       expect(writeStatus3.code).toBe(202);
 
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(receivedMessages).toHaveLength(2);
+      });
+
       // close subscription
       await subscription!.close();
 
