@@ -93,6 +93,16 @@ function contextInvitationType(): ProtocolDefinition['types'][string] {
   };
 }
 
+/**
+ * `who: 'anyone'` is load-bearing: a stranger must be able to offer a context
+ * before any relationship exists. It also makes this an open write endpoint.
+ * `$size` and `$immutable` bound each record, but the record COUNT is
+ * deliberately uncapped: a global `$recordLimit` would let one writer fill the
+ * cap and block real invitations, and per-author limits do not help because
+ * fresh DIDs are free. Discovery therefore treats the inbox as untrusted and
+ * bounded input — see `projectContextInvitations`. Closing the exposure needs
+ * an admission decision Enbox does not have yet; do not "fix" it with a cap.
+ */
 function contextInvitationRule(): ProtocolDefinition['structure'][string] {
   return {
     $immutable : true,
