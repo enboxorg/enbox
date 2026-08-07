@@ -1,4 +1,5 @@
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
+import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
 import { KeyDerivationScheme } from '../utils/hd-key.js';
@@ -116,6 +117,24 @@ export function getRoleRecordIdentity(input: {
     protocolPath,
     recipient,
   };
+}
+
+/**
+ * Returns the canonical role identity described by a RecordsWrite, or
+ * `undefined` when the required descriptor fields are absent.
+ */
+export function getRecordsWriteRoleIdentity(message: RecordsWriteMessage): RoleRecordIdentity | undefined {
+  const { protocol, protocolPath, recipient } = message.descriptor;
+  if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
+    return undefined;
+  }
+
+  return getRoleRecordIdentity({
+    contextId: message.contextId,
+    protocol,
+    protocolPath,
+    recipient,
+  });
 }
 
 /**

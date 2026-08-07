@@ -331,28 +331,22 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   }
 
   /** Execute and publish one generation without owning the outer drain loop. */
-  protected async materialize(): Promise<void> {
-    const generation = this._requestGeneration;
-
+  protected async materialize(generation: number): Promise<void> {
     try {
       const result = await this._dwn.records.query(this._query);
       requireDwnSuccess('RecordView query', result);
       const records = await this._materializeRecords(result.records);
 
       const currentness = await this.resolveCurrentness();
-      if (!this.canPublishGeneration(generation)) {
+      if (!this.canPublishMaterialization(generation)) {
         return;
       }
       this.publishMaterialization(records, result.cursor !== undefined, currentness);
     } catch (error: unknown) {
-      if (this.canPublishGeneration(generation)) {
+      if (this.canPublishMaterialization(generation)) {
         this.publishError(toError(error));
       }
     }
-  }
-
-  private canPublishGeneration(generation: number): boolean {
-    return !this.isClosed && generation === this._requestGeneration;
   }
 
   private publishMaterialization(

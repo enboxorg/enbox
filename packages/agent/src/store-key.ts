@@ -7,14 +7,13 @@ import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk
 
 import { DataStream } from '@enbox/dwn-sdk-js';
 
-import type { AgentDataStore } from './store-data.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 
 import { DwnInterface } from './types/dwn.js';
 import { JwkProtocolDefinition } from './store-data-protocols.js';
 import { DwnDataStore, InMemoryDataStore } from './store-data.js';
 
-export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk> {
+export class DwnKeyStore extends DwnDataStore<Jwk> {
   protected name = 'DwnKeyStore';
 
   protected _recordProtocolDefinition = JwkProtocolDefinition;
@@ -28,13 +27,6 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
     protocolPath : 'privateJwk',
     schema       : this._recordProtocolDefinition.types.privateJwk.schema,
   };
-
-  protected async getAllRecords(params: {
-    agent: EnboxPlatformAgent;
-    tenantDid: string;
-  }): Promise<Jwk[]> {
-    return this.queryAllStoredRecords(params);
-  }
 
   protected getStoredObjectId(storedKey: Jwk): string {
     return `${KEY_URI_PREFIX_JWK}${storedKey.kid}`;
@@ -84,6 +76,6 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
   }
 }
 
-export class InMemoryKeyStore extends InMemoryDataStore<Jwk> implements AgentDataStore<Jwk> {
+export class InMemoryKeyStore extends InMemoryDataStore<Jwk> {
   protected name = 'InMemoryKeyStore';
 }

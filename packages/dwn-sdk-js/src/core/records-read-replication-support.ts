@@ -19,7 +19,7 @@ import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRoleAudienceContextId, getRoleRecordIdentity, isCrossProtocolRef } from '../utils/protocols.js';
+import { getRecordsWriteRoleIdentity, getRoleAudienceContextId, getRoleRecordIdentity, isCrossProtocolRef } from '../utils/protocols.js';
 
 const MAX_SUPPORT_RECORDS_PER_KIND = 16;
 const MAX_SUPPORT_PROTOCOL_CONFIGS = 64;
@@ -201,7 +201,7 @@ export class RecordsReadReplicationSupport {
     }
 
     for (const ancestor of recordChain) {
-      const identity = RecordsReadReplicationSupport.roleRecordIdentity(ancestor);
+      const identity = getRecordsWriteRoleIdentity(ancestor);
       if (identity !== undefined) {
         selectors.delete(identity.key);
       }
@@ -246,7 +246,7 @@ export class RecordsReadReplicationSupport {
       if (!Records.isRecordsWrite(message) || !await RecordsWrite.isInitialWrite(message)) {
         continue;
       }
-      const candidate = RecordsReadReplicationSupport.roleRecordIdentity(message);
+      const candidate = getRecordsWriteRoleIdentity(message);
       if (candidate === undefined) {
         continue;
       }
@@ -257,19 +257,6 @@ export class RecordsReadReplicationSupport {
       }
     }
     return undefined;
-  }
-
-  private static roleRecordIdentity(message: RecordsWriteMessage): RoleRecordIdentity | undefined {
-    const { protocol, protocolPath, recipient } = message.descriptor;
-    if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
-      return undefined;
-    }
-    return getRoleRecordIdentity({
-      contextId: message.contextId,
-      protocol,
-      protocolPath,
-      recipient,
-    });
   }
 
   private static async fetchAudienceRecords(input: {

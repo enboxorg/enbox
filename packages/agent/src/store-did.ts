@@ -2,13 +2,10 @@ import type { PortableDid } from '@enbox/dids';
 
 import { isPortableDid } from '@enbox/dids';
 
-import type { AgentDataStore } from './store-data.js';
-import type { EnboxPlatformAgent } from './types/agent.js';
-
 import { IdentityProtocolDefinition } from './store-data-protocols.js';
 import { DwnDataStore, InMemoryDataStore } from './store-data.js';
 
-export class DwnDidStore extends DwnDataStore<PortableDid> implements AgentDataStore<PortableDid> {
+export class DwnDidStore extends DwnDataStore<PortableDid> {
   protected name = 'DwnDidStore';
 
   protected _recordProtocolDefinition = IdentityProtocolDefinition;
@@ -23,13 +20,6 @@ export class DwnDidStore extends DwnDataStore<PortableDid> implements AgentDataS
     schema       : this._recordProtocolDefinition.types.portableDid.schema,
   };
 
-  protected async getAllRecords(params: {
-    agent: EnboxPlatformAgent;
-    tenantDid: string;
-  }): Promise<PortableDid[]> {
-    return this.queryAllStoredRecords(params);
-  }
-
   protected getStoredObjectId(storedDid: PortableDid): string {
     return storedDid.uri;
   }
@@ -39,6 +29,6 @@ export class DwnDidStore extends DwnDataStore<PortableDid> implements AgentDataS
   }
 }
 
-export class InMemoryDidStore extends InMemoryDataStore<PortableDid> implements AgentDataStore<PortableDid> {
+export class InMemoryDidStore extends InMemoryDataStore<PortableDid> {
   protected name = 'InMemoryDidStore';
 }

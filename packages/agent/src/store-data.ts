@@ -41,7 +41,7 @@ export interface AgentDataStore<TStoreObject> {
   set(params: DataStoreSetParams<TStoreObject>): Promise<void>;
 }
 
-export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implements AgentDataStore<TStoreObject> {
+export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implements AgentDataStore<TStoreObject> {
   protected name = 'DwnDataStore';
 
   /**
@@ -73,16 +73,17 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   /**
    * The protocol assigned to this storage instance.
    */
-  protected _recordProtocolDefinition!: ProtocolDefinition;
+  protected abstract _recordProtocolDefinition: ProtocolDefinition;
 
   /**
    * Properties to use when writing and querying records with the DWN store.
-   * Subclasses MUST override this to include `protocol` and `protocolPath`.
+   * Includes the protocol and protocol path owned by the concrete store.
    */
-  protected _recordProperties: { dataFormat: string; protocol: string; protocolPath: string; schema?: string } = {
-    dataFormat   : 'application/json',
-    protocol     : '', // overridden by subclass
-    protocolPath : '', // overridden by subclass
+  protected abstract _recordProperties: {
+    dataFormat: string;
+    protocol: string;
+    protocolPath: string;
+    schema?: string;
   };
 
   public async delete({ id, agent, tenant }: DataStoreDeleteParams): Promise<boolean> {
@@ -135,9 +136,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     const tenantDid = await getDataStoreTenant({ tenant, agent });
 
     // Query the DWN for all stored record objects.
-    const storedRecords = await this.getAllRecords({ agent, tenantDid });
-
-    return storedRecords;
+    return this.queryAllStoredRecords({ agent, tenantDid });
   }
 
   public async set({ id, data, tenant, agent, preventDuplicates = true, updateExisting = false, useCache = false }:
@@ -231,20 +230,12 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     this._protocolInitializedCache.set(tenantDid, true);
   }
 
-  protected async getAllRecords(_params: {
-    agent: EnboxPlatformAgent;
-    tenantDid: string;
-  }): Promise<TStoreObject[]> {
-    throw new Error('Not implemented: Classes extending DwnDataStore must implement getAllRecords()');
-  }
-
   /**
-   * Shared `getAllRecords` pipeline: queries every record of this store's
-   * record type for the tenant and rebuilds the index and object cache from
-   * the results. Per-store behavior is supplied by {@link readStoredObject}
-   * and {@link getStoredObjectId}.
+   * Queries every record of this store's record type for the tenant and
+   * rebuilds the index and object cache from the results. Per-store behavior
+   * is supplied by {@link readStoredObject} and {@link getStoredObjectId}.
    */
-  protected async queryAllStoredRecords({ agent, tenantDid }: {
+  private async queryAllStoredRecords({ agent, tenantDid }: {
     agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<TStoreObject[]> {
@@ -299,18 +290,13 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
 
   /**
    * Returns the store identifier of one stored object for index bookkeeping.
-   * Subclasses MUST override this.
    */
-  protected getStoredObjectId(_storedObject: TStoreObject): string {
-    throw new Error('Not implemented: Classes extending DwnDataStore must implement getStoredObjectId()');
-  }
+  protected abstract getStoredObjectId(storedObject: TStoreObject): string;
 
   /**
-   * Validates a parsed stored record payload. Subclasses MUST override this.
+   * Validates a parsed stored record payload.
    */
-  protected isStoredObject(_value: unknown): _value is TStoreObject {
-    throw new Error('Not implemented: Classes extending DwnDataStore must implement isStoredObject()');
-  }
+  protected abstract isStoredObject(value: unknown): value is TStoreObject;
 
   private async getRecord({ recordId, tenantDid, agent, useCache }: {
     recordId: string;
@@ -388,7 +374,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     // If no matching record ID was found in the index...
     if (!recordId) {
       // Query the DWN for all stored objects, which rebuilds the index.
-      await this.getAllRecords({ agent, tenantDid });
+      await this.queryAllStoredRecords({ agent, tenantDid });
 
       // Check the index again for a matching ID.
       recordId = this._index.get(`${tenantDid}${TENANT_SEPARATOR}${id}`);

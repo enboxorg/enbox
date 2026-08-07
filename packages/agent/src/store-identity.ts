@@ -1,5 +1,3 @@
-import type { AgentDataStore } from './store-data.js';
-import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata } from './types/identity.js';
 
 import { IdentityProtocolDefinition } from './store-data-protocols.js';
@@ -11,7 +9,7 @@ export function isIdentityMetadata(obj: unknown): obj is IdentityMetadata {
     && 'name' in obj;
 }
 
-export class DwnIdentityStore extends DwnDataStore<IdentityMetadata> implements AgentDataStore<IdentityMetadata> {
+export class DwnIdentityStore extends DwnDataStore<IdentityMetadata> {
   protected name = 'DwnIdentityStore';
 
   protected _recordProtocolDefinition = IdentityProtocolDefinition;
@@ -26,13 +24,6 @@ export class DwnIdentityStore extends DwnDataStore<IdentityMetadata> implements 
     schema       : this._recordProtocolDefinition.types.identityMetadata.schema,
   };
 
-  protected async getAllRecords(params: {
-    agent: EnboxPlatformAgent;
-    tenantDid: string;
-  }): Promise<IdentityMetadata[]> {
-    return this.queryAllStoredRecords(params);
-  }
-
   protected getStoredObjectId(storedIdentity: IdentityMetadata): string {
     return storedIdentity.uri;
   }
@@ -42,6 +33,6 @@ export class DwnIdentityStore extends DwnDataStore<IdentityMetadata> implements 
   }
 }
 
-export class InMemoryIdentityStore extends InMemoryDataStore<IdentityMetadata> implements AgentDataStore<IdentityMetadata> {
+export class InMemoryIdentityStore extends InMemoryDataStore<IdentityMetadata> {
   protected name = 'InMemoryIdentityStore';
 }

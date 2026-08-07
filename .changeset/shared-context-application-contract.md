@@ -22,6 +22,9 @@ inadmissible data, and exposes explicit context refresh, forget, and leave.
 Paused sources re-check their ordered roles at that endpoint; re-following is
 the explicit way to select a different endpoint or role group.
 
+`DwnDataStore` is now abstract and owns record enumeration; subclasses provide
+protocol metadata, object identity, validation, and optional payload loading.
+
 Typed records add cursor-free pages, bounded initial change replay, shallow
 conflict-aware patches, idempotent deletes, and one observable view lifecycle.
 Shared internal implementations replace duplicate canonicalization, protocol
