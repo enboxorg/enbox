@@ -424,11 +424,10 @@ Invitation discovery is a bounded newest-first query: it reads 50 raw inbox
 records by default and accepts limits up to 100. Malformed, duplicate, or
 unsolicited records consume that bound and can crowd out older valid
 invitations. Pagination continuation and automatic junk cleanup are not
-available yet and are tracked in
-[#1552](https://github.com/enboxorg/enbox/issues/1552). Apps that receive the
-owner DID, context ID, and group through another channel can bypass inbox
-discovery with `contexts.follow({ ownerDid, id, group })`; following still proves
-current membership before accepting the context.
+available yet. Apps that receive the owner DID, context ID, and group through
+another channel can bypass inbox discovery with
+`contexts.follow({ ownerDid, id, group })`; following still proves current
+membership before accepting the context.
 
 <Callout type="warn" title="The invitation inbox is an open write endpoint">
 A protocol that declares any encrypted type carries a reserved
@@ -512,7 +511,7 @@ operation needs replication freshness.
   error as `cause` for diagnostics.
 
 Accepted contexts survive restart in the current agent. Acceptance does not yet
-replicate between a user's devices ([tracking issue](https://github.com/enboxorg/enbox/issues/1551)).
+replicate between a user's devices.
 The verified endpoint and role group remain pinned until an explicit re-follow
 selects replacements. When a role link pauses, Enbox checks the group's roles strongest
 first at that endpoint and replaces or removes the catalog entry only from that

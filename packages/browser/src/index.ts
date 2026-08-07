@@ -75,6 +75,7 @@ export type {
   ContextRoleGroups,
   ContextRolePath,
   ContextsApi,
+  DataForPath,
   DefineApplicationManifestOptions,
   EnboxAnonymousOptions,
   EnboxConnectOptions,

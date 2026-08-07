@@ -198,7 +198,7 @@ The lower-level
 
 Typed protocol composition through `$ref` is not inferred from incomplete
 local metadata. `defineProtocol()` rejects it for now; use the raw `enbox.dwn`
-API until the explicit composition contract tracked in #1462 is available.
+API when an application needs explicit protocol composition.
 
 ## Integration Testing
 
@@ -286,10 +286,10 @@ Typed record operations return application values directly: `create()` returns
 a `Record`, `query()` returns a `RecordPage`, `count()` returns a number, and
 `read()` returns a `Record` or `undefined`. `Record.update()` mutates and returns
 the same handle, while `TypedEnbox.records.patch()` returns the freshly read and
-updated record. Successful delete, store, import, and send operations resolve
-without a value. Context-bound deletion requires authority-backed proof: an
-authorized existing tombstone is idempotent, while a plain scoped 404 remains a
-404 because the ID may name a record outside the context.
+updated record. Successful delete operations resolve without a value.
+Context-bound deletion requires authority-backed proof: an authorized existing
+tombstone is idempotent, while a plain scoped 404 remains a 404 because the ID
+may name a record outside the context.
 
 Other non-success DWN statuses throw a `DwnResponseError` with the original
 status:

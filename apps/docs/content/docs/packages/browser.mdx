@@ -24,10 +24,10 @@ const { enbox } = await Enbox.connect({
 });
 ```
 
-This is the delegated wallet flow. For a local owner identity, omit
-`connectHandler` and pass `createIdentity: true` instead. Applications that own
-session restoration and refresh should use the manifest-backed connection store
-shown in the [`@enbox/api` guide](/docs/packages/api).
+This is the delegated wallet flow. To create a local owner identity, omit
+`connectHandler` and pass `createIdentity: true`. Applications that need session
+restoration and refresh should use the manifest-backed connection store shown
+in the [`@enbox/api` guide](/docs/packages/api).
 
 ## Browser entrypoint
 

@@ -289,8 +289,8 @@ stop after the first failing schema rule; custom `RecordValidator`
 implementations may report multiple failures.
 
 Composed `$ref` paths require referenced protocol metadata that a standalone
-definition file does not contain. Code generation rejects them clearly until
-the composition-aware typed contract tracked in enboxorg/enbox#1462 lands.
+definition file does not contain. Code generation rejects them clearly; use the
+raw protocol APIs when an application needs explicit protocol composition.
 
 ## Programmatic API
 
