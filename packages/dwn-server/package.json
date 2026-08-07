@@ -1,7 +1,7 @@
 {
   "name": "@enbox/dwn-server",
   "type": "module",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "license": "Apache-2.0",
   "files": [
     "dist",
