@@ -1,8 +1,17 @@
+import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import { describe, expect, it } from 'bun:test';
 
 import fc from 'fast-check';
 
-import { getRoleAudienceContextId, getRoleContextPrefix, getRoleRecordIdentity, getTypeName, isCrossProtocolRef, parseCrossProtocolRef } from '../../src/utils/protocols.js';
+import {
+  authoredProtocolDefinitionsEqual,
+  getRoleAudienceContextId,
+  getRoleContextPrefix,
+  getRoleRecordIdentity,
+  getTypeName,
+  isCrossProtocolRef,
+  parseCrossProtocolRef,
+} from '../../src/utils/protocols.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 100;
 
@@ -139,6 +148,24 @@ describe('Protocol utility functions — fuzz', () => {
       expect(rootFromRecord.key).toBe(rootFromContent.key);
       expect(nestedFromRole.contextIdPrefix).toBe('thread');
       expect(nestedFromRole.key).toBe(nestedFromContent.key);
+    });
+  });
+
+  describe('protocol definition policy equality', () => {
+    it('ignores injected encryption metadata without mutating the definition', () => {
+      const authored: ProtocolDefinition = {
+        protocol  : 'https://example.com/protocol',
+        published : true,
+        structure : { note: {} },
+        types     : { note: {} },
+      };
+      const installed = structuredClone(authored);
+      installed.structure.note.$keyAgreement = {
+        publicKeyJwk: { crv: 'X25519', kty: 'OKP', x: 'key' },
+      };
+
+      expect(authoredProtocolDefinitionsEqual(authored, installed)).toBe(true);
+      expect(installed.structure.note.$keyAgreement).toBeDefined();
     });
   });
 });

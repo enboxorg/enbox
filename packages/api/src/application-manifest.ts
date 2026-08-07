@@ -9,7 +9,7 @@
 
 import type { Permission, ProtocolRequest } from '@enbox/auth';
 
-import { definitionsEqual } from './typed-enbox.js';
+import { authoredProtocolDefinitionsEqual } from '@enbox/dwn-sdk-js';
 import { isTypedProtocol } from './define-protocol.js';
 import type { TypedProtocol } from './protocol-types.js';
 
@@ -97,7 +97,7 @@ export function defineApplicationManifest<
     const protocolUri = protocol.definition.protocol;
     const previous = seen.get(protocolUri);
     if (previous !== undefined) {
-      const duplicate = definitionsEqual(previous.protocol.definition, protocol.definition);
+      const duplicate = authoredProtocolDefinitionsEqual(previous.protocol.definition, protocol.definition);
       const reason = duplicate ? 'duplicate protocol URI' : 'conflicting definitions for protocol URI';
       throw new TypeError(
         `defineApplicationManifest: ${reason} '${protocolUri}' at indexes ${previous.index} and ${index}.`,

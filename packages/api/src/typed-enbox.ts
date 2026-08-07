@@ -71,6 +71,13 @@ import {
   isProtocolRolePath,
 } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
+import {
+  authoredProtocolDefinitionsEqual,
+  DateSort,
+  getRuleSetAtPath,
+  getTypeName,
+  resolveProtocolRoleContextScope,
+} from '@enbox/dwn-sdk-js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
 import {
   CONTEXT_INVITATION_PATH,
@@ -78,7 +85,6 @@ import {
   isContextInvitationEnvelope,
 } from './context-invitations.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
-import { DateSort, getRuleSetAtPath, getTypeName, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
 import {
   FollowedSourceNotReadyError,
@@ -1188,10 +1194,9 @@ export type VerifyInstalledResult = {
   installed: boolean;
 
   /**
-   * Whether the installed definition canonically matches the code
-   * definition, compared via {@link definitionsEqual} (deterministic JSON
-   * with `$encryption`/`$keyAgreement` runtime blocks stripped). `false`
-   * when no installation was found.
+   * Whether the installed definition canonically matches the code definition
+   * with `$encryption`/`$keyAgreement` runtime blocks stripped. `false` when
+   * no installation was found.
    */
   definitionsMatch: boolean;
 
@@ -1365,7 +1370,7 @@ export class TypedEnbox<
       const existing = protocols[0];
       const encryptionKeysComplete = !this._hasEncryptedTypes
         || collectMissingKeyAgreementPaths(existing.definition).length === 0;
-      if (definitionsEqual(existing.definition, this._definition) && encryptionKeysComplete) {
+      if (authoredProtocolDefinitionsEqual(existing.definition, this._definition) && encryptionKeysComplete) {
         this._configured = true;
         return { status: { code: 200, detail: 'OK' }, protocol: existing };
       }
@@ -1559,7 +1564,7 @@ export class TypedEnbox<
         const protocolPath = segments.slice(0, depth).join('/');
         const results = await Promise.all(parentContexts.map(async (within) => {
           const result = await this._dwn.records.query({
-            filter: compileRecordFilter(this._definition, protocolPath, undefined, undefined, within),
+            filter: compileRecordFilter(this._definition, protocolPath, undefined, within),
           });
           requireDwnSuccess('TypedEnbox.contexts.list', result);
           return result.records;
@@ -1675,8 +1680,7 @@ export class TypedEnbox<
    * `verifyInstalled()`:
    *
    * 1. canonically compares the installed definition against the code
-   *    definition via {@link definitionsEqual} (runtime
-   *    `$encryption`/`$keyAgreement` blocks stripped);
+   *    definition with runtime `$encryption`/`$keyAgreement` blocks stripped;
    * 2. when the definition declares encrypted types, verifies a
    *    `$keyAgreement.publicKeyJwk` is present at every path the
    *    encryption-key injection covers (protocol root and every non-`$ref`
@@ -1734,7 +1738,7 @@ export class TypedEnbox<
       });
     }
 
-    const definitionsMatch = definitionsEqual(installedDefinition, this._definition);
+    const definitionsMatch = authoredProtocolDefinitionsEqual(installedDefinition, this._definition);
 
     // `$keyAgreement` injection only happens for encrypted installs, so key
     // coverage is only expected when the definition declares encrypted types.
@@ -1949,7 +1953,6 @@ export class TypedEnbox<
       const filter = compileRecordFilter(
         this._definition,
         childPath,
-        undefined,
         undefined,
         source.within,
       );
@@ -2691,7 +2694,6 @@ export class TypedEnbox<
             this._definition,
             role,
             undefined,
-            undefined,
             contextId,
           )),
           definition         : this._definition,
@@ -2954,7 +2956,7 @@ export class TypedEnbox<
 
     if (protocols.length > 0) {
       const existing = protocols[0];
-      const definitionsMatch = definitionsEqual(existing.definition, this._definition);
+      const definitionsMatch = authoredProtocolDefinitionsEqual(existing.definition, this._definition);
       const encryptionKeysComplete = !this._hasEncryptedTypes
         || collectMissingKeyAgreementPaths(existing.definition).length === 0;
       if (definitionsMatch && encryptionKeysComplete) {
@@ -3057,7 +3059,6 @@ export class TypedEnbox<
         this._definition,
         normalizedPath,
         request.filter,
-        undefined,
         within,
       ),
       protocolRole: request.protocolRole,
@@ -3275,7 +3276,6 @@ export class TypedEnbox<
         const additionalWakeFilters = childPaths.map((childPath): RecordsFilter => compileRecordFilter(
           this._definition,
           childPath,
-          undefined,
           undefined,
           within,
         ));
@@ -3604,45 +3604,6 @@ function compareInvitationRecords(left: Record, right: Record): number {
     return left.timestamp > right.timestamp ? -1 : 1;
   }
   return compareCodeUnits(right.id, left.id);
-}
-
-/**
- * Compares two protocol definitions for **logical** equality using
- * deterministic JSON serialization with runtime encryption metadata stripped.
- *
- * When a protocol declares encrypted types, the agent injects public key
- * agreement blocks into the `structure`. These blocks are operational
- * metadata — not part of the developer-authored definition — so they must be
- * ignored during equality checks.
- *
- * Keys are sorted recursively so that semantically identical definitions
- * with different key ordering are treated as equal.
- */
-export function definitionsEqual(a: unknown, b: unknown): boolean {
-  return installedProtocolDefinitionsEqual(stripEncryptionBlocks(a), stripEncryptionBlocks(b));
-}
-
-/**
- * Recursively removes runtime-injected encryption keys (`$encryption` and
- * `$keyAgreement` blocks) from an object tree — the canonicalization step
- * behind {@link definitionsEqual} and {@link TypedEnbox.verifyInstalled}.
- * Returns a new object — the original is not mutated.
- */
-export function stripEncryptionBlocks(value: unknown): unknown {
-  if (value === null || value === undefined || typeof value !== 'object') {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((item) => stripEncryptionBlocks(item));
-  }
-
-  const result: globalThis.Record<string, unknown> = {};
-  for (const [key, val] of Object.entries(value as globalThis.Record<string, unknown>)) {
-    if (key === '$encryption' || key === '$keyAgreement') { continue; }
-    result[key] = stripEncryptionBlocks(val);
-  }
-  return result;
 }
 
 /**

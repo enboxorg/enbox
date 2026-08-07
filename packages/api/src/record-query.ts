@@ -170,11 +170,10 @@ export function compileRecordFilter(
   definition: ProtocolDefinition,
   protocolPath: string,
   filter: RecordFilterInput | undefined,
-  dateSort?: DateSort,
   within?: string,
 ): RecordsFilter & { protocol: string; protocolPath: string } {
   assertValidRecordWithin(protocolPath, within, false);
-  return buildRecordFilter(definition, protocolPath, filter, dateSort, within);
+  return buildRecordFilter(definition, protocolPath, filter, undefined, within);
 }
 
 function buildRecordFilter(

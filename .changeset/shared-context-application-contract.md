@@ -24,6 +24,9 @@ the explicit way to select a different endpoint or role group.
 
 `DwnDataStore` is now abstract and owns record enumeration; subclasses provide
 protocol metadata, object identity, validation, and optional payload loading.
+Remove the internal-purpose `definitionsEqual` and `stripEncryptionBlocks`
+exports; protocol installation and manifest checks compare definitions
+automatically.
 
 Typed records add cursor-free pages, bounded initial change replay, shallow
 conflict-aware patches, idempotent deletes, and one observable view lifecycle.

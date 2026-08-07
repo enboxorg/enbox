@@ -39,8 +39,8 @@ import type { DwnProtocolDefinition, DwnResponse } from './types/dwn.js';
 import type { EncryptionKeyDeriver, ProtocolsQueryMessage } from '@enbox/dwn-sdk-js';
 
 import { computeJwkThumbprint } from '@enbox/crypto';
-import { KeyDerivationScheme } from '@enbox/dwn-sdk-js';
-import { canonicalJsonStringify, logger } from '@enbox/common';
+import { logger } from '@enbox/common';
+import { authoredProtocolDefinitionsEqual, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { mapConcurrentSettled } from './utils.js';
@@ -75,37 +75,6 @@ type ProtocolConfigureEntry = {
     definition?: DwnProtocolDefinition;
   };
 };
-
-/**
- * Structural normalization used for definition comparison: wallet-managed
- * encryption metadata (`$keyAgreement` / `$encryption`) is stripped — it is
- * injected at install time by the owner — so only authored policy participates
- * in the comparison.
- */
-function stripWalletManagedEncryptionMetadata(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(stripWalletManagedEncryptionMetadata);
-  }
-
-  if (!value || typeof value !== 'object') {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([key, entry]) => key !== '$keyAgreement' && key !== '$encryption' && entry !== undefined)
-      .map(([key, entry]) => [key, stripWalletManagedEncryptionMetadata(entry)]),
-  );
-}
-
-/** Whether two protocol definitions are policy-identical (encryption metadata aside). */
-export function protocolDefinitionsMatch(
-  installedDefinition: DwnProtocolDefinition,
-  requestedDefinition: DwnProtocolDefinition,
-): boolean {
-  return canonicalJsonStringify(stripWalletManagedEncryptionMetadata(installedDefinition))
-    === canonicalJsonStringify(stripWalletManagedEncryptionMetadata(requestedDefinition));
-}
 
 /** Whether a requested definition carries wallet-managed encryption metadata. */
 function containsRequesterManagedEncryptionKeys(value: unknown): boolean {
@@ -275,7 +244,7 @@ export function getProtocolSetupStatus(
     return 'install';
   }
 
-  if (!protocolDefinitionsMatch(installedDefinition, requestedDefinition)) {
+  if (!authoredProtocolDefinitionsEqual(installedDefinition, requestedDefinition)) {
     return 'conflict';
   }
 
@@ -326,7 +295,10 @@ function getProtocolSetupConflictMessage(
       + 'Requesters must provide the protocol definition without $keyAgreement metadata.';
   }
 
-  if (installedDefinition !== undefined && !protocolDefinitionsMatch(installedDefinition, requestedDefinition)) {
+  if (
+    installedDefinition !== undefined &&
+    !authoredProtocolDefinitionsEqual(installedDefinition, requestedDefinition)
+  ) {
     return `Protocol '${requestedDefinition.protocol}' is already installed with a different definition. `
       + 'A connection request cannot replace an owner protocol definition.';
   }
