@@ -45,10 +45,13 @@ import { BrowserConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enb
 
 const { enbox } = await Enbox.connect({
   connectHandler : BrowserConnectHandler({ appName: 'Notes' }),
-  createIdentity : true,
   protocols      : [NotesProtocol],
 });
 ```
+
+This is the delegated wallet flow. To create a local owner identity, omit
+`connectHandler` and pass `createIdentity: true`. Applications that need session
+restoration and refresh should use a manifest-backed connection store.
 
 ## Bundlers and Service Workers
 
@@ -58,9 +61,9 @@ Vite passes used for service workers, can import `@enbox/browser` without
 adding Node global shims for `process`, `process.env`, `process.browser`,
 `process.emitWarning`, `global`, or the Node `events` builtin.
 
-`activatePolyfills()` is unrelated to Node-global shims. It installs browser
-DWeb/DRL behavior such as service-worker handling for `dweb` URLs; it is not a
-compatibility shim for the SDK package graph.
+`activatePolyfills()` is unrelated to Node-global shims. Every Enbox browser app
+must register a service worker that calls it so DRL requests reach the DWeb
+network stack; it is not a compatibility shim for the SDK package graph.
 
 ## Storage Model
 
@@ -70,7 +73,7 @@ and service workers on the same origin can safely write concurrently. SQLite
 over OPFS is not a drop-in browser replacement for this usage because it does
 not provide the same cross-context write behavior.
 
-### Activate Polyfills (required for any app that renders DWN-addressed content)
+### Activate Polyfills (required for every browser dapp)
 
 `activatePolyfills()` installs the **DWeb network stack**: a service worker
 fetch handler that resolves DRLs — DWN-addressed URLs such as
