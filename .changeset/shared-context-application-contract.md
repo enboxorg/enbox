@@ -15,7 +15,7 @@ subscriptions, membership, delivery health, invitations, and durable accepted
 context catalogs without handling tenants, grants, role records, encryption
 keys, or feed cursors. Invitation discovery uses a bounded newest-first inbox;
 unsolicited records can crowd out older invitations. Pagination continuation
-and inbox hardening remain tracked in #1552.
+and automatic junk cleanup are not yet available.
 
 Role-authorized feeds now support delegated callers and bounded encrypted
 bootstrap dependencies. The sync engine persists one pull-only exact-context

@@ -198,7 +198,7 @@ The lower-level
 
 Typed protocol composition through `$ref` is not inferred from incomplete
 local metadata. `defineProtocol()` rejects it for now; use the raw `enbox.dwn`
-API until the explicit composition contract tracked in #1462 is available.
+API when an application needs explicit protocol composition.
 
 ## Integration Testing
 
