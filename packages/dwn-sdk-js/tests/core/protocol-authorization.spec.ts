@@ -34,6 +34,17 @@ describe('ProtocolAuthorization', () => {
   });
 
   describe('getActionsSeekingARuleMatch()', () => {
+    it('should fail closed for an initial RecordsWrite without action rules', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const { recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+      const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
+      const validationStateReader = createTestValidationStateReader({ messageStore: messageStoreStub });
+
+      await expect(
+        getActionsSeekingARuleMatch(alice.did, recordsWrite, validationStateReader)
+      ).rejects.toThrow(DwnErrorCode.ProtocolAuthorizationActionRulesNotFound);
+    });
+
     it('should return empty array if unknown message method type is given', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 

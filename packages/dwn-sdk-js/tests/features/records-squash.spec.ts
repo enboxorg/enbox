@@ -615,6 +615,7 @@ export function testRecordsSquash(): void {
           alice.did, bobSquash.message, { dataStream: DataStream.fromBytes(editorSquashData) }
         );
         expect(bobSquashReply.status.code).toBe(401);
+        expect(bobSquashReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
         // admin squash is authorized by the explicit action
         const adminSquashTimestamp = Time.createOffsetTimestamp({ seconds: 20 });
@@ -1038,7 +1039,7 @@ export function testRecordsSquash(): void {
     });
 
     describe('squash authorization — negative', () => {
-      it('should reject squash when the author has neither squash nor create permission', async () => {
+      it('should reject squash when the author lacks explicit squash permission', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -1101,8 +1102,7 @@ export function testRecordsSquash(): void {
         const patchReply = await dwn.processMessage(alice.did, patch.message, { dataStream: patch.dataStream });
         expect(patchReply.status.code).toBe(202);
 
-        // bob tries to squash — bob is NOT author of document and has no editor role
-        // the squash action checks 'squash' first (no role), then falls back to 'create' (bob is not author of document)
+        // bob tries to squash without the editor role required by the explicit squash action
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const bobSquash = await RecordsWrite.create({
           signer           : Jws.createSigner(bob),
@@ -1119,8 +1119,8 @@ export function testRecordsSquash(): void {
         const bobSquashReply = await dwn.processMessage(
           alice.did, bobSquash.message, { dataStream: DataStream.fromBytes(TestDataGenerator.randomBytes(32)) }
         );
-        // bob should be rejected — either 401 (authorization failure)
         expect(bobSquashReply.status.code).toBe(401);
+        expect(bobSquashReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
       });
     });
 

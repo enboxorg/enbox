@@ -255,6 +255,12 @@ async function getWriteActionsSeekingARuleMatch(
   const incomingRecordsWrite = incomingMessage as RecordsWrite;
 
   if (await incomingRecordsWrite.isInitialWrite()) {
+    if (actionRules === undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationActionRulesNotFound,
+        'action rules are required when determining authorization actions for an initial RecordsWrite'
+      );
+    }
     return getInitialWriteActionsSeekingARuleMatch(incomingRecordsWrite, actionRules);
   } else {
     // else incoming RecordsWrite not an initial write
@@ -284,15 +290,15 @@ async function getWriteActionsSeekingARuleMatch(
  */
 export function getInitialWriteActionsSeekingARuleMatch(
   incomingRecordsWrite: RecordsWrite,
-  actionRules?: ProtocolActionRule[],
+  actionRules: ProtocolActionRule[],
 ): ProtocolAction[] {
   if (incomingRecordsWrite.message.descriptor.squash !== true) {
     return [ProtocolAction.Create];
   }
 
-  const hasExplicitSquashRule = actionRules?.some(
+  const hasExplicitSquashRule = actionRules.some(
     (actionRule: ProtocolActionRule): boolean => actionRule.can.includes(ProtocolAction.Squash)
-  ) ?? false;
+  );
 
   return hasExplicitSquashRule
     ? [ProtocolAction.Squash]
