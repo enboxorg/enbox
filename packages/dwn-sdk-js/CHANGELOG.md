@@ -1,5 +1,13 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.22
+
+### Patch Changes
+
+- [#1605](https://github.com/enboxorg/enbox/pull/1605) [`2eee007`](https://github.com/enboxorg/enbox/commit/2eee007892807d44dad8ce828afe19aee7dfe18d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Keep an explicit `squash` action separate from `create` authorization. A
+  `create` fallback remains available for protocol paths that define no explicit
+  `squash` action.
+
 ## 0.4.21
 
 ### Patch Changes

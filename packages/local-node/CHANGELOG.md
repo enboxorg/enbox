@@ -1,5 +1,13 @@
 # @enbox/local-node
 
+## 0.0.24
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @enbox/agent@0.8.38
+  - @enbox/dwn-server@0.1.37
+
 ## 0.0.23
 
 ### Patch Changes
