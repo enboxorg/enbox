@@ -7,15 +7,19 @@ import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ResolvedProtocolRole } from './protocol-authorization-action.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
+import type { ProtocolAction, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
 import { EncryptionControl } from './encryption-control.js';
 import { getRuleSetAtPath } from '../utils/protocols.js';
 import { isEncryptionControlPath } from './constants.js';
+import { ProtocolActor } from '../types/protocols-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
-import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
-import { authorizeAgainstAllowedActions, verifyInvokedRole } from './protocol-authorization-action.js';
+import {
+  authorizeAgainstAllowedActions,
+  getInitialWriteActionsSeekingARuleMatch,
+  verifyInvokedRole,
+} from './protocol-authorization-action.js';
 import {
   verifyAsRoleRecordIfNeeded,
   verifyImmutability,
@@ -399,9 +403,6 @@ export class ProtocolAuthorization {
       return;
     }
 
-    const actions = incomingMessage.message.descriptor.squash === true
-      ? [ProtocolAction.Squash, ProtocolAction.Create]
-      : [ProtocolAction.Create];
     const actionRules = ruleSet.$actions;
     if (actionRules === undefined) {
       throw new DwnError(
@@ -409,6 +410,7 @@ export class ProtocolAuthorization {
         `no create action rule defined for stored RecordsWrite by author ${incomingMessage.author}`
       );
     }
+    const actions = getInitialWriteActionsSeekingARuleMatch(incomingMessage, actionRules);
 
     const invokedRole = incomingMessage.signaturePayload?.protocolRole;
     for (const actionRule of actionRules) {

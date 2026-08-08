@@ -299,6 +299,8 @@ export type ProtocolRuleSet = {
    * atomically creates a new record (the snapshot) and deletes all sibling records
    * at the same protocol path within the same parent context that have a
    * `messageTimestamp` strictly older than the squash record's `messageTimestamp`.
+   * When the path has an explicit `squash` action, only a matching `squash` rule
+   * authorizes the write. Without one, `create` authorization is the fallback.
    */
   $squash?: boolean;
 

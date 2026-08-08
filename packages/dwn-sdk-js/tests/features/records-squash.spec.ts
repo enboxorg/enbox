@@ -504,23 +504,28 @@ export function testRecordsSquash(): void {
     });
 
     describe('squash authorization', () => {
-      it('should authorize squash via explicit squash action rule', async () => {
+      it('should keep explicit squash authorization separate from create', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        // protocol where only editors can squash
-        const editorSquashProtocol: ProtocolDefinition = {
-          protocol  : 'http://editor-squash.xyz',
+        const roleSeparatedSquashProtocol: ProtocolDefinition = {
+          protocol  : 'http://role-separated-squash.xyz',
           published : true,
           types     : {
             document : {},
+            admin    : {},
             editor   : {},
             patch    : {},
           },
           structure: {
             document: {
               $actions : [{ who: 'anyone', can: ['create', 'read'] }],
-              editor   : {
+              admin    : {
+                $role    : true,
+                $actions : [{ who: 'author', of: 'document', can: ['create', 'delete'] }],
+              },
+              editor: {
                 $role    : true,
                 $actions : [{ who: 'author', of: 'document', can: ['create', 'delete'] }],
               },
@@ -528,8 +533,8 @@ export function testRecordsSquash(): void {
                 $immutable : true,
                 $squash    : true,
                 $actions   : [
-                  { who: 'anyone', can: ['create', 'read'] },
-                  { role: 'document/editor', can: ['squash'] },
+                  { role: 'document/admin', can: ['create', 'read', 'squash'] },
+                  { role: 'document/editor', can: ['create', 'read'] },
                 ],
               }
             }
@@ -538,7 +543,7 @@ export function testRecordsSquash(): void {
 
         const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
           author             : alice,
-          protocolDefinition : editorSquashProtocol,
+          protocolDefinition : roleSeparatedSquashProtocol,
         });
         const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
         expect(configReply.status.code).toBe(202);
@@ -546,7 +551,7 @@ export function testRecordsSquash(): void {
         // create parent document
         const document = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
-          protocol     : editorSquashProtocol.protocol,
+          protocol     : roleSeparatedSquashProtocol.protocol,
           protocolPath : 'document',
         });
         const docReply = await dwn.processMessage(alice.did, document.message, { dataStream: document.dataStream });
@@ -554,24 +559,34 @@ export function testRecordsSquash(): void {
 
         const documentContextId = document.message.contextId;
 
-        // give bob the editor role
         const editorRole = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
           recipient       : bob.did,
-          protocol        : editorSquashProtocol.protocol,
+          protocol        : roleSeparatedSquashProtocol.protocol,
           protocolPath    : 'document/editor',
           parentContextId : documentContextId,
         });
         const editorReply = await dwn.processMessage(alice.did, editorRole.message, { dataStream: editorRole.dataStream });
         expect(editorReply.status.code).toBe(202);
 
-        // create some patches
+        const adminRole = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          recipient       : carol.did,
+          protocol        : roleSeparatedSquashProtocol.protocol,
+          protocolPath    : 'document/admin',
+          parentContextId : documentContextId,
+        });
+        const adminReply = await dwn.processMessage(alice.did, adminRole.message, { dataStream: adminRole.dataStream });
+        expect(adminReply.status.code).toBe(202);
+
+        // editor create remains authorized for normal immutable patches
         for (let i = 0; i < 3; i++) {
           const timestamp = Time.createOffsetTimestamp({ seconds: i + 1 });
           const patch = await TestDataGenerator.generateRecordsWrite({
-            author           : alice,
-            protocol         : editorSquashProtocol.protocol,
+            author           : bob,
+            protocol         : roleSeparatedSquashProtocol.protocol,
             protocolPath     : 'document/patch',
+            protocolRole     : 'document/editor',
             parentContextId  : documentContextId,
             messageTimestamp : timestamp,
             dateCreated      : timestamp,
@@ -580,32 +595,53 @@ export function testRecordsSquash(): void {
           expect(reply.status.code).toBe(202);
         }
 
-        // bob squashes by invoking the editor role
-        const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
-        const squashData = TestDataGenerator.randomBytes(64);
+        // editor create permission must not authorize a squash
+        const editorSquashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+        const editorSquashData = TestDataGenerator.randomBytes(64);
         const bobSquash = await RecordsWrite.create({
           signer           : Jws.createSigner(bob),
-          protocol         : editorSquashProtocol.protocol,
+          protocol         : roleSeparatedSquashProtocol.protocol,
           protocolPath     : 'document/patch',
           protocolRole     : 'document/editor',
           parentContextId  : documentContextId,
           dataFormat       : 'application/json',
-          data             : squashData,
-          messageTimestamp : squashTimestamp,
-          dateCreated      : squashTimestamp,
+          data             : editorSquashData,
+          messageTimestamp : editorSquashTimestamp,
+          dateCreated      : editorSquashTimestamp,
           squash           : true,
         });
 
         const bobSquashReply = await dwn.processMessage(
-          alice.did, bobSquash.message, { dataStream: DataStream.fromBytes(squashData) }
+          alice.did, bobSquash.message, { dataStream: DataStream.fromBytes(editorSquashData) }
         );
-        expect(bobSquashReply.status.code).toBe(202);
+        expect(bobSquashReply.status.code).toBe(401);
+
+        // admin squash is authorized by the explicit action
+        const adminSquashTimestamp = Time.createOffsetTimestamp({ seconds: 20 });
+        const adminSquashData = TestDataGenerator.randomBytes(64);
+        const carolSquash = await RecordsWrite.create({
+          signer           : Jws.createSigner(carol),
+          protocol         : roleSeparatedSquashProtocol.protocol,
+          protocolPath     : 'document/patch',
+          protocolRole     : 'document/admin',
+          parentContextId  : documentContextId,
+          dataFormat       : 'application/json',
+          data             : adminSquashData,
+          messageTimestamp : adminSquashTimestamp,
+          dateCreated      : adminSquashTimestamp,
+          squash           : true,
+        });
+
+        const carolSquashReply = await dwn.processMessage(
+          alice.did, carolSquash.message, { dataStream: DataStream.fromBytes(adminSquashData) }
+        );
+        expect(carolSquashReply.status.code).toBe(202);
 
         // verify patches were deleted
         const query = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol     : editorSquashProtocol.protocol,
+            protocol     : roleSeparatedSquashProtocol.protocol,
             protocolPath : 'document/patch',
             contextId    : documentContextId,
           },
@@ -613,7 +649,7 @@ export function testRecordsSquash(): void {
         const queryReply = await dwn.processMessage(alice.did, query.message);
         expect(queryReply.status.code).toBe(200);
         expect(queryReply.entries!).toHaveLength(1);
-        expect(queryReply.entries![0].recordId).toBe(bobSquash.message.recordId);
+        expect(queryReply.entries![0].recordId).toBe(carolSquash.message.recordId);
       });
 
       it('should authorize squash via create fallback when no explicit squash rule exists', async () => {
