@@ -175,6 +175,7 @@ export async function getActionsSeekingARuleMatch(
   tenant: string,
   incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
   validationStateReader: ValidationStateReader,
+  actionRules?: ProtocolActionRule[],
 ): Promise<ProtocolAction[]> {
 
   switch (incomingMessage.message.descriptor.method) {
@@ -194,7 +195,7 @@ export async function getActionsSeekingARuleMatch(
     return [ProtocolAction.Read];
 
   case DwnMethodName.Write:
-    return getWriteActionsSeekingARuleMatch(tenant, incomingMessage, validationStateReader);
+    return getWriteActionsSeekingARuleMatch(tenant, incomingMessage, validationStateReader, actionRules);
   }
 
   // purely defensive programming: should not be reachable
@@ -249,16 +250,18 @@ async function getWriteActionsSeekingARuleMatch(
   tenant: string,
   incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
   validationStateReader: ValidationStateReader,
+  actionRules?: ProtocolActionRule[],
 ): Promise<ProtocolAction[]> {
   const incomingRecordsWrite = incomingMessage as RecordsWrite;
 
   if (await incomingRecordsWrite.isInitialWrite()) {
-    // A squash write seeks the `squash` action first, with fallback to `create`.
-    // This means any DID authorized to `create` can also squash when no explicit `squash` rule exists.
-    if (incomingRecordsWrite.message.descriptor.squash === true) {
-      return [ProtocolAction.Squash, ProtocolAction.Create];
+    if (actionRules === undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationActionRulesNotFound,
+        'action rules are required when determining authorization actions for an initial RecordsWrite'
+      );
     }
-    return [ProtocolAction.Create];
+    return getInitialWriteActionsSeekingARuleMatch(incomingRecordsWrite, actionRules);
   } else {
     // else incoming RecordsWrite not an initial write
 
@@ -281,6 +284,28 @@ async function getWriteActionsSeekingARuleMatch(
 }
 
 /**
+ * Returns the actions that can authorize an initial write. An explicit `squash`
+ * rule makes squash authorization exclusive; `create` remains a compatibility
+ * fallback only when the rule set has no explicit squash action.
+ */
+export function getInitialWriteActionsSeekingARuleMatch(
+  incomingRecordsWrite: RecordsWrite,
+  actionRules: ProtocolActionRule[],
+): ProtocolAction[] {
+  if (incomingRecordsWrite.message.descriptor.squash !== true) {
+    return [ProtocolAction.Create];
+  }
+
+  const hasExplicitSquashRule = actionRules.some(
+    (actionRule: ProtocolActionRule): boolean => actionRule.can.includes(ProtocolAction.Squash)
+  );
+
+  return hasExplicitSquashRule
+    ? [ProtocolAction.Squash]
+    : [ProtocolAction.Squash, ProtocolAction.Create];
+}
+
+/**
  * Verifies the given message is authorized by one of the action rules in the given protocol rule set.
  * @param protocolDefinition Optional protocol definition for resolving cross-protocol `of` and `role` references.
  * @throws {Error} if action not allowed.
@@ -294,7 +319,6 @@ export async function authorizeAgainstAllowedActions(
   protocolDefinition?: ProtocolDefinition,
 ): Promise<void> {
   const incomingMessageMethod = incomingMessage.message.descriptor.method;
-  const actionsSeekingARuleMatch = await getActionsSeekingARuleMatch(tenant, incomingMessage, validationStateReader);
   const author = incomingMessage.author;
   const actionRules = ruleSet.$actions;
 
@@ -306,6 +330,10 @@ export async function authorizeAgainstAllowedActions(
       `no action rule defined for Records${incomingMessageMethod}, ${author} is unauthorized`
     );
   }
+
+  const actionsSeekingARuleMatch = await getActionsSeekingARuleMatch(
+    tenant, incomingMessage, validationStateReader, actionRules
+  );
 
   const invokedRole = incomingMessage.signaturePayload?.protocolRole;
 

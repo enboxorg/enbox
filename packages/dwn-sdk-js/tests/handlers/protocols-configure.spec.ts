@@ -690,6 +690,164 @@ export function testProtocolsConfigureHandler(): void {
         expect(tenantMessages.messages.length).toBeGreaterThan(0);
       });
 
+      it('should revalidate stored squash records against explicit squash authorization', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocol = 'http://config-validity.example/squash-action-history';
+        const createSquashDefinition = (adminActions: ProtocolAction[]): ProtocolDefinition => ({
+          protocol,
+          published : true,
+          types     : {
+            admin    : {},
+            document : {},
+            editor   : {},
+            patch    : {},
+          },
+          structure: {
+            document: {
+              $actions : [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+              admin    : {
+                $role    : true,
+                $actions : [{
+                  who : 'author',
+                  of  : 'document',
+                  can : [ProtocolAction.Create, ProtocolAction.Delete],
+                }],
+              },
+              editor: {
+                $role    : true,
+                $actions : [{
+                  who : 'author',
+                  of  : 'document',
+                  can : [ProtocolAction.Create, ProtocolAction.Delete],
+                }],
+              },
+              patch: {
+                $immutable : true,
+                $squash    : true,
+                $actions   : [
+                  { role: 'document/admin', can: adminActions },
+                  { role: 'document/editor', can: [ProtocolAction.Create, ProtocolAction.Read] },
+                ],
+              },
+            },
+          },
+        });
+        const createFallbackDefinition = createSquashDefinition([
+          ProtocolAction.Create,
+          ProtocolAction.Read,
+        ]);
+        const explicitSquashDefinition = createSquashDefinition([
+          ProtocolAction.Create,
+          ProtocolAction.Read,
+          ProtocolAction.Squash,
+        ]);
+
+        const createFallbackConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          messageTimestamp   : '2025-06-01T00:00:00.000000Z',
+          protocolDefinition : createFallbackDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, createFallbackConfig.message)).status.code).toBe(202);
+
+        const editorDocument = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          dateCreated      : '2025-06-03T00:00:00.000000Z',
+          messageTimestamp : '2025-06-03T00:00:00.000000Z',
+          protocol,
+          protocolPath     : 'document',
+        });
+        expect((await dwn.processMessage(
+          alice.did, editorDocument.message, { dataStream: editorDocument.dataStream }
+        )).status.code).toBe(202);
+
+        const adminDocument = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          dateCreated      : '2025-06-03T01:00:00.000000Z',
+          messageTimestamp : '2025-06-03T01:00:00.000000Z',
+          protocol,
+          protocolPath     : 'document',
+        });
+        expect((await dwn.processMessage(
+          alice.did, adminDocument.message, { dataStream: adminDocument.dataStream }
+        )).status.code).toBe(202);
+
+        const editorRole = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          dateCreated      : '2025-06-03T02:00:00.000000Z',
+          messageTimestamp : '2025-06-03T02:00:00.000000Z',
+          parentContextId  : editorDocument.message.contextId,
+          protocol,
+          protocolPath     : 'document/editor',
+          recipient        : bob.did,
+        });
+        expect((await dwn.processMessage(
+          alice.did, editorRole.message, { dataStream: editorRole.dataStream }
+        )).status.code).toBe(202);
+
+        const adminRole = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          dateCreated      : '2025-06-03T03:00:00.000000Z',
+          messageTimestamp : '2025-06-03T03:00:00.000000Z',
+          parentContextId  : adminDocument.message.contextId,
+          protocol,
+          protocolPath     : 'document/admin',
+          recipient        : carol.did,
+        });
+        expect((await dwn.processMessage(
+          alice.did, adminRole.message, { dataStream: adminRole.dataStream }
+        )).status.code).toBe(202);
+
+        const editorSquash = await TestDataGenerator.generateRecordsWrite({
+          author           : bob,
+          dateCreated      : '2025-06-04T00:00:00.000000Z',
+          messageTimestamp : '2025-06-04T00:00:00.000000Z',
+          parentContextId  : editorDocument.message.contextId,
+          protocol,
+          protocolPath     : 'document/patch',
+          protocolRole     : 'document/editor',
+          squash           : true,
+        });
+        expect((await dwn.processMessage(
+          alice.did, editorSquash.message, { dataStream: editorSquash.dataStream }
+        )).status.code).toBe(202);
+
+        const adminSquash = await TestDataGenerator.generateRecordsWrite({
+          author           : carol,
+          dateCreated      : '2025-06-04T01:00:00.000000Z',
+          messageTimestamp : '2025-06-04T01:00:00.000000Z',
+          parentContextId  : adminDocument.message.contextId,
+          protocol,
+          protocolPath     : 'document/patch',
+          protocolRole     : 'document/admin',
+          squash           : true,
+        });
+        expect((await dwn.processMessage(
+          alice.did, adminSquash.message, { dataStream: adminSquash.dataStream }
+        )).status.code).toBe(202);
+
+        const explicitSquashConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          messageTimestamp   : '2025-06-02T00:00:00.000000Z',
+          protocolDefinition : explicitSquashDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, explicitSquashConfig.message)).status.code).toBe(202);
+
+        const invalidEditorMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : editorSquash.message.recordId,
+        }]);
+        expect(invalidEditorMessages.messages).toHaveLength(0);
+
+        const validAdminMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : adminSquash.message.recordId,
+        }]);
+        expect(validAdminMessages.messages.length).toBeGreaterThan(0);
+      });
+
       it('should preserve grant-authorized records if the grant is later deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
