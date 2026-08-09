@@ -119,6 +119,61 @@ describe('typed record subscriptions', () => {
       .rejects.toThrow('initial replay requires a context-bound records surface');
   });
 
+  it('scopes ordinary subscriptions to their caller and closes a late handle', async () => {
+    const firstClose = sinon.stub().resolves();
+    const lateClose = sinon.stub().resolves();
+    let finishOpening!: (reply: unknown) => void;
+    const pendingReply = new Promise(resolve => { finishOpening = resolve; });
+    const subscribeRecordFrames = sinon.stub();
+    subscribeRecordFrames.onFirstCall().resolves({
+      status       : { code: 200, detail: 'OK' },
+      subscription : { id: 'first', close: firstClose },
+    });
+    subscribeRecordFrames.onSecondCall().returns(pendingReply);
+    const typed = new TypedEnbox({
+      connectedDid      : 'did:example:alice',
+      followedContextId : undefined,
+      followedSourceId  : undefined,
+      recordTenantDid   : 'did:example:alice',
+      subscribeRecordFrames,
+    } as unknown as DwnApi, protocol);
+    (typed as unknown as { _configured: boolean })._configured = true;
+
+    const activeController = new AbortController();
+    const active = await typed.records.subscribe(
+      'note',
+      { signal: activeController.signal },
+      (): void => {},
+    );
+    activeController.abort(new Error('stream hidden'));
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(firstClose.calledOnce).toBe(true);
+    });
+    await active.close();
+    expect(firstClose.calledOnce).toBe(true);
+
+    const openingController = new AbortController();
+    const opening = typed.records.subscribe(
+      'note',
+      { signal: openingController.signal },
+      (): void => {},
+    );
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(subscribeRecordFrames.calledTwice).toBe(true);
+    });
+    const reason = new Error('route changed');
+    openingController.abort(reason);
+    await expect(opening).rejects.toBe(reason);
+
+    finishOpening({
+      status       : { code: 200, detail: 'OK' },
+      subscription : { id: 'late', close: lateClose },
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(lateClose.calledOnce).toBe(true);
+    });
+  });
+
   it('hands paginated initial records to one live stream without missing overlap', async () => {
     const first = testRecord('first', '2026-01-01T00:00:00.000000Z');
     const current = testRecord('mutable', '2026-01-01T00:00:02.000000Z');

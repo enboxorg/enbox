@@ -518,7 +518,8 @@ describe('TypedEnbox contexts', () => {
     });
 
     const owned = await typed.contexts.open('workspace', contextId);
-    const view = await owned.members().observe();
+    const controller = new AbortController();
+    const view = await owned.members().observe({ signal: controller.signal });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(view.getState().status).toBe('ready');
     }, Poller.pollRetrySleep, 1_000);
@@ -585,10 +586,13 @@ describe('TypedEnbox contexts', () => {
       ],
     });
 
-    await view.close();
+    controller.abort(new Error('member list hidden'));
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(transports.get(protocolRole)?.close.calledOnce).toBe(true);
+      expect(transports.get(viewerRole)?.close.calledOnce).toBe(true);
+    }, Poller.pollRetrySleep, 1_000);
+    expect(view.getState().status).toBe('ready');
     expect(deliveryListeners.size).toBe(0);
-    expect(transports.get(protocolRole)?.close.calledOnce).toBe(true);
-    expect(transports.get(viewerRole)?.close.calledOnce).toBe(true);
   });
 
   it('rejects a context ID at a different protocol depth', async () => {
@@ -1094,7 +1098,8 @@ describe('TypedEnbox contexts', () => {
       }
       throw new Error(`Unexpected local request: ${request.messageType}`);
     });
-    const view = await typed.contexts.observe();
+    const controller = new AbortController();
+    const view = await typed.contexts.observe({ signal: controller.signal });
 
     expect(await view.ready()).toMatchObject({
       status   : 'ready',
@@ -1112,8 +1117,49 @@ describe('TypedEnbox contexts', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(view.getState().contexts).toEqual([]);
 
-    await view.close();
+    controller.abort(new Error('catalog hidden'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(view.getState().status).toBe('ready');
     expect(transport.close.calledOnce).toBe(true);
+  });
+
+  it('rejects a caller abort while the context catalog opens and closes the late subscription', async () => {
+    const transport = { close: sinon.stub().resolves() };
+    let finishSubscribe!: (value: unknown) => void;
+    let markSubscribeStarted!: () => void;
+    const subscribeStarted = new Promise<void>((resolve) => { markSubscribeStarted = resolve; });
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.MessagesSubscribe) {
+        markSubscribeStarted();
+        return await new Promise((resolve) => { finishSubscribe = resolve; });
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        throw new Error('aborted context view must not query');
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    const controller = new AbortController();
+    const opening = typed.contexts.observe({ signal: controller.signal });
+    await subscribeStarted;
+
+    const reason = new Error('catalog no longer needed');
+    controller.abort(reason);
+    await expect(opening).rejects.toBe(reason);
+    finishSubscribe({
+      reply: {
+        status       : { code: 200, detail: 'OK' },
+        subscription : transport,
+      },
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(transport.close.calledOnce).toBe(true);
+    });
   });
 
   it('projects one newest invitation and dismisses represented duplicates idempotently', async () => {
@@ -1174,6 +1220,17 @@ describe('TypedEnbox contexts', () => {
       .toEqual(['invite-current', 'invite-old']);
     await expect(invitations[0].accept()).rejects.toThrow('invitation is no longer pending');
     expect(follow.notCalled).toBe(true);
+  });
+
+  it('rejects an invitation view whose caller already ended', async () => {
+    const controller = new AbortController();
+    const reason = new Error('invitations hidden');
+    controller.abort(reason);
+
+    await expect(typed.contexts.invitations.observe({
+      signal: controller.signal,
+    })).rejects.toBe(reason);
+    expect(agent.processDwnRequest.notCalled).toBe(true);
   });
 
   it('keeps a failed acceptance retryable and does not turn cleanup failure into a false rejection', async () => {

@@ -9,6 +9,7 @@ import { ContextRetiredError } from './context-errors.js';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { ObservedView } from './observed-view.js';
+import { openView } from './view-opening.js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
@@ -84,6 +85,7 @@ type CompiledRecordQuery = ReturnType<typeof compileRecordQuery>;
 /** @internal Dependencies supplied by {@link TypedEnbox} for one view. */
 type RecordViewOptions<Item> = {
   additionalWakeFilters?: readonly RecordsFilter[];
+  callerSignal?: AbortSignal;
   definition: ProtocolDefinition;
   dwn: DwnApi;
   expandBy?: number;
@@ -107,9 +109,10 @@ type PullCurrentnessChangeEvent = Extract<SyncEvent, { type: 'pull:currentness-c
 export async function createRecordView<Item = Record>(
   options: RecordViewOptions<Item>,
 ): Promise<RecordView<Item>> {
+  options.callerSignal?.throwIfAborted();
   options.signal?.throwIfAborted();
   const view = new ObservedRecordView<Item>(options);
-  await view.open();
+  await openView(view, [options.callerSignal, options.signal]);
   return view;
 }
 
@@ -122,9 +125,10 @@ export async function createExpandableRecordView<Item = Record>(
     throw new TypeError('ExpandableRecordView: pagination.limit must be a positive safe integer.');
   }
 
+  options.callerSignal?.throwIfAborted();
   options.signal?.throwIfAborted();
   const view = new ObservedRecordView<Item>({ ...options, expandBy: limit });
-  await view.open();
+  await openView(view, [options.callerSignal, options.signal]);
   return view;
 }
 
@@ -137,6 +141,7 @@ type PendingLoad = {
 /** One serialized, wake-driven materialization resource. */
 class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> implements RecordView<Item> {
   private readonly _additionalWakeFilters: readonly RecordsFilter[];
+  private readonly _callerSignal?: AbortSignal;
   private readonly _definition: ProtocolDefinition;
   private readonly _dwn: DwnApi;
   private readonly _expandBy?: number;
@@ -151,16 +156,24 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   private readonly _followedSourceId?: string;
 
   private _hasMaterialized = false;
+  private _hasTerminationReason = false;
   private _isOpen = false;
   private _limit?: number;
   private _loadMorePromise?: Promise<void>;
   private _pendingLoad?: PendingLoad;
+  private _terminationReason?: unknown;
   private readonly _subscriptions: { close(): Promise<void> }[] = [];
   private _syncUnsubscribe?: () => void;
   private _wakeUnsubscribe?: () => void;
 
   private readonly _handleAbort = (): void => {
+    this.captureTerminationReason(this._signal?.reason);
     this.publishError(new Error('RecordView: owning session ended.', { cause: this._signal?.reason }));
+    void this.close().catch((): void => {});
+  };
+
+  private readonly _handleCallerAbort = (): void => {
+    this.captureTerminationReason(this._callerSignal?.reason);
     void this.close().catch((): void => {});
   };
 
@@ -172,6 +185,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       current : false,
     }));
     this._additionalWakeFilters = options.additionalWakeFilters ?? [];
+    this._callerSignal = options.callerSignal;
     this._definition = options.definition;
     this._dwn = options.dwn;
     this._expandBy = options.expandBy;
@@ -188,6 +202,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     this._followedSourceAcceptanceId = options.dwn.followedSourceAcceptanceId;
     this._followedSourceId = options.dwn.followedSourceId;
 
+    this._callerSignal?.addEventListener('abort', this._handleCallerAbort, { once: true });
     this._signal?.addEventListener('abort', this._handleAbort, { once: true });
     this._syncUnsubscribe = this._sync?.on((event): void => {
       this.handleSyncEvent(event);
@@ -227,6 +242,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     this._wakeUnsubscribe = undefined;
     this._syncUnsubscribe?.();
     this._syncUnsubscribe = undefined;
+    this._callerSignal?.removeEventListener('abort', this._handleCallerAbort);
     this._signal?.removeEventListener('abort', this._handleAbort);
 
     const subscriptions = this._subscriptions.splice(0);
@@ -274,7 +290,14 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   }
 
   private get terminationReason(): unknown {
-    return this._signal?.aborted ? this._signal.reason : this._closeController.signal.reason;
+    return this._hasTerminationReason ? this._terminationReason : this._closeController.signal.reason;
+  }
+
+  private captureTerminationReason(reason: unknown): void {
+    if (!this._hasTerminationReason) {
+      this._hasTerminationReason = true;
+      this._terminationReason = reason;
+    }
   }
 
   /** Open one wake subscription and retain its handle only after validating the reply. */
@@ -292,6 +315,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
 
     if (this.isClosed) {
       await reply.subscription?.close();
+      this._callerSignal?.throwIfAborted();
       this._signal?.throwIfAborted();
       throw new Error('RecordView: closed while opening the subscription.');
     }

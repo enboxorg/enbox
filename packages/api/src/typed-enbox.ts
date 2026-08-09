@@ -78,6 +78,7 @@ import {
   resolveProtocolRoleContextScope,
 } from '@enbox/dwn-sdk-js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
+import { combineAbortSignals, whileSignalsActive } from './view-opening.js';
 import {
   CONTEXT_INVITATION_PATH,
   contextInvitationCodec,
@@ -234,11 +235,13 @@ type TypedRecordChangeEvent<
 type RecordSubscriptionSelection<Path extends string> = Path | readonly Path[];
 
 type RecordSubscriptionOptions = Readonly<{
+  /** Abort this subscription without closing the typed API or bound context. */
+  signal?: AbortSignal;
+}>;
+
+type InitialRecordSubscriptionOptions = RecordSubscriptionOptions & Readonly<{
   /** Replay each selected context path oldest-first before switching to live delivery. */
   initial: true;
-
-  /** Abort this replay and its live subscription without closing the context. */
-  signal?: AbortSignal;
 }>;
 
 type SelectedSubscriptionPaths<Selection, Path extends string = string> = Selection extends Path
@@ -252,7 +255,9 @@ type TypedRecordsSubscribeArguments<
 > = ContextBound extends true
   ? | [listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>]
     | [options: RecordSubscriptionOptions, listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>]
-  : [listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>];
+    | [options: InitialRecordSubscriptionOptions, listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>]
+  : | [listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>]
+    | [options: RecordSubscriptionOptions, listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>];
 
 type ProtocolSubscriptionPaths<D extends ProtocolDefinition, Selection> = SelectedSubscriptionPaths<
   Selection,
@@ -373,6 +378,8 @@ type ObserveRequest<
   Query extends RecordQuery<D, Path>,
 > = Omit<Query, 'pagination'> & {
   pagination: { limit: number };
+  /** Abort this view without ending the owning typed API or bound context. */
+  signal?: AbortSignal;
 } & ([Materialization] extends [undefined]
   ? { materialize?: undefined }
   : { materialize: Materialization });
@@ -468,7 +475,9 @@ export type ContextInvitationsApi<
   Group extends string = string,
 > = Readonly<{
   list(options?: Readonly<{ limit?: number }>): Promise<ContextInvitation<Context, Group>[]>;
-  observe(options?: Readonly<{ limit?: number }>): Promise<RecordView<ContextInvitation<Context, Group>>>;
+  observe(options?: Readonly<{ limit?: number; signal?: AbortSignal }>): Promise<
+    RecordView<ContextInvitation<Context, Group>>
+  >;
 }>;
 
 type ProtocolContextInvitation<
@@ -512,7 +521,7 @@ export type ContextMembersApi<
    * Observe the current preferred assignment for every member in this role group.
    * Delivery is sampled whenever membership or delivery state rematerializes the view.
    */
-  observe(): Promise<RecordView<ContextMember<D, C, Role>>>;
+  observe(options?: Readonly<{ signal?: AbortSignal }>): Promise<RecordView<ContextMember<D, C, Role>>>;
   remove(did: string): Promise<void>;
   /** Reconcile protocol-wide delivery, then return this member's current row. */
   retryDelivery(did: string): Promise<ContextMember<D, C, Role> | undefined>;
@@ -654,7 +663,7 @@ export type ContextsApi<
   /** List owned and accepted member contexts in the local catalog. */
   list(): Promise<ProtocolContext<D, C, G>[]>;
   /** Observe owned and accepted member contexts in the local catalog. */
-  observe(): Promise<ContextView<ProtocolContext<D, C, G>>>;
+  observe(options?: Readonly<{ signal?: AbortSignal }>): Promise<ContextView<ProtocolContext<D, C, G>>>;
 } & (G extends { readonly default: readonly [string, ...string[]] } ? {
   invitations: ContextInvitationsApi<
     MemberContext<D, C, Extract<RoleGroupRoles<G, RoleGroupName<G>>, ContextRolePath<D>>>,
@@ -1619,6 +1628,7 @@ export class TypedEnbox<
     const openCatalogWakeSubscription = async (
       wake: () => void,
       fail: (error: Error) => void,
+      signal?: AbortSignal,
     ): Promise<{ close(): Promise<void> }> => {
       const detachSync = this._options.sync?.on((event): void => {
         if (
@@ -1632,7 +1642,7 @@ export class TypedEnbox<
       try {
         const records = contextRoots.length === 0
           ? undefined
-          : await this.records.subscribe(contextRoots, (event): void => {
+          : await this.records.subscribe(contextRoots, { signal }, (event): void => {
             if (event.type === 'error') {
               fail(event.error);
             } else {
@@ -1658,17 +1668,19 @@ export class TypedEnbox<
         invitations: {
           list: async (options?: { limit?: number }): Promise<ProtocolContextInvitation<D, C, G>[]> =>
             this.listContextInvitations(options?.limit, followContext),
-          observe: async (options?: { limit?: number }): Promise<
+          observe: async (options?: { limit?: number; signal?: AbortSignal }): Promise<
             RecordView<ProtocolContextInvitation<D, C, G>>
-          > => this.observeContextInvitations(options?.limit, followContext),
+          > => this.observeContextInvitations(options?.limit, followContext, options?.signal),
         },
       } : {}),
       list    : listContexts,
-      observe : async (): Promise<ContextView<ProtocolContext<D, C, G>>> => createContextView({
-        list                 : listContexts,
-        openWakeSubscription : openCatalogWakeSubscription,
-        signal               : this._options.signal,
-      }),
+      observe : async (options?: { signal?: AbortSignal }): Promise<ContextView<ProtocolContext<D, C, G>>> =>
+        createContextView({
+          callerSignal         : options?.signal,
+          list                 : listContexts,
+          openWakeSubscription : (wake, fail) => openCatalogWakeSubscription(wake, fail, options?.signal),
+          signal               : this._options.signal,
+        }),
     } as ContextsApi<D, C, G>;
     return this._contexts;
   }
@@ -2025,7 +2037,10 @@ export class TypedEnbox<
       throw new TypeError('TypedEnbox.records.subscribe: at least one protocol path is required.');
     }
     const paths = [...new Set(requestedPaths.map(normalizePath))];
-    await Promise.all(paths.map(path => this._ensureReady(path)));
+    await whileSignalsActive(
+      () => Promise.all(paths.map(path => this._ensureReady(path))),
+      [signal],
+    );
     signal?.throwIfAborted();
 
     let closed = false;
@@ -2051,6 +2066,9 @@ export class TypedEnbox<
     const contextId = this._options.context?.contextId;
     if (followedSourceId !== undefined && contextId !== undefined && this._options.sync !== undefined) {
       detachSync = this._options.sync.on((event): void => {
+        if (closed || signal?.aborted === true) {
+          return;
+        }
         if (
           event.type === 'followed-context:change' &&
           event.actorDid === this._dwn.connectedDid &&
@@ -2074,7 +2092,7 @@ export class TypedEnbox<
       });
     }
 
-    const reply = await this._dwn.subscribeRecordFrames({
+    const opening = this._dwn.subscribeRecordFrames({
       paths,
       protocol: this.protocol,
     }, async (message, record): Promise<void> => {
@@ -2097,9 +2115,13 @@ export class TypedEnbox<
           error : new Error(`Record subscription failed (${message.error.code}): ${message.error.detail}`),
         });
       }
-    }).catch((error: unknown): never => {
+    });
+    const reply = await whileSignalsActive(() => opening, [signal]).catch((error: unknown): never => {
       closed = true;
       detachSync();
+      void opening.then(async (lateReply): Promise<void> => {
+        await lateReply.subscription?.close();
+      }).catch((): void => {});
       throw error;
     });
 
@@ -2129,10 +2151,18 @@ export class TypedEnbox<
     };
     if (closed || signal?.aborted === true) {
       detachSync();
-      await closeSubscription();
+      let closeFailure: unknown;
+      try {
+        await closeSubscription();
+      } catch (error: unknown) {
+        closeFailure = error;
+      }
       signal?.throwIfAborted();
       if (listenerFailure !== undefined) {
         throw listenerFailure.error;
+      }
+      if (closeFailure !== undefined) {
+        throw closeFailure;
       }
       throw new Error('TypedEnbox.records.subscribe: closed while opening the subscription.');
     }
@@ -2150,7 +2180,7 @@ export class TypedEnbox<
     const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>,
   >(
     selection: Selection,
-    options: RecordSubscriptionOptions,
+    options: InitialRecordSubscriptionOptions,
     listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
   ): Promise<RecordSubscription> {
     if (this._options.context === undefined) {
@@ -2159,28 +2189,10 @@ export class TypedEnbox<
     type Change = TypedRecordChangeEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>;
     type Event = TypedRecordSubscriptionEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>;
     const overflow = new AbortController();
-    const signals = [this._options.signal, options.signal, overflow.signal].filter(
-      (signal): signal is AbortSignal => signal !== undefined,
-    );
-    const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+    const signal = combineAbortSignals(this._options.signal, options.signal, overflow.signal)!;
     signal.throwIfAborted();
-    const whileOpening = async <T>(operation: Promise<T>): Promise<T> => {
-      signal.throwIfAborted();
-      let detachAbort = (): void => {};
-      const cancelled = new Promise<never>((_resolve, reject): void => {
-        const onAbort = (): void => reject(signal.reason);
-        signal.addEventListener('abort', onAbort, { once: true });
-        detachAbort = (): void => signal.removeEventListener('abort', onAbort);
-        if (signal.aborted) {
-          onAbort();
-        }
-      });
-      try {
-        return await Promise.race([operation, cancelled]);
-      } finally {
-        detachAbort();
-      }
-    };
+    const whileOpening = <T>(operation: () => Promise<T>): Promise<T> =>
+      whileSignalsActive(operation, [signal]);
     const bufferedChanges: Change[] = [];
     let subscriptionError: Error | undefined;
     const assertActive = (): void => {
@@ -2205,7 +2217,7 @@ export class TypedEnbox<
     };
     let subscription: RecordSubscription;
     try {
-      subscription = await whileOpening(this.subscribeToRecordPaths(selection, event => receive(event), signal));
+      subscription = await whileOpening(() => this.subscribeToRecordPaths(selection, event => receive(event), signal));
     } catch (error: unknown) {
       assertActive();
       throw error;
@@ -2215,15 +2227,18 @@ export class TypedEnbox<
     let opening = true;
     const deliver = async (event: Event): Promise<void> => {
       assertActive();
-      const delivery = Promise.resolve(listener(event));
-      await (opening ? whileOpening(delivery) : delivery);
+      if (opening) {
+        await whileOpening(() => Promise.resolve(listener(event)));
+      } else {
+        await listener(event);
+      }
       assertActive();
     };
 
     try {
       assertActive();
       for (const path of paths) {
-        let page: RecordPage<Record> | undefined = await whileOpening(this.records.query(
+        let page: RecordPage<Record> | undefined = await whileOpening(() => this.records.query(
           path as ProtocolPaths<D> & string,
           {
             dateSort   : DateSort.CreatedAscending,
@@ -2235,7 +2250,8 @@ export class TypedEnbox<
           for (const record of page.records) {
             await deliver(this.recordSubscriptionChange<Selection>(record));
           }
-          page = await whileOpening(page.next());
+          const currentPage = page;
+          page = await whileOpening(() => currentPage.next());
         }
       }
       let deliveryTail = Promise.resolve();
@@ -2428,9 +2444,14 @@ export class TypedEnbox<
   private async observeContextInvitations(
     limit : number | undefined,
     follow : (request: { group?: string; id: string; ownerDid: string }) => Promise<MemberContext<D, C>>,
+    signal?: AbortSignal,
   ): Promise<RecordView<ProtocolContextInvitation<D, C, G>>> {
-    await this._ensureReady(CONTEXT_INVITATION_PATH);
+    await whileSignalsActive(
+      () => this._ensureReady(CONTEXT_INVITATION_PATH),
+      [signal, this._options.signal],
+    );
     return createRecordView<ProtocolContextInvitation<D, C, G>>({
+      callerSignal       : signal,
       definition         : this._definition,
       dwn                : this._dwn,
       materializeRecords : records => this.projectContextInvitations(records, follow),
@@ -2686,9 +2707,12 @@ export class TypedEnbox<
     return Object.freeze({
       get,
       list    : async (): Promise<ContextMember<D, C, Role>[]> => projectList(await load()),
-      observe : async (): Promise<RecordView<ContextMember<D, C, Role>>> => {
+      observe : async (options?: { signal?: AbortSignal }): Promise<RecordView<ContextMember<D, C, Role>>> => {
         const [primaryRole, ...additionalRoles] = rolePaths;
-        await this._ensureReady(primaryRole);
+        await whileSignalsActive(
+          () => this._ensureReady(primaryRole),
+          [options?.signal, this._options.signal],
+        );
         return createRecordView<ContextMember<D, C, Role>>({
           additionalWakeFilters: additionalRoles.map(role => compileRecordFilter(
             this._definition,
@@ -2696,6 +2720,7 @@ export class TypedEnbox<
             undefined,
             contextId,
           )),
+          callerSignal       : options?.signal,
           definition         : this._definition,
           dwn                : this._dwn,
           materializeRecords : async (records): Promise<ContextMember<D, C, Role>[]> => {
@@ -3272,12 +3297,13 @@ export class TypedEnbox<
         path: Path,
         request: TypedObserveRequest<D, Path, Materialization>,
       ): Promise<ExpandableRecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
+        request?.signal?.throwIfAborted();
         this._options.signal?.throwIfAborted();
         const normalizedPath = normalizePath(path);
         if (request?.pagination?.limit === undefined) {
           throw new TypeError('RecordView: pagination.limit is required to bound retained records.');
         }
-        const { materialize, ...query } = request;
+        const { materialize, signal, ...query } = request;
         const within = this.resolveContextWithin(normalizedPath, query.within);
         const childPaths = this.resolveMaterializedChildPaths<Path>(
           normalizedPath,
@@ -3291,10 +3317,14 @@ export class TypedEnbox<
           undefined,
           within,
         ));
-        await this._ensureReady(normalizedPath);
+        await whileSignalsActive(
+          () => this._ensureReady(normalizedPath),
+          [signal, this._options.signal],
+        );
 
         return createExpandableRecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>({
           additionalWakeFilters,
+          callerSignal       : signal,
           definition         : this._definition,
           dwn                : this._dwn,
           materializeRecords : async (records): Promise<readonly SelectedRecordRepresentation<
@@ -3323,9 +3353,23 @@ export class TypedEnbox<
             options: RecordSubscriptionOptions,
             listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
           ]
-      ): Promise<RecordSubscription> => args.length === 1
-        ? this.subscribeToRecordPaths(selection, args[0])
-        : this.subscribeToInitialRecordPaths(selection, args[0], args[1]),
+          | [
+            options: InitialRecordSubscriptionOptions,
+            listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+          ]
+      ): Promise<RecordSubscription> => {
+        if (args.length === 1) {
+          return this.subscribeToRecordPaths(selection, args[0]);
+        }
+        if ('initial' in args[0] && args[0].initial === true) {
+          return this.subscribeToInitialRecordPaths(selection, args[0], args[1]);
+        }
+        return this.subscribeToRecordPaths(
+          selection,
+          args[1],
+          combineAbortSignals(this._options.signal, args[0].signal),
+        );
+      },
 
       /**
        * Count the complete population selected by the same specification as
