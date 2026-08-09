@@ -222,32 +222,26 @@ describe('vaultConnect', () => {
     expect(updateCalls[0].did).toBe('did:dht:testuser123');
   });
 
-  test('creates a fallback identity when fresh vault remote recovery fails', async () => {
+  test('rejects when fresh vault remote recovery fails', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const createCalls: any[] = [];
-    const warn = console.warn;
-    console.warn = (): void => {};
+    const agent = createMockAgent({
+      firstLaunch    : async () => true,
+      initialize     : async () => 'recovery phrase words',
+      identityList   : async () => [],
+      identityCreate : async (params) => { createCalls.push(params); return createMockIdentity(); },
+      syncSync       : async () => { throw new Error('remote unavailable'); },
+    });
 
-    try {
-      const agent = createMockAgent({
-        firstLaunch    : async () => true,
-        initialize     : async () => 'recovery phrase words',
-        identityList   : async () => [],
-        identityCreate : async (params) => { createCalls.push(params); return createMockIdentity(); },
-        syncSync       : async () => { throw new Error('remote unavailable'); },
-      });
-
-      const session = await vaultConnect(
+    await expect(
+      vaultConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         { recoveryPhrase: 'existing recovery phrase', password: 'pass', createIdentity: true },
-      );
+      )
+    ).rejects.toThrow('remote unavailable');
 
-      expect(session.did).toBe('did:dht:testuser123');
-      expect(createCalls).toHaveLength(1);
-    } finally {
-      console.warn = warn;
-    }
+    expect(createCalls).toHaveLength(0);
   });
 
   test('registers the newly created identity tenant when registration options are provided', async () => {
@@ -351,6 +345,41 @@ describe('vaultConnect', () => {
     );
 
     expect(initCalls[0].dwnEndpoints).toEqual(['https://custom-dwn.example.com']);
+  });
+
+  test.each([
+    {
+      label            : 'manager defaults',
+      defaultEndpoints : ['https://manager-default.example'],
+      options          : { recoveryPhrase: 'recovery phrase', sync: 'off' as const },
+      expected         : false,
+    },
+    {
+      label            : 'explicit restore endpoints',
+      defaultEndpoints : ['https://manager-default.example'],
+      options          : {
+        recoveryPhrase : 'recovery phrase',
+        dwnEndpoints   : ['https://explicit.example'],
+        sync           : 'off' as const,
+      },
+      expected: true,
+    },
+  ])('treats $label as replaceDwnEndpoints=$expected', async ({ defaultEndpoints, options, expected }) => {
+    const initCalls: any[] = [];
+    const agent = createMockAgent({
+      firstLaunch : async () => true,
+      initialize  : async (params) => { initCalls.push(params); return 'phrase'; },
+    });
+
+    await vaultConnect(
+      {
+        userAgent           : agent, emitter             : new AuthEventEmitter(), storage             : new MemoryStorage(),
+        defaultDwnEndpoints : defaultEndpoints,
+      },
+      options,
+    );
+
+    expect(initCalls[0].replaceDwnEndpoints).toBe(expected);
   });
 
   test('handles wallet-connected identity (connectedDid set)', async () => {

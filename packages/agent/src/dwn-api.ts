@@ -510,14 +510,10 @@ export class AgentDwnApi {
   private async requireRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
     if (this._localDwnStrategy === 'only') {
       throw new Error(
-        `AgentDwnApi: remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'.`
+        `AgentDwnApi: Remote DWN requests are unavailable while localDwnStrategy is 'only'.`
       );
     }
-    const endpoints = await this.getRemoteDwnEndpointUrls(targetDid);
-    if (endpoints.length === 0) {
-      throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${targetDid}#dwn`);
-    }
-    return endpoints;
+    return this.getRemoteDwnEndpointUrls(targetDid);
   }
 
   /** Lazily retrieves the local DWN server endpoint via discovery. */
@@ -1182,15 +1178,9 @@ export class AgentDwnApi {
     let dwnEndpointUrls: string[];
     if (request.remoteEndpoint !== undefined) {
       dwnEndpointUrls = [request.remoteEndpoint];
-    } else if (request.remoteEndpointsOnly) {
-      dwnEndpointUrls = await this.requireRemoteDwnEndpointUrls(request.target);
     } else {
-      dwnEndpointUrls = await this.getDwnEndpointUrlsForTarget(request.target);
+      dwnEndpointUrls = await this.requireRemoteDwnEndpointUrls(request.target);
     }
-    if (dwnEndpointUrls.length === 0) {
-      throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${request.target}#dwn`);
-    }
-
     let messageCid: string | undefined;
     let message: DwnMessage[T];
     let data: DwnRpcData | undefined;
@@ -2721,11 +2711,17 @@ export class AgentDwnApi {
     granteeDid?: string,
   ): Promise<ProtocolDefinition | undefined> {
     if (!this._dwn) {
-      // Remote mode: query via RPC (same as fetchRemoteProtocolDefinition,
-      // but for locally-managed DIDs). The remote protocol definition
-      // cache uses a different key prefix, so we use a dedicated call.
+      // Remote mode still has a configured local DWN server. Query it
+      // directly rather than resolving the tenant's advertised remote DWN.
       try {
-        return await this.fetchRemoteProtocolDefinition(tenantDid, protocolUri);
+        return await fetchRemoteProtocolDefinitionFn(
+          tenantDid,
+          protocolUri,
+          async (): Promise<string[]> => [this._localDwnEndpoint!],
+          this.sendDwnRpcRequest.bind(this),
+          this._protocolDefinitionCache,
+          'local-rpc',
+        );
       } catch (error: unknown) {
         // Only treat "not found" responses as missing protocols.  Transient
         // errors (network timeouts, auth failures) are rethrown so the
@@ -2773,7 +2769,7 @@ export class AgentDwnApi {
     protocolUri: string,
   ): Promise<ProtocolDefinition> {
     return fetchRemoteProtocolDefinitionFn(
-      targetDid, protocolUri, this.getDwnEndpointUrlsForTarget.bind(this),
+      targetDid, protocolUri, this.getRemoteDwnEndpointUrls.bind(this),
       this.sendDwnRpcRequest.bind(this), this._protocolDefinitionCache,
     );
   }

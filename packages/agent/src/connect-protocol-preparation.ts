@@ -366,7 +366,7 @@ async function resolveDwnEndpointUrls(
   agent: EnboxPlatformAgent,
 ): Promise<string[]> {
   try {
-    return await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
+    return await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
   } catch {
     // Endpoint resolution failure — treated like zero endpoints below.
     return [];

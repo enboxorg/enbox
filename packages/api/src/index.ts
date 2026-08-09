@@ -75,3 +75,4 @@ export {
   AudienceDecryptError,
   type AudienceDecryptFailureCause,
 } from '@enbox/agent';
+export type { DwnEndpointResolution } from '@enbox/dids';

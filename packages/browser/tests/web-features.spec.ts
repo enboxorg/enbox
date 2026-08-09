@@ -1,37 +1,25 @@
 import { vi } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-// ---------------------------------------------------------------------------
-// Mock @enbox/dids so the module-level `DidResolver` instance (created in
-// web-features.ts at import time) uses a controllable `resolve()` method.
-//
-// vi.hoisted ensures `mockResolve` is declared before vi.mock's factory runs
-// (both are hoisted to the top of the module by Vitest's transform).
-// ---------------------------------------------------------------------------
-const { mockResolve } = vi.hoisted(() => ({
-  mockResolve: vi.fn(),
-}));
-
-vi.mock('@enbox/dids', () => {
-  class MockUniversalResolver {
-    public resolve = mockResolve;
-    constructor(_opts?: unknown) { /* no-op */ }
-  }
-  return {
-    DidDht            : {},
-    DidWeb            : {},
-    UniversalResolver : MockUniversalResolver,
-  };
-});
-
 import { activatePolyfills, cacheResponse, fetchResource, getDwnEndpoints, handleEvent, parseDrlUrl } from '../src/web-features.js';
+
+const mockResolve = vi.fn();
+const resolveDid = async (...params: unknown[]): Promise<any> => ({
+  didDocumentMetadata   : {},
+  didResolutionMetadata : {},
+  ...await mockResolve(...params),
+});
+const mockDidResolvers = [
+  { methodName: 'dht', resolve: resolveDid },
+  { methodName: 'example', resolve: resolveDid },
+];
 
 // Helper: a DID document whose DWN service has the given endpoints.
 // Pass [] to get getDwnEndpoints → [].
 function dwnDidDoc(endpoints: string[]): any {
   return {
     didDocument: {
-      service: [{ type: 'DecentralizedWebNode', serviceEndpoint: endpoints }],
+      service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: endpoints }],
     },
   };
 }
@@ -67,6 +55,12 @@ describe('web features', () => {
     suppressedErrors.length = 0;
     window.addEventListener('unhandledrejection', suppressUnhandledRejections);
     mockResolve.mockReset();
+    activatePolyfills({
+      didResolvers  : mockDidResolvers,
+      serviceWorker : false,
+      injectStyles  : false,
+      links         : false,
+    });
   });
 
   afterEach(() => {
@@ -204,6 +198,7 @@ describe('web features', () => {
       mockResolve.mockResolvedValue({
         didDocument: {
           service: [{
+            id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : ['https://dwn.example.com'],
           }],
@@ -237,6 +232,7 @@ describe('web features', () => {
       mockResolve.mockResolvedValue({
         didDocument: {
           service: [{
+            id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : ['https://dwn.example.com'],
           }],
@@ -630,6 +626,7 @@ describe('web features', () => {
       mockResolve.mockResolvedValue({
         didDocument: {
           service: [{
+            id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : ['https://dwn1.example.com', 'https://dwn2.example.com'],
           }],
@@ -640,10 +637,19 @@ describe('web features', () => {
       expect(endpoints).toEqual(['https://dwn1.example.com', 'https://dwn2.example.com']);
     });
 
+    it('should cache repeated DID resolution', async () => {
+      mockResolve.mockResolvedValue(dwnDidDoc(['https://dwn.example.com']));
+
+      await getDwnEndpoints('did:example:cached');
+      await getDwnEndpoints('did:example:cached');
+
+      expect(mockResolve).toHaveBeenCalledTimes(1);
+    });
+
     it('should return empty array when DWN service has empty endpoints', async () => {
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: [] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: [] }],
         },
       });
 
@@ -655,6 +661,7 @@ describe('web features', () => {
       mockResolve.mockResolvedValue({
         didDocument: {
           service: [{
+            id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : 'https://single.example.com',
           }],
@@ -665,10 +672,11 @@ describe('web features', () => {
       expect(endpoints).toEqual(['https://single.example.com']);
     });
 
-    it('should filter out non-http endpoints', async () => {
+    it('should reject a service containing a non-http endpoint', async () => {
       mockResolve.mockResolvedValue({
         didDocument: {
           service: [{
+            id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : ['https://valid.example.com', 'ws://invalid.example.com'],
           }],
@@ -676,7 +684,7 @@ describe('web features', () => {
       });
 
       const endpoints = await getDwnEndpoints('did:example:test');
-      expect(endpoints).toEqual(['https://valid.example.com']);
+      expect(endpoints).toEqual([]);
     });
   });
 
@@ -756,7 +764,7 @@ describe('web features', () => {
 
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockResolvedValue(new Response('fresh', { status: 200 }));
@@ -788,7 +796,7 @@ describe('web features', () => {
       spyOn(caches, 'open').mockResolvedValue(mockCache as unknown as Cache);
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network error'));
@@ -806,7 +814,7 @@ describe('web features', () => {
       spyOn(caches, 'open').mockResolvedValue(mockCache as unknown as Cache);
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Not Found', { status: 404 }));
@@ -834,7 +842,7 @@ describe('web features', () => {
       expect(response.status).toBe(530);
     });
 
-    it('should return 500 with message when non-Response error is thrown', async () => {
+    it('should return 530 when DID resolution throws', async () => {
       const mockCache = { match: vi.fn().mockResolvedValue(undefined), put: vi.fn() };
       spyOn(caches, 'open').mockResolvedValue(mockCache as unknown as Cache);
       mockResolve.mockRejectedValue(new Error('DID resolution timeout'));
@@ -844,9 +852,9 @@ describe('web features', () => {
       };
 
       const response = await handleEvent(mockEvent, 'did:example:alice', 'records/to', {});
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(530);
       const body = await response.text();
-      expect(body).toBe('DID URL fetch error');
+      expect(body).toBe('DWeb Node resolution failed: no valid endpoints found.');
     });
 
     it('should normalize http to https and strip trailing slashes in DRL', async () => {
@@ -854,7 +862,7 @@ describe('web features', () => {
       spyOn(caches, 'open').mockResolvedValue(mockCache as unknown as Cache);
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
@@ -875,7 +883,7 @@ describe('web features', () => {
       spyOn(caches, 'open').mockResolvedValue(mockCache as unknown as Cache);
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockResolvedValue(new Response('content', { status: 200 }));
@@ -899,7 +907,7 @@ describe('web features', () => {
       spyOn(caches, 'open').mockResolvedValue(mockCache as unknown as Cache);
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockResolvedValue(new Response('fresh', { status: 200 }));
@@ -943,7 +951,7 @@ describe('web features', () => {
     it('should fetch from DWN endpoint and cache the response', async () => {
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockResolvedValue(new Response('data', { status: 200 }));
@@ -978,7 +986,7 @@ describe('web features', () => {
     it('should return 500 when endpoint fetch throws', async () => {
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockRejectedValue(new Error('connection refused'));
@@ -994,7 +1002,7 @@ describe('web features', () => {
     it('should return DWN error status when response is not ok', async () => {
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Forbidden', { status: 403 }));
@@ -1010,7 +1018,7 @@ describe('web features', () => {
     it('should not cache when onCacheCheck returns falsy', async () => {
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] }],
         },
       });
       spyOn(globalThis, 'fetch').mockResolvedValue(new Response('data', { status: 200 }));
@@ -1030,7 +1038,7 @@ describe('web features', () => {
     it('should strip trailing slash from endpoint URL', async () => {
       mockResolve.mockResolvedValue({
         didDocument: {
-          service: [{ type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com/'] }],
+          service: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com/'] }],
         },
       });
       const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));

@@ -6,7 +6,7 @@
 
 import type { DidMethodResolver } from '@enbox/dids';
 
-import { DidDht, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DidDht, DidResolverCacheMemory, DidWeb, resolveDwnEndpointStatus, UniversalResolver } from '@enbox/dids';
 
 /**
  * Result returned by the `onCacheCheck` callback.
@@ -62,7 +62,10 @@ interface DrlMediaElement extends HTMLElement {
   __src__?: string;
 }
 
-let didResolver = new UniversalResolver({ didResolvers: [DidDht, DidWeb] });
+let didResolver = new UniversalResolver({
+  didResolvers : [DidDht, DidWeb],
+  cache        : new DidResolverCacheMemory(),
+});
 
 import { parseDrlUrl } from './drl-url-parser.js';
 export { parseDrlUrl } from './drl-url-parser.js';
@@ -73,14 +76,8 @@ const DRL_CACHE_NAME = 'drl';
 
 /** @internal Exported for testing. Resolves DWN service endpoints from a DID. */
 export async function getDwnEndpoints(did: string): Promise<string[]> {
-  const { didDocument } = await didResolver.resolve(did);
-  const endpoints = didDocument?.service?.find(
-    (service) => service.type === 'DecentralizedWebNode'
-  )?.serviceEndpoint;
-  if (!endpoints) {return [];}
-  return (Array.isArray(endpoints) ? endpoints : [endpoints]).filter(
-    (url) => typeof url === 'string' && url.startsWith('http')
-  );
+  const result = await resolveDwnEndpointStatus(did, didResolver);
+  return result.status === 'ready' ? result.endpoints : [];
 }
 
 /** Returns an open DRL cache, or `undefined` if the Cache API is unavailable. */
@@ -585,7 +582,10 @@ async function resetContextMenuTarget(e?: Event): Promise<void> {
  */
 export function activatePolyfills(options: ActivatePolyfillsOptions = {}): void {
   if (options.didResolvers) {
-    didResolver = new UniversalResolver({ didResolvers: options.didResolvers });
+    didResolver = new UniversalResolver({
+      didResolvers : options.didResolvers,
+      cache        : new DidResolverCacheMemory(),
+    });
   }
   if (options.serviceWorker !== false) {
     installWorker(options);

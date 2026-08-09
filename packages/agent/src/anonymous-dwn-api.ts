@@ -1,4 +1,4 @@
-import type { DidResolver, DidUrlDereferencer } from '@enbox/dids';
+import type { DidResolver } from '@enbox/dids';
 import type { DwnRpcRequest, EnboxRpc } from '@enbox/dwn-clients';
 
 import type {
@@ -26,7 +26,7 @@ import { getDwnServiceEndpointUrls, resolveDwnSubscriptionUrl } from './utils.js
  */
 export type AnonymousDwnApiParams = {
   /** Resolver used for target DWN discovery and returned-message authentication. */
-  didResolver: DidResolver & DidUrlDereferencer;
+  didResolver: DidResolver;
   /** An RPC client for sending messages to remote DWNs. */
   rpcClient: EnboxRpc;
 };
@@ -100,7 +100,7 @@ export type AnonymousProtocolsQueryParams = {
  * ```
  */
 export class AnonymousDwnApi {
-  private readonly _didResolver: DidResolver & DidUrlDereferencer;
+  private readonly _didResolver: DidResolver;
   private readonly _rpcClient: EnboxRpc;
 
   constructor({ didResolver, rpcClient }: AnonymousDwnApiParams) {

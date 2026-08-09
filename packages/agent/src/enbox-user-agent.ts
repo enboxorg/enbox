@@ -59,6 +59,9 @@ export type AgentInitializeParams = {
    * side in place of the agentDid-->connectedDids pattern.
    */
    dwnEndpoints?: string[];
+
+  /** Replace resolved endpoints only when recovery explicitly requests it. */
+  replaceDwnEndpoints?: boolean;
  };
 
 export type AgentStartParams = {
@@ -135,6 +138,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     this.secrets = params.secretsApi ?? new InMemorySecretStore();
     this.sync = params.syncApi;
     this.vault = params.agentVault;
+    this.vault.didResolver = this.did;
 
     // Set this agent to be the default agent.
     this.did.agent = this;
@@ -270,9 +274,16 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
    * cryptographic keys for the vault. If a recovery phrase is not provided, a new recovery phrase
    * will be generated and returned. The password should be chosen and entered by the end-user.
    */
-  public async initialize({ password, recoveryPhrase, dwnEndpoints }: AgentInitializeParams): Promise<string> {
+  public async initialize({
+    password,
+    recoveryPhrase,
+    dwnEndpoints,
+    replaceDwnEndpoints,
+  }: AgentInitializeParams): Promise<string> {
     // Initialize the Agent vault.
-    recoveryPhrase = await this.vault.initialize({ password, recoveryPhrase, dwnEndpoints });
+    recoveryPhrase = await this.vault.initialize({
+      password, recoveryPhrase, dwnEndpoints, replaceDwnEndpoints,
+    });
 
     return recoveryPhrase;
   }

@@ -12,7 +12,6 @@ import type { FlowContext } from './lifecycle.js';
 import type { WalletConnectOptions } from '../types.js';
 
 import { ConnectDeniedError } from '../errors.js';
-import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 import { validateConnectResultGrants } from './validate-grants.js';
 import { WalletConnect } from '../wallet-connect-client.js';
@@ -78,12 +77,12 @@ export async function walletConnect(
   // Provider authentication may wait on application UI, so keep it outside
   // the lifecycle mutex and re-check teardown before importing the delegate.
   if (ctx.registration) {
-    const dwnEndpoints = ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
+    const dwnEndpoints = await userAgent.identity.getDwnEndpoints({ didUri: connectedDid, refresh: true });
     await registerWithDwnEndpoints(
       {
         userAgent,
         dwnEndpoints,
-        agentDid     : userAgent.agentDid.uri,
+        agentDid     : connectedDid,
         connectedDid,
         secretStore  : userAgent.secrets,
         storage      : storage,

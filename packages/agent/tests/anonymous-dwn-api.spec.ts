@@ -1,5 +1,5 @@
 import type { EnboxRpc } from '@enbox/dwn-clients';
-import type { BearerDid, DidDereferencingResult, DidResolver, DidUrlDereferencer } from '@enbox/dids';
+import type { BearerDid, DidResolver } from '@enbox/dids';
 import type { MessageSigner, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
@@ -12,9 +12,10 @@ import { AnonymousDwnApi } from '../src/anonymous-dwn-api.js';
 describe('AnonymousDwnApi', () => {
 
   let anonymousDwn: AnonymousDwnApi;
-  let dereferenceStub: sinon.SinonStub;
+  let resolveStub: sinon.SinonStub;
+  let resolvedDwnEndpoints: string[] | undefined;
   let rpcStub: sinon.SinonStubbedInstance<EnboxRpc>;
-  let resolver: DidResolver & DidUrlDereferencer;
+  let resolver: DidResolver;
   let targetDid: string;
   let targetSigner: MessageSigner;
 
@@ -37,25 +38,26 @@ describe('AnonymousDwnApi', () => {
   };
 
   /**
-   * Helper: create a stubbed DidUrlDereferencer that returns a DWN service
-   * endpoint for the given DID.
+   * Helper: create a resolver that adds the target DID's advertised DWN service.
    */
-  function createResolver(): DidResolver & DidUrlDereferencer {
+  function createResolver(): DidResolver {
     const universalResolver = new UniversalResolver({ didResolvers: [DidJwk] });
-    dereferenceStub = sinon.stub().resolves({
-      dereferencingMetadata : {},
-      contentMetadata       : {},
-      contentStream         : {
-        id              : '#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : [dwnEndpoint],
-      },
-    } as DidDereferencingResult);
+    resolveStub = sinon.stub().callsFake(async (didUri: string) => {
+      const result = await universalResolver.resolve(didUri);
+      if (didUri === targetDid && result.didDocument !== null && resolvedDwnEndpoints !== undefined) {
+        result.didDocument = {
+          ...result.didDocument,
+          service: [{
+            id              : `${didUri}#dwn`,
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : resolvedDwnEndpoints,
+          }],
+        };
+      }
+      return result;
+    });
 
-    return {
-      dereference : dereferenceStub,
-      resolve     : universalResolver.resolve.bind(universalResolver),
-    };
+    return { resolve: resolveStub };
   }
 
   /**
@@ -81,6 +83,7 @@ describe('AnonymousDwnApi', () => {
   });
 
   beforeEach(() => {
+    resolvedDwnEndpoints = [dwnEndpoint];
     resolver = createResolver();
     rpcStub = createRpcStub();
     anonymousDwn = new AnonymousDwnApi({
@@ -301,18 +304,12 @@ describe('AnonymousDwnApi', () => {
         filter: { schema: 'https://example.com' },
       });
 
-      // Verify the DID resolver was called with the target DID's #dwn fragment.
-      expect(dereferenceStub.calledOnce).toBe(true);
-      const dereferenceArg = dereferenceStub.args[0][0];
-      expect(dereferenceArg).toContain(targetDid);
+      expect(resolveStub.calledOnce).toBe(true);
+      expect(resolveStub.args[0][0]).toBe(targetDid);
     });
 
     it('should throw when DID has no DWN service endpoints', async () => {
-      dereferenceStub.resolves({
-        dereferencingMetadata : {},
-        contentMetadata       : {},
-        contentStream         : undefined,
-      } as DidDereferencingResult);
+      resolvedDwnEndpoints = undefined;
 
       await expect(
         anonymousDwn.recordsQuery(targetDid, { filter: { schema: 'https://example.com' } })
@@ -321,15 +318,7 @@ describe('AnonymousDwnApi', () => {
 
     it('should try multiple DWN endpoints on failure', async () => {
       // DID resolves to two endpoints.
-      dereferenceStub.resolves({
-        dereferencingMetadata : {},
-        contentMetadata       : {},
-        contentStream         : {
-          id              : '#dwn',
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : ['https://dwn1.example.com', 'https://dwn2.example.com'],
-        },
-      } as DidDereferencingResult);
+      resolvedDwnEndpoints = ['https://dwn1.example.com', 'https://dwn2.example.com'];
 
       // First endpoint fails, second succeeds.
       rpcStub.sendDwnRequest
@@ -348,15 +337,7 @@ describe('AnonymousDwnApi', () => {
     });
 
     it('should try the next DWN endpoint when response verification fails', async () => {
-      dereferenceStub.resolves({
-        dereferencingMetadata : {},
-        contentMetadata       : {},
-        contentStream         : {
-          id              : '#dwn',
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : ['https://dwn1.example.com', 'https://dwn2.example.com'],
-        },
-      } as DidDereferencingResult);
+      resolvedDwnEndpoints = ['https://dwn1.example.com', 'https://dwn2.example.com'];
 
       const attacker = await DidJwk.create();
       const [attackerSigner, validConfigure] = await Promise.all([

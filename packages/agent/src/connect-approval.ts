@@ -442,7 +442,7 @@ export async function createPermissionGrants(
   // to a different one and needs the grant to authenticate.  We send each
   // grant to every endpoint so that sync works regardless of which DWN the
   // agent contacts first.
-  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
+  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
   logger.log(`Sending ${permissionGrants.length} permission grants to ${dwnEndpointUrls.length} DWN endpoint(s)...`);
 
   const batchSignal = AbortSignal.timeout(CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS);
@@ -588,7 +588,7 @@ async function fanOutDataEncodedRecords(
     return;
   }
 
-  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(ownerDid);
+  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(ownerDid);
   const sendTasks = records.flatMap((record, recordIndex) => {
     const { encodedData, ...rawMessage } = record;
     const data = Convert.base64Url(encodedData).toUint8Array();
@@ -800,7 +800,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     const permissionsApi = new AgentPermissionsApi({ agent });
     let revGrantEndpoints: string[] = [];
     try {
-      revGrantEndpoints = await agent.dwn.getDwnEndpointUrlsForTarget(providerDid);
+      revGrantEndpoints = await agent.dwn.getRemoteDwnEndpointUrls(providerDid);
     } catch {
       // Endpoint resolution failure — revocation grants will be local-only until sync.
     }

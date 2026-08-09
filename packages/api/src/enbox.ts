@@ -1,5 +1,6 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
+import type { DwnEndpointResolution } from '@enbox/dids';
 import type { EnboxPlatformAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
@@ -171,6 +172,14 @@ export class Enbox {
    */
   public get connectedDid(): string {
     return this._connectedDid;
+  }
+
+  /** Resolve the connected DID's advertised DWN endpoints without applying product defaults. */
+  public getDwnEndpointStatus(options: { refresh?: boolean } = {}): Promise<DwnEndpointResolution> {
+    return this.agent.identity.getDwnEndpointStatus({
+      didUri  : this._connectedDid,
+      refresh : options.refresh,
+    });
   }
 
   /**

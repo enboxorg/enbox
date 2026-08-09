@@ -13,6 +13,7 @@
 import type { BearerIdentity, EnboxUserAgent } from '@enbox/agent';
 import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter } from '../types.js';
 
+import { DidErrorCode } from '@enbox/dids';
 import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
 
 import { registerWithDwnEndpoints } from '../registration.js';
@@ -153,13 +154,12 @@ async function registerRecoveredIdentityForSync(params: {
 export async function recoverIdentitiesFromRemote(params: {
   userAgent: EnboxUserAgent;
   dwnEndpoints: string[];
+  replaceDwnEndpoints?: boolean;
   identitySyncProtocols?: IdentitySyncProtocols;
   registration?: RegistrationOptions;
   storage: StorageAdapter;
 } & RecoveryLifecycle): Promise<BearerIdentity[]> {
-  const { userAgent, dwnEndpoints, identitySyncProtocols, registration, storage } = params;
-  const agentDid = userAgent.agentDid.uri;
-
+  const { userAgent, dwnEndpoints, replaceDwnEndpoints = false, identitySyncProtocols, registration, storage } = params;
   // Phase 1: pull identity metadata + encrypted DID keys.
   const identities = await runRecoveryMutation(params, async (): Promise<BearerIdentity[]> => {
     await userAgent.sync.sync('pull');
@@ -169,22 +169,48 @@ export async function recoverIdentitiesFromRemote(params: {
     return [];
   }
 
+  // Resolve every recovered DID before publishing or registering any of them.
+  const resolvedIdentities = await Promise.all(identities.map(async identity => {
+    const ownedDid = identity.did.uri;
+    const routingDid = identity.metadata.connectedDid ?? ownedDid;
+    const status = await userAgent.identity.getDwnEndpointStatus({ didUri: routingDid, refresh: true });
+    const canBootstrap = status.status === 'resolution-failed'
+      && status.resolutionError === DidErrorCode.NotFound;
+    if (status.status !== 'ready' && !canBootstrap
+      && (!replaceDwnEndpoints || status.status === 'resolution-failed')) {
+      throw new Error(status.message);
+    }
+    return { ownedDid, routingDid, status, canBootstrap };
+  }));
+
   // Register each recovered identity DID as a DWN tenant. Register for sync
   // only when the application supplied an explicit identity protocol scope.
   // Tenant registration must come first — sync('pull') reads the durable
   // MessagesQuery feed, which requires the DID to be a recognised tenant.
   let registeredIdentityForSync = false;
-  for (const identity of identities) {
-    const did = identity.metadata.connectedDid ?? identity.did.uri;
+  for (const { ownedDid, routingDid, status, canBootstrap } of resolvedIdentities) {
+    let resolvedEndpoints = status.status === 'ready' ? status.endpoints : undefined;
+    const canReplaceRoutingDid = ownedDid === routingDid;
+    if ((replaceDwnEndpoints || canBootstrap) && canReplaceRoutingDid) {
+      await userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: dwnEndpoints });
+      const updatedStatus = await userAgent.identity.getDwnEndpointStatus({ didUri: routingDid });
+      if (updatedStatus.status !== 'ready') {
+        throw new Error(updatedStatus.message);
+      }
+      resolvedEndpoints = updatedStatus.endpoints;
+    }
+    if (resolvedEndpoints === undefined) {
+      throw new Error(`Recovered DID '${routingDid}' does not advertise a DWN endpoint.`);
+    }
 
     // Registration may wait on app-owned provider-auth UI, so it must remain
     // outside the lifecycle mutation mutex. Re-check the flow before making
     // any further local agent mutations.
     await registerRecoveredIdentityTenant({
       userAgent,
-      dwnEndpoints,
-      agentDid,
-      connectedDid : did,
+      dwnEndpoints : resolvedEndpoints,
+      agentDid     : routingDid,
+      connectedDid : routingDid,
       registration,
       storage,
       assertActive : params.assertActive,
@@ -193,7 +219,7 @@ export async function recoverIdentitiesFromRemote(params: {
     assertRecoveryActive(params);
     registeredIdentityForSync = await runRecoveryMutation(
       params,
-      () => registerRecoveredIdentityForSync({ userAgent, did, identitySyncProtocols }),
+      () => registerRecoveredIdentityForSync({ userAgent, did: routingDid, identitySyncProtocols }),
     ) || registeredIdentityForSync;
   }
 

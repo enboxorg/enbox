@@ -77,6 +77,7 @@ export type {
   ContextsApi,
   DataForPath,
   DefineApplicationManifestOptions,
+  DwnEndpointResolution,
   EnboxAnonymousOptions,
   EnboxConnectOptions,
   EnboxConnectResult,

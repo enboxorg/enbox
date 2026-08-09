@@ -1,4 +1,5 @@
 import type { RequireOnly } from '@enbox/common';
+import type { DidDocumentMetadata, DidResolutionResult, DwnEndpointResolution } from '@enbox/dids';
 
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
@@ -6,7 +7,7 @@ import type { DidMethodCreateOptions } from './did-api.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 
-import { isPortableDid } from '@enbox/dids';
+import { Did, DidDht, DidErrorCode, getDwnEndpointStatus, isPortableDid, replaceDwnServiceEndpointUrls, resolveDwnEndpointStatus } from '@enbox/dids';
 
 import { BearerIdentity } from './bearer-identity.js';
 import { InMemoryIdentityStore } from './store-identity.js';
@@ -224,8 +225,26 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
    * @returns An array of DWN endpoints.
    * @throws An error if the DID is not found, or no DWN service exists.
    */
-  public getDwnEndpoints({ didUri }: { didUri: string; }): Promise<string[]> {
-    return this.agent.dwn.getDwnEndpointUrlsForTarget(didUri);
+  public async getDwnEndpoints({ didUri, refresh = false }: {
+    didUri: string;
+    refresh?: boolean;
+  }): Promise<string[]> {
+    const result = await this.getDwnEndpointStatus({ didUri, refresh });
+    if (result.status !== 'ready') {
+      throw new Error(result.message);
+    }
+    return result.endpoints;
+  }
+
+  /** Return the DID-advertised DWN endpoint state without substituting a local or default node. */
+  public getDwnEndpointStatus({ didUri, refresh = false }: {
+    didUri: string;
+    refresh?: boolean;
+  }): Promise<DwnEndpointResolution> {
+    const resolver = refresh
+      ? { resolve: async (): Promise<DidResolutionResult> => this.agent.did.refreshResolution(didUri) }
+      : this.agent.did;
+    return resolveDwnEndpointStatus(didUri, resolver);
   }
 
   /**
@@ -240,32 +259,65 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
     if (!bearerDid) {
       throw new Error(`AgentIdentityApi: Failed to set DWN endpoints due to DID not found: ${didUri}`);
     }
+    if (Did.parse(didUri)?.method !== DidDht.methodName) {
+      throw new Error(`AgentIdentityApi: Setting DWN endpoints is only supported for did:dht DIDs: ${didUri}`);
+    }
 
     const portableDid = await bearerDid.export();
-    const dwnService = portableDid.document.service?.find(service => service.id.endsWith('dwn'));
-    if (dwnService) {
-      // Update the existing DWN Service with the provided endpoints
-      dwnService.serviceEndpoint = endpoints;
-    } else {
+    portableDid.document = replaceDwnServiceEndpointUrls(portableDid.document, endpoints);
+    const requested = getDwnEndpointStatus(didUri, portableDid.document);
+    if (requested.status !== 'ready') {
+      throw new Error(requested.message);
+    }
 
-      // create a DWN Service to add to the DID document
-      const newDwnService = {
-        id              : 'dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : endpoints,
-      };
+    const resolution = await this.agent.did.refreshResolution(didUri);
+    const isNotFound = resolution.didResolutionMetadata.error === DidErrorCode.NotFound;
+    if (!isNotFound && (resolution.didResolutionMetadata.error !== undefined || resolution.didDocument === null)) {
+      throw new Error(
+        resolution.didResolutionMetadata.errorMessage
+        ?? `AgentIdentityApi: Unable to resolve DID before updating endpoints: ${didUri}`
+      );
+    }
 
-      // if no other services exist, create a new array with the DWN service
-      if (portableDid.document.service) {
-        // push the new DWN service to the existing services
-        portableDid.document.service.push(newDwnService);
-      } else {
-        // no other services exist, create a new array with the DWN service
-        portableDid.document.service = [newDwnService];
+    const publicDocument = replaceDwnServiceEndpointUrls(
+      resolution.didDocument ?? portableDid.document,
+      requested.endpoints,
+    );
+
+    const current = resolution.didDocument === null
+      ? undefined
+      : getDwnEndpointStatus(didUri, resolution.didDocument);
+    const publishRequired = isNotFound
+      || current?.status !== 'ready'
+      || current.endpoints.join('\n') !== requested.endpoints.join('\n');
+    let publishedMetadata: DidDocumentMetadata | undefined;
+    if (publishRequired) {
+      bearerDid.document = publicDocument;
+      publishedMetadata = (await DidDht.publish({ did: bearerDid })).didDocumentMetadata;
+      if (publishedMetadata.published === false) {
+        throw new Error(`AgentIdentityApi: Failed to publish updated DWN endpoints for '${didUri}'.`);
       }
     }
 
-    await this.agent.did.update({ portableDid, tenant: this.agent.agentDid.uri });
+    try {
+      await this.agent.did.update({
+        portableDid,
+        tenant  : this.agent.agentDid.uri,
+        publish : false,
+      });
+    } catch (error: unknown) {
+      if (!(error instanceof Error && error.message.includes('No changes detected'))) {
+        throw error;
+      }
+    }
+
+    if (publishedMetadata !== undefined) {
+      await this.agent.did.cacheResolution(didUri, {
+        didDocument           : publicDocument,
+        didDocumentMetadata   : publishedMetadata,
+        didResolutionMetadata : {},
+      });
+    }
   }
 
   /**

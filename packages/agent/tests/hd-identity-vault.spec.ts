@@ -1,10 +1,13 @@
 import type { IdentityVaultBackup } from '../src/types/identity-vault.js';
 import type { KeyValueStore } from '@enbox/common';
 
+import sinon from 'sinon';
+
 import { HdIdentityVault } from '../src/hd-identity-vault.js';
 import { LevelStore } from '@enbox/common/level-store';
 import { MemoryStore } from '@enbox/common';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DidDht, DidErrorCode } from '@enbox/dids';
 
 describe('HdIdentityVault', () => {
   ['MemoryStore', 'LevelStore'].forEach((vaultStoreType) => {
@@ -27,6 +30,7 @@ describe('HdIdentityVault', () => {
       });
 
       afterEach(async () => {
+        sinon.restore();
         await vaultStore.clear();
       });
 
@@ -271,6 +275,65 @@ describe('HdIdentityVault', () => {
           expect(returnedRecoveryPhrase).toBe(predefinedRecoveryPhrase);
         });
 
+        it('preserves resolved endpoints when recovering from a phrase', async () => {
+          const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+          identityVault.didResolver = {
+            resolve: async (didUri: string): Promise<any> => ({
+              didDocument: {
+                id      : didUri,
+                service : [{
+                  id              : `${didUri}#dwn`,
+                  type            : 'DecentralizedWebNode',
+                  serviceEndpoint : ['https://resolved.example'],
+                }],
+              },
+              didDocumentMetadata   : {},
+              didResolutionMetadata : {},
+            }),
+          };
+          const publish = sinon.stub(DidDht, 'publish');
+
+          await identityVault.initialize({
+            password: 'password', recoveryPhrase, dwnEndpoints: ['https://default.example'],
+          });
+
+          expect(publish.notCalled).toBe(true);
+          expect((await identityVault.getDid()).document.service?.[0].serviceEndpoint)
+            .toEqual(['https://resolved.example']);
+        });
+
+        it('bootstraps endpoints only when a recovered DID is not found', async () => {
+          const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+          identityVault.didResolver = {
+            resolve: async (): Promise<any> => ({
+              didDocument           : null,
+              didDocumentMetadata   : {},
+              didResolutionMetadata : { error: DidErrorCode.NotFound },
+            }),
+          };
+          const publish = sinon.stub(DidDht, 'publish').resolves({ didDocumentMetadata: {} } as any);
+
+          await identityVault.initialize({
+            password: 'password', recoveryPhrase, dwnEndpoints: ['https://default.example'],
+          });
+
+          expect(publish.calledOnce).toBe(true);
+          expect(publish.firstCall.args[0].did.document.service?.[0].serviceEndpoint)
+            .toEqual(['https://default.example']);
+        });
+
+        it('leaves the vault uninitialized when recovery resolution fails', async () => {
+          const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+          identityVault.didResolver = {
+            resolve: async (): Promise<never> => { throw new Error('resolver offline'); },
+          };
+
+          await expect(identityVault.initialize({ password: 'password', recoveryPhrase }))
+            .rejects.toThrow('resolver offline');
+          expect(await identityVault.isInitialized()).toBe(false);
+          expect(await vaultStore.get('did')).toBeUndefined();
+        });
+
         it('throws an error if the vault is already initialized', async () => {
           // Initialize the vault.
           await identityVault.initialize({ password: 'dumbbell-krakatoa-ditty' });
@@ -362,6 +425,56 @@ describe('HdIdentityVault', () => {
           expect(typeof vaultStatus.lastRestore).toBe('string');
           expect(vaultStatus.initialized).toBe(true);
           expect(identityVault.isLocked()).toBe(false);
+        });
+
+        it('replaces only resolved #dwn endpoints when explicitly requested', async () => {
+          const publish = sinon.stub(DidDht, 'publish').resolves({ didDocumentMetadata: {} } as any);
+          const password = 'password';
+          await identityVault.initialize({ password, dwnEndpoints: ['https://old.example'] });
+          const backup = await identityVault.backup();
+          identityVault.didResolver = {
+            resolve: async (didUri: string): Promise<any> => ({
+              didDocument: {
+                id      : didUri,
+                service : [{
+                  id              : `${didUri}#other`,
+                  type            : 'Other',
+                  serviceEndpoint : 'https://other.example',
+                }, {
+                  id              : `${didUri}#dwn`,
+                  type            : 'DecentralizedWebNode',
+                  serviceEndpoint : ['https://old.example'],
+                }],
+              },
+              didDocumentMetadata   : {},
+              didResolutionMetadata : {},
+            }),
+          };
+
+          await identityVault.restore({
+            backup, password, dwnEndpoints: ['https://new.example'], replaceDwnEndpoints: true,
+          });
+
+          expect(publish.lastCall.args[0].did.document.service).toEqual([{
+            id              : `${publish.lastCall.args[0].did.uri}#other`,
+            type            : 'Other',
+            serviceEndpoint : 'https://other.example',
+          }, {
+            id              : `${publish.lastCall.args[0].did.uri}#dwn`,
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : ['https://new.example'],
+          }]);
+        });
+
+        it('preserves DID resolution errors during restore', async () => {
+          const password = 'password';
+          await identityVault.initialize({ password });
+          const backup = await identityVault.backup();
+          identityVault.didResolver = {
+            resolve: async (): Promise<never> => { throw new Error('resolver offline'); },
+          };
+
+          await expect(identityVault.restore({ backup, password })).rejects.toThrow('resolver offline');
         });
 
         it('reverts to the previous vault contents if conversion of backup data fails', async () => {

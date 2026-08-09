@@ -67,6 +67,9 @@ export interface MockAgentOverrides {
   identityImport?: (params: any) => Promise<MockIdentity>;
   identityDelete?: (params: any) => Promise<void>;
   identityExport?: (params: any) => Promise<any>;
+  identityGetDwnEndpoints?: (params: any) => Promise<string[]>;
+  identityGetDwnEndpointStatus?: (params: any) => Promise<any>;
+  identitySetDwnEndpoints?: (params: any) => Promise<void>;
   identityConnectedIdentity?: () => Promise<MockIdentity | undefined>;
   didExport?: (params: any) => Promise<any>;
   didDelete?: (params: any) => Promise<void>;
@@ -141,6 +144,11 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       message : entry,
     }));
   });
+  const identityGetDwnEndpointStatus = overrides.identityGetDwnEndpointStatus ?? (async (params: any): Promise<any> => ({
+    status    : 'ready',
+    didUri    : params.didUri,
+    endpoints : ['https://enbox-dwn.fly.dev'],
+  }));
 
   return {
     agentDid : { uri: 'did:dht:testagent' },
@@ -168,10 +176,17 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
         const identities = await (overrides.identityList ?? (async (): Promise<MockIdentity[]> => [defaultIdentity]))();
         return identities.find((identity) => identity.did.uri === params?.didUri);
       }),
-      import            : overrides.identityImport ?? (async (): Promise<MockIdentity> => defaultIdentity),
-      delete            : overrides.identityDelete ?? (async (): Promise<void> => {}),
-      export            : overrides.identityExport ?? (async (): Promise<any> => ({})),
-      connectedIdentity : overrides.identityConnectedIdentity ?? (async (): Promise<MockIdentity | undefined> => undefined),
+      import          : overrides.identityImport ?? (async (): Promise<MockIdentity> => defaultIdentity),
+      delete          : overrides.identityDelete ?? (async (): Promise<void> => {}),
+      export          : overrides.identityExport ?? (async (): Promise<any> => ({})),
+      getDwnEndpoints : overrides.identityGetDwnEndpoints ?? (async (params: any): Promise<string[]> => {
+        const status = await identityGetDwnEndpointStatus(params);
+        if (status.status !== 'ready') { throw new Error(status.message); }
+        return status.endpoints;
+      }),
+      getDwnEndpointStatus : identityGetDwnEndpointStatus,
+      setDwnEndpoints      : overrides.identitySetDwnEndpoints ?? (async (): Promise<void> => {}),
+      connectedIdentity    : overrides.identityConnectedIdentity ?? (async (): Promise<MockIdentity | undefined> => undefined),
     },
 
     did: {
