@@ -40,7 +40,7 @@ function normalizeEndpointUrls(values: unknown): string[] | undefined {
       const endpoint = new URL(value);
       if ((endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:')
         || endpoint.search !== '' || endpoint.hash !== '') {
-        throw new TypeError();
+        throw new TypeError('DWN endpoint URL must use HTTP(S) without a query or fragment.');
       }
       return endpoint.toString().replace(/\/$/, '');
     });
