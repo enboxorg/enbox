@@ -267,7 +267,14 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       throw this.terminationReason;
     }
     if (this.getState().status === 'loading') {
-      await this.ready();
+      try {
+        await this.ready();
+      } catch (error: unknown) {
+        if (this._hasTerminationReason) {
+          throw this.terminationReason;
+        }
+        throw error;
+      }
     }
     if (!this.getState().hasMore) {
       return;

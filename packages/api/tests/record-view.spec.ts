@@ -812,6 +812,24 @@ describe('RecordView', () => {
     await view.close();
   });
 
+  it('rejects a queued load with the exact caller termination reason', async () => {
+    let finishQuery!: (response: RecordsQueryResponse) => void;
+    const harness = createHarness(() => new Promise((resolve) => { finishQuery = resolve; }));
+    const caller = new AbortController();
+    const view = await createTyped(harness).records.observe('note', {
+      pagination : { limit: 1 },
+      signal     : caller.signal,
+    });
+
+    const loading = view.loadMore();
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(1); });
+    caller.abort(null);
+
+    const rejection = await loading.then(() => undefined, reason => reason);
+    expect(rejection).toBeNull();
+    finishQuery(ok([]));
+  });
+
   it('retains the committed prefix after a failed load and retries the same step', async () => {
     const retained = [testRecord('one'), testRecord('two')];
     const expanded = [...retained, testRecord('three')];
