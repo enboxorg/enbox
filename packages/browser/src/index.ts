@@ -90,6 +90,7 @@ export type {
   ExpandableRecordView,
   FollowContextOptions,
   JsonRecordCodecOptions,
+  MaterializedMemberContext,
   MaterializedRecord,
   MemberContext,
   OwnedContext,

@@ -447,6 +447,7 @@ coordinates writes across browser contexts.
 | `RecordPage<Item>` | One page with cursor-free `next()` and lazy async iteration. |
 | `ExpandableRecordView<Item>` | Closeable bounded query view with fixed-step `loadMore()`. |
 | `ContextView` | Closeable live catalog of owned and accepted member contexts. |
+| `MaterializedMemberContext` | Accepted member context with its independently observed root state. |
 | `ProtocolContext` | Discriminated owner/member entry returned by a context catalog. |
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
 | `ContextMember` | One owner-managed member and its audience-key delivery state. |

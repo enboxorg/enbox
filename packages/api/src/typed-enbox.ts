@@ -51,7 +51,7 @@ import type {
   TypeNameAtPath,
 } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
-import type { ExpandableRecordView, RecordView } from './record-view.js';
+import type { ExpandableRecordView, RecordView, RecordViewState } from './record-view.js';
 import type { MaterializedRecord, Record, RecordPatch } from './record.js';
 import type { ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
@@ -88,13 +88,11 @@ import {
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { createExpandableRecordView, createRecordView } from './record-view.js';
 import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
-import {
-  FollowedSourceNotReadyError,
-  followedSyncSourceActiveEqual,
-} from '@enbox/agent';
+import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual } from '@enbox/agent';
 
 const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
+const MEMBER_ROOT_OPEN_CONCURRENCY = 4;
 
 function compareCodeUnits(left: string, right: string): number {
   if (left < right) {
@@ -651,6 +649,30 @@ export type ProtocolContext<
   Extract<RoleGroupRoles<G, RoleGroupName<G>>, ContextRolePath<D>>
 >;
 
+/** One accepted member context paired with its independently observed root state. */
+export type MaterializedMemberContext<
+  Context = MemberContext,
+  Root = ContextMaterializedRecord,
+> = Readonly<{
+  context: Context;
+  root: RecordViewState<Root>;
+}>;
+
+type SelectedMaterializedMemberContext<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  G extends ContextRoleGroups,
+  Context = Extract<ProtocolContext<D, C, G>, { access: 'member' }>,
+> = Context extends { path: infer Path extends string }
+  ? MaterializedMemberContext<Context, ContextMaterializedRecord<DataForPath<C, Path>>>
+  : never;
+
+type ContextObserve<D extends ProtocolDefinition, C extends RecordCodecMap, G extends ContextRoleGroups> = {
+  (options: Readonly<{ access: 'member'; materializeRoot: true; signal?: AbortSignal }>):
+  Promise<ContextView<SelectedMaterializedMemberContext<D, C, G>>>;
+  (options?: Readonly<{ signal?: AbortSignal }>): Promise<ContextView<ProtocolContext<D, C, G>>>;
+};
+
 /** Public request for following one foreign context through one declared role group. */
 export type FollowContextOptions<Group extends string = 'default'> = Readonly<{
   id: string;
@@ -680,8 +702,8 @@ export type ContextsApi<
   follow: ContextFollow<D, C, G>;
   /** List owned and accepted member contexts in the local catalog. */
   list(): Promise<ProtocolContext<D, C, G>[]>;
-  /** Observe owned and accepted member contexts in the local catalog. */
-  observe(options?: Readonly<{ signal?: AbortSignal }>): Promise<ContextView<ProtocolContext<D, C, G>>>;
+  /** Observe the full catalog, or accepted member contexts with their decoded roots. */
+  observe: ContextObserve<D, C, G>;
 } & (G extends { readonly default: readonly [string, ...string[]] } ? {
   invitations: ContextInvitationsApi<
     MemberContext<D, C, Extract<RoleGroupRoles<G, RoleGroupName<G>>, ContextRolePath<D>>>,
@@ -1447,7 +1469,21 @@ export class TypedEnbox<
       .map(group => this.resolveContextRoleGroup(group).contextPath))]
       .sort(compareCodeUnits) as Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>[];
     const contextRoles = new Set(Object.values(this._roleGroups).flat());
-    type CatalogContext = { access: 'member' | 'owner'; id: string; ownerDid: string };
+    type CatalogContext = { access: 'member' | 'owner'; id: string; key: string; ownerDid: string };
+    type CatalogMemberContext = CatalogContext & {
+      access: 'member';
+      path: string;
+      records: {
+        observe(
+          path: string,
+          request: Readonly<{
+            materialize: true;
+            pagination: { limit: number };
+            signal: AbortSignal;
+          }>,
+        ): Promise<RecordView<ContextMaterializedRecord<unknown>>>;
+      };
+    };
     const boundMembers = new Map<string, { context: MemberContext<D, C>; source: FollowedSyncSource }>();
     const boundOwners = new Map<string, CatalogContext>();
 
@@ -1590,6 +1626,21 @@ export class TypedEnbox<
       return context;
     };
 
+    const bindCatalogMembers = (sources: readonly FollowedSyncSource[]): CatalogMemberContext[] => {
+      const activeKeys = new Set(sources.map(source => protocolContextKey(source.sourceDid, source.contextId)));
+      for (const key of boundMembers.keys()) {
+        if (!activeKeys.has(key)) { boundMembers.delete(key); }
+      }
+      const members = new Map<string, CatalogMemberContext>();
+      for (const source of sources) {
+        const key = protocolContextKey(source.sourceDid, source.contextId);
+        if (!members.has(key)) {
+          members.set(key, bindMemberContext(source) as unknown as CatalogMemberContext);
+        }
+      }
+      return [...members.values()].sort(compareProtocolContexts);
+    };
+
     const listOwnedRootContextIds = async (path: string): Promise<string[]> => {
       await this._ensureReady(path);
       let parentContexts: Array<string | undefined> = [undefined];
@@ -1628,26 +1679,24 @@ export class TypedEnbox<
       ]);
       const owned = ownedByRoot.flat();
       const activeOwnerKeys = new Set(owned.map(context => protocolContextKey(context.ownerDid, context.id)));
-      const activeMemberKeys = new Set(sources.map(source => protocolContextKey(source.sourceDid, source.contextId)));
       for (const key of boundOwners.keys()) {
         if (!activeOwnerKeys.has(key)) { boundOwners.delete(key); }
-      }
-      for (const key of boundMembers.keys()) {
-        if (!activeMemberKeys.has(key)) { boundMembers.delete(key); }
       }
 
       const contexts = new Map<string, CatalogContext>();
       for (const context of owned) {
         contexts.set(protocolContextKey(context.ownerDid, context.id), context);
       }
-      for (const source of sources) {
-        const key = protocolContextKey(source.sourceDid, source.contextId);
+      for (const member of bindCatalogMembers(sources)) {
+        const catalogMember = member as unknown as CatalogContext;
+        const key = protocolContextKey(catalogMember.ownerDid, catalogMember.id);
         if (!contexts.has(key)) {
-          contexts.set(key, bindMemberContext(source) as unknown as CatalogContext);
+          contexts.set(key, catalogMember);
         }
       }
       return [...contexts.values()].sort(compareProtocolContexts);
     };
+
     const listContexts = async (): Promise<ProtocolContext<D, C, G>[]> =>
       await listCatalogContexts() as unknown as ProtocolContext<D, C, G>[];
 
@@ -1655,6 +1704,7 @@ export class TypedEnbox<
       wake: () => void,
       fail: (error: Error) => void,
       signal?: AbortSignal,
+      includeOwnedRoots = true,
     ): Promise<{ close(): Promise<void> }> => {
       const detachSync = this._options.sync?.on((event): void => {
         if (
@@ -1666,7 +1716,7 @@ export class TypedEnbox<
         }
       }) ?? ((): void => {});
       try {
-        const records = contextRoots.length === 0
+        const records = !includeOwnedRoots || contextRoots.length === 0
           ? undefined
           : await this.records.subscribe(contextRoots, { signal }, (event): void => {
             if (event.type === 'error') {
@@ -1687,6 +1737,181 @@ export class TypedEnbox<
       }
     };
 
+    const observeMaterializedMemberContexts = async (
+      options: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<ContextView<MaterializedMemberContext<
+      CatalogMemberContext,
+      ContextMaterializedRecord<unknown>
+    >>> => {
+      type Root = ContextMaterializedRecord<unknown>;
+      type Row = MaterializedMemberContext<CatalogMemberContext, Root>;
+      type Binding = {
+        context: CatalogMemberContext;
+        controller: AbortController;
+        row: Row;
+        unsubscribe?: () => void;
+        view?: RecordView<Root>;
+      };
+
+      const loading = Object.freeze({
+        status  : 'loading',
+        records : Object.freeze([]),
+        hasMore : false,
+        current : false,
+      }) as RecordViewState<Root>;
+      let bindings = new Map<string, Binding>();
+      let ordered: Binding[] = [];
+      let catalogVersion = 0;
+      let listedVersion = -1;
+      let closed = false;
+      let wakeView = (): void => {};
+      let activeOpenings = 0;
+      const openingQueue: Binding[] = [];
+      const openingTasks = new Set<Promise<void>>();
+      const cleanupTasks = new Set<Promise<void>>();
+
+      const row = (context: CatalogMemberContext, root: RecordViewState<Root>): Row =>
+        Object.freeze({ context, root });
+
+      const dispose = (binding: Binding): Promise<void> | undefined => {
+        if (binding.controller.signal.aborted) { return; }
+        binding.controller.abort();
+        binding.unsubscribe?.();
+        binding.unsubscribe = undefined;
+        const view = binding.view;
+        binding.view = undefined;
+        return view?.close();
+      };
+
+      const disposeQuietly = (binding: Binding): void => {
+        const task = dispose(binding)?.catch((): void => {});
+        if (task === undefined) { return; }
+        cleanupTasks.add(task);
+        void task.then((): void => { cleanupTasks.delete(task); });
+      };
+
+      const publishRoot = (binding: Binding, root: RecordViewState<Root>): void => {
+        if (
+          closed || binding.controller.signal.aborted ||
+          bindings.get(binding.context.key) !== binding || binding.row.root === root
+        ) {
+          return;
+        }
+        binding.row = row(binding.context, root);
+        wakeView();
+      };
+
+      const openBinding = async (binding: Binding): Promise<void> => {
+        try {
+          const view = await binding.context.records.observe(binding.context.path, {
+            materialize : true,
+            pagination  : { limit: 1 },
+            signal      : binding.controller.signal,
+          });
+          if (closed || binding.controller.signal.aborted || bindings.get(binding.context.key) !== binding) {
+            await view.close();
+            return;
+          }
+          binding.view = view;
+          binding.unsubscribe = view.subscribe((state): void => { publishRoot(binding, state); });
+          publishRoot(binding, view.getState());
+        } catch (error: unknown) {
+          if (closed || binding.controller.signal.aborted || bindings.get(binding.context.key) !== binding) {
+            return;
+          }
+          publishRoot(binding, Object.freeze({
+            status  : 'error',
+            records : Object.freeze([]),
+            hasMore : false,
+            current : false,
+            error   : error instanceof Error ? error : new Error(String(error)),
+          }));
+        }
+      };
+
+      const drainOpenings = (): void => {
+        while (!closed && activeOpenings < MEMBER_ROOT_OPEN_CONCURRENCY && openingQueue.length > 0) {
+          const binding = openingQueue.shift()!;
+          if (binding.controller.signal.aborted || bindings.get(binding.context.key) !== binding) { continue; }
+          activeOpenings += 1;
+          const task = openBinding(binding);
+          openingTasks.add(task);
+          void task.finally((): void => {
+            openingTasks.delete(task);
+            activeOpenings -= 1;
+            drainOpenings();
+          });
+        }
+      };
+
+      const reconcile = (contexts: readonly CatalogMemberContext[]): void => {
+        const next = new Map<string, Binding>();
+        const nextOrdered: Binding[] = [];
+        for (const context of contexts) {
+          let binding = bindings.get(context.key);
+          if (binding === undefined || binding.context !== context) {
+            if (binding !== undefined) { disposeQuietly(binding); }
+            binding = {
+              context,
+              controller : new AbortController(),
+              row        : row(context, loading),
+            };
+            openingQueue.push(binding);
+          }
+          next.set(context.key, binding);
+          nextOrdered.push(binding);
+        }
+        for (const binding of bindings.values()) {
+          if (next.get(binding.context.key) !== binding) { disposeQuietly(binding); }
+        }
+        bindings = next;
+        ordered = nextOrdered;
+        drainOpenings();
+      };
+
+      return createContextView({
+        callerSignal : options.signal,
+        list         : async (): Promise<readonly Row[]> => {
+          const version = catalogVersion;
+          if (listedVersion !== version) {
+            const sources = await listSources();
+            if (closed) { return []; }
+            reconcile(bindCatalogMembers(sources));
+            listedVersion = version;
+          }
+          return ordered.map(binding => binding.row);
+        },
+        openWakeSubscription: async (wake, fail) => {
+          wakeView = wake;
+          const catalog = await openCatalogWakeSubscription((): void => {
+            catalogVersion += 1;
+            wake();
+          }, fail, options.signal, false);
+          return {
+            close: async (): Promise<void> => {
+              closed = true;
+              wakeView = (): void => {};
+              openingQueue.length = 0;
+              const closingViews = [...bindings.values()]
+                .map(dispose)
+                .filter((task): task is Promise<void> => task !== undefined);
+              bindings.clear();
+              ordered = [];
+              const results = await Promise.allSettled([
+                catalog.close(),
+                ...openingTasks,
+                ...closingViews,
+                ...cleanupTasks,
+              ]);
+              const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+              if (failure !== undefined) { throw failure.reason; }
+            },
+          };
+        },
+        signal: this._options.signal,
+      });
+    };
+
     this._contexts = {
       open   : openContext,
       follow : followContext as ContextsApi<D, C, G>['follow'],
@@ -1700,13 +1925,26 @@ export class TypedEnbox<
         },
       } : {}),
       list    : listContexts,
-      observe : async (options?: { signal?: AbortSignal }): Promise<ContextView<ProtocolContext<D, C, G>>> =>
-        createContextView({
+      observe : async (options?: {
+        access?: 'member';
+        materializeRoot?: true;
+        signal?: AbortSignal;
+      }): Promise<ContextView<unknown>> => {
+        if (options?.access !== undefined || options?.materializeRoot !== undefined) {
+          if (options.access !== 'member' || options.materializeRoot !== true) {
+            throw new TypeError(
+              'TypedEnbox.contexts.observe: root materialization requires access: \'member\' and materializeRoot: true.',
+            );
+          }
+          return observeMaterializedMemberContexts(options);
+        }
+        return createContextView({
           callerSignal         : options?.signal,
           list                 : listContexts,
           openWakeSubscription : (wake, fail) => openCatalogWakeSubscription(wake, fail, options?.signal),
           signal               : this._options.signal,
-        }),
+        });
+      },
     } as ContextsApi<D, C, G>;
     return this._contexts;
   }

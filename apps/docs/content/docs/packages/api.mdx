@@ -506,9 +506,43 @@ unsubscribeCatalog();
 await catalog.close();
 ```
 
-`contexts.list()` and `contexts.observe()` include both declared collaboration
-roots owned by the connected identity and accepted member contexts. If the
-same `(ownerDid, contextId)` appears through both routes, owner access wins.
+Observe accepted member contexts with their decoded root records when a catalog
+needs root metadata such as a title:
+
+```ts
+const catalog = await notebooks.contexts.observe({
+  access: 'member',
+  materializeRoot: true,
+  signal,
+});
+
+const render = ({ contexts, error, status }) => {
+  if (status === 'error') reportCatalog(error);
+  for (const { context, root } of contexts) {
+    if (root.status === 'loading') renderLoading(context);
+    else if (root.status === 'error') reportRoot(context, root.error);
+    else renderNotebook(context, root.records[0]?.value, root.current);
+  }
+};
+
+const unsubscribe = catalog.subscribe(render);
+render(await catalog.ready());
+
+// When the screen closes:
+unsubscribe();
+await catalog.close();
+```
+
+Each row exposes the immutable `RecordViewState` of one exact root. Rows become
+usable independently, keep their last records when a refresh fails, and receive
+cross-tab local-store updates through their context-bound record views. Root
+views open with at most four in flight. A current, ready row with no records
+means the root is missing; when `current` is false, replication is still behind.
+
+By default, `contexts.list()` and `contexts.observe()` include both declared
+collaboration roots owned by the connected identity and accepted member
+contexts. If the same `(ownerDid, contextId)` appears through both routes,
+owner access wins.
 Owned roots are discovered from local records at roots named by `roleGroups`;
 accepted member contexts come from the durable followed-source catalog.
 `contexts.open()` remains available for binding any non-role context path, but
