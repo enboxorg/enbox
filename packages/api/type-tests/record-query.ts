@@ -89,6 +89,7 @@ const observedNotes: Promise<RecordView<Record<RecordCodecValue<QueryCodecs['not
   pagination: { limit: 20 },
 });
 void observedNotes;
+void typed.records.observe('note', { pagination: { limit: 20 } }).then(view => view.loadMore());
 void typed.records.query('note/comment', {
   filter : { tags: { kind: { startsWith: 'reply-' } } },
   within : 'note-context',

@@ -1,4 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { Record } from '../src/record.js';
 import type { RecordQuery } from '../src/record-query.js';
 import type { DwnApi, RecordsCountRequest, RecordsQueryRequest, RecordsQueryResponse } from '../src/dwn-api.js';
 
@@ -177,6 +178,32 @@ describe('RecordQuery', () => {
     expect(secondPage).toBeDefined();
     await expect(secondPage!.next()).rejects.toThrow('query returned a repeated pagination cursor');
     expect(queryRequests).toHaveLength(3);
+  });
+
+  it('should iterate pages lazily', async () => {
+    const first = { id: 'first' } as Record;
+    const second = { id: 'second' } as Record;
+    const { dwn, queryRequests } = createCapturingDwn([
+      {
+        status  : { code: 200, detail: 'OK' },
+        records : [first],
+        cursor  : { messageCid: 'next', value: 1 },
+      },
+      { status: { code: 200, detail: 'OK' }, records: [second] },
+    ]);
+    const page = await createTypedEnbox(dwn).records.query('note', { pagination: { limit: 1 } });
+
+    for await (const _record of page) {
+      break;
+    }
+    expect(queryRequests).toHaveLength(1);
+
+    const records = [];
+    for await (const record of page) {
+      records.push(record);
+    }
+    expect(records).toEqual([first, second]);
+    expect(queryRequests).toHaveLength(2);
   });
 
   it('should omit schema for a schema-less protocol type', () => {

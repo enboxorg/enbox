@@ -179,6 +179,10 @@ const first = await notebooks.records.query('notebook/page', {
 });
 const second = await first.next();
 
+for await (const page of first) {
+  console.log(page.id);
+}
+
 // Replace a complete value
 await pageRecord.update({ data: { summary: 'Ready to ship' } });
 
@@ -197,12 +201,12 @@ The main operations are:
 |---|---|
 | `create(path, request)` | A typed `Record<T>` |
 | `read(path, idOrRequest)` | `Record<T> \| undefined` |
-| `query(path, selection?)` | A `RecordPage` with `next()` |
+| `query(path, selection?)` | A lazily async-iterable `RecordPage` with `next()` |
 | `count(path, selection?)` | The full matching count before pagination |
 | `set(path, request)` | Create or replace a `$recordLimit.max: 1` record |
 | `patch(path, id, patch)` | A freshly read and updated record |
 | `delete(path, request)` | `void` when the requested delete is proven complete |
-| `observe(path, selection)` | A bounded materialized `RecordView` |
+| `observe(path, selection)` | A bounded materialized `ExpandableRecordView` |
 | `subscribe(paths, listener)` | An incremental change stream |
 
 `record.value()` decodes the application value. `record.data.text()`,
@@ -296,10 +300,16 @@ const renderView = (next) => {
 const unsubscribe = view.subscribe(renderView);
 renderView(view.getState());
 await view.ready();
+await view.loadMore();
 
 unsubscribe();
 await view.close();
 ```
+
+The original pagination limit is both the initial retained-record bound and
+the `loadMore()` step. Each expansion reruns the live selection from the
+beginning and replaces the retained prefix, so inserts and deletes cannot make
+cursor-appended pages drift from query truth.
 
 Every observable view uses the same lifecycle:
 

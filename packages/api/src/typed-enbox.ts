@@ -31,7 +31,6 @@
 import type { ContextInvitationPreview } from './context-invitations.js';
 import type { ContextView } from './context-view.js';
 import type { Protocol } from './protocol.js';
-import type { RecordView } from './record-view.js';
 import type {
   AudienceKeyDeliveryOutcome,
   DwnPaginationCursor,
@@ -51,6 +50,7 @@ import type {
   TypeNameAtPath,
 } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
+import type { ExpandableRecordView, RecordView } from './record-view.js';
 import type { MaterializedRecord, Record, RecordPatch } from './record.js';
 import type { ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
@@ -58,7 +58,6 @@ import type { RecordDeleteParams, RecordUpdateParams } from './record-types.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createContextView } from './context-view.js';
-import { createRecordView } from './record-view.js';
 import { Did } from '@enbox/dids';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
@@ -85,6 +84,7 @@ import {
   isContextInvitationEnvelope,
 } from './context-invitations.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
+import { createExpandableRecordView, createRecordView } from './record-view.js';
 import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
 import {
   FollowedSourceNotReadyError,
@@ -185,7 +185,7 @@ type MaterializedRecordHandle<T, ContextBound extends boolean> = ContextBound ex
   : MaterializedRecord<T>;
 
 /** One page returned by a typed records query. */
-export type RecordPage<Item = Record> = {
+export type RecordPage<Item = Record> = AsyncIterable<Item> & {
   /** Matching records in the representation selected by the query. */
   records: Item[];
 
@@ -1082,7 +1082,7 @@ type TypedRecordsApi<
     request: ContextBound extends true
       ? ContextObserveRequest<D, NoInfer<Path>, Materialization>
       : TypedObserveRequest<D, Path, Materialization>,
-  ) => Promise<RecordView<
+  ) => Promise<ExpandableRecordView<
     SelectedRecordRepresentation<D, C, Path, Materialization, ContextBound>
   >>;
 
@@ -3205,22 +3205,22 @@ export class TypedEnbox<
         });
         const queryPage = async (
           compiledQuery : typeof canonicalQuery,
-          priorCursors : ReadonlySet<string>,
+          priorCursor : PaginationCursorLineage | undefined,
         ): Promise<RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
           const result = await this._dwn.records.query(compiledQuery);
           requireDwnSuccess('TypedEnbox.records.query', result);
 
           const continuation = result.cursor === undefined ? undefined : { ...result.cursor };
-          const pageCursors = new Set(priorCursors);
+          let pageCursor = priorCursor;
           if (continuation !== undefined) {
             const key = paginationCursorKey(continuation);
-            if (pageCursors.has(key)) {
+            if (paginationCursorSeen(priorCursor, key)) {
               throw new Error('RecordPage: query returned a repeated pagination cursor.');
             }
-            pageCursors.add(key);
+            pageCursor = { key, previous: priorCursor };
           }
 
-          return {
+          const page: RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>> = {
             records: [...await this.representRecords<Path, Materialization>(
               normalizedPath,
               result.records,
@@ -3235,11 +3235,23 @@ export class TypedEnbox<
               : queryPage({
                 ...canonicalQuery,
                 pagination: { ...canonicalQuery.pagination, cursor: continuation },
-              }, pageCursors),
+              }, pageCursor),
+            async *[Symbol.asyncIterator](): AsyncIterator<
+              SelectedRecordRepresentation<D, C, Path, Materialization>
+              > {
+              let current: RecordPage<
+                SelectedRecordRepresentation<D, C, Path, Materialization>
+              > | undefined = page;
+              while (current !== undefined) {
+                yield* current.records;
+                current = await current.next();
+              }
+            },
           };
+          return page;
         };
 
-        return queryPage(canonicalQuery, new Set());
+        return queryPage(canonicalQuery, undefined);
       },
 
       /**
@@ -3259,7 +3271,7 @@ export class TypedEnbox<
       >(
         path: Path,
         request: TypedObserveRequest<D, Path, Materialization>,
-      ): Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
+      ): Promise<ExpandableRecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
         this._options.signal?.throwIfAborted();
         const normalizedPath = normalizePath(path);
         if (request?.pagination?.limit === undefined) {
@@ -3281,7 +3293,7 @@ export class TypedEnbox<
         ));
         await this._ensureReady(normalizedPath);
 
-        return createRecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>({
+        return createExpandableRecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>({
           additionalWakeFilters,
           definition         : this._definition,
           dwn                : this._dwn,
@@ -3697,6 +3709,20 @@ function projectRoleDeliveryOutcome(outcome: AudienceKeyDeliveryOutcome): RoleDe
 /** Stable identity for one validated DWN keyset cursor. */
 function paginationCursorKey(cursor: DwnPaginationCursor): string {
   return JSON.stringify([cursor.messageCid, cursor.value]);
+}
+
+type PaginationCursorLineage = Readonly<{
+  key: string;
+  previous?: PaginationCursorLineage;
+}>;
+
+function paginationCursorSeen(lineage: PaginationCursorLineage | undefined, key: string): boolean {
+  for (let cursor = lineage; cursor !== undefined; cursor = cursor.previous) {
+    if (cursor.key === key) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function contextKey(ownerDid: string, contextId: string): string {

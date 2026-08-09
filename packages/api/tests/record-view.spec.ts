@@ -740,6 +740,132 @@ describe('RecordView', () => {
     await view.close();
   });
 
+  it('grows one canonical prefix step and joins concurrent loads', async () => {
+    const records = Array.from({ length: 5 }, (_, index) => testRecord(String(index + 1)));
+    const harness = createHarness(async (request) => {
+      const limit = request.pagination?.limit ?? records.length;
+      return ok(
+        records.slice(0, limit),
+        limit < records.length ? { messageCid: `next-${limit}`, value: String(limit) } : undefined,
+      );
+    });
+    const view = await createTyped(harness).records.observe('note', { pagination: { limit: 2 } });
+    await view.ready();
+
+    const first = view.loadMore();
+    expect(view.loadMore()).toBe(first);
+    await first;
+    expect(view.getState().records).toEqual(records.slice(0, 4));
+
+    await view.loadMore();
+    await view.loadMore();
+    expect(view.getState().records).toEqual(records);
+    expect(harness.queryRequests.map(request => request.pagination?.limit)).toEqual([2, 4, 6]);
+    await view.close();
+  });
+
+  it('queues a load during the initial query', async () => {
+    const records = [testRecord('one'), testRecord('two')];
+    let finishInitial!: (response: RecordsQueryResponse) => void;
+    const initial = new Promise<RecordsQueryResponse>((resolve) => { finishInitial = resolve; });
+    const harness = createHarness(async (_request, call) => call === 1 ? initial : ok(records));
+    const view = await createTyped(harness).records.observe('note', { pagination: { limit: 1 } });
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(1); });
+
+    const loading = view.loadMore();
+    finishInitial(ok([records[0]!], { messageCid: 'next', value: '1' }));
+    await loading;
+
+    expect(view.getState().records).toEqual(records);
+    expect(harness.queryRequests.map(request => request.pagination?.limit)).toEqual([1, 2]);
+    await view.close();
+  });
+
+  it('retains the committed prefix after a failed load and retries the same step', async () => {
+    const retained = [testRecord('one'), testRecord('two')];
+    const expanded = [...retained, testRecord('three')];
+    const harness = createHarness(async (_request, call) => call === 1
+      ? ok(retained, { messageCid: 'next', value: '2' })
+      : call === 2
+        ? { status: { code: 500, detail: 'failed' }, records: [] }
+        : ok(expanded));
+    const view = await createTyped(harness).records.observe('note', { pagination: { limit: 2 } });
+    await view.ready();
+
+    await expect(view.loadMore()).rejects.toBeInstanceOf(DwnResponseError);
+    expect(view.getState().records).toEqual(retained);
+
+    await view.loadMore();
+    expect(view.getState().records).toEqual(expanded);
+    expect(harness.queryRequests.map(request => request.pagination?.limit)).toEqual([2, 4, 4]);
+    await view.close();
+  });
+
+  it('requeries the expanded prefix after live reordering', async () => {
+    const initial = [testRecord('a'), testRecord('b')];
+    const expanded = [testRecord('new'), testRecord('a'), testRecord('c')];
+    const afterDelete = [expanded[0]!, expanded[2]!];
+    const harness = createHarness(async (_request, call) => call === 1
+      ? ok(initial, { messageCid: 'next', value: '2' })
+      : call === 2 ? ok(expanded) : ok(afterDelete));
+    const view = await createTyped(harness).records.observe('note', { pagination: { limit: 2 } });
+    await view.ready();
+
+    await view.loadMore();
+    harness.emit(recordEvent());
+    await waitFor(() => { expect(view.getState().records).toEqual(afterDelete); });
+
+    expect(harness.queryRequests.map(request => request.pagination?.limit)).toEqual([2, 4, 4]);
+    expect(harness.queryRequests.every(request => request.pagination?.cursor === undefined)).toBe(true);
+    await view.close();
+  });
+
+  it('settles a load after a wake supersedes its active query', async () => {
+    const expanded = [testRecord('one'), testRecord('two')];
+    let finishStale!: (response: RecordsQueryResponse) => void;
+    let finishCurrent!: (response: RecordsQueryResponse) => void;
+    const harness = createHarness(async (_request, call) => {
+      if (call === 1) {
+        return ok([expanded[0]!], { messageCid: 'next', value: '1' });
+      }
+      return new Promise<RecordsQueryResponse>((resolve) => {
+        if (call === 2) {
+          finishStale = resolve;
+        } else {
+          finishCurrent = resolve;
+        }
+      });
+    });
+    const view = await createTyped(harness).records.observe('note', { pagination: { limit: 1 } });
+    await view.ready();
+
+    const loading = view.loadMore();
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
+    harness.emit(recordEvent());
+    finishStale(ok([testRecord('stale')]));
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(3); });
+    finishCurrent(ok(expanded));
+    await loading;
+
+    expect(view.getState().records).toEqual(expanded);
+    expect(harness.queryRequests.map(request => request.pagination?.limit)).toEqual([1, 2, 2]);
+    await view.close();
+  });
+
+  it('rejects an in-flight load when the view closes', async () => {
+    const harness = createHarness(async (_request, call) => call === 1
+      ? ok([testRecord('one')], { messageCid: 'next', value: '1' })
+      : new Promise<RecordsQueryResponse>(() => {}));
+    const view = await createTyped(harness).records.observe('note', { pagination: { limit: 1 } });
+    await view.ready();
+
+    const loading = view.loadMore();
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
+    await view.close();
+
+    await expect(loading).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('rematerializes when a record changes out of a mutable query predicate', async () => {
     const draft = testRecord('draft');
     const harness = createHarness(async (_request, call) => ok(call === 1 ? [draft] : []));

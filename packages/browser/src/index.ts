@@ -84,6 +84,7 @@ export type {
   EnboxSessionParams,
   EncodedRecordData,
   EnsureProtocolsReadyOptions,
+  ExpandableRecordView,
   FollowContextOptions,
   JsonRecordCodecOptions,
   MaterializedRecord,
