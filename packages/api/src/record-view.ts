@@ -141,13 +141,11 @@ type PendingLoad = {
 /** One serialized, wake-driven materialization resource. */
 class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> implements RecordView<Item> {
   private readonly _additionalWakeFilters: readonly RecordsFilter[];
-  private readonly _callerSignal?: AbortSignal;
   private readonly _definition: ProtocolDefinition;
   private readonly _dwn: DwnApi;
   private readonly _expandBy?: number;
   private readonly _materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   private readonly _query: CompiledRecordQuery;
-  private readonly _signal?: AbortSignal;
   private readonly _subscribeToWakes?: (wake: () => void) => () => void;
   private readonly _sync?: SyncEngine;
   private readonly _tenantDid: string;
@@ -166,28 +164,20 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   private _syncUnsubscribe?: () => void;
   private _wakeUnsubscribe?: () => void;
 
-  private readonly _handleAbort = (): void => { this.handleLifetimeAbort(true); };
-
-  private readonly _handleCallerAbort = (): void => {
-    this.handleLifetimeAbort(this._signal?.aborted === true);
-  };
-
   public constructor(options: RecordViewOptions<Item>) {
     super(immutableState({
       status  : 'loading',
       records : [],
       hasMore : false,
       current : false,
-    }));
+    }), options.callerSignal, options.signal);
     this._additionalWakeFilters = options.additionalWakeFilters ?? [];
-    this._callerSignal = options.callerSignal;
     this._definition = options.definition;
     this._dwn = options.dwn;
     this._expandBy = options.expandBy;
     this._limit = options.expandBy === undefined ? undefined : options.query.pagination?.limit;
     this._materializeRecords = options.materializeRecords;
     this._query = options.query;
-    this._signal = options.signal;
     this._subscribeToWakes = options.subscribeToWakes;
     this._sync = options.dwn.followedSourceId !== undefined || options.query.from === undefined
       ? options.sync
@@ -196,9 +186,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     this._followedContextId = options.dwn.followedContextId;
     this._followedSourceAcceptanceId = options.dwn.followedSourceAcceptanceId;
     this._followedSourceId = options.dwn.followedSourceId;
-
-    this._callerSignal?.addEventListener('abort', this._handleCallerAbort, { once: true });
-    this._signal?.addEventListener('abort', this._handleAbort, { once: true });
     this._syncUnsubscribe = this._sync?.on((event): void => {
       this.handleSyncEvent(event);
     });
@@ -237,9 +224,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     this._wakeUnsubscribe = undefined;
     this._syncUnsubscribe?.();
     this._syncUnsubscribe = undefined;
-    this._callerSignal?.removeEventListener('abort', this._handleCallerAbort);
-    this._signal?.removeEventListener('abort', this._handleAbort);
-
     const subscriptions = this._subscriptions.splice(0);
     await Promise.all(subscriptions.map(async (subscription): Promise<void> => subscription.close()));
   }
@@ -302,14 +286,12 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     }
   }
 
-  /** Preserve owning-session semantics when caller and session lifetimes share an abort. */
-  private handleLifetimeAbort(sessionEnded: boolean): void {
-    const signal = sessionEnded ? this._signal : this._callerSignal;
-    this.captureTerminationReason(signal?.reason);
+  /** Retain the first abort reason for loads; publish only owning-session termination. */
+  protected handleLifetimeAbort(reason: unknown, sessionEnded: boolean): void {
+    this.captureTerminationReason(reason);
     if (sessionEnded) {
-      this.publishError(new Error('RecordView: owning session ended.', { cause: signal?.reason }));
+      this.publishError(new Error('RecordView: owning session ended.', { cause: reason }));
     }
-    void this.close().catch((): void => {});
   }
 
   /** Open one wake subscription and retain its handle only after validating the reply. */
@@ -328,7 +310,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     if (this.isClosed) {
       await reply.subscription?.close();
       this._callerSignal?.throwIfAborted();
-      this._signal?.throwIfAborted();
+      this._sessionSignal?.throwIfAborted();
       throw new Error('RecordView: closed while opening the subscription.');
     }
 

@@ -46,27 +46,15 @@ export async function createContextView<Context>(
 }
 
 class ObservedContextView<Context> extends ObservedView<ContextViewState<Context>> implements ContextView<Context> {
-  private readonly _callerSignal?: AbortSignal;
   private readonly _list: ContextViewOptions<Context>['list'];
   private readonly _openWakeSubscription: ContextViewOptions<Context>['openWakeSubscription'];
-  private readonly _signal?: AbortSignal;
 
   private _wakeSubscription?: { close(): Promise<void> };
 
-  private readonly _handleAbort = (): void => { this.handleLifetimeAbort(true); };
-
-  private readonly _handleCallerAbort = (): void => {
-    this.handleLifetimeAbort(this._signal?.aborted === true);
-  };
-
   public constructor(options: ContextViewOptions<Context>) {
-    super(immutableState({ status: 'loading', contexts: [] }));
-    this._callerSignal = options.callerSignal;
+    super(immutableState({ status: 'loading', contexts: [] }), options.callerSignal, options.signal);
     this._list = options.list;
     this._openWakeSubscription = options.openWakeSubscription;
-    this._signal = options.signal;
-    this._callerSignal?.addEventListener('abort', this._handleCallerAbort, { once: true });
-    this._signal?.addEventListener('abort', this._handleAbort, { once: true });
   }
 
   /** Install wake delivery before the initial list so changes cannot fall through the handoff. */
@@ -84,7 +72,7 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
       if (this.isClosed) {
         await wakeSubscription.close();
         this._callerSignal?.throwIfAborted();
-        this._signal?.throwIfAborted();
+        this._sessionSignal?.throwIfAborted();
         return;
       }
       this._wakeSubscription = wakeSubscription;
@@ -96,8 +84,6 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
   }
 
   protected async closeOwnedResources(): Promise<void> {
-    this._callerSignal?.removeEventListener('abort', this._handleCallerAbort);
-    this._signal?.removeEventListener('abort', this._handleAbort);
     await this._wakeSubscription?.close();
     this._wakeSubscription = undefined;
   }
@@ -119,12 +105,11 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
     return statesEqual(previous, next);
   }
 
-  /** Preserve owning-session semantics when caller and session lifetimes share an abort. */
-  private handleLifetimeAbort(sessionEnded: boolean): void {
+  /** Keep caller abort silent; publish owning-session termination. */
+  protected handleLifetimeAbort(reason: unknown, sessionEnded: boolean): void {
     if (sessionEnded) {
-      this.publishError(new Error('ContextView: owning session ended.', { cause: this._signal?.reason }));
+      this.publishError(new Error('ContextView: owning session ended.', { cause: reason }));
     }
-    void this.close().catch((): void => {});
   }
 
   private publishError(error: Error): void {
