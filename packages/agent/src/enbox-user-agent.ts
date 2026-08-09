@@ -60,8 +60,8 @@ export type AgentInitializeParams = {
    */
    dwnEndpoints?: string[];
 
-  /** Replace resolved endpoints only when recovery explicitly requests it. */
-  replaceDwnEndpoints?: boolean;
+  /** Explicit replacement endpoints for recovery; omitted to preserve the resolved DID document. */
+  recoveryDwnEndpoints?: string[];
  };
 
 export type AgentStartParams = {
@@ -278,11 +278,11 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     password,
     recoveryPhrase,
     dwnEndpoints,
-    replaceDwnEndpoints,
+    recoveryDwnEndpoints,
   }: AgentInitializeParams): Promise<string> {
     // Initialize the Agent vault.
     recoveryPhrase = await this.vault.initialize({
-      password, recoveryPhrase, dwnEndpoints, replaceDwnEndpoints,
+      password, recoveryPhrase, dwnEndpoints, recoveryDwnEndpoints,
     });
 
     return recoveryPhrase;

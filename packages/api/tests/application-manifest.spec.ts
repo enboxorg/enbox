@@ -1,12 +1,9 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { normalizeProtocolRequests } from '@enbox/auth';
 import { describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { recordCodecs } from '../src/record-codec.js';
-import { ServiceConfigProtocol } from '../src/index.js';
 import { defineApplicationManifest, getApplicationProtocolRequests } from '../src/application-manifest.js';
 
 const NotesDefinition = {
@@ -40,21 +37,6 @@ const PhotosProtocol = defineProtocol(PhotosDefinition, {
 });
 
 describe('application manifest', () => {
-  it('should project read-only service-config access to Messages.Read', () => {
-    const application = defineApplicationManifest({
-      protocols: [{ protocol: ServiceConfigProtocol, permissions: ['read'] }],
-    } as const);
-
-    const [request] = normalizeProtocolRequests(getApplicationProtocolRequests(application));
-
-    expect(request.protocolDefinition).toBe(ServiceConfigProtocol.definition);
-    expect(request.permissionScopes).toContainEqual({
-      protocol  : ServiceConfigProtocol.definition.protocol,
-      interface : DwnInterfaceName.Messages,
-      method    : DwnMethodName.Read,
-    });
-  });
-
   it('should normalize typed protocol shorthands and explicit permission policies', () => {
     const application = defineApplicationManifest({
       protocols: [

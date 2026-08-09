@@ -49,7 +49,7 @@ export async function vaultConnect(
   const sync = options.sync ?? ctx.defaultSync;
   const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
   const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
-  const replaceDwnEndpoints = options.recoveryPhrase !== undefined && options.dwnEndpoints !== undefined;
+  const replacementDwnEndpoints = options.recoveryPhrase === undefined ? undefined : options.dwnEndpoints;
   const shouldCreateIdentity = options.createIdentity === true;
 
   // Initialize vault on first launch and start the agent.
@@ -58,9 +58,9 @@ export async function vaultConnect(
     emitter,
     password,
     isFirstLaunch,
-    recoveryPhrase: options.recoveryPhrase,
+    recoveryPhrase       : options.recoveryPhrase,
     dwnEndpoints,
-    replaceDwnEndpoints,
+    recoveryDwnEndpoints : replacementDwnEndpoints,
   }));
 
   // Apply a stored local-node pairing when the agent was created in local mode.
@@ -73,7 +73,7 @@ export async function vaultConnect(
   const recoveryDwnEndpoints = options.recoveryPhrase !== undefined && sync !== 'off'
     ? await userAgent.identity.getDwnEndpoints({
       didUri  : userAgent.agentDid.uri,
-      refresh : !isFirstLaunch && !replaceDwnEndpoints,
+      refresh : !isFirstLaunch && replacementDwnEndpoints === undefined,
     })
     : undefined;
 
@@ -112,8 +112,7 @@ export async function vaultConnect(
   if (!identity && options.recoveryPhrase && sync !== 'off') {
     identities = await recoverIdentitiesFromRemote({
       userAgent,
-      dwnEndpoints,
-      replaceDwnEndpoints,
+      replacementDwnEndpoints,
       identitySyncProtocols,
       registration : ctx.registration,
       storage,

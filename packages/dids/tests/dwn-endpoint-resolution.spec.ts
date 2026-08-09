@@ -1,22 +1,27 @@
+import type { DidDocument } from '../src/types/did-core.js';
+
 import { describe, expect, it, mock } from 'bun:test';
 
 import { getDwnEndpointStatus, replaceDwnServiceEndpointUrls, resolveDwnEndpointStatus } from '../src/dwn-endpoint-resolution.js';
 
 const didUri = 'did:example:alice';
 
+function dwnDocument(
+  serviceEndpoint: string | string[],
+  id = `${didUri}#dwn`,
+): DidDocument {
+  return {
+    id      : didUri,
+    service : [{ id, type: 'DecentralizedWebNode', serviceEndpoint }],
+  };
+}
+
 describe('DWN endpoint resolution', () => {
   it('normalizes and deduplicates the canonical #dwn endpoints', () => {
-    const result = getDwnEndpointStatus(didUri, {
-      id      : didUri,
-      service : [{
-        id              : `${didUri}#dwn`,
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : [
-          'https://DWN.example/path/',
-          'https://dwn.example/path',
-        ],
-      }],
-    });
+    const result = getDwnEndpointStatus(didUri, dwnDocument([
+      'https://DWN.example/path/',
+      'https://dwn.example/path',
+    ]));
 
     expect(result).toEqual({
       status    : 'ready',
@@ -26,14 +31,7 @@ describe('DWN endpoint resolution', () => {
   });
 
   it('rejects endpoint URLs with a query or fragment', () => {
-    const result = getDwnEndpointStatus('did:example:alice', {
-      id      : 'did:example:alice',
-      service : [{
-        id              : 'did:example:alice#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example/path?tenant=alice#fragment',
-      }],
-    });
+    const result = getDwnEndpointStatus(didUri, dwnDocument('https://dwn.example/path?tenant=alice#fragment'));
 
     expect(result.status).toBe('service-malformed');
   });
@@ -46,14 +44,10 @@ describe('DWN endpoint resolution', () => {
   });
 
   it('ignores a #dwn fragment belonging to another DID', () => {
-    expect(getDwnEndpointStatus(didUri, {
-      id      : didUri,
-      service : [{
-        id              : 'did:example:bob#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example',
-      }],
-    })).toMatchObject({ status: 'service-missing', didUri });
+    expect(getDwnEndpointStatus(didUri, dwnDocument(
+      'https://dwn.example',
+      'did:example:bob#dwn',
+    ))).toMatchObject({ status: 'service-missing', didUri });
   });
 
   it('replaces only #dwn endpoints while preserving unrelated services', () => {
@@ -81,14 +75,9 @@ describe('DWN endpoint resolution', () => {
     { serviceEndpoint: ['ftp://dwn.example'] },
     { serviceEndpoint: [42] },
   ])('reports malformed endpoints: %j', ({ serviceEndpoint }) => {
-    expect(getDwnEndpointStatus(didUri, {
-      id      : didUri,
-      service : [{
-        id              : `${didUri}#dwn`,
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : serviceEndpoint as unknown as string[],
-      }],
-    })).toMatchObject({ status: 'service-malformed', didUri });
+    expect(getDwnEndpointStatus(didUri, dwnDocument(
+      serviceEndpoint as unknown as string[],
+    ))).toMatchObject({ status: 'service-malformed', didUri });
   });
 
   it('distinguishes DID resolution failure from a missing service', async () => {

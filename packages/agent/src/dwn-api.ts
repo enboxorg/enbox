@@ -331,14 +331,6 @@ export class AgentDwnApi {
   });
 
   /**
-   * Cache of locally-managed DIDs (agent DID + identities). Used to decide
-   * whether a target DID should be routed through the local DWN server.
-   */
-  private readonly _localManagedDidCache = new TtlCache<string, boolean>({
-    ttl: 30 * 60 * 1000
-  });
-
-  /**
    * Coalesces concurrent owner-authorized {@link reprovisionAudienceKeyDelivery}
    * calls for the same (target, protocol, rolePath, contextId, recipientDid,
    * recipient wrap target) onto one execution, so the non-atomic check-then-write
@@ -420,7 +412,6 @@ export class AgentDwnApi {
       10_000,
       AgentDwnApi._tryCreateDiscoveryFile(),
     );
-    this._localManagedDidCache.clear();
   }
 
   get localDwnStrategy(): LocalDwnStrategy {
@@ -506,16 +497,6 @@ export class AgentDwnApi {
     return getDwnServiceEndpointUrls(targetDid, this.agent.did);
   }
 
-  /** Resolve hosted endpoints for an operation that must not fall back to a local DWN. */
-  private async requireRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
-    if (this._localDwnStrategy === 'only' && await this.shouldUseLocalDwnForTarget(targetDid, false)) {
-      throw new Error(
-        `AgentDwnApi: Remote DWN requests are unavailable while localDwnStrategy is 'only'.`
-      );
-    }
-    return this.getRemoteDwnEndpointUrls(targetDid);
-  }
-
   /** Lazily retrieves the local DWN server endpoint via discovery. */
   private async getLocalDwnEndpoint(): Promise<string | undefined> {
     // In remote mode, the endpoint is always known.
@@ -550,46 +531,22 @@ export class AgentDwnApi {
    * local DWN server. Returns `true` if the DID is the agent DID or one
    * of the locally-managed identity DIDs.
    */
-  private async shouldUseLocalDwnForTarget(targetDid: string, useCache = true): Promise<boolean> {
+  private async shouldUseLocalDwnForTarget(targetDid: string): Promise<boolean> {
     if (this._localDwnStrategy === 'off') {
       return false;
     }
+    return this.isLocallyManagedDid(targetDid);
+  }
 
-    if (useCache) {
-      const cached = this._localManagedDidCache.get(targetDid);
-      if (cached !== undefined) {
-        return cached;
-      }
-    }
-
+  /** Freshly checks the target-scoped boundary used by `localDwnStrategy: 'only'`. */
+  private async isLocallyManagedDid(targetDid: string): Promise<boolean> {
     if (targetDid === this.agent.agentDid.uri) {
-      if (useCache) {
-        this._localManagedDidCache.set(targetDid, true);
-      }
       return true;
     }
-
     const identities = await this.agent.identity.list();
-    const localManagedDids = new Set<string>();
-
-    for (const identity of identities) {
-      localManagedDids.add(identity.did.uri);
-      if (identity.metadata.connectedDid) {
-        localManagedDids.add(identity.metadata.connectedDid);
-      }
-    }
-
-    const isLocalManaged = localManagedDids.has(targetDid);
-    if (useCache) {
-      for (const localDid of localManagedDids) {
-        this._localManagedDidCache.set(localDid, true);
-      }
-      if (!isLocalManaged) {
-        this._localManagedDidCache.set(targetDid, false);
-      }
-    }
-
-    return isLocalManaged;
+    return identities.some(identity =>
+      identity.did.uri === targetDid || identity.metadata.connectedDid === targetDid
+    );
   }
 
   /**
@@ -1175,19 +1132,14 @@ export class AgentDwnApi {
     if (request.remoteEndpoint !== undefined && request.remoteEndpointsOnly === true) {
       throw new TypeError('AgentDwnApi: remoteEndpoint and remoteEndpointsOnly are mutually exclusive.');
     }
-    if (request.remoteEndpoint !== undefined
-      && this._localDwnStrategy === 'only'
-      && await this.shouldUseLocalDwnForTarget(request.target, false)) {
+    if (this._localDwnStrategy === 'only' && await this.isLocallyManagedDid(request.target)) {
       throw new Error(
-        `AgentDwnApi: remoteEndpoint cannot be used while localDwnStrategy is 'only'.`
+        `AgentDwnApi: Remote DWN requests are unavailable while localDwnStrategy is 'only'.`
       );
     }
-    let dwnEndpointUrls: string[];
-    if (request.remoteEndpoint !== undefined) {
-      dwnEndpointUrls = [request.remoteEndpoint];
-    } else {
-      dwnEndpointUrls = await this.requireRemoteDwnEndpointUrls(request.target);
-    }
+    const dwnEndpointUrls = request.remoteEndpoint === undefined
+      ? await this.getRemoteDwnEndpointUrls(request.target)
+      : [request.remoteEndpoint];
     let messageCid: string | undefined;
     let message: DwnMessage[T];
     let data: DwnRpcData | undefined;

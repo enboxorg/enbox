@@ -42,7 +42,6 @@ export {
   ServiceConfigProtocolDefinition,
   isServiceConfigNoticeDelivery,
 } from './service-config.js';
-export type { ServiceConfigNotice } from './service-config.js';
 export * from './store-data.js';
 export * from './store-did.js';
 export * from './store-identity.js';

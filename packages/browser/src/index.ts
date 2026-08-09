@@ -111,7 +111,6 @@ export type {
   RecordValidator,
   ReplicationCurrentness,
   RoleDeliveryState,
-  ServiceConfigNotice,
   SyncStatusSnapshot,
 } from '@enbox/api';
 

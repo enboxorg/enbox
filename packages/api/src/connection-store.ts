@@ -716,6 +716,8 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
   }
 
+  // ─── Outcome mapping ───────────────────────────────────────────
+
   private async _runDwnEndpointRefresh(): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
     this._apply({ error: undefined });
@@ -738,8 +740,6 @@ class HeadlessConnectionStore implements ConnectionStore {
       return this._applyActionFailure(generation, cause);
     }
   }
-
-  // ─── Outcome mapping ───────────────────────────────────────────
 
   /** Apply and seed the authoritative session, repeating if auth changes while status is read. */
   private async _commitConnected(auth: AuthManager, generation: number): Promise<ConnectionSnapshot> {

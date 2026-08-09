@@ -452,7 +452,7 @@ describe('HdIdentityVault', () => {
           };
 
           await identityVault.restore({
-            backup, password, dwnEndpoints: ['https://new.example'], replaceDwnEndpoints: true,
+            backup, password, dwnEndpoints: ['https://new.example'],
           });
 
           expect(publish.lastCall.args[0].did.document.service).toEqual([{

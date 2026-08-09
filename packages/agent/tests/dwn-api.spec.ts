@@ -611,7 +611,7 @@ describe('AgentDwnApi', () => {
         messageType    : DwnInterface.ProtocolsQuery,
         remoteEndpoint : 'https://hosted.example',
         target         : 'did:example:owner',
-      })).rejects.toThrow(`remoteEndpoint cannot be used while localDwnStrategy is 'only'`);
+      })).rejects.toThrow(`Remote DWN requests are unavailable while localDwnStrategy is 'only'`);
     });
 
     it('sendRequest uses advertised endpoints for a foreign target under local-only routing', async () => {
@@ -620,20 +620,6 @@ describe('AgentDwnApi', () => {
       const dwnApi = new AgentDwnApi({
         agent: {
           agentDid : { uri: 'did:example:owner' },
-          did      : {
-            resolve: sinon.stub().resolves({
-              didDocument: {
-                id      : foreignDid,
-                service : [{
-                  id              : `${foreignDid}#dwn`,
-                  type            : 'DecentralizedWebNode',
-                  serviceEndpoint : 'https://foreign.example',
-                }],
-              },
-              didDocumentMetadata   : {},
-              didResolutionMetadata : {},
-            }),
-          },
           identity : { list: identityList },
           rpc      : {
             getServerInfo  : sinon.stub(),
@@ -652,8 +638,6 @@ describe('AgentDwnApi', () => {
       });
       sinon.stub(Message, 'getCid').resolves('bafytestmessagecid');
 
-      expect(await dwnApi.getDwnEndpointUrlsForTarget(foreignDid)).toEqual(['https://foreign.example']);
-
       await dwnApi.sendRequest({
         author        : 'did:example:owner',
         messageParams : { filter: { protocol: 'https://example.com/notes' } },
@@ -671,7 +655,7 @@ describe('AgentDwnApi', () => {
         messageType    : DwnInterface.ProtocolsQuery,
         remoteEndpoint : 'https://pinned-foreign.example',
         target         : foreignDid,
-      })).rejects.toThrow(`remoteEndpoint cannot be used while localDwnStrategy is 'only'`);
+      })).rejects.toThrow(`Remote DWN requests are unavailable while localDwnStrategy is 'only'`);
 
       identityList.resolves([]);
       await dwnApi.sendRequest({

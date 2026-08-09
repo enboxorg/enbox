@@ -12,8 +12,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import {
   isServiceConfigNoticeDelivery,
   publishServiceConfigNotice,
-  SERVICE_CONFIG_PROTOCOL_PATH,
-  SERVICE_CONFIG_PROTOCOL_URI,
+  ServiceConfigProtocolDefinition,
 } from '../src/service-config.js';
 
 const OWNER_DID = 'did:example:alice';
@@ -45,19 +44,10 @@ describe('service-config notice', () => {
 
   it('writes each local notice as an append-only initial record', async () => {
     const { agent, processRequest } = createAgent();
+    const params = { agent, currentEndpoints: [], formerEndpoints: [], ownerDid: OWNER_DID };
 
-    await publishServiceConfigNotice({
-      agent,
-      currentEndpoints : [],
-      formerEndpoints  : [],
-      ownerDid         : OWNER_DID,
-    });
-    await publishServiceConfigNotice({
-      agent,
-      currentEndpoints : [],
-      formerEndpoints  : [],
-      ownerDid         : OWNER_DID,
-    });
+    await publishServiceConfigNotice(params);
+    await publishServiceConfigNotice(params);
 
     const requests = processRequest.getCalls().map(call => call.args[0]);
     const writes = requests.filter(request => request.messageType === DwnInterface.RecordsWrite);
@@ -107,37 +97,24 @@ describe('service-config notice', () => {
       descriptor     : {
         interface    : DwnInterfaceName.Records,
         method       : DwnMethodName.Write,
-        protocol     : SERVICE_CONFIG_PROTOCOL_URI,
-        protocolPath : SERVICE_CONFIG_PROTOCOL_PATH,
+        protocol     : ServiceConfigProtocolDefinition.protocol,
+        protocolPath : 'serviceConfig',
         author       : OWNER_DID,
       },
     };
 
     expect(isServiceConfigNoticeDelivery(event, OWNER_DID)).toBe(true);
-    expect(isServiceConfigNoticeDelivery({ ...event, tenantDid: 'did:example:bob' }, OWNER_DID)).toBe(false);
-    expect(isServiceConfigNoticeDelivery({
-      ...event,
-      descriptor: { ...event.descriptor, author: 'did:example:bob' },
-    }, OWNER_DID)).toBe(false);
-    expect(isServiceConfigNoticeDelivery({
-      ...event,
-      descriptor: { ...event.descriptor, interface: DwnInterfaceName.Protocols },
-    }, OWNER_DID)).toBe(false);
-    expect(isServiceConfigNoticeDelivery({
-      ...event,
-      descriptor: { ...event.descriptor, method: DwnMethodName.Delete },
-    }, OWNER_DID)).toBe(false);
-    expect(isServiceConfigNoticeDelivery({
-      ...event,
-      descriptor: { ...event.descriptor, protocol: 'https://example.com/other' },
-    }, OWNER_DID)).toBe(false);
-    expect(isServiceConfigNoticeDelivery({
-      ...event,
-      descriptor: { ...event.descriptor, protocolPath: 'other' },
-    }, OWNER_DID)).toBe(false);
-    expect(isServiceConfigNoticeDelivery({
-      type      : 'identity:registration-change',
-      tenantDid : OWNER_DID,
-    }, OWNER_DID)).toBe(false);
+    const mismatches: SyncEvent[] = [
+      { ...event, tenantDid: 'did:example:bob' },
+      { ...event, descriptor: { ...event.descriptor, author: 'did:example:bob' } },
+      { ...event, descriptor: { ...event.descriptor, interface: DwnInterfaceName.Protocols } },
+      { ...event, descriptor: { ...event.descriptor, method: DwnMethodName.Delete } },
+      { ...event, descriptor: { ...event.descriptor, protocol: 'https://example.com/other' } },
+      { ...event, descriptor: { ...event.descriptor, protocolPath: 'other' } },
+      { type: 'identity:registration-change', tenantDid: OWNER_DID },
+    ];
+    for (const mismatch of mismatches) {
+      expect(isServiceConfigNoticeDelivery(mismatch, OWNER_DID)).toBe(false);
+    }
   });
 });

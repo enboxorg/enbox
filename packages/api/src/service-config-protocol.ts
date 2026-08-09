@@ -1,5 +1,3 @@
-import type { ServiceConfigNotice } from '@enbox/agent';
-
 import { ServiceConfigProtocolDefinition } from '@enbox/agent';
 
 import { defineProtocol } from './define-protocol.js';
@@ -11,7 +9,5 @@ import { recordCodecs } from './record-codec.js';
  */
 export const ServiceConfigProtocol = defineProtocol(
   ServiceConfigProtocolDefinition,
-  { serviceConfig: recordCodecs.json<ServiceConfigNotice>() },
+  { serviceConfig: recordCodecs.json<Record<string, never>>() },
 );
-
-export type { ServiceConfigNotice } from '@enbox/agent';

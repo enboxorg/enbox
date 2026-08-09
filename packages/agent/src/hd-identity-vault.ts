@@ -46,8 +46,8 @@ export type HdIdentityVaultInitializeParams = {
     */
     dwnEndpoints?: string[];
 
-   /** Replace resolved endpoints during recovery only when explicitly requested. */
-   replaceDwnEndpoints?: boolean;
+   /** Explicit replacement endpoints for recovery; omitted to preserve the resolved DID document. */
+   recoveryDwnEndpoints?: string[];
  };
 
 export type HdIdentityVaultResetPasswordWithRecoveryPhraseParams = {
@@ -60,15 +60,12 @@ export type HdIdentityVaultResetPasswordWithRecoveryPhraseParams = {
   /** Explicit replacement endpoints for the recovered DID document. */
   dwnEndpoints?: string[];
 
-  /** Whether the supplied endpoints intentionally replace the resolved #dwn service. */
-  replaceDwnEndpoints?: boolean;
 };
 
 export type HdIdentityVaultRestoreParams = {
   backup: IdentityVaultBackup;
   password: string;
   dwnEndpoints?: string[];
-  replaceDwnEndpoints?: boolean;
 };
 
 type HdIdentityVaultDidResolver = Pick<DidResolver, 'resolve'> & {
@@ -433,7 +430,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @returns A promise that resolves with the recovery phrase used during the initialization, which
    *          should be securely stored by the user.
    */
-  public async initialize({ password, recoveryPhrase, dwnEndpoints, replaceDwnEndpoints }:
+  public async initialize({ password, recoveryPhrase, dwnEndpoints, recoveryDwnEndpoints }:
     HdIdentityVaultInitializeParams
   ): Promise<string> {
     // Verify that the identity vault was not previously initialized.
@@ -445,7 +442,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints });
     const portableDid = isRecovery
       ? await this.reconcileRecoveredDid({
-        portableDid: derivedMaterial.portableDid, dwnEndpoints, replaceDwnEndpoints,
+        portableDid: derivedMaterial.portableDid, replacementEndpoints: recoveryDwnEndpoints,
       })
       : await this.publishPortableDid(derivedMaterial.portableDid);
 
@@ -475,7 +472,6 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     recoveryPhrase,
     password,
     dwnEndpoints,
-    replaceDwnEndpoints,
   }: HdIdentityVaultResetPasswordWithRecoveryPhraseParams): Promise<void> {
     if (await this.isInitialized() === false) {
       throw new Error(
@@ -496,9 +492,9 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       throw new HdIdentityVaultRecoveryPhraseMismatchError();
     }
 
-    if (replaceDwnEndpoints) {
+    if (dwnEndpoints !== undefined) {
       storedPortableDid = await this.reconcileRecoveredDid({
-        portableDid: storedPortableDid, dwnEndpoints, replaceDwnEndpoints,
+        portableDid: storedPortableDid, replacementEndpoints: dwnEndpoints,
       });
       await this._store.set(
         'did',
@@ -618,7 +614,6 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     backup,
     password,
     dwnEndpoints,
-    replaceDwnEndpoints,
   }: HdIdentityVaultRestoreParams): Promise<void> {
     // Validate the backup object.
     if (!isIdentityVaultBackup(backup)) {
@@ -661,7 +656,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
 
     // Resolution happens before any restored state is written so its exact error can reach callers.
     const reconciledDid = await this.reconcileRecoveredDid({
-      portableDid, dwnEndpoints, replaceDwnEndpoints,
+      portableDid, replacementEndpoints: dwnEndpoints,
     });
 
     try {
@@ -942,23 +937,18 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   /** Reconcile a recovered DID with its authoritative document before any vault write. */
   private async reconcileRecoveredDid({
     portableDid,
-    dwnEndpoints,
-    replaceDwnEndpoints = false,
+    replacementEndpoints,
   }: {
     portableDid: PortableDid;
-    dwnEndpoints?: string[];
-    replaceDwnEndpoints?: boolean;
+    replacementEndpoints?: string[];
   }): Promise<PortableDid> {
     const resolution = this._didResolver.refreshResolution === undefined
       ? await this._didResolver.resolve(portableDid.uri, {})
       : await this._didResolver.refreshResolution(portableDid.uri);
 
     if (resolution.didResolutionMetadata.error === DidErrorCode.NotFound) {
-      if (replaceDwnEndpoints) {
-        if (dwnEndpoints === undefined) {
-          throw new Error('HdIdentityVault: Explicit endpoint replacement requires dwnEndpoints.');
-        }
-        const document = replaceDwnServiceEndpointUrls(portableDid.document, dwnEndpoints);
+      if (replacementEndpoints !== undefined) {
+        const document = replaceDwnServiceEndpointUrls(portableDid.document, replacementEndpoints);
         return this.publishPortableDid(portableDid, document, document);
       }
       return this.publishPortableDid(portableDid);
@@ -972,19 +962,16 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
 
     const resolvedDocument = resolution.didDocument;
     const localDocument = this.copyResolvedDwnService(portableDid.document, resolvedDocument);
-    if (!replaceDwnEndpoints) {
+    if (replacementEndpoints === undefined) {
       return {
         ...portableDid,
         document : localDocument,
         metadata : resolution.didDocumentMetadata,
       };
     }
-    if (dwnEndpoints === undefined) {
-      throw new Error('HdIdentityVault: Explicit endpoint replacement requires dwnEndpoints.');
-    }
 
-    const publicDocument = replaceDwnServiceEndpointUrls(resolvedDocument, dwnEndpoints);
-    const updatedLocalDocument = replaceDwnServiceEndpointUrls(localDocument, dwnEndpoints);
+    const publicDocument = replaceDwnServiceEndpointUrls(resolvedDocument, replacementEndpoints);
+    const updatedLocalDocument = replaceDwnServiceEndpointUrls(localDocument, replacementEndpoints);
     return this.publishPortableDid(portableDid, publicDocument, updatedLocalDocument);
   }
 

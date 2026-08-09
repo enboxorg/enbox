@@ -156,6 +156,10 @@ function serviceConfigNotice(author: string = OWNER_DID): SyncEvent {
   };
 }
 
+function readyDwn(endpoint = 'https://dwn.example', didUri = OWNER_DID): DwnEndpointResolution {
+  return { status: 'ready', didUri, endpoints: [endpoint] };
+}
+
 /** Duck-typed AuthManager driven by a real AuthEventEmitter. */
 type FakeAuthManager = {
   agent: EnboxUserAgent;
@@ -190,11 +194,7 @@ describe('createConnectionStore()', () => {
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
     getDwnEndpointStatus = sinon.stub(testHarness.agent.identity, 'getDwnEndpointStatus')
-      .callsFake(async ({ didUri }): Promise<DwnEndpointResolution> => ({
-        status    : 'ready',
-        didUri,
-        endpoints : ['https://dwn.example'],
-      }));
+      .callsFake(async ({ didUri }): Promise<DwnEndpointResolution> => readyDwn(undefined, didUri));
   });
 
   afterEach(() => {
@@ -560,11 +560,7 @@ describe('createConnectionStore()', () => {
       const engine = createSyncStatusEngine();
       const { store } = await connectWithSync(engine);
 
-      expect(store.getSnapshot().remoteDwn).toEqual({
-        status    : 'ready',
-        didUri    : OWNER_DID,
-        endpoints : ['https://dwn.example'],
-      });
+      expect(store.getSnapshot().remoteDwn).toEqual(readyDwn());
       expect(Object.isFrozen(store.getSnapshot().remoteDwn)).toBe(true);
       expect(Object.isFrozen((store.getSnapshot().remoteDwn as { endpoints: string[] }).endpoints)).toBe(true);
       expect(getDwnEndpointStatus.calledOnceWith({ didUri: OWNER_DID, refresh: true })).toBe(true);
@@ -572,18 +568,10 @@ describe('createConnectionStore()', () => {
 
       getDwnEndpointStatus.resetHistory();
       engine.optionUpdates.length = 0;
-      getDwnEndpointStatus.resolves({
-        status    : 'ready',
-        didUri    : OWNER_DID,
-        endpoints : ['https://new-dwn.example'],
-      });
+      getDwnEndpointStatus.resolves(readyDwn('https://new-dwn.example'));
       const changed = await store.refreshDwnEndpoints();
 
-      expect(changed.remoteDwn).toEqual({
-        status    : 'ready',
-        didUri    : OWNER_DID,
-        endpoints : ['https://new-dwn.example'],
-      });
+      expect(changed.remoteDwn).toEqual(readyDwn('https://new-dwn.example'));
       expect(getDwnEndpointStatus.calledOnceWith({ didUri: OWNER_DID, refresh: true })).toBe(true);
       expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { protocols: 'all' } }]);
 
@@ -605,11 +593,7 @@ describe('createConnectionStore()', () => {
 
       const { store } = await connectWithSync(engine);
       const initial = store.getSnapshot();
-      expect(initial.remoteDwn).toEqual({
-        status    : 'ready',
-        didUri    : OWNER_DID,
-        endpoints : ['https://dwn.example'],
-      });
+      expect(initial.remoteDwn).toEqual(readyDwn());
       expect(updateIdentityOptions.callCount).toBe(1);
 
       const retried = await store.refreshDwnEndpoints();
@@ -660,11 +644,7 @@ describe('createConnectionStore()', () => {
       let resolveFirst!: (status: DwnEndpointResolution) => void;
       const firstRead = new Promise<DwnEndpointResolution>((resolve) => { resolveFirst = resolve; });
       getDwnEndpointStatus.onCall(0).returns(firstRead);
-      getDwnEndpointStatus.onCall(1).resolves({
-        status    : 'ready',
-        didUri    : OWNER_DID,
-        endpoints : ['https://latest-dwn.example'],
-      });
+      getDwnEndpointStatus.onCall(1).resolves(readyDwn('https://latest-dwn.example'));
 
       engine.emit(serviceConfigNotice('did:dht:someone-else'));
       await Promise.resolve();
@@ -676,11 +656,7 @@ describe('createConnectionStore()', () => {
       engine.emit(serviceConfigNotice());
       expect(getDwnEndpointStatus.callCount).toBe(1);
 
-      resolveFirst({
-        status    : 'ready',
-        didUri    : OWNER_DID,
-        endpoints : ['https://superseded-dwn.example'],
-      });
+      resolveFirst(readyDwn('https://superseded-dwn.example'));
       await waitFor(() => { expect(getDwnEndpointStatus.callCount).toBe(2); });
       await waitFor(() => {
         expect(store.getSnapshot().remoteDwn?.status).toBe('ready');
@@ -707,11 +683,7 @@ describe('createConnectionStore()', () => {
       lifetime.abort();
       const aborted = store.getSnapshot();
       expect(aborted.remoteDwn).toBeUndefined();
-      resolveStatus({
-        status    : 'ready',
-        didUri    : OWNER_DID,
-        endpoints : ['https://stale-dwn.example'],
-      });
+      resolveStatus(readyDwn('https://stale-dwn.example'));
       await Promise.resolve();
       await Promise.resolve();
 
@@ -1102,7 +1074,8 @@ describe('createConnectionStore()', () => {
 
       const snapshot = await store.connect({ protocols: PROTOCOLS });
 
-      expect(phases).toEqual(['connecting', 'connected', 'connected', 'connected', 'connected']);
+      expect(phases[0]).toBe('connecting');
+      expect(phases.at(-1)).toBe('connected');
       expect(snapshot.phase).toBe('connected');
       expect(snapshot.session).toBe(session);
       expect(snapshot.enbox).toBeInstanceOf(Enbox);

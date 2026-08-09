@@ -266,6 +266,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
     }
 
     const portableDid = await bearerDid.export();
+    const storedDocument = portableDid.document;
     portableDid.document = replaceDwnServiceEndpointUrls(portableDid.document, endpoints);
     const requested = getDwnEndpointStatus(didUri, portableDid.document);
     if (requested.status !== 'ready') {
@@ -301,16 +302,12 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
       }
     }
 
-    try {
+    if (JSON.stringify(storedDocument) !== JSON.stringify(portableDid.document)) {
       await this.agent.did.update({
         portableDid,
         tenant  : this.agent.agentDid.uri,
         publish : false,
       });
-    } catch (error: unknown) {
-      if (!(error instanceof Error && error.message.includes('No changes detected'))) {
-        throw error;
-      }
     }
 
     if (publishedMetadata !== undefined) {

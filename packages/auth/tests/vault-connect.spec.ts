@@ -349,22 +349,20 @@ describe('vaultConnect', () => {
 
   test.each([
     {
-      label            : 'manager defaults',
-      defaultEndpoints : ['https://manager-default.example'],
-      options          : { recoveryPhrase: 'recovery phrase', sync: 'off' as const },
-      expected         : false,
+      label    : 'manager defaults',
+      options  : { recoveryPhrase: 'recovery phrase', sync: 'off' as const },
+      expected : undefined,
     },
     {
-      label            : 'explicit restore endpoints',
-      defaultEndpoints : ['https://manager-default.example'],
-      options          : {
+      label   : 'explicit restore endpoints',
+      options : {
         recoveryPhrase : 'recovery phrase',
         dwnEndpoints   : ['https://explicit.example'],
         sync           : 'off' as const,
       },
-      expected: true,
+      expected: ['https://explicit.example'],
     },
-  ])('treats $label as replaceDwnEndpoints=$expected', async ({ defaultEndpoints, options, expected }) => {
+  ])('uses $label as the recovery endpoint provenance', async ({ options, expected }) => {
     const initCalls: any[] = [];
     const agent = createMockAgent({
       firstLaunch : async () => true,
@@ -374,12 +372,12 @@ describe('vaultConnect', () => {
     await vaultConnect(
       {
         userAgent           : agent, emitter             : new AuthEventEmitter(), storage             : new MemoryStorage(),
-        defaultDwnEndpoints : defaultEndpoints,
+        defaultDwnEndpoints : ['https://manager-default.example'],
       },
       options,
     );
 
-    expect(initCalls[0].replaceDwnEndpoints).toBe(expected);
+    expect(initCalls[0].recoveryDwnEndpoints).toEqual(expected);
   });
 
   test('handles wallet-connected identity (connectedDid set)', async () => {

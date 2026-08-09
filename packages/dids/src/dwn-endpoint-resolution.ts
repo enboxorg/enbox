@@ -14,6 +14,17 @@ export type DwnEndpointResolution =
     resolutionError?: string;
   };
 
+type DwnEndpointFailureStatus = Exclude<DwnEndpointResolution['status'], 'ready'>;
+
+function failure(
+  status: DwnEndpointFailureStatus,
+  didUri: string,
+  message: string,
+  resolutionError?: string,
+): DwnEndpointResolution {
+  return { status, didUri, message, ...(resolutionError === undefined ? {} : { resolutionError }) };
+}
+
 function isDwnServiceId(id: string, didUri: string): boolean {
   return id === `${didUri}#dwn` || id === '#dwn' || id === 'dwn';
 }
@@ -24,24 +35,19 @@ function normalizeEndpointUrls(values: unknown): string[] | undefined {
     return undefined;
   }
 
-  const endpoints: string[] = [];
   try {
-    for (const value of candidates) {
+    const endpoints = candidates.map(value => {
       const endpoint = new URL(value);
       if ((endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:')
         || endpoint.search !== '' || endpoint.hash !== '') {
-        return undefined;
+        throw new TypeError();
       }
-      const normalized = endpoint.toString().replace(/\/$/, '');
-      if (!endpoints.includes(normalized)) {
-        endpoints.push(normalized);
-      }
-    }
+      return endpoint.toString().replace(/\/$/, '');
+    });
+    return [...new Set(endpoints)];
   } catch {
     return undefined;
   }
-
-  return endpoints;
 }
 
 /** Read and validate the canonical `#dwn` service from a DID document. */
@@ -52,28 +58,16 @@ export function getDwnEndpointStatus(
   const dwnService = didDocument.service?.find(service => isDwnServiceId(service.id, didUri));
 
   if (dwnService === undefined) {
-    return {
-      status  : 'service-missing',
-      didUri,
-      message : `DID '${didUri}' does not advertise a #dwn service.`,
-    };
+    return failure('service-missing', didUri, `DID '${didUri}' does not advertise a #dwn service.`);
   }
 
   if (dwnService.type !== 'DecentralizedWebNode') {
-    return {
-      status  : 'service-malformed',
-      didUri,
-      message : `DID '${didUri}' has a malformed #dwn service.`,
-    };
+    return failure('service-malformed', didUri, `DID '${didUri}' has a malformed #dwn service.`);
   }
 
   const endpoints = normalizeEndpointUrls(dwnService.serviceEndpoint);
   if (endpoints === undefined) {
-    return {
-      status  : 'service-malformed',
-      didUri,
-      message : `DID '${didUri}' has an invalid #dwn service endpoint.`,
-    };
+    return failure('service-malformed', didUri, `DID '${didUri}' has an invalid #dwn service endpoint.`);
   }
 
   return { status: 'ready', didUri, endpoints };
@@ -90,14 +84,14 @@ export function replaceDwnServiceEndpointUrls(
   }
 
   const updated = structuredClone(didDocument);
-  const existing = updated.service?.find(service => isDwnServiceId(service.id, didDocument.id));
-  updated.service = updated.service?.filter(service => !isDwnServiceId(service.id, didDocument.id)) ?? [];
-  updated.service.push({
+  const services = updated.service ?? [];
+  const existing = services.find(service => isDwnServiceId(service.id, didDocument.id));
+  updated.service = [...services.filter(service => !isDwnServiceId(service.id, didDocument.id)), {
     ...existing,
     id              : `${didDocument.id}#dwn`,
     type            : 'DecentralizedWebNode',
     serviceEndpoint : endpoints,
-  });
+  }];
   return updated;
 }
 
@@ -109,21 +103,21 @@ export async function resolveDwnEndpointStatus(
   try {
     const result = await resolver.resolve(didUri);
     if (result.didResolutionMetadata.error !== undefined || result.didDocument === null) {
-      return {
-        status  : 'resolution-failed',
+      return failure(
+        'resolution-failed',
         didUri,
-        message : result.didResolutionMetadata.errorMessage
+        result.didResolutionMetadata.errorMessage
           ?? `Unable to resolve DID '${didUri}'.`,
-        resolutionError: result.didResolutionMetadata.error,
-      };
+        result.didResolutionMetadata.error,
+      );
     }
 
     return getDwnEndpointStatus(didUri, result.didDocument);
   } catch (error: unknown) {
-    return {
-      status  : 'resolution-failed',
+    return failure(
+      'resolution-failed',
       didUri,
-      message : error instanceof Error ? error.message : `Unable to resolve DID '${didUri}'.`,
-    };
+      error instanceof Error ? error.message : `Unable to resolve DID '${didUri}'.`,
+    );
   }
 }
