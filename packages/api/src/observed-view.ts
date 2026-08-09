@@ -11,6 +11,8 @@ import { waitForViewReady } from './view-ready.js';
  */
 export abstract class ObservedView<TState extends ViewState> {
   protected readonly _closeController = new AbortController();
+  protected readonly _callerSignal?: AbortSignal;
+  protected readonly _sessionSignal?: AbortSignal;
   private readonly _listeners = new Set<(state: TState) => void>();
 
   private _closed = false;
@@ -21,8 +23,19 @@ export abstract class ObservedView<TState extends ViewState> {
 
   private _requestGeneration = 0;
 
-  protected constructor(initialState: TState) {
+  private readonly _handleLifetimeAbort = (): void => {
+    const sessionEnded = this._sessionSignal?.aborted === true;
+    const signal = sessionEnded ? this._sessionSignal : this._callerSignal;
+    this.handleLifetimeAbort(signal?.reason, sessionEnded);
+    void this.close().catch((): void => {});
+  };
+
+  protected constructor(initialState: TState, callerSignal?: AbortSignal, sessionSignal?: AbortSignal) {
+    this._callerSignal = callerSignal;
+    this._sessionSignal = sessionSignal;
     this._state = initialState;
+    this._callerSignal?.addEventListener('abort', this._handleLifetimeAbort, { once: true });
+    this._sessionSignal?.addEventListener('abort', this._handleLifetimeAbort, { once: true });
   }
 
   public readonly getState = (): TState => this._state;
@@ -118,6 +131,8 @@ export abstract class ObservedView<TState extends ViewState> {
     this._requestGeneration += 1;
     this._materializationRequested = false;
     this._listeners.clear();
+    this._callerSignal?.removeEventListener('abort', this._handleLifetimeAbort);
+    this._sessionSignal?.removeEventListener('abort', this._handleLifetimeAbort);
     await this.closeOwnedResources();
   }
 
@@ -126,6 +141,9 @@ export abstract class ObservedView<TState extends ViewState> {
 
   /** Execute and publish one requested pass without owning the outer drain loop. */
   protected abstract materialize(generation: number): Promise<void>;
+
+  /** Apply state specific to the first caller or owning-session lifetime that ends. */
+  protected abstract handleLifetimeAbort(reason: unknown, sessionEnded: boolean): void;
 
   /** Whether a requested pass may start now; subclasses gate on open state. */
   protected mayStartMaterialization(): boolean {

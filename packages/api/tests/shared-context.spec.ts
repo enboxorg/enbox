@@ -14,6 +14,7 @@ import type {
 
 import { CONTEXT_INVITATION_PATH } from '../src/context-invitations.js';
 import { Convert } from '@enbox/common';
+import { createContextView } from '../src/context-view.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Poller } from '@enbox/dwn-sdk-js';
@@ -22,7 +23,7 @@ import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
-import { type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
+import { protocolContextKey, type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
 
 const connectedDid = 'did:example:member';
 const contextId = 'workspaceRecord';
@@ -283,8 +284,10 @@ function membershipEntry(options: {
   } as DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string };
 }
 
-function contextEntry(recordId: string = contextId): DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string } {
-  const data = {};
+function contextEntry(
+  recordId: string = contextId,
+  data: unknown = {},
+): DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string } {
   return {
     authorization : authorization(connectedDid),
     contextId     : recordId,
@@ -404,6 +407,7 @@ describe('TypedEnbox contexts', () => {
         followSource        : follow,
         getFollowedSource   : get,
         getIdentityOptions  : async (): Promise<undefined> => undefined,
+        getReplicationLinks : async () => [],
         listFollowedSources : list,
         markFollowedSourcePullPending,
         on                  : (listener: SyncEventListener): (() => void) => {
@@ -415,10 +419,26 @@ describe('TypedEnbox contexts', () => {
     });
   });
 
+  it('should encode owner and context coordinates without delimiter collisions', () => {
+    expect(protocolContextKey('did:example:a', 'root/child')).toBe(
+      JSON.stringify(['did:example:a', 'root/child']),
+    );
+    expect(protocolContextKey('did:example:a/root', 'child')).not.toBe(
+      protocolContextKey('did:example:a', 'root/child'),
+    );
+  });
+
   it('binds owner and member contexts to the same records contract', async () => {
     const owned = await typed.contexts.open('workspace', contextId);
 
-    expect(owned).toMatchObject({ access: 'owner', id: contextId, ownerDid: connectedDid, path: 'workspace' });
+    expect(owned).toMatchObject({
+      access       : 'owner',
+      id           : contextId,
+      key          : protocolContextKey(connectedDid, contextId),
+      ownerDid     : connectedDid,
+      path         : 'workspace',
+      rootRecordId : contextId,
+    });
     await owned.records.query('workspace/note');
     const recordsQuery = agent.processDwnRequest.getCalls()
       .find(call => call.args[0].messageType === DwnInterface.RecordsQuery);
@@ -518,7 +538,8 @@ describe('TypedEnbox contexts', () => {
     });
 
     const owned = await typed.contexts.open('workspace', contextId);
-    const view = await owned.members().observe();
+    const controller = new AbortController();
+    const view = await owned.members().observe({ signal: controller.signal });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(view.getState().status).toBe('ready');
     }, Poller.pollRetrySleep, 1_000);
@@ -585,10 +606,13 @@ describe('TypedEnbox contexts', () => {
       ],
     });
 
-    await view.close();
+    controller.abort(new Error('member list hidden'));
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(transports.get(protocolRole)?.close.calledOnce).toBe(true);
+      expect(transports.get(viewerRole)?.close.calledOnce).toBe(true);
+    }, Poller.pollRetrySleep, 1_000);
+    expect(view.getState().status).toBe('ready');
     expect(deliveryListeners.size).toBe(0);
-    expect(transports.get(protocolRole)?.close.calledOnce).toBe(true);
-    expect(transports.get(viewerRole)?.close.calledOnce).toBe(true);
   });
 
   it('rejects a context ID at a different protocol depth', async () => {
@@ -620,11 +644,13 @@ describe('TypedEnbox contexts', () => {
       sourceDid,
     });
     expect(shared).toMatchObject({
-      access   : 'member',
-      id       : contextId,
-      ownerDid : sourceDid,
-      path     : 'workspace',
-      role     : protocolRole,
+      access       : 'member',
+      id           : contextId,
+      key          : protocolContextKey(sourceDid, contextId),
+      ownerDid     : sourceDid,
+      path         : 'workspace',
+      role         : protocolRole,
+      rootRecordId : contextId,
     });
 
     await shared.records.query('workspace/note');
@@ -1020,6 +1046,286 @@ describe('TypedEnbox contexts', () => {
     ]);
   });
 
+  it('observes member roots independently with bounded opening', async () => {
+    const sources = Array.from({ length: 6 }, (_, index) => source({
+      acceptanceId : `acceptance-${index}`,
+      contextId    : `workspace${index}`,
+      id           : `role-${index}`,
+    }));
+    list.resolves(sources);
+    get.callsFake(async (id: string): Promise<FollowedSyncSource | undefined> =>
+      sources.find(candidate => candidate.id === id)
+    );
+    let releaseSubscriptions!: () => void;
+    const subscriptionGate = new Promise<void>(resolve => { releaseSubscriptions = resolve; });
+    let activeSubscriptions = 0;
+    let maximumSubscriptions = 0;
+    const transports: Array<{ close: sinon.SinonStub }> = [];
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsSubscribe) {
+        activeSubscriptions += 1;
+        maximumSubscriptions = Math.max(maximumSubscriptions, activeSubscriptions);
+        await subscriptionGate;
+        activeSubscriptions -= 1;
+        const transport = { close: sinon.stub().resolves() };
+        transports.push(transport);
+        return {
+          reply: {
+            status       : { code: 200, detail: 'OK' },
+            subscription : transport,
+          },
+        };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        const rootId = request.messageParams.filter.contextId!;
+        if (rootId === 'workspace4') { throw new Error('root query failed'); }
+        return {
+          reply: {
+            entries : rootId === 'workspace5' ? [] : [contextEntry(rootId, { name: rootId })],
+            status  : { code: 200, detail: 'OK' },
+          },
+        };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+
+    const view = await typed.contexts.observe({ access: 'member', materializeRoot: true });
+    const state = await view.ready();
+    expect(state.contexts).toHaveLength(6);
+    expect(state.contexts.every(row => row.root.status === 'loading')).toBe(true);
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(activeSubscriptions).toBe(4);
+    });
+    expect(maximumSubscriptions).toBe(4);
+
+    releaseSubscriptions();
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts.every(row => row.root.status !== 'loading')).toBe(true);
+    });
+    expect(agent.processDwnRequest.getCalls()
+      .filter(call => call.args[0].messageType === DwnInterface.RecordsSubscribe)
+      .map(call => call.args[0].messageParams.filter.contextId)
+      .sort()).toEqual(sources.map(candidate => candidate.contextId).sort());
+    expect(view.getState().contexts[0]).toMatchObject({
+      context : { access: 'member', id: 'workspace0' },
+      root    : { status: 'ready', records: [{ value: { name: 'workspace0' } }] },
+    });
+    expect(view.getState().contexts[4].root).toMatchObject({
+      status : 'error',
+      error  : new Error('root query failed'),
+    });
+    expect(view.getState().contexts[5].root).toMatchObject({ status: 'ready', records: [] });
+
+    await view.close();
+    expect(transports).toHaveLength(6);
+    expect(transports.every(transport => transport.close.calledOnce)).toBe(true);
+    expect(listeners.size).toBe(0);
+    await expect((typed.contexts.observe as unknown as (
+      options: { access: 'member' }
+    ) => Promise<unknown>)({ access: 'member' })).rejects.toThrow('materializeRoot: true');
+  });
+
+  it('retries a failed root-view opening on the next catalog change', async () => {
+    current = source();
+    const transport = { close: sinon.stub().resolves() };
+    const subscriptions = agent.processDwnRequest.withArgs(sinon.match({
+      messageType: DwnInterface.RecordsSubscribe,
+    }));
+    subscriptions.onFirstCall().resolves({ reply: { status: { code: 500, detail: 'Unavailable' } } });
+    subscriptions.onSecondCall().resolves({
+      reply: {
+        status       : { code: 200, detail: 'OK' },
+        subscription : transport,
+      },
+    });
+
+    const view = await typed.contexts.observe({ access: 'member', materializeRoot: true });
+    await view.ready();
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts[0].root.status).toBe('error');
+    });
+    expect(subscriptions.calledOnce).toBe(true);
+
+    for (const listener of [...listeners]) { listener(followedContextChange(current!)); }
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts[0].root.status).toBe('ready');
+    });
+    expect(subscriptions.calledTwice).toBe(true);
+
+    await view.close();
+    expect(transport.close.calledOnce).toBe(true);
+    expect(listeners.size).toBe(0);
+  });
+
+  it('refreshes an exact member root and reconciles source lifecycle', async () => {
+    current = source();
+    let title = 'First';
+    let deleted = false;
+    let queries = 0;
+    let deliver!: (message: DwnSubscriptionMessage) => void | Promise<void>;
+    let releaseRetiredClose!: () => void;
+    const retiredClose = new Promise<void>(resolve => { releaseRetiredClose = resolve; });
+    const transports: Array<{ close: sinon.SinonStub }> = [];
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsSubscribe) {
+        deliver = request.subscriptionHandler!;
+        const transport = {
+          close: transports.length === 0 ? sinon.stub().returns(retiredClose) : sinon.stub().resolves(),
+        };
+        transports.push(transport);
+        return { reply: { status: { code: 200, detail: 'OK' }, subscription: transport } };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        queries += 1;
+        return deleted
+          ? { reply: { entries: [], status: { code: 200, detail: 'OK' } } }
+          : {
+            reply: {
+              entries : [contextEntry(contextId, { title })],
+              status  : { code: 200, detail: 'OK' },
+            },
+          };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    const view = await typed.contexts.observe({ access: 'member', materializeRoot: true });
+    await view.ready();
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts[0].root.records[0]?.value).toEqual({ title: 'First' });
+    });
+    expect(agent.processDwnRequest.getCalls().find(
+      call => call.args[0].messageType === DwnInterface.RecordsSubscribe,
+    )?.args[0]).toMatchObject({
+      messageParams: {
+        filter: {
+          contextId,
+          protocol     : SharedDefinition.protocol,
+          protocolPath : 'workspace',
+        },
+      },
+      target: sourceDid,
+    });
+
+    title = 'Second';
+    await deliver({
+      type   : 'event',
+      cursor : { epoch: 'epoch', position: '1', streamId: 'stream' },
+      event  : { message: contextEntry(contextId, { title }) },
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts[0].root.records[0]?.value).toEqual({ title: 'Second' });
+    });
+
+    deleted = true;
+    await deliver({
+      type   : 'event',
+      cursor : { epoch: 'epoch', position: '2', streamId: 'stream' },
+      event  : { message: contextEntry(contextId) },
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts[0].root.records).toEqual([]);
+    });
+    expect(queries).toBe(3);
+
+    const firstContext = view.getState().contexts[0].context;
+    deleted = false;
+    title = 'Third';
+    current = source({
+      acceptanceId : 'acceptance-b',
+      id           : 'viewer-role-record',
+      protocolRole : viewerRole,
+    });
+    for (const listener of [...listeners]) { listener(followedContextChange(current)); }
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      const row = view.getState().contexts[0];
+      expect(row.context.role).toBe(viewerRole);
+      expect(row.context).not.toBe(firstContext);
+      expect(row.root.records[0]?.value).toEqual({ title: 'Third' });
+    });
+
+    const removed = current;
+    current = undefined;
+    for (const listener of [...listeners]) { listener(followedContextChange(removed, false)); }
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts).toEqual([]);
+    });
+
+    title = 'Fourth';
+    current = source({ acceptanceId: 'acceptance-c', id: 'restored-role-record' });
+    for (const listener of [...listeners]) { listener(followedContextChange(current)); }
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts[0].root.records[0]?.value).toEqual({ title: 'Fourth' });
+    });
+    let closed = false;
+    const closing = view.close().then((): void => { closed = true; });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    releaseRetiredClose();
+    await closing;
+    expect(transports.every(transport => transport.close.calledOnce)).toBe(true);
+    expect(listeners.size).toBe(0);
+  });
+
+  it('stops queued root openings and closes late transports', async () => {
+    const sources = Array.from({ length: 6 }, (_, index) => source({
+      acceptanceId : `acceptance-${index}`,
+      contextId    : `workspace${index}`,
+      id           : `role-${index}`,
+    }));
+    list.resolves(sources);
+    get.callsFake(async (id: string): Promise<FollowedSyncSource | undefined> =>
+      sources.find(candidate => candidate.id === id)
+    );
+    let releaseSubscriptions!: () => void;
+    const gate = new Promise<void>(resolve => { releaseSubscriptions = resolve; });
+    const transports: Array<{ close: sinon.SinonStub }> = [];
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsSubscribe) {
+        await gate;
+        const transport = { close: sinon.stub().resolves() };
+        transports.push(transport);
+        return { reply: { status: { code: 200, detail: 'OK' }, subscription: transport } };
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+
+    const view = await typed.contexts.observe({ access: 'member', materializeRoot: true });
+    await view.ready();
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(agent.processDwnRequest.getCalls().filter(
+        call => call.args[0].messageType === DwnInterface.RecordsSubscribe,
+      )).toHaveLength(4);
+    });
+    await view.close();
+    releaseSubscriptions();
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(transports).toHaveLength(4);
+      expect(transports.every(transport => transport.close.calledOnce)).toBe(true);
+    });
+    expect(agent.processDwnRequest.getCalls().some(
+      call => call.args[0].messageType === DwnInterface.RecordsQuery,
+    )).toBe(false);
+    expect(listeners.size).toBe(0);
+  });
+
   it('walks parent contexts when listing a nested owned context root', async () => {
     const nestedEntry = (
       protocolPath: 'notebook' | 'notebook/page',
@@ -1065,9 +1371,14 @@ describe('TypedEnbox contexts', () => {
       permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
     }), NestedProtocol);
 
-    expect(await local.contexts.list()).toMatchObject([
-      { access: 'owner', id: pageContextId, ownerDid: connectedDid, path: 'notebook/page' },
-    ]);
+    expect(await local.contexts.list()).toMatchObject([{
+      access       : 'owner',
+      id           : pageContextId,
+      key          : protocolContextKey(connectedDid, pageContextId),
+      ownerDid     : connectedDid,
+      path         : 'notebook/page',
+      rootRecordId : 'pageRecord',
+    }]);
     expect(queries).toEqual([
       { protocol: NestedDefinition.protocol, protocolPath: 'notebook' },
       { contextId: notebookId, protocol: NestedDefinition.protocol, protocolPath: 'notebook/page' },
@@ -1094,7 +1405,8 @@ describe('TypedEnbox contexts', () => {
       }
       throw new Error(`Unexpected local request: ${request.messageType}`);
     });
-    const view = await typed.contexts.observe();
+    const controller = new AbortController();
+    const view = await typed.contexts.observe({ signal: controller.signal });
 
     expect(await view.ready()).toMatchObject({
       status   : 'ready',
@@ -1112,8 +1424,72 @@ describe('TypedEnbox contexts', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(view.getState().contexts).toEqual([]);
 
-    await view.close();
+    controller.abort(new Error('catalog hidden'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(view.getState().status).toBe('ready');
     expect(transport.close.calledOnce).toBe(true);
+  });
+
+  it('preserves owning-session termination when a context caller shares its signal', async () => {
+    const lifetime = new AbortController();
+    const close = sinon.stub().resolves();
+    const view = await createContextView({
+      callerSignal         : lifetime.signal,
+      list                 : async () => [],
+      openWakeSubscription : async () => ({ close }),
+      signal               : lifetime.signal,
+    });
+    await view.ready();
+
+    const reason = new Error('session replaced');
+    lifetime.abort(reason);
+
+    expect(view.getState()).toMatchObject({
+      status : 'error',
+      error  : { message: 'ContextView: owning session ended.', cause: reason },
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(close.calledOnce).toBe(true);
+    });
+  });
+
+  it('rejects a caller abort while the context catalog opens and closes the late subscription', async () => {
+    const transport = { close: sinon.stub().resolves() };
+    let finishSubscribe!: (value: unknown) => void;
+    let markSubscribeStarted!: () => void;
+    const subscribeStarted = new Promise<void>((resolve) => { markSubscribeStarted = resolve; });
+    agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.MessagesSubscribe) {
+        markSubscribeStarted();
+        return await new Promise((resolve) => { finishSubscribe = resolve; });
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        throw new Error('aborted context view must not query');
+      }
+      throw new Error(`Unexpected local request: ${request.messageType}`);
+    });
+    const controller = new AbortController();
+    const opening = typed.contexts.observe({ signal: controller.signal });
+    await subscribeStarted;
+
+    const reason = new Error('catalog no longer needed');
+    controller.abort(reason);
+    await expect(opening).rejects.toBe(reason);
+    finishSubscribe({
+      reply: {
+        status       : { code: 200, detail: 'OK' },
+        subscription : transport,
+      },
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(transport.close.calledOnce).toBe(true);
+    });
   });
 
   it('projects one newest invitation and dismisses represented duplicates idempotently', async () => {
@@ -1174,6 +1550,17 @@ describe('TypedEnbox contexts', () => {
       .toEqual(['invite-current', 'invite-old']);
     await expect(invitations[0].accept()).rejects.toThrow('invitation is no longer pending');
     expect(follow.notCalled).toBe(true);
+  });
+
+  it('rejects an invitation view whose caller already ended', async () => {
+    const controller = new AbortController();
+    const reason = new Error('invitations hidden');
+    controller.abort(reason);
+
+    await expect(typed.contexts.invitations.observe({
+      signal: controller.signal,
+    })).rejects.toBe(reason);
+    expect(agent.processDwnRequest.notCalled).toBe(true);
   });
 
   it('keeps a failed acceptance retryable and does not turn cleanup failure into a false rejection', async () => {

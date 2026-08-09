@@ -9,6 +9,7 @@ import { ContextRetiredError } from './context-errors.js';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { ObservedView } from './observed-view.js';
+import { openView } from './view-opening.js';
 import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
@@ -73,13 +74,21 @@ export interface RecordView<Item = Record> {
   close(): Promise<void>;
 }
 
+/** A bounded record view whose canonical prefix can grow in fixed-size steps. */
+export interface ExpandableRecordView<Item = Record> extends RecordView<Item> {
+  /** Grow the retained prefix by the observe request's original limit. */
+  loadMore(): Promise<void>;
+}
+
 type CompiledRecordQuery = ReturnType<typeof compileRecordQuery>;
 
 /** @internal Dependencies supplied by {@link TypedEnbox} for one view. */
 type RecordViewOptions<Item> = {
   additionalWakeFilters?: readonly RecordsFilter[];
+  callerSignal?: AbortSignal;
   definition: ProtocolDefinition;
   dwn: DwnApi;
+  expandBy?: number;
   materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   query: CompiledRecordQuery;
   signal?: AbortSignal;
@@ -100,20 +109,43 @@ type PullCurrentnessChangeEvent = Extract<SyncEvent, { type: 'pull:currentness-c
 export async function createRecordView<Item = Record>(
   options: RecordViewOptions<Item>,
 ): Promise<RecordView<Item>> {
+  options.callerSignal?.throwIfAborted();
   options.signal?.throwIfAborted();
   const view = new ObservedRecordView<Item>(options);
-  await view.open();
+  await openView(view, [options.callerSignal, options.signal]);
   return view;
 }
+
+/** @internal Create an observed records view with an explicitly bounded expansion step. */
+export async function createExpandableRecordView<Item = Record>(
+  options: RecordViewOptions<Item>,
+): Promise<ExpandableRecordView<Item>> {
+  const limit = options.query.pagination?.limit;
+  if (!Number.isSafeInteger(limit) || limit === undefined || limit <= 0) {
+    throw new TypeError('ExpandableRecordView: pagination.limit must be a positive safe integer.');
+  }
+
+  options.callerSignal?.throwIfAborted();
+  options.signal?.throwIfAborted();
+  const view = new ObservedRecordView<Item>({ ...options, expandBy: limit });
+  await openView(view, [options.callerSignal, options.signal]);
+  return view;
+}
+
+type PendingLoad = {
+  limit: number;
+  reject(reason?: unknown): void;
+  resolve(): void;
+};
 
 /** One serialized, wake-driven materialization resource. */
 class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> implements RecordView<Item> {
   private readonly _additionalWakeFilters: readonly RecordsFilter[];
   private readonly _definition: ProtocolDefinition;
   private readonly _dwn: DwnApi;
+  private readonly _expandBy?: number;
   private readonly _materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
   private readonly _query: CompiledRecordQuery;
-  private readonly _signal?: AbortSignal;
   private readonly _subscribeToWakes?: (wake: () => void) => () => void;
   private readonly _sync?: SyncEngine;
   private readonly _tenantDid: string;
@@ -122,15 +154,15 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   private readonly _followedSourceId?: string;
 
   private _hasMaterialized = false;
+  private _hasTerminationReason = false;
   private _isOpen = false;
+  private _limit?: number;
+  private _loadMorePromise?: Promise<void>;
+  private _pendingLoad?: PendingLoad;
+  private _terminationReason?: unknown;
   private readonly _subscriptions: { close(): Promise<void> }[] = [];
   private _syncUnsubscribe?: () => void;
   private _wakeUnsubscribe?: () => void;
-
-  private readonly _handleAbort = (): void => {
-    this.publishError(new Error('RecordView: owning session ended.', { cause: this._signal?.reason }));
-    void this.close().catch((): void => {});
-  };
 
   public constructor(options: RecordViewOptions<Item>) {
     super(immutableState({
@@ -138,13 +170,14 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       records : [],
       hasMore : false,
       current : false,
-    }));
+    }), options.callerSignal, options.signal);
     this._additionalWakeFilters = options.additionalWakeFilters ?? [];
     this._definition = options.definition;
     this._dwn = options.dwn;
+    this._expandBy = options.expandBy;
+    this._limit = options.expandBy === undefined ? undefined : options.query.pagination?.limit;
     this._materializeRecords = options.materializeRecords;
     this._query = options.query;
-    this._signal = options.signal;
     this._subscribeToWakes = options.subscribeToWakes;
     this._sync = options.dwn.followedSourceId !== undefined || options.query.from === undefined
       ? options.sync
@@ -153,8 +186,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     this._followedContextId = options.dwn.followedContextId;
     this._followedSourceAcceptanceId = options.dwn.followedSourceAcceptanceId;
     this._followedSourceId = options.dwn.followedSourceId;
-
-    this._signal?.addEventListener('abort', this._handleAbort, { once: true });
     this._syncUnsubscribe = this._sync?.on((event): void => {
       this.handleSyncEvent(event);
     });
@@ -187,14 +218,80 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   }
 
   protected async closeOwnedResources(): Promise<void> {
+    this._pendingLoad?.reject(this.terminationReason);
+    this._pendingLoad = undefined;
     this._wakeUnsubscribe?.();
     this._wakeUnsubscribe = undefined;
     this._syncUnsubscribe?.();
     this._syncUnsubscribe = undefined;
-    this._signal?.removeEventListener('abort', this._handleAbort);
-
     const subscriptions = this._subscriptions.splice(0);
     await Promise.all(subscriptions.map(async (subscription): Promise<void> => subscription.close()));
+  }
+
+  /** Grow this view's canonical prefix once. Exposed only by the expandable factory. */
+  public loadMore(): Promise<void> {
+    if (this._expandBy === undefined || this._limit === undefined) {
+      return Promise.reject(new Error('RecordView is not expandable.'));
+    }
+    if (this._loadMorePromise !== undefined) {
+      return this._loadMorePromise;
+    }
+
+    const pending = this.expandOnce();
+    this._loadMorePromise = pending;
+    void pending.then(
+      (): void => { this._loadMorePromise = undefined; },
+      (): void => { this._loadMorePromise = undefined; },
+    );
+    return pending;
+  }
+
+  private async expandOnce(): Promise<void> {
+    if (this.isClosed) {
+      throw this.terminationReason;
+    }
+    if (this.getState().status === 'loading') {
+      try {
+        await this.ready();
+      } catch (error: unknown) {
+        if (this._hasTerminationReason) {
+          throw this.terminationReason;
+        }
+        throw error;
+      }
+    }
+    if (!this.getState().hasMore) {
+      return;
+    }
+
+    const limit = this._limit! + this._expandBy!;
+    if (!Number.isSafeInteger(limit)) {
+      throw new RangeError('ExpandableRecordView: pagination limit exceeds Number.MAX_SAFE_INTEGER.');
+    }
+
+    await new Promise<void>((resolve, reject): void => {
+      this._pendingLoad = { limit, reject, resolve };
+      this.requestMaterialization();
+    });
+  }
+
+  private get terminationReason(): unknown {
+    return this._hasTerminationReason ? this._terminationReason : this._closeController.signal.reason;
+  }
+
+  private captureTerminationReason(reason: unknown): void {
+    if (!this._hasTerminationReason) {
+      this._hasTerminationReason = true;
+      this._terminationReason = reason;
+    }
+  }
+
+  /** Retain the first abort reason for loads; publish only owning-session termination. */
+  protected handleLifetimeAbort(reason: unknown, sessionEnded: boolean): void {
+    this.captureTerminationReason(reason);
+    if (sessionEnded) {
+      this.publishError(new Error('RecordView: owning session ended.', { cause: reason }));
+    }
   }
 
   /** Open one wake subscription and retain its handle only after validating the reply. */
@@ -212,7 +309,8 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
 
     if (this.isClosed) {
       await reply.subscription?.close();
-      this._signal?.throwIfAborted();
+      this._callerSignal?.throwIfAborted();
+      this._sessionSignal?.throwIfAborted();
       throw new Error('RecordView: closed while opening the subscription.');
     }
 
@@ -332,8 +430,9 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
 
   /** Execute and publish one generation without owning the outer drain loop. */
   protected async materialize(generation: number): Promise<void> {
+    const query = this.materializationQuery();
     try {
-      const result = await this._dwn.records.query(this._query);
+      const result = await this._dwn.records.query(query);
       requireDwnSuccess('RecordView query', result);
       const records = await this._materializeRecords(result.records);
 
@@ -342,11 +441,51 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
         return;
       }
       this.publishMaterialization(records, result.cursor !== undefined, currentness);
+      this.completePendingLoad(query);
     } catch (error: unknown) {
       if (this.canPublishMaterialization(generation)) {
-        this.publishError(toError(error));
+        const normalized = toError(error);
+        this.publishError(normalized);
+        this.failPendingLoad(query, normalized);
       }
     }
+  }
+
+  private materializationQuery(): CompiledRecordQuery {
+    if (this._limit === undefined) {
+      return this._query;
+    }
+
+    const { cursor: _cursor, ...pagination } = this._query.pagination!;
+
+    return {
+      ...this._query,
+      pagination: {
+        ...pagination,
+        limit: this._pendingLoad?.limit ?? this._limit,
+      },
+    };
+  }
+
+  private completePendingLoad(query: CompiledRecordQuery): void {
+    const pending = this._pendingLoad;
+    if (pending === undefined || query.pagination?.limit !== pending.limit) {
+      return;
+    }
+
+    this._limit = pending.limit;
+    this._pendingLoad = undefined;
+    pending.resolve();
+  }
+
+  private failPendingLoad(query: CompiledRecordQuery, error: Error): void {
+    const pending = this._pendingLoad;
+    if (pending === undefined || query.pagination?.limit !== pending.limit) {
+      return;
+    }
+
+    this._pendingLoad = undefined;
+    pending.reject(error);
   }
 
   private publishMaterialization(

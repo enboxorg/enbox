@@ -12,11 +12,20 @@ import {
 } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
-import { DwnResponseError as DirectDwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
-import { AudienceDecryptError, DwnResponseError } from '../src/index.js';
+import {
+  AudienceDecryptError,
+  DwnResponseError,
+  RecordParentNotFoundError,
+  RecordSquashBackstopError,
+} from '../src/index.js';
+import {
+  DwnResponseError as DirectDwnResponseError,
+  RecordParentNotFoundError as DirectRecordParentNotFoundError,
+  RecordSquashBackstopError as DirectRecordSquashBackstopError,
+} from '../src/dwn-response-error.js';
 
 describe('AudienceDecryptError re-export', () => {
   it('re-exports the same class identity as @enbox/agent so instanceof checks work across layers', () => {
@@ -34,8 +43,10 @@ describe('AudienceDecryptError re-export', () => {
 });
 
 describe('DwnResponseError export', () => {
-  it('exports the public error with one class identity', () => {
+  it('exports the public errors with one class identity', () => {
     expect(DwnResponseError).toBe(DirectDwnResponseError);
+    expect(RecordParentNotFoundError).toBe(DirectRecordParentNotFoundError);
+    expect(RecordSquashBackstopError).toBe(DirectRecordSquashBackstopError);
     const error = new DwnResponseError('records.query', { code: 401, detail: 'Unauthorized' });
     expect(error).toBeInstanceOf(DirectDwnResponseError);
   });

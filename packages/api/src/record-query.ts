@@ -262,8 +262,8 @@ function assertValidQueryControls(
     throw new TypeError('RecordQuery: pagination must contain only limit.');
   }
   if (pagination.limit !== undefined
-    && (typeof pagination.limit !== 'number' || !Number.isFinite(pagination.limit) || pagination.limit < 1)) {
-    throw new TypeError('RecordQuery: pagination.limit must be a finite number greater than or equal to 1.');
+    && (!Number.isSafeInteger(pagination.limit) || pagination.limit < 1)) {
+    throw new TypeError('RecordQuery: pagination.limit must be a positive safe integer.');
   }
 }
 

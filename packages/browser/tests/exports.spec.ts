@@ -54,6 +54,7 @@ describe('@enbox/browser exports', () => {
     ]);
     expect(browser.recordCodecs).toBe(api.recordCodecs);
     expect(browser.ServiceConfigProtocol).toBe(api.ServiceConfigProtocol);
+    expect(typeof (browser.recordCodecs as typeof api.recordCodecs).fileEnvelope).toBe('function');
   });
 
   it('re-exports the canonical Record class from @enbox/api', async () => {
@@ -73,7 +74,17 @@ describe('@enbox/browser exports', () => {
     expect(browser.ContextRetiredError).toBe(api.ContextRetiredError);
     expect(browser.DwnResponseError).toBe(api.DwnResponseError);
     expect(browser.RecordConflictError).toBe(api.RecordConflictError);
+    expect(browser.RecordParentNotFoundError).toBe(api.RecordParentNotFoundError);
+    expect(browser.RecordSquashBackstopError).toBe(api.RecordSquashBackstopError);
     expect(browser.RecordValidationError).toBe(api.RecordValidationError);
+  });
+
+  it('re-exports protocolContextKey from @enbox/api', async () => {
+    const [browser, api] = await Promise.all([
+      getBrowserExports(),
+      import('@enbox/api'),
+    ]);
+    expect(browser.protocolContextKey).toBe(api.protocolContextKey);
   });
 
   it('re-exports AuthManager from @enbox/auth', async () => {

@@ -99,6 +99,51 @@ The codec for each type encodes writes and decodes `record.value()`. Encrypted
 types use the managed audience-key lifecycle. Dapp code does not provision or
 deliver those keys directly.
 
+### Private file records
+
+`recordCodecs.fileEnvelope()` keeps a safe filename and canonicalized media type
+inside one versioned binary payload. The record descriptor always uses
+`application/octet-stream`; declare the protocol type as encrypted to keep the
+embedded metadata private with the file bytes.
+
+```ts
+const maxAttachmentContentBytes = 50_000_000;
+const attachmentCodec = recordCodecs.fileEnvelope({
+  formatId: 'myapp1', // exactly six ASCII bytes
+});
+
+const definition = {
+  protocol  : 'https://example.com/protocols/files',
+  published : true,
+  types     : {
+    attachment: {
+      dataFormats        : ['application/octet-stream'],
+      encryptionRequired : true,
+    },
+  },
+  structure: {
+    attachment: {
+      $size: { max: attachmentCodec.maxEncodedBytesFor(maxAttachmentContentBytes) },
+    },
+  },
+} as const;
+
+const FilesProtocol = defineProtocol(definition, {
+  attachment: attachmentCodec,
+});
+```
+
+`maxEncodedBytesFor()` reserves enough record bytes for the supplied content
+and the maximum metadata overhead. Because `$size.max` caps the whole envelope,
+it is not an exact content-byte limit when metadata is shorter. Omit `$size.max`
+when the protocol has no attachment-size policy. To enforce an exact local
+ceiling while encoding and decoding, pass
+`maxContentBytes: maxAttachmentContentBytes` to `fileEnvelope()`. This is also
+useful when decoding untrusted files because the codec materializes the content
+as a `Blob`. A remote with a lower limit can still reject a write. Treat the
+decoded `mimeType` as untrusted and allowlist renderable types before displaying
+file content inline.
+
 ### 2. Register and connect the application
 
 ```ts
@@ -179,6 +224,10 @@ const first = await notebooks.records.query('notebook/page', {
 });
 const second = await first.next();
 
+for await (const page of first) {
+  console.log(page.id);
+}
+
 // Replace a complete value
 await pageRecord.update({ data: { summary: 'Ready to ship' } });
 
@@ -195,14 +244,14 @@ The main operations are:
 
 | Method | Result |
 |---|---|
-| `create(path, request)` | A typed `Record<T>` |
-| `read(path, idOrRequest)` | `Record<T> \| undefined` |
-| `query(path, selection?)` | A `RecordPage` with `next()` |
+| `create(path, request)` | A `TypedRecord<T>` |
+| `read(path, idOrRequest)` | `TypedRecord<T> \| undefined` |
+| `query(path, selection?)` | A lazily async-iterable `RecordPage` with `next()` |
 | `count(path, selection?)` | The full matching count before pagination |
 | `set(path, request)` | Create or replace a `$recordLimit.max: 1` record |
 | `patch(path, id, patch)` | A freshly read and updated record |
 | `delete(path, request)` | `void` when the requested delete is proven complete |
-| `observe(path, selection)` | A bounded materialized `RecordView` |
+| `observe(path, selection)` | A bounded materialized `ExpandableRecordView` |
 | `subscribe(paths, listener)` | An incremental change stream |
 
 `record.value()` decodes the application value. `record.data.text()`,
@@ -211,10 +260,12 @@ The main operations are:
 and may invoke its side-effect-free producer twice when retrying one conflict.
 
 A missing read returns `undefined`; other non-success statuses normally throw
-`DwnResponseError`. An unbound typed delete also treats an already-absent record
-or a canonical tombstone conflict as complete. Context-bound deletion is
-stricter: its initial authority miss requires an authorized tombstone because
-the ID may identify a record outside that context.
+`DwnResponseError`. Typed records expose required `contextId`, `protocol`, and
+`protocolPath` coordinates. An unbound typed delete also treats an
+already-absent record or a canonical tombstone conflict as complete.
+Context-bound deletion is stricter: its initial authority miss requires an
+authorized tombstone because the ID may identify a record outside that context.
+An exact same-protocol missing-parent write throws `RecordParentNotFoundError`.
 
 ### Compact a delta history
 
@@ -224,7 +275,7 @@ on that path must use one monotonic application clock with identical explicit
 Create an ordinary delta and a full-state snapshot like this:
 
 ```ts
-import { DwnResponseError } from '@enbox/browser';
+import { RecordSquashBackstopError } from '@enbox/browser';
 
 const writeDelta = (data, timestamp) => notebooks.records.create(
   'notebook/page/change',
@@ -248,26 +299,28 @@ const writeSnapshot = (data, timestamp) => notebooks.records.create(
 );
 
 try {
-  await writeSnapshot(compactedState, nextDwnTimestampAfter());
+  await writeSnapshot(compactedState, snapshotTimestamp);
 } catch (error) {
-  if (!(error instanceof DwnResponseError)
-    || error.status.errorCode !== 'ProtocolAuthorizationSquashBackstop') {
+  if (!(error instanceof RecordSquashBackstopError)) {
     throw error;
   }
 
-  const floor = error.status.info?.squashFloorTimestamp;
-  if (typeof floor !== 'string') throw error;
+  const floor = error.squashFloorTimestamp;
+  if (floor === undefined) {
+    throw error;
+  }
 
   const authoritative = await readAuthoritativeHistory();
   const rebased = applyPendingChanges(authoritative, pendingChanges);
-  await writeSnapshot(rebased, nextDwnTimestampAfter(floor));
+  scheduleSnapshotRebase({ data: rebased, squashFloorTimestamp: floor });
 }
 ```
 
 A successful squash removes older siblings and establishes a temporal floor.
-`nextDwnTimestampAfter()` represents an application helper that produces a
-DWN-compatible timestamp strictly newer than both wall-clock now and the
-provided floor. If the rebased write also races, repeat the authoritative
+The returned record's immutable `squash` property remains `true` through later
+updates or deletion and is also available on anonymous read-only records.
+A rebased write must use `dateCreated` and `messageTimestamp` values strictly
+newer than the reported floor. If it also races, repeat the authoritative
 read/rebase/write sequence with a bounded retry count. Never blindly retry the
 rejected snapshot.
 
@@ -284,9 +337,11 @@ the complete bounded result after matching changes. Event payloads are hints;
 the canonical query remains collection truth.
 
 ```ts
+const viewLifetime = new AbortController();
 const view = await notebooks.records.observe('notebook/page', {
   within     : notebook.contextId,
   pagination : { limit: 25 },
+  signal     : viewLifetime.signal,
 });
 
 const renderView = (next) => {
@@ -296,10 +351,17 @@ const renderView = (next) => {
 const unsubscribe = view.subscribe(renderView);
 renderView(view.getState());
 await view.ready();
+await view.loadMore();
 
 unsubscribe();
-await view.close();
+viewLifetime.abort();
+await view.close(); // joins the caller-triggered cleanup
 ```
+
+The original pagination limit is both the initial retained-record bound and
+the `loadMore()` step. Each expansion reruns the live selection from the
+beginning and replaces the retained prefix, so inserts and deletes cannot make
+cursor-appended pages drift from query truth.
 
 Every observable view uses the same lifecycle:
 
@@ -308,6 +370,11 @@ Every observable view uses the same lifecycle:
 - `status: 'error'` retains the last result and exposes the failure.
 - `ready({ signal })` waits for the first locally usable result.
 - `close()` is async, idempotent, and stops owned subscriptions.
+
+Pass `signal` to a typed record observation or subscription, or to a context,
+invitation, or member observation, when its lifetime belongs to one caller.
+Aborting it rejects an opening call or closes the opened resource without
+ending the typed API or bound context; `close()` safely joins the same cleanup.
 
 `RecordView` additionally exposes `current`. `false` means the rendered local
 replica is still catching up or is offline; `true` means the relevant
@@ -341,6 +408,8 @@ stream if setup or the async listener fails.
 A context binds the existing records API to one owner, protocol root, and
 context ID. Owner and member handles expose the same `context.records` verbs;
 app code does not pass `from`, `protocolRole`, grants, or root `within` values.
+Every handle also exposes its root record ID and the collision-safe
+`protocolContextKey(ownerDid, id)` as `rootRecordId` and `key`.
 
 ### Owner workflow
 
@@ -482,9 +551,43 @@ unsubscribeCatalog();
 await catalog.close();
 ```
 
-`contexts.list()` and `contexts.observe()` include both declared collaboration
-roots owned by the connected identity and accepted member contexts. If the
-same `(ownerDid, contextId)` appears through both routes, owner access wins.
+Observe accepted member contexts with their decoded root records when a catalog
+needs root metadata such as a title:
+
+```ts
+const catalog = await notebooks.contexts.observe({
+  access: 'member',
+  materializeRoot: true,
+  signal,
+});
+
+const render = ({ contexts, error, status }) => {
+  if (status === 'error') reportCatalog(error);
+  for (const { context, root } of contexts) {
+    if (root.status === 'loading') renderLoading(context);
+    else if (root.status === 'error') reportRoot(context, root.error);
+    else renderNotebook(context, root.records[0]?.value, root.current);
+  }
+};
+
+const unsubscribe = catalog.subscribe(render);
+render(await catalog.ready());
+
+// When the screen closes:
+unsubscribe();
+await catalog.close();
+```
+
+Each row exposes the immutable `RecordViewState` of one exact root. Rows become
+usable independently, keep their last records when a refresh fails, and receive
+cross-tab local-store updates through their context-bound record views. Root
+views open with at most four in flight. A current, ready row with no records
+means the root is missing; when `current` is false, replication is still behind.
+
+By default, `contexts.list()` and `contexts.observe()` include both declared
+collaboration roots owned by the connected identity and accepted member
+contexts. If the same `(ownerDid, contextId)` appears through both routes,
+owner access wins.
 Owned roots are discovered from local records at roots named by `roleGroups`;
 accepted member contexts come from the durable followed-source catalog.
 `contexts.open()` remains available for binding any non-role context path, but

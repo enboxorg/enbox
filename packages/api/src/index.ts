@@ -31,10 +31,15 @@ export type {
 export type { ContextView, ContextViewListener, ContextViewState } from './context-view.js';
 export { defineProtocol } from './define-protocol.js';
 export * from './did-api.js';
-export { DwnResponseError } from './dwn-response-error.js';
+export { DwnResponseError, RecordParentNotFoundError, RecordSquashBackstopError } from './dwn-response-error.js';
 export * from './dwn-reader-api.js';
 export * from './enbox.js';
 export type * from './enbox-types.js';
+export type {
+  FileEnvelopeCodec,
+  FileEnvelopeCodecOptions,
+  FileEnvelopeData,
+} from './file-envelope-codec.js';
 export * from './protocol.js';
 export { ProtocolReadinessError } from './protocol-readiness.js';
 export type { EnsureProtocolsReadyOptions, ProtocolReadinessApi } from './protocol-readiness.js';
@@ -48,6 +53,7 @@ export type {
   ProtocolRecordCodecs,
   ProtocolRolePaths,
   RuleSetPaths,
+  SquashProtocolPaths,
   TagKeys,
   TagsAtPath,
   TypedProtocol,
@@ -67,7 +73,7 @@ export {
 } from './record-codec.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
 export { RecordConflictError } from './record-conflict-error.js';
-export type { RecordView, RecordViewListener, RecordViewState } from './record-view.js';
+export type { ExpandableRecordView, RecordView, RecordViewListener, RecordViewState } from './record-view.js';
 export type { ReplicationCurrentness } from './replication-currentness.js';
 export * from './record.js';
 export * from './service-config-protocol.js';

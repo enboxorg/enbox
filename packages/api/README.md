@@ -120,6 +120,22 @@ const data = await record.value(); // { title: string; body: string }
 record methods infer paths and application values while using the same codec
 for writes and reads.
 
+For encrypted file records, use a private envelope:
+
+```ts
+const attachmentCodec = recordCodecs.fileEnvelope({
+  formatId: 'myapp1', // exactly six ASCII bytes
+});
+```
+
+The descriptor stays `application/octet-stream`; the safe filename and
+canonicalized media type remain inside the payload. Declare the protocol type
+with `encryptionRequired: true`. Use
+`attachmentCodec.maxEncodedBytesFor(contentBytes)` when its `$size.max` rule
+should reserve room for that content plus maximum envelope metadata. Pass
+`maxContentBytes` to the codec only when the dapp also wants to reject larger
+files locally; otherwise the codec adds no application size policy.
+
 Register all of an application's typed protocols and delegated permission
 policies once with `defineApplicationManifest()`:
 
@@ -237,6 +253,7 @@ const selection = { pagination: { limit: 20 } };
 const page = await notes.records.query('note', selection);
 const { records } = page;
 const nextPage = await page.next(); // undefined after the final page
+for await (const record of page) console.log(record.id);
 
 // Observe one bounded materialization
 const view = await notes.records.observe('note', selection);
@@ -246,6 +263,7 @@ const render = (state) => {
 await view.ready();
 const unsubscribe = view.subscribe(render);
 render(view.getState()); // close the one-shot-to-live handoff
+await view.loadMore(); // retain one more 20-record step when hasMore is true
 
 // Consume later writes/deletes from one stream
 const changes = await notes.records.subscribe('note', async (event) => {
@@ -282,35 +300,39 @@ await view.close();
 await changes.close();
 ```
 
-Typed record operations return application values directly: `create()` returns
-a `Record`, `query()` returns a `RecordPage`, `count()` returns a number, and
-`read()` returns a `Record` or `undefined`. `Record.update()` mutates and returns
-the same handle, while `TypedEnbox.records.patch()` returns the freshly read and
-updated record. Successful delete operations resolve without a value.
+Typed record operations return protocol-bound `TypedRecord<T>` handles.
+`contextId`, `protocol`, and `protocolPath` are therefore required strings on
+every create, read, query, observe, subscription, and materialization result.
+`update()` mutates and returns the same refined handle. Successful delete
+operations resolve without a value.
 Context-bound deletion requires authority-backed proof: an authorized existing
 tombstone is idempotent, while a plain scoped 404 remains a 404 because the ID
 may name a record outside the context.
 
-Other non-success DWN statuses throw a `DwnResponseError` with the original
-status:
+Structured write failures preserve the original DWN status and expose exact
+subclasses:
 
 ```ts
-import { DwnResponseError } from '@enbox/api';
+import { RecordParentNotFoundError, RecordSquashBackstopError } from '@enbox/api';
 
-try {
-  await notes.records.delete('note', { recordId: record.id });
-} catch (error) {
-  if (error instanceof DwnResponseError) {
-    console.error(error.status.code, error.status.errorCode, error.status.detail);
+function reportWriteError(error: unknown) {
+  if (error instanceof RecordSquashBackstopError) {
+    console.error(error.squashFloorTimestamp);
+  } else if (error instanceof RecordParentNotFoundError) {
+    console.error('The parent record no longer exists.');
   }
 }
 ```
+
+Other non-success replies throw `DwnResponseError` with the same `status`.
 
 ### Delta history compaction
 
 The typed records API exposes the timestamp and `squash` primitives needed by
 delta-based applications. The canonical [API guide](https://enbox-docs.pages.dev/docs/packages/api)
 documents the bounded rebase recipe and machine-readable squash backstop.
+`record.squash` reports the immutable initial-write fact and remains stable
+after updates and deletion; anonymous `ReadOnlyRecord` handles expose it too.
 
 Returned records are canonical `Record<T>` instances. `value()` decodes the
 typed application value through the protocol codec, while `data.json()`,
@@ -322,7 +344,13 @@ a shallow partial object update with one bounded conflict retry.
 `observe()` watches the connected tenant by default; pass `from` and, when
 required, `protocolRole` to watch a foreign tenant. Subscription events are
 wake hints: every immutable view state is rebuilt from the same canonical query.
-Its required pagination limit bounds retained records.
+Its required pagination limit is the initial retained-record bound and the
+`loadMore()` step. Expansion reruns the live query from the beginning and
+retains only the latest bounded prefix.
+Pass `signal` to a typed record observation or subscription, or to a context,
+invitation, or member observation, when its lifetime belongs to one caller.
+Aborting it rejects an opening call or closes only that resource; `close()`
+safely joins the same cleanup.
 When the owning session ends, a view publishes one terminal `error` state
 and closes. After automatic grant refresh, `ConnectionStore` publishes a
 replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
@@ -360,6 +388,9 @@ plus declarative membership, invitations, live catalogs, exact-context
 replication, and explicit `refresh()`, `forget()`, and `leave()` lifecycle
 operations. Tenant routing, role records, grants, delivery keys, and feed
 cursors remain internal.
+
+Each context exposes its `rootRecordId` and a collision-safe `key` equivalent
+to `protocolContextKey(context.ownerDid, context.id)`.
 
 The complete owner/member workflow and current limitations live in the
 canonical [API guide](https://enbox-docs.pages.dev/docs/packages/api).
@@ -429,16 +460,20 @@ coordinates writes across browser contexts.
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
-| `RecordPage<Item>` | One page of selected record items with cursor-free `next()` pagination. |
-| `RecordView<Item>` | Closeable bounded query view with immutable state. |
+| `RecordPage<Item>` | One page with cursor-free `next()` and lazy async iteration. |
+| `ExpandableRecordView<Item>` | Closeable bounded query view with fixed-step `loadMore()`. |
 | `ContextView` | Closeable live catalog of owned and accepted member contexts. |
+| `MaterializedMemberContext` | Accepted member context with its independently observed root state. |
 | `ProtocolContext` | Discriminated owner/member entry returned by a context catalog. |
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
 | `ContextMember` | One owner-managed member and its audience-key delivery state. |
-| `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |
+| `MaterializedRecord<T, Handle>` | A decoded value paired with its retained record handle. |
+| `TypedRecord<T>` | A canonical record with required protocol coordinates. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |
 | `DwnResponseError` | Typed-operation error carrying the original non-success DWN status. |
+| `RecordSquashBackstopError` | Exact squash-floor rejection with the reported floor timestamp. |
+| `RecordParentNotFoundError` | Exact same-protocol missing-parent write rejection. |
 | `ReadOnlyRecord` | Anonymous-read record handle. |
 | `DidApi` | DID resolution helpers. |
 | `DwnReaderApi` | Anonymous read-only DWN API. |

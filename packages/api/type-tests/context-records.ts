@@ -64,7 +64,7 @@ const ContextProtocol = defineProtocol(ContextDefinition, {
   member    : recordCodecs.json<{ label: string }>(),
   note      : recordCodecs.json<{ text: string }>(),
   outsider  : recordCodecs.json<{ label: string }>(),
-  project   : recordCodecs.json<{ name: string }>(),
+  project   : recordCodecs.json<{ projectCode: number }>(),
   session   : recordCodecs.json<{ peer: string }>(),
   title     : recordCodecs.json<{ text: string }>(),
   viewer    : recordCodecs.json<{ expires: boolean }>(),
@@ -100,6 +100,8 @@ declare const typed: TypedEnbox<
   typeof ContextProtocol.codecs,
   typeof ContextProtocol.roleGroups
 >;
+declare const callerSignal: AbortSignal;
+void typed.records.subscribe('workspace/note', { signal: callerSignal }, (): void => {});
 
 if (catalogContext.role === 'workspace/member') {
   const root: 'workspace' = catalogContext.path;
@@ -127,9 +129,26 @@ const observed: Promise<ContextView<ProtocolContext<
   typeof ContextProtocol.codecs,
   typeof ContextProtocol.roleGroups
 >>> =
-  typed.contexts.observe();
+  typed.contexts.observe({ signal: callerSignal });
 void listed;
 void observed;
+void typed.contexts.observe({ access: 'member', materializeRoot: true, signal: callerSignal })
+  .then((view): void => {
+    const row = view.getState().contexts[0];
+    const value: { name: string } | { projectCode: number } | undefined = row?.root.records[0]?.value;
+    const rootError: Error | undefined = row?.root.status === 'error' ? row.root.error : undefined;
+    const memberAccess: 'member' | undefined = row?.context.access;
+    void value;
+    void rootError;
+    void memberAccess;
+    void row?.context.leave();
+    // @ts-expect-error a member-only selection never exposes owner membership management.
+    void row?.context.members();
+  });
+// @ts-expect-error one-shot root materialization is not part of the catalog API.
+void typed.contexts.list({ access: 'member', materializeRoot: true });
+// @ts-expect-error root materialization is only supported for accepted member contexts.
+void typed.contexts.observe({ access: 'owner', materializeRoot: true });
 declare const listedContext: ProtocolContext<
   typeof ContextDefinition,
   typeof ContextProtocol.codecs,
@@ -200,7 +219,7 @@ void owned.then((value): void => {
     typeof ContextDefinition,
     typeof ContextProtocol.codecs,
     'workspace/member' | 'workspace/viewer'
-  >>> = members.observe();
+  >>> = members.observe({ signal: callerSignal });
   void memberView.then((view): void => {
     void view.getState().records;
     const member = view.getState().records[0];
@@ -262,7 +281,7 @@ void typed.contexts.invitations.list().then((invitations): void => {
   }
 });
 
-void typed.contexts.invitations.observe().then((view): void => {
+void typed.contexts.invitations.observe({ signal: callerSignal }).then((view): void => {
   const status: 'loading' | 'ready' | 'error' = view.getState().status;
   const current: boolean = view.getState().current;
   void status;
@@ -361,15 +380,17 @@ void context.records.query('workspace', {
 });
 
 void context.records.observe('workspace/note', {
-  pagination: { limit: 20 },
+  pagination : { limit: 20 },
+  signal     : callerSignal,
 }).then((view): void => {
   const note: ContextRecord<{ text: string }> | undefined = view.getState().records[0];
+  void view.loadMore();
   void note;
   // @ts-expect-error observed states retain context-bound handles.
   void view.getState().records[0]?.rawMessage;
 });
 
-void context.records.subscribe('workspace/note', async (event): Promise<void> => {
+void context.records.subscribe('workspace/note', { signal: callerSignal }, async (event): Promise<void> => {
   if (event.type === 'error') {
     const error: Error = event.error;
     void error;
