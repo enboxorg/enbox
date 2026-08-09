@@ -269,7 +269,7 @@ describe('RecordView', () => {
     await expect(observe('note')).rejects.toThrow('pagination.limit is required');
     await expect(observe('note', {
       pagination: { limit: 0 },
-    })).rejects.toThrow('pagination.limit must be a finite number greater than or equal to 1');
+    })).rejects.toThrow('pagination.limit must be a positive safe integer');
     await expect(query('note', { materialize: true }))
       .rejects.toThrow('pagination.limit is required to bound decoded values');
     await expect(observe('note', {
@@ -761,6 +761,23 @@ describe('RecordView', () => {
     await view.loadMore();
     expect(view.getState().records).toEqual(records);
     expect(harness.queryRequests.map(request => request.pagination?.limit)).toEqual([2, 4, 6]);
+    await view.close();
+  });
+
+  it('rejects an expansion that would exceed the safe-integer limit', async () => {
+    const retained = testRecord('retained');
+    const harness = createHarness(async () => ok(
+      [retained],
+      { messageCid: 'next', value: '1' },
+    ));
+    const view = await createTyped(harness).records.observe('note', {
+      pagination: { limit: Number.MAX_SAFE_INTEGER },
+    });
+    await view.ready();
+
+    await expect(view.loadMore()).rejects.toThrow('pagination limit exceeds Number.MAX_SAFE_INTEGER');
+    expect(view.getState().records).toEqual([retained]);
+    expect(harness.queryRequests).toHaveLength(1);
     await view.close();
   });
 

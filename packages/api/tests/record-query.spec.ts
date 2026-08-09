@@ -310,6 +310,8 @@ describe('RecordQuery', () => {
     const invalidPaginationValues = [
       [],
       { unexpected: true },
+      { limit: 1.5 },
+      { limit: Number.MAX_SAFE_INTEGER + 1 },
       { limit: Number.POSITIVE_INFINITY },
       { cursor: null },
       { limit: 1, cursor: { messageCid: 'bafy-page', value: 1 } },
