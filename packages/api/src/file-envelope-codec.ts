@@ -18,7 +18,10 @@ export type FileEnvelopeCodecOptions = Readonly<{
   /** Exactly six ASCII bytes identifying the application format. */
   formatId: string;
 
-  /** Optional local ceiling for encoded and decoded file content. Omit it to add no dapp size policy. */
+  /**
+   * Optional local ceiling for encoded and decoded file content. Omit it to add no dapp size policy.
+   * Configure it when decoding untrusted records because decoding materializes the content as a Blob.
+   */
   maxContentBytes?: number;
 }>;
 
