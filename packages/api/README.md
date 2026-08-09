@@ -327,6 +327,10 @@ wake hints: every immutable view state is rebuilt from the same canonical query.
 Its required pagination limit is the initial retained-record bound and the
 `loadMore()` step. Expansion reruns the live query from the beginning and
 retains only the latest bounded prefix.
+Pass `signal` to a typed record observation or subscription, or to a context,
+invitation, or member observation, when its lifetime belongs to one caller.
+Aborting it rejects an opening call or closes only that resource; `close()`
+safely joins the same cleanup.
 When the owning session ends, a view publishes one terminal `error` state
 and closes. After automatic grant refresh, `ConnectionStore` publishes a
 replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources

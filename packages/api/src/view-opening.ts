@@ -15,19 +15,19 @@ export async function openView(
     let closing: Promise<void>;
     try {
       closing = view.close();
-    } catch (closeError: unknown) {
+    } catch {
       signal?.throwIfAborted();
-      throw closeError;
+      throw error;
     }
 
     try {
       await whileSignalsActive(() => closing, [signal]);
-    } catch (closeError: unknown) {
+    } catch {
       if (signal?.aborted === true) {
         void closing.catch((): void => {});
         signal.throwIfAborted();
       }
-      throw closeError;
+      throw error;
     }
     throw error;
   }
