@@ -301,6 +301,23 @@ describe('ReadOnlyRecord', () => {
     expect(record.initialWrite).toBe(initialWrite);
   });
 
+  it('should retain the initial squash fact when the current write omits it', () => {
+    anonStub = createAnonymousDwnStub();
+    const initialWrite = createMockRecordsWriteMessage({
+      descriptor: { squash: true } as RecordsWriteMessage['descriptor'],
+    });
+    const current = createMockRecordsWriteMessage({ recordId: initialWrite.recordId });
+    const record = new ReadOnlyRecord({
+      anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      initialWrite,
+      rawMessage   : current,
+      remoteOrigin : targetDid,
+    });
+
+    expect(record.squash).toBe(true);
+    expect(record.toJSON().squash).toBe(true);
+  });
+
   it('should return data from encodedData when available', async () => {
     anonStub = createAnonymousDwnStub();
 

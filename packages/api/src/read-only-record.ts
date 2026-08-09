@@ -128,6 +128,11 @@ export class ReadOnlyRecord {
   /** Record's schema. */
   get schema(): string | undefined { return this._descriptor.schema; }
 
+  /** Whether the initial write carried the protocol squash directive. */
+  get squash(): boolean {
+    return (this._initialWrite?.descriptor ?? this._descriptor).squash === true;
+  }
+
   // ---------------------------------------------------------------------------
   // Mutable descriptor properties
   // ---------------------------------------------------------------------------
@@ -234,6 +239,7 @@ export class ReadOnlyRecord {
       recipient     : this.recipient,
       recordId      : this.id,
       schema        : this.schema,
+      squash        : this.squash,
       tags          : this.tags,
       timestamp     : this.timestamp,
     };

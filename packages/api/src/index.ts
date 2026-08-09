@@ -31,7 +31,7 @@ export type {
 export type { ContextView, ContextViewListener, ContextViewState } from './context-view.js';
 export { defineProtocol } from './define-protocol.js';
 export * from './did-api.js';
-export { DwnResponseError } from './dwn-response-error.js';
+export { DwnResponseError, RecordParentNotFoundError, RecordSquashBackstopError } from './dwn-response-error.js';
 export * from './dwn-reader-api.js';
 export * from './enbox.js';
 export type * from './enbox-types.js';
@@ -48,6 +48,7 @@ export type {
   ProtocolRecordCodecs,
   ProtocolRolePaths,
   RuleSetPaths,
+  SquashProtocolPaths,
   TagKeys,
   TagsAtPath,
   TypedProtocol,

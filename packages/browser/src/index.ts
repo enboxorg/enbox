@@ -40,7 +40,10 @@ export {
   getApplicationProtocolRequests,
   ProtocolReadinessError,
   RecordConflictError,
+  RecordParentNotFoundError,
+  RecordSquashBackstopError,
   RecordValidationError,
+  protocolContextKey,
   recordCodecs,
 } from '@enbox/api';
 
@@ -92,6 +95,7 @@ export type {
   OwnedContext,
   ProtocolContext,
   ProtocolRolePaths,
+  SquashProtocolPaths,
   RecordCodec,
   RecordCodecContext,
   RecordCodecValue,
@@ -111,6 +115,8 @@ export type {
   ReplicationCurrentness,
   RoleDeliveryState,
   SyncStatusSnapshot,
+  TypedMaterializedRecord,
+  TypedRecord,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────

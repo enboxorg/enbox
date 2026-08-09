@@ -46,6 +46,7 @@ import type {
   ProtocolPaths,
   ProtocolRolePaths,
   SingletonProtocolPaths,
+  SquashProtocolPaths,
   TypedProtocol,
   TypeNameAtPath,
 } from './protocol-types.js';
@@ -128,9 +129,22 @@ export type RecordPatchInput<T> = [RecordPatch<T>] extends [never]
   );
 
 type TypedRecordReadResult<T> = {
-  record: Record<T> | undefined;
+  record: TypedRecord<T> | undefined;
   tombstonePrune?: boolean;
 };
+
+/** A protocol-bound record with coordinates guaranteed by its typed selection. */
+export interface TypedRecord<T = unknown> extends Record<T> {
+  readonly contextId: string;
+  readonly protocol: string;
+  readonly protocolPath: string;
+
+  /** Mutate and return this same protocol-refined handle. */
+  update(params: RecordUpdateParams<T>): Promise<this>;
+}
+
+/** A typed protocol record paired with its decoded application value. */
+export type TypedMaterializedRecord<T = unknown> = MaterializedRecord<T, TypedRecord<T>>;
 
 /** Update fields available on a record whose context, role, and target are already bound. */
 export type ContextRecordUpdateParams<T = unknown> = Pick<
@@ -150,7 +164,6 @@ export type ContextRecordDeleteParams = Pick<RecordDeleteParams, 'prune' | 'time
 export type ContextRecord<T = unknown> = Pick<
   Record<T>,
   | 'author'
-  | 'contextId'
   | 'creator'
   | 'data'
   | 'dataCid'
@@ -167,23 +180,24 @@ export type ContextRecord<T = unknown> = Pick<
   | 'timestamp'
   | 'value'
 > & {
+  readonly contextId: string;
+  readonly protocol: string;
+  readonly protocolPath: string;
+  readonly squash: boolean;
   delete(params?: ContextRecordDeleteParams): Promise<void>;
   update(params: ContextRecordUpdateParams<T>): Promise<ContextRecord<T>>;
 };
 
 /** A context-bound record handle paired with its decoded application value. */
-export type ContextMaterializedRecord<T = unknown> = Readonly<{
-  record: ContextRecord<T>;
-  value: T;
-}>;
+export type ContextMaterializedRecord<T = unknown> = MaterializedRecord<T, ContextRecord<T>>;
 
 type RecordHandle<T, ContextBound extends boolean> = ContextBound extends true
   ? ContextRecord<T>
-  : Record<T>;
+  : TypedRecord<T>;
 
 type MaterializedRecordHandle<T, ContextBound extends boolean> = ContextBound extends true
   ? ContextMaterializedRecord<T>
-  : MaterializedRecord<T>;
+  : TypedMaterializedRecord<T>;
 
 /** One page returned by a typed records query. */
 export type RecordPage<Item = Record> = AsyncIterable<Item> & {
@@ -335,8 +349,8 @@ type SelectedRecordRepresentation<
   ? RecordHandle<DataForPath<C, Path>, ContextBound>
   : MaterializedRecordForPath<D, C, Path, Materialization, ContextBound>;
 
-type MaterializedRecordWithChildren<T> = MaterializedRecord<T> & Readonly<{
-  children: Readonly<globalThis.Record<string, MaterializedRecord<unknown> | undefined>>;
+type MaterializedRecordWithChildren<T> = TypedMaterializedRecord<T> & Readonly<{
+  children: Readonly<globalThis.Record<string, TypedMaterializedRecord<unknown> | undefined>>;
 }>;
 
 type MaterializationSource = {
@@ -547,12 +561,16 @@ type ContextBase<
 > = {
   /** Context ID that bounds every record operation. */
   id: string;
+  /** Collision-safe identity across owner tenants. */
+  key: string;
   /** DID whose DWN owns the authoritative context. */
   ownerDid: string;
   /** Protocol path of this context's root record. */
   path: Root;
   /** Typed records API with this context's tenant and root scope already bound. */
   records: ContextRecordsApi<D, C, Root>;
+  /** Record ID of the context root at `path`. */
+  rootRecordId: string;
 };
 
 type MemberContextForRoot<
@@ -853,7 +871,13 @@ export type TypedCreateRequest<
   D extends ProtocolDefinition,
   C extends RecordCodecMap,
   Path extends ProtocolPaths<D> & string,
-> = TypedCreateOptions<C, Path> & ([Extract<Path, ProtocolRolePaths<D>>] extends [never]
+> = TypedCreateOptions<C, Path> & (
+  ProtocolDefinition extends D
+    ? unknown
+    : [Path] extends [SquashProtocolPaths<D>]
+      ? unknown
+      : { squash?: never }
+) & ([Extract<Path, ProtocolRolePaths<D>>] extends [never]
   ? unknown
   : {
     /**
@@ -1471,7 +1495,7 @@ export class TypedEnbox<
       normalizedPath: Root,
       id: string,
     ): OwnedContext<D, C, Root, G> => {
-      const key = contextKey(this._dwn.connectedDid, id);
+      const key = protocolContextKey(this._dwn.connectedDid, id);
       const existing = boundOwners.get(key);
       if (existing !== undefined) {
         return existing as OwnedContext<D, C, Root, G>;
@@ -1529,9 +1553,11 @@ export class TypedEnbox<
           },
         } : {}),
         members,
-        ownerDid : this._dwn.connectedDid,
-        path     : normalizedPath,
+        key,
+        ownerDid     : this._dwn.connectedDid,
+        path         : normalizedPath,
         records,
+        rootRecordId : contextRootRecordId(id),
       }) as OwnedContext<D, C, Root, G>;
       boundOwners.set(key, context);
       return context;
@@ -1554,7 +1580,7 @@ export class TypedEnbox<
     };
 
     const bindMemberContext = (source: FollowedSyncSource): MemberContext<D, C> => {
-      const key = contextKey(source.sourceDid, source.contextId);
+      const key = protocolContextKey(source.sourceDid, source.contextId);
       const existing = boundMembers.get(key);
       if (existing !== undefined && followedSyncSourceActiveEqual(existing.source, source)) {
         return existing.context;
@@ -1601,8 +1627,8 @@ export class TypedEnbox<
         listSources(),
       ]);
       const owned = ownedByRoot.flat();
-      const activeOwnerKeys = new Set(owned.map(context => contextKey(context.ownerDid, context.id)));
-      const activeMemberKeys = new Set(sources.map(source => contextKey(source.sourceDid, source.contextId)));
+      const activeOwnerKeys = new Set(owned.map(context => protocolContextKey(context.ownerDid, context.id)));
+      const activeMemberKeys = new Set(sources.map(source => protocolContextKey(source.sourceDid, source.contextId)));
       for (const key of boundOwners.keys()) {
         if (!activeOwnerKeys.has(key)) { boundOwners.delete(key); }
       }
@@ -1612,10 +1638,10 @@ export class TypedEnbox<
 
       const contexts = new Map<string, CatalogContext>();
       for (const context of owned) {
-        contexts.set(contextKey(context.ownerDid, context.id), context);
+        contexts.set(protocolContextKey(context.ownerDid, context.id), context);
       }
       for (const source of sources) {
-        const key = contextKey(source.sourceDid, source.contextId);
+        const key = protocolContextKey(source.sourceDid, source.contextId);
         if (!contexts.has(key)) {
           contexts.set(key, bindMemberContext(source) as unknown as CatalogContext);
         }
@@ -1849,9 +1875,9 @@ export class TypedEnbox<
   >(
     path : string,
     record : Record<Existing>,
-  ): Record<DataForPath<C, Path>> {
+  ): TypedRecord<DataForPath<C, Path>> {
     const dataFormats = this._definition.types[getTypeName(path)]?.dataFormats;
-    return bindRecordCodec(record, this.getCodec<Path>(path), dataFormats);
+    return bindRecordCodec(record, this.getCodec<Path>(path), dataFormats) as TypedRecord<DataForPath<C, Path>>;
   }
 
   /** Validate materialization once, before any protocol or Records request starts. */
@@ -1936,10 +1962,12 @@ export class TypedEnbox<
     childPaths : readonly string[],
     source : MaterializationSource,
   ): Promise<readonly (
-    MaterializedRecord<DataForPath<C, Path>> |
+    TypedMaterializedRecord<DataForPath<C, Path>> |
     MaterializedRecordWithChildren<DataForPath<C, Path>>
   )[]> {
-    const parents = await Promise.all(records.map(async (record): Promise<MaterializedRecord<DataForPath<C, Path>>> => {
+    const parents = await Promise.all(records.map(async (record): Promise<
+      TypedMaterializedRecord<DataForPath<C, Path>>
+    > => {
       const typedRecord = this.bindCodec<Path>(parentPath, record);
       return Object.freeze({
         record : typedRecord,
@@ -1952,7 +1980,7 @@ export class TypedEnbox<
     }
 
     const parentById = new Map(parents.map((parent) => [parent.record.id, {
-      children: new Map<string, MaterializedRecord<unknown> | undefined>(
+      children: new Map<string, TypedMaterializedRecord<unknown> | undefined>(
         childPaths.map((childPath) => [getTypeName(childPath), undefined]),
       ),
       parent,
@@ -2306,7 +2334,7 @@ export class TypedEnbox<
     dwn: DwnApi = this._dwn,
   ): Promise<{
     audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
-    record: Record<DataForPath<C, Path>>;
+    record: TypedRecord<DataForPath<C, Path>>;
   }> {
     const normalizedPath = normalizePath(path);
     if (getRuleSetAtPath(normalizedPath, this._definition.structure)?.$role === true
@@ -2873,6 +2901,7 @@ export class TypedEnbox<
       access   : 'member',
       forget   : (): Promise<void> => retire(false),
       id       : source.contextId,
+      key      : protocolContextKey(source.sourceDid, source.contextId),
       leave    : (): Promise<void> => retire(true),
       ownerDid : source.sourceDid,
       path     : scope.protocolPath,
@@ -2881,7 +2910,8 @@ export class TypedEnbox<
         protocolPath : scope.protocolPath,
         protocolPaths,
       }, signal),
-      role: scope.role,
+      role         : scope.role,
+      rootRecordId : contextRootRecordId(source.contextId),
       refresh,
     }) as unknown as MemberContext<D, C>;
   }
@@ -3165,7 +3195,7 @@ export class TypedEnbox<
       create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedCreateRequest<D, C, Path>,
-      ): Promise<Record<DataForPath<C, Path>>> => (await this.createRecord(path, request)).record,
+      ): Promise<TypedRecord<DataForPath<C, Path>>> => (await this.createRecord(path, request)).record,
 
       /**
        * Query records at the given protocol path.
@@ -3427,7 +3457,7 @@ export class TypedEnbox<
       read: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         recordIdOrRequest: string | TypedReadRequest<D, Path>,
-      ): Promise<Record<DataForPath<C, Path>> | undefined> => {
+      ): Promise<TypedRecord<DataForPath<C, Path>> | undefined> => {
         const request: TypedReadRequest<D, Path> = typeof recordIdOrRequest === 'string'
           ? { filter: { recordId: recordIdOrRequest } }
           : recordIdOrRequest;
@@ -3449,7 +3479,7 @@ export class TypedEnbox<
         path: Path,
         recordId: string,
         patch: RecordPatchInput<DataForPath<C, Path>>,
-      ): Promise<Record<DataForPath<C, Path>>> => {
+      ): Promise<TypedRecord<DataForPath<C, Path>>> => {
         let retried = false;
         while (true) {
           const { record } = await this.readTypedRecord(path, { filter: { recordId } }, true);
@@ -3493,7 +3523,7 @@ export class TypedEnbox<
       set: async <Path extends SingletonProtocolPaths<D> & string>(
         path: Path,
         request: TypedSetRequest<C, Path>,
-      ): Promise<Record<DataForPath<C, Path>>> => {
+      ): Promise<TypedRecord<DataForPath<C, Path>>> => {
         const normalizedPath = normalizePath(path);
         const within = this.resolveContextWithin(normalizedPath, request.within);
         this.assertSingletonScope(normalizedPath, within);
@@ -3769,8 +3799,13 @@ function paginationCursorSeen(lineage: PaginationCursorLineage | undefined, key:
   return false;
 }
 
-function contextKey(ownerDid: string, contextId: string): string {
+/** Return the collision-safe identity for one owner-scoped protocol context. */
+export function protocolContextKey(ownerDid: string, contextId: string): string {
   return JSON.stringify([ownerDid, contextId]);
+}
+
+function contextRootRecordId(contextId: string): string {
+  return contextId.slice(contextId.lastIndexOf('/') + 1);
 }
 
 function compareProtocolContexts(
