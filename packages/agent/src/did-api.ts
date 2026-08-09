@@ -168,11 +168,8 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
   }
 
   /** Resolve without reading the cache, then write a successful result through to it. */
-  public async refreshResolution(
-    didUri: string,
-    options: DidResolutionOptions = {},
-  ): Promise<DidResolutionResult> {
-    const result = await super.resolve(didUri, options);
+  public async refreshResolution(didUri: string): Promise<DidResolutionResult> {
+    const result = await super.resolve(didUri, {});
     if (result.didResolutionMetadata.error === undefined) {
       await this.cache.set(didUri, result);
     }
