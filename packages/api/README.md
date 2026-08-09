@@ -237,6 +237,7 @@ const selection = { pagination: { limit: 20 } };
 const page = await notes.records.query('note', selection);
 const { records } = page;
 const nextPage = await page.next(); // undefined after the final page
+for await (const record of page) console.log(record.id);
 
 // Observe one bounded materialization
 const view = await notes.records.observe('note', selection);
@@ -246,6 +247,7 @@ const render = (state) => {
 await view.ready();
 const unsubscribe = view.subscribe(render);
 render(view.getState()); // close the one-shot-to-live handoff
+await view.loadMore(); // retain one more 20-record step when hasMore is true
 
 // Consume later writes/deletes from one stream
 const changes = await notes.records.subscribe('note', async (event) => {
@@ -322,7 +324,9 @@ a shallow partial object update with one bounded conflict retry.
 `observe()` watches the connected tenant by default; pass `from` and, when
 required, `protocolRole` to watch a foreign tenant. Subscription events are
 wake hints: every immutable view state is rebuilt from the same canonical query.
-Its required pagination limit bounds retained records.
+Its required pagination limit is the initial retained-record bound and the
+`loadMore()` step. Expansion reruns the live query from the beginning and
+retains only the latest bounded prefix.
 When the owning session ends, a view publishes one terminal `error` state
 and closes. After automatic grant refresh, `ConnectionStore` publishes a
 replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
@@ -429,8 +433,8 @@ coordinates writes across browser contexts.
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
-| `RecordPage<Item>` | One page of selected record items with cursor-free `next()` pagination. |
-| `RecordView<Item>` | Closeable bounded query view with immutable state. |
+| `RecordPage<Item>` | One page with cursor-free `next()` and lazy async iteration. |
+| `ExpandableRecordView<Item>` | Closeable bounded query view with fixed-step `loadMore()`. |
 | `ContextView` | Closeable live catalog of owned and accepted member contexts. |
 | `ProtocolContext` | Discriminated owner/member entry returned by a context catalog. |
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |

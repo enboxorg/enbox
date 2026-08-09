@@ -364,6 +364,7 @@ void context.records.observe('workspace/note', {
   pagination: { limit: 20 },
 }).then((view): void => {
   const note: ContextRecord<{ text: string }> | undefined = view.getState().records[0];
+  void view.loadMore();
   void note;
   // @ts-expect-error observed states retain context-bound handles.
   void view.getState().records[0]?.rawMessage;
