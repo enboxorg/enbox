@@ -8,8 +8,7 @@ const DATA_FORMAT = 'application/octet-stream';
 
 function fileCodec(): FileEnvelopeCodec {
   return recordCodecs.fileEnvelope({
-    formatId        : 'photos',
-    maxContentBytes : 4,
+    formatId: 'photos',
   });
 }
 

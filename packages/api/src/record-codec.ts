@@ -187,8 +187,8 @@ export const recordCodecs = {
   },
 
   /**
-   * A bounded private-file envelope with filename and media type inside the
-   * payload. Use it with a protocol type declaring `encryptionRequired: true`.
+   * A private-file envelope with filename and media type inside the payload.
+   * Use it with a protocol type declaring `encryptionRequired: true`.
    */
   fileEnvelope(options: FileEnvelopeCodecOptions): FileEnvelopeCodec {
     return createFileEnvelopeCodec(options);

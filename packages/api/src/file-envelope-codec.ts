@@ -18,14 +18,14 @@ export type FileEnvelopeCodecOptions = Readonly<{
   /** Exactly six ASCII bytes identifying the application format. */
   formatId: string;
 
-  /** Maximum accepted file-content size in bytes. */
-  maxContentBytes: number;
+  /** Optional local ceiling for encoded and decoded file content. Omit it to add no dapp size policy. */
+  maxContentBytes?: number;
 }>;
 
-/** A file codec with the exact bounds needed by a protocol `$size` rule. */
+/** A private-file codec with a protocol-size calculation helper. */
 export type FileEnvelopeCodec = RecordCodec<FileEnvelopeData> & Readonly<{
-  maxContentBytes: number;
-  maxEncodedBytes: number;
+  /** Worst-case encoded size for the supplied content bytes and maximum permitted metadata. */
+  maxEncodedBytesFor(contentBytes: number): number;
 }>;
 
 type FileEnvelopeMetadata = Readonly<{
@@ -46,6 +46,7 @@ const FORMAT_ID_BYTES = 6;
 const METADATA_MAX_BYTES = 4_096;
 const MIME_TYPE_MAX_BYTES = 255;
 const PREFIX_BYTES = 12;
+const MAX_SAFE_CONTENT_BYTES = Number.MAX_SAFE_INTEGER - PREFIX_BYTES - METADATA_MAX_BYTES;
 const RESERVED_BYTE = 0;
 const VERSION = 1;
 const MIME_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+*-]*$/;
@@ -74,7 +75,7 @@ function normalizeMaxContentBytes(value: unknown): number {
     return fail('maxContentBytes must be a non-negative safe integer.');
   }
   const maxContentBytes = value as number;
-  if (maxContentBytes > Number.MAX_SAFE_INTEGER - PREFIX_BYTES - METADATA_MAX_BYTES) {
+  if (maxContentBytes > MAX_SAFE_CONTENT_BYTES) {
     return fail('maxContentBytes is too large to calculate a safe encoded-size bound.');
   }
   return maxContentBytes;
@@ -164,18 +165,20 @@ function finishContent(blocks: ContentBlocks): Uint8Array[] {
   return blocks.blocks;
 }
 
-/** @internal Create one bounded V1 private-file envelope codec. */
+/** @internal Create one V1 private-file envelope codec. */
 export function createFileEnvelopeCodec(options: FileEnvelopeCodecOptions): FileEnvelopeCodec {
   if (typeof options !== 'object' || options === null) {
     return fail('options must be an object.');
   }
   const formatId = normalizeFormatId(options.formatId);
-  const maxContentBytes = normalizeMaxContentBytes(options.maxContentBytes);
-  const maxEncodedBytes = PREFIX_BYTES + METADATA_MAX_BYTES + maxContentBytes;
+  const maxContentBytes = options.maxContentBytes === undefined
+    ? MAX_SAFE_CONTENT_BYTES
+    : normalizeMaxContentBytes(options.maxContentBytes);
 
   return Object.freeze({
-    maxContentBytes,
-    maxEncodedBytes,
+    maxEncodedBytesFor(contentBytes: number): number {
+      return PREFIX_BYTES + METADATA_MAX_BYTES + normalizeMaxContentBytes(contentBytes);
+    },
 
     encode(value: FileEnvelopeData): EncodedRecordData {
       if (!(value?.blob instanceof Blob)) {
@@ -216,7 +219,6 @@ export function createFileEnvelopeCodec(options: FileEnvelopeCodecOptions): File
       let metadata: FileEnvelopeMetadata | undefined;
       let requiredHeaderBytes = PREFIX_BYTES;
       let streamFinished = false;
-      let totalBytes = 0;
 
       try {
         while (true) {
@@ -229,10 +231,6 @@ export function createFileEnvelopeCodec(options: FileEnvelopeCodecOptions): File
           if (!(chunk instanceof Uint8Array)) {
             return fail('record stream must contain byte chunks.');
           }
-          if (chunk.byteLength > maxEncodedBytes - totalBytes) {
-            return fail(`record exceeds ${maxEncodedBytes} bytes.`);
-          }
-          totalBytes += chunk.byteLength;
 
           let chunkOffset = 0;
           while (chunkOffset < chunk.byteLength) {

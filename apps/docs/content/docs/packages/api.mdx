@@ -102,14 +102,14 @@ deliver those keys directly.
 ### Private file records
 
 `recordCodecs.fileEnvelope()` keeps a safe filename and canonicalized media type
-inside one bounded binary payload. The record descriptor always uses
+inside one versioned binary payload. The record descriptor always uses
 `application/octet-stream`; declare the protocol type as encrypted to keep the
 embedded metadata private with the file bytes.
 
 ```ts
+const maxAttachmentContentBytes = 50_000_000;
 const attachmentCodec = recordCodecs.fileEnvelope({
-  formatId        : 'myapp1', // exactly six ASCII bytes
-  maxContentBytes : 50_000_000,
+  formatId: 'myapp1', // exactly six ASCII bytes
 });
 
 const definition = {
@@ -123,7 +123,7 @@ const definition = {
   },
   structure: {
     attachment: {
-      $size: { max: attachmentCodec.maxEncodedBytes },
+      $size: { max: attachmentCodec.maxEncodedBytesFor(maxAttachmentContentBytes) },
     },
   },
 } as const;
@@ -133,9 +133,16 @@ const FilesProtocol = defineProtocol(definition, {
 });
 ```
 
-`maxEncodedBytes` includes the V1 prefix and bounded metadata, so it is the
-exact protocol size ceiling. Treat the decoded `mimeType` as untrusted and
-allowlist renderable types before displaying file content inline.
+`maxEncodedBytesFor()` reserves enough record bytes for the supplied content
+and the maximum metadata overhead. Because `$size.max` caps the whole envelope,
+it is not an exact content-byte limit when metadata is shorter. Omit `$size.max`
+when the protocol has no attachment-size policy. To enforce an exact local
+ceiling while encoding and decoding, pass
+`maxContentBytes: maxAttachmentContentBytes` to `fileEnvelope()`. This is also
+useful when decoding untrusted files because the codec materializes the content
+as a `Blob`. A remote with a lower limit can still reject a write. Treat the
+decoded `mimeType` as untrusted and allowlist renderable types before displaying
+file content inline.
 
 ### 2. Register and connect the application
 

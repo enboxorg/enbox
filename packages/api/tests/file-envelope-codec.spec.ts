@@ -109,7 +109,7 @@ function file(filename: string, blob = new Blob(['x']), mimeType = 'text/plain')
 
 describe('recordCodecs.fileEnvelope', () => {
   it('preserves the Notesd V1 bytes and round-trips private file metadata', async () => {
-    const codec = recordCodecs.fileEnvelope({ formatId: FORMAT_ID, maxContentBytes: 3 });
+    const codec = recordCodecs.fileEnvelope({ formatId: FORMAT_ID });
     const encoded = codec.encode({
       filename : 'hello.txt',
       mimeType : 'Text/Plain; charset=utf-8',
@@ -128,24 +128,43 @@ describe('recordCodecs.fileEnvelope', () => {
     expect(await bytesOf(decoded.blob)).toEqual(new Uint8Array([0, 1, 255]));
   });
 
-  it('validates options, file bounds, basenames, and MIME claims', async () => {
+  it('supports an optional local content limit and calculates protocol size bounds', async () => {
     for (const options of [
       undefined,
       null,
-      { formatId: 'short', maxContentBytes: 1 },
-      { formatId: 'toolong', maxContentBytes: 1 },
-      { formatId: 'notéss', maxContentBytes: 1 },
+      { formatId: 'short' },
+      { formatId: 'toolong' },
+      { formatId: 'notéss' },
       { formatId: FORMAT_ID, maxContentBytes: -1 },
       { formatId: FORMAT_ID, maxContentBytes: 1.5 },
       { formatId: FORMAT_ID, maxContentBytes: Number.MAX_SAFE_INTEGER },
+      { formatId: FORMAT_ID, maxContentBytes: null },
     ]) {
       expect(() => recordCodecs.fileEnvelope(options as never)).toThrow('File envelope');
     }
 
+    const unbounded = recordCodecs.fileEnvelope({ formatId: FORMAT_ID });
+    expect(() => recordCodecs.fileEnvelope({ formatId: FORMAT_ID, maxContentBytes: undefined })).not.toThrow();
+    expect(Object.isFrozen(unbounded)).toBe(true);
+    expect(unbounded.maxEncodedBytesFor(0)).toBe(4_108);
+    expect(unbounded.maxEncodedBytesFor(3)).toBe(4_111);
+    for (const contentBytes of [-1, 1.5, Number.MAX_SAFE_INTEGER, null]) {
+      expect(() => unbounded.maxEncodedBytesFor(contentBytes as never)).toThrow('File envelope');
+    }
+
+    const zeroLimit = recordCodecs.fileEnvelope({ formatId: FORMAT_ID, maxContentBytes: 0 });
+    expect(() => zeroLimit.encode(file('empty.bin', new Blob()))).not.toThrow();
+    expect(() => zeroLimit.encode(file('nonempty.bin'))).toThrow('content exceeds 0 bytes');
+
     const codec = recordCodecs.fileEnvelope({ formatId: FORMAT_ID, maxContentBytes: 3 });
-    expect(codec.maxContentBytes).toBe(3);
-    expect(codec.maxEncodedBytes).toBe(4_111);
-    expect(Object.isFrozen(codec)).toBe(true);
+    const larger = file('larger.bin', new Blob(['1234']));
+    const encoded = unbounded.encode(larger);
+    expect(await (await decode(unbounded, encoded.data)).blob.text()).toBe('1234');
+    expect(() => codec.encode(larger)).toThrow('content exceeds 3 bytes');
+  });
+
+  it('validates file values, basenames, and MIME claims', async () => {
+    const codec = recordCodecs.fileEnvelope({ formatId: FORMAT_ID, maxContentBytes: 3 });
     expect(() => codec.encode({ ...file('bad.bin'), blob: 'bytes' } as unknown as FileEnvelopeData))
       .toThrow('blob must be a Blob');
     expect(() => codec.encode(file('three.bin', new Blob(['123'])))).not.toThrow();
@@ -185,7 +204,6 @@ describe('recordCodecs.fileEnvelope', () => {
       [rawEnvelope({ metadata: '{"filename":"file.txt","mimeType":"text/plain","extra":true}' }), 'only filename and mimeType'],
       [rawEnvelope({ metadata: '{"filename":"..","mimeType":"text/plain"}' }), 'relative directory'],
       [rawEnvelope({ content: encoder.encode('1234') }), 'content exceeds 3 bytes'],
-      [new Blob([new Uint8Array(codec.maxEncodedBytes + 1) as BlobPart], { type: DATA_FORMAT }), `record exceeds ${codec.maxEncodedBytes}`],
       [rawEnvelope(), `dataFormat must be '${DATA_FORMAT}'`, 'text/plain'],
     ];
 
@@ -197,7 +215,7 @@ describe('recordCodecs.fileEnvelope', () => {
       content  : encoder.encode('123'),
       metadata : '{"filename":"file.txt","mimeType":"text/plain"}'.padEnd(4_096, ' '),
     });
-    expect(exact.size).toBe(codec.maxEncodedBytes);
+    expect(exact.size).toBe(codec.maxEncodedBytesFor(3));
     expect(await (await decode(codec, exact)).blob.text()).toBe('123');
   });
 
