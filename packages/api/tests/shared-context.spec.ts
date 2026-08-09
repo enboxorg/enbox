@@ -1131,6 +1131,38 @@ describe('TypedEnbox contexts', () => {
     ) => Promise<unknown>)({ access: 'member' })).rejects.toThrow('materializeRoot: true');
   });
 
+  it('retries a failed root-view opening on the next catalog change', async () => {
+    current = source();
+    const transport = { close: sinon.stub().resolves() };
+    const subscriptions = agent.processDwnRequest.withArgs(sinon.match({
+      messageType: DwnInterface.RecordsSubscribe,
+    }));
+    subscriptions.onFirstCall().resolves({ reply: { status: { code: 500, detail: 'Unavailable' } } });
+    subscriptions.onSecondCall().resolves({
+      reply: {
+        status       : { code: 200, detail: 'OK' },
+        subscription : transport,
+      },
+    });
+
+    const view = await typed.contexts.observe({ access: 'member', materializeRoot: true });
+    await view.ready();
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts[0].root.status).toBe('error');
+    });
+    expect(subscriptions.calledOnce).toBe(true);
+
+    for (const listener of [...listeners]) { listener(followedContextChange(current!)); }
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getState().contexts[0].root.status).toBe('ready');
+    });
+    expect(subscriptions.calledTwice).toBe(true);
+
+    await view.close();
+    expect(transport.close.calledOnce).toBe(true);
+    expect(listeners.size).toBe(0);
+  });
+
   it('refreshes an exact member root and reconciles source lifecycle', async () => {
     current = source();
     let title = 'First';

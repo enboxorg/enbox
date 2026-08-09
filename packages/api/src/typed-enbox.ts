@@ -1849,7 +1849,10 @@ export class TypedEnbox<
         const nextOrdered: Binding[] = [];
         for (const context of contexts) {
           let binding = bindings.get(context.key);
-          if (binding === undefined || binding.context !== context) {
+          if (
+            binding === undefined || binding.context !== context ||
+            (binding.view === undefined && binding.row.root.status === 'error')
+          ) {
             if (binding !== undefined) { disposeQuietly(binding); }
             binding = {
               context,
