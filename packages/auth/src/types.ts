@@ -302,8 +302,9 @@ export interface AuthManagerOptions {
   /**
    * Controls local DWN discovery behavior for remote-target DWN sends/sync.
    * `'prefer'` (default) uses a paired local DWN first, then falls back to
-   * DID-document endpoints. `'only'` requires a local server. `'off'` disables
-   * local DWN discovery entirely.
+   * DID-document endpoints. `'only'` requires a local server for locally
+   * managed DIDs; foreign DIDs still use their advertised endpoints. `'off'`
+   * disables local DWN discovery entirely.
    *
    * Discovery is passive by default: the SDK validates only a persisted
    * local-node pairing or the native discovery file. Browser localhost port

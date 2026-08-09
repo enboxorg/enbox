@@ -23,7 +23,8 @@ import type { DwnDiscoveryFile } from './dwn-discovery-file.js';
  * Controls how the agent discovers and routes to a local DWN server.
  *
  * - `'prefer'` — (default) use a paired local DWN first; fall back to DID-document endpoints.
- * - `'only'`   — require a local server; throw if none is found.
+ * - `'only'`   — require a local server for locally managed DIDs; foreign DIDs
+ *                still use their advertised endpoints.
  * - `'off'`    — skip local discovery entirely.
  */
 export type LocalDwnStrategy = 'prefer' | 'only' | 'off';

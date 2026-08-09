@@ -13,7 +13,7 @@
 import type { BearerIdentity, EnboxUserAgent } from '@enbox/agent';
 import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter } from '../types.js';
 
-import { DidErrorCode } from '@enbox/dids';
+import { DidErrorCode, getDwnEndpointStatus } from '@enbox/dids';
 import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
 
 import { registerWithDwnEndpoints } from '../registration.js';
@@ -174,13 +174,36 @@ export async function recoverIdentitiesFromRemote(params: {
     const ownedDid = identity.did.uri;
     const routingDid = identity.metadata.connectedDid ?? ownedDid;
     const status = await userAgent.identity.getDwnEndpointStatus({ didUri: routingDid, refresh: true });
-    const canBootstrap = status.status === 'resolution-failed'
-      && status.resolutionError === DidErrorCode.NotFound;
-    if (status.status !== 'ready' && !canBootstrap
-      && (!replaceDwnEndpoints || status.status === 'resolution-failed')) {
-      throw new Error(status.message);
+    const ownsRoutingDid = ownedDid === routingDid;
+    let replacementEndpoints: string[] | undefined;
+
+    if (status.status === 'ready') {
+      if (replaceDwnEndpoints && ownsRoutingDid) {
+        replacementEndpoints = dwnEndpoints;
+      }
+    } else if (status.status === 'resolution-failed') {
+      const canBootstrap = ownsRoutingDid && status.resolutionError === DidErrorCode.NotFound;
+      if (!canBootstrap) {
+        throw new Error(status.message);
+      }
+
+      if (replaceDwnEndpoints) {
+        replacementEndpoints = dwnEndpoints;
+      } else {
+        const storedStatus = getDwnEndpointStatus(ownedDid, identity.did.document);
+        if (storedStatus.status !== 'ready') {
+          throw new Error(storedStatus.message);
+        }
+        replacementEndpoints = storedStatus.endpoints;
+      }
+    } else {
+      if (!replaceDwnEndpoints || !ownsRoutingDid) {
+        throw new Error(status.message);
+      }
+      replacementEndpoints = dwnEndpoints;
     }
-    return { ownedDid, routingDid, status, canBootstrap };
+
+    return { ownedDid, routingDid, status, replacementEndpoints };
   }));
 
   // Register each recovered identity DID as a DWN tenant. Register for sync
@@ -188,11 +211,10 @@ export async function recoverIdentitiesFromRemote(params: {
   // Tenant registration must come first — sync('pull') reads the durable
   // MessagesQuery feed, which requires the DID to be a recognised tenant.
   let registeredIdentityForSync = false;
-  for (const { ownedDid, routingDid, status, canBootstrap } of resolvedIdentities) {
+  for (const { ownedDid, routingDid, status, replacementEndpoints } of resolvedIdentities) {
     let resolvedEndpoints = status.status === 'ready' ? status.endpoints : undefined;
-    const canReplaceRoutingDid = ownedDid === routingDid;
-    if ((replaceDwnEndpoints || canBootstrap) && canReplaceRoutingDid) {
-      await userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: dwnEndpoints });
+    if (replacementEndpoints !== undefined) {
+      await userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: replacementEndpoints });
       const updatedStatus = await userAgent.identity.getDwnEndpointStatus({ didUri: routingDid });
       if (updatedStatus.status !== 'ready') {
         throw new Error(updatedStatus.message);

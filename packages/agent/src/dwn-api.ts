@@ -508,7 +508,7 @@ export class AgentDwnApi {
 
   /** Resolve hosted endpoints for an operation that must not fall back to a local DWN. */
   private async requireRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
-    if (this._localDwnStrategy === 'only') {
+    if (this._localDwnStrategy === 'only' && await this.shouldUseLocalDwnForTarget(targetDid, false)) {
       throw new Error(
         `AgentDwnApi: Remote DWN requests are unavailable while localDwnStrategy is 'only'.`
       );
@@ -550,18 +550,22 @@ export class AgentDwnApi {
    * local DWN server. Returns `true` if the DID is the agent DID or one
    * of the locally-managed identity DIDs.
    */
-  private async shouldUseLocalDwnForTarget(targetDid: string): Promise<boolean> {
+  private async shouldUseLocalDwnForTarget(targetDid: string, useCache = true): Promise<boolean> {
     if (this._localDwnStrategy === 'off') {
       return false;
     }
 
-    const cached = this._localManagedDidCache.get(targetDid);
-    if (cached !== undefined) {
-      return cached;
+    if (useCache) {
+      const cached = this._localManagedDidCache.get(targetDid);
+      if (cached !== undefined) {
+        return cached;
+      }
     }
 
     if (targetDid === this.agent.agentDid.uri) {
-      this._localManagedDidCache.set(targetDid, true);
+      if (useCache) {
+        this._localManagedDidCache.set(targetDid, true);
+      }
       return true;
     }
 
@@ -575,13 +579,14 @@ export class AgentDwnApi {
       }
     }
 
-    for (const localDid of localManagedDids) {
-      this._localManagedDidCache.set(localDid, true);
-    }
-
     const isLocalManaged = localManagedDids.has(targetDid);
-    if (!isLocalManaged) {
-      this._localManagedDidCache.set(targetDid, false);
+    if (useCache) {
+      for (const localDid of localManagedDids) {
+        this._localManagedDidCache.set(localDid, true);
+      }
+      if (!isLocalManaged) {
+        this._localManagedDidCache.set(targetDid, false);
+      }
     }
 
     return isLocalManaged;
@@ -1170,7 +1175,9 @@ export class AgentDwnApi {
     if (request.remoteEndpoint !== undefined && request.remoteEndpointsOnly === true) {
       throw new TypeError('AgentDwnApi: remoteEndpoint and remoteEndpointsOnly are mutually exclusive.');
     }
-    if (request.remoteEndpoint !== undefined && this._localDwnStrategy === 'only') {
+    if (request.remoteEndpoint !== undefined
+      && this._localDwnStrategy === 'only'
+      && await this.shouldUseLocalDwnForTarget(request.target, false)) {
       throw new Error(
         `AgentDwnApi: remoteEndpoint cannot be used while localDwnStrategy is 'only'.`
       );
@@ -2574,6 +2581,7 @@ export class AgentDwnApi {
 
     const { definition } = message.descriptor;
     this._protocolDefinitionCache.delete(`${target}~${definition.protocol}`);
+    this._protocolDefinitionCache.delete(`local-rpc~${target}~${definition.protocol}`);
     this._protocolDefinitionCache.delete(`remote~${target}~${definition.protocol}`);
   }
 

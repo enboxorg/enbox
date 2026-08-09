@@ -425,6 +425,13 @@ export async function createPermissionGrants(
     assertConnectGrantScope(scope);
   }
 
+  // Resolve before creating local grants so an unusable or unavailable DID
+  // document fails the approval without leaving undeliverable grant records.
+  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
+  if (dwnEndpointUrls.length === 0) {
+    throw new Error(`DID '${selectedDid}' does not advertise a #dwn service.`);
+  }
+
   const permissionGrants = await Promise.all(
     scopes.map((scope) => permissionsApi.createGrant({
       delegated      : isRecordPermissionScope(scope) || isMessagesPermissionScope(scope),
@@ -442,7 +449,6 @@ export async function createPermissionGrants(
   // to a different one and needs the grant to authenticate.  We send each
   // grant to every endpoint so that sync works regardless of which DWN the
   // agent contacts first.
-  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
   logger.log(`Sending ${permissionGrants.length} permission grants to ${dwnEndpointUrls.length} DWN endpoint(s)...`);
 
   const batchSignal = AbortSignal.timeout(CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS);

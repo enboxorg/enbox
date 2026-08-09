@@ -364,7 +364,11 @@ describe('AgentDwnApi', () => {
       });
       const tenant = 'did:dht:testtenant';
       const protocol = 'https://example.com/protocol-cache';
-      const cacheKeys = [`${tenant}~${protocol}`, `remote~${tenant}~${protocol}`];
+      const cacheKeys = [
+        `${tenant}~${protocol}`,
+        `local-rpc~${tenant}~${protocol}`,
+        `remote~${tenant}~${protocol}`,
+      ];
       const protocolCache = (dwnApi as any)._protocolDefinitionCache;
       for (const cacheKey of cacheKeys) {
         protocolCache.set(cacheKey, { protocol });
@@ -479,7 +483,11 @@ describe('AgentDwnApi', () => {
       });
       const tenant = 'did:dht:testtenant';
       const protocol = 'https://example.com/protocol-cache';
-      const cacheKeys = [`${tenant}~${protocol}`, `remote~${tenant}~${protocol}`];
+      const cacheKeys = [
+        `${tenant}~${protocol}`,
+        `local-rpc~${tenant}~${protocol}`,
+        `remote~${tenant}~${protocol}`,
+      ];
       const protocolCache = (dwnApi as any)._protocolDefinitionCache;
       const protocolMessage = {
         descriptor: {
@@ -559,7 +567,9 @@ describe('AgentDwnApi', () => {
     it('sendRequest can target hosted endpoints without overriding local-only routing', async () => {
       const dwnApi = new AgentDwnApi({
         agent: {
-          rpc: {
+          agentDid : { uri: 'did:example:owner' },
+          identity : { list: sinon.stub().resolves([]) },
+          rpc      : {
             getServerInfo  : sinon.stub(),
             sendDwnRequest : sinon.stub(),
           },
@@ -594,6 +604,86 @@ describe('AgentDwnApi', () => {
         `Remote DWN requests are unavailable while localDwnStrategy is 'only'`
       );
       expect(remoteEndpoints.calledOnce).toBe(true);
+
+      await expect(dwnApi.sendRequest({
+        author         : 'did:example:owner',
+        messageParams  : { filter: { protocol: 'https://example.com/notes' } },
+        messageType    : DwnInterface.ProtocolsQuery,
+        remoteEndpoint : 'https://hosted.example',
+        target         : 'did:example:owner',
+      })).rejects.toThrow(`remoteEndpoint cannot be used while localDwnStrategy is 'only'`);
+    });
+
+    it('sendRequest uses advertised endpoints for a foreign target under local-only routing', async () => {
+      const foreignDid = 'did:example:foreign';
+      const identityList = sinon.stub().resolves([]);
+      const dwnApi = new AgentDwnApi({
+        agent: {
+          agentDid : { uri: 'did:example:owner' },
+          did      : {
+            resolve: sinon.stub().resolves({
+              didDocument: {
+                id      : foreignDid,
+                service : [{
+                  id              : `${foreignDid}#dwn`,
+                  type            : 'DecentralizedWebNode',
+                  serviceEndpoint : 'https://foreign.example',
+                }],
+              },
+              didDocumentMetadata   : {},
+              didResolutionMetadata : {},
+            }),
+          },
+          identity : { list: identityList },
+          rpc      : {
+            getServerInfo  : sinon.stub(),
+            sendDwnRequest : sinon.stub(),
+          },
+        } as any,
+        dwn              : {} as Dwn,
+        localDwnStrategy : 'only',
+      });
+      const remoteEndpoints = sinon.stub(dwnApi, 'getRemoteDwnEndpointUrls').resolves(['https://foreign.example']);
+      const sendDwnRpcRequest = sinon.stub(dwnApi as any, 'sendDwnRpcRequest').resolves({
+        status: { code: 200, detail: 'OK' },
+      });
+      sinon.stub(dwnApi as any, 'constructDwnMessage').resolves({
+        message: { descriptor: { interface: 'Protocols', method: 'Query' } },
+      });
+      sinon.stub(Message, 'getCid').resolves('bafytestmessagecid');
+
+      expect(await dwnApi.getDwnEndpointUrlsForTarget(foreignDid)).toEqual(['https://foreign.example']);
+
+      await dwnApi.sendRequest({
+        author        : 'did:example:owner',
+        messageParams : { filter: { protocol: 'https://example.com/notes' } },
+        messageType   : DwnInterface.ProtocolsQuery,
+        target        : foreignDid,
+      });
+
+      expect(remoteEndpoints.calledOnceWithExactly(foreignDid)).toBe(true);
+      expect(sendDwnRpcRequest.firstCall.args[0].dwnEndpointUrls).toEqual(['https://foreign.example']);
+
+      identityList.resolves([{ did: { uri: foreignDid }, metadata: {} }]);
+      await expect(dwnApi.sendRequest({
+        author         : 'did:example:owner',
+        messageParams  : { filter: { protocol: 'https://example.com/notes' } },
+        messageType    : DwnInterface.ProtocolsQuery,
+        remoteEndpoint : 'https://pinned-foreign.example',
+        target         : foreignDid,
+      })).rejects.toThrow(`remoteEndpoint cannot be used while localDwnStrategy is 'only'`);
+
+      identityList.resolves([]);
+      await dwnApi.sendRequest({
+        author         : 'did:example:owner',
+        messageParams  : { filter: { protocol: 'https://example.com/notes' } },
+        messageType    : DwnInterface.ProtocolsQuery,
+        remoteEndpoint : 'https://pinned-foreign.example',
+        target         : foreignDid,
+      });
+
+      expect(remoteEndpoints.calledOnce).toBe(true);
+      expect(sendDwnRpcRequest.secondCall.args[0].dwnEndpointUrls).toEqual(['https://pinned-foreign.example']);
     });
 
     it('sendRequest streams existing message data through RPC when using messageCid', async () => {

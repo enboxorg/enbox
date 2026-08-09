@@ -397,17 +397,31 @@ describe('connect approval ceremony', () => {
     it('should report when no DWN endpoint is resolved for permission grant delivery', async () => {
       sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves([]);
       const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest');
+      const createGrant = sinon.stub(AgentPermissionsApi.prototype, 'createGrant');
 
       await expect(createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid.uri,
         testHarness.agent,
         permissionScopes,
-      )).rejects.toThrow(
-        'Could not send permission grant to any DWN endpoint: grant 1 ' +
-        '(Records.Write, protocol http://profile-protocol.xyz); no DWN endpoints were resolved',
-      );
+      )).rejects.toThrow('does not advertise a #dwn service');
+      expect(createGrant.notCalled).toBe(true);
       expect(sendStub.callCount).toBe(0);
+    });
+
+    it('should resolve remote endpoints before creating local permission grants', async () => {
+      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls')
+        .rejects(new Error('DID does not advertise a #dwn service'));
+      const createGrant = sinon.stub(AgentPermissionsApi.prototype, 'createGrant');
+
+      await expect(createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        permissionScopes,
+      )).rejects.toThrow('DID does not advertise a #dwn service');
+
+      expect(createGrant.notCalled).toBe(true);
     });
 
     it('should reject obsolete read-like record grant scopes', async () => {

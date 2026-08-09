@@ -342,6 +342,18 @@ describe('connect protocol preparation', () => {
         .rejects.toThrow('Could not verify the latest protocol definition on every reachable DWN endpoint');
     });
 
+    it('should preserve endpoint resolution failures before configuring locally', async () => {
+      const { agent, processDwnRequest, sendDwnRequest } = stubAgent();
+      (agent.dwn.getRemoteDwnEndpointUrls as sinon.SinonStub)
+        .rejects(new Error('DID does not advertise a #dwn service'));
+
+      await expect(prepareProtocol('did:example:owner', agent, encryptedProtocol))
+        .rejects.toThrow('DID does not advertise a #dwn service');
+
+      expect(configureCalls(processDwnRequest)).toHaveLength(0);
+      expect(sendDwnRequest.callCount).toBe(0);
+    });
+
     it('should configure locally without remote traffic when no endpoints resolve', async () => {
       const { agent, processDwnRequest, sendDwnRequest } = stubAgent();
 

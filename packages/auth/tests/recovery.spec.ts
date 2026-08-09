@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { DidErrorCode } from '@enbox/dids';
+
 import { MemoryStorage } from '../src/storage/storage.js';
 import { AGENT_DID_SYNC_PROTOCOLS, recoverIdentitiesFromRemote, registerAgentDidForSync } from '../src/connect/recovery.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
@@ -142,6 +144,87 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(endpointUpdates).toHaveLength(0);
   });
 
+  test('bootstraps a not-found owned DID with its recovered endpoints instead of manager defaults', async () => {
+    const identity = createMockIdentity() as any;
+    identity.did.document = {
+      id      : identity.did.uri,
+      service : [{
+        id              : `${identity.did.uri}#dwn`,
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : ['https://recovered.example'],
+      }],
+    };
+    let pullCount = 0;
+    const endpointUpdates: any[] = [];
+    const agent = createMockAgent({
+      identityList                 : async () => (pullCount > 0 ? [identity] : []),
+      identityGetDwnEndpointStatus : async ({ didUri, refresh }) => refresh
+        ? {
+          status: 'resolution-failed', didUri, message: 'DID not found', resolutionError: DidErrorCode.NotFound,
+        }
+        : { status: 'ready', didUri, endpoints: ['https://recovered.example'] },
+      identitySetDwnEndpoints : async (params) => { endpointUpdates.push(params); },
+      syncSync                : async () => { pullCount++; },
+    });
+
+    await recoverIdentitiesFromRemote({
+      userAgent    : agent,
+      dwnEndpoints : ['https://manager-default.example'],
+      storage      : new MemoryStorage(),
+    });
+
+    expect(endpointUpdates).toEqual([{
+      didUri    : identity.did.uri,
+      endpoints : ['https://recovered.example'],
+    }]);
+  });
+
+  test('does not synthesize defaults when a not-found recovered DID has no valid stored endpoints', async () => {
+    const identity = createMockIdentity() as any;
+    identity.did.document = { id: identity.did.uri };
+    let pullCount = 0;
+    const endpointUpdates: any[] = [];
+    const agent = createMockAgent({
+      identityList                 : async () => (pullCount > 0 ? [identity] : []),
+      identityGetDwnEndpointStatus : async ({ didUri }) => ({
+        status: 'resolution-failed', didUri, message: 'DID not found', resolutionError: DidErrorCode.NotFound,
+      }),
+      identitySetDwnEndpoints : async (params) => { endpointUpdates.push(params); },
+      syncSync                : async () => { pullCount++; },
+    });
+
+    await expect(recoverIdentitiesFromRemote({
+      userAgent    : agent,
+      dwnEndpoints : ['https://manager-default.example'],
+      storage      : new MemoryStorage(),
+    })).rejects.toThrow('does not advertise a #dwn service');
+    expect(endpointUpdates).toHaveLength(0);
+  });
+
+  test('fails closed when a not-found routing DID is externally owned', async () => {
+    const identity = createMockIdentity({
+      metadata: { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+    });
+    let pullCount = 0;
+    const endpointUpdates: any[] = [];
+    const agent = createMockAgent({
+      identityList                 : async () => (pullCount > 0 ? [identity] : []),
+      identityGetDwnEndpointStatus : async ({ didUri }) => ({
+        status: 'resolution-failed', didUri, message: 'Owner DID not found', resolutionError: DidErrorCode.NotFound,
+      }),
+      identitySetDwnEndpoints : async (params) => { endpointUpdates.push(params); },
+      syncSync                : async () => { pullCount++; },
+    });
+
+    await expect(recoverIdentitiesFromRemote({
+      userAgent           : agent,
+      dwnEndpoints        : ['https://explicit.example'],
+      replaceDwnEndpoints : true,
+      storage             : new MemoryStorage(),
+    })).rejects.toThrow('Owner DID not found');
+    expect(endpointUpdates).toHaveLength(0);
+  });
+
   test('registers recovered identity DIDs as DWN tenants when registration is provided', async () => {
     const identity = createMockIdentity();
     let pullCount = 0;
@@ -229,6 +312,32 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     expect(endpointUpdates).toHaveLength(0);
+  });
+
+  test('replaces a resolved owned DID only when explicitly requested', async () => {
+    const identity = createMockIdentity();
+    const endpointUpdates: any[] = [];
+    let pullCount = 0;
+    const agent = createMockAgent({
+      identityList                 : async () => (pullCount > 0 ? [identity] : []),
+      identityGetDwnEndpointStatus : async ({ didUri }) => ({
+        status: 'ready', didUri, endpoints: ['https://resolved.example'],
+      }),
+      identitySetDwnEndpoints : async params => { endpointUpdates.push(params); },
+      syncSync                : async () => { pullCount++; },
+    });
+
+    await recoverIdentitiesFromRemote({
+      userAgent           : agent,
+      dwnEndpoints        : ['https://replacement.example'],
+      replaceDwnEndpoints : true,
+      storage             : new MemoryStorage(),
+    });
+
+    expect(endpointUpdates).toEqual([{
+      didUri    : identity.did.uri,
+      endpoints : ['https://replacement.example'],
+    }]);
   });
 
   test('keeps registration callbacks outside the lifecycle mutation runner', async () => {
