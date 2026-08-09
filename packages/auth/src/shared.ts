@@ -19,9 +19,15 @@ export {
   isSessionInvalidError,
   reconcileConnectionStatusGrants,
 } from './connect/status.js';
-export { normalizeProtocolRequests } from './permissions.js';
+export { normalizeProtocolRequests, serviceConfigProtocolRequest } from './permissions.js';
 export { WalletConnect } from './wallet-connect-client.js';
 export type { ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
+export {
+  ServiceConfigProtocolDefinition,
+  SERVICE_CONFIG_PROTOCOL_PATH,
+  SERVICE_CONFIG_PROTOCOL_URI,
+} from '@enbox/agent';
+export type { ServiceConfig } from '@enbox/agent';
 
 export { loadTokensFromStorage, saveTokensToStorage } from './registration.js';
 
@@ -109,3 +115,4 @@ export type {
   VaultConnectOptions,
   WalletConnectOptions,
 } from './types.js';
+export type { DwnEndpointResolution } from '@enbox/dids';

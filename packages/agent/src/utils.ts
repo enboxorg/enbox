@@ -1,40 +1,16 @@
-import type { DidUrlDereferencer } from '@enbox/dids';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { PaginationCursor, RecordsDeleteMessage, RecordsWrite, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
-import { utils as didUtils } from '@enbox/dids';
 import { DateSort, DwnInterfaceName, DwnMethodName, Jws, Message } from '@enbox/dwn-sdk-js';
 
-import { normalizeBaseUrl } from './local-dwn.js';
-
-export async function getDwnServiceEndpointUrls(didUri: string, dereferencer: DidUrlDereferencer): Promise<string[]> {
-  // Attempt to dereference the DID service with ID fragment #dwn.
-  const dereferencingResult = await dereferencer.dereference(`${didUri}#dwn`);
-
-  if (dereferencingResult.dereferencingMetadata.error) {
-    throw new Error(`Failed to dereference '${didUri}#dwn': ${dereferencingResult.dereferencingMetadata.error}`);
-  }
-
-  if (didUtils.isDwnDidService(dereferencingResult.contentStream)) {
-    const { serviceEndpoint } = dereferencingResult.contentStream;
-    const stringArrayEndpoints = Array.isArray(serviceEndpoint) && serviceEndpoint.every(endpoint => typeof endpoint === 'string')
-    // If the service endpoint is an array of strings, use it as is.
-      ? serviceEndpoint
-      // If the service endpoint is neither a string nor an array of strings, return an empty array.
-      : [];
-    const serviceEndpointUrls = typeof serviceEndpoint === 'string'
-    // If the service endpoint is a string, format it as a single-element array.
-      ? [serviceEndpoint]
-      : stringArrayEndpoints;
-
-    if (serviceEndpointUrls.length > 0) {
-      return [...new Set(serviceEndpointUrls.map(normalizeDwnServiceEndpointUrl))];
-    }
-  }
-
-  // If the DID service with ID fragment #dwn was not found or is not valid, return an empty array.
-  return [];
-}
+export {
+  DwnEndpointResolutionError,
+  DwnEndpointResolutionErrorCode,
+  isDwnEndpointResolutionError,
+  resolveDwnEndpointStatus,
+  resolveDwnServiceEndpointUrls as getDwnServiceEndpointUrls,
+} from '@enbox/dids';
+export type { DwnEndpointResolution } from '@enbox/dids';
 
 /** Resolves the WebSocket transport advertised for a DWN HTTP endpoint. */
 export async function resolveDwnSubscriptionUrl(dwnUrl: string, rpcClient: EnboxRpc): Promise<string> {
@@ -46,14 +22,6 @@ export async function resolveDwnSubscriptionUrl(dwnUrl: string, rpcClient: Enbox
   const parsedUrl = new URL(dwnUrl);
   parsedUrl.protocol = parsedUrl.protocol === 'http:' ? 'ws:' : 'wss:';
   return parsedUrl.toString();
-}
-
-function normalizeDwnServiceEndpointUrl(endpoint: string): string {
-  try {
-    return normalizeBaseUrl(new URL(endpoint).toString());
-  } catch {
-    return normalizeBaseUrl(endpoint);
-  }
 }
 
 export function getRecordAuthor(record: RecordsWriteMessage | RecordsDeleteMessage): string | undefined {

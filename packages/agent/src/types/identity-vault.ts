@@ -37,6 +37,43 @@ export type IdentityVaultBackupData = {
   status: IdentityVaultStatus;
 };
 
+/** Endpoint provenance controls shared by recovery-capable vault operations. */
+export type IdentityVaultDwnEndpointRecoveryParams = {
+  /** Endpoints used to bootstrap a new or definitively unresolved DID. */
+  dwnEndpoints?: string[];
+
+  /** Deliberately replace and publish the endpoints in an existing resolved DID document. */
+  replaceDwnEndpoints?: boolean;
+};
+
+/** Parameters for initializing a recovery-capable identity vault. */
+export type IdentityVaultInitializeParams = IdentityVaultDwnEndpointRecoveryParams & {
+  /** The password used to secure the vault. */
+  password: string;
+
+  /** An optional recovery phrase used to deterministically recover an existing vault DID. */
+  recoveryPhrase?: string;
+};
+
+/** Parameters for resetting a vault password by proving the original recovery phrase. */
+export type IdentityVaultResetPasswordWithRecoveryPhraseParams = IdentityVaultDwnEndpointRecoveryParams & {
+  /** The BIP-39 recovery phrase originally used to initialize the vault. */
+  recoveryPhrase: string;
+
+  /** The new password used to unlock the existing vault. */
+  password: string;
+};
+
+/** Parameters for restoring an encrypted identity vault backup. */
+export type IdentityVaultRestoreParams = IdentityVaultDwnEndpointRecoveryParams & {
+  /** The encrypted vault backup to restore. */
+  backup: IdentityVaultBackup;
+
+  /** The password used to decrypt the backup's content encryption key. */
+  password: string;
+
+};
+
 /**
  * Configuration parameters for initializing an {@link IdentityVault} instance. These parameters
  * define the settings and resources used by the {@link IdentityVault} to secure and manage identity
@@ -86,14 +123,14 @@ export interface IdentityVault<T extends Record<string, any> = { InitializeResul
   /**
    * Initializes the IdentityVault instance with the given `password`.
    */
-  initialize(params: { password: string }): Promise<T['InitializeResult']>;
+  initialize(params: IdentityVaultInitializeParams): Promise<T['InitializeResult']>;
 
   /**
    * Resets the vault password by proving knowledge of the original recovery phrase.
    *
    * Implementations must leave existing vault contents unchanged when the phrase does not match.
    */
-  resetPasswordWithRecoveryPhrase(params: { recoveryPhrase: string, password: string }): Promise<void>;
+  resetPasswordWithRecoveryPhrase(params: IdentityVaultResetPasswordWithRecoveryPhraseParams): Promise<void>;
 
   /**
    * Returns a boolean indicating whether the IdentityVault has been initialized.
@@ -112,11 +149,12 @@ export interface IdentityVault<T extends Record<string, any> = { InitializeResul
 
   /**
    * Restores the IdentityVault instance to the state in the provided {@link IdentityVaultBackup}
-   * object.
+   * object. Implementations reconcile the restored DID with resolution before committing it.
    *
-   * @throws An error if the backup is invalid or the password is incorrect.
+   * @throws An error if the backup is invalid, the password is incorrect, DID resolution fails, or
+   *         DID publication fails.
    */
-  restore(params: { backup: IdentityVaultBackup, password: string }): Promise<void>;
+  restore(params: IdentityVaultRestoreParams): Promise<void>;
 
   /**
    * Attempts to unlock the IdentityVault with the provided password.

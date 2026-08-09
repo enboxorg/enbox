@@ -2,8 +2,8 @@ import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { PortableIdentity } from '../src/types/identity.js';
 
 import { Convert } from '@enbox/common';
-import { DidDht } from '@enbox/dids';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { BearerDid, DidDht } from '@enbox/dids';
 
 import { DidInterface } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -249,12 +249,10 @@ describe('EnboxUserAgent', () => {
                       type         : 'JsonWebKey',
                       controller   : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy',
                       publicKeyJwk : {
-                        kty : 'EC',
-                        crv : 'secp256k1',
+                        kty : 'OKP',
+                        crv : 'X25519',
                         x   : 'P5FoqXk9W11i8FWyTpIvltAjV09FL9Q5o76wEHcxMtI',
-                        y   : 'DgoLVlLKbjlaUja4RTjdxzqAy0ITOEFlCXGKSpu8XQs',
                         kid : 'hXXhIgfXRVIYqnKiX0DIL7ZGy0CBJrFQFIYxmRkAB-A',
-                        alg : 'ES256K',
                       },
                     },
                   ],
@@ -305,13 +303,11 @@ describe('EnboxUserAgent', () => {
                     alg : 'EdDSA',
                   },
                   {
-                    kty : 'EC',
-                    crv : 'secp256k1',
+                    kty : 'OKP',
+                    crv : 'X25519',
                     d   : 'b2gb-OfB5X4G3xd16u19MXNkamDP5lsT6bVsDN4aeuY',
                     x   : 'P5FoqXk9W11i8FWyTpIvltAjV09FL9Q5o76wEHcxMtI',
-                    y   : 'DgoLVlLKbjlaUja4RTjdxzqAy0ITOEFlCXGKSpu8XQs',
                     kid : 'hXXhIgfXRVIYqnKiX0DIL7ZGy0CBJrFQFIYxmRkAB-A',
-                    alg : 'ES256K',
                   },
                 ],
               },
@@ -322,13 +318,15 @@ describe('EnboxUserAgent', () => {
               }
             };
 
+            // Portable identity import now treats resolution as authoritative. Publish the fixture
+            // first so a stale relay record cannot replace its current verification methods before
+            // their matching private keys are preflighted and imported.
+            const authoritativeDid = await BearerDid.import({ portableDid: testPortableIdentity.portableDid });
+            await DidDht.publish({ did: authoritativeDid });
+
             alice = await testHarness.agent.identity.import({
               portableIdentity: testPortableIdentity
             });
-
-            // Ensure the DID is published to the DHT. This step is necessary while the DHT Gateways
-            // operated by TBD are regularly restarted and DIDs are no longer persisted.
-            await DidDht.publish({ did: alice.did });
 
             await testHarness.agent.sendDwnRequest({
               author        : alice.did.uri,

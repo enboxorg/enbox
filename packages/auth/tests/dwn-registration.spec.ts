@@ -57,10 +57,14 @@ describe('registerWithDwnEndpoints', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess : () => { successCalled = true; },
@@ -86,10 +90,14 @@ describe('registerWithDwnEndpoints', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess : () => { successCalled = true; },
@@ -104,7 +112,7 @@ describe('registerWithDwnEndpoints', () => {
     expect(mockRegisterTenant.mock.calls[1]).toEqual(['https://dwn1.example.com', 'did:dht:user1']);
   });
 
-  test('deduplicates DIDs when agent DID equals connected DID', async () => {
+  test('deduplicates repeated DID-scoped targets', async () => {
     mockRegisterTenant.mockClear();
 
     const agent = createMockAgent({
@@ -117,10 +125,14 @@ describe('registerWithDwnEndpoints', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:same',
-        connectedDid : 'did:dht:same',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:same',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:same',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess : () => { successCalled = true; },
@@ -131,6 +143,112 @@ describe('registerWithDwnEndpoints', () => {
     expect(successCalled).toBe(true);
     // Only one registration call since DIDs are the same
     expect(mockRegisterTenant.mock.calls).toHaveLength(1);
+  });
+
+  test('registers each DID only at its own advertised endpoints', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    await registerWithDwnEndpoints(
+      {
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://agent-dwn.example'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://user-dwn.example'],
+        }],
+      },
+      {
+        onSuccess : () => {},
+        onFailure : () => {},
+      },
+    );
+
+    expect(mockRegisterTenant.mock.calls).toEqual([
+      ['https://agent-dwn.example', 'did:dht:agent1'],
+      ['https://user-dwn.example', 'did:dht:user1'],
+    ]);
+  });
+
+  test('rejects an empty DID-scoped target list before contacting a server', async () => {
+    let getServerInfoCalled = false;
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => {
+        getServerInfoCalled = true;
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
+      },
+    });
+    let failureError: unknown;
+
+    await expect(registerWithDwnEndpoints(
+      { userAgent: agent, targets: [] },
+      {
+        onSuccess : () => {},
+        onFailure : (error: unknown) => { failureError = error; },
+      },
+    )).rejects.toThrow('DWN registration requires at least one DID-scoped target.');
+
+    expect(failureError).toBeDefined();
+    expect(getServerInfoCalled).toBe(false);
+  });
+
+  test('rejects a malformed DID-scoped target before contacting a server', async () => {
+    let getServerInfoCalled = false;
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => {
+        getServerInfoCalled = true;
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
+      },
+    });
+    const malformedContext = {
+      userAgent : agent,
+      targets   : [{ dwnEndpoints: ['https://dwn1.example.com'] }],
+    } as unknown as Parameters<typeof registerWithDwnEndpoints>[0];
+    let failureError: unknown;
+
+    await expect(registerWithDwnEndpoints(
+      malformedContext,
+      {
+        onSuccess : () => {},
+        onFailure : (error: unknown) => { failureError = error; },
+      },
+    )).rejects.toThrow(
+      'DWN registration target at index 0 must contain a non-empty DID and an endpoint array.'
+    );
+
+    expect(failureError).toBeInstanceOf(TypeError);
+    expect(getServerInfoCalled).toBe(false);
+  });
+
+  test('rejects the removed shared-endpoint registration context', async () => {
+    let getServerInfoCalled = false;
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => {
+        getServerInfoCalled = true;
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
+      },
+    });
+    const legacyContext = {
+      userAgent    : agent,
+      dwnEndpoints : ['https://dwn1.example.com'],
+      agentDid     : 'did:dht:agent1',
+      connectedDid : 'did:dht:user1',
+    } as unknown as Parameters<typeof registerWithDwnEndpoints>[0];
+
+    await expect(registerWithDwnEndpoints(
+      legacyContext,
+      { onSuccess: () => {}, onFailure: () => {} },
+    )).rejects.toThrow('DWN registration requires at least one DID-scoped target.');
+
+    expect(getServerInfoCalled).toBe(false);
   });
 
   test('uses provider auth when server supports it and callback is provided', async () => {
@@ -153,10 +271,14 @@ describe('registerWithDwnEndpoints', () => {
     let capturedTokens: Record<string, RegistrationTokenData> | undefined;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess              : () => { successCalled = true; },
@@ -227,10 +349,14 @@ describe('registerWithDwnEndpoints', () => {
 
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       registration,
     );
@@ -261,10 +387,14 @@ describe('registerWithDwnEndpoints', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess              : () => { successCalled = true; },
@@ -314,10 +444,14 @@ describe('registerWithDwnEndpoints', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess              : () => { successCalled = true; },
@@ -371,10 +505,14 @@ describe('registerWithDwnEndpoints', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess              : () => { successCalled = true; },
@@ -414,12 +552,16 @@ describe('registerWithDwnEndpoints', () => {
     });
 
     let failureError: unknown;
-    await registerWithDwnEndpoints(
+    await expect(registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess              : () => {},
@@ -429,7 +571,7 @@ describe('registerWithDwnEndpoints', () => {
           state : 'wrong-state', // intentionally wrong
         }),
       },
-    );
+    )).rejects.toThrow('state mismatch');
 
     // Should have called onFailure with CSRF error
     expect(failureError).toBeDefined();
@@ -451,18 +593,22 @@ describe('registerWithDwnEndpoints', () => {
 
     let failureError: unknown;
     let successCalled = false;
-    await registerWithDwnEndpoints(
+    await expect(registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess : () => { successCalled = true; },
         onFailure : (error: unknown) => { failureError = error; },
       },
-    );
+    )).rejects.toThrow('Network error');
 
     expect(successCalled).toBe(false);
     expect(failureError).toBeDefined();
@@ -487,10 +633,14 @@ describe('registerWithDwnEndpoints', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com', 'https://dwn2.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com', 'https://dwn2.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com', 'https://dwn2.example.com'],
+        }],
       },
       {
         onSuccess : () => { successCalled = true; },
@@ -523,10 +673,14 @@ describe('registerWithDwnEndpoints', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess : () => { successCalled = true; },
@@ -559,10 +713,14 @@ describe('registerWithDwnEndpoints', () => {
     let capturedParams: any;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess              : () => {},
@@ -599,10 +757,14 @@ describe('registerWithDwnEndpoints', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:same',
-        connectedDid : 'did:dht:same',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:same',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:same',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
       },
       {
         onSuccess              : () => { successCalled = true; },
@@ -747,10 +909,14 @@ describe('registerWithDwnEndpoints with persistTokens', () => {
     const authCallCount = { value: 0 };
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         storage,
       },
       {
@@ -798,10 +964,14 @@ describe('registerWithDwnEndpoints with persistTokens', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         storage,
       },
       {
@@ -844,10 +1014,14 @@ describe('registerWithDwnEndpoints with persistTokens', () => {
 
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         storage,
       },
       {
@@ -891,10 +1065,14 @@ describe('registerWithDwnEndpoints with persistTokens', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         storage,
       },
       {
@@ -936,10 +1114,14 @@ describe('registerWithDwnEndpoints with persistTokens', () => {
 
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         storage,
       },
       {
@@ -970,10 +1152,14 @@ describe('registerWithDwnEndpoints with persistTokens', () => {
 
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         // No storage provided
       },
       {
@@ -1004,10 +1190,14 @@ describe('registerWithDwnEndpoints with persistTokens', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         storage,
       },
       {
@@ -1103,10 +1293,14 @@ describe('SecretStore token helpers', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         secretStore,
       },
       {
@@ -1151,10 +1345,14 @@ describe('SecretStore token helpers', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         secretStore,
         storage,
       },
@@ -1203,10 +1401,14 @@ describe('SecretStore token helpers', () => {
     let successCalled = false;
     await registerWithDwnEndpoints(
       {
-        userAgent    : agent,
-        dwnEndpoints : ['https://dwn1.example.com'],
-        agentDid     : 'did:dht:agent1',
-        connectedDid : 'did:dht:user1',
+        userAgent : agent,
+        targets   : [{
+          did          : 'did:dht:agent1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }, {
+          did          : 'did:dht:user1',
+          dwnEndpoints : ['https://dwn1.example.com'],
+        }],
         secretStore,
         storage,
       },

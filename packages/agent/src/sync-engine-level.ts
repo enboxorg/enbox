@@ -668,6 +668,11 @@ export class SyncEngineLevel implements SyncEngine {
     this._targetPlanner.invalidate();
   }
 
+  /** Invalidates the memoized target plan so the next sync operation re-resolves endpoints. */
+  public invalidateSyncTargets(): void {
+    this.invalidateSyncTargetsCache();
+  }
+
   get hasActiveSubscriptions(): boolean {
     for (const controller of this._linkControllers.values()) {
       if (controller.hasLiveSubscription || controller.hasLocalSubscription) {

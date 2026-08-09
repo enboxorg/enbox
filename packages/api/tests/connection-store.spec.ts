@@ -15,7 +15,14 @@ import type {
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxUserAgent } from '@enbox/agent';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
-import { AuthEventEmitter, AuthSession, ConnectDeniedError, isConnectDeniedError } from '@enbox/auth';
+import {
+  AuthEventEmitter,
+  AuthSession,
+  ConnectDeniedError,
+  isConnectDeniedError,
+  serviceConfigProtocolRequest,
+} from '@enbox/auth';
+import { DwnEndpointResolutionError, DwnEndpointResolutionErrorCode } from '@enbox/dids';
 
 import type { ConnectionSnapshot } from '../src/connection-store.js';
 
@@ -24,6 +31,7 @@ import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { Enbox } from '../src/enbox.js';
 import { ProtocolReadinessError } from '../src/protocol-readiness.js';
+import { ServiceConfigProtocol } from '../src/service-config-protocol.js';
 import { WalletReapprovalRequiredError } from '../src/typed-enbox.js';
 
 const OWNER_DID = 'did:dht:store-owner';
@@ -48,6 +56,13 @@ const APPLICATION = defineApplicationManifest({
   protocols: [{ protocol: ApplicationProtocol, permissions: ['read'] }],
 } as const);
 const APPLICATION_REQUESTS = [{ definition: ApplicationDefinition, permissions: ['read'] }];
+const WATCH_APPLICATION = defineApplicationManifest({
+  protocols: [
+    { protocol: ApplicationProtocol, permissions: ['read'] },
+    { protocol: ServiceConfigProtocol, permissions: ['read'] },
+  ],
+} as const);
+const WATCH_APPLICATION_REQUESTS = [...APPLICATION_REQUESTS, serviceConfigProtocolRequest()];
 
 const ACTIVE_STATUS: ConnectionStatus = {
   state              : 'active',
@@ -148,10 +163,14 @@ type FakeAuthManager = {
   shutdown: sinon.SinonStub;
   getConnectionStatus: sinon.SinonStub;
   startConnectionMonitor: sinon.SinonStub;
+  startServiceConfigWatch: sinon.SinonStub;
+  stopServiceConfigWatch: sinon.SinonStub;
+  stopServiceConfigWatchSpy: sinon.SinonSpy;
 };
 
 describe('createConnectionStore()', () => {
   let testHarness: PlatformAgentTestHarness;
+  let getDwnEndpointStatus: sinon.SinonStub;
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
@@ -162,6 +181,11 @@ describe('createConnectionStore()', () => {
 
   beforeEach(async () => {
     sinon.restore();
+    getDwnEndpointStatus = sinon.stub(Enbox.prototype, 'getDwnEndpointStatus').resolves({
+      status    : 'ready',
+      didUri    : OWNER_DID,
+      endpoints : ['https://dwn.example'],
+    });
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
   });
@@ -179,22 +203,26 @@ describe('createConnectionStore()', () => {
   function createFakeAuth(): FakeAuthManager {
     const emitter = new AuthEventEmitter();
     const stopMonitorSpy = sinon.spy();
+    const stopServiceConfigWatchSpy = sinon.spy();
 
     const fake: FakeAuthManager = {
-      agent                  : testHarness.agent as EnboxUserAgent,
+      agent                   : testHarness.agent as EnboxUserAgent,
       emitter,
-      state                  : 'unlocked',
-      session                : undefined,
+      state                   : 'unlocked',
+      session                 : undefined,
       stopMonitorSpy,
-      on                     : emitter.on.bind(emitter) as AuthManager['on'],
-      restoreSession         : sinon.stub().resolves(undefined),
-      connect                : sinon.stub().resolves(undefined),
-      connectVault           : sinon.stub().resolves(undefined),
-      refresh                : sinon.stub().resolves(undefined),
-      disconnect             : sinon.stub().resolves(),
-      shutdown               : sinon.stub().resolves(),
-      getConnectionStatus    : sinon.stub().resolves({ ...ACTIVE_STATUS }),
-      startConnectionMonitor : sinon.stub().returns(stopMonitorSpy),
+      on                      : emitter.on.bind(emitter) as AuthManager['on'],
+      restoreSession          : sinon.stub().resolves(undefined),
+      connect                 : sinon.stub().resolves(undefined),
+      connectVault            : sinon.stub().resolves(undefined),
+      refresh                 : sinon.stub().resolves(undefined),
+      disconnect              : sinon.stub().resolves(),
+      shutdown                : sinon.stub().resolves(),
+      getConnectionStatus     : sinon.stub().resolves({ ...ACTIVE_STATUS }),
+      startConnectionMonitor  : sinon.stub().returns(stopMonitorSpy),
+      startServiceConfigWatch : sinon.stub().resolves(stopServiceConfigWatchSpy),
+      stopServiceConfigWatch  : sinon.stub(),
+      stopServiceConfigWatchSpy,
     };
     return fake;
   }
@@ -281,6 +309,180 @@ describe('createConnectionStore()', () => {
       expect(store.getSnapshot()).toBe(afterFirst);
       expect(store.getSnapshot().vaultLocked).toBe(true);
       expect(notifications).toBe(1);
+    });
+
+    it('should expose a missing advertised DWN service without collapsing the connected session', async () => {
+      const error = new DwnEndpointResolutionError({
+        code    : DwnEndpointResolutionErrorCode.ServiceMissing,
+        didUri  : OWNER_DID,
+        message : 'No advertised DWN service.',
+      });
+      getDwnEndpointStatus.resolves({
+        status : 'service-missing',
+        didUri : OWNER_DID,
+        error,
+      });
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+
+      const snapshot = await store.connect({ protocols: PROTOCOLS });
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.remoteDwn).toEqual({
+        status : 'service-missing',
+        didUri : OWNER_DID,
+        error,
+      });
+    });
+
+    it('should apply live endpoint events only to the authoritative active session', async () => {
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.connect({ protocols: PROTOCOLS });
+      await Promise.resolve();
+      const initialRemoteDwn = store.getSnapshot().remoteDwn;
+      const missing = {
+        status : 'service-missing' as const,
+        didUri : OWNER_DID,
+        error  : new DwnEndpointResolutionError({
+          code    : DwnEndpointResolutionErrorCode.ServiceMissing,
+          didUri  : OWNER_DID,
+          message : 'No advertised DWN service.',
+        }),
+      };
+      const event = {
+        connectedDid : OWNER_DID,
+        previous     : initialRemoteDwn!,
+        current      : missing,
+        endpoints    : [],
+        added        : [],
+        removed      : ['https://dwn.example'],
+      };
+
+      fake.session = createSession({ did: 'did:dht:replacement' });
+      fake.emitter.emit('connection-endpoints-changed', event);
+      expect(store.getSnapshot().remoteDwn).toBe(initialRemoteDwn);
+
+      fake.session = session;
+      fake.emitter.emit('connection-endpoints-changed', event);
+      expect(store.getSnapshot().remoteDwn).toBe(missing);
+      expect(store.getSnapshot().phase).toBe('connected');
+    });
+
+    it('should apply the newest same-session endpoint event after a pending action commits', async () => {
+      const initial = {
+        status    : 'ready' as const,
+        didUri    : OWNER_DID,
+        endpoints : ['https://captured.example/dwn'],
+      };
+      let releaseStatus!: () => void;
+      const statusGate = new Promise<void>((resolve) => { releaseStatus = resolve; });
+      getDwnEndpointStatus.callsFake(async () => {
+        await statusGate;
+        return initial;
+      });
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      const connecting = store.connect({ protocols: PROTOCOLS });
+      await waitFor(() => { expect(getDwnEndpointStatus.calledOnce).toBe(true); });
+      const missing = {
+        status : 'service-missing' as const,
+        didUri : OWNER_DID,
+        error  : new DwnEndpointResolutionError({
+          code    : DwnEndpointResolutionErrorCode.ServiceMissing,
+          didUri  : OWNER_DID,
+          message : 'No advertised DWN service.',
+        }),
+      };
+      const newest = {
+        status    : 'ready' as const,
+        didUri    : OWNER_DID,
+        endpoints : ['https://newest.example/dwn'],
+      };
+      fake.emitter.emit('connection-endpoints-changed', {
+        connectedDid : OWNER_DID,
+        previous     : initial,
+        current      : missing,
+        endpoints    : [],
+        added        : [],
+        removed      : initial.endpoints,
+      });
+      fake.emitter.emit('connection-endpoints-changed', {
+        connectedDid : OWNER_DID,
+        previous     : missing,
+        current      : newest,
+        endpoints    : newest.endpoints,
+        added        : newest.endpoints,
+        removed      : [],
+      });
+
+      releaseStatus();
+      const snapshot = await connecting;
+
+      expect(snapshot.remoteDwn).toBe(newest);
+      expect(store.getSnapshot().remoteDwn).toBe(newest);
+      expect(snapshot.session).toBe(session);
+    });
+
+    it('should discard a queued endpoint event from a replacement session the action did not commit', async () => {
+      const initial = {
+        status    : 'ready' as const,
+        didUri    : OWNER_DID,
+        endpoints : ['https://captured.example/dwn'],
+      };
+      let releaseStatus!: () => void;
+      const statusGate = new Promise<void>((resolve) => { releaseStatus = resolve; });
+      getDwnEndpointStatus.callsFake(async () => {
+        await statusGate;
+        return initial;
+      });
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      const connecting = store.connect({ protocols: PROTOCOLS });
+      await waitFor(() => { expect(getDwnEndpointStatus.calledOnce).toBe(true); });
+      const replacement = createSession();
+      const replacementStatus = {
+        status    : 'ready' as const,
+        didUri    : OWNER_DID,
+        endpoints : ['https://replacement.example/dwn'],
+      };
+      fake.session = replacement;
+      fake.emitter.emit('connection-endpoints-changed', {
+        connectedDid : OWNER_DID,
+        previous     : initial,
+        current      : replacementStatus,
+        endpoints    : replacementStatus.endpoints,
+        added        : replacementStatus.endpoints,
+        removed      : initial.endpoints,
+      });
+      fake.session = session;
+
+      releaseStatus();
+      const snapshot = await connecting;
+
+      expect(snapshot.session).toBe(session);
+      expect(snapshot.remoteDwn).toBe(initial);
+      expect(store.getSnapshot().remoteDwn).toBe(initial);
     });
 
     it('should not notify a listener after it unsubscribes', async () => {
@@ -633,6 +835,148 @@ describe('createConnectionStore()', () => {
       expect(() => createConnectionStore({ application })).toThrow(
         'createConnectionStore requires at least one application protocol'
       );
+    });
+
+    it('should require the exact read-only service-config request before enabling its watch', () => {
+      const fake = createFakeAuth();
+
+      expect(() => createConnectionStore({
+        application        : APPLICATION,
+        auth               : asAuth(fake),
+        serviceConfigWatch : true,
+      })).toThrow('serviceConfigWatch requires an application manifest');
+
+      expect(() => createConnectionStore({
+        application        : WATCH_APPLICATION,
+        auth               : asAuth(fake),
+        serviceConfigWatch : true,
+      })).not.toThrow();
+    });
+
+    it('should start, replace, and stop the opt-in watch with delegated session ownership', async () => {
+      stubProtocolReadiness();
+      const fake = createFakeAuth();
+      const firstSession = createSession({ delegateDid: DELEGATE_DID });
+      const replacementSession = createSession({ delegateDid: DELEGATE_DID, name: 'Replacement' });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = firstSession;
+        return firstSession;
+      });
+      fake.refresh.callsFake(async (): Promise<AuthSession> => {
+        fake.session = replacementSession;
+        return replacementSession;
+      });
+      const store = createConnectionStore({
+        application        : WATCH_APPLICATION,
+        auth               : asAuth(fake),
+        serviceConfigWatch : true,
+      });
+      fake.startServiceConfigWatch.callsFake(async (): Promise<() => void> => {
+        expect(store.getSnapshot().session).toBe(fake.session);
+        return fake.stopServiceConfigWatchSpy;
+      });
+
+      await store.connect();
+      expect(fake.connect.firstCall.args[0]).toEqual({ protocols: WATCH_APPLICATION_REQUESTS });
+      expect(fake.startServiceConfigWatch.calledOnce).toBe(true);
+      expect(fake.stopServiceConfigWatchSpy.notCalled).toBe(true);
+
+      const refreshed = await store.refresh();
+      expect(refreshed.session).toBe(replacementSession);
+      expect(fake.startServiceConfigWatch.calledTwice).toBe(true);
+      expect(fake.stopServiceConfigWatchSpy.calledOnce).toBe(true);
+
+      await store.dispose();
+      expect(fake.stopServiceConfigWatchSpy.calledTwice).toBe(true);
+    });
+
+    it('should not start the opt-in watch for a non-delegated vault session', async () => {
+      stubProtocolReadiness();
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.connectVault.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({
+        application        : WATCH_APPLICATION,
+        auth               : asAuth(fake),
+        serviceConfigWatch : true,
+      });
+
+      const connected = await store.connectVault();
+
+      expect(connected.phase).toBe('connected');
+      expect(fake.startServiceConfigWatch.notCalled).toBe(true);
+    });
+
+    it('should fence a watch start to its session and restart for a replacement', async () => {
+      stubProtocolReadiness();
+      const fake = createFakeAuth();
+      const firstSession = createSession({ delegateDid: DELEGATE_DID });
+      const replacementSession = createSession({ delegateDid: DELEGATE_DID, name: 'Replacement' });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = firstSession;
+        return firstSession;
+      });
+      let resolveFirstStart!: (stop: () => void) => void;
+      const firstStart = new Promise<() => void>((resolve) => { resolveFirstStart = resolve; });
+      const firstStop = sinon.spy();
+      const replacementStop = sinon.spy();
+      fake.startServiceConfigWatch.onFirstCall().returns(firstStart);
+      fake.startServiceConfigWatch.onSecondCall().resolves(replacementStop);
+      const store = createConnectionStore({
+        application        : WATCH_APPLICATION,
+        auth               : asAuth(fake),
+        serviceConfigWatch : true,
+      });
+
+      const connecting = store.connect();
+      await waitFor(() => { expect(fake.startServiceConfigWatch.calledOnce).toBe(true); });
+      fake.session = replacementSession;
+      resolveFirstStart(firstStop);
+
+      const connected = await connecting;
+
+      expect(connected.session).toBe(replacementSession);
+      expect(fake.startServiceConfigWatch.calledTwice).toBe(true);
+      expect(firstStop.calledOnce).toBe(true);
+      expect(replacementStop.notCalled).toBe(true);
+    });
+
+    it('should invalidate an in-flight watch start on disconnect and dispose', async () => {
+      stubProtocolReadiness();
+      const fake = createFakeAuth();
+      const session = createSession({ delegateDid: DELEGATE_DID });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      let resolveStart!: (stop: () => void) => void;
+      fake.startServiceConfigWatch.returns(new Promise<() => void>((resolve) => { resolveStart = resolve; }));
+      fake.disconnect.callsFake(async (): Promise<void> => {
+        fake.session = undefined;
+      });
+      const lateStop = sinon.spy();
+      const store = createConnectionStore({
+        application        : WATCH_APPLICATION,
+        auth               : asAuth(fake),
+        serviceConfigWatch : true,
+      });
+
+      const connecting = store.connect();
+      await waitFor(() => { expect(fake.startServiceConfigWatch.calledOnce).toBe(true); });
+      const disconnecting = store.disconnect();
+      resolveStart(lateStop);
+
+      const [connectResult, disconnectResult] = await Promise.all([connecting, disconnecting]);
+      expect(connectResult.phase).toBe('disconnected');
+      expect(disconnectResult.phase).toBe('disconnected');
+      expect(fake.stopServiceConfigWatch.calledOnce).toBe(true);
+      expect(lateStop.calledOnce).toBe(true);
+
+      await store.dispose();
+      expect(fake.stopServiceConfigWatch.calledOnce).toBe(true);
     });
 
     it('should project the registered manifest through delegated connect, refresh, and opted-in auto-refresh', async () => {
@@ -1104,6 +1448,131 @@ describe('createConnectionStore()', () => {
     });
   });
 
+  describe('refreshDwnEndpoints()', () => {
+    async function connectStore(): Promise<{
+      fake: FakeAuthManager;
+      store: ReturnType<typeof createConnectionStore>;
+    }> {
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.connect({ protocols: PROTOCOLS });
+      return { fake, store };
+    }
+
+    it('should force-refresh and publish expected endpoint absence without disconnecting', async () => {
+      const { store } = await connectStore();
+      const error = new DwnEndpointResolutionError({
+        code    : DwnEndpointResolutionErrorCode.ServiceMissing,
+        didUri  : OWNER_DID,
+        message : 'No advertised DWN service.',
+      });
+      const refresh = sinon.stub(Enbox.prototype, 'refreshDwnEndpointStatus').resolves({
+        status : 'service-missing',
+        didUri : OWNER_DID,
+        error,
+      });
+
+      const snapshot = await store.refreshDwnEndpoints();
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.error).toBeUndefined();
+      expect(snapshot.remoteDwn).toEqual({ status: 'service-missing', didUri: OWNER_DID, error });
+      expect(refresh.calledOnce).toBe(true);
+    });
+
+    it('should keep an explicit fresh result over an older event queued before resolution completed', async () => {
+      const { fake, store } = await connectStore();
+      const old = {
+        status    : 'ready' as const,
+        didUri    : OWNER_DID,
+        endpoints : ['https://old-event.example/dwn'],
+      };
+      const fresh = {
+        status    : 'ready' as const,
+        didUri    : OWNER_DID,
+        endpoints : ['https://fresh-resolution.example/dwn'],
+      };
+      let resolveRefresh!: (status: typeof fresh) => void;
+      sinon.stub(Enbox.prototype, 'refreshDwnEndpointStatus').returns(new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }));
+
+      const refreshing = store.refreshDwnEndpoints();
+      fake.emitter.emit('connection-endpoints-changed', {
+        connectedDid : OWNER_DID,
+        previous     : store.getSnapshot().remoteDwn!,
+        current      : old,
+        endpoints    : old.endpoints,
+        added        : old.endpoints,
+        removed      : [],
+      });
+      resolveRefresh(fresh);
+
+      const snapshot = await refreshing;
+      expect(snapshot.remoteDwn).toBe(fresh);
+      expect(store.getSnapshot().remoteDwn).toBe(fresh);
+    });
+
+    it('should keep the active session and prior topology when refresh throws', async () => {
+      const { store } = await connectStore();
+      sinon.stub(Enbox.prototype, 'refreshDwnEndpointStatus').rejects(new Error('resolver unavailable'));
+
+      const snapshot = await store.refreshDwnEndpoints();
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.error?.message).toBe('resolver unavailable');
+      expect(snapshot.remoteDwn).toEqual({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://dwn.example'],
+      });
+    });
+
+    it('should single-flight concurrent endpoint refreshes', async () => {
+      const { store } = await connectStore();
+      let resolveRefresh!: (status: Awaited<ReturnType<Enbox['refreshDwnEndpointStatus']>>) => void;
+      sinon.stub(Enbox.prototype, 'refreshDwnEndpointStatus').returns(new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }));
+
+      const first = store.refreshDwnEndpoints();
+      const second = store.refreshDwnEndpoints();
+
+      expect(second).toBe(first);
+      resolveRefresh({ status: 'ready', didUri: OWNER_DID, endpoints: ['https://fresh.example'] });
+      expect((await first).remoteDwn).toEqual({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://fresh.example'],
+      });
+    });
+
+    it('should discard a late refresh after disconnect supersedes its session', async () => {
+      const { fake, store } = await connectStore();
+      let resolveRefresh!: (status: Awaited<ReturnType<Enbox['refreshDwnEndpointStatus']>>) => void;
+      sinon.stub(Enbox.prototype, 'refreshDwnEndpointStatus').returns(new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }));
+      fake.disconnect.callsFake(async (): Promise<void> => {
+        fake.session = undefined;
+      });
+
+      const refreshing = store.refreshDwnEndpoints();
+      const disconnected = await store.disconnect();
+      resolveRefresh({ status: 'ready', didUri: OWNER_DID, endpoints: ['https://late.example'] });
+      const refreshResult = await refreshing;
+
+      expect(disconnected.phase).toBe('disconnected');
+      expect(refreshResult.phase).toBe('disconnected');
+      expect(store.getSnapshot().remoteDwn).toBeUndefined();
+    });
+  });
+
   describe('auth event wiring', () => {
     it('should flip to disconnected and stop the monitor when the session ends externally', async () => {
       const fake = createFakeAuth();
@@ -1197,6 +1666,7 @@ describe('createConnectionStore()', () => {
       const session = createSession({ name: 'Switched identity' });
       fake.session = session;
       fake.emitter.emit('session-start', {});
+      await waitFor(() => { expect(store.getSnapshot().phase).toBe('connected'); });
 
       const snapshot = store.getSnapshot();
       expect(snapshot.phase).toBe('connected');
@@ -1756,8 +2226,8 @@ describe('createConnectionStore()', () => {
         const session = createSession({ delegateDid: DELEGATE_DID });
         fake.session = session;
         fake.emitter.emit('session-start', {});
-        // Let the rejected commit promise settle through its catch handler.
-        await Promise.resolve();
+        // Endpoint status is resolved before the connected snapshot is published.
+        await waitFor(() => { expect(store.getSnapshot().phase).toBe('connected'); });
 
         expect(store.getSnapshot().phase).toBe('connected');
         expect(store.getSnapshot().session).toBe(session);

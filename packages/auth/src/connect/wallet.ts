@@ -12,11 +12,10 @@ import type { FlowContext } from './lifecycle.js';
 import type { WalletConnectOptions } from '../types.js';
 
 import { ConnectDeniedError } from '../errors.js';
-import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 import { validateConnectResultGrants } from './validate-grants.js';
 import { WalletConnect } from '../wallet-connect-client.js';
-import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolvePassword, runFlowMutation } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, refreshDwnEndpointsForConnection, resolvePassword, runFlowMutation } from './lifecycle.js';
 
 // Re-export for backward compatibility — processConnectedGrants moved to lifecycle.ts.
 export { processConnectedGrants } from './lifecycle.js';
@@ -75,18 +74,27 @@ export async function walletConnect(
     delegatePortableDid, connectedDid, delegateGrants, sessionRevocations,
   } = result;
 
-  // Provider authentication may wait on application UI, so keep it outside
-  // the lifecycle mutex and re-check teardown before importing the delegate.
+  // Resolve the wallet DID independently of the returned delegate snapshot. This keeps routing on
+  // the wallet's current published topology even when registration callbacks are not configured.
+  const dwnEndpoints = await refreshDwnEndpointsForConnection({
+    userAgent,
+    didUri   : connectedDid,
+    required : true,
+  });
+  assertFlowActive(ctx);
+
+  // Provider authentication may wait on application UI, so keep it outside the lifecycle mutex
+  // and re-check teardown before importing the delegate.
   if (ctx.registration) {
-    const dwnEndpoints = ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
+    if (dwnEndpoints === undefined) {
+      throw new Error(`[@enbox/auth] No DWN endpoints are available for registration of '${connectedDid}'.`);
+    }
     await registerWithDwnEndpoints(
       {
         userAgent,
-        dwnEndpoints,
-        agentDid     : userAgent.agentDid.uri,
-        connectedDid,
+        targets      : [{ did: connectedDid, dwnEndpoints }],
         secretStore  : userAgent.secrets,
-        storage      : storage,
+        storage,
         assertActive : ctx.assertActive,
         runMutation  : ctx.runMutation,
       },

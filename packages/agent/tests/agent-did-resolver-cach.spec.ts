@@ -1,12 +1,12 @@
-import sinon from 'sinon';
+import type { AgentDidResolverCache } from '../src/agent-did-resolver-cache.js';
+import type { DidResolutionResult } from '@enbox/dids';
 
-import { AgentDidResolverCache } from '../src/agent-did-resolver-cache.js';
-import { logger } from '@enbox/common';
+import sinon from 'sinon';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DidDht, DidJwk, setDwnServiceEndpointUrls } from '@enbox/dids';
+
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
-
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { BearerDid, DidJwk } from '@enbox/dids';
 
 describe('AgentDidResolverCache', () => {
   let resolverCache: AgentDidResolverCache;
@@ -15,10 +15,11 @@ describe('AgentDidResolverCache', () => {
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
-      agentStores : 'dwn'
+      agentStores : 'dwn',
     });
-
-    resolverCache = new AgentDidResolverCache({ agent: testHarness.agent, location: '__TESTDATA__/did_cache' });
+    // Use the exact cache installed on AgentDidApi. A separate cache would not exercise the
+    // production recursion boundary between cache.get() and the cache-bypassing core refresh.
+    resolverCache = testHarness.didResolverCache as AgentDidResolverCache;
   });
 
   afterAll(async () => {
@@ -33,141 +34,240 @@ describe('AgentDidResolverCache', () => {
     await testHarness.createAgentDid();
   });
 
-  it('does not attempt to resolve a DID that is already resolving', async () => {
-    const did = testHarness.agent.agentDid.uri;
-    const getStub = sinon.stub(resolverCache['cache'], 'get').resolves(JSON.stringify({ ttlMillis: Date.now() - 1000, value: { didDocument: { id: did } } }));
-    const resolveSpy = sinon.spy(testHarness.agent.did, 'resolve');
+  async function createManagedDid(): Promise<{ didUri: string; result: DidResolutionResult }> {
+    const identity = await testHarness.agent.identity.create({
+      didMethod : 'jwk',
+      metadata  : { name: 'Managed cache test' },
+    });
+    return {
+      didUri : identity.did.uri,
+      result : {
+        didDocument           : identity.did.document,
+        didDocumentMetadata   : identity.did.metadata,
+        didResolutionMetadata : {},
+      },
+    };
+  }
 
-    await Promise.all([
-      resolverCache.get(did),
-      resolverCache.get(did)
+  async function putRawCacheEntry(
+    didUri: string,
+    result: DidResolutionResult,
+    ttlMillis: number,
+  ): Promise<void> {
+    await resolverCache['cache'].put(didUri, JSON.stringify({ ttlMillis, value: result }));
+  }
+
+  it('refreshes an expired managed DID through the method resolver once and renews its TTL', async () => {
+    const { didUri, result: staleResult } = await createManagedDid();
+    staleResult.didDocument!.alsoKnownAs = ['https://stale.example'];
+    await putRawCacheEntry(didUri, staleResult, Date.now() - 1);
+    const methodResolve = sinon.spy(DidJwk, 'resolve');
+
+    const [first, second] = await Promise.all([
+      testHarness.agent.did.resolve(didUri),
+      testHarness.agent.did.resolve(didUri),
     ]);
 
-    // get should be called twice, but resolve should only be called once
-    // because the second call should be blocked by the _resolving Map
-    expect(getStub.callCount).toBe(2);
-    expect(resolveSpy.callCount).toBe(1);
+    expect(methodResolve.calledOnceWithExactly(didUri, {})).toBe(true);
+    expect(first.didDocument?.alsoKnownAs).toBeUndefined();
+    expect(second).toEqual(first);
+
+    const refreshedEntry = JSON.parse(await resolverCache['cache'].get(didUri));
+    expect(refreshedEntry.ttlMillis).toBeGreaterThan(Date.now());
+
+    await testHarness.agent.did.resolve(didUri);
+    expect(methodResolve.callCount).toBe(1);
   });
 
-  it('should not resolve a DID if the ttl has not elapsed', async () => {
-    const did = testHarness.agent.agentDid.uri;
-    const getStub = sinon.stub(resolverCache['cache'], 'get').resolves(JSON.stringify({ ttlMillis: Date.now() + 1000, value: { didDocument: { id: did } } }));
-    const resolveSpy = sinon.spy(testHarness.agent.did, 'resolve');
+  it('does not reconcile an expired entry over a concurrent authoritative DID update', async () => {
+    const identity = await testHarness.agent.identity.create({
+      didMethod  : 'dht',
+      metadata   : { name: 'Managed cache race' },
+      didOptions : {
+        publish  : false,
+        services : [{
+          id              : 'dwn',
+          type            : 'DecentralizedWebNode',
+          serviceEndpoint : ['https://before.example/dwn'],
+        }],
+      },
+    });
+    const staleResult: DidResolutionResult = {
+      didDocument           : identity.did.document,
+      didDocumentMetadata   : identity.did.metadata,
+      didResolutionMetadata : {},
+    };
+    await putRawCacheEntry(identity.did.uri, staleResult, Date.now() - 1);
+    const resolvedBefore = setDwnServiceEndpointUrls({
+      didDocument : identity.did.document,
+      endpoints   : ['https://resolved-before.example/dwn'],
+    });
+    const publishedDocument = setDwnServiceEndpointUrls({
+      didDocument : identity.did.document,
+      endpoints   : ['https://published.example/dwn'],
+    });
+    let releaseOld!: () => void;
+    let markResolveStarted!: () => void;
+    const oldResolutionGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+    const resolveStarted = new Promise<void>((resolve) => { markResolveStarted = resolve; });
+    const resolve = sinon.stub(DidDht, 'resolve');
+    resolve.onFirstCall().callsFake(async () => {
+      markResolveStarted();
+      await oldResolutionGate;
+      return {
+        didDocument           : resolvedBefore,
+        didDocumentMetadata   : { published: true, versionId: 'before' },
+        didResolutionMetadata : {},
+      };
+    });
+    resolve.onSecondCall().resolves({
+      didDocument           : publishedDocument,
+      didDocumentMetadata   : { published: true, versionId: 'published' },
+      didResolutionMetadata : {},
+    });
+    sinon.stub(DidDht, 'publish').resolves({
+      didDocument             : publishedDocument,
+      didDocumentMetadata     : { published: true, versionId: 'published' },
+      didRegistrationMetadata : {},
+    });
 
-    await resolverCache.get(did);
+    const refreshing = resolverCache.get(identity.did.uri);
+    await resolveStarted;
+    const portableDid = await identity.did.export();
+    portableDid.document = publishedDocument;
+    await testHarness.agent.did.update({
+      portableDid,
+      tenant: testHarness.agent.agentDid.uri,
+    });
+    releaseOld();
 
-    // get should be called once, but resolve should not be called
-    expect(getStub.callCount).toBe(1);
-    expect(resolveSpy.callCount).toBe(0);
+    await expect(refreshing).resolves.toMatchObject({ didDocument: publishedDocument });
+    expect(resolve.callCount).toBe(2);
+    const stored = await testHarness.agent.did.get({
+      didUri : identity.did.uri,
+      tenant : testHarness.agent.agentDid.uri,
+    });
+    expect(stored?.document).toEqual(publishedDocument);
+    const cached = JSON.parse(await resolverCache['cache'].get(identity.did.uri));
+    expect(cached.value.didDocument).toEqual(publishedDocument);
   });
 
-  it('should not call resolve if the DID is not the agent DID or exists as an identity in the agent', async () => {
+  it('does not refresh a cache entry whose TTL has not elapsed', async () => {
+    const { didUri, result } = await createManagedDid();
+    await putRawCacheEntry(didUri, result, Date.now() + 60_000);
+    const refresh = sinon.spy(testHarness.agent.did, 'refreshResolutionAndReconcile');
+
+    await resolverCache.get(didUri);
+
+    expect(refresh.notCalled).toBe(true);
+  });
+
+  it('evicts an expired DID that is not managed by the agent', async () => {
     const did = await DidJwk.create();
-    const getStub = sinon.stub(resolverCache['cache'], 'get').resolves(JSON.stringify({ ttlMillis: Date.now() - 1000, value: { didDocument: { id: did.uri } } }));
-    const resolveSpy = sinon.spy(testHarness.agent.did, 'resolve').withArgs(did.uri);
-    const nextTickSpy = sinon.stub(resolverCache['cache'], 'nextTick').resolves();
+    const result: DidResolutionResult = {
+      didDocument           : did.document,
+      didDocumentMetadata   : did.metadata,
+      didResolutionMetadata : {},
+    };
+    await putRawCacheEntry(did.uri, result, Date.now() - 1);
+    const nextTick = sinon.spy(resolverCache['cache'], 'nextTick');
+    const refresh = sinon.spy(testHarness.agent.did, 'refreshResolutionAndReconcile');
 
-    await resolverCache.get(did.uri),
+    const cached = await resolverCache.get(did.uri);
 
-    // get should be called once, but we do not resolve even though the TTL is expired
-    expect(getStub.callCount).toBe(1);
-    expect(resolveSpy.callCount).toBe(0);
-
-    // we expect the nextTick of the cache to be called to trigger a delete of the cache item after returning as it's expired
-    expect(nextTickSpy.callCount).toBe(1);
+    expect(cached).toBeUndefined();
+    expect(refresh.notCalled).toBe(true);
+    expect(nextTick.calledOnce).toBe(true);
   });
 
-  it('should resolve and update if the DID is managed by the agent', async () => {
-    const did = await DidJwk.create();
+  it('retains stale managed DID data without repeating failed refreshes on sequential reads', async () => {
+    const { didUri, result } = await createManagedDid();
+    await putRawCacheEntry(didUri, result, Date.now() - 1);
+    const refresh = sinon.stub(testHarness.agent.did, 'refreshResolutionAndReconcile').rejects(new Error('offline'));
 
-    const getStub = sinon.stub(resolverCache['cache'], 'get').resolves(JSON.stringify({ ttlMillis: Date.now() - 1000, value: { didDocument: { id: did.uri } } }));
-    const resolveSpy = sinon.spy(testHarness.agent.did, 'resolve').withArgs(did.uri);
-    sinon.stub(resolverCache['cache'], 'nextTick').resolves();
-    const didApiStub = sinon.stub(testHarness.agent.did, 'get');
-    const updateSpy = sinon.stub(testHarness.agent.did, 'update').resolves();
-    didApiStub.withArgs({ didUri: did.uri, tenant: testHarness.agent.agentDid.uri }).resolves(new BearerDid({
-      uri        : did.uri,
-      document   : { id: did.uri },
-      metadata   : { },
-      keyManager : testHarness.agent.keyManager
-    }));
+    const first = await resolverCache.get(didUri);
+    const second = await resolverCache.get(didUri);
+    const third = await resolverCache.get(didUri);
 
-    await resolverCache.get(did.uri),
-
-    // get should be called once, and we also resolve the DId as it's returned by the identity.get method
-    expect(getStub.callCount).toBe(1);
-    expect(resolveSpy.callCount).toBe(1);
-    expect(updateSpy.callCount).toBe(1);
+    expect(first).toEqual(result);
+    expect(second).toEqual(result);
+    expect(third).toEqual(result);
+    expect(refresh.calledOnce).toBe(true);
+    expect(resolverCache['_failedRefreshRetryAfter'].get(didUri)).toBeGreaterThan(Date.now());
   });
 
-  it('should log an error if an update is attempted and fails', async () => {
-    const did = await DidJwk.create();
+  it('retries after the failure delay and adopts the recovered resolution', async () => {
+    const { didUri, result: staleResult } = await createManagedDid();
+    staleResult.didDocument!.alsoKnownAs = ['https://stale.example'];
+    await putRawCacheEntry(didUri, staleResult, Date.now() - 1);
 
-    const getStub = sinon.stub(resolverCache['cache'], 'get').resolves(JSON.stringify({ ttlMillis: Date.now() - 1000, value: { didDocument: { id: did.uri } } }));
-    const resolveSpy = sinon.spy(testHarness.agent.did, 'resolve').withArgs(did.uri);
-    sinon.stub(resolverCache['cache'], 'nextTick').resolves();
-    const didApiStub = sinon.stub(testHarness.agent.did, 'get');
-    const updateSpy = sinon.stub(testHarness.agent.did, 'update').rejects(new Error('Some Error'));
-    const consoleErrorSpy = sinon.stub(logger, 'error');
-    didApiStub.withArgs({ didUri: did.uri, tenant: testHarness.agent.agentDid.uri }).resolves(new BearerDid({
-      uri        : did.uri,
-      document   : { id: did.uri },
-      metadata   : { },
-      keyManager : testHarness.agent.keyManager
-    }));
+    const freshResult = structuredClone(staleResult);
+    freshResult.didDocument!.alsoKnownAs = ['https://fresh.example'];
+    let now = Date.now();
+    sinon.stub(Date, 'now').callsFake(() => now);
+    const refresh = sinon.stub(testHarness.agent.did, 'refreshResolutionAndReconcile');
+    refresh.onFirstCall().rejects(new Error('offline'));
+    refresh.onSecondCall().callsFake(async () => {
+      await resolverCache.set(didUri, freshResult);
+      return freshResult;
+    });
 
-    await resolverCache.get(did.uri),
+    expect(await resolverCache.get(didUri)).toEqual(staleResult);
+    const retryAfter = resolverCache['_failedRefreshRetryAfter'].get(didUri)!;
 
-    // get should be called once, and we also resolve the DId as it's returned by the identity.get method
-    expect(getStub.callCount).toBe(1);
-    expect(resolveSpy.callCount).toBe(1);
-    expect(updateSpy.callCount).toBe(1);
-    expect(consoleErrorSpy.callCount).toBe(1);
+    now = retryAfter - 1;
+    expect(await resolverCache.get(didUri)).toEqual(staleResult);
+    expect(refresh.calledOnce).toBe(true);
+
+    now = retryAfter;
+    expect(await resolverCache.get(didUri)).toEqual(freshResult);
+    expect(refresh.callCount).toBe(2);
+    expect(resolverCache['_failedRefreshRetryAfter'].has(didUri)).toBe(false);
+
+    expect(await resolverCache.get(didUri)).toEqual(freshResult);
+    expect(refresh.callCount).toBe(2);
+  });
+
+  it('clears failed-refresh retry state when cache entries are replaced or removed', async () => {
+    const { didUri, result } = await createManagedDid();
+
+    resolverCache['_failedRefreshRetryAfter'].set(didUri, Date.now() + 60_000);
+    await resolverCache.set(didUri, result);
+    expect(resolverCache['_failedRefreshRetryAfter'].has(didUri)).toBe(false);
+
+    resolverCache['_failedRefreshRetryAfter'].set(didUri, Date.now() + 60_000);
+    await resolverCache.delete(didUri);
+    expect(resolverCache['_failedRefreshRetryAfter'].has(didUri)).toBe(false);
+
+    resolverCache['_failedRefreshRetryAfter'].set(didUri, Date.now() + 60_000);
+    await resolverCache.clear();
+    expect(resolverCache['_failedRefreshRetryAfter'].size).toBe(0);
   });
 
   it('does not cache notFound records', async () => {
     const did = testHarness.agent.agentDid.uri;
-    const getStub = sinon.stub(resolverCache['cache'], 'get').rejects({ notFound: true });
+    const get = sinon.stub(resolverCache['cache'], 'get').rejects({ notFound: true });
 
     const result = await resolverCache.get(did);
 
-    // get should be called once, and resolve should be called once
-    expect(getStub.callCount).toBe(1);
+    expect(get.calledOnce).toBe(true);
     expect(result).toBeUndefined();
   });
 
-  it('throws if the error is anything other than a notFound error', async () => {
+  it('throws cache errors other than notFound', async () => {
     const did = testHarness.agent.agentDid.uri;
-    sinon.stub(resolverCache['cache'], 'get').rejects(new Error('Some Error'));
+    sinon.stub(resolverCache['cache'], 'get').rejects(new Error('cache unavailable'));
 
-    try {
-      await resolverCache.get(did);
-      throw new Error('Should have thrown');
-    } catch (error: any) {
-      expect(error.message).toBe('Some Error');
-    }
+    await expect(resolverCache.get(did)).rejects.toThrow('cache unavailable');
   });
 
-  it('throws if the agent is not initialized', async () => {
-    // close existing DB
-    await resolverCache['cache'].close();
+  it('throws if the agent is not initialized', () => {
+    const originalAgent = resolverCache.agent;
+    resolverCache['_agent'] = undefined;
 
-    // set resolver cache without an agent
-    resolverCache = new AgentDidResolverCache({ location: '__TESTDATA__/did_cache' });
+    expect(() => resolverCache.agent).toThrow('Agent not initialized');
 
-    try {
-      // attempt to access the agent property
-      resolverCache.agent;
-
-      throw new Error('Should have thrown');
-    } catch (error: any) {
-      expect(error.message).toBe('Agent not initialized');
-    }
-
-    // set the agent property
-    resolverCache.agent = testHarness.agent;
-
-    // should not throw
-    resolverCache.agent;
+    resolverCache.agent = originalAgent;
+    expect(resolverCache.agent).toBe(originalAgent);
   });
 });

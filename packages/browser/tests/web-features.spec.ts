@@ -1,3 +1,6 @@
+import type * as EnboxDids from '@enbox/dids';
+
+import { DwnEndpointResolutionErrorCode } from '@enbox/dids';
 import { vi } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
@@ -8,19 +11,52 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:te
 // vi.hoisted ensures `mockResolve` is declared before vi.mock's factory runs
 // (both are hoisted to the top of the module by Vitest's transform).
 // ---------------------------------------------------------------------------
-const { mockResolve } = vi.hoisted(() => ({
-  mockResolve: vi.fn(),
+const { mockResolve, resolverOptions } = vi.hoisted(() => ({
+  mockResolve     : vi.fn(),
+  resolverOptions : [] as unknown[],
 }));
 
-vi.mock('@enbox/dids', () => {
+vi.mock('@enbox/dids', async (importOriginal) => {
+  const original = await importOriginal<typeof EnboxDids>();
   class MockUniversalResolver {
-    public resolve = mockResolve;
-    constructor(_opts?: unknown) { /* no-op */ }
+    private readonly _cache?: EnboxDids.DidResolverCache;
+
+    public constructor(opts?: { cache?: EnboxDids.DidResolverCache }) {
+      resolverOptions.push(opts);
+      this._cache = opts?.cache;
+    }
+
+    public async resolve(didUri: string): Promise<any> {
+      const cached = await this._cache?.get(didUri);
+      if (cached !== undefined) {
+        return cached;
+      }
+
+      const result = await mockResolve(didUri);
+      if (result?.didDocument === undefined || result.didDocument === null) {
+        return result;
+      }
+
+      const normalized = {
+        didDocumentMetadata   : {},
+        didResolutionMetadata : {},
+        ...result,
+        didDocument           : {
+          ...result.didDocument,
+          id      : didUri,
+          service : result.didDocument.service?.map((service: any, index: number) => ({
+            id: `${didUri}#service-${index}`,
+            ...service,
+          })),
+        },
+      };
+      await this._cache?.set(didUri, normalized);
+      return normalized;
+    }
   }
   return {
-    DidDht            : {},
-    DidWeb            : {},
-    UniversalResolver : MockUniversalResolver,
+    ...original,
+    UniversalResolver: MockUniversalResolver,
   };
 });
 
@@ -30,8 +66,11 @@ import { activatePolyfills, cacheResponse, fetchResource, getDwnEndpoints, handl
 // Pass [] to get getDwnEndpoints → [].
 function dwnDidDoc(endpoints: string[]): any {
   return {
-    didDocument: {
-      service: [{ type: 'DecentralizedWebNode', serviceEndpoint: endpoints }],
+    didDocumentMetadata   : {},
+    didResolutionMetadata : {},
+    didDocument           : {
+      id      : 'did:example:test',
+      service : [{ type: 'DecentralizedWebNode', serviceEndpoint: endpoints }],
     },
   };
 }
@@ -63,10 +102,14 @@ function suppressUnhandledRejections(e: PromiseRejectionEvent): void {
 // ---------------------------------------------------------------------------
 
 describe('web features', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     suppressedErrors.length = 0;
     window.addEventListener('unhandledrejection', suppressUnhandledRejections);
     mockResolve.mockReset();
+    await Promise.all(resolverOptions.map(async (options) => {
+      const cache = (options as { cache?: EnboxDids.DidResolverCache } | undefined)?.cache;
+      await cache?.clear();
+    }));
   });
 
   afterEach(() => {
@@ -80,6 +123,15 @@ describe('web features', () => {
   // -----------------------------------------------------------------------
 
   describe('activatePolyfills — initial call', () => {
+    it('caches completed DID resolutions between endpoint lookups', async () => {
+      mockResolve.mockResolvedValue(dwnDidDoc(['https://dwn.example.com']));
+
+      await expect(getDwnEndpoints('did:example:cached')).resolves.toEqual(['https://dwn.example.com']);
+      await expect(getDwnEndpoints('did:example:cached')).resolves.toEqual(['https://dwn.example.com']);
+
+      expect(mockResolve).toHaveBeenCalledTimes(1);
+    });
+
     it('should inject overlay, styles, and link features on first call', () => {
       activatePolyfills({ serviceWorker: false, injectStyles: true, links: true });
 
@@ -640,15 +692,16 @@ describe('web features', () => {
       expect(endpoints).toEqual(['https://dwn1.example.com', 'https://dwn2.example.com']);
     });
 
-    it('should return empty array when DWN service has empty endpoints', async () => {
+    it('should signal when a DWN service has empty endpoints', async () => {
       mockResolve.mockResolvedValue({
         didDocument: {
           service: [{ type: 'DecentralizedWebNode', serviceEndpoint: [] }],
         },
       });
 
-      const endpoints = await getDwnEndpoints('did:example:test');
-      expect(endpoints).toEqual([]);
+      await expect(getDwnEndpoints('did:example:test')).rejects.toMatchObject({
+        code: DwnEndpointResolutionErrorCode.EndpointsMissing,
+      });
     });
 
     it('should handle a single string serviceEndpoint', async () => {
@@ -665,7 +718,7 @@ describe('web features', () => {
       expect(endpoints).toEqual(['https://single.example.com']);
     });
 
-    it('should filter out non-http endpoints', async () => {
+    it('should keep valid HTTP endpoints when a malformed sibling is advertised', async () => {
       mockResolve.mockResolvedValue({
         didDocument: {
           service: [{
@@ -675,8 +728,7 @@ describe('web features', () => {
         },
       });
 
-      const endpoints = await getDwnEndpoints('did:example:test');
-      expect(endpoints).toEqual(['https://valid.example.com']);
+      await expect(getDwnEndpoints('did:example:test')).resolves.toEqual(['https://valid.example.com']);
     });
   });
 
@@ -832,9 +884,30 @@ describe('web features', () => {
 
       const response = await handleEvent(mockEvent, 'did:example:alice', 'records/x', {});
       expect(response.status).toBe(530);
+      await expect(response.json()).resolves.toMatchObject({
+        code   : DwnEndpointResolutionErrorCode.EndpointsMissing,
+        didUri : 'did:example:alice',
+      });
     });
 
-    it('should return 500 with message when non-Response error is thrown', async () => {
+    it('should return a typed 530 response when the DID has no DWN service', async () => {
+      const mockCache = { match: vi.fn().mockResolvedValue(undefined), put: vi.fn() };
+      spyOn(caches, 'open').mockResolvedValue(mockCache as unknown as Cache);
+      mockResolve.mockResolvedValue({ didDocument: { service: [] } });
+
+      const mockEvent = {
+        request: { url: 'https://dweb/did:example:alice/records/missing-service', headers: new Headers() },
+      };
+
+      const response = await handleEvent(mockEvent, 'did:example:alice', 'records/missing-service', {});
+      expect(response.status).toBe(530);
+      await expect(response.json()).resolves.toMatchObject({
+        code   : DwnEndpointResolutionErrorCode.ServiceMissing,
+        didUri : 'did:example:alice',
+      });
+    });
+
+    it('should return a typed 530 response when DID resolution throws', async () => {
       const mockCache = { match: vi.fn().mockResolvedValue(undefined), put: vi.fn() };
       spyOn(caches, 'open').mockResolvedValue(mockCache as unknown as Cache);
       mockResolve.mockRejectedValue(new Error('DID resolution timeout'));
@@ -844,9 +917,11 @@ describe('web features', () => {
       };
 
       const response = await handleEvent(mockEvent, 'did:example:alice', 'records/to', {});
-      expect(response.status).toBe(500);
-      const body = await response.text();
-      expect(body).toBe('DID URL fetch error');
+      expect(response.status).toBe(530);
+      await expect(response.json()).resolves.toMatchObject({
+        code   : DwnEndpointResolutionErrorCode.DidResolutionFailed,
+        didUri : 'did:example:alice',
+      });
     });
 
     it('should normalize http to https and strip trailing slashes in DRL', async () => {

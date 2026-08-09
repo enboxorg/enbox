@@ -34,14 +34,18 @@ export {
   ContextNotReadyError,
   ContextRetiredError,
   defineApplicationManifest,
+  DwnEndpointResolutionError,
+  DwnEndpointResolutionErrorCode,
   DwnResponseError,
   Enbox,
   defineProtocol,
   getApplicationProtocolRequests,
+  isDwnEndpointResolutionError,
   ProtocolReadinessError,
   RecordConflictError,
   RecordValidationError,
   recordCodecs,
+  ServiceConfigProtocol,
 } from '@enbox/api';
 
 export type {
@@ -58,6 +62,7 @@ export type {
   ConnectionSnapshotListener,
   ConnectionStore,
   ConnectionStoreOptions,
+  DwnEndpointResolution,
   ContextView,
   ContextViewListener,
   ContextViewState,
@@ -127,12 +132,17 @@ export {
   isSessionExpiredError,
   isSessionInvalidError,
   normalizeProtocolRequests,
+  ServiceConfigProtocolDefinition,
+  SERVICE_CONFIG_PROTOCOL_PATH,
+  SERVICE_CONFIG_PROTOCOL_URI,
+  serviceConfigProtocolRequest,
   WalletConnect,
 } from '@enbox/auth/browser';
 
 export type {
   AuthEvent,
   AuthEventHandler,
+  AuthEventMap,
   AuthManagerOptions,
   AuthState,
   ComputeConnectionStatusOptions,
@@ -155,6 +165,7 @@ export type {
   ProtocolRequest,
   RefreshOptions,
   RegistrationOptions,
+  ServiceConfig,
   StorageAdapter,
   SyncOption,
   WalletConnectOptions,

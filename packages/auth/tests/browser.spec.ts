@@ -28,6 +28,8 @@ describe('@enbox/auth/browser', () => {
     expect(mod.createDefaultStorage).toBeDefined();
     expect(mod.discoverLocalDwn).toBeDefined();
     expect(mod.normalizeProtocolRequests).toBeDefined();
+    expect(mod.serviceConfigProtocolRequest).toBeDefined();
+    expect(mod.ServiceConfigProtocolDefinition).toBeDefined();
   });
 
   it('should export only browser-safe password provider factories', async () => {

@@ -459,5 +459,25 @@ describe('BearerDid', () => {
       expect(did.uri).toBe(portableDid.uri);
       expect(importKeySpy).not.toHaveBeenCalled();
     });
+
+    it('preserves public-only verification methods while exporting only controlled private keys', async () => {
+      const keyManager = new LocalKeyManager();
+      await keyManager.importKey({ key: portableDid.privateKeys![0] });
+      const externalKeyManager = new LocalKeyManager();
+      const externalKeyUri = await externalKeyManager.generateKey({ algorithm: 'Ed25519' });
+      const externalPublicKey = await externalKeyManager.getPublicKey({ keyUri: externalKeyUri });
+      portableDid.document.verificationMethod!.push({
+        id           : `${portableDid.uri}#external`,
+        type         : 'JsonWebKey2020',
+        controller   : 'did:example:external-controller',
+        publicKeyJwk : externalPublicKey,
+      });
+
+      const did = await BearerDid.import({ portableDid, keyManager });
+      const exported = await did.export();
+
+      expect(exported.document.verificationMethod).toHaveLength(2);
+      expect(exported.privateKeys).toEqual([portableDid.privateKeys![0]]);
+    });
   });
 });

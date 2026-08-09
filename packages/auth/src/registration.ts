@@ -1,7 +1,7 @@
 /**
  * DWN registration flow.
  *
- * Registers the agent DID and connected DID with DWN endpoints.
+ * Registers DID-scoped targets with their respective DWN endpoints.
  * Supports two registration paths:
  * 1. Provider auth (`provider-auth-v0`) — OAuth-style with tokens
  * 2. Proof of Work (default) — PoW challenge-response
@@ -16,6 +16,7 @@ import type { EnboxUserAgent, SecretStore } from '@enbox/agent';
 
 import { Convert } from '@enbox/common';
 import { DwnRegistrar } from '@enbox/dwn-clients';
+import { validateDwnServiceEndpointUrls } from '@enbox/dids';
 
 import { STORAGE_KEYS } from './types.js';
 
@@ -25,19 +26,15 @@ import type {
   StorageAdapter,
 } from './types.js';
 
-/** @internal */
-export interface RegistrationContext {
+/** One DID and the authoritative endpoints at which that DID should be registered. */
+export type DwnRegistrationTarget = {
+  did: string;
+  dwnEndpoints: string[];
+};
+
+interface RegistrationContextBase {
   /** The user agent with RPC access for getServerInfo(). */
   userAgent: EnboxUserAgent;
-
-  /** DWN endpoints to register with. */
-  dwnEndpoints: string[];
-
-  /** The agent DID URI. */
-  agentDid: string;
-
-  /** The connected DID URI (the identity's DID). */
-  connectedDid: string;
 
   /**
    * Vault-backed secret store for encrypted token persistence.
@@ -64,6 +61,12 @@ export interface RegistrationContext {
   runMutation?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
+/** @internal */
+export type RegistrationContext = RegistrationContextBase & {
+  /** DID-scoped registration targets. Each DID is registered only at its own endpoints. */
+  targets: DwnRegistrationTarget[];
+};
+
 function assertRegistrationActive(ctx: RegistrationContext): void {
   ctx.assertActive?.();
 }
@@ -76,7 +79,7 @@ async function runRegistrationMutation<T>(
 }
 
 /**
- * Register the agent and connected DIDs with the configured DWN endpoints.
+ * Register each DID-scoped target with only its configured DWN endpoints.
  *
  * For each endpoint:
  * 1. Fetches server info to check registration requirements.
@@ -91,9 +94,9 @@ export async function registerWithDwnEndpoints(
   ctx: RegistrationContext,
   registration: RegistrationOptions,
 ): Promise<void> {
-  const { dwnEndpoints } = ctx;
-
   try {
+    const registrationPlan = createRegistrationPlan(ctx);
+
     // Load initial tokens: when persistTokens is enabled, try the
     // vault-backed SecretStore first, then fall back to the legacy plaintext
     // StorageAdapter. This ensures upgraded clients that already have tokens
@@ -101,8 +104,8 @@ export async function registerWithDwnEndpoints(
     const seedTokens = await loadSeedRegistrationTokens(ctx, registration);
     const updatedTokens: Record<string, RegistrationTokenData> = { ...seedTokens };
 
-    for (const dwnEndpoint of dwnEndpoints) {
-      await registerDidsAtEndpoint(ctx, registration, dwnEndpoint, updatedTokens);
+    for (const [dwnEndpoint, dids] of registrationPlan) {
+      await registerDidsAtEndpoint(ctx, registration, dwnEndpoint, dids, updatedTokens);
     }
 
     // Persist tokens: prefer vault-backed SecretStore over plaintext StorageAdapter.
@@ -123,10 +126,52 @@ export async function registerWithDwnEndpoints(
     // failure callback. Re-throw it before invoking app-owned code.
     assertRegistrationActive(ctx);
     registration.onFailure(error);
+    throw error;
   }
 }
 
 // ─── registerWithDwnEndpoints helpers ─────────────────────────────
+
+function createRegistrationPlan(ctx: RegistrationContext): Map<string, string[]> {
+  const targets: unknown = ctx.targets;
+  if (!Array.isArray(targets) || targets.length === 0) {
+    throw new Error('DWN registration requires at least one DID-scoped target.');
+  }
+
+  const plan = new Map<string, string[]>();
+  for (const [index, target] of targets.entries()) {
+    if (!isDwnRegistrationTarget(target)) {
+      throw new TypeError(
+        `DWN registration target at index ${index} must contain a non-empty DID and an endpoint array.`
+      );
+    }
+
+    const endpoints = validateDwnServiceEndpointUrls({
+      didUri    : target.did,
+      endpoints : target.dwnEndpoints,
+    });
+    for (const endpoint of endpoints) {
+      const dids = plan.get(endpoint) ?? [];
+      if (!dids.includes(target.did)) {
+        dids.push(target.did);
+      }
+      plan.set(endpoint, dids);
+    }
+  }
+
+  return plan;
+}
+
+function isDwnRegistrationTarget(target: unknown): target is DwnRegistrationTarget {
+  if (typeof target !== 'object' || target === null) {
+    return false;
+  }
+
+  const candidate = target as Partial<DwnRegistrationTarget>;
+  return typeof candidate.did === 'string'
+    && candidate.did.length > 0
+    && Array.isArray(candidate.dwnEndpoints);
+}
 
 /**
  * Load the initial registration-token seed set: from persisted storage
@@ -157,7 +202,7 @@ async function loadSeedRegistrationTokens(
 }
 
 /**
- * Register the agent and connected DIDs with a single DWN endpoint: fetch
+ * Register the planned DIDs with a single DWN endpoint: fetch
  * server info, skip endpoints with no registration requirements, then use
  * provider-auth (when advertised and supported) or fall back to PoW/general
  * registration.
@@ -166,9 +211,10 @@ async function registerDidsAtEndpoint(
   ctx: RegistrationContext,
   registration: RegistrationOptions,
   dwnEndpoint: string,
+  didsToRegister: string[],
   updatedTokens: Record<string, RegistrationTokenData>,
 ): Promise<void> {
-  const { userAgent, agentDid, connectedDid } = ctx;
+  const { userAgent } = ctx;
 
   assertRegistrationActive(ctx);
   const serverInfo = await userAgent.rpc.getServerInfo(dwnEndpoint);
@@ -177,10 +223,6 @@ async function registerDidsAtEndpoint(
   if (serverInfo.registrationRequirements.length === 0) {
     return;
   }
-
-  // Deduplicate DIDs to register.
-  const didsToRegister = [agentDid, connectedDid]
-    .filter((did, i, arr): did is string => arr.indexOf(did) === i);
 
   const hasProviderAuth =
     serverInfo.registrationRequirements.includes('provider-auth-v0')

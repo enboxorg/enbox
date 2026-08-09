@@ -1,3 +1,4 @@
+import type { RegistrationOptions } from '../src/types.js';
 import type { DwnProtocolDefinition, EnboxUserAgent } from '@enbox/agent';
 
 import { describe, expect, test } from 'bun:test';
@@ -81,6 +82,7 @@ function createTestManager(
     sync?: any;
     identitySyncProtocols?: 'all' | [string, ...string[]];
     dwnEndpoints?: string[];
+    registration?: RegistrationOptions;
     initialState?: string;
   } = {},
 ): AuthManager {
@@ -106,11 +108,18 @@ function createTestManager(
   manager._defaultSync = overrides.sync;
   manager._defaultIdentitySyncProtocols = overrides.identitySyncProtocols;
   manager._defaultDwnEndpoints = overrides.dwnEndpoints;
+  manager._registration = overrides.registration;
 
   return manager as AuthManager;
 }
 
 describe('AuthManager', () => {
+  test('advertises authoritative vault recovery semantics', () => {
+    const manager = createTestManager(createMockAgent());
+
+    expect(manager.supportsAuthoritativeVaultRecovery).toBe(true);
+  });
+
   describe('property getters', () => {
     test('state returns current auth state', () => {
       const agent = createMockAgent();
@@ -227,7 +236,12 @@ describe('AuthManager', () => {
         sync           : 'off',
       });
 
-      expect(resetCalls).toEqual([{ recoveryPhrase: 'test phrase', password: 'new-password' }]);
+      expect(resetCalls).toEqual([{
+        recoveryPhrase      : 'test phrase',
+        password            : 'new-password',
+        dwnEndpoints        : ['https://enbox-dwn.fly.dev'],
+        replaceDwnEndpoints : false,
+      }]);
       expect(session.did).toBe('did:dht:testuser123');
     });
 
@@ -255,7 +269,12 @@ describe('AuthManager', () => {
         protocols      : HANDLER_PROTOCOLS,
       } as any);
 
-      expect(resetCalls).toEqual([{ recoveryPhrase: 'test phrase', password: 'new-password' }]);
+      expect(resetCalls).toEqual([{
+        recoveryPhrase      : 'test phrase',
+        password            : 'new-password',
+        dwnEndpoints        : ['https://enbox-dwn.fly.dev'],
+        replaceDwnEndpoints : false,
+      }]);
       expect(session.did).toBe('did:dht:testuser123');
     });
   });
@@ -376,7 +395,12 @@ describe('AuthManager', () => {
         sync           : 'off',
       });
 
-      expect(resetCalls).toEqual([{ recoveryPhrase: 'test phrase', password: 'new-password' }]);
+      expect(resetCalls).toEqual([{
+        recoveryPhrase      : 'test phrase',
+        password            : 'new-password',
+        dwnEndpoints        : ['https://enbox-dwn.fly.dev'],
+        replaceDwnEndpoints : false,
+      }]);
       expect(session.did).toBe('did:dht:testuser123');
     });
   });
@@ -1279,6 +1303,52 @@ describe('AuthManager', () => {
 
       expect(syncCalls).toHaveLength(0);
     });
+
+    test('fresh-resolves and tenant-registers the switched connected DID', async () => {
+      const identity = createMockIdentity({ did: { uri: 'did:dht:switched' } });
+      const refreshedDids: string[] = [];
+      const serverInfoEndpoints: string[] = [];
+      let registrationSucceeded = false;
+      const agent = createMockAgent({
+        identityGet          : async () => identity,
+        didRefreshResolution : async (didUri) => {
+          refreshedDids.push(didUri);
+          return {
+            didDocument: {
+              id      : didUri,
+              service : [{
+                id              : `${didUri}#dwn`,
+                type            : 'DecentralizedWebNode',
+                serviceEndpoint : ['https://switched.example/dwn'],
+              }],
+            },
+            didDocumentMetadata   : {},
+            didResolutionMetadata : {},
+          };
+        },
+        rpcGetServerInfo: async (endpoint) => {
+          serverInfoEndpoints.push(endpoint);
+          return {
+            registrationRequirements : [],
+            maxFileSize              : 10_000_000,
+          };
+        },
+      });
+      const manager = createTestManager(agent, {
+        sync         : 'off',
+        registration : {
+          onSuccess : () => { registrationSucceeded = true; },
+          onFailure : () => {},
+        },
+      });
+
+      const session = await manager.switchIdentity('did:dht:switched');
+
+      expect(session.did).toBe('did:dht:switched');
+      expect(refreshedDids).toEqual(['did:dht:switched']);
+      expect(serverInfoEndpoints).toEqual(['https://switched.example/dwn']);
+      expect(registrationSucceeded).toBe(true);
+    });
   });
 
   describe('deleteIdentity()', () => {
@@ -1375,7 +1445,18 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
 
       const session = await manager.importFromPortable({
-        portableIdentity: {} as any,
+        portableIdentity: {
+          portableDid: {
+            uri      : 'did:dht:testuser123',
+            document : { id: 'did:dht:testuser123' },
+            metadata : {},
+          },
+          metadata: {
+            name   : 'Imported',
+            tenant : 'did:dht:testagent',
+            uri    : 'did:dht:testuser123',
+          },
+        },
       });
 
       expect(session.did).toBe('did:dht:testuser123');

@@ -67,7 +67,6 @@ describe('recoverIdentitiesFromRemote', () => {
 
     const result = await recoverIdentitiesFromRemote({
       userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
       identitySyncProtocols : ['https://proto.example/profile'],
       storage               : new MemoryStorage(),
     });
@@ -94,9 +93,8 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     const result = await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      storage      : new MemoryStorage(),
+      userAgent : agent,
+      storage   : new MemoryStorage(),
     });
 
     expect(result).toHaveLength(1);
@@ -112,9 +110,8 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     const result = await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      storage      : new MemoryStorage(),
+      userAgent : agent,
+      storage   : new MemoryStorage(),
     });
 
     expect(result).toEqual([]);
@@ -137,7 +134,6 @@ describe('recoverIdentitiesFromRemote', () => {
 
     await recoverIdentitiesFromRemote({
       userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
       identitySyncProtocols : ['https://proto.example/profile'],
       registration          : {
         onSuccess : () => { registrationSucceeded = true; },
@@ -166,7 +162,6 @@ describe('recoverIdentitiesFromRemote', () => {
 
     await recoverIdentitiesFromRemote({
       userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
       registration : {
         onSuccess : () => { registrationMutationDepth = mutationDepth; },
         onFailure : () => {},
@@ -186,7 +181,7 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(mutationDepth).toBe(0);
   });
 
-  test('continues recovery when DWN tenant registration fails', async () => {
+  test('surfaces DWN tenant registration failure without starting identity sync', async () => {
     const identity = createMockIdentity();
     let pullCount = 0;
     const syncCalls: any[] = [];
@@ -198,20 +193,18 @@ describe('recoverIdentitiesFromRemote', () => {
       rpcGetServerInfo     : async () => { throw new Error('network error'); },
     });
 
-    const result = await recoverIdentitiesFromRemote({
+    await expect(recoverIdentitiesFromRemote({
       userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
       identitySyncProtocols : ['https://proto.example/profile'],
       registration          : {
         onSuccess : () => {},
         onFailure : () => {},
       },
       storage: new MemoryStorage(),
-    });
+    })).rejects.toThrow('network error');
 
-    expect(result).toHaveLength(1);
-    expect(syncCalls).toHaveLength(1);
-    expect(pullCount).toBe(2);
+    expect(syncCalls).toHaveLength(0);
+    expect(pullCount).toBe(1);
   });
 
   test('uses connectedDid for delegate identities', async () => {
@@ -229,7 +222,6 @@ describe('recoverIdentitiesFromRemote', () => {
 
     await recoverIdentitiesFromRemote({
       userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
       identitySyncProtocols : ['https://proto.example/profile'],
       storage               : new MemoryStorage(),
     });
@@ -249,7 +241,6 @@ describe('recoverIdentitiesFromRemote', () => {
 
     const result = await recoverIdentitiesFromRemote({
       userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
       identitySyncProtocols : ['https://proto.example/profile'],
       storage               : new MemoryStorage(),
     });
@@ -271,7 +262,6 @@ describe('recoverIdentitiesFromRemote', () => {
     await expect(
       recoverIdentitiesFromRemote({
         userAgent             : agent,
-        dwnEndpoints          : ['https://dwn.example.com'],
         identitySyncProtocols : ['https://proto.example/profile'],
         storage               : new MemoryStorage(),
       })

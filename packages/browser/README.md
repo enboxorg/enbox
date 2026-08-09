@@ -103,6 +103,22 @@ non-null after a reload). A served-but-never-evaluated worker passes every
 build. Full wiring guidance, build traps, and hosting-header pitfalls:
 [`docs/architecture/browser-dapps.md`][browser-dapps-link].
 
+DRL endpoint discovery caches successful DID resolutions for 15 minutes. If the
+DID cannot be resolved or has no usable advertised `DecentralizedWebNode`
+service, the worker returns HTTP 530 with an `application/json` body:
+
+```json
+{
+  "code": "DWN_SERVICE_MISSING",
+  "didUri": "did:dht:example",
+  "message": "DID 'did:dht:example' does not advertise a DecentralizedWebNode service."
+}
+```
+
+Branch on `code` (`DID_RESOLUTION_FAILED`, `DWN_SERVICE_MISSING`,
+`DWN_SERVICE_MALFORMED`, or `DWN_ENDPOINTS_MISSING`) rather than matching the
+human-readable message.
+
 ## Project Resources
 
 | Resource                                | Description                                                                   |

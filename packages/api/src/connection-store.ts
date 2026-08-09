@@ -37,6 +37,7 @@
  */
 
 import type { ApplicationManifest } from './application-manifest.js';
+import type { DwnEndpointResolution } from '@enbox/dids';
 import type { ReplicationCurrentness } from './replication-currentness.js';
 import type {
   AuthManagerOptions,
@@ -54,9 +55,10 @@ import type {
 import type { ReplicationLinkSnapshot, SyncConnectivityState } from '@enbox/agent';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
-import { isConnectDeniedError } from '@enbox/auth';
+import { authoredProtocolDefinitionsEqual } from '@enbox/dwn-sdk-js';
 import { omitUndefined } from '@enbox/common';
 import { resolveSyncConnectivityState } from '@enbox/agent';
+import { isConnectDeniedError, ServiceConfigProtocolDefinition } from '@enbox/auth';
 
 import { Enbox } from './enbox.js';
 import { getApplicationProtocolRequests } from './application-manifest.js';
@@ -134,6 +136,13 @@ export type ConnectionSnapshot = {
 
   /** Overall sync status for the connected identity. Cleared when the session ends. */
   sync?: SyncStatusSnapshot;
+
+  /**
+   * Resolution status of the connected identity's advertised remote DWN endpoints.
+   * This remains distinct from local-replica sync state so applications can explain why remote
+   * storage is unavailable instead of treating an empty topology as successfully synchronized.
+   */
+  remoteDwn?: DwnEndpointResolution;
 
   /**
    * Status of the delegated connect approval, for wallet-delegated sessions.
@@ -221,6 +230,7 @@ type PlainConnectionStoreOptions = ConnectionStoreSharedOptions & {
   monitor?: ConnectionMonitorOptions | false;
 
   requireHostedReadiness?: never;
+  serviceConfigWatch?: never;
 };
 
 /** Options for a connection store backed by one canonical application manifest. */
@@ -235,6 +245,13 @@ export type ApplicationConnectionStoreOptions = ConnectionStoreSharedOptions & {
 
   /** Require owner protocols to be published and verified at the hosted DWN before connecting. Defaults to `false`. */
   requireHostedReadiness?: boolean;
+
+  /**
+   * Watch replicated service-config announcements and freshly resolve the connected DID when one
+   * arrives. Defaults to `false`. The manifest must register `ServiceConfigProtocol` with the
+   * explicit read-only permission policy used by `serviceConfigProtocolRequest()`.
+   */
+  serviceConfigWatch?: boolean;
 };
 
 /** Options for {@link createConnectionStore}. */
@@ -249,9 +266,9 @@ export type ConnectionStoreOptions = PlainConnectionStoreOptions | ApplicationCo
  * disposed store, which throws synchronously as a programming error.
  *
  * While an action is in flight, additional `initialize`/`connect`/
- * `connectVault`/`refresh` calls do not start a second auth flow; they return
- * the in-flight action's resulting snapshot. `disconnect()` is exempt so it
- * can supersede (invalidate) an in-flight connect.
+ * `connectVault`/`refresh`/`refreshDwnEndpoints` calls do not start a second
+ * flow; they return the in-flight action's resulting snapshot. `disconnect()`
+ * is exempt so it can supersede (invalidate) an in-flight action.
  */
 export interface ConnectionStore {
   /**
@@ -309,6 +326,13 @@ export interface ConnectionStore {
   refresh(options: RefreshOptions): Promise<ConnectionSnapshot>;
 
   /**
+   * Force-refreshes the connected identity's DID document and republishes its advertised remote
+   * DWN status in the snapshot. Expected DID/service absence is represented by `remoteDwn`, not
+   * as an action failure.
+   */
+  refreshDwnEndpoints(): Promise<ConnectionSnapshot>;
+
+  /**
    * Signs out: stops the connection monitor, runs `AuthManager.disconnect()`
    * (grant revocation + session-marker cleanup), and resolves to a
    * `'disconnected'` snapshot. Allowed while a connect is in flight — the
@@ -347,6 +371,7 @@ const CLEARED_SESSION_FIELDS = {
   identityName             : undefined,
   session                  : undefined,
   sync                     : undefined,
+  remoteDwn                : undefined,
   walletReapprovalRequired : undefined,
 } as const;
 
@@ -358,6 +383,7 @@ const SNAPSHOT_KEYS: readonly (keyof ConnectionSnapshot)[] = [
   'identityDid',
   'identityName',
   'sync',
+  'remoteDwn',
   'connection',
   'vaultLocked',
   'walletReapprovalRequired',
@@ -366,6 +392,15 @@ const SNAPSHOT_KEYS: readonly (keyof ConnectionSnapshot)[] = [
 
 const DISPOSED_MESSAGE =
   '[@enbox/api] ConnectionStore has been disposed and cannot be reused. Create a new store with createConnectionStore().';
+
+/** Whether a manifest carries the exact least-privilege request required by the live endpoint watch. */
+function hasServiceConfigReadRequest(application: ApplicationManifest): boolean {
+  return application.protocols.some(({ permissions, protocol }): boolean => {
+    return permissions?.length === 1
+      && permissions[0] === 'read'
+      && authoredProtocolDefinitionsEqual(protocol.definition, ServiceConfigProtocolDefinition);
+  });
+}
 
 /**
  * Internal sentinel thrown when an action resumes after being superseded by a
@@ -404,6 +439,14 @@ type SyncStatusBinding = {
   unsubscribe?: () => void;
 };
 
+type QueuedConnectionEndpointStatus = {
+  auth: AuthManager;
+  connectedDid: string;
+  remoteDwn: DwnEndpointResolution;
+  sequence: number;
+  session: AuthSession;
+};
+
 /**
  * The concrete {@link ConnectionStore} returned by {@link createConnectionStore}.
  *
@@ -435,6 +478,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   private readonly _monitor: Exclude<ConnectionStoreOptions['monitor'], undefined>;
   private readonly _requireHostedReadiness: boolean;
   private readonly _restore?: RestoreSessionOptions;
+  private readonly _serviceConfigWatchEnabled: boolean;
   private readonly _listeners = new Set<ConnectionSnapshotListener>();
   private readonly _unsubscribers: (() => void)[] = [];
 
@@ -442,23 +486,39 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _ownsAuth = false;
   private _snapshot: ConnectionSnapshot = Object.freeze<ConnectionSnapshot>({ phase: 'initializing' });
   private _stopMonitor?: () => void;
+  private _stopServiceConfigWatch?: () => void;
+  private _serviceConfigWatchStarting = false;
   private _pendingAction?: Promise<ConnectionSnapshot>;
   private _pendingAuthCreation?: Promise<AuthManager>;
   private _initialized = false;
   private _disposed = false;
   private _actionGeneration = 0;
+  private _connectionEndpointEventSequence = 0;
+  private _serviceConfigWatchGeneration = 0;
   private _syncBinding?: SyncStatusBinding;
+  private readonly _queuedConnectionEndpointStatuses = new Map<AuthSession, QueuedConnectionEndpointStatus>();
 
   public constructor(options: ConnectionStoreOptions) {
-    const { application, auth, monitor, requireHostedReadiness, restore, ...authManagerOptions } = options;
+    const {
+      application, auth, monitor, requireHostedReadiness, restore, serviceConfigWatch, ...authManagerOptions
+    } = options;
     if (application?.protocols.length === 0) {
       throw new TypeError('[@enbox/api] createConnectionStore requires at least one application protocol.');
+    }
+    if (serviceConfigWatch === true && (
+      application === undefined || !hasServiceConfigReadRequest(application)
+    )) {
+      throw new TypeError(
+        '[@enbox/api] serviceConfigWatch requires an application manifest containing '
+        + '{ protocol: ServiceConfigProtocol, permissions: [\'read\'] } (serviceConfigProtocolRequest()).'
+      );
     }
     this._application = application;
     this._providedAuth = auth;
     this._monitor = monitor ?? {};
     this._requireHostedReadiness = requireHostedReadiness ?? false;
     this._restore = restore;
+    this._serviceConfigWatchEnabled = serviceConfigWatch ?? false;
     this._authManagerOptions = authManagerOptions;
   }
 
@@ -509,6 +569,14 @@ class HeadlessConnectionStore implements ConnectionStore {
     ));
   }
 
+  public refreshDwnEndpoints(): Promise<ConnectionSnapshot> {
+    this._assertNotDisposed();
+    if (this._pendingAction !== undefined) {
+      return this._pendingAction;
+    }
+    return this._track(this._runDwnEndpointRefresh());
+  }
+
   public disconnect(options?: DisconnectOptions): Promise<ConnectionSnapshot> {
     this._assertNotDisposed();
     return this._track(this._runDisconnect(options));
@@ -521,7 +589,9 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._disposed = true;
     this._actionGeneration++;
     this._stopDelegateMonitor();
+    this._stopServiceConfigWatcher();
     this._unbindSyncStatus();
+    this._queuedConnectionEndpointStatuses.clear();
 
     for (const unsubscribe of this._unsubscribers) {
       unsubscribe();
@@ -546,15 +616,25 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   /** Registers `action` as the pending action until it settles. */
   private _track(action: Promise<ConnectionSnapshot>): Promise<ConnectionSnapshot> {
-    this._pendingAction = action;
-    // Action promises never reject (failures land in the snapshot), so the
-    // derived cleanup promise cannot produce an unhandled rejection.
-    void action.finally((): void => {
-      if (this._pendingAction === action) {
+    const tracked = action.then(
+      (snapshot): ConnectionSnapshot => {
+        if (this._pendingAction !== tracked) {
+          return snapshot;
+        }
         this._pendingAction = undefined;
+        this._drainQueuedConnectionEndpointStatus();
+        return this._snapshot;
+      },
+      (cause: unknown): never => {
+        if (this._pendingAction === tracked) {
+          this._pendingAction = undefined;
+          this._drainQueuedConnectionEndpointStatus();
+        }
+        throw cause;
       }
-    });
-    return action;
+    );
+    this._pendingAction = tracked;
+    return tracked;
   }
 
   /** Single-flight entry point shared by `connect`, `connectVault`, and `refresh`. */
@@ -627,6 +707,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   private async _runDisconnect(options?: DisconnectOptions): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
     this._stopDelegateMonitor();
+    this._stopServiceConfigWatcher();
 
     try {
       // A disconnect must never resolve while a manager it did not clear can
@@ -649,6 +730,31 @@ class HeadlessConnectionStore implements ConnectionStore {
         return this._settleSuperseded();
       }
       return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
+    } catch (cause: unknown) {
+      if (this._isStale(generation)) {
+        return this._settleSuperseded();
+      }
+      return this._applyActionFailure(generation, cause);
+    }
+  }
+
+  private async _runDwnEndpointRefresh(): Promise<ConnectionSnapshot> {
+    const generation = ++this._actionGeneration;
+    this._apply({ error: undefined });
+
+    try {
+      const { enbox, session } = this._snapshot;
+      if (enbox === undefined || !isActiveAuthSession(session)) {
+        throw new Error('[@enbox/api] ConnectionStore.refreshDwnEndpoints requires an active session.');
+      }
+
+      const remoteDwn = await enbox.refreshDwnEndpointStatus();
+      const resolvedThroughSequence = this._connectionEndpointEventSequence;
+      if (this._isStale(generation) || this._snapshot.session !== session) {
+        return this._settleSuperseded();
+      }
+      this._discardQueuedConnectionEndpointStatusThrough(session, resolvedThroughSequence);
+      return this._apply({ remoteDwn });
     } catch (cause: unknown) {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
@@ -687,13 +793,17 @@ class HeadlessConnectionStore implements ConnectionStore {
       // Auth aborts the previous lifetime before publishing its replacement.
       // Do not expose that dead session while the replacement is readied.
       this._stopDelegateMonitor();
+      this._stopServiceConfigWatcher();
       this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'connecting' });
     }
 
     const patch = this._connectedPatch(activeSession);
-    const readinessError = this._application === undefined
-      ? undefined
-      : await this._getApplicationReadinessError(patch.enbox, this._application);
+    const [readinessError, remoteDwn] = await Promise.all([
+      this._application === undefined
+        ? Promise.resolve(undefined)
+        : this._getApplicationReadinessError(patch.enbox, this._application),
+      patch.enbox.getDwnEndpointStatus(),
+    ]);
     if (this._isStale(generation)) {
       return this._snapshot;
     }
@@ -709,8 +819,9 @@ class HeadlessConnectionStore implements ConnectionStore {
       await this._rejectUnreadySession(auth, readinessError);
     }
 
-    this._apply(patch);
+    this._apply({ ...patch, remoteDwn });
     this._restartMonitor(auth, activeSession);
+    await this._restartServiceConfigWatcher(auth, activeSession, generation);
     await this._seedConnectionStatus(auth, activeSession, generation);
     if (this._isStale(generation)) {
       return this._snapshot;
@@ -742,6 +853,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   /** Reject one unready candidate, forgetting only definitions that require fresh wallet approval. */
   private async _rejectUnreadySession(auth: AuthManager, error: Error): Promise<never> {
     this._stopDelegateMonitor();
+    this._stopServiceConfigWatcher();
     if (requiresWalletReapproval(error)) {
       // The lifetime is already aborted if cleanup fails; keep the actionable
       // readiness outcome while making the cleanup failure visible.
@@ -900,12 +1012,77 @@ class HeadlessConnectionStore implements ConnectionStore {
       auth.on('session-end', (): void => { this._onSessionChange(auth); }),
       auth.on('connection-expiring', ({ status }): void => { this._applyConnectionStatus(status); }),
       auth.on('connection-expired', ({ status }): void => { this._applyConnectionStatus(status); }),
+      auth.on('connection-endpoints-changed', ({ connectedDid, current }): void => {
+        this._applyConnectionEndpointStatus(auth, connectedDid, current);
+      }),
       auth.on('vault-locked', (): void => {
         this._unbindSyncStatus();
         this._apply({ sync: undefined, vaultLocked: true });
       }),
       auth.on('vault-unlocked', (): void => { this._apply({ vaultLocked: false }); }),
     );
+  }
+
+  /** Apply a live endpoint-status wake only to the exact session that produced it. */
+  private _applyConnectionEndpointStatus(
+    auth: AuthManager,
+    connectedDid: string,
+    remoteDwn: DwnEndpointResolution,
+  ): void {
+    if (this._disposed || this._auth !== auth) {
+      return;
+    }
+
+    const session = auth.session;
+    if (!isActiveAuthSession(session) || session.did !== connectedDid) {
+      return;
+    }
+    const sequence = ++this._connectionEndpointEventSequence;
+    if (this._pendingAction !== undefined) {
+      this._queuedConnectionEndpointStatuses.set(session, { auth, connectedDid, remoteDwn, sequence, session });
+      return;
+    }
+
+    this._applyConnectionEndpointStatusForSession({ auth, connectedDid, remoteDwn, sequence, session });
+  }
+
+  /** Apply one endpoint status only while its exact auth/session still owns the snapshot. */
+  private _applyConnectionEndpointStatusForSession({ auth, connectedDid, remoteDwn, session }:
+    QueuedConnectionEndpointStatus
+  ): void {
+    if (
+      this._disposed
+      || this._auth !== auth
+      || auth.session !== session
+      || !isActiveAuthSession(session)
+      || session.did !== connectedDid
+      || this._snapshot.phase !== 'connected'
+      || this._snapshot.session !== session
+    ) {
+      return;
+    }
+
+    this._apply({ remoteDwn });
+  }
+
+  /** Drain only the newest queued event belonging to the session an action committed. */
+  private _drainQueuedConnectionEndpointStatus(): void {
+    const session = this._snapshot.session;
+    const queued = session === undefined
+      ? undefined
+      : this._queuedConnectionEndpointStatuses.get(session);
+    this._queuedConnectionEndpointStatuses.clear();
+    if (queued !== undefined) {
+      this._applyConnectionEndpointStatusForSession(queued);
+    }
+  }
+
+  /** Discard prompts that an explicit fresh resolution completed after observing. */
+  private _discardQueuedConnectionEndpointStatusThrough(session: AuthSession, sequence: number): void {
+    const queued = this._queuedConnectionEndpointStatuses.get(session);
+    if (queued !== undefined && queued.sequence <= sequence) {
+      this._queuedConnectionEndpointStatuses.delete(session);
+    }
   }
 
   /** Reconciles a manager lifecycle wake against its authoritative active session. */
@@ -960,6 +1137,7 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   private _publishDisconnected(): ConnectionSnapshot {
     this._stopDelegateMonitor();
+    this._stopServiceConfigWatcher();
     return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
   }
 
@@ -967,6 +1145,70 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (this._stopMonitor !== undefined) {
       this._stopMonitor();
       this._stopMonitor = undefined;
+    }
+  }
+
+  /** Replace the endpoint-change watch and fence an in-flight start to this exact session. */
+  private async _restartServiceConfigWatcher(
+    auth: AuthManager,
+    session: AuthSession,
+    actionGeneration: number,
+  ): Promise<void> {
+    this._stopServiceConfigWatcher();
+    if (!this._serviceConfigWatchEnabled || session.delegateDid === undefined) {
+      return;
+    }
+
+    const watchGeneration = ++this._serviceConfigWatchGeneration;
+    this._serviceConfigWatchStarting = true;
+    let stop: () => void;
+    try {
+      stop = await auth.startServiceConfigWatch();
+    } catch (cause: unknown) {
+      if (this._serviceConfigWatchGeneration === watchGeneration) {
+        this._serviceConfigWatchStarting = false;
+      }
+      if (
+        this._isStale(actionGeneration)
+        || this._serviceConfigWatchGeneration !== watchGeneration
+        || auth.session !== session
+      ) {
+        return;
+      }
+      throw cause;
+    }
+
+    if (
+      this._isStale(actionGeneration)
+      || this._serviceConfigWatchGeneration !== watchGeneration
+      || auth.session !== session
+      || this._snapshot.session !== session
+    ) {
+      if (this._serviceConfigWatchGeneration === watchGeneration) {
+        this._serviceConfigWatchStarting = false;
+      }
+      stop();
+      return;
+    }
+    this._serviceConfigWatchStarting = false;
+    this._stopServiceConfigWatch = stop;
+  }
+
+  /** Stop or invalidate the store-owned service-config watch, including an in-flight start. */
+  private _stopServiceConfigWatcher(): void {
+    if (!this._serviceConfigWatchEnabled) {
+      return;
+    }
+
+    this._serviceConfigWatchGeneration++;
+    const stop = this._stopServiceConfigWatch;
+    const wasStarting = this._serviceConfigWatchStarting;
+    this._stopServiceConfigWatch = undefined;
+    this._serviceConfigWatchStarting = false;
+    if (stop !== undefined) {
+      stop();
+    } else if (wasStarting) {
+      this._auth?.stopServiceConfigWatch();
     }
   }
 

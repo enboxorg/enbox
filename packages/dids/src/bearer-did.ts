@@ -118,7 +118,8 @@ export class BearerDid {
    * ```
    *
    * @returns A `PortableDid` containing the URI, DID document, metadata, and optionally private
-   *          keys associated with the `BearerDid`.
+   *          keys associated with the `BearerDid`. Verification methods controlled by another
+   *          party remain in the document but do not contribute private key material.
    * @throws An error if the DID document does not contain any verification methods or the keys for
    *         any verification method are missing in the key manager.
    */
@@ -146,13 +147,35 @@ export class BearerDid {
         // Compute the key URI of the verification method's public key.
         const keyUri = await this.keyManager.getKeyUri({ key: vm.publicKeyJwk });
 
+        // A DID document can legitimately contain verification methods controlled by another
+        // party. Preserve those methods in the document without treating their absent private
+        // keys as an export failure.
+        const isLocallyControlled = await this.keyManager.getPublicKey({ keyUri })
+          .then(() => true)
+          .catch(() => false);
+        if (!isLocallyControlled) {
+          continue;
+        }
+
         // Retrieve the private key from the key manager.
-        const privateKey = await this.keyManager.exportKey({ keyUri }) as Jwk;
+        let privateKey: Jwk;
+        try {
+          privateKey = await this.keyManager.exportKey({ keyUri }) as Jwk;
+        } catch (cause: unknown) {
+          // Some key managers expose public-only verification keys alongside locally controlled
+          // private keys. Such methods are preserved in the DID document but are not portable.
+          if (!(cause instanceof Error && cause.message.includes('Key not found'))) {
+            throw cause;
+          }
+          continue;
+        }
 
         // Add the verification method to the key set.
         privateKeys.push({ ...privateKey });
       }
-      portableDid.privateKeys = privateKeys;
+      if (privateKeys.length > 0) {
+        portableDid.privateKeys = privateKeys;
+      }
     }
 
     return portableDid;
@@ -233,8 +256,8 @@ export class BearerDid {
    *                            used.
    * @returns A Promise resolving to a `BearerDid` object representing the DID formed from the
    *          provided PortableDid.
-   * @throws An error if the PortableDid document does not contain any verification methods or the
-   *         keys for any verification method are missing in the key manager.
+   * @throws An error if the PortableDid document does not contain any verification methods, a
+   *         method lacks a public JWK, or the key manager controls none of the methods.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
     keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, string, KmsExportKeyParams>;
@@ -260,8 +283,11 @@ export class BearerDid {
       }
     }
 
-    // Validate that the key material for every verification method in the DID document is present
-    // in the key manager.
+    // Validate each verification method, and require the key manager to control at least one.
+    // DID documents can contain methods controlled by other parties; those public-only methods
+    // remain authoritative document state and must not prevent importing the locally controlled DID.
+    let controlledKeyCount = 0;
+    let missingKeyCause: unknown;
     for (const vm of verificationMethods) {
       if (!vm.publicKeyJwk) {
         throw new Error(`Verification method '${vm.id}' does not contain a public key in JWK format`);
@@ -270,8 +296,16 @@ export class BearerDid {
       // Compute the key URI of the verification method's public key.
       const keyUri = await keyManager.getKeyUri({ key: vm.publicKeyJwk });
 
-      // Verify that the key is present in the key manager. If not, an error is thrown.
-      await keyManager.getPublicKey({ keyUri });
+      try {
+        await keyManager.getPublicKey({ keyUri });
+        controlledKeyCount++;
+      } catch (cause: unknown) {
+        missingKeyCause ??= cause;
+      }
+    }
+
+    if (controlledKeyCount === 0) {
+      throw missingKeyCause ?? new Error(`No locally controlled verification method found for '${portableDid.uri}'`);
     }
 
     // Use the given PortableDid to construct the BearerDid object.

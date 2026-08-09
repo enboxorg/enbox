@@ -39,7 +39,7 @@ Common options:
 | `password` | Local vault password. The default is insecure; production apps should pass one. |
 | `createIdentity` | Create a default identity when no identity exists. |
 | `recoveryPhrase` | Explicit BIP-39 vault recovery. |
-| `dwnEndpoints` | Remote DWN endpoints used for registration and sync. |
+| `dwnEndpoints` | Endpoints for newly created DIDs. On phrase recovery, a per-call value deliberately replaces the resolved DID document; configured product defaults only bootstrap a DID that does not yet exist. |
 | `sync` | Omit for live sync, pass an interval like `'30s'`, or pass `'off'`. |
 | `protocols` | Protocol scopes for handler-based connect flows. |
 | `connectHandler` | Browser/wallet connect handler. |
@@ -58,7 +58,12 @@ import { createConnectionStore } from '@enbox/api';
 
 const store = createConnectionStore({ password: userPassword });
 const unsubscribe = store.subscribe((snapshot) => {
-  console.log(snapshot.phase, snapshot.sync?.state, snapshot.sync?.connectivity);
+  console.log(
+    snapshot.phase,
+    snapshot.sync?.state,
+    snapshot.sync?.connectivity,
+    snapshot.remoteDwn?.status,
+  );
 });
 
 await store.initialize();
@@ -76,10 +81,23 @@ For registered identities, connectivity uses the sync engine's existing
 aggregation rule: any online link makes the identity online; otherwise an
 offline link makes it offline, and no links fall back to the engine-wide state.
 
-The frozen snapshot updates from existing sync events and local state without
-polling or network requests. Its reference stays stable until a field changes,
-and sync state resets on lock, disconnect, replacement, or shutdown. Call
-`unsubscribe()` when the consumer is released and `store.dispose()` at shutdown.
+`remoteDwn` separately reports `ready`, `resolution-failed`, `service-missing`,
+`service-malformed`, or `endpoints-missing`. This prevents an identity with no
+advertised remote node from being presented as successfully synchronized. Call
+`store.refreshDwnEndpoints()` to bypass the DID cache and update that field.
+
+The frozen snapshot otherwise updates from existing sync events and local state
+without polling. DID endpoint status is resolved when a session is committed and
+when an explicit or announced endpoint refresh runs. Its reference stays stable
+until a field changes, and sync/endpoint state resets on lock, disconnect,
+replacement, or shutdown. Call `unsubscribe()` when the consumer is released
+and `store.dispose()` at shutdown.
+
+For prompt endpoint changes in a delegated app, request
+`serviceConfigProtocolRequest()`, call `auth.startServiceConfigWatch()`, and
+listen for `connection-endpoints-changed`. The service-config record is only a
+notification: each event force-resolves the DID document, which remains the
+authoritative endpoint source.
 
 ## Typed Protocols
 

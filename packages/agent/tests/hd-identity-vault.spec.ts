@@ -1,10 +1,48 @@
-import type { IdentityVaultBackup } from '../src/types/identity-vault.js';
 import type { KeyValueStore } from '@enbox/common';
+import type { SinonStub } from 'sinon';
+import type { DidDocument, DidRegistrationResult, DidResolutionResult, PortableDid } from '@enbox/dids';
 
-import { HdIdentityVault } from '../src/hd-identity-vault.js';
+import type { IdentityVaultBackup, IdentityVaultBackupData } from '../src/types/identity-vault.js';
+
 import { LevelStore } from '@enbox/common/level-store';
-import { MemoryStore } from '@enbox/common';
+import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { Convert, MemoryStore } from '@enbox/common';
+import { DidDht, DidErrorCode, setDwnServiceEndpointUrls } from '@enbox/dids';
+import { HdIdentityVault, HdIdentityVaultPartialCommitError } from '../src/hd-identity-vault.js';
+
+import { deferred } from './utils/deferred.js';
+
+type PersistedVaultState = IdentityVaultBackupData & {
+  version: 1;
+  generation: number;
+};
+
+const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+
+function didNotFoundResolution(): DidResolutionResult {
+  return {
+    didDocument           : null,
+    didDocumentMetadata   : {},
+    didResolutionMetadata : { error: DidErrorCode.NotFound },
+  };
+}
+
+function successfulDidResolution(didDocument: DidDocument): DidResolutionResult {
+  return {
+    didDocument,
+    didDocumentMetadata   : { published: true, versionId: 'resolved-version' },
+    didResolutionMetadata : {},
+  };
+}
+
+function stubSuccessfulDidPublish(): SinonStub {
+  return sinon.stub(DidDht, 'publish').callsFake(async ({ did }): Promise<DidRegistrationResult> => ({
+    didDocument             : structuredClone(did.document),
+    didDocumentMetadata     : { ...did.metadata, published: true, versionId: 'published-version' },
+    didRegistrationMetadata : {},
+  }));
+}
 
 describe('HdIdentityVault', () => {
   ['MemoryStore', 'LevelStore'].forEach((vaultStoreType) => {
@@ -27,12 +65,59 @@ describe('HdIdentityVault', () => {
       });
 
       afterEach(async () => {
+        sinon.restore();
         await vaultStore.clear();
       });
 
       afterAll(async () => {
         await vaultStore.close();
       });
+
+      async function seedRecoveryVault(dwnEndpoints = ['https://original-dwn.example.com']): Promise<PortableDid> {
+        sinon.stub(DidDht, 'resolve').resolves(didNotFoundResolution());
+        stubSuccessfulDidPublish();
+        await identityVault.initialize({
+          password: 'old-password',
+          recoveryPhrase,
+          dwnEndpoints,
+        });
+        const portableDid = await (await identityVault.getDid()).export();
+        sinon.restore();
+        return portableDid;
+      }
+
+      async function replaceWithFreshVault(): Promise<void> {
+        await vaultStore.clear();
+        identityVault = new HdIdentityVault({
+          store                   : vaultStore,
+          keyDerivationWorkFactor : 1
+        });
+      }
+
+      async function getPersistedVaultState(): Promise<PersistedVaultState> {
+        const serializedState = await vaultStore.get('vaultState');
+        if (serializedState === undefined) {
+          throw new Error('Expected the atomic vault state to be persisted.');
+        }
+        return Convert.string(serializedState).toObject() as PersistedVaultState;
+      }
+
+      async function prepareRestoreScenario(): Promise<{
+        backup: IdentityVaultBackup;
+        currentPortableDid: PortableDid;
+        restoredPortableDid: PortableDid;
+      }> {
+        const restoredPortableDid = await seedRecoveryVault();
+        const backup = await identityVault.backup();
+
+        await replaceWithFreshVault();
+        stubSuccessfulDidPublish();
+        await identityVault.initialize({ password: 'current-password' });
+        const currentPortableDid = await (await identityVault.getDid()).export();
+        sinon.restore();
+
+        return { backup, currentPortableDid, restoredPortableDid };
+      }
 
       describe('backup()', () => {
         it('backs up the vault', async () => {
@@ -112,10 +197,27 @@ describe('HdIdentityVault', () => {
             expect(identityVault.isLocked()).toBe(true);
           }
         });
+
+        it('rejects blank replacement passwords without changing or locking the vault', async () => {
+          const oldPassword = 'correct-horse-battery-staple';
+          await identityVault.initialize({ password: oldPassword });
+          const previousState = await getPersistedVaultState();
+
+          for (const newPassword of ['', '   ']) {
+            await expect(identityVault.changePassword({ oldPassword, newPassword }))
+              .rejects.toThrow('password is required and cannot be blank');
+            expect(await getPersistedVaultState()).toEqual(previousState);
+            expect(identityVault.isLocked()).toBe(false);
+          }
+
+          await identityVault.lock();
+          await identityVault.unlock({ password: oldPassword });
+          expect(identityVault.isLocked()).toBe(false);
+          expect((await getPersistedVaultState()).generation).toBe(previousState.generation);
+        });
       });
 
       describe('resetPasswordWithRecoveryPhrase()', () => {
-        const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
         const otherRecoveryPhrase = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
 
         it('resets the password when the recovery phrase matches the initialized vault', async () => {
@@ -128,7 +230,8 @@ describe('HdIdentityVault', () => {
           await identityVault.lock();
           await identityVault.resetPasswordWithRecoveryPhrase({
             recoveryPhrase,
-            password: 'new-password',
+            password     : 'new-password',
+            dwnEndpoints : ['https://default-dwn.example.com'],
           });
 
           expect(identityVault.isLocked()).toBe(false);
@@ -142,13 +245,12 @@ describe('HdIdentityVault', () => {
         });
 
         it('leaves the existing vault unchanged when the recovery phrase does not match', async () => {
-          await identityVault.initialize({
-            password: 'old-password',
-            recoveryPhrase,
-          });
+          await seedRecoveryVault();
           const didBefore = (await identityVault.getDid()).uri;
 
           await identityVault.lock();
+          const resolveSpy = sinon.spy(DidDht, 'resolve');
+          const publishSpy = sinon.spy(DidDht, 'publish');
           await expect(
             identityVault.resetPasswordWithRecoveryPhrase({
               recoveryPhrase : otherRecoveryPhrase,
@@ -156,9 +258,64 @@ describe('HdIdentityVault', () => {
             })
           ).rejects.toThrow('Recovery phrase does not match');
 
+          expect(resolveSpy.called).toBe(false);
+          expect(publishSpy.called).toBe(false);
           expect(identityVault.isLocked()).toBe(true);
           await identityVault.unlock({ password: 'old-password' });
           expect((await identityVault.getDid()).uri).toBe(didBefore);
+        });
+
+        it('reconciles the resolved DID after validating a matching phrase without publishing', async () => {
+          const storedPortableDid = await seedRecoveryVault();
+          const resolvedDocument = setDwnServiceEndpointUrls({
+            didDocument : storedPortableDid.document,
+            endpoints   : ['https://resolved-dwn.example.com'],
+          });
+          resolvedDocument.service?.push({
+            id              : `${storedPortableDid.uri}#profile`,
+            type            : 'LinkedDomains',
+            serviceEndpoint : 'https://profile.example.com',
+          });
+
+          await identityVault.lock();
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves(successfulDidResolution(resolvedDocument));
+          const publishSpy = sinon.spy(DidDht, 'publish');
+          await identityVault.resetPasswordWithRecoveryPhrase({
+            recoveryPhrase,
+            password     : 'new-password',
+            dwnEndpoints : ['https://default-dwn.example.com'],
+          });
+
+          expect(resolveStub.calledOnce).toBe(true);
+          expect(publishSpy.called).toBe(false);
+          const recoveredDid = await identityVault.getDid();
+          expect(recoveredDid.document).toEqual(resolvedDocument);
+
+          await identityVault.lock();
+          await expect(identityVault.unlock({ password: 'old-password' })).rejects.toThrow('incorrect password');
+          await identityVault.unlock({ password: 'new-password' });
+          expect((await identityVault.getDid()).document).toEqual(resolvedDocument);
+        });
+
+        it('uses bootstrap endpoints only after a matching phrase resolves to notFound', async () => {
+          await seedRecoveryVault();
+          await identityVault.lock();
+
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves(didNotFoundResolution());
+          const publishStub = stubSuccessfulDidPublish();
+          await identityVault.resetPasswordWithRecoveryPhrase({
+            recoveryPhrase,
+            password     : 'new-password',
+            dwnEndpoints : ['https://bootstrap-dwn.example.com'],
+          });
+
+          expect(resolveStub.calledBefore(publishStub)).toBe(true);
+          expect(publishStub.calledOnce).toBe(true);
+          expect(publishStub.firstCall.args[0].did.document.service).toContainEqual({
+            id              : `${(await identityVault.getDid()).uri}#dwn`,
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : ['https://bootstrap-dwn.example.com'],
+          });
         });
 
         it('throws an error if the vault is not initialized', async () => {
@@ -178,15 +335,8 @@ describe('HdIdentityVault', () => {
         });
 
         it('returns initialized=true after initialization', async () => {
-          // Mock initialization having been completed.
-          await vaultStore.set(
-            'vaultStatus',
-            JSON.stringify({
-              initialized : true,
-              lastBackup  : null,
-              lastRestore : null
-            })
-          );
+          stubSuccessfulDidPublish();
+          await identityVault.initialize({ password: 'secure-password' });
 
           const vaultStatus = await identityVault.getStatus();
           expect(vaultStatus.initialized).toBe(true);
@@ -231,6 +381,251 @@ describe('HdIdentityVault', () => {
       });
 
       describe('initialize()', () => {
+        it('derives the deterministic DID without publishing inside DidDht.create()', async () => {
+          const createSpy = sinon.spy(DidDht, 'create');
+          const publishStub = stubSuccessfulDidPublish();
+
+          await identityVault.initialize({ password: 'dumbbell-krakatoa-ditty' });
+
+          expect(createSpy.calledOnce).toBe(true);
+          expect(createSpy.firstCall.args[0].options?.publish).toBe(false);
+          expect(publishStub.calledOnce).toBe(true);
+        });
+
+        it.each([
+          { dwnEndpoints: [] },
+          { dwnEndpoints: ['ftp://invalid-dwn.example.com'] },
+        ])('rejects invalid explicit endpoints before publishing or initializing: $dwnEndpoints', async ({ dwnEndpoints }) => {
+          const publishSpy = sinon.spy(DidDht, 'publish');
+
+          await expect(identityVault.initialize({
+            password: 'dumbbell-krakatoa-ditty',
+            dwnEndpoints,
+          })).rejects.toThrow();
+
+          expect(publishSpy.notCalled).toBe(true);
+          expect(await identityVault.isInitialized()).toBe(false);
+        });
+
+        it('publishes bootstrap endpoints only when recovery resolution definitively returns notFound', async () => {
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves(didNotFoundResolution());
+          const publishStub = stubSuccessfulDidPublish();
+
+          await identityVault.initialize({
+            password     : 'new-password',
+            recoveryPhrase,
+            dwnEndpoints : ['https://bootstrap-dwn.example.com'],
+          });
+
+          expect(resolveStub.calledOnce).toBe(true);
+          expect(publishStub.calledOnce).toBe(true);
+          expect(resolveStub.calledBefore(publishStub)).toBe(true);
+          expect(publishStub.firstCall.args[0].did.document.service?.[0].serviceEndpoint)
+            .toEqual(['https://bootstrap-dwn.example.com']);
+        });
+
+        it('preserves the resolved document and public-only verification methods without publishing defaults', async () => {
+          const storedPortableDid = await seedRecoveryVault();
+          await replaceWithFreshVault();
+
+          const resolvedDocument = setDwnServiceEndpointUrls({
+            didDocument : storedPortableDid.document,
+            endpoints   : ['https://authoritative-dwn.example.com'],
+          });
+          resolvedDocument.verificationMethod?.push({
+            id           : `${storedPortableDid.uri}#external-public`,
+            type         : 'JsonWebKey',
+            controller   : storedPortableDid.uri,
+            publicKeyJwk : {
+              alg : 'EdDSA',
+              crv : 'Ed25519',
+              kty : 'OKP',
+              x   : 'H2XEz9RKJ7T0m7BmlyphVEdpKDFFT1WpJ9_STXKd7wY',
+            },
+          });
+          resolvedDocument.service?.push({
+            id              : `${storedPortableDid.uri}#profile`,
+            type            : 'LinkedDomains',
+            serviceEndpoint : 'https://profile.example.com',
+          });
+
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves(successfulDidResolution(resolvedDocument));
+          const publishSpy = sinon.spy(DidDht, 'publish');
+          await identityVault.initialize({
+            password     : 'restored-password',
+            recoveryPhrase,
+            dwnEndpoints : ['https://default-dwn.example.com'],
+          });
+
+          expect(resolveStub.calledOnce).toBe(true);
+          expect(publishSpy.called).toBe(false);
+          const recoveredDid = await identityVault.getDid();
+          expect(recoveredDid.document).toEqual(resolvedDocument);
+          expect(identityVault['_cachedPortableDid']?.privateKeys).toHaveLength(storedPortableDid.privateKeys?.length ?? 0);
+          const exportedDid = await recoveredDid.export();
+          expect(exportedDid.document).toEqual(resolvedDocument);
+          expect(exportedDid.privateKeys).toHaveLength(storedPortableDid.privateKeys?.length ?? 0);
+          const identitySigner = await recoveredDid.getSigner({ methodId: '0' });
+          const data = new Uint8Array([1, 2, 3]);
+          const signature = await identitySigner.sign({ data });
+          expect(await identitySigner.verify({ data, signature })).toBe(true);
+        });
+
+        it('rejects recovery when the resolved default assertion method is public-only', async () => {
+          const storedPortableDid = await seedRecoveryVault();
+          await replaceWithFreshVault();
+          const externalMethodId = `${storedPortableDid.uri}#external-public`;
+          const resolvedDocument = structuredClone(storedPortableDid.document);
+          resolvedDocument.verificationMethod?.push({
+            id           : externalMethodId,
+            type         : 'JsonWebKey',
+            controller   : 'did:example:external-controller',
+            publicKeyJwk : {
+              alg : 'EdDSA',
+              crv : 'Ed25519',
+              kty : 'OKP',
+              x   : 'H2XEz9RKJ7T0m7BmlyphVEdpKDFFT1WpJ9_STXKd7wY',
+            },
+          });
+          resolvedDocument.assertionMethod = [
+            externalMethodId,
+            ...resolvedDocument.assertionMethod ?? [],
+          ];
+          sinon.stub(DidDht, 'resolve').resolves(successfulDidResolution(resolvedDocument));
+          const publishSpy = sinon.spy(DidDht, 'publish');
+
+          await expect(identityVault.initialize({
+            password: 'restored-password',
+            recoveryPhrase,
+          })).rejects.toThrow('does not control the assertionMethod key');
+
+          expect(publishSpy.notCalled).toBe(true);
+          expect(await identityVault.isInitialized()).toBe(false);
+        });
+
+        it('merges and publishes deliberate endpoint replacements after resolution', async () => {
+          const storedPortableDid = await seedRecoveryVault();
+          await replaceWithFreshVault();
+
+          const resolvedDocument = setDwnServiceEndpointUrls({
+            didDocument : storedPortableDid.document,
+            endpoints   : ['https://old-dwn.example.com'],
+          });
+          resolvedDocument.service?.push({
+            id              : `${storedPortableDid.uri}#profile`,
+            type            : 'LinkedDomains',
+            serviceEndpoint : 'https://profile.example.com',
+          });
+          resolvedDocument.verificationMethod?.push({
+            id           : `${storedPortableDid.uri}#external-public`,
+            type         : 'JsonWebKey',
+            controller   : storedPortableDid.uri,
+            publicKeyJwk : {
+              alg : 'EdDSA',
+              crv : 'Ed25519',
+              kty : 'OKP',
+              x   : 'H2XEz9RKJ7T0m7BmlyphVEdpKDFFT1WpJ9_STXKd7wY',
+            },
+          });
+
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves(successfulDidResolution(resolvedDocument));
+          const publishStub = stubSuccessfulDidPublish();
+          await identityVault.initialize({
+            password            : 'restored-password',
+            recoveryPhrase,
+            dwnEndpoints        : ['https://replacement-dwn.example.com'],
+            replaceDwnEndpoints : true,
+          });
+
+          expect(resolveStub.calledBefore(publishStub)).toBe(true);
+          expect(publishStub.calledOnce).toBe(true);
+          const publishedDocument = publishStub.firstCall.args[0].did.document;
+          expect(publishedDocument.service).toContainEqual({
+            id              : `${storedPortableDid.uri}#dwn`,
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : ['https://replacement-dwn.example.com'],
+          });
+          expect(publishedDocument.service).toContainEqual({
+            id              : `${storedPortableDid.uri}#profile`,
+            type            : 'LinkedDomains',
+            serviceEndpoint : 'https://profile.example.com',
+          });
+          expect(publishedDocument.verificationMethod).toContainEqual({
+            id           : `${storedPortableDid.uri}#external-public`,
+            type         : 'JsonWebKey',
+            controller   : storedPortableDid.uri,
+            publicKeyJwk : {
+              alg : 'EdDSA',
+              crv : 'Ed25519',
+              kty : 'OKP',
+              x   : 'H2XEz9RKJ7T0m7BmlyphVEdpKDFFT1WpJ9_STXKd7wY',
+            },
+          });
+        });
+
+        it('rejects a resolved document whose identity key is not controlled by the recovery phrase', async () => {
+          const storedPortableDid = await seedRecoveryVault();
+          await replaceWithFreshVault();
+
+          const resolvedDocument = structuredClone(storedPortableDid.document);
+          const identityVerificationMethod = resolvedDocument.verificationMethod?.find(
+            verificationMethod => verificationMethod.id.endsWith('#0')
+          );
+          if (identityVerificationMethod === undefined) {
+            throw new Error('Expected the seeded DID to contain an identity verification method.');
+          }
+          identityVerificationMethod.publicKeyJwk = {
+            alg : 'EdDSA',
+            crv : 'Ed25519',
+            kty : 'OKP',
+            x   : 'H2XEz9RKJ7T0m7BmlyphVEdpKDFFT1WpJ9_STXKd7wY',
+          };
+
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves(successfulDidResolution(resolvedDocument));
+          const publishSpy = sinon.spy(DidDht, 'publish');
+          await expect(identityVault.initialize({
+            password: 'restored-password',
+            recoveryPhrase,
+          })).rejects.toThrow('Recovered vault key material does not control the identity key');
+
+          expect(resolveStub.calledOnce).toBe(true);
+          expect(publishSpy.called).toBe(false);
+          expect(await identityVault.isInitialized()).toBe(false);
+        });
+
+        it('stops recovery without publishing or initializing on resolver failures', async () => {
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves({
+            didDocument           : null,
+            didDocumentMetadata   : {},
+            didResolutionMetadata : { error: DidErrorCode.InternalError },
+          });
+          const publishSpy = sinon.spy(DidDht, 'publish');
+
+          await expect(identityVault.initialize({
+            password     : 'new-password',
+            recoveryPhrase,
+            dwnEndpoints : ['https://bootstrap-dwn.example.com'],
+          })).rejects.toThrow('DID resolution failed: internalError');
+
+          expect(resolveStub.calledOnce).toBe(true);
+          expect(publishSpy.called).toBe(false);
+          expect(await identityVault.isInitialized()).toBe(false);
+        });
+
+        it('stops recovery without publishing when the resolver throws', async () => {
+          const resolveStub = sinon.stub(DidDht, 'resolve').rejects(new Error('gateway unavailable'));
+          const publishSpy = sinon.spy(DidDht, 'publish');
+
+          await expect(identityVault.initialize({
+            password: 'new-password',
+            recoveryPhrase,
+          })).rejects.toThrow('DID resolution failed');
+
+          expect(resolveStub.calledOnce).toBe(true);
+          expect(publishSpy.called).toBe(false);
+          expect(await identityVault.isInitialized()).toBe(false);
+        });
+
         it('initializes and unlocks the vault', async () => {
           // Verify that the vault is not initialized and is locked.
           let vaultStatus = await identityVault.getStatus();
@@ -340,6 +735,186 @@ describe('HdIdentityVault', () => {
         });
       });
 
+      describe('atomic persistence', () => {
+        it('migrates a complete legacy vault into one authoritative state record', async () => {
+          stubSuccessfulDidPublish();
+          await identityVault.initialize({ password: 'legacy-password' });
+          const originalDidUri = (await identityVault.getDid()).uri;
+          const state = await getPersistedVaultState();
+
+          await vaultStore.clear();
+          await vaultStore.set('did', state.did);
+          await vaultStore.set('contentEncryptionKey', state.contentEncryptionKey);
+          await vaultStore.set('vaultStatus', JSON.stringify(state.status));
+
+          const migratedVault = new HdIdentityVault({
+            store                   : vaultStore,
+            keyDerivationWorkFactor : 1,
+          });
+          expect((await migratedVault.getStatus()).initialized).toBe(true);
+          expect(await getPersistedVaultState()).toEqual(state);
+          expect(await vaultStore.get('did')).toBeUndefined();
+          expect(await vaultStore.get('contentEncryptionKey')).toBeUndefined();
+          expect(await vaultStore.get('vaultStatus')).toBeUndefined();
+
+          await migratedVault.unlock({ password: 'legacy-password' });
+          expect((await migratedVault.getDid()).uri).toBe(originalDidUri);
+        });
+
+        it('serializes concurrent initialization before the check and publish side effect', async () => {
+          const publishStarted = deferred();
+          const releasePublish = deferred();
+          const publishStub = sinon.stub(DidDht, 'publish').callsFake(async ({ did }): Promise<DidRegistrationResult> => {
+            publishStarted.resolve();
+            await releasePublish.promise;
+            return {
+              didDocument             : structuredClone(did.document),
+              didDocumentMetadata     : { ...did.metadata, published: true },
+              didRegistrationMetadata : {},
+            };
+          });
+          const competingVault = new HdIdentityVault({
+            store                   : vaultStore,
+            keyDerivationWorkFactor : 1,
+          });
+
+          const firstInitialization = identityVault.initialize({ password: 'first-password' });
+          await publishStarted.promise;
+          const secondInitialization = competingVault.initialize({ password: 'second-password' });
+          const secondOutcome = secondInitialization.then(
+            (): Error | undefined => undefined,
+            (error: Error): Error => error,
+          );
+
+          await Promise.resolve();
+          expect(publishStub.callCount).toBe(1);
+
+          releasePublish.resolve();
+          await firstInitialization;
+          expect((await secondOutcome)?.message).toContain('Vault has already been initialized');
+          expect(publishStub.callCount).toBe(1);
+        });
+
+        it('does not expose partial state when the atomic initialization commit fails', async () => {
+          stubSuccessfulDidPublish();
+          const originalSet = vaultStore.set.bind(vaultStore);
+          sinon.stub(vaultStore, 'set').callsFake(async (key, value): Promise<void> => {
+            if (key === 'vaultState') {
+              throw new Error('atomic put failed');
+            }
+            await originalSet(key, value);
+          });
+
+          let commitError: unknown;
+          try {
+            await identityVault.initialize({ password: 'secure-password' });
+          } catch (error: unknown) {
+            commitError = error;
+          }
+          expect(commitError).toBeInstanceOf(HdIdentityVaultPartialCommitError);
+          expect(commitError).toMatchObject({
+            code      : 'HD_IDENTITY_VAULT_PARTIAL_COMMIT',
+            operation : 'initialize',
+            published : true,
+          });
+          expect((commitError as Error).cause).toMatchObject({ message: 'atomic put failed' });
+          expect(await vaultStore.get('vaultState')).toBeUndefined();
+          expect(await vaultStore.get('did')).toBeUndefined();
+          expect(await vaultStore.get('contentEncryptionKey')).toBeUndefined();
+          expect(await vaultStore.get('vaultStatus')).toBeUndefined();
+          expect(identityVault.isLocked()).toBe(true);
+        });
+
+        it('fences an unlocked sibling when another instance changes the password', async () => {
+          stubSuccessfulDidPublish();
+          await identityVault.initialize({ password: 'old-password' });
+          const siblingVault = new HdIdentityVault({
+            store                   : vaultStore,
+            keyDerivationWorkFactor : 1,
+          });
+          await siblingVault.unlock({ password: 'old-password' });
+
+          await identityVault.changePassword({
+            oldPassword : 'old-password',
+            newPassword : 'new-password',
+          });
+
+          await expect(siblingVault.getDid())
+            .rejects.toThrow('Vault contents changed in another context');
+          expect(siblingVault.isLocked()).toBe(true);
+          await expect(siblingVault.unlock({ password: 'old-password' }))
+            .rejects.toThrow('incorrect password');
+          await siblingVault.unlock({ password: 'new-password' });
+          expect(siblingVault.isLocked()).toBe(false);
+        });
+
+        it('serializes a competing backup behind restore and rejects its stale generation', async () => {
+          const { backup, restoredPortableDid } = await prepareRestoreScenario();
+          const competingVault = new HdIdentityVault({
+            store                   : vaultStore,
+            keyDerivationWorkFactor : 1,
+          });
+          await competingVault.unlock({ password: 'current-password' });
+          const resolutionStarted = deferred();
+          const releaseResolution = deferred();
+          sinon.stub(DidDht, 'resolve').callsFake(async (): Promise<DidResolutionResult> => {
+            resolutionStarted.resolve();
+            await releaseResolution.promise;
+            return successfulDidResolution(restoredPortableDid.document);
+          });
+
+          const restorePromise = identityVault.restore({
+            backup,
+            password: 'old-password',
+          });
+          await resolutionStarted.promise;
+
+          let backupCompleted = false;
+          const concurrentBackupOutcome = competingVault.backup().then(
+            (concurrentBackup): { backup?: IdentityVaultBackup; error?: Error } => ({ backup: concurrentBackup }),
+            (error: Error): { backup?: IdentityVaultBackup; error?: Error } => ({ error }),
+          ).finally(() => { backupCompleted = true; });
+          await Promise.resolve();
+          expect(backupCompleted).toBe(false);
+
+          releaseResolution.resolve();
+          await restorePromise;
+          const concurrentBackup = await concurrentBackupOutcome;
+          expect(concurrentBackup.backup).toBeUndefined();
+          expect(concurrentBackup.error?.message).toContain('Vault contents changed in another context');
+          expect(competingVault.isLocked()).toBe(true);
+
+          await competingVault.unlock({ password: 'old-password' });
+          const freshBackup = await competingVault.backup();
+          const backupData = Convert.base64Url(freshBackup.data).toObject() as IdentityVaultBackupData;
+          const state = await getPersistedVaultState();
+          expect(backupData.did).toBe(state.did);
+          expect(backupData.contentEncryptionKey).toBe(state.contentEncryptionKey);
+          expect(backupData.status.lastRestore).toBe(state.status.lastRestore);
+        });
+
+        it('invalidates an unlocked instance after another instance commits a new generation', async () => {
+          const portableDid = await seedRecoveryVault();
+          const staleVault = new HdIdentityVault({
+            store                   : vaultStore,
+            keyDerivationWorkFactor : 1,
+          });
+          await staleVault.unlock({ password: 'old-password' });
+          sinon.stub(DidDht, 'resolve').resolves(successfulDidResolution(portableDid.document));
+
+          await identityVault.resetPasswordWithRecoveryPhrase({
+            recoveryPhrase,
+            password: 'new-password',
+          });
+
+          await expect(staleVault.getDid())
+            .rejects.toThrow('Vault contents changed in another context');
+          expect(staleVault.isLocked()).toBe(true);
+          await staleVault.unlock({ password: 'new-password' });
+          expect((await staleVault.getDid()).uri).toBe(portableDid.uri);
+        });
+      });
+
       describe('restore()', () => {
         it('restores the vault from a backup', async () => {
           const password = 'dumbbell-krakatoa-ditty';
@@ -364,6 +939,158 @@ describe('HdIdentityVault', () => {
           expect(identityVault.isLocked()).toBe(false);
         });
 
+        it('preserves the resolved backup DID instead of applying supplied default endpoints', async () => {
+          const { backup, restoredPortableDid } = await prepareRestoreScenario();
+          const resolvedDocument = setDwnServiceEndpointUrls({
+            didDocument : restoredPortableDid.document,
+            endpoints   : ['https://authoritative-dwn.example.com'],
+          });
+          resolvedDocument.service?.push({
+            id              : `${restoredPortableDid.uri}#profile`,
+            type            : 'LinkedDomains',
+            serviceEndpoint : 'https://profile.example.com',
+          });
+          resolvedDocument.verificationMethod?.push({
+            id           : `${restoredPortableDid.uri}#external-public`,
+            type         : 'JsonWebKey',
+            controller   : restoredPortableDid.uri,
+            publicKeyJwk : {
+              alg : 'EdDSA',
+              crv : 'Ed25519',
+              kty : 'OKP',
+              x   : 'H2XEz9RKJ7T0m7BmlyphVEdpKDFFT1WpJ9_STXKd7wY',
+            },
+          });
+
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves(successfulDidResolution(resolvedDocument));
+          const publishSpy = sinon.spy(DidDht, 'publish');
+          await identityVault.restore({
+            backup,
+            password     : 'old-password',
+            dwnEndpoints : ['https://default-dwn.example.com'],
+          });
+
+          expect(resolveStub.calledOnceWith(restoredPortableDid.uri)).toBe(true);
+          expect(publishSpy.called).toBe(false);
+          expect((await identityVault.getDid()).document).toEqual(resolvedDocument);
+          expect(identityVault['_cachedPortableDid']?.privateKeys)
+            .toHaveLength(restoredPortableDid.privateKeys?.length ?? 0);
+          expect(typeof (await identityVault.getStatus()).lastRestore).toBe('string');
+        });
+
+        it('publishes a deliberate endpoint replacement after resolving the backup DID', async () => {
+          const { backup, restoredPortableDid } = await prepareRestoreScenario();
+          const resolvedDocument = setDwnServiceEndpointUrls({
+            didDocument : restoredPortableDid.document,
+            endpoints   : ['https://authoritative-dwn.example.com'],
+          });
+          resolvedDocument.service?.push({
+            id              : `${restoredPortableDid.uri}#profile`,
+            type            : 'LinkedDomains',
+            serviceEndpoint : 'https://profile.example.com',
+          });
+
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves(successfulDidResolution(resolvedDocument));
+          const publishStub = stubSuccessfulDidPublish();
+          await identityVault.restore({
+            backup,
+            password            : 'old-password',
+            dwnEndpoints        : ['https://replacement-dwn.example.com'],
+            replaceDwnEndpoints : true,
+          });
+
+          expect(resolveStub.calledBefore(publishStub)).toBe(true);
+          expect(publishStub.calledOnce).toBe(true);
+          const restoredDocument = (await identityVault.getDid()).document;
+          expect(restoredDocument.service).toContainEqual({
+            id              : `${restoredPortableDid.uri}#dwn`,
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : ['https://replacement-dwn.example.com'],
+          });
+          expect(restoredDocument.service).toContainEqual({
+            id              : `${restoredPortableDid.uri}#profile`,
+            type            : 'LinkedDomains',
+            serviceEndpoint : 'https://profile.example.com',
+          });
+        });
+
+        it('publishes bootstrap endpoints only when the backup DID definitively does not resolve', async () => {
+          const { backup, restoredPortableDid } = await prepareRestoreScenario();
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves(didNotFoundResolution());
+          const publishStub = stubSuccessfulDidPublish();
+
+          await identityVault.restore({
+            backup,
+            password     : 'old-password',
+            dwnEndpoints : ['https://bootstrap-dwn.example.com'],
+          });
+
+          expect(resolveStub.calledBefore(publishStub)).toBe(true);
+          expect(publishStub.calledOnce).toBe(true);
+          expect((await identityVault.getDid()).document.service).toContainEqual({
+            id              : `${restoredPortableDid.uri}#dwn`,
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : ['https://bootstrap-dwn.example.com'],
+          });
+        });
+
+        it('keeps the current vault fully intact when backup DID resolution fails', async () => {
+          const { backup, currentPortableDid } = await prepareRestoreScenario();
+          const previousState = await vaultStore.get('vaultState');
+          const resolveStub = sinon.stub(DidDht, 'resolve').resolves({
+            didDocument           : null,
+            didDocumentMetadata   : {},
+            didResolutionMetadata : { error: DidErrorCode.InternalError },
+          });
+          const publishSpy = sinon.spy(DidDht, 'publish');
+
+          await expect(identityVault.restore({
+            backup,
+            password: 'old-password',
+          })).rejects.toThrow('DID resolution failed: internalError');
+
+          expect(resolveStub.calledOnce).toBe(true);
+          expect(publishSpy.called).toBe(false);
+          expect(await vaultStore.get('vaultState')).toBe(previousState);
+          expect(identityVault.isLocked()).toBe(false);
+          expect((await identityVault.getDid()).uri).toBe(currentPortableDid.uri);
+        });
+
+        it('rejects an incorrect backup password before resolving or changing the current vault', async () => {
+          const { backup, currentPortableDid } = await prepareRestoreScenario();
+          const previousState = await vaultStore.get('vaultState');
+          const resolveSpy = sinon.spy(DidDht, 'resolve');
+          const publishSpy = sinon.spy(DidDht, 'publish');
+
+          await expect(identityVault.restore({
+            backup,
+            password: 'incorrect-password',
+          })).rejects.toThrow('invalid backup data or an incorrect password');
+
+          expect(resolveSpy.called).toBe(false);
+          expect(publishSpy.called).toBe(false);
+          expect(await vaultStore.get('vaultState')).toBe(previousState);
+          expect(identityVault.isLocked()).toBe(false);
+          expect((await identityVault.getDid()).uri).toBe(currentPortableDid.uri);
+        });
+
+        it('keeps the current vault fully intact when backup DID publication fails', async () => {
+          const { backup, currentPortableDid } = await prepareRestoreScenario();
+          const previousState = await vaultStore.get('vaultState');
+          sinon.stub(DidDht, 'resolve').resolves(didNotFoundResolution());
+          const publishStub = sinon.stub(DidDht, 'publish').rejects(new Error('gateway unavailable'));
+
+          await expect(identityVault.restore({
+            backup,
+            password: 'old-password',
+          })).rejects.toThrow('gateway unavailable');
+
+          expect(publishStub.calledOnce).toBe(true);
+          expect(await vaultStore.get('vaultState')).toBe(previousState);
+          expect(identityVault.isLocked()).toBe(false);
+          expect((await identityVault.getDid()).uri).toBe(currentPortableDid.uri);
+        });
+
         it('reverts to the previous vault contents if conversion of backup data fails', async () => {
           const backup: IdentityVaultBackup = {
             data        : 'invalid-backup-data',
@@ -377,9 +1104,7 @@ describe('HdIdentityVault', () => {
           await identityVault.initialize({ password });
 
           // Mock the initial vault state
-          const previousStatus = await vaultStore.get('vaultStatus');
-          const previousContentEncryptionKey = await vaultStore.get('contentEncryptionKey');
-          const previousDid = await vaultStore.get('did');
+          const previousState = await vaultStore.get('vaultState');
 
           try {
             await identityVault.restore({ backup, password });
@@ -388,13 +1113,7 @@ describe('HdIdentityVault', () => {
             expect(error.message).toContain('invalid backup data or an incorrect password');
 
             // Verify that the vault contents are unchanged
-            const currentStatus = await vaultStore.get('vaultStatus');
-            const currentContentEncryptionKey = await vaultStore.get('contentEncryptionKey');
-            const currentDid = await vaultStore.get('did');
-
-            expect(currentStatus).toEqual(previousStatus);
-            expect(currentContentEncryptionKey).toBe(previousContentEncryptionKey);
-            expect(currentDid).toBe(previousDid);
+            expect(await vaultStore.get('vaultState')).toBe(previousState);
           }
         });
 
@@ -415,32 +1134,12 @@ describe('HdIdentityVault', () => {
           };
           const password = 'test-password';
 
-          try {
-            vaultStore.delete('vaultStatus');
-            await identityVault.restore({ backup, password });
-            throw new Error('Expected an error to be thrown.');
-          } catch (error: any) {
-            expect(error.message).toContain('restore operation cannot proceed');
-            expect(error.message).toContain('vault contents are missing or inaccessible');
-          }
+          await expect(identityVault.restore({ backup, password }))
+            .rejects.toThrow('vault contents are missing or inaccessible');
 
-          try {
-            vaultStore.delete('did');
-            await identityVault.restore({ backup, password });
-            throw new Error('Expected an error to be thrown.');
-          } catch (error: any) {
-            expect(error.message).toContain('restore operation cannot proceed');
-            expect(error.message).toContain('vault contents are missing or inaccessible');
-          }
-
-          try {
-            vaultStore.delete('contentEncryptionKey');
-            await identityVault.restore({ backup, password });
-            throw new Error('Expected an error to be thrown.');
-          } catch (error: any) {
-            expect(error.message).toContain('restore operation cannot proceed');
-            expect(error.message).toContain('vault contents are missing or inaccessible');
-          }
+          await vaultStore.set('vaultState', 'invalid-vault-state');
+          await expect(identityVault.restore({ backup, password }))
+            .rejects.toThrow('vault contents are missing or inaccessible');
         });
       });
 
@@ -520,18 +1219,21 @@ describe('HdIdentityVault', () => {
           }
         });
 
-        it('throws an error if the content encryption key data is missing', async () => {
+        it('throws an error if the atomic vault state is malformed', async () => {
           // Initialize the vault.
           await identityVault.initialize({ password: 'dumbbell-krakatoa-ditty' });
 
-          // Remove the content encryption key data.
-          await vaultStore.delete('contentEncryptionKey');
+          const state = await getPersistedVaultState();
+          await vaultStore.set('vaultState', JSON.stringify({
+            ...state,
+            contentEncryptionKey: '',
+          }));
 
           try {
             await identityVault.unlock({ password: 'dumbbell-krakatoa-ditty' });
             throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).toContain('Unable to retrieve the Content Encryption Key');
+            expect(error.message).toContain('Invalid vault state object');
           }
         });
       });

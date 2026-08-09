@@ -2,7 +2,7 @@ import type { JwkParamsOkpPublic } from '@enbox/crypto';
 import type { Dwn, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
-import { DidDht } from '@enbox/dids';
+import { BearerDid, DidDht, DwnEndpointResolutionErrorCode } from '@enbox/dids';
 import {
   ContentEncryptionAlgorithm,
   DataStream,
@@ -223,17 +223,18 @@ describe('AgentDwnApi', () => {
         agent            : testHarness.agent,
         localDwnEndpoint : 'http://127.0.0.1:55557',
       });
-      const fetchDefinition = sinon.stub(dwnApi as any, 'fetchRemoteProtocolDefinition');
+      const sendDwnRpcRequest = sinon.stub(dwnApi as any, 'sendDwnRpcRequest');
       const protocol = 'https://uninstalled-protocol.example';
       const targetDid = 'did:example:alice';
 
-      fetchDefinition.onFirstCall().rejects(
-        new RemoteProtocolDefinitionError('Protocol is not installed', 'not-found')
-      );
+      sendDwnRpcRequest.onFirstCall().resolves({
+        entries : [],
+        status  : { code: 200, detail: 'OK' },
+      });
       expect(await dwnApi['getProtocolDefinition'](targetDid, protocol)).toBeUndefined();
 
       const unrelatedError = new Error('Unrelated upstream 404');
-      fetchDefinition.onSecondCall().rejects(unrelatedError);
+      sendDwnRpcRequest.onSecondCall().rejects(unrelatedError);
       await expect(dwnApi['getProtocolDefinition'](targetDid, protocol)).rejects.toBe(unrelatedError);
     });
 
@@ -707,14 +708,18 @@ describe('AgentDwnApi', () => {
   describe('getDwnEndpointUrlsForTarget()', () => {
     const localDid = 'did:jwk:local';
 
-    function createDerefResult(did: string, serviceEndpoint: string | string[]): object {
+    function createResolveResult(did: string, serviceEndpoint: string | string[]): object {
       return {
-        dereferencingMetadata : {},
-        contentStream         : {
-          id              : `${did}#dwn`,
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : serviceEndpoint,
+        didDocument: {
+          id      : did,
+          service : [{
+            id   : `${did}#dwn`,
+            type : 'DecentralizedWebNode',
+            serviceEndpoint,
+          }],
         },
+        didDocumentMetadata   : {},
+        didResolutionMetadata : {},
       };
     }
 
@@ -722,7 +727,7 @@ describe('AgentDwnApi', () => {
       return {
         agentDid : { uri: 'did:jwk:agent' },
         did      : {
-          dereference: sinon.stub().resolves(createDerefResult(localDid, 'https://remote.example')),
+          resolve: sinon.stub().resolves(createResolveResult(localDid, 'https://remote.example')),
         },
         identity: {
           list: sinon.stub().resolves([
@@ -735,9 +740,9 @@ describe('AgentDwnApi', () => {
       };
     }
 
-    it('should use the local DWN endpoint if available even when DID #dwn dereference fails', async () => {
+    it('should use the local DWN endpoint if available even when DID resolution fails', async () => {
       const mockAgent = createMockAgent();
-      mockAgent.did.dereference.rejects(new Error('DID dereference failed'));
+      mockAgent.did.resolve.rejects(new Error('DID resolution failed'));
       mockAgent.rpc.getServerInfo.resolves({ server: '@enbox/dwn-server' });
 
       const dwnApi = new AgentDwnApi({
@@ -752,7 +757,7 @@ describe('AgentDwnApi', () => {
       const endpoints = await dwnApi.getDwnEndpointUrlsForTarget(localDid);
 
       expect(endpoints).toEqual(['http://127.0.0.1:3000']);
-      expect(mockAgent.did.dereference.callCount).toBe(1);
+      expect(mockAgent.did.resolve.callCount).toBe(1);
     });
 
     it('should throw when strategy is only and local DWN is unavailable', async () => {
@@ -766,7 +771,7 @@ describe('AgentDwnApi', () => {
 
       await expect(dwnApi.getDwnEndpointUrlsForTarget(localDid))
         .rejects.toThrow(`Local DWN strategy is 'only'`);
-      expect(mockAgent.did.dereference.callCount).toBe(0);
+      expect(mockAgent.did.resolve.callCount).toBe(0);
     });
 
     it('should return DID endpoints and skip local probing when strategy is off', async () => {
@@ -782,13 +787,13 @@ describe('AgentDwnApi', () => {
 
       expect(endpoints).toEqual(['https://remote.example']);
       expect(mockAgent.rpc.getServerInfo.callCount).toBe(0);
-      expect(mockAgent.did.dereference.callCount).toBe(1);
+      expect(mockAgent.did.resolve.callCount).toBe(1);
     });
 
     it('should prepend local endpoint ahead of DID endpoints when strategy is prefer', async () => {
       const mockAgent = createMockAgent();
-      mockAgent.did.dereference.resolves(
-        createDerefResult(localDid, ['https://remote-a.example', 'https://remote-b.example'])
+      mockAgent.did.resolve.resolves(
+        createResolveResult(localDid, ['https://remote-a.example', 'https://remote-b.example'])
       );
       mockAgent.rpc.getServerInfo.resolves({ server: '@enbox/dwn-server' });
 
@@ -808,7 +813,7 @@ describe('AgentDwnApi', () => {
         'https://remote-a.example',
         'https://remote-b.example',
       ]);
-      expect(mockAgent.did.dereference.callCount).toBe(1);
+      expect(mockAgent.did.resolve.callCount).toBe(1);
     });
 
     it('should skip local probing for a DID not managed by this agent', async () => {
@@ -828,7 +833,55 @@ describe('AgentDwnApi', () => {
       expect(endpoints).toEqual(['https://remote.example']);
       // No localhost probing should have occurred for an unmanaged DID.
       expect(mockAgent.rpc.getServerInfo.callCount).toBe(0);
-      expect(mockAgent.did.dereference.callCount).toBe(1);
+      expect(mockAgent.did.resolve.callCount).toBe(1);
+    });
+
+    it('should adopt a newly managed connected DID after topology invalidation', async () => {
+      const mockAgent = createMockAgent();
+      mockAgent.identity.list.resolves([]);
+      mockAgent.rpc.getServerInfo.resolves({ server: '@enbox/dwn-server' });
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        dwn              : {} as Dwn,
+        localDwnStrategy : 'prefer',
+      });
+      await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:3000');
+
+      await expect(dwnApi.getDwnEndpointUrlsForTarget(localDid))
+        .resolves.toEqual(['https://remote.example']);
+
+      mockAgent.identity.list.resolves([{
+        did      : { uri: 'did:jwk:delegate' },
+        metadata : { connectedDid: localDid },
+      }]);
+      dwnApi.invalidateLocalManagedDidCache();
+
+      await expect(dwnApi.getDwnEndpointUrlsForTarget(localDid)).resolves.toEqual([
+        'http://127.0.0.1:3000',
+        'https://remote.example',
+      ]);
+    });
+
+    it('should stop treating a deleted identity as locally managed after topology invalidation', async () => {
+      const mockAgent = createMockAgent();
+      mockAgent.rpc.getServerInfo.resolves({ server: '@enbox/dwn-server' });
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        dwn              : {} as Dwn,
+        localDwnStrategy : 'prefer',
+      });
+      await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:3000');
+
+      await expect(dwnApi.getDwnEndpointUrlsForTarget(localDid)).resolves.toEqual([
+        'http://127.0.0.1:3000',
+        'https://remote.example',
+      ]);
+
+      mockAgent.identity.list.resolves([]);
+      dwnApi.invalidateLocalManagedDidCache();
+
+      await expect(dwnApi.getDwnEndpointUrlsForTarget(localDid))
+        .resolves.toEqual(['https://remote.example']);
     });
   });
 
@@ -1993,13 +2046,14 @@ describe('AgentDwnApi', () => {
         }
       };
 
+      // Portable identity import treats resolution as authoritative. Publish the fixture first so
+      // the relay document and supplied private keys describe the same verification methods.
+      const authoritativeDid = await BearerDid.import({ portableDid: testPortableIdentity.portableDid });
+      await DidDht.publish({ did: authoritativeDid });
+
       alice = await testHarness.agent.identity.import({
         portableIdentity: testPortableIdentity
       });
-
-      // Ensure the DID is published to the DHT. This step is necessary while the DHT Gateways
-      // operated by TBD are regularly restarted and DIDs are no longer persisted.
-      await DidDht.publish({ did: alice.did });
 
       // Install free-for-all protocol locally and on remote DWN.
       await installFreeForAll(testHarness, alice.did.uri);
@@ -2674,15 +2728,18 @@ describe('AgentDwnApi', () => {
 
     it('should use a secure (wss) transport when the dwnUrl is also secure (https)', async () => {
 
-      // mock the dereference method to return a DWN service endpoint that is secure (https)
-      sinon.stub(testHarness.agent.did, 'dereference').resolves({
-        dereferencingMetadata : {},
-        contentMetadata       : {},
-        contentStream         : {
-          id              : '#dwn',
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : ['https://localhost'], // secure endpoint
-        }
+      // mock DID resolution to return a DWN service endpoint that is secure (https)
+      sinon.stub(testHarness.agent.did, 'resolve').resolves({
+        didDocument: {
+          id      : alice.did.uri,
+          service : [{
+            id              : `${alice.did.uri}#dwn`,
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : ['https://localhost'], // secure endpoint
+          }],
+        },
+        didDocumentMetadata   : {},
+        didResolutionMetadata : {},
       });
 
       // stub the serverInfo to return true for `webSocketSupport`
@@ -2720,15 +2777,18 @@ describe('AgentDwnApi', () => {
 
     it('should use a non-secure (ws) transport when the dwnUrl is also non-secure (http)', async () => {
 
-      // mock the dereference method to return a DWN service endpoint that is insecure (http)
-      sinon.stub(testHarness.agent.did, 'dereference').resolves({
-        dereferencingMetadata : {},
-        contentMetadata       : {},
-        contentStream         : {
-          id              : '#dwn',
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : ['http://localhost'], // insecure endpoint
-        }
+      // mock DID resolution to return a DWN service endpoint that is insecure (http)
+      sinon.stub(testHarness.agent.did, 'resolve').resolves({
+        didDocument: {
+          id      : alice.did.uri,
+          service : [{
+            id              : `${alice.did.uri}#dwn`,
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : ['http://localhost'], // insecure endpoint
+          }],
+        },
+        didDocumentMetadata   : {},
+        didResolutionMetadata : {},
       });
 
       // stub the serverInfo to return true for `webSocketSupport`
@@ -2858,7 +2918,7 @@ describe('AgentDwnApi', () => {
         throw new Error('Expected an error to be thrown');
 
       } catch (error: any) {
-        expect(error.message).toContain('Failed to dereference');
+        expect(error).toMatchObject({ code: DwnEndpointResolutionErrorCode.ServiceMissing });
       }
     });
 
@@ -3137,7 +3197,9 @@ describe('Encryption Callback Factories', () => {
 
       // Stub sendDwnRpcRequest to route to the local DWN instead of making a remote call.
       const dwnApi = testHarness.agent.dwn;
-      sinon.stub(dwnApi as any, 'sendDwnRpcRequest')
+      const mixedEndpoints = sinon.stub(dwnApi, 'getDwnEndpointUrlsForTarget').resolves(['http://localhost:3000']);
+      const remoteEndpoints = sinon.stub(dwnApi, 'getRemoteDwnEndpointUrls').resolves(['https://hosted.example']);
+      const sendDwnRpcRequest = sinon.stub(dwnApi as any, 'sendDwnRpcRequest')
         .callsFake(async (params: any): Promise<any> => {
           return dwnApi['_dwn'].processMessage(params.targetDid, params.message);
         });
@@ -3149,6 +3211,9 @@ describe('Encryption Callback Factories', () => {
 
       expect(def).toBeDefined();
       expect(def.protocol).toBe(emailProtocolDefinition.protocol);
+      expect(remoteEndpoints.calledOnceWithExactly(alice.did.uri)).toBe(true);
+      expect(mixedEndpoints.notCalled).toBe(true);
+      expect(sendDwnRpcRequest.firstCall.args[0].dwnEndpointUrls).toEqual(['https://hosted.example']);
     });
   });
 

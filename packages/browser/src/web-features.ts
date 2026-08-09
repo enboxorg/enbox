@@ -4,9 +4,16 @@
   so take care to gate additions to only activate code in the right env, such as a Service Worker scope or page window.
 */
 
-import type { DidMethodResolver } from '@enbox/dids';
+import type { DidMethodResolver, DwnEndpointResolutionErrorCode } from '@enbox/dids';
 
-import { DidDht, DidWeb, UniversalResolver } from '@enbox/dids';
+import {
+  DidDht,
+  DidResolverCacheMemory,
+  DidWeb,
+  isDwnEndpointResolutionError,
+  resolveDwnServiceEndpointUrls,
+  UniversalResolver,
+} from '@enbox/dids';
 
 /**
  * Result returned by the `onCacheCheck` callback.
@@ -15,6 +22,13 @@ import { DidDht, DidWeb, UniversalResolver } from '@enbox/dids';
 export type CacheCheckResult = {
   /** Time-to-live for the cached DRL response, in milliseconds. */
   ttl?: number;
+};
+
+/** JSON body returned with HTTP 530 when a DRL target has no resolvable advertised DWN. */
+export type DrlEndpointResolutionErrorResponse = {
+  code: DwnEndpointResolutionErrorCode;
+  didUri: string;
+  message: string;
 };
 
 /**
@@ -62,7 +76,14 @@ interface DrlMediaElement extends HTMLElement {
   __src__?: string;
 }
 
-let didResolver = new UniversalResolver({ didResolvers: [DidDht, DidWeb] });
+function createDidResolver(didResolvers: DidMethodResolver[]): UniversalResolver {
+  return new UniversalResolver({
+    didResolvers,
+    cache: new DidResolverCacheMemory({ ttl: '15m' }),
+  });
+}
+
+let didResolver = createDidResolver([DidDht, DidWeb]);
 
 import { parseDrlUrl } from './drl-url-parser.js';
 export { parseDrlUrl } from './drl-url-parser.js';
@@ -73,14 +94,7 @@ const DRL_CACHE_NAME = 'drl';
 
 /** @internal Exported for testing. Resolves DWN service endpoints from a DID. */
 export async function getDwnEndpoints(did: string): Promise<string[]> {
-  const { didDocument } = await didResolver.resolve(did);
-  const endpoints = didDocument?.service?.find(
-    (service) => service.type === 'DecentralizedWebNode'
-  )?.serviceEndpoint;
-  if (!endpoints) {return [];}
-  return (Array.isArray(endpoints) ? endpoints : [endpoints]).filter(
-    (url) => typeof url === 'string' && url.startsWith('http')
-  );
+  return resolveDwnServiceEndpointUrls(did, didResolver);
 }
 
 /** Returns an open DRL cache, or `undefined` if the Cache API is unavailable. */
@@ -137,12 +151,23 @@ export async function fetchResource(
   event: FetchEvent, did: string, drl: string, path: string,
   responseCache: Cache | undefined, options?: ActivatePolyfillsOptions
 ): Promise<Response> {
-  const endpoints = await getDwnEndpoints(did);
-  if (!endpoints?.length) {
-    throw new Response(
-      'DWeb Node resolution failed: no valid endpoints found.',
-      { status: 530 }
-    );
+  let endpoints: string[];
+  try {
+    endpoints = await getDwnEndpoints(did);
+  } catch (error: unknown) {
+    if (!isDwnEndpointResolutionError(error)) {
+      throw error;
+    }
+
+    const body: DrlEndpointResolutionErrorResponse = {
+      code    : error.code,
+      didUri  : error.didUri,
+      message : error.message,
+    };
+    throw new Response(JSON.stringify(body), {
+      status  : 530,
+      headers : { 'Content-Type': 'application/json' },
+    });
   }
   let lastError: Response | undefined;
   for (const endpoint of endpoints) {
@@ -585,7 +610,7 @@ async function resetContextMenuTarget(e?: Event): Promise<void> {
  */
 export function activatePolyfills(options: ActivatePolyfillsOptions = {}): void {
   if (options.didResolvers) {
-    didResolver = new UniversalResolver({ didResolvers: options.didResolvers });
+    didResolver = createDidResolver(options.didResolvers);
   }
   if (options.serviceWorker !== false) {
     installWorker(options);

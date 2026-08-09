@@ -15,8 +15,8 @@
  */
 
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
-import type { PortableDid } from '@enbox/dids';
 import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry, SyncIdentityOptions } from '@enbox/agent';
+import type { DidResolutionResult, PortableDid } from '@enbox/dids';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
@@ -24,6 +24,12 @@ import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOp
 
 import { Convert } from '@enbox/common';
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import {
+  DwnEndpointResolutionErrorCode,
+  isDwnEndpointResolutionError,
+  resolveDwnServiceEndpointUrls,
+  validateDwnServiceEndpointUrls,
+} from '@enbox/dids';
 import { DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
 
 import { AuthSession } from '../identity-session.js';
@@ -159,6 +165,7 @@ export async function ensureVaultReady(params: {
   isFirstLaunch: boolean;
   recoveryPhrase?: string;
   dwnEndpoints?: string[];
+  replaceDwnEndpoints?: boolean;
 }): Promise<string | undefined> {
   const { userAgent, emitter, password, isFirstLaunch } = params;
   let recoveryPhrase: string | undefined;
@@ -166,14 +173,17 @@ export async function ensureVaultReady(params: {
   if (isFirstLaunch) {
     recoveryPhrase = await userAgent.initialize({
       password,
-      recoveryPhrase : params.recoveryPhrase,
-      dwnEndpoints   : params.dwnEndpoints,
+      recoveryPhrase      : params.recoveryPhrase,
+      dwnEndpoints        : params.dwnEndpoints,
+      replaceDwnEndpoints : params.replaceDwnEndpoints,
     });
   } else if (params.recoveryPhrase) {
     try {
       await userAgent.vault.resetPasswordWithRecoveryPhrase({
-        recoveryPhrase: params.recoveryPhrase,
+        recoveryPhrase      : params.recoveryPhrase,
         password,
+        dwnEndpoints        : params.dwnEndpoints,
+        replaceDwnEndpoints : params.replaceDwnEndpoints,
       });
     } catch (error) {
       if (error instanceof HdIdentityVaultRecoveryPhraseMismatchError) {
@@ -240,6 +250,66 @@ export async function startSyncIfEnabled(
   await userAgent.sync.startSync(resolveSyncOption(sync));
 }
 
+/**
+ * Force an authoritative endpoint refresh before a connection flow starts using a DID remotely.
+ *
+ * A DID without a usable DWN service is still a valid local-only identity. When no remote feature
+ * is required, expected service-shape errors are left for the application-facing endpoint status
+ * API to report instead of aborting the auth flow. Resolver failures remain fatal because the
+ * imported or persisted DID document cannot be established as current.
+ */
+export async function refreshDwnEndpointsForConnection(params: {
+  userAgent: EnboxUserAgent;
+  didUri: string;
+  required: boolean;
+}): Promise<string[] | undefined> {
+  const refreshed = await refreshDwnRoutingForConnection(params);
+  return refreshed.dwnEndpoints;
+}
+
+/** The authoritative resolution result and any usable DWN endpoints it advertises. */
+export type RefreshedDwnRouting = {
+  resolution: DidResolutionResult;
+  dwnEndpoints?: string[];
+};
+
+/** Force endpoint discovery while retaining the authoritative document for import reconciliation. */
+export async function refreshDwnRoutingForConnection(params: {
+  userAgent: EnboxUserAgent;
+  didUri: string;
+  required: boolean;
+}): Promise<RefreshedDwnRouting> {
+  let resolution: DidResolutionResult | undefined;
+  try {
+    const dwnEndpoints = await resolveDwnServiceEndpointUrls(params.didUri, {
+      resolve: async (): Promise<DidResolutionResult> => {
+        resolution = await params.userAgent.did.refreshResolution(params.didUri);
+        if (resolution.didResolutionMetadata.error === undefined && resolution.didDocument !== null) {
+          params.userAgent.sync.invalidateSyncTargets();
+        }
+        return resolution;
+      },
+    });
+    if (resolution === undefined) {
+      throw new Error(`[@enbox/auth] DID resolver returned no result for '${params.didUri}'.`);
+    }
+    return { resolution, dwnEndpoints };
+  } catch (error: unknown) {
+    if (
+      !params.required
+      && isDwnEndpointResolutionError(error)
+      && error.code !== DwnEndpointResolutionErrorCode.DidResolutionFailed
+    ) {
+      if (resolution === undefined) {
+        throw new Error(`[@enbox/auth] DID resolver returned no result for '${params.didUri}'.`);
+      }
+      return { resolution };
+    }
+
+    throw error;
+  }
+}
+
 // ─── createDefaultIdentity ──────────────────────────────────────
 
 /**
@@ -256,6 +326,11 @@ export async function createDefaultIdentity(
   dwnEndpoints: string[] = DEFAULT_DWN_ENDPOINTS,
   name = 'Default',
 ): Promise<BearerIdentity> {
+  const normalizedDwnEndpoints = validateDwnServiceEndpointUrls({
+    didUri    : 'new did:dht identity',
+    endpoints : dwnEndpoints,
+  });
+
   return userAgent.identity.create({
     didMethod  : 'dht',
     metadata   : { name },
@@ -264,7 +339,7 @@ export async function createDefaultIdentity(
         {
           id              : 'dwn',
           type            : 'DecentralizedWebNode',
-          serviceEndpoint : dwnEndpoints,
+          serviceEndpoint : normalizedDwnEndpoints,
         }
       ],
       verificationMethods: [

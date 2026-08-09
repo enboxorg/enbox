@@ -131,6 +131,7 @@ export async function getProtocolDefinition(
  * @param getDwnEndpointUrls - Callback to resolve DWN endpoint URLs (with local discovery)
  * @param sendDwnRpcRequest - Callback to send the RPC query
  * @param cache - The shared protocol definition cache
+ * @param cacheNamespace - Cache namespace separating paired-local and advertised-remote definitions
  * @returns The protocol definition
  * @throws If the protocol cannot be fetched
  */
@@ -140,8 +141,9 @@ export async function fetchRemoteProtocolDefinition(
   getDwnEndpointUrls: GetDwnEndpointUrlsFn,
   sendDwnRpcRequest: SendDwnRpcRequestFn,
   cache: TtlCache<string, ProtocolDefinition>,
+  cacheNamespace = 'remote',
 ): Promise<ProtocolDefinition> {
-  const cacheKey = `remote~${targetDid}~${protocolUri}`;
+  const cacheKey = `${cacheNamespace}~${targetDid}~${protocolUri}`;
   const cached = cache.get(cacheKey);
   if (cached) { return cached; }
 

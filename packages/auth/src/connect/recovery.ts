@@ -15,6 +15,7 @@ import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter } from 
 
 import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
 
+import { refreshDwnEndpointsForConnection } from './lifecycle.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 
 type RecoveryLifecycle = {
@@ -80,35 +81,27 @@ function isAlreadyRegisteredError(error: unknown): boolean {
 async function registerRecoveredIdentityTenant(params: {
   userAgent: EnboxUserAgent;
   dwnEndpoints: string[];
-  agentDid: string;
   connectedDid: string;
   registration?: RegistrationOptions;
   storage: StorageAdapter;
 } & RecoveryLifecycle): Promise<void> {
-  const { userAgent, dwnEndpoints, agentDid, connectedDid, registration, storage, assertActive, runMutation } = params;
+  const { userAgent, dwnEndpoints, connectedDid, registration, storage, assertActive, runMutation } = params;
 
   if (registration === undefined) {
     return;
   }
 
-  try {
-    await registerWithDwnEndpoints(
-      {
-        userAgent,
-        dwnEndpoints,
-        agentDid,
-        connectedDid,
-        secretStore: userAgent.secrets,
-        storage,
-        assertActive,
-        runMutation,
-      },
-      registration,
-    );
-  } catch {
-    // Best effort — the DID may already be registered, or the
-    // endpoint may be temporarily unreachable.
-  }
+  await registerWithDwnEndpoints(
+    {
+      userAgent,
+      targets     : [{ did: connectedDid, dwnEndpoints }],
+      secretStore : userAgent.secrets,
+      storage,
+      assertActive,
+      runMutation,
+    },
+    registration,
+  );
 }
 
 async function registerRecoveredIdentityForSync(params: {
@@ -152,13 +145,11 @@ async function registerRecoveredIdentityForSync(params: {
  */
 export async function recoverIdentitiesFromRemote(params: {
   userAgent: EnboxUserAgent;
-  dwnEndpoints: string[];
   identitySyncProtocols?: IdentitySyncProtocols;
   registration?: RegistrationOptions;
   storage: StorageAdapter;
 } & RecoveryLifecycle): Promise<BearerIdentity[]> {
-  const { userAgent, dwnEndpoints, identitySyncProtocols, registration, storage } = params;
-  const agentDid = userAgent.agentDid.uri;
+  const { userAgent, identitySyncProtocols, registration, storage } = params;
 
   // Phase 1: pull identity metadata + encrypted DID keys.
   const identities = await runRecoveryMutation(params, async (): Promise<BearerIdentity[]> => {
@@ -176,20 +167,29 @@ export async function recoverIdentitiesFromRemote(params: {
   let registeredIdentityForSync = false;
   for (const identity of identities) {
     const did = identity.metadata.connectedDid ?? identity.did.uri;
+    const dwnEndpoints = await refreshDwnEndpointsForConnection({
+      userAgent,
+      didUri   : did,
+      required : registration !== undefined || identitySyncProtocols !== undefined,
+    });
 
     // Registration may wait on app-owned provider-auth UI, so it must remain
     // outside the lifecycle mutation mutex. Re-check the flow before making
     // any further local agent mutations.
-    await registerRecoveredIdentityTenant({
-      userAgent,
-      dwnEndpoints,
-      agentDid,
-      connectedDid : did,
-      registration,
-      storage,
-      assertActive : params.assertActive,
-      runMutation  : params.runMutation,
-    });
+    if (registration !== undefined) {
+      if (dwnEndpoints === undefined) {
+        throw new Error(`[@enbox/auth] No DWN endpoints are available for registration of '${did}'.`);
+      }
+      await registerRecoveredIdentityTenant({
+        userAgent,
+        dwnEndpoints,
+        connectedDid : did,
+        registration,
+        storage,
+        assertActive : params.assertActive,
+        runMutation  : params.runMutation,
+      });
+    }
     assertRecoveryActive(params);
     registeredIdentityForSync = await runRecoveryMutation(
       params,

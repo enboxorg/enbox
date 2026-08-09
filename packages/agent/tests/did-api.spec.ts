@@ -1,5 +1,6 @@
 import sinon from 'sinon';
 
+import { Ed25519 } from '@enbox/crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import type { BearerDid, PortableDid } from '@enbox/dids';
 import { DidDht, DidJwk } from '@enbox/dids';
@@ -89,6 +90,21 @@ describe('AgentDidApi', () => {
           expect(did).toHaveProperty('uri');
           expect(did).toHaveProperty('document');
           expect(did).toHaveProperty('metadata');
+        });
+
+        it('does not seed resolver routing when durable creation storage fails', async () => {
+          const did = await DidJwk.create();
+          sinon.stub(DidJwk, 'create').resolves(did);
+          sinon.stub(testHarness.agent.did['_store'], 'set').rejects(new Error('disk unavailable'));
+
+          await expect(testHarness.agent.did.create({
+            method : 'jwk',
+            tenant : testHarness.agent.agentDid.uri,
+          })).rejects.toThrow('disk unavailable');
+
+          const resolve = sinon.spy(DidJwk, 'resolve');
+          await testHarness.agent.did.resolve(did.uri);
+          expect(resolve.calledOnce).toBe(true);
         });
 
         it('supports DID DHT', async () => {
@@ -251,6 +267,166 @@ describe('AgentDidApi', () => {
           expect(storedDid).toBeUndefined();
         });
 
+        it('deletes only locally controlled private keys from a mixed authoritative document', async () => {
+          const tenant = testHarness.agent.agentDid.uri;
+          const did = await testHarness.agent.did.create({ method: 'jwk', tenant });
+          const portableDid = await did.export();
+          const externalDid = await DidJwk.create();
+          const externalMethod = externalDid.document.verificationMethod?.[0];
+          if (externalMethod?.publicKeyJwk === undefined) {
+            throw new Error('Expected external DID verification method with a public JWK');
+          }
+          portableDid.document = {
+            ...portableDid.document,
+            verificationMethod: [
+              ...(portableDid.document.verificationMethod ?? []),
+              externalMethod,
+            ],
+          };
+          await testHarness.agent.did.update({ portableDid, publish: false, tenant });
+
+          const localKeyUris = await Promise.all(
+            (did.document.verificationMethod ?? []).map(async (method) => {
+              return testHarness.agent.keyManager.getKeyUri({ key: method.publicKeyJwk! });
+            })
+          );
+          const externalKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: externalMethod.publicKeyJwk });
+          const deleteKey = sinon.spy(testHarness.agent.keyManager, 'deleteKey');
+
+          await testHarness.agent.did.delete({ didUri: did.uri, tenant });
+
+          for (const keyUri of localKeyUris) {
+            expect(deleteKey.calledWithExactly({ keyUri })).toBe(true);
+          }
+          expect(deleteKey.neverCalledWith({ keyUri: externalKeyUri })).toBe(true);
+          await expect(testHarness.agent.did.deleteKeys({ portableDid })).resolves.toBeUndefined();
+        });
+
+        it('continues owned-key cleanup after cache deletion fails while preserving shared and public-only keys', async () => {
+          const tenant = testHarness.agent.agentDid.uri;
+          const did = await testHarness.agent.did.create({ method: 'jwk', tenant });
+          const portableDid = await did.export();
+          const uniqueDid = await DidJwk.create();
+          const uniquePortableDid = await uniqueDid.export();
+          const externalDid = await DidJwk.create();
+          const sharedMethod = portableDid.document.verificationMethod?.[0];
+          const uniqueMethod = uniquePortableDid.document.verificationMethod?.[0];
+          const externalMethod = externalDid.document.verificationMethod?.[0];
+          const uniquePrivateKey = uniquePortableDid.privateKeys?.[0];
+          if (
+            sharedMethod?.publicKeyJwk === undefined
+            || uniqueMethod?.publicKeyJwk === undefined
+            || externalMethod?.publicKeyJwk === undefined
+            || uniquePrivateKey === undefined
+          ) {
+            throw new Error('Expected JWK verification methods and private key material');
+          }
+          portableDid.document = {
+            ...portableDid.document,
+            verificationMethod: [
+              sharedMethod,
+              uniqueMethod,
+              externalMethod,
+            ],
+          };
+          portableDid.privateKeys = [
+            ...(portableDid.privateKeys ?? []),
+            uniquePrivateKey,
+          ];
+          await testHarness.agent.did.update({ portableDid, publish: false, tenant });
+
+          const sharedOwnerDid = 'did:example:cache-failure-shared-owner';
+          await testHarness.agent.did['_store'].set({
+            id   : sharedOwnerDid,
+            data : {
+              uri      : sharedOwnerDid,
+              metadata : {},
+              document : {
+                id                 : sharedOwnerDid,
+                verificationMethod : [{
+                  ...sharedMethod,
+                  id         : `${sharedOwnerDid}#key`,
+                  controller : sharedOwnerDid,
+                }],
+              },
+            },
+            agent             : testHarness.agent,
+            tenant,
+            preventDuplicates : true,
+            useCache          : true,
+          });
+          const sharedKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: sharedMethod.publicKeyJwk });
+          const uniqueKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: uniqueMethod.publicKeyJwk });
+          const externalKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: externalMethod.publicKeyJwk });
+          sinon.stub(testHarness.agent.did.cache, 'delete').rejects(new Error('cache unavailable'));
+
+          await expect(testHarness.agent.did.delete({ didUri: did.uri, tenant }))
+            .rejects.toThrow('DID deletion left partial state');
+
+          await expect(testHarness.agent.did['_store'].get({
+            id       : did.uri,
+            agent    : testHarness.agent,
+            tenant,
+            useCache : false,
+          })).resolves.toBeUndefined();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: sharedKeyUri })).resolves.toBeDefined();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: uniqueKeyUri })).rejects.toThrow();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: externalKeyUri })).rejects.toThrow();
+        });
+
+        it('preserves a did:jwk key and its off-document companion until its final tenant copy is deleted', async () => {
+          const firstTenant = testHarness.agent.agentDid.uri;
+          const secondTenant = await testHarness.agent.did.create({ method: 'jwk', tenant: firstTenant });
+          const did = await DidJwk.create();
+          const portableDid = await did.export();
+          const ed25519PrivateKey = portableDid.privateKeys?.find((key) => key.crv === 'Ed25519');
+          if (ed25519PrivateKey === undefined) {
+            throw new Error('Expected an Ed25519 private key');
+          }
+          const x25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+            privateKey: ed25519PrivateKey,
+          });
+          portableDid.privateKeys = [...(portableDid.privateKeys ?? []), x25519PrivateKey];
+          const [ed25519KeyUri, x25519KeyUri] = await Promise.all([
+            testHarness.agent.keyManager.getKeyUri({ key: ed25519PrivateKey }),
+            testHarness.agent.keyManager.getKeyUri({ key: x25519PrivateKey }),
+          ]);
+
+          await testHarness.agent.did.import({ portableDid, tenant: firstTenant });
+          const storedPortableDid: PortableDid = {
+            uri      : portableDid.uri,
+            document : portableDid.document,
+            metadata : portableDid.metadata,
+          };
+          await testHarness.agent.did['_store'].set({
+            id                : portableDid.uri,
+            data              : storedPortableDid,
+            agent             : testHarness.agent,
+            tenant            : secondTenant.uri,
+            preventDuplicates : true,
+            useCache          : true,
+          });
+          await testHarness.agent.did['_setManagedKeyOwnership']({
+            didUri   : portableDid.uri,
+            document : portableDid.document,
+            tenant   : secondTenant.uri,
+          });
+
+          await testHarness.agent.did.delete({ didUri: portableDid.uri, tenant: firstTenant });
+
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: ed25519KeyUri })).resolves.toBeDefined();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: x25519KeyUri })).resolves.toBeDefined();
+          await expect(testHarness.agent.did.get({
+            didUri : portableDid.uri,
+            tenant : secondTenant.uri,
+          })).resolves.toBeDefined();
+
+          await testHarness.agent.did.delete({ didUri: portableDid.uri, tenant: secondTenant.uri });
+
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: ed25519KeyUri })).rejects.toThrow();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: x25519KeyUri })).rejects.toThrow();
+        });
+
         it('should skip non Jwk encoded verification methods', async () => {
           // stub store to return a portable did with non-jwk verification methods
           sinon.stub(testHarness.agent.did['_store'], 'get').resolves({
@@ -267,7 +443,7 @@ describe('AgentDidApi', () => {
             }
           });
 
-          sinon.stub(testHarness.agent.did['_store'], 'delete').resolves();
+          sinon.stub(testHarness.agent.did['_store'], 'delete').resolves(true);
 
           // spy on deleteKey
           const keyManagerSpy = sinon.spy(testHarness.agent.keyManager, 'deleteKey');
@@ -287,7 +463,7 @@ describe('AgentDidApi', () => {
             }
           });
 
-          sinon.stub(testHarness.agent.did['_store'], 'delete').resolves();
+          sinon.stub(testHarness.agent.did['_store'], 'delete').resolves(true);
 
           // spy on deleteKey
           const keyManagerDeleteSpy = sinon.spy(testHarness.agent.keyManager, 'deleteKey');
@@ -321,6 +497,282 @@ describe('AgentDidApi', () => {
       });
 
       describe('import()', () => {
+        it('does not seed resolver routing when durable import fails', async () => {
+          const did = await DidJwk.create();
+          const portableDid = await did.export();
+          sinon.stub(testHarness.agent.did['_store'], 'set').rejects(new Error('disk unavailable'));
+
+          await expect(testHarness.agent.did.import({
+            portableDid,
+            tenant: testHarness.agent.agentDid.uri,
+          })).rejects.toThrow('disk unavailable');
+
+          const resolve = sinon.spy(DidJwk, 'resolve');
+          await testHarness.agent.did.resolve(did.uri);
+          expect(resolve.calledOnce).toBe(true);
+        });
+
+        it('rolls back only keys newly imported before a DID-store failure', async () => {
+          const existingDid = await DidJwk.create();
+          const newlyControlledDid = await DidJwk.create();
+          const portableDid = await existingDid.export();
+          const newlyControlledPortableDid = await newlyControlledDid.export();
+          portableDid.document = {
+            ...portableDid.document,
+            verificationMethod: [
+              ...(portableDid.document.verificationMethod ?? []),
+              ...(newlyControlledPortableDid.document.verificationMethod ?? []),
+            ],
+          };
+          portableDid.privateKeys = [
+            ...(portableDid.privateKeys ?? []),
+            ...(newlyControlledPortableDid.privateKeys ?? []),
+          ];
+          const existingKey = portableDid.privateKeys[0];
+          const newlyImportedKey = newlyControlledPortableDid.privateKeys?.[0];
+          if (existingKey === undefined || newlyImportedKey === undefined) {
+            throw new Error('Expected private keys for rollback test');
+          }
+          await testHarness.agent.keyManager.importKey({ key: existingKey });
+          const existingKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: existingKey });
+          const newlyImportedKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: newlyImportedKey });
+          sinon.stub(testHarness.agent.did['_store'], 'set').rejects(new Error('disk unavailable'));
+
+          await expect(testHarness.agent.did.import({
+            portableDid,
+            tenant: testHarness.agent.agentDid.uri,
+          })).rejects.toThrow('disk unavailable');
+
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: existingKeyUri })).resolves.toBeDefined();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: newlyImportedKeyUri })).rejects.toThrow();
+        });
+
+        it('rejects did:dht import without private control of the URI identity key', async () => {
+          const tenant = testHarness.agent.agentDid.uri;
+          const did = await DidDht.create({
+            options: {
+              publish             : false,
+              verificationMethods : [{ algorithm: 'Ed25519', id: 'sig' }],
+            },
+          });
+          const portableDid = await did.export();
+          const identityMethod = portableDid.document.verificationMethod?.find((method) => method.id.endsWith('#0'));
+          const signingMethod = portableDid.document.verificationMethod?.find((method) => method.id.endsWith('#sig'));
+          if (identityMethod?.publicKeyJwk === undefined || signingMethod?.publicKeyJwk === undefined) {
+            throw new Error('Expected did:dht identity and signing methods');
+          }
+          const signingKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: signingMethod.publicKeyJwk });
+          const signingKey = await Promise.all((portableDid.privateKeys ?? []).map(async (key) => ({
+            key,
+            keyUri: await testHarness.agent.keyManager.getKeyUri({ key }),
+          }))).then((keys) => keys.find(({ keyUri }) => keyUri === signingKeyUri)?.key);
+          if (signingKey === undefined) {
+            throw new Error('Expected a private signing key');
+          }
+          portableDid.privateKeys = [signingKey];
+
+          await expect(testHarness.agent.did.import({ portableDid, tenant }))
+            .rejects.toThrow('No private did:dht identity key \'#0\'');
+
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: signingKeyUri })).rejects.toThrow();
+          await expect(testHarness.agent.did['_store'].get({
+            id       : portableDid.uri,
+            agent    : testHarness.agent,
+            tenant,
+            useCache : false,
+          })).resolves.toBeUndefined();
+        });
+
+        it('rejects a did:dht identity key that is not bound to the portable URI', async () => {
+          const tenant = testHarness.agent.agentDid.uri;
+          const [sourceDid, otherDid] = await Promise.all([
+            DidDht.create({ options: { publish: false } }),
+            DidDht.create({ options: { publish: false } }),
+          ]);
+          const portableDid = await sourceDid.export();
+          portableDid.uri = otherDid.uri;
+          portableDid.document = { ...portableDid.document, id: otherDid.uri };
+          const privateKey = portableDid.privateKeys?.[0];
+          if (privateKey === undefined) {
+            throw new Error('Expected a did:dht identity key');
+          }
+          const keyUri = await testHarness.agent.keyManager.getKeyUri({ key: privateKey });
+
+          await expect(testHarness.agent.did.import({ portableDid, tenant }))
+            .rejects.toThrow('identity key \'#0\' does not match');
+
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri })).rejects.toThrow();
+          await expect(testHarness.agent.did['_store'].get({
+            id       : portableDid.uri,
+            agent    : testHarness.agent,
+            tenant,
+            useCache : false,
+          })).resolves.toBeUndefined();
+        });
+
+        it('rejects a public-only did:dht identity key before importing another private method', async () => {
+          const tenant = testHarness.agent.agentDid.uri;
+          const did = await DidDht.create({
+            options: {
+              publish             : false,
+              verificationMethods : [{ algorithm: 'Ed25519', id: 'sig' }],
+            },
+          });
+          const portableDid = await did.export();
+          const identityMethod = portableDid.document.verificationMethod?.find((method) => method.id.endsWith('#0'));
+          const signingMethod = portableDid.document.verificationMethod?.find((method) => method.id.endsWith('#sig'));
+          if (identityMethod?.publicKeyJwk === undefined || signingMethod?.publicKeyJwk === undefined) {
+            throw new Error('Expected did:dht identity and signing methods');
+          }
+          const identityKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: identityMethod.publicKeyJwk });
+          const getPublicKey = testHarness.agent.keyManager.getPublicKey.bind(testHarness.agent.keyManager);
+          const exportKey = testHarness.agent.keyManager.exportKey.bind(testHarness.agent.keyManager);
+          sinon.stub(testHarness.agent.keyManager, 'getPublicKey').callsFake(async ({ keyUri }) => {
+            return keyUri === identityKeyUri ? identityMethod.publicKeyJwk! : getPublicKey({ keyUri });
+          });
+          sinon.stub(testHarness.agent.keyManager, 'exportKey').callsFake(async ({ keyUri }) => {
+            if (keyUri === identityKeyUri) {
+              throw new Error('Private key not found');
+            }
+            return exportKey({ keyUri });
+          });
+          const signingKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: signingMethod.publicKeyJwk });
+          const signingKey = await Promise.all((portableDid.privateKeys ?? []).map(async (key) => ({
+            key,
+            keyUri: await testHarness.agent.keyManager.getKeyUri({ key }),
+          }))).then((keys) => keys.find(({ keyUri }) => keyUri === signingKeyUri)?.key);
+          if (signingKey === undefined) {
+            throw new Error('Expected a private signing key');
+          }
+          portableDid.privateKeys = [signingKey];
+
+          await expect(testHarness.agent.did.import({ portableDid, tenant }))
+            .rejects.toThrow('No private did:dht identity key \'#0\'');
+
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: signingKeyUri })).rejects.toThrow();
+          await expect(testHarness.agent.did['_store'].get({
+            id       : portableDid.uri,
+            agent    : testHarness.agent,
+            tenant,
+            useCache : false,
+          })).resolves.toBeUndefined();
+        });
+
+        it('serializes cross-tenant imports and rejects a key already committed to another DID', async () => {
+          const sourceDid = await DidJwk.create();
+          const sourcePortableDid = await sourceDid.export();
+          const privateKey = sourcePortableDid.privateKeys?.[0];
+          const publicKeyJwk = sourcePortableDid.document.verificationMethod?.[0]?.publicKeyJwk;
+          if (privateKey === undefined || publicKeyJwk === undefined) {
+            throw new Error('Expected a portable JWK DID');
+          }
+          const makePortableDid = (didUri: string): PortableDid => ({
+            uri      : didUri,
+            metadata : {},
+            document : {
+              id                 : didUri,
+              verificationMethod : [{
+                id         : `${didUri}#key`,
+                type       : 'JsonWebKey',
+                controller : didUri,
+                publicKeyJwk,
+              }],
+            },
+            privateKeys: [privateKey],
+          });
+          const firstPortableDid = makePortableDid('did:example:shared-owner-a');
+          const secondPortableDid = makePortableDid('did:example:shared-owner-b');
+          const secondTenant = await testHarness.agent.did.create({
+            method : 'jwk',
+            tenant : testHarness.agent.agentDid.uri,
+          });
+          let releaseCommit!: () => void;
+          let markCommitStarted!: () => void;
+          const commitGate = new Promise<void>((resolve) => { releaseCommit = resolve; });
+          const commitStarted = new Promise<void>((resolve) => { markCommitStarted = resolve; });
+
+          const firstImport = testHarness.agent.did.importWithCommit({
+            portableDid : firstPortableDid,
+            tenant      : testHarness.agent.agentDid.uri,
+            commit      : async (did) => {
+              markCommitStarted();
+              await commitGate;
+              return did;
+            },
+          });
+          await commitStarted;
+
+          let secondSettled = false;
+          const secondImport = testHarness.agent.did.import({
+            portableDid : secondPortableDid,
+            tenant      : secondTenant.uri,
+          }).then(
+            (value) => {
+              secondSettled = true;
+              return { value };
+            },
+            (error: unknown) => {
+              secondSettled = true;
+              return { error };
+            }
+          );
+          await Promise.resolve();
+          expect(secondSettled).toBe(false);
+
+          releaseCommit();
+          await firstImport;
+          const secondOutcome = await secondImport;
+          expect(secondOutcome).toHaveProperty(
+            'error.message',
+            expect.stringContaining('already referenced by another managed DID')
+          );
+
+          const keyUri = await testHarness.agent.keyManager.getKeyUri({ key: privateKey });
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri })).resolves.toBeDefined();
+          await expect(testHarness.agent.did.get({
+            didUri : secondPortableDid.uri,
+            tenant : secondTenant.uri,
+          })).resolves.toBeUndefined();
+        });
+
+        it('retains a key referenced by another committed DID when deleting one owner', async () => {
+          const tenant = testHarness.agent.agentDid.uri;
+          const firstDid = await DidJwk.create();
+          const firstPortableDid = await firstDid.export();
+          const importedDid = await testHarness.agent.did.import({ portableDid: firstPortableDid, tenant });
+          const sharedMethod = importedDid.document.verificationMethod?.[0];
+          if (sharedMethod?.publicKeyJwk === undefined) {
+            throw new Error('Expected a JWK verification method');
+          }
+          const secondDidUri = 'did:example:legacy-shared-owner';
+          const secondPortableDid: PortableDid = {
+            uri      : secondDidUri,
+            metadata : {},
+            document : {
+              id                 : secondDidUri,
+              verificationMethod : [{
+                ...sharedMethod,
+                id         : `${secondDidUri}#key`,
+                controller : secondDidUri,
+              }],
+            },
+          };
+          await testHarness.agent.did['_store'].set({
+            id                : secondDidUri,
+            data              : secondPortableDid,
+            agent             : testHarness.agent,
+            tenant,
+            preventDuplicates : true,
+            useCache          : true,
+          });
+          const keyUri = await testHarness.agent.keyManager.getKeyUri({ key: sharedMethod.publicKeyJwk });
+
+          await testHarness.agent.did.delete({ didUri: importedDid.uri, tenant });
+
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri })).resolves.toBeDefined();
+          await expect(testHarness.agent.did.get({ didUri: secondDidUri, tenant })).resolves.toBeDefined();
+        });
+
         it('imports DID and private keys', async () => {
           // Generate a new DID.
           const did = await DidJwk.create();
@@ -340,6 +792,104 @@ describe('AgentDidApi', () => {
           if (storedDid === undefined) {throw new Error('Type guard unexpectedly threw');} // Type guard.
           expect(storedDid.uri).toBe(portableDid.uri);
           expect(storedDid.document).toEqual(portableDid.document);
+        });
+
+        it('imports and deletes a deterministic X25519 companion of an authoritative Ed25519 key', async () => {
+          const did = await DidJwk.create();
+          const portableDid = await did.export();
+          const ed25519PrivateKey = portableDid.privateKeys?.find((key) => key.crv === 'Ed25519');
+          if (ed25519PrivateKey === undefined) {
+            throw new Error('Expected an Ed25519 private key');
+          }
+          const x25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+            privateKey: ed25519PrivateKey,
+          });
+          portableDid.privateKeys = [...(portableDid.privateKeys ?? []), x25519PrivateKey];
+          const [ed25519KeyUri, x25519KeyUri] = await Promise.all([
+            testHarness.agent.keyManager.getKeyUri({ key: ed25519PrivateKey }),
+            testHarness.agent.keyManager.getKeyUri({ key: x25519PrivateKey }),
+          ]);
+          const tenant = testHarness.agent.agentDid.uri;
+
+          await testHarness.agent.did.import({ portableDid, tenant });
+
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: ed25519KeyUri })).resolves.toBeDefined();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: x25519KeyUri })).resolves.toBeDefined();
+
+          await testHarness.agent.did.delete({ didUri: did.uri, tenant, deleteKey: true });
+
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: ed25519KeyUri })).rejects.toThrow();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: x25519KeyUri })).rejects.toThrow();
+        });
+
+        it('rejects an unrelated X25519 companion before importing any key', async () => {
+          const [did, unrelatedDid] = await Promise.all([DidJwk.create(), DidJwk.create()]);
+          const portableDid = await did.export();
+          const unrelatedPortableDid = await unrelatedDid.export();
+          const unrelatedEd25519Key = unrelatedPortableDid.privateKeys?.find((key) => key.crv === 'Ed25519');
+          if (unrelatedEd25519Key === undefined) {
+            throw new Error('Expected an unrelated Ed25519 private key');
+          }
+          const unrelatedX25519Key = await Ed25519.convertPrivateKeyToX25519({
+            privateKey: unrelatedEd25519Key,
+          });
+          portableDid.privateKeys = [...(portableDid.privateKeys ?? []), unrelatedX25519Key];
+          const unrelatedKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: unrelatedX25519Key });
+          const importKey = sinon.spy(testHarness.agent.keyManager, 'importKey');
+
+          await expect(testHarness.agent.did.import({
+            portableDid,
+            tenant: testHarness.agent.agentDid.uri,
+          })).rejects.toThrow('does not match the authoritative DID document');
+
+          expect(importKey.notCalled).toBe(true);
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: unrelatedKeyUri })).rejects.toThrow();
+        });
+
+        it('rejects a derived companion when the supplied Ed25519 private material is forged', async () => {
+          const [did, unrelatedDid] = await Promise.all([DidJwk.create(), DidJwk.create()]);
+          const portableDid = await did.export();
+          const authoritativeEd25519Key = portableDid.privateKeys?.find((key) => key.crv === 'Ed25519');
+          const unrelatedEd25519Key = (await unrelatedDid.export()).privateKeys?.find((key) => key.crv === 'Ed25519');
+          if (authoritativeEd25519Key?.d === undefined || unrelatedEd25519Key?.d === undefined) {
+            throw new Error('Expected Ed25519 private keys');
+          }
+          const forgedEd25519Key = { ...authoritativeEd25519Key, d: unrelatedEd25519Key.d };
+          const forgedX25519Key = await Ed25519.convertPrivateKeyToX25519({ privateKey: forgedEd25519Key });
+          portableDid.privateKeys = [forgedEd25519Key, forgedX25519Key];
+          const importKey = sinon.spy(testHarness.agent.keyManager, 'importKey');
+
+          await expect(testHarness.agent.did.import({
+            portableDid,
+            tenant: testHarness.agent.agentDid.uri,
+          })).rejects.toThrow('does not control authoritative key');
+
+          expect(importKey.notCalled).toBe(true);
+        });
+
+        it('rejects a companion with the expected public URI but different private material', async () => {
+          const [did, unrelatedDid] = await Promise.all([DidJwk.create(), DidJwk.create()]);
+          const portableDid = await did.export();
+          const ed25519PrivateKey = portableDid.privateKeys?.find((key) => key.crv === 'Ed25519');
+          const unrelatedEd25519Key = (await unrelatedDid.export()).privateKeys?.find((key) => key.crv === 'Ed25519');
+          if (ed25519PrivateKey === undefined || unrelatedEd25519Key === undefined) {
+            throw new Error('Expected Ed25519 private keys');
+          }
+          const expectedX25519Key = await Ed25519.convertPrivateKeyToX25519({ privateKey: ed25519PrivateKey });
+          const unrelatedX25519Key = await Ed25519.convertPrivateKeyToX25519({ privateKey: unrelatedEd25519Key });
+          if (unrelatedX25519Key.d === undefined) {
+            throw new Error('Expected unrelated X25519 private material');
+          }
+          const forgedX25519Key = { ...expectedX25519Key, d: unrelatedX25519Key.d };
+          portableDid.privateKeys = [...(portableDid.privateKeys ?? []), forgedX25519Key];
+          const importKey = sinon.spy(testHarness.agent.keyManager, 'importKey');
+
+          await expect(testHarness.agent.did.import({
+            portableDid,
+            tenant: testHarness.agent.agentDid.uri,
+          })).rejects.toThrow('does not match the authoritative DID document');
+
+          expect(importKey.notCalled).toBe(true);
         });
 
         it('supports importing multiple DIDs to the same Identity/tenant', async () => {
@@ -542,7 +1092,7 @@ describe('AgentDidApi', () => {
           sinon.stub(DidDht, 'create').resolves(mockedBearerDid);
         });
 
-        it('updates a DID in the store', async () => {
+        it('updates a non-publishable DID locally only when publication is disabled', async () => {
           // Generate a new DID.
           const did = await testHarness.agent.did.create({ method: 'jwk', tenant: testHarness.agent.agentDid.uri });
           const portableDid = await did.export();
@@ -556,7 +1106,11 @@ describe('AgentDidApi', () => {
           };
 
           // Update the DID.
-          await testHarness.agent.did.update({ portableDid: updateDid, tenant: testHarness.agent.agentDid.uri });
+          await testHarness.agent.did.update({
+            portableDid : updateDid,
+            publish     : false,
+            tenant      : testHarness.agent.agentDid.uri,
+          });
 
           // get the updated DID
           const updatedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: testHarness.agent.agentDid.uri });
@@ -568,6 +1122,29 @@ describe('AgentDidApi', () => {
 
           // Verify the updated document.
           expect(updatedDid!.document).toEqual(updateDid.document);
+        });
+
+        it('rejects publishing an update for an immutable DID method without changing local state', async () => {
+          const did = await testHarness.agent.did.create({ method: 'jwk', tenant: testHarness.agent.agentDid.uri });
+          const portableDid = await did.export();
+          const updateDid = {
+            ...portableDid,
+            document: {
+              ...portableDid.document,
+              service: [{ id: 'service1', type: 'example', serviceEndpoint: 'https://example.com' }]
+            }
+          };
+
+          await expect(testHarness.agent.did.update({
+            portableDid : updateDid,
+            tenant      : testHarness.agent.agentDid.uri,
+          })).rejects.toThrow('DID method does not support publishing document updates');
+
+          const storedDid = await testHarness.agent.did.get({
+            didUri : did.uri,
+            tenant : testHarness.agent.agentDid.uri,
+          });
+          expect(storedDid?.document).toEqual(portableDid.document);
         });
 
         it('updates a DID DHT and publishes it by default', async () => {
@@ -600,6 +1177,116 @@ describe('AgentDidApi', () => {
 
           // Verify publish was called
           expect(publishSpy.called).toBe(true);
+        });
+
+        it('does not commit local or cached state when DHT publication is rejected', async () => {
+          const did = await testHarness.agent.did.create({ method: 'dht', tenant: testHarness.agent.agentDid.uri });
+          const portableDid = await did.export();
+          const updateDid = {
+            ...portableDid,
+            document: {
+              ...portableDid.document,
+              service: [{ id: 'service1', type: 'example', serviceEndpoint: 'https://rejected.example' }]
+            }
+          };
+          sinon.stub(DidDht, 'publish').resolves({
+            didDocument             : null,
+            didDocumentMetadata     : { published: false },
+            didRegistrationMetadata : {},
+          });
+
+          await expect(testHarness.agent.did.update({
+            portableDid : updateDid,
+            tenant      : testHarness.agent.agentDid.uri,
+          })).rejects.toThrow('Failed to publish DID document');
+
+          const [storedDid, resolvedDid] = await Promise.all([
+            testHarness.agent.did.get({ didUri: did.uri, tenant: testHarness.agent.agentDid.uri }),
+            testHarness.agent.did.resolve(did.uri),
+          ]);
+          expect(storedDid?.document).toEqual(portableDid.document);
+          expect(resolvedDid.didDocument).toEqual(portableDid.document);
+        });
+
+        it('keeps the published document in resolver state when local reconciliation fails', async () => {
+          const did = await testHarness.agent.did.create({ method: 'dht', tenant: testHarness.agent.agentDid.uri });
+          const portableDid = await did.export();
+          const updateDid = {
+            ...portableDid,
+            document: {
+              ...portableDid.document,
+              service: [{ id: 'service1', type: 'example', serviceEndpoint: 'https://published.example' }]
+            }
+          };
+          sinon.stub(DidDht, 'publish').callsFake(async ({ did: didToPublish }) => ({
+            didDocument             : didToPublish.document,
+            didDocumentMetadata     : { published: true },
+            didRegistrationMetadata : {},
+          }));
+          sinon.stub(testHarness.agent.did['_store'], 'set').rejects(new Error('disk unavailable'));
+
+          await expect(testHarness.agent.did.update({
+            portableDid : updateDid,
+            tenant      : testHarness.agent.agentDid.uri,
+          })).rejects.toMatchObject({
+            code      : 'DID_UPDATE_LOCAL_COMMIT_FAILED',
+            didUri    : did.uri,
+            published : true,
+          });
+
+          const resolvedDid = await testHarness.agent.did.resolve(did.uri);
+          expect(resolvedDid.didDocument).toEqual(updateDid.document);
+        });
+
+        it('retries refreshes invalidated by publication so every coalesced caller receives the current document', async () => {
+          const did = await testHarness.agent.did.create({ method: 'dht', tenant: testHarness.agent.agentDid.uri });
+          const portableDid = await did.export();
+          const staleResolution = {
+            didDocument           : portableDid.document,
+            didDocumentMetadata   : portableDid.metadata,
+            didResolutionMetadata : {},
+          };
+          let resolveRefresh!: (result: typeof staleResolution) => void;
+          let markRefreshStarted!: () => void;
+          const refreshStarted = new Promise<void>((resolve) => { markRefreshStarted = resolve; });
+          const updateDid = {
+            ...portableDid,
+            document: {
+              ...portableDid.document,
+              service: [{ id: 'service1', type: 'example', serviceEndpoint: 'https://published.example' }]
+            }
+          };
+          const publishedResolution = {
+            didDocument           : updateDid.document,
+            didDocumentMetadata   : { published: true },
+            didResolutionMetadata : {},
+          };
+          const resolve = sinon.stub(DidDht, 'resolve');
+          resolve.onFirstCall().callsFake(() => {
+            markRefreshStarted();
+            return new Promise((resolve) => { resolveRefresh = resolve; });
+          });
+          resolve.onSecondCall().resolves(publishedResolution);
+          sinon.stub(DidDht, 'publish').callsFake(async ({ did: didToPublish }) => ({
+            didDocument             : didToPublish.document,
+            didDocumentMetadata     : { published: true },
+            didRegistrationMetadata : {},
+          }));
+
+          const refreshing = testHarness.agent.did.refreshResolution(did.uri);
+          await refreshStarted;
+          const coalescedRefresh = testHarness.agent.did.refreshResolution(did.uri);
+          await testHarness.agent.did.update({
+            portableDid : updateDid,
+            tenant      : testHarness.agent.agentDid.uri,
+          });
+          resolveRefresh(staleResolution);
+          await expect(refreshing).resolves.toEqual(publishedResolution);
+          await expect(coalescedRefresh).resolves.toEqual(publishedResolution);
+          expect(resolve.callCount).toBe(2);
+
+          const resolvedDid = await testHarness.agent.did.resolve(did.uri);
+          expect(resolvedDid.didDocument).toEqual(updateDid.document);
         });
 
         it('updates a DID DHT and does not publish it if publish is false', async () => {

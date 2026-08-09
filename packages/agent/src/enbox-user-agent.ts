@@ -59,6 +59,12 @@ export type AgentInitializeParams = {
    * side in place of the agentDid-->connectedDids pattern.
    */
    dwnEndpoints?: string[];
+
+  /**
+   * Whether `dwnEndpoints` deliberately replaces the endpoints in a DID document resolved while
+   * restoring from `recoveryPhrase`. Omit this for bootstrap/default endpoint configuration.
+   */
+  replaceDwnEndpoints?: boolean;
  };
 
 export type AgentStartParams = {
@@ -157,6 +163,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
 
   set agentDid(did: BearerDid) {
     this._agentDid = did;
+    this.dwn.invalidateLocalManagedDidCache();
   }
 
   /**
@@ -270,9 +277,14 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
    * cryptographic keys for the vault. If a recovery phrase is not provided, a new recovery phrase
    * will be generated and returned. The password should be chosen and entered by the end-user.
    */
-  public async initialize({ password, recoveryPhrase, dwnEndpoints }: AgentInitializeParams): Promise<string> {
+  public async initialize({ password, recoveryPhrase, dwnEndpoints, replaceDwnEndpoints }: AgentInitializeParams): Promise<string> {
     // Initialize the Agent vault.
-    recoveryPhrase = await this.vault.initialize({ password, recoveryPhrase, dwnEndpoints });
+    recoveryPhrase = await this.vault.initialize({
+      password,
+      recoveryPhrase,
+      dwnEndpoints,
+      replaceDwnEndpoints,
+    });
 
     return recoveryPhrase;
   }

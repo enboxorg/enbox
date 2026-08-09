@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import {
+  DwnEndpointResolutionErrorCode,
   getDwnServiceEndpointUrls,
   getPaginationCursor,
   getRecordAuthor,
@@ -230,41 +231,44 @@ describe('Utils', () => {
   // were here).
 
   describe('getDwnServiceEndpointUrls', () => {
-    it('should return service endpoint URLs from a DID document', async () => {
-      const mockDereferencer = {
-        dereference: mock(() => Promise.resolve({
-          dereferencingMetadata : {},
-          contentStream         : {
-            id              : 'did:example:alice#dwn',
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : ['https://dwn.example.com'],
+    function resolverFor(service?: { id: string; type: string; serviceEndpoint: string | string[] }): any {
+      return {
+        resolve: mock(() => Promise.resolve({
+          didDocument: {
+            id      : 'did:example:alice',
+            service : service === undefined ? [] : [service],
           },
+          didDocumentMetadata   : {},
+          didResolutionMetadata : {},
         })),
       };
+    }
 
-      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
+    it('should return service endpoint URLs from a DID document', async () => {
+      const resolver = resolverFor({
+        id              : 'did:example:alice#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : ['https://dwn.example.com'],
+      });
+
+      const urls = await getDwnServiceEndpointUrls('did:example:alice', resolver);
       expect(urls).toEqual(['https://dwn.example.com']);
     });
 
     it('should normalize and deduplicate service endpoint URLs', async () => {
-      const mockDereferencer = {
-        dereference: mock(() => Promise.resolve({
-          dereferencingMetadata : {},
-          contentStream         : {
-            id              : 'did:example:alice#dwn',
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : [
-              'https://DWN.EXAMPLE.com/dwn/',
-              'https://dwn.example.com/dwn',
-              'https://dwn.example.com/DWN/',
-              'https://dwn.example.com:443/root/',
-              'https://dwn.example.com/root',
-            ],
-          },
-        })),
-      };
+      const resolver = resolverFor({
+        id              : 'did:example:alice#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : [
+          'https://DWN.EXAMPLE.com/dwn/',
+          'https://dwn.example.com/dwn',
+          'https://dwn.example.com/DWN/',
+          'https://dwn.example.com:443/root/',
+          'https://dwn.example.com/root',
+        ],
+      });
 
-      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
+      const urls = await getDwnServiceEndpointUrls('did:example:alice', resolver);
       expect(urls).toEqual([
         'https://dwn.example.com/dwn',
         'https://dwn.example.com/DWN',
@@ -272,64 +276,52 @@ describe('Utils', () => {
       ]);
     });
 
-    it('should return empty array when service endpoint is empty', async () => {
-      const mockDereferencer = {
-        dereference: mock(() => Promise.resolve({
-          dereferencingMetadata : {},
-          contentStream         : {
-            id              : 'did:example:alice#dwn',
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : [],
-          },
-        })),
-      };
+    it('should signal when service endpoints are empty', async () => {
+      const resolver = resolverFor({
+        id              : 'did:example:alice#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : [],
+      });
 
-      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
-      expect(urls).toEqual([]);
+      await expect(getDwnServiceEndpointUrls('did:example:alice', resolver)).rejects.toMatchObject({
+        code: DwnEndpointResolutionErrorCode.EndpointsMissing,
+      });
     });
 
-    it('should throw when dereferencing fails', async () => {
-      const mockDereferencer = {
-        dereference: mock(() => Promise.resolve({
-          dereferencingMetadata : { error: 'notFound' },
-          contentStream         : null,
+    it('should signal when DID resolution fails', async () => {
+      const resolver = {
+        resolve: mock(() => Promise.resolve({
+          didDocument           : null,
+          didDocumentMetadata   : {},
+          didResolutionMetadata : { error: 'notFound' },
         })),
       };
 
       await expect(
-        getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any)
-      ).rejects.toThrow('Failed to dereference');
+        getDwnServiceEndpointUrls('did:example:alice', resolver)
+      ).rejects.toMatchObject({ code: DwnEndpointResolutionErrorCode.DidResolutionFailed });
     });
 
-    it('should return empty array for non-DWN service', async () => {
-      const mockDereferencer = {
-        dereference: mock(() => Promise.resolve({
-          dereferencingMetadata : {},
-          contentStream         : {
-            id              : 'did:example:alice#other',
-            type            : 'OtherService',
-            serviceEndpoint : 'https://other.example.com',
-          },
-        })),
-      };
+    it('should signal when only non-DWN services are advertised', async () => {
+      const resolver = resolverFor({
+        id              : 'did:example:alice#other',
+        type            : 'OtherService',
+        serviceEndpoint : 'https://other.example.com',
+      });
 
-      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
-      expect(urls).toEqual([]);
+      await expect(getDwnServiceEndpointUrls('did:example:alice', resolver)).rejects.toMatchObject({
+        code: DwnEndpointResolutionErrorCode.ServiceMissing,
+      });
     });
 
     it('should handle string service endpoint', async () => {
-      const mockDereferencer = {
-        dereference: mock(() => Promise.resolve({
-          dereferencingMetadata : {},
-          contentStream         : {
-            id              : 'did:example:alice#dwn',
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : 'https://dwn.example.com',
-          },
-        })),
-      };
+      const resolver = resolverFor({
+        id              : 'did:example:alice#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : 'https://dwn.example.com',
+      });
 
-      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
+      const urls = await getDwnServiceEndpointUrls('did:example:alice', resolver);
       expect(urls).toEqual(['https://dwn.example.com']);
     });
   });

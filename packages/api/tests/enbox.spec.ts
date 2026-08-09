@@ -4,6 +4,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
+import { serviceConfigProtocolRequest as authServiceConfigProtocolRequest } from '@enbox/auth';
+import { DwnEndpointResolutionErrorCode } from '@enbox/dids';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import {
   AudienceDecryptError as AgentAudienceDecryptError,
@@ -16,7 +18,7 @@ import { DwnResponseError as DirectDwnResponseError } from '../src/dwn-response-
 import { Enbox } from '../src/enbox.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
-import { AudienceDecryptError, DwnResponseError } from '../src/index.js';
+import { AudienceDecryptError, DwnResponseError, serviceConfigProtocolRequest } from '../src/index.js';
 
 describe('AudienceDecryptError re-export', () => {
   it('re-exports the same class identity as @enbox/agent so instanceof checks work across layers', () => {
@@ -38,6 +40,16 @@ describe('DwnResponseError export', () => {
     expect(DwnResponseError).toBe(DirectDwnResponseError);
     const error = new DwnResponseError('records.query', { code: 401, detail: 'Unauthorized' });
     expect(error).toBeInstanceOf(DirectDwnResponseError);
+  });
+});
+
+describe('service-config protocol export', () => {
+  it('re-exports the canonical read-only connect request helper', () => {
+    expect(serviceConfigProtocolRequest).toBe(authServiceConfigProtocolRequest);
+    expect(serviceConfigProtocolRequest()).toMatchObject({
+      definition  : { protocol: 'https://identity.foundation/protocols/service-config' },
+      permissions : ['read'],
+    });
   });
 });
 
@@ -120,6 +132,77 @@ describe('Enbox API', () => {
           connectedDid : socialIdentity.did.uri,
         });
         expect(enboxSocial).toBeDefined();
+      });
+    });
+
+    describe('DWN endpoint resolution', () => {
+      it('force-refreshes the DID once, invalidates sync targets, and returns a status', async () => {
+        const identity = await testHarness.agent.identity.create({
+          metadata  : { name: 'Endpoint refresh' },
+          didMethod : 'jwk',
+        });
+        const refreshResolution = sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+          didDocument: {
+            ...identity.did.document,
+            service: [{
+              id              : `${identity.did.uri}#dwn`,
+              type            : 'DecentralizedWebNode',
+              serviceEndpoint : ['https://fresh.example/', 'https://fresh.example'],
+            }],
+          },
+          didDocumentMetadata   : {},
+          didResolutionMetadata : {},
+        });
+        const invalidateSyncTargets = sinon.spy(testHarness.agent.sync, 'invalidateSyncTargets');
+        const enbox = new Enbox({ agent: testHarness.agent, connectedDid: identity.did.uri });
+
+        await expect(enbox.refreshDwnEndpointStatus()).resolves.toEqual({
+          status    : 'ready',
+          didUri    : identity.did.uri,
+          endpoints : ['https://fresh.example'],
+        });
+        expect(refreshResolution.calledOnceWithExactly(identity.did.uri)).toBe(true);
+        expect(invalidateSyncTargets.calledOnce).toBe(true);
+      });
+
+      it('returns a typed missing-service status while the endpoint-list convenience method throws it', async () => {
+        const identity = await testHarness.agent.identity.create({
+          metadata  : { name: 'No hosted DWN' },
+          didMethod : 'jwk',
+        });
+        sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+          didDocument           : identity.did.document,
+          didDocumentMetadata   : {},
+          didResolutionMetadata : {},
+        });
+        const enbox = new Enbox({ agent: testHarness.agent, connectedDid: identity.did.uri });
+
+        const status = await enbox.refreshDwnEndpointStatus();
+        expect(status).toMatchObject({
+          status : 'service-missing',
+          didUri : identity.did.uri,
+          error  : { code: DwnEndpointResolutionErrorCode.ServiceMissing },
+        });
+        await expect(enbox.refreshDwnEndpoints()).rejects.toMatchObject({
+          code: DwnEndpointResolutionErrorCode.ServiceMissing,
+        });
+      });
+
+      it('maps a fresh-resolution transport failure to status without invalidating known sync targets', async () => {
+        const identity = await testHarness.agent.identity.create({
+          metadata  : { name: 'Offline resolver' },
+          didMethod : 'jwk',
+        });
+        sinon.stub(testHarness.agent.did, 'refreshResolution').rejects(new Error('resolver unavailable'));
+        const invalidateSyncTargets = sinon.spy(testHarness.agent.sync, 'invalidateSyncTargets');
+        const enbox = new Enbox({ agent: testHarness.agent, connectedDid: identity.did.uri });
+
+        await expect(enbox.refreshDwnEndpointStatus()).resolves.toMatchObject({
+          status : 'resolution-failed',
+          didUri : identity.did.uri,
+          error  : { code: DwnEndpointResolutionErrorCode.DidResolutionFailed },
+        });
+        expect(invalidateSyncTargets.notCalled).toBe(true);
       });
     });
 
@@ -521,6 +604,26 @@ describe('Enbox API', () => {
           structure : {},
         }],
       })).rejects.toThrow('Call auth.refresh');
+      await expect(enbox.refreshConnection()).rejects.toThrow('Call auth.refreshConnection');
+    });
+
+    it('refreshes endpoint state through the matching owning AuthManager', async () => {
+      const connectedDid = 'did:dht:refresh-owner';
+      const delegateDid = 'did:jwk:refresh-delegate';
+      const status = {
+        status    : 'ready' as const,
+        didUri    : connectedDid,
+        endpoints : ['https://fresh.example/dwn'],
+      };
+      const refreshConnection = sinon.stub().resolves(status);
+      const enbox = new Enbox({ agent: testHarness.agent, connectedDid, delegateDid });
+      (enbox as any)._auth = {
+        session: { did: connectedDid, delegateDid },
+        refreshConnection,
+      };
+
+      await expect(enbox.refreshConnection()).resolves.toEqual(status);
+      expect(refreshConnection.calledOnce).toBe(true);
     });
 
     it('does not inspect or refresh a different session after its retained AuthManager moves', async () => {
@@ -528,6 +631,7 @@ describe('Enbox API', () => {
       const delegateDid = 'did:jwk:original-delegate';
       const getConnectionStatus = sinon.stub().resolves({ state: 'active' });
       const refresh = sinon.stub().resolves(undefined);
+      const refreshConnection = sinon.stub().resolves(undefined);
       const enbox = new Enbox({ agent: testHarness.agent, connectedDid, delegateDid });
       (enbox as any)._auth = {
         session: {
@@ -536,6 +640,7 @@ describe('Enbox API', () => {
         },
         getConnectionStatus,
         refresh,
+        refreshConnection,
       };
       sinon.stub(testHarness.agent.permissions, 'fetchGrants').resolves([]);
       const protocols = [{
@@ -547,8 +652,10 @@ describe('Enbox API', () => {
 
       await expect(enbox.getConnectionStatus()).resolves.toEqual({ state: 'none' });
       await expect(enbox.refresh({ protocols })).rejects.toThrow('no longer matches');
+      await expect(enbox.refreshConnection()).rejects.toThrow('no longer matches');
       expect(getConnectionStatus.called).toBe(false);
       expect(refresh.called).toBe(false);
+      expect(refreshConnection.called).toBe(false);
     });
 
     it('Enbox.fromSession() accepts the session primitives', async () => {

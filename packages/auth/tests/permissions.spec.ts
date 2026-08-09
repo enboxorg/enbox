@@ -3,8 +3,8 @@ import { describe, expect, test } from 'bun:test';
 import type { DwnProtocolDefinition } from '@enbox/agent';
 import type { ProtocolRequest } from '../src/types.js';
 
-import { normalizeProtocolRequests } from '../src/permissions.js';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+import { normalizeProtocolRequests, serviceConfigProtocolRequest } from '../src/permissions.js';
 
 /** Minimal protocol definition for testing. */
 const TestProtocol = {
@@ -38,6 +38,18 @@ describe('normalizeProtocolRequests', () => {
 
   test('returns empty array for empty array input', () => {
     expect(normalizeProtocolRequests([])).toEqual([]);
+  });
+
+  test('builds a read-only service-config request with message-feed replication access', () => {
+    const request = serviceConfigProtocolRequest();
+    const [result] = normalizeProtocolRequests([request]);
+
+    expect(result.protocolDefinition).toBe(request.definition);
+    expect(scopeKeys(result)).toEqual([
+      `${DwnInterfaceName.Messages}.${DwnMethodName.Read}`,
+      `${DwnInterfaceName.Protocols}.${DwnMethodName.Query}`,
+      `${DwnInterfaceName.Records}.${DwnMethodName.Read}`,
+    ].sort());
   });
 
   test('normalizes a bare protocol definition with default permissions', () => {

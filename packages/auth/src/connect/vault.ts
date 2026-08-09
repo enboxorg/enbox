@@ -13,10 +13,12 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { VaultConnectOptions } from '../types.js';
 
+import { extractDwnServiceEndpointUrls } from '@enbox/dids';
+
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { assertFlowActive, commitFlowSession, createDefaultIdentity, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, createDefaultIdentity, ensureVaultReady, finalizeSession, refreshDwnEndpointsForConnection, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
 import { recoverIdentitiesFromRemote, registerAgentDidForSync } from './recovery.js';
 
 /**
@@ -48,7 +50,9 @@ export async function vaultConnect(
 
   const sync = options.sync ?? ctx.defaultSync;
   const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
-  const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
+  const newDidDwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
+  const replaceRecoveredDwnEndpoints = options.recoveryPhrase !== undefined
+    && options.dwnEndpoints !== undefined;
   const shouldCreateIdentity = options.createIdentity === true;
 
   // Initialize vault on first launch and start the agent.
@@ -57,8 +61,9 @@ export async function vaultConnect(
     emitter,
     password,
     isFirstLaunch,
-    recoveryPhrase: options.recoveryPhrase,
-    dwnEndpoints,
+    recoveryPhrase      : options.recoveryPhrase,
+    dwnEndpoints        : newDidDwnEndpoints,
+    replaceDwnEndpoints : replaceRecoveredDwnEndpoints,
   }));
 
   // Apply a stored local-node pairing when the agent was created in local mode.
@@ -67,16 +72,30 @@ export async function vaultConnect(
     await runFlowMutation(ctx, () => applyLocalDwnDiscovery(userAgent, storage, emitter));
   }
 
-  // Register the agent DID as a DWN tenant and for sync early — both are
-  // prerequisites for seed phrase recovery and for normal push/pull of
-  // identity metadata after identity creation.
+  // Resolve the agent DID before either tenant registration or sync can use it. Initialization and
+  // recovery already stored an authoritative document; a regular unlock bypasses stale cache state.
+  let agentDwnEndpoints: string[] | undefined;
+  if (ctx.registration !== undefined || sync !== 'off') {
+    agentDwnEndpoints = isFirstLaunch || options.recoveryPhrase !== undefined
+      ? extractDwnServiceEndpointUrls(userAgent.agentDid.document)
+      : await refreshDwnEndpointsForConnection({
+        userAgent,
+        didUri   : userAgent.agentDid.uri,
+        required : true,
+      });
+    assertFlowActive(ctx);
+  }
+
+  // Register the agent DID as a DWN tenant and for sync early — both are prerequisites for seed
+  // phrase recovery and for normal push/pull of identity metadata after identity creation.
   if (ctx.registration) {
+    if (agentDwnEndpoints === undefined) {
+      throw new Error(`[@enbox/auth] No DWN endpoints are available for registration of '${userAgent.agentDid.uri}'.`);
+    }
     await registerWithDwnEndpoints(
       {
         userAgent,
-        dwnEndpoints,
-        agentDid     : userAgent.agentDid.uri,
-        connectedDid : userAgent.agentDid.uri,
+        targets      : [{ did: userAgent.agentDid.uri, dwnEndpoints: agentDwnEndpoints }],
         secretStore  : userAgent.secrets,
         storage,
         assertActive : ctx.assertActive,
@@ -94,24 +113,21 @@ export async function vaultConnect(
   let identities = await userAgent.identity.list();
   let identity = identities[0];
   let isNewIdentity = false;
+  let isRecoveredIdentity = false;
 
   // Seed phrase recovery: when a recovery phrase was provided and no identities exist locally,
   // pull them from the remote DWN before deciding whether to create a new identity.
   if (!identity && options.recoveryPhrase && sync !== 'off') {
-    try {
-      identities = await recoverIdentitiesFromRemote({
-        userAgent,
-        dwnEndpoints,
-        identitySyncProtocols,
-        registration : ctx.registration,
-        storage,
-        assertActive : ctx.assertActive,
-        runMutation  : ctx.runMutation,
-      });
-      identity = identities[0];
-    } catch (err) {
-      console.warn('[@enbox/auth] Seed phrase recovery failed:', err);
-    }
+    identities = await recoverIdentitiesFromRemote({
+      userAgent,
+      identitySyncProtocols,
+      registration : ctx.registration,
+      storage,
+      assertActive : ctx.assertActive,
+      runMutation  : ctx.runMutation,
+    });
+    identity = identities[0];
+    isRecoveredIdentity = identity !== undefined;
     assertFlowActive(ctx);
   }
 
@@ -120,7 +136,7 @@ export async function vaultConnect(
     isNewIdentity = true;
     identity = await runFlowMutation(
       ctx,
-      () => createDefaultIdentity(userAgent, dwnEndpoints, options.metadata?.name ?? 'Default'),
+      () => createDefaultIdentity(userAgent, newDidDwnEndpoints, options.metadata?.name ?? 'Default'),
     );
   }
 
@@ -131,17 +147,34 @@ export async function vaultConnect(
   const connectedDid = identityDids?.connectedDid ?? userAgent.agentDid.uri;
   const delegateDid = identityDids?.delegateDid;
 
-  // Register the new identity DID as a tenant and for sync.
+  // Resolve an existing identity independently of its stored DID snapshot. Recovery already
+  // refreshed every recovered identity, while a freshly created identity uses the document that
+  // was just published.
+  let identityDwnEndpoints: string[] | undefined;
+  if (identity && !isNewIdentity && !isRecoveredIdentity) {
+    identityDwnEndpoints = await refreshDwnEndpointsForConnection({
+      userAgent,
+      didUri   : connectedDid,
+      required : ctx.registration !== undefined || sync !== 'off',
+    });
+    assertFlowActive(ctx);
+  } else if (identity && isNewIdentity && ctx.registration) {
+    identityDwnEndpoints = await userAgent.identity.getDwnEndpoints({ didUri: connectedDid });
+  }
+
+  // Register the selected persisted identity DID as a tenant, not only newly created identities.
+  // Recovered identities were already registered individually during the recovery phase.
   // Tenant registration must come before sync registration — with live
   // sync active, registerIdentity hot-adds a subscription that needs
   // the DID to be a recognised tenant on the remote DWN.
-  if (isNewIdentity && ctx.registration) {
+  if (identity && !isRecoveredIdentity && ctx.registration) {
+    if (identityDwnEndpoints === undefined) {
+      throw new Error(`[@enbox/auth] No DWN endpoints are available for registration of '${connectedDid}'.`);
+    }
     await registerWithDwnEndpoints(
       {
         userAgent,
-        dwnEndpoints,
-        agentDid     : userAgent.agentDid.uri,
-        connectedDid,
+        targets      : [{ did: connectedDid, dwnEndpoints: identityDwnEndpoints }],
         secretStore  : userAgent.secrets,
         storage      : storage,
         assertActive : ctx.assertActive,

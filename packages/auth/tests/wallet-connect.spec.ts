@@ -346,6 +346,36 @@ describe('walletConnect', () => {
     expect(session.did).toBe('did:dht:connected456');
   });
 
+  test('requires freshly resolved owner endpoints even when sync is off', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    let identityImported = false;
+    const agent = createMockAgent({
+      firstLaunch    : async () => false,
+      identityImport : async () => {
+        identityImported = true;
+        return createMockIdentity();
+      },
+      didRefreshResolution: async (didUri) => ({
+        didDocument           : { id: didUri },
+        didDocumentMetadata   : {},
+        didResolutionMetadata : {},
+      }),
+    });
+
+    await expect(walletConnect(
+      { userAgent: agent, emitter, storage, defaultSync: 'off' },
+      {
+        displayName        : 'Test App',
+        connectServerUrl   : 'https://relay.example.com',
+        permissionRequests : [],
+        onWalletUriReady   : () => {},
+        validatePin        : async () => '1234',
+      },
+    )).rejects.toThrow('does not advertise a DecentralizedWebNode service');
+    expect(identityImported).toBe(false);
+  });
+
   test('throws when initClient returns undefined/null', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();

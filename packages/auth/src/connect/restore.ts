@@ -18,8 +18,9 @@ import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
+import { registerWithDwnEndpoints } from '../registration.js';
 import { STORAGE_KEYS } from '../types.js';
-import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeSession, refreshDwnEndpointsForConnection, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Attempt to restore a previous session.
@@ -68,6 +69,10 @@ export async function restoreSession(
     await runFlowMutation(ctx, () => applyLocalDwnDiscovery(userAgent, storage, emitter));
   }
 
+  // The agent DID is a persisted sync target used by retry maintenance and identity recovery.
+  // Refresh it before either path can start sync, and tenant-register it at only its own endpoints.
+  await prepareRestoredDidRouting(ctx, userAgent.agentDid.uri);
+
   // --- Retry maintenance (independent from session restore) ---
   await runRetryMaintenanceIfNeeded(ctx, userAgent, storage, retryContextJson);
 
@@ -88,6 +93,9 @@ export async function restoreSession(
   const { connectedDid, delegateDid } = resolveIdentityDids(
     identity, storedDelegateDid ?? undefined,
   );
+  if (connectedDid !== userAgent.agentDid.uri) {
+    await prepareRestoredDidRouting(ctx, connectedDid);
+  }
 
   return commitFlowSession(ctx, () => finalizeRestoredSession(ctx, identity, connectedDid, delegateDid));
 }
@@ -243,6 +251,37 @@ async function handleMissingRestoreIdentity(
     emitIdentityAdded : false,
     signal            : ctx.sessionSignal,
   }));
+}
+
+/** Refresh and, when configured, tenant-register the DID selected by persisted session state. */
+async function prepareRestoredDidRouting(ctx: FlowContext, connectedDid: string): Promise<void> {
+  const { userAgent, storage } = ctx;
+  const dwnEndpoints = await refreshDwnEndpointsForConnection({
+    userAgent,
+    didUri   : connectedDid,
+    required : ctx.registration !== undefined || ctx.defaultSync !== 'off',
+  });
+  assertFlowActive(ctx);
+
+  if (ctx.registration === undefined) {
+    return;
+  }
+  if (dwnEndpoints === undefined) {
+    throw new Error(`[@enbox/auth] No DWN endpoints are available for registration of '${connectedDid}'.`);
+  }
+
+  await registerWithDwnEndpoints(
+    {
+      userAgent,
+      targets      : [{ did: connectedDid, dwnEndpoints }],
+      secretStore  : userAgent.secrets,
+      storage,
+      assertActive : ctx.assertActive,
+      runMutation  : ctx.runMutation,
+    },
+    ctx.registration,
+  );
+  assertFlowActive(ctx);
 }
 
 /**

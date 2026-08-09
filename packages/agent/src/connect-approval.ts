@@ -25,7 +25,13 @@ import type { ConnectSessionMetadata, ConnectSessionTransport, DwnDataEncodedRec
 import { Ed25519 } from '@enbox/crypto';
 import { randomToken } from '@enbox/connect';
 import { Convert, logger, nowMs, timed } from '@enbox/common';
-import { Did, DidJwk } from '@enbox/dids';
+import {
+  Did,
+  DidJwk,
+  DwnEndpointResolutionError,
+  DwnEndpointResolutionErrorCode,
+  resolveDwnServiceEndpointUrls,
+} from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
@@ -279,6 +285,38 @@ function validatePermissionRequestProtocolUris(permissionRequests: ConnectPermis
 }
 
 /**
+ * Resolves the hosted DWN endpoints advertised by the provider DID and
+ * requires at least one before the ceremony is allowed to persist anything.
+ * The canonical resolver normally rejects an empty service itself; the
+ * explicit guard keeps this invariant intact for custom agent implementations.
+ */
+async function requireAdvertisedDwnEndpointUrls(
+  providerDid: string,
+  agent: EnboxPlatformAgent,
+  fresh = false,
+): Promise<string[]> {
+  if (fresh) {
+    return resolveDwnServiceEndpointUrls(providerDid, {
+      resolve: () => agent.did.refreshResolution(providerDid),
+    });
+  }
+
+  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(providerDid);
+  assertAdvertisedDwnEndpointUrls(providerDid, dwnEndpointUrls);
+  return dwnEndpointUrls;
+}
+
+function assertAdvertisedDwnEndpointUrls(providerDid: string, dwnEndpointUrls: string[]): void {
+  if (dwnEndpointUrls.length === 0) {
+    throw new DwnEndpointResolutionError({
+      code    : DwnEndpointResolutionErrorCode.EndpointsMissing,
+      didUri  : providerDid,
+      message : `DID '${providerDid}' advertises no usable DecentralizedWebNode endpoints.`,
+    });
+  }
+}
+
+/**
  * Orders protocol preparation so that a protocol's in-batch composition
  * dependencies are prepared before it.
  *
@@ -406,8 +444,9 @@ export async function ensureDelegateX25519PrivateKey(
 /**
  * Creates permission grants that assign the requested scopes to a delegate
  * DID, stores them locally, and delivers each grant to every owner DWN
- * endpoint. Each grant must be accepted (202 or 409) by at least one
- * endpoint; otherwise the approval fails.
+ * endpoint. Endpoint resolution completes before any grant is stored. Each
+ * grant must be accepted (202 or 409) by at least one endpoint; otherwise the
+ * approval fails.
  */
 export async function createPermissionGrants(
   selectedDid: string,
@@ -415,6 +454,7 @@ export async function createPermissionGrants(
   agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
   connectSession?: ConnectSessionMetadata,
+  advertisedDwnEndpointUrls?: string[],
 ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
   const session = connectSession ?? createConnectSessionMetadata();
@@ -424,6 +464,12 @@ export async function createPermissionGrants(
   for (const scope of scopes) {
     assertConnectGrantScope(scope);
   }
+
+  // Resolve before `createGrant({ store: true })`: an absent or malformed
+  // advertised service must never leave orphaned local permission writes.
+  const dwnEndpointUrls = advertisedDwnEndpointUrls
+    ?? await requireAdvertisedDwnEndpointUrls(selectedDid, agent);
+  assertAdvertisedDwnEndpointUrls(selectedDid, dwnEndpointUrls);
 
   const permissionGrants = await Promise.all(
     scopes.map((scope) => permissionsApi.createGrant({
@@ -442,7 +488,6 @@ export async function createPermissionGrants(
   // to a different one and needs the grant to authenticate.  We send each
   // grant to every endpoint so that sync works regardless of which DWN the
   // agent contacts first.
-  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
   logger.log(`Sending ${permissionGrants.length} permission grants to ${dwnEndpointUrls.length} DWN endpoint(s)...`);
 
   const batchSignal = AbortSignal.timeout(CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS);
@@ -583,12 +628,14 @@ async function fanOutDataEncodedRecords(
   ownerDid: string,
   agent: EnboxPlatformAgent,
   records: DwnDataEncodedRecordsWriteMessage[],
+  advertisedDwnEndpointUrls?: string[],
 ): Promise<void> {
   if (records.length === 0) {
     return;
   }
 
-  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(ownerDid);
+  const dwnEndpointUrls = advertisedDwnEndpointUrls
+    ?? await requireAdvertisedDwnEndpointUrls(ownerDid, agent);
   const sendTasks = records.flatMap((record, recordIndex) => {
     const { encodedData, ...rawMessage } = record;
     const data = Convert.base64Url(encodedData).toUint8Array();
@@ -655,16 +702,18 @@ export const ConnectCeremony = {
 /**
  * Executes the wallet-side connect approval ceremony:
  *
- * 1. Uses a requester-supplied delegate DID, or mints one (did:jwk with the
+ * 1. Resolves and requires the provider DID's advertised hosted DWN endpoints
+ *    before any protocol, grant, or grantKey record is persisted.
+ * 2. Uses a requester-supplied delegate DID, or mints one (did:jwk with the
  *    derived X25519 private key appended) when omitted.
- * 2. Clamps the requested session TTL and builds the session metadata.
- * 3. Prepares each requested protocol on the owner's DWNs: install or
+ * 3. Clamps the requested session TTL and builds the session metadata.
+ * 4. Prepares each requested protocol on the owner's DWNs: install or
  *    encryption upgrade with fail-closed conflict detection and remote
  *    convergence verification.
- * 4. Creates permission grants (scope guards enforced) and delivers them to
+ * 5. Creates permission grants (scope guards enforced) and delivers them to
  *    every owner DWN endpoint.
- * 5. Creates and fans out durable grantKey records for encrypted read scopes.
- * 6. Creates per-grant contextId-scoped revocation grants and fans them out.
+ * 6. Creates and fans out durable grantKey records for encrypted read scopes.
+ * 7. Creates per-grant contextId-scoped revocation grants and fans them out.
  *
  * @param params - The approval parameters.
  * @returns The `ConnectApproval` consumed by the kernel's
@@ -693,6 +742,18 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     const sessionTtlSeconds = resolveRequestedSessionTtlSeconds(request.requestedSessionTtlSeconds);
     const preSuppliedDelegateDid = resolvePreSuppliedDelegateDid(request.delegateDid);
 
+    validatePermissionRequestProtocolUris(request.permissionRequests);
+
+    // This is deliberately the first operation that can consult identity
+    // state, and it occurs before every persistent protocol/grant mutation.
+    // Reuse the same authoritative endpoint snapshot throughout the ceremony
+    // so later phases neither fall back to a local replica nor re-resolve to a
+    // different document halfway through approval.
+    const advertisedDwnEndpointUrls = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} providerDid.dwnEndpoints.resolve`,
+      () => requireAdvertisedDwnEndpointUrls(providerDid, agent, true),
+    );
+
     let delegatePortableDid: PortableDid | undefined;
     let delegateRootPrivateKey: PrivateKeyJwk | undefined;
     let responseSigner: BearerDid;
@@ -715,8 +776,6 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       responseSigner = delegateBearerDid;
       grantedDelegateDid = delegateBearerDid.uri;
     }
-
-    validatePermissionRequestProtocolUris(request.permissionRequests);
 
     const preSuppliedDelegateRootPublicKey = preSuppliedDelegateDid !== undefined &&
       request.permissionRequests.some(permissionRequestHasEncryptedReadScopes)
@@ -744,7 +803,12 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
         // are still prepared concurrently.
         for (const level of orderPermissionRequestsByUsesDependencies(request.permissionRequests)) {
           await Promise.all(level.map(
-            ({ protocolDefinition }) => prepareProtocol(providerDid, agent, protocolDefinition)
+            ({ protocolDefinition }) => prepareProtocol(
+              providerDid,
+              agent,
+              protocolDefinition,
+              advertisedDwnEndpointUrls,
+            )
           ));
         }
 
@@ -755,6 +819,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
           agent,
           permissionScopes,
           connectSession,
+          advertisedDwnEndpointUrls,
         );
 
         let grantOffset = 0;
@@ -791,19 +856,18 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
 
     await timed(
       `${CONNECT_PERF_LOG_PREFIX} grantKeys.fanout (n=${durableGrantKeyRecords.length})`,
-      () => fanOutDataEncodedRecords(providerDid, agent, durableGrantKeyRecords),
+      () => fanOutDataEncodedRecords(
+        providerDid,
+        agent,
+        durableGrantKeyRecords,
+        advertisedDwnEndpointUrls,
+      ),
     );
 
     // Create per-grant contextId-scoped revocation grants.
     // Each revocation grant authorizes the delegate to write a revocation
     // ONLY for the specific session grant it corresponds to.
     const permissionsApi = new AgentPermissionsApi({ agent });
-    let revGrantEndpoints: string[] = [];
-    try {
-      revGrantEndpoints = await agent.dwn.getDwnEndpointUrlsForTarget(providerDid);
-    } catch {
-      // Endpoint resolution failure — revocation grants will be local-only until sync.
-    }
 
     sessionGrantCount = createdGrants.length;
 
@@ -848,7 +912,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
 
       const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
       const revData = Uint8Array.from(Convert.base64Url(revEncoded).toUint8Array());
-      for (const dwnUrl of revGrantEndpoints) {
+      for (const dwnUrl of advertisedDwnEndpointUrls) {
         revSendTasks.push({ revRawMessage, revData, dwnUrl });
       }
     }
@@ -859,7 +923,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     // tolerated by `mapConcurrentSettled`.
     if (revSendTasks.length > 0) {
       await timed(
-        `${CONNECT_PERF_LOG_PREFIX} revocationGrants.fanout (sends=${revSendTasks.length}, endpoints=${revGrantEndpoints.length})`,
+        `${CONNECT_PERF_LOG_PREFIX} revocationGrants.fanout (sends=${revSendTasks.length}, endpoints=${advertisedDwnEndpointUrls.length})`,
         () => mapConcurrentSettled(
           revSendTasks,
           CONNECT_FANOUT_CONCURRENCY,

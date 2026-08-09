@@ -92,6 +92,15 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.normalizeProtocolRequests).toBe('function');
   });
 
+  it('re-exports the service-config opt-in helper from @enbox/auth', async () => {
+    const [browser, auth] = await Promise.all([
+      getBrowserExports(),
+      import('@enbox/auth/browser'),
+    ]);
+    expect(browser.serviceConfigProtocolRequest).toBe(auth.serviceConfigProtocolRequest);
+    expect(browser.ServiceConfigProtocolDefinition).toBe(auth.ServiceConfigProtocolDefinition);
+  });
+
   it('exports BrowserConnectHandler', async () => {
     const mod = await getBrowserExports();
     expect(mod.BrowserConnectHandler).toBeDefined();

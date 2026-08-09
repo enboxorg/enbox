@@ -28,10 +28,10 @@
  *    failure reasons (rejected sends, non-2xx replies, non-converged states)
  *    to the error instead of swallowing them.
  *
- * When no remote DWN endpoints resolve for the provider, preparation is
- * local-only — grant delivery enforces the ≥1-endpoint invariant immediately
- * afterwards, so approval still cannot complete against a provider with no
- * reachable DWN.
+ * Standalone callers retain local-replica behavior: when no remote DWN
+ * endpoints resolve, preparation is local-only. The hosted approval ceremony
+ * preflights a required advertised endpoint set before any protocol or grant
+ * mutation and supplies that same snapshot to every preparation call.
  */
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -366,7 +366,7 @@ async function resolveDwnEndpointUrls(
   agent: EnboxPlatformAgent,
 ): Promise<string[]> {
   try {
-    return await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
+    return await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
   } catch {
     // Endpoint resolution failure — treated like zero endpoints below.
     return [];
@@ -524,14 +524,18 @@ export async function prepareProtocol(
   selectedDid: string,
   agent: EnboxPlatformAgent,
   protocolDefinition: DwnProtocolDefinition,
+  advertisedDwnEndpointUrls?: string[],
 ): Promise<void> {
+  // Endpoint discovery precedes any possible local configure. Hosted connect
+  // passes a required, already-resolved snapshot; standalone/local-replica
+  // callers retain the historical local-only fallback when resolution fails.
+  const dwnEndpointUrls = advertisedDwnEndpointUrls
+    ?? await resolveDwnEndpointUrls(selectedDid, agent);
   const { queryResult, existingEntry, setupStatus } = await queryLocalProtocolStatus(selectedDid, agent, protocolDefinition);
 
-  const dwnEndpointUrls = await resolveDwnEndpointUrls(selectedDid, agent);
-
-  // Local-only mode: nothing to verify or fan out. Grant delivery enforces
-  // the ≥1-endpoint invariant immediately afterwards, so an approval against
-  // a provider with no reachable DWN still cannot complete.
+  // Standalone/local-replica mode: nothing to verify or fan out. Hosted
+  // connect never reaches this branch because it supplies its required,
+  // preflighted advertised endpoint snapshot.
   if (dwnEndpointUrls.length === 0) {
     if (setupStatus === 'install' || setupStatus === 'upgrade') {
       await configureProtocolLocally(selectedDid, agent, protocolDefinition);

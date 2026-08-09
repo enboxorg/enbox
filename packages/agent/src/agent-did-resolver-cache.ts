@@ -1,10 +1,9 @@
 import type { DidResolverCacheLevelParams } from '@enbox/dids/resolver-cache-level';
-import type { DidResolutionResult, DidResolverCache, PortableDid } from '@enbox/dids';
+import type { DidResolutionResult, DidResolverCache } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 
 import { DidResolverCacheLevel } from '@enbox/dids/resolver-cache-level';
-import { logger } from '@enbox/common';
 
 
 /**
@@ -12,6 +11,8 @@ import { logger } from '@enbox/common';
  * This allows for quick and offline access to the internal DIDs used by the agent.
  */
 export class AgentDidResolverCache extends DidResolverCacheLevel implements DidResolverCache {
+  /** Delay before retrying a managed DID resolution that failed while its stale value was retained. */
+  private static readonly FAILED_REFRESH_RETRY_MS = 5_000;
 
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
@@ -21,8 +22,11 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
    */
   private _agent?: EnboxPlatformAgent;
 
-  /** A map of DIDs that are currently in-flight. This helps avoid going into an infinite loop */
-  private readonly _resolving: Map<string, boolean> = new Map();
+  /** Coalesces stale refreshes so one expired DID produces at most one network resolution. */
+  private readonly _refreshing = new Map<string, Promise<StaleDidRefresh>>();
+
+  /** Prevents sequential cache reads from repeatedly resolving the same managed DID while offline. */
+  private readonly _failedRefreshRetryAfter = new Map<string, number>();
 
   constructor({ agent, db, location, ttl }: DidResolverCacheLevelParams & { agent?: EnboxPlatformAgent }) {
     super ({ db, location, ttl });
@@ -49,11 +53,19 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
   async get(did: string): Promise<DidResolutionResult | void> {
     try {
       const str = await this.cache.get(did);
-      const cachedResult = JSON.parse(str);
-      if (!this._resolving.has(did) && Date.now() >= cachedResult.ttlMillis) {
-        await this.refreshStaleDid(did);
+      const cachedResult = JSON.parse(str) as { ttlMillis: number; value: DidResolutionResult };
+      if (Date.now() < cachedResult.ttlMillis) {
+        return cachedResult.value;
       }
-      return cachedResult.value;
+
+      const refresh = await this.refreshStaleDid(did);
+      if (!refresh.isManaged) {
+        return;
+      }
+
+      // Managed DIDs retain their last known document for offline use, but a successful refresh
+      // is returned immediately rather than making this first post-TTL operation use stale routes.
+      return refresh.value ?? cachedResult.value;
     } catch (error: any) {
       if (error.notFound) {
         return;
@@ -62,55 +74,94 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
     }
   }
 
+  /** Stores an authoritative result and removes any failed-refresh retry delay for the DID. */
+  public override async set(did: string, value: DidResolutionResult): Promise<void> {
+    await super.set(did, value);
+    this._failedRefreshRetryAfter.delete(did);
+  }
+
+  /** Deletes a cached result and its failed-refresh retry state. */
+  public override async delete(did: string): Promise<void> {
+    await super.delete(did);
+    this._failedRefreshRetryAfter.delete(did);
+  }
+
+  /** Clears all cached results and failed-refresh retry state. */
+  public override async clear(): Promise<void> {
+    await super.clear();
+    this._failedRefreshRetryAfter.clear();
+  }
+
   /**
    * Re-resolves a DID that is managed by the agent (or is the agent's own DID) after its cache
    * entry has gone stale. If the DID is not found in the DID Store, its cache entry is evicted.
    * Otherwise, the cache entry is kept until a new resolution succeeds, at which point both the
    * store and the cache are updated with the newly resolved Document.
    */
-  private async refreshStaleDid(did: string): Promise<void> {
-    this._resolving.set(did, true);
-
-    // if a DID is stored in the DID Store, then we don't want to evict it from the cache until we have a successful resolution
-    // upon a successful resolution, we will update both the storage and the cache with the newly resolved Document.
-    const storedDid = await this.agent.did.get({ didUri: did, tenant: this.agent.agentDid.uri });
-    if ('undefined' === typeof storedDid) {
-      this._resolving.delete(did);
-      this.cache.nextTick(() => this.cache.del(did));
-    } else {
-      try {
-        const result = await this.agent.did.resolve(did);
-
-        // if the resolution was successful, update the stored DID with the new Document
-        if (!result.didResolutionMetadata.error && result.didDocument) {
-
-          const portableDid = {
-            ...storedDid,
-            document : result.didDocument,
-            metadata : result.didDocumentMetadata,
-          };
-
-          await this.updateStoredDid(portableDid);
-        }
-      } finally {
-        this._resolving.delete(did);
+  private async refreshStaleDid(did: string): Promise<StaleDidRefresh> {
+    const retryAfter = this._failedRefreshRetryAfter.get(did);
+    if (retryAfter !== undefined) {
+      if (Date.now() < retryAfter) {
+        return { isManaged: true };
       }
+      this._failedRefreshRetryAfter.delete(did);
+    }
+
+    const inFlight = this._refreshing.get(did);
+    if (inFlight !== undefined) {
+      return inFlight;
+    }
+
+    const refresh = this.performStaleDidRefresh(did);
+    this._refreshing.set(did, refresh);
+    try {
+      return await refresh;
+    } finally {
+      this._refreshing.delete(did);
     }
   }
 
-  /**
-   * Persists a freshly resolved Document to the DID Store. Throws internally (and is swallowed
-   * here) if the DID is not managed by the agent, or if there is no difference between the stored
-   * and resolved DID — in either case we don't publish the DID, as it was received by the resolver.
-   */
-  private async updateStoredDid(portableDid: PortableDid): Promise<void> {
-    try {
-      await this.agent.did.update({ portableDid, tenant: this.agent.agentDid.uri, publish: false });
-    } catch (error: any) {
-      // if the error is not due to no changes detected, log the error
-      if (error.message && !error.message.includes('No changes detected, update aborted')) {
-        logger.error(`Error updating DID: ${error.message}`);
-      }
+  private async performStaleDidRefresh(did: string): Promise<StaleDidRefresh> {
+    const isAgentDid = did === this.agent.agentDid.uri;
+    const storedDid = isAgentDid
+      ? undefined
+      : await this.agent.did.get({ didUri: did, tenant: this.agent.agentDid.uri });
+
+    if (!isAgentDid && storedDid === undefined) {
+      this._failedRefreshRetryAfter.delete(did);
+      this.cache.nextTick(() => this.delete(did));
+      return { isManaged: false };
     }
+
+    try {
+      // The core operation bypasses this cache and generation-conditionally
+      // reconciles a managed DID. Calling ordinary `resolve` here would recurse
+      // through this same stale entry.
+      const result = await this.agent.did.refreshResolutionAndReconcile({
+        didUri : did,
+        tenant : this.agent.agentDid.uri,
+      });
+      if (result.didResolutionMetadata.error !== undefined || result.didDocument === null) {
+        this.deferFailedRefresh(did);
+        return { isManaged: true };
+      }
+
+      this._failedRefreshRetryAfter.delete(did);
+      return { isManaged: true, value: result };
+    } catch {
+      // Managed DIDs deliberately retain their last known document while offline.
+      this.deferFailedRefresh(did);
+      return { isManaged: true };
+    }
+  }
+
+  /** Applies a short failure-only retry delay without extending the cached document's TTL. */
+  private deferFailedRefresh(did: string): void {
+    this._failedRefreshRetryAfter.set(did, Date.now() + AgentDidResolverCache.FAILED_REFRESH_RETRY_MS);
   }
 }
+
+type StaleDidRefresh = {
+  isManaged: boolean;
+  value?: DidResolutionResult;
+};

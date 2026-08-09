@@ -372,8 +372,7 @@ export class DidDht extends DidMethod {
    * @returns A Promise resolving to a `BearerDid` object representing the DID formed from the
    *          provided PortableDid.
    * @throws An error if the PortableDid document does not contain any verification methods, lacks
-   *         an Identity Key, or the keys for any verification method are missing in the key
-   *         manager.
+   *         an Identity Key, or the Identity Key is unavailable in the key manager.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
     keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, string, KmsExportKeyParams>;
@@ -388,9 +387,13 @@ export class DidDht extends DidMethod {
     const did = await BearerDid.import({ portableDid, keyManager });
 
     // Validate that the given verification methods contain an Identity Key.
-    if (!did.document.verificationMethod?.some(vm => vm.id?.split('#').pop() === '0')) {
+    const identityMethod = did.document.verificationMethod?.find(vm => vm.id?.split('#').pop() === '0');
+    if (identityMethod?.publicKeyJwk === undefined) {
       throw new DidError(DidErrorCode.InvalidDidDocument, `DID document must contain an Identity Key`);
     }
+
+    const identityKeyUri = await keyManager.getKeyUri({ key: identityMethod.publicKeyJwk });
+    await keyManager.getPublicKey({ keyUri: identityKeyUri });
 
     return did;
   }

@@ -105,6 +105,119 @@ describe('restoreSession', () => {
     expect(session!.signal).toBe(context.sessionSignal);
   });
 
+  test('fresh-resolves and tenant-registers the restored connected DID', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    const refreshedDids: string[] = [];
+    const serverInfoEndpoints: string[] = [];
+    let registrationSuccesses = 0;
+    const agent = createMockAgent({
+      firstLaunch          : async () => false,
+      didRefreshResolution : async (didUri) => {
+        refreshedDids.push(didUri);
+        return {
+          didDocument: {
+            id      : didUri,
+            service : [{
+              id              : `${didUri}#dwn`,
+              type            : 'DecentralizedWebNode',
+              serviceEndpoint : [didUri === 'did:dht:testagent'
+                ? 'https://restored-agent.example/dwn'
+                : 'https://restored-identity.example/dwn'],
+            }],
+          },
+          didDocumentMetadata   : {},
+          didResolutionMetadata : {},
+        };
+      },
+      rpcGetServerInfo: async (endpoint) => {
+        serverInfoEndpoints.push(endpoint);
+        return {
+          registrationRequirements : [],
+          maxFileSize              : 10_000_000,
+        };
+      },
+    });
+
+    const session = await restoreSession({
+      userAgent    : agent,
+      emitter,
+      storage,
+      defaultSync  : 'off',
+      registration : {
+        onSuccess : () => { registrationSuccesses++; },
+        onFailure : () => {},
+      },
+    });
+
+    expect(session?.did).toBe('did:dht:testuser123');
+    expect(refreshedDids).toEqual(['did:dht:testagent', 'did:dht:testuser123']);
+    expect(serverInfoEndpoints).toEqual([
+      'https://restored-agent.example/dwn',
+      'https://restored-identity.example/dwn',
+    ]);
+    expect(registrationSuccesses).toBe(2);
+  });
+
+  test('restores a local-only session when sync and tenant registration are disabled', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    const agent = createMockAgent({
+      firstLaunch          : async () => false,
+      didRefreshResolution : async (didUri) => ({
+        didDocument           : { id: didUri },
+        didDocumentMetadata   : {},
+        didResolutionMetadata : {},
+      }),
+    });
+
+    const session = await restoreSession({
+      userAgent   : agent,
+      emitter,
+      storage,
+      defaultSync : 'off',
+    });
+
+    expect(session?.did).toBe('did:dht:testuser123');
+  });
+
+  test('refreshes the agent DID before retry maintenance can start sync', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, '[]');
+    const operations: string[] = [];
+    const agent = createMockAgent({
+      firstLaunch          : async () => false,
+      didRefreshResolution : async (didUri) => {
+        operations.push(`resolve:${didUri}`);
+        return {
+          didDocument: {
+            id      : didUri,
+            service : [{
+              id              : `${didUri}#dwn`,
+              type            : 'DecentralizedWebNode',
+              serviceEndpoint : [`https://${didUri.endsWith('testagent') ? 'agent' : 'identity'}.example/dwn`],
+            }],
+          },
+          didDocumentMetadata   : {},
+          didResolutionMetadata : {},
+        };
+      },
+      syncStartSync : async () => { operations.push('start-sync'); },
+      syncStopSync  : async () => { operations.push('stop-sync'); },
+    });
+
+    await restoreSession({ userAgent: agent, emitter, storage, defaultSync: '15s' });
+
+    expect(operations[0]).toBe('resolve:did:dht:testagent');
+    expect(operations.indexOf('start-sync')).toBeGreaterThan(operations.indexOf('resolve:did:dht:testagent'));
+    expect(operations.indexOf('resolve:did:dht:testuser123'))
+      .toBeGreaterThan(operations.indexOf('start-sync'));
+  });
+
   test('restores session from active identity DID', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();

@@ -10,7 +10,17 @@ import { DwnPermissionGrant, InMemorySecretStore } from '@enbox/agent';
 
 /** Minimal BearerIdentity-like object for testing. */
 export interface MockIdentity {
-  did: { uri: string };
+  did: {
+    uri: string;
+    document?: {
+      id: string;
+      service?: {
+        id: string;
+        type: string;
+        serviceEndpoint: string[];
+      }[];
+    };
+  };
   metadata: {
     name: string;
     tenant: string;
@@ -20,9 +30,20 @@ export interface MockIdentity {
 
 /** Create a mock identity with defaults. */
 export function createMockIdentity(overrides: Partial<MockIdentity> = {}): MockIdentity {
+  const didUri = overrides.did?.uri ?? 'did:dht:testuser123';
   return {
-    did      : overrides.did ?? { uri: 'did:dht:testuser123' },
-    metadata : {
+    did: {
+      uri      : didUri,
+      document : overrides.did?.document ?? {
+        id      : didUri,
+        service : [{
+          id              : `${didUri}#dwn`,
+          type            : 'DecentralizedWebNode',
+          serviceEndpoint : ['https://dwn.example.com'],
+        }],
+      },
+    },
+    metadata: {
       name         : 'Default',
       tenant       : 'did:dht:testagent',
       connectedDid : undefined,
@@ -68,6 +89,11 @@ export interface MockAgentOverrides {
   identityDelete?: (params: any) => Promise<void>;
   identityExport?: (params: any) => Promise<any>;
   identityConnectedIdentity?: () => Promise<MockIdentity | undefined>;
+  identityGetDwnEndpoints?: (params: { didUri: string }) => Promise<string[]>;
+  identityRefreshDwnEndpoints?: (params: { didUri: string }) => Promise<string[]>;
+  identitySupportsAuthoritativeDidImport?: boolean;
+  didResolve?: (didUri: string) => Promise<any>;
+  didRefreshResolution?: (didUri: string) => Promise<any>;
   didExport?: (params: any) => Promise<any>;
   didDelete?: (params: any) => Promise<void>;
   dwnSetCachedLocalDwnEndpoint?: (endpoint: string) => Promise<boolean>;
@@ -108,6 +134,18 @@ export interface MockAgentOverrides {
  */
 export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAgent {
   const defaultIdentity = createMockIdentity();
+  const agentDid = {
+    uri      : 'did:dht:testagent',
+    document : {
+      id      : 'did:dht:testagent',
+      service : [{
+        id              : 'did:dht:testagent#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : ['https://dwn.example.com'],
+      }],
+    },
+    metadata: {},
+  };
   const processDwnRequest = overrides.processDwnRequest ?? (async (params: any): Promise<any> => {
     // RecordsQuery returns 200 with empty entries (used by _deriveProtocolsFromGrants).
     // All other DWN messages return 202 Accepted.
@@ -116,6 +154,18 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     }
     return { reply: { status: { code: 202, detail: 'Accepted' } } };
   });
+  const resolveDid = overrides.didResolve ?? (async (didUri: string): Promise<any> => ({
+    didDocument: didUri === agentDid.uri ? agentDid.document : {
+      id      : didUri,
+      service : [{
+        id              : `${didUri}#dwn`,
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : ['https://dwn.example.com'],
+      }],
+    },
+    didDocumentMetadata   : {},
+    didResolutionMetadata : {},
+  }));
   const permissionsFetchGrants = overrides.permissionsFetchGrants ?? (async (params: any): Promise<any[]> => {
     const tags = params.protocol !== undefined ? { protocol: params.protocol } : undefined;
     const { reply } = await processDwnRequest({
@@ -143,12 +193,20 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
   });
 
   return {
-    agentDid : { uri: 'did:dht:testagent' },
-    secrets  : new InMemorySecretStore(),
+    agentDid,
+    secrets: new InMemorySecretStore(),
 
     firstLaunch : overrides.firstLaunch ?? (async (): Promise<boolean> => false),
-    initialize  : overrides.initialize ?? (async (): Promise<string> => 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12'),
-    start       : overrides.start ?? (async (): Promise<void> => {}),
+    initialize  : overrides.initialize ?? (async (params: any): Promise<string> => {
+      if (
+        params.dwnEndpoints !== undefined
+        && (params.recoveryPhrase === undefined || params.replaceDwnEndpoints === true)
+      ) {
+        agentDid.document.service[0].serviceEndpoint = params.dwnEndpoints;
+      }
+      return 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12';
+    }),
+    start: overrides.start ?? (async (): Promise<void> => {}),
 
     // Mirrors EnboxUserAgent.shutdown ordering (best-effort steps) so tests
     // can observe component calls through the manager's delegated teardown.
@@ -160,22 +218,29 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     }),
 
     identity: {
-      list   : overrides.identityList ?? (async (): Promise<MockIdentity[]> => [defaultIdentity]),
-      create : overrides.identityCreate ?? (async (): Promise<MockIdentity> => defaultIdentity),
+      supportsAuthoritativeDidImport : overrides.identitySupportsAuthoritativeDidImport ?? true,
+      list                           : overrides.identityList ?? (async (): Promise<MockIdentity[]> => [defaultIdentity]),
+      create                         : overrides.identityCreate ?? (async (): Promise<MockIdentity> => defaultIdentity),
       // Mirrors the real store: resolves only the identity whose own DID
       // matches `didUri` (from the same list the mock exposes).
-      get    : overrides.identityGet ?? (async (params: any): Promise<MockIdentity | undefined> => {
+      get                            : overrides.identityGet ?? (async (params: any): Promise<MockIdentity | undefined> => {
         const identities = await (overrides.identityList ?? (async (): Promise<MockIdentity[]> => [defaultIdentity]))();
         return identities.find((identity) => identity.did.uri === params?.didUri);
       }),
-      import            : overrides.identityImport ?? (async (): Promise<MockIdentity> => defaultIdentity),
-      delete            : overrides.identityDelete ?? (async (): Promise<void> => {}),
-      export            : overrides.identityExport ?? (async (): Promise<any> => ({})),
-      connectedIdentity : overrides.identityConnectedIdentity ?? (async (): Promise<MockIdentity | undefined> => undefined),
+      import          : overrides.identityImport ?? (async (): Promise<MockIdentity> => defaultIdentity),
+      delete          : overrides.identityDelete ?? (async (): Promise<void> => {}),
+      export          : overrides.identityExport ?? (async (): Promise<any> => ({})),
+      getDwnEndpoints : overrides.identityGetDwnEndpoints
+        ?? (async (): Promise<string[]> => ['https://dwn.example.com']),
+      refreshDwnEndpoints: overrides.identityRefreshDwnEndpoints
+        ?? (async (): Promise<string[]> => ['https://dwn.example.com']),
+      connectedIdentity: overrides.identityConnectedIdentity ?? (async (): Promise<MockIdentity | undefined> => undefined),
     },
 
     did: {
-      export: overrides.didExport ?? (async (params: any): Promise<any> => ({
+      resolve           : resolveDid,
+      refreshResolution : overrides.didRefreshResolution ?? resolveDid,
+      export            : overrides.didExport ?? (async (params: any): Promise<any> => ({
         uri      : params.didUri,
         document : { id: params.didUri },
         metadata : {},
@@ -192,6 +257,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       sync                   : overrides.syncSync ?? (async (): Promise<void> => {}),
       drainTo                : overrides.syncDrainTo ?? (async (endpoint: string): Promise<any> => ({ completed: true, endpoint, targets: [] })),
       close                  : overrides.syncClose ?? (async (): Promise<void> => {}),
+      invalidateSyncTargets  : (): void => {},
       hasActiveSubscriptions : overrides.syncHasActiveSubscriptions ?? false,
     },
 
@@ -237,7 +303,11 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       lock           : overrides.vaultLock ?? (async (): Promise<void> => {}),
       changePassword : overrides.vaultChangePassword ?? (async (): Promise<void> => {}),
       resetPasswordWithRecoveryPhrase:
-        overrides.vaultResetPasswordWithRecoveryPhrase ?? (async (): Promise<void> => {}),
+        overrides.vaultResetPasswordWithRecoveryPhrase ?? (async (params: any): Promise<void> => {
+          if (params.replaceDwnEndpoints === true && params.dwnEndpoints !== undefined) {
+            agentDid.document.service[0].serviceEndpoint = params.dwnEndpoints;
+          }
+        }),
       backup      : overrides.vaultBackup ?? (async (): Promise<any> => ({ data: 'backup' })),
       restore     : overrides.vaultRestore ?? (async (): Promise<void> => {}),
       encryptData : overrides.vaultEncryptData ?? mockEncryptData,

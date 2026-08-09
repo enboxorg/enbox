@@ -128,8 +128,8 @@ function stubAgent(options: StubAgentOptions = {}): {
     processDwnRequest,
     rpc : { sendDwnRequest },
     dwn : {
-      getDwnEndpointUrlsForTarget : sinon.stub().resolves(options.endpoints ?? []),
-      getEncryptionKeyDeriver     : sinon.stub().resolves({
+      getRemoteDwnEndpointUrls : sinon.stub().resolves(options.endpoints ?? []),
+      getEncryptionKeyDeriver  : sinon.stub().resolves({
         rootKeyId        : 'urn:test:owner-root',
         derivationScheme : KeyDerivationScheme.ProtocolPath,
         derivePublicKey  : async (path: string[]) => ({
@@ -459,8 +459,8 @@ function simAgent(options: {
     processDwnRequest,
     rpc : { sendDwnRequest },
     dwn : {
-      getDwnEndpointUrlsForTarget : sinon.stub().resolves(Object.keys(options.remotes)),
-      getEncryptionKeyDeriver     : sinon.stub().rejects(new Error('no encrypted types in these fixtures')),
+      getRemoteDwnEndpointUrls : sinon.stub().resolves(Object.keys(options.remotes)),
+      getEncryptionKeyDeriver  : sinon.stub().rejects(new Error('no encrypted types in these fixtures')),
     },
   };
 

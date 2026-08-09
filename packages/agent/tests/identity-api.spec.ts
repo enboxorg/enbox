@@ -5,10 +5,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } fr
 import type { PortableDid } from '@enbox/dids';
 import type { PortableIdentity } from '../src/index.js';
 
+import { DidUpdateLocalCommitError } from '../src/did-api.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { AgentIdentityApi, isPortableIdentity } from '../src/identity-api.js';
-import { BearerDid, UniversalResolver } from '@enbox/dids';
+import { BearerDid, DidDht, DidJwk, DwnEndpointResolutionErrorCode, setDwnServiceEndpointUrls } from '@enbox/dids';
 
 describe('AgentIdentityApi', () => {
 
@@ -17,6 +18,10 @@ describe('AgentIdentityApi', () => {
       expect(
         new AgentIdentityApi()
       ).toBeDefined();
+    });
+
+    it('advertises authoritative atomic portable DID import', () => {
+      expect(new AgentIdentityApi().supportsAuthoritativeDidImport).toBe(true);
     });
   });
 
@@ -155,6 +160,228 @@ describe('AgentIdentityApi', () => {
         });
       });
 
+      describe('import()', () => {
+        it('freshly resolves and reconciles the DID before importing keys or writing stores', async () => {
+          const did = await DidJwk.create();
+          const portableDid = await did.export();
+          const staleDocument = {
+            ...portableDid.document,
+            service: [{
+              id              : `${portableDid.uri}#dwn`,
+              type            : 'DecentralizedWebNode',
+              serviceEndpoint : ['https://stale.example/dwn'],
+            }],
+          };
+          const authoritativeDocument = {
+            ...portableDid.document,
+            service: [{
+              id              : `${portableDid.uri}#dwn`,
+              type            : 'DecentralizedWebNode',
+              serviceEndpoint : ['https://authoritative.example/dwn'],
+            }],
+          };
+          const portableIdentity: PortableIdentity = {
+            portableDid : { ...portableDid, document: staleDocument },
+            metadata    : { name: 'Imported', uri: portableDid.uri, tenant: 'portable-tenant' },
+          };
+          let releaseResolution!: () => void;
+          let markResolutionStarted!: () => void;
+          const resolutionGate = new Promise<void>((resolve) => { releaseResolution = resolve; });
+          const resolutionStarted = new Promise<void>((resolve) => { markResolutionStarted = resolve; });
+          const refreshResolution = sinon.stub(testHarness.agent.did, 'refreshResolution').callsFake(async () => {
+            markResolutionStarted();
+            await resolutionGate;
+            return {
+              didDocument           : authoritativeDocument,
+              didDocumentMetadata   : { published: true },
+              didResolutionMetadata : {},
+            };
+          });
+          const didImport = sinon.stub(testHarness.agent.did, 'importWithCommit').callsFake(async ({ commit }) => {
+            return commit(did);
+          });
+          const identityStoreSet = sinon.stub(testHarness.agent.identity['_store'], 'set').resolves();
+
+          const importing = testHarness.agent.identity.import({ portableIdentity });
+          await resolutionStarted;
+
+          expect(refreshResolution.calledOnceWithExactly(portableDid.uri)).toBe(true);
+          expect(didImport.notCalled).toBe(true);
+          expect(identityStoreSet.notCalled).toBe(true);
+
+          releaseResolution();
+          await importing;
+
+          expect(didImport.calledAfter(refreshResolution)).toBe(true);
+          expect(didImport.firstCall.args[0]).toMatchObject({
+            portableDid: {
+              ...portableDid,
+              document : authoritativeDocument,
+              metadata : { published: true },
+            },
+            tenant: testHarness.agent.agentDid.uri,
+          });
+          expect(identityStoreSet.calledAfter(didImport)).toBe(true);
+          expect(portableIdentity.metadata.tenant).toBe('portable-tenant');
+        });
+
+        it('does not mutate keys or stores when authoritative resolution fails', async () => {
+          const did = await DidJwk.create();
+          const portableIdentity: PortableIdentity = {
+            portableDid : await did.export(),
+            metadata    : { name: 'Imported', uri: did.uri, tenant: 'portable-tenant' },
+          };
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : null,
+            didDocumentMetadata   : {},
+            didResolutionMetadata : { error: 'notFound' },
+          });
+          const didImport = sinon.spy(testHarness.agent.did, 'importWithCommit');
+          const identityStoreSet = sinon.spy(testHarness.agent.identity['_store'], 'set');
+
+          await expect(testHarness.agent.identity.import({ portableIdentity }))
+            .rejects.toThrow('authoritative DID resolution failed');
+
+          expect(didImport.notCalled).toBe(true);
+          expect(identityStoreSet.notCalled).toBe(true);
+        });
+
+        it('rejects mismatched identity metadata before resolving or mutating state', async () => {
+          const did = await DidJwk.create();
+          const portableIdentity: PortableIdentity = {
+            portableDid : await did.export(),
+            metadata    : { name: 'Mismatch', uri: 'did:jwk:mismatch', tenant: 'portable-tenant' },
+          };
+          const refreshResolution = sinon.spy(testHarness.agent.did, 'refreshResolution');
+          const importKey = sinon.spy(testHarness.agent.keyManager, 'importKey');
+          const didStoreSet = sinon.spy(testHarness.agent.did['_store'], 'set');
+
+          await expect(testHarness.agent.identity.import({ portableIdentity }))
+            .rejects.toThrow('does not match DID');
+
+          expect(refreshResolution.notCalled).toBe(true);
+          expect(importKey.notCalled).toBe(true);
+          expect(didStoreSet.notCalled).toBe(true);
+        });
+
+        it('rejects an existing identity before resolution or key mutation', async () => {
+          const identity = await testHarness.agent.identity.create({
+            didMethod : 'jwk',
+            metadata  : { name: 'Existing' },
+          });
+          const portableIdentity = await identity.export();
+          const refreshResolution = sinon.spy(testHarness.agent.did, 'refreshResolution');
+          const importKey = sinon.spy(testHarness.agent.keyManager, 'importKey');
+
+          await expect(testHarness.agent.identity.import({ portableIdentity }))
+            .rejects.toThrow('Identity already exists');
+
+          expect(refreshResolution.notCalled).toBe(true);
+          expect(importKey.notCalled).toBe(true);
+        });
+
+        it('rejects unrelated supplied keys before they enter the KMS', async () => {
+          const identityDid = await DidJwk.create();
+          const unrelatedDid = await DidJwk.create();
+          const portableDid = await identityDid.export();
+          portableDid.privateKeys = (await unrelatedDid.export()).privateKeys;
+          const portableIdentity: PortableIdentity = {
+            portableDid,
+            metadata: {
+              name   : 'Unrelated keys',
+              uri    : identityDid.uri,
+              tenant : 'portable-tenant',
+            },
+          };
+          const unrelatedKey = portableDid.privateKeys?.[0];
+          if (unrelatedKey === undefined) {
+            throw new Error('Expected an unrelated private key');
+          }
+          const unrelatedKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: unrelatedKey });
+          const importKey = sinon.spy(testHarness.agent.keyManager, 'importKey');
+          const didStoreSet = sinon.spy(testHarness.agent.did['_store'], 'set');
+
+          await expect(testHarness.agent.identity.import({ portableIdentity }))
+            .rejects.toThrow('does not match the authoritative DID document');
+
+          expect(importKey.notCalled).toBe(true);
+          expect(didStoreSet.notCalled).toBe(true);
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri: unrelatedKeyUri })).rejects.toThrow();
+        });
+
+        it('rolls back the newly imported DID and keys when identity storage fails', async () => {
+          const did = await DidJwk.create();
+          const portableDid = await did.export();
+          const privateKey = portableDid.privateKeys?.[0];
+          if (privateKey === undefined) {
+            throw new Error('Expected a private key');
+          }
+          const keyUri = await testHarness.agent.keyManager.getKeyUri({ key: privateKey });
+          const portableIdentity: PortableIdentity = {
+            portableDid,
+            metadata: {
+              name   : 'Rollback',
+              uri    : did.uri,
+              tenant : 'portable-tenant',
+            },
+          };
+          sinon.stub(testHarness.agent.identity['_store'], 'set').rejects(new Error('identity store unavailable'));
+
+          await expect(testHarness.agent.identity.import({ portableIdentity }))
+            .rejects.toThrow('identity store unavailable');
+
+          await expect(testHarness.agent.did['_store'].get({
+            id       : did.uri,
+            agent    : testHarness.agent,
+            tenant   : testHarness.agent.agentDid.uri,
+            useCache : false,
+          })).resolves.toBeUndefined();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri })).rejects.toThrow();
+        });
+
+        it('still removes imported keys and reports residual cache state when cache rollback fails', async () => {
+          const did = await DidJwk.create();
+          const portableDid = await did.export();
+          const privateKey = portableDid.privateKeys?.[0];
+          if (privateKey === undefined) {
+            throw new Error('Expected a private key');
+          }
+          const keyUri = await testHarness.agent.keyManager.getKeyUri({ key: privateKey });
+          const portableIdentity: PortableIdentity = {
+            portableDid,
+            metadata: {
+              name   : 'Partial rollback',
+              uri    : did.uri,
+              tenant : 'portable-tenant',
+            },
+          };
+          sinon.stub(testHarness.agent.identity['_store'], 'set').rejects(new Error('identity store unavailable'));
+          sinon.stub(testHarness.agent.did.cache, 'delete').rejects(new Error('cache unavailable'));
+
+          let importError: unknown;
+          try {
+            await testHarness.agent.identity.import({ portableIdentity });
+          } catch (cause: unknown) {
+            importError = cause;
+          }
+
+          expect(importError).toBeInstanceOf(AggregateError);
+          expect((importError as AggregateError).message).toContain('Import commit and rollback both failed');
+          const rollbackError = (importError as AggregateError).errors[1];
+          expect(rollbackError).toBeInstanceOf(AggregateError);
+          expect((rollbackError as AggregateError).message).toContain('Import rollback left partial state');
+          expect(((rollbackError as AggregateError).errors[0] as Error).message)
+            .toContain('Resolver cache still contains rolled-back DID');
+          await expect(testHarness.agent.did['_store'].get({
+            id       : did.uri,
+            agent    : testHarness.agent,
+            tenant   : testHarness.agent.agentDid.uri,
+            useCache : false,
+          })).resolves.toBeUndefined();
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri })).rejects.toThrow();
+        });
+      });
+
       describe('create()', () => {
         it('creates and returns an Identity', async () => {
 
@@ -172,6 +399,24 @@ describe('AgentIdentityApi', () => {
           // Verify the result.
           expect(identity).toHaveProperty('did');
           expect(identity).toHaveProperty('metadata');
+        });
+
+        it('invalidates local routing topology only after storing the identity', async () => {
+          const invalidateSpy = sinon.spy(testHarness.agent.dwn, 'invalidateLocalManagedDidCache');
+
+          await testHarness.agent.identity.create({
+            didMethod : 'jwk',
+            metadata  : { name: 'Ephemeral Identity' },
+            store     : false,
+          });
+          expect(invalidateSpy.notCalled).toBe(true);
+
+          await testHarness.agent.identity.create({
+            didMethod : 'jwk',
+            metadata  : { name: 'Stored Identity' },
+            store     : true,
+          });
+          expect(invalidateSpy.calledOnce).toBe(true);
         });
       });
 
@@ -223,7 +468,9 @@ describe('AgentIdentityApi', () => {
           expect(storedIdentity?.did.uri).toBe(identity.did.uri);
 
           // Delete the Identity.
+          const invalidateSpy = sinon.spy(testHarness.agent.dwn, 'invalidateLocalManagedDidCache');
           await testHarness.agent.identity.delete({ didUri: identity.did.uri });
+          expect(invalidateSpy.calledOnce).toBe(true);
 
           // Verify that the Identity no longer exists.
           storedIdentity = await testHarness.agent.identity.get({ didUri: identity.did.uri });
@@ -258,7 +505,10 @@ describe('AgentIdentityApi', () => {
         });
       });
 
-      describe('setDwnEndpoints()', () => {
+      describe('DWN endpoints', () => {
+        let publishServiceConfig: sinon.SinonStub;
+        let runMutation: sinon.SinonStub;
+
         const testPortableDid: PortableDid = {
           uri      : 'did:dht:d71hju6wjeu5j7r5sbujqkubktds1kbtei8imkj859jr4hw77hdy',
           document : {
@@ -365,19 +615,496 @@ describe('AgentIdentityApi', () => {
         beforeEach(async () => {
           // import the keys for the test portable DID
           await BearerDid.import({ keyManager: testHarness.agent.keyManager, portableDid: testPortableDid });
+          publishServiceConfig = sinon.stub(testHarness.agent.identity, 'publishServiceConfig').resolves();
+          runMutation = sinon.stub(testHarness.agent.did, 'runMutation').callsFake(async ({ operation }) => {
+            return operation({ update: testHarness.agent.did.update.bind(testHarness.agent.did) });
+          });
         });
 
-        it('should set the DWN endpoints for a DID', async () => {
-          // stub did.get to return the test DID
+        it('returns only DID-advertised endpoints', async () => {
+          const mixedEndpoints = sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget')
+            .resolves(['http://localhost:3000', 'https://hosted.example']);
+          const remoteEndpoints = sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls')
+            .resolves(['https://hosted.example']);
+
+          await expect(testHarness.agent.identity.getDwnEndpoints({ didUri: testPortableDid.uri }))
+            .resolves.toEqual(['https://hosted.example']);
+          expect(remoteEndpoints.calledOnceWithExactly(testPortableDid.uri)).toBe(true);
+          expect(mixedEndpoints.notCalled).toBe(true);
+        });
+
+        it('force-refreshes advertised endpoints and invalidates the sync target plan', async () => {
+          const refreshResolution = sinon.stub(testHarness.agent.did, 'refreshResolutionAndReconcile').resolves({
+            didDocument: {
+              ...testPortableDid.document,
+              service: [{
+                id              : `${testPortableDid.uri}#dwn`,
+                type            : 'DecentralizedWebNode',
+                serviceEndpoint : ['https://fresh.example/', 'https://fresh.example'],
+              }],
+            },
+            didDocumentMetadata   : {},
+            didResolutionMetadata : {},
+          });
+          const invalidateSyncTargets = sinon.spy(testHarness.agent.sync, 'invalidateSyncTargets');
+
+          const endpoints = await testHarness.agent.identity.refreshDwnEndpoints({ didUri: testPortableDid.uri });
+
+          expect(endpoints).toEqual(['https://fresh.example']);
+          expect(refreshResolution.calledOnceWithExactly({
+            didUri : testPortableDid.uri,
+            tenant : testHarness.agent.agentDid.uri,
+          })).toBe(true);
+          expect(invalidateSyncTargets.calledOnce).toBe(true);
+        });
+
+        it('wraps a fresh-resolution transport failure and preserves the existing sync target plan', async () => {
+          sinon.stub(testHarness.agent.did, 'refreshResolutionAndReconcile').rejects(new Error('resolver unavailable'));
+          const invalidateSyncTargets = sinon.spy(testHarness.agent.sync, 'invalidateSyncTargets');
+
+          await expect(testHarness.agent.identity.refreshDwnEndpoints({ didUri: testPortableDid.uri }))
+            .rejects.toMatchObject({ code: DwnEndpointResolutionErrorCode.DidResolutionFailed });
+          expect(invalidateSyncTargets.notCalled).toBe(true);
+        });
+
+        it('reconciles a managed DID store with fresh resolution without publishing', async () => {
+          const identity = await testHarness.agent.identity.create({
+            didMethod  : 'dht',
+            metadata   : { name: 'Fresh durable snapshot' },
+            didOptions : {
+              publish  : false,
+              services : [{
+                id              : 'dwn',
+                type            : 'DecentralizedWebNode',
+                serviceEndpoint : ['https://stale.example'],
+              }],
+            },
+          });
+          const authoritativeDocument = setDwnServiceEndpointUrls({
+            didDocument : identity.did.document,
+            endpoints   : ['https://fresh.example'],
+          });
+          sinon.stub(DidDht, 'resolve').resolves({
+            didDocument           : authoritativeDocument,
+            didDocumentMetadata   : { published: true, versionId: 'fresh' },
+            didResolutionMetadata : {},
+          });
+          const publish = sinon.spy(DidDht, 'publish');
+
+          await expect(testHarness.agent.identity.refreshDwnEndpoints({ didUri: identity.did.uri }))
+            .resolves.toEqual(['https://fresh.example']);
+
+          const stored = await testHarness.agent.did.get({
+            didUri : identity.did.uri,
+            tenant : testHarness.agent.agentDid.uri,
+          });
+          expect(stored?.document).toEqual(authoritativeDocument);
+          expect(stored?.metadata).toMatchObject({ published: true, versionId: 'fresh' });
+          expect(publish.notCalled).toBe(true);
+        });
+
+        it('does not let an older background resolution overwrite a concurrent published update', async () => {
+          const identity = await testHarness.agent.identity.create({
+            didMethod  : 'dht',
+            metadata   : { name: 'Concurrent refresh' },
+            didOptions : {
+              publish  : false,
+              services : [{
+                id              : 'dwn',
+                type            : 'DecentralizedWebNode',
+                serviceEndpoint : ['https://before.example/dwn'],
+              }],
+            },
+          });
+          const resolvedBefore = setDwnServiceEndpointUrls({
+            didDocument : identity.did.document,
+            endpoints   : ['https://resolved-before.example/dwn'],
+          });
+          const publishedDocument = setDwnServiceEndpointUrls({
+            didDocument : identity.did.document,
+            endpoints   : ['https://published.example/dwn'],
+          });
+          let resolveOld!: () => void;
+          let markResolveStarted!: () => void;
+          const oldResolutionGate = new Promise<void>((resolve) => { resolveOld = resolve; });
+          const resolveStarted = new Promise<void>((resolve) => { markResolveStarted = resolve; });
+          const resolve = sinon.stub(DidDht, 'resolve');
+          resolve.onFirstCall().callsFake(async () => {
+            markResolveStarted();
+            await oldResolutionGate;
+            return {
+              didDocument           : resolvedBefore,
+              didDocumentMetadata   : { published: true, versionId: 'before' },
+              didResolutionMetadata : {},
+            };
+          });
+          resolve.onSecondCall().resolves({
+            didDocument           : publishedDocument,
+            didDocumentMetadata   : { published: true, versionId: 'published' },
+            didResolutionMetadata : {},
+          });
+          sinon.stub(DidDht, 'publish').resolves({
+            didDocument             : publishedDocument,
+            didDocumentMetadata     : { published: true, versionId: 'published' },
+            didRegistrationMetadata : {},
+          });
+
+          const refreshing = testHarness.agent.identity.refreshDwnEndpointStatus({ didUri: identity.did.uri });
+          await resolveStarted;
+          const portableDid = await identity.did.export();
+          portableDid.document = publishedDocument;
+          await testHarness.agent.did.update({
+            portableDid,
+            tenant: testHarness.agent.agentDid.uri,
+          });
+          resolveOld();
+
+          await expect(refreshing).resolves.toMatchObject({
+            status    : 'ready',
+            endpoints : ['https://published.example/dwn'],
+          });
+          expect(resolve.callCount).toBe(2);
+          const stored = await testHarness.agent.did.get({
+            didUri : identity.did.uri,
+            tenant : testHarness.agent.agentDid.uri,
+          });
+          expect(stored?.document).toEqual(publishedDocument);
+          await expect(testHarness.agent.did.resolve(identity.did.uri))
+            .resolves.toMatchObject({ didDocument: publishedDocument });
+        });
+
+        it('merges endpoints into the freshly resolved document and preserves unrelated state', async () => {
+          const storedBearerDid = new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager });
+          sinon.stub(testHarness.agent.did, 'get').resolves(storedBearerDid);
+          const authoritativeDocument = {
+            ...testPortableDid.document,
+            alsoKnownAs : ['https://authoritative.example/alice'],
+            service     : [{
+              id              : `${testPortableDid.uri}#profile`,
+              type            : 'Profile',
+              serviceEndpoint : 'https://authoritative.example/profile',
+            }, {
+              id              : `${testPortableDid.uri}#dwn`,
+              type            : 'DecentralizedWebNode',
+              serviceEndpoint : ['https://old-hosted.example'],
+              routingKeys     : ['did:example:mediator'],
+            }],
+          };
+          const refreshResolution = sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : authoritativeDocument,
+            didDocumentMetadata   : { published: true, versionId: 'fresh-version' },
+            didResolutionMetadata : {},
+          });
+          const update = sinon.stub(testHarness.agent.did, 'update').resolves();
+          const invalidateSyncTargets = sinon.spy(testHarness.agent.sync, 'invalidateSyncTargets');
+
+          await testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['https://new-hosted.example/', 'https://new-hosted.example'],
+          });
+
+          expect(refreshResolution.calledBefore(update)).toBe(true);
+          expect(update.calledOnce).toBe(true);
+          expect(update.firstCall.args[0].portableDid.document).toEqual({
+            ...authoritativeDocument,
+            service: [{
+              id              : `${testPortableDid.uri}#profile`,
+              type            : 'Profile',
+              serviceEndpoint : 'https://authoritative.example/profile',
+            }, {
+              id              : `${testPortableDid.uri}#dwn`,
+              type            : 'DecentralizedWebNode',
+              serviceEndpoint : ['https://new-hosted.example'],
+              routingKeys     : ['did:example:mediator'],
+            }],
+          });
+          expect(update.firstCall.args[0].portableDid.metadata).toEqual({ published: true, versionId: 'fresh-version' });
+          expect(invalidateSyncTargets.calledAfter(update)).toBe(true);
+          expect(publishServiceConfig.calledAfter(update)).toBe(true);
+          expect(publishServiceConfig.calledOnceWithExactly({
+            didUri            : testPortableDid.uri,
+            deliveryEndpoints : ['https://old-hosted.example'],
+          })).toBe(true);
+        });
+
+        it('can opt out of the best-effort service-config announcement', async () => {
+          const storedBearerDid = new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager });
+          sinon.stub(testHarness.agent.did, 'get').resolves(storedBearerDid);
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : testPortableDid.document,
+            didDocumentMetadata   : testPortableDid.metadata,
+            didResolutionMetadata : {},
+          });
+          sinon.stub(testHarness.agent.did, 'update').resolves();
+
+          await testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['https://new-hosted.example'],
+            announce  : false,
+          });
+
+          expect(publishServiceConfig.notCalled).toBe(true);
+        });
+
+        it('does not roll back an authoritative endpoint update when its announcement fails', async () => {
+          const storedBearerDid = new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager });
+          sinon.stub(testHarness.agent.did, 'get').resolves(storedBearerDid);
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : testPortableDid.document,
+            didDocumentMetadata   : testPortableDid.metadata,
+            didResolutionMetadata : {},
+          });
+          const update = sinon.stub(testHarness.agent.did, 'update').resolves();
+          publishServiceConfig.rejects(new Error('announcement unavailable'));
+
+          await expect(testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['https://new-hosted.example'],
+          })).resolves.toBeUndefined();
+
+          expect(update.calledOnce).toBe(true);
+          expect(publishServiceConfig.calledAfter(update)).toBe(true);
+        });
+
+        it('serializes same-DID updates and re-resolves before merging the queued change', async () => {
+          const storedBearerDid = new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager });
+          const get = sinon.stub(testHarness.agent.did, 'get').resolves(storedBearerDid);
+          const firstAuthoritative = structuredClone(testPortableDid.document);
+          const secondAuthoritative = structuredClone(testPortableDid.document);
+          secondAuthoritative.verificationMethod?.push({
+            id           : `${testPortableDid.uri}#external-latest`,
+            type         : 'JsonWebKey',
+            controller   : 'did:example:external-controller',
+            publicKeyJwk : {
+              alg : 'EdDSA',
+              crv : 'Ed25519',
+              kty : 'OKP',
+              x   : 'T2rdfCxGubY_zta8Gy6SVxypcchfmZKJhbXB9Ia9xlg',
+            },
+          });
+          secondAuthoritative.service = [
+            {
+              id              : `${testPortableDid.uri}#profile-latest`,
+              type            : 'Profile',
+              serviceEndpoint : 'https://profile.example/latest',
+            },
+            {
+              id              : `${testPortableDid.uri}#dwn`,
+              type            : 'DecentralizedWebNode',
+              serviceEndpoint : ['https://first.example'],
+            },
+          ];
+          let firstUpdateCompleted = false;
+          const refreshResolution = sinon.stub(testHarness.agent.did, 'refreshResolution');
+          refreshResolution.onFirstCall().resolves({
+            didDocument           : firstAuthoritative,
+            didDocumentMetadata   : {},
+            didResolutionMetadata : {},
+          });
+          refreshResolution.onSecondCall().callsFake(async () => {
+            expect(firstUpdateCompleted).toBe(true);
+            return {
+              didDocument           : secondAuthoritative,
+              didDocumentMetadata   : {},
+              didResolutionMetadata : {},
+            };
+          });
+          let releaseFirstUpdate!: () => void;
+          let markFirstUpdateStarted!: () => void;
+          const firstUpdateStarted = new Promise<void>((resolve) => { markFirstUpdateStarted = resolve; });
+          const firstUpdateGate = new Promise<void>((resolve) => { releaseFirstUpdate = resolve; });
+          const update = sinon.stub(testHarness.agent.did, 'update');
+          update.onFirstCall().callsFake(async () => {
+            markFirstUpdateStarted();
+            await firstUpdateGate;
+            firstUpdateCompleted = true;
+            return storedBearerDid;
+          });
+          update.onSecondCall().resolves(storedBearerDid);
+
+          const first = testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['https://first.example'],
+            announce  : false,
+          });
+          await firstUpdateStarted;
+          const second = testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['https://second.example'],
+            announce  : false,
+          });
+          await Promise.resolve();
+
+          expect(get.callCount).toBe(1);
+          expect(refreshResolution.callCount).toBe(1);
+          releaseFirstUpdate();
+          await Promise.all([first, second]);
+
+          expect(refreshResolution.callCount).toBe(2);
+          expect(update.callCount).toBe(2);
+          expect(update.secondCall.args[0].portableDid.document.verificationMethod)
+            .toContainEqual(secondAuthoritative.verificationMethod?.at(-1));
+          expect(update.secondCall.args[0].portableDid.document.service).toEqual([
+            secondAuthoritative.service[0],
+            {
+              ...secondAuthoritative.service[1],
+              serviceEndpoint: ['https://second.example'],
+            },
+          ]);
+        });
+
+        it('merges after a concurrent core DID update from another API surface', async () => {
+          runMutation.restore();
+          const initialBearerDid = new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager });
+          const externalDid = await DidJwk.create();
+          const directDocument = structuredClone(testPortableDid.document);
+          directDocument.alsoKnownAs = ['https://latest.example/profile'];
+          directDocument.verificationMethod?.push(externalDid.document.verificationMethod![0]);
+          const directBearerDid = new BearerDid({
+            uri        : testPortableDid.uri,
+            document   : directDocument,
+            metadata   : { published: true, versionId: 'direct' },
+            keyManager : testHarness.agent.keyManager,
+          });
+          const get = sinon.stub(testHarness.agent.did, 'get');
+          get.onFirstCall().resolves(initialBearerDid);
+          get.onSecondCall().resolves(directBearerDid);
+          get.onThirdCall().resolves(directBearerDid);
+          sinon.stub(testHarness.agent.did['_store'], 'set').resolves();
+          let releaseDirectPublish!: () => void;
+          let markDirectPublishStarted!: () => void;
+          const directPublishGate = new Promise<void>((resolve) => { releaseDirectPublish = resolve; });
+          const directPublishStarted = new Promise<void>((resolve) => { markDirectPublishStarted = resolve; });
+          let directPublished = false;
+          const publish = sinon.stub(DidDht, 'publish');
+          publish.onFirstCall().callsFake(async () => {
+            markDirectPublishStarted();
+            await directPublishGate;
+            directPublished = true;
+            return {
+              didDocument             : directDocument,
+              didDocumentMetadata     : { published: true, versionId: 'direct' },
+              didRegistrationMetadata : {},
+            };
+          });
+          publish.onSecondCall().callsFake(async ({ did }) => ({
+            didDocument             : did.document,
+            didDocumentMetadata     : { published: true, versionId: 'endpoint' },
+            didRegistrationMetadata : {},
+          }));
+          const refreshResolution = sinon.stub(testHarness.agent.did, 'refreshResolution').callsFake(async () => {
+            expect(directPublished).toBe(true);
+            return {
+              didDocument           : directDocument,
+              didDocumentMetadata   : { published: true, versionId: 'direct' },
+              didResolutionMetadata : {},
+            };
+          });
+          const directPortableDid = await initialBearerDid.export();
+          directPortableDid.document = directDocument;
+
+          const directUpdate = testHarness.agent.did.update({
+            portableDid : directPortableDid,
+            tenant      : testHarness.agent.agentDid.uri,
+          });
+          await directPublishStarted;
+          const endpointUpdate = testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['https://endpoint.example/dwn'],
+            announce  : false,
+          });
+          await Promise.resolve();
+          expect(refreshResolution.notCalled).toBe(true);
+
+          releaseDirectPublish();
+          await Promise.all([directUpdate, endpointUpdate]);
+
+          expect(refreshResolution.calledOnce).toBe(true);
+          expect(publish.callCount).toBe(2);
+          expect(publish.secondCall.args[0].did.document.alsoKnownAs).toEqual(directDocument.alsoKnownAs);
+          expect(publish.secondCall.args[0].did.document.verificationMethod)
+            .toContainEqual(externalDid.document.verificationMethod![0]);
+          expect(publish.secondCall.args[0].did.document.service?.find(
+            (service) => service.type === 'DecentralizedWebNode'
+          )?.serviceEndpoint).toEqual(['https://endpoint.example/dwn']);
+        });
+
+        it('invalidates and announces a published update before surfacing a local commit failure', async () => {
+          const storedBearerDid = new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager });
+          sinon.stub(testHarness.agent.did, 'get').resolves(storedBearerDid);
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : testPortableDid.document,
+            didDocumentMetadata   : testPortableDid.metadata,
+            didResolutionMetadata : {},
+          });
+          const update = sinon.stub(testHarness.agent.did, 'update').callsFake(async ({ portableDid }) => {
+            await testHarness.agent.did.cache.set(portableDid.uri, {
+              didDocument           : portableDid.document,
+              didDocumentMetadata   : portableDid.metadata,
+              didResolutionMetadata : {},
+            });
+            throw new DidUpdateLocalCommitError({
+              cause     : new Error('disk unavailable'),
+              didUri    : portableDid.uri,
+              published : true,
+            });
+          });
+          const invalidateSyncTargets = sinon.spy(testHarness.agent.sync, 'invalidateSyncTargets');
+
+          await expect(testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['https://published.example'],
+          })).rejects.toMatchObject({
+            code      : 'DID_UPDATE_LOCAL_COMMIT_FAILED',
+            published : true,
+          });
+
+          expect(invalidateSyncTargets.calledOnce).toBe(true);
+          expect(publishServiceConfig.calledAfter(update)).toBe(true);
+          const cached = await testHarness.agent.did.resolve(testPortableDid.uri);
+          expect(cached.didDocument?.service?.find((service) => service.type === 'DecentralizedWebNode')?.serviceEndpoint)
+            .toEqual(['https://published.example']);
+        });
+
+        it('should throw an error if the service endpoints remain unchanged', async () => {
           sinon.stub(testHarness.agent.did, 'get').resolves(new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager }));
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : testPortableDid.document,
+            didDocumentMetadata   : testPortableDid.metadata,
+            didResolutionMetadata : {},
+          });
+          sinon.stub(testHarness.agent.did, 'update').rejects(new Error('AgentDidApi: No changes detected, update aborted'));
+
+          await expect(testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['https://example.com/dwn'],
+          })).rejects.toThrow('AgentDidApi: No changes detected');
+        });
+
+        it('should throw an error if the DID is not found', async () => {
+          const refreshResolution = sinon.spy(testHarness.agent.did, 'refreshResolution');
+
+          await expect(testHarness.agent.identity.setDwnEndpoints({
+            didUri    : 'did:method:xyz123',
+            endpoints : ['https://example.com/dwn'],
+          })).rejects.toThrow('AgentIdentityApi: Failed to set DWN endpoints due to DID not found');
+          expect(refreshResolution.notCalled).toBe(true);
+        });
+
+        it('should add a DWN service if no services exist', async () => {
+          const testPortableDidWithoutServices = { ...testPortableDid, document: { ...testPortableDid.document, service: undefined } };
+          sinon.stub(testHarness.agent.did, 'get').resolves(new BearerDid({ ...testPortableDidWithoutServices, keyManager: testHarness.agent.keyManager }));
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : testPortableDidWithoutServices.document,
+            didDocumentMetadata   : {},
+            didResolutionMetadata : {},
+          });
           const updateSpy = sinon.stub(testHarness.agent.did, 'update').resolves();
 
-          // set new endpoints
           const newEndpoints = ['https://example.com/dwn2'];
           await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: newEndpoints });
 
           expect(updateSpy.calledOnce).toBe(true);
-          // expect the updated DID to have the new DWN service
           expect(updateSpy.firstCall.args[0].portableDid.document.service).toEqual([{
             id              : `${testPortableDid.uri}#dwn`,
             type            : 'DecentralizedWebNode',
@@ -385,87 +1112,212 @@ describe('AgentIdentityApi', () => {
           }]);
         });
 
-        it('should throw an error if the service endpoints remain unchanged', async () => {
-          // stub did.get to return the test DID
-          sinon.stub(testHarness.agent.did, 'get').resolves(new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager }));
-
-          // set the same endpoints
-          try {
-            await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: ['https://example.com/dwn'] });
-            throw new Error('Expected an error to be thrown');
-          } catch (error: any) {
-            expect(error.message).toContain('AgentDidApi: No changes detected');
-          }
-        });
-
-        it('should throw an error if the DID is not found', async () => {
-          try {
-            await testHarness.agent.identity.setDwnEndpoints({ didUri: 'did:method:xyz123', endpoints: ['https://example.com/dwn'] });
-            throw new Error('Expected an error to be thrown');
-          } catch (error: any) {
-            expect(error.message).toContain('AgentIdentityApi: Failed to set DWN endpoints due to DID not found');
-          }
-        });
-
-        it('should add a DWN service if no services exist', async () => {
-          // stub the did.get to return a DID without any services
-          const testPortableDidWithoutServices = { ...testPortableDid, document: { ...testPortableDid.document, service: undefined } };
-          sinon.stub(testHarness.agent.did, 'get').resolves(new BearerDid({ ...testPortableDidWithoutServices, keyManager: testHarness.agent.keyManager }));
-          sinon.stub(UniversalResolver.prototype, 'resolve').withArgs(testPortableDid.uri).resolves({ didDocument: testPortableDidWithoutServices.document, didDocumentMetadata: {}, didResolutionMetadata: {} });
-          const updateSpy = sinon.stub(testHarness.agent.did, 'update').resolves();
-
-          // control: get the service endpoints of the created DID, should fail
-          try {
-            await testHarness.agent.identity.getDwnEndpoints({ didUri: testPortableDid.uri });
-            throw new Error('should have thrown an error');
-          } catch (error: any) {
-            expect(error.message).toContain('Failed to dereference');
-          }
-
-          // set new endpoints
-          const newEndpoints = ['https://example.com/dwn2'];
-          await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: newEndpoints });
-
-          expect(updateSpy.calledOnce).toBe(true);
-
-          // expect the updated DID to have the new DWN service (without legacy enc/sig)
-          expect(updateSpy.firstCall.args[0].portableDid.document.service).toEqual([{
-            id              : 'dwn',
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : newEndpoints,
-          }]);
-        });
-
         it('should add a DWN service if one does not exist in the services list', async () => {
-          // stub the did.get and resolver to return a DID with a different service
           const testPortableDidWithDifferentService = { ...testPortableDid, document: { ...testPortableDid.document, service: [{ id: 'other', type: 'Other', serviceEndpoint: ['https://example.com/other'] }] } };
           sinon.stub(testHarness.agent.did, 'get').resolves(new BearerDid({ ...testPortableDidWithDifferentService, keyManager: testHarness.agent.keyManager }));
-          sinon.stub(UniversalResolver.prototype, 'resolve').withArgs(testPortableDid.uri).resolves({ didDocument: testPortableDidWithDifferentService.document, didDocumentMetadata: {}, didResolutionMetadata: {} });
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : testPortableDidWithDifferentService.document,
+            didDocumentMetadata   : {},
+            didResolutionMetadata : {},
+          });
           const updateSpy = sinon.stub(testHarness.agent.did, 'update').resolves();
 
-          // control: get the service endpoints of the created DID, should fail
-          try {
-            await testHarness.agent.identity.getDwnEndpoints({ didUri: testPortableDidWithDifferentService.uri });
-            throw new Error('should have thrown an error');
-          } catch (error: any) {
-            expect(error.message).toContain('Failed to dereference');
-          }
-
-          // set new endpoints
           const newEndpoints = ['https://example.com/dwn2'];
           await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDidWithDifferentService.uri, endpoints: newEndpoints });
 
-          // expect the updated DID to have the new DWN service as well as the existing service
           expect(updateSpy.calledOnce).toBe(true);
           expect(updateSpy.firstCall.args[0].portableDid.document.service).toEqual([{
             id              : 'other',
             type            : 'Other',
             serviceEndpoint : ['https://example.com/other']
           }, {
-            id              : 'dwn',
+            id              : `${testPortableDid.uri}#dwn`,
             type            : 'DecentralizedWebNode',
             serviceEndpoint : newEndpoints,
           }]);
+        });
+
+        it('rejects invalid endpoints before publishing an update', async () => {
+          sinon.stub(testHarness.agent.did, 'get').resolves(new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager }));
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : testPortableDid.document,
+            didDocumentMetadata   : testPortableDid.metadata,
+            didResolutionMetadata : {},
+          });
+          const update = sinon.stub(testHarness.agent.did, 'update').resolves();
+
+          await expect(testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['file:///tmp/not-a-dwn'],
+          })).rejects.toMatchObject({ code: DwnEndpointResolutionErrorCode.ServiceMalformed });
+          expect(update.notCalled).toBe(true);
+        });
+
+        it('does not update a locally stored DID when its authoritative document cannot be resolved', async () => {
+          sinon.stub(testHarness.agent.did, 'get').resolves(new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager }));
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : null,
+            didDocumentMetadata   : {},
+            didResolutionMetadata : { error: 'notFound' },
+          });
+          const update = sinon.stub(testHarness.agent.did, 'update').resolves();
+
+          await expect(testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDid.uri,
+            endpoints : ['https://example.com/dwn2'],
+          })).rejects.toMatchObject({ code: DwnEndpointResolutionErrorCode.DidResolutionFailed });
+          expect(update.notCalled).toBe(true);
+        });
+
+        it('publishes when desired endpoints match stale local state but differ from resolved state', async () => {
+          const identity = await testHarness.agent.identity.create({
+            didMethod  : 'dht',
+            metadata   : { name: 'Stale local endpoints' },
+            didOptions : {
+              publish  : false,
+              services : [{
+                id              : 'dwn',
+                type            : 'DecentralizedWebNode',
+                serviceEndpoint : ['https://local.example'],
+              }],
+            },
+          });
+          const authoritativeDocument = setDwnServiceEndpointUrls({
+            didDocument : identity.did.document,
+            endpoints   : ['https://authoritative.example'],
+          });
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : authoritativeDocument,
+            didDocumentMetadata   : { published: true },
+            didResolutionMetadata : {},
+          });
+          const publish = sinon.stub(DidDht, 'publish').callsFake(async ({ did }) => ({
+            didDocument             : did.document,
+            didDocumentMetadata     : { published: true },
+            didRegistrationMetadata : {},
+          }));
+
+          await testHarness.agent.identity.setDwnEndpoints({
+            didUri    : identity.did.uri,
+            endpoints : ['https://local.example'],
+          });
+
+          expect(publish.calledOnce).toBe(true);
+          expect(publish.firstCall.args[0].did.document.service?.[0].serviceEndpoint)
+            .toEqual(['https://local.example']);
+        });
+
+        it('reconciles stale local state without republishing when desired endpoints match resolution', async () => {
+          const identity = await testHarness.agent.identity.create({
+            didMethod  : 'dht',
+            metadata   : { name: 'Stale local snapshot' },
+            didOptions : {
+              publish  : false,
+              services : [{
+                id              : 'dwn',
+                type            : 'DecentralizedWebNode',
+                serviceEndpoint : ['https://local.example'],
+              }],
+            },
+          });
+          const authoritativeDocument = setDwnServiceEndpointUrls({
+            didDocument : identity.did.document,
+            endpoints   : ['https://authoritative.example'],
+          });
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : authoritativeDocument,
+            didDocumentMetadata   : { published: true, versionId: 'fresh' },
+            didResolutionMetadata : {},
+          });
+          const publish = sinon.spy(DidDht, 'publish');
+
+          await testHarness.agent.identity.setDwnEndpoints({
+            didUri    : identity.did.uri,
+            endpoints : ['https://authoritative.example'],
+          });
+
+          expect(publish.notCalled).toBe(true);
+          const stored = await testHarness.agent.did.get({
+            didUri : identity.did.uri,
+            tenant : testHarness.agent.agentDid.uri,
+          });
+          expect(stored?.document).toEqual(authoritativeDocument);
+          expect(stored?.metadata).toMatchObject({ published: true, versionId: 'fresh' });
+          expect(publishServiceConfig.notCalled).toBe(true);
+        });
+
+        it('preserves resolved public-only verification methods during a real endpoint update', async () => {
+          const identity = await testHarness.agent.identity.create({
+            didMethod  : 'dht',
+            metadata   : { name: 'External verification method' },
+            didOptions : { publish: false },
+          });
+          const authoritativeDocument = structuredClone(identity.did.document);
+          authoritativeDocument.verificationMethod?.push({
+            id           : `${identity.did.uri}#external`,
+            type         : 'JsonWebKey',
+            controller   : 'did:example:external-controller',
+            publicKeyJwk : {
+              alg : 'EdDSA',
+              crv : 'Ed25519',
+              kty : 'OKP',
+              x   : 'H2XEz9RKJ7T0m7BmlyphVEdpKDFFT1WpJ9_STXKd7wY',
+            },
+          });
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : authoritativeDocument,
+            didDocumentMetadata   : { published: true },
+            didResolutionMetadata : {},
+          });
+          sinon.stub(DidDht, 'publish').callsFake(async ({ did }) => ({
+            didDocument             : did.document,
+            didDocumentMetadata     : { published: true },
+            didRegistrationMetadata : {},
+          }));
+
+          await testHarness.agent.identity.setDwnEndpoints({
+            didUri    : identity.did.uri,
+            endpoints : ['https://new.example'],
+          });
+
+          const stored = await testHarness.agent.did.get({
+            didUri : identity.did.uri,
+            tenant : testHarness.agent.agentDid.uri,
+          });
+          expect(stored?.document.verificationMethod).toContainEqual(
+            authoritativeDocument.verificationMethod?.at(-1)
+          );
+          await expect(stored!.export()).resolves.toMatchObject({
+            document: { verificationMethod: authoritativeDocument.verificationMethod },
+          });
+        });
+
+        it('rejects endpoint publication for an immutable DID method without changing its store or cache', async () => {
+          const identity = await testHarness.agent.identity.create({
+            didMethod : 'jwk',
+            metadata  : { name: 'Immutable DID' },
+          });
+          const originalDocument = structuredClone(identity.did.document);
+          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+            didDocument           : originalDocument,
+            didDocumentMetadata   : identity.did.metadata,
+            didResolutionMetadata : {},
+          });
+
+          await expect(testHarness.agent.identity.setDwnEndpoints({
+            didUri    : identity.did.uri,
+            endpoints : ['https://cannot-publish.example'],
+          })).rejects.toThrow('DID method does not support publishing document updates');
+
+          const [stored, cached] = await Promise.all([
+            testHarness.agent.did.get({
+              didUri : identity.did.uri,
+              tenant : testHarness.agent.agentDid.uri,
+            }),
+            testHarness.agent.did.resolve(identity.did.uri),
+          ]);
+          expect(stored?.document).toEqual(originalDocument);
+          expect(cached.didDocument).toEqual(originalDocument);
         });
       });
 

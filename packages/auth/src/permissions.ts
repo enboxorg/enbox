@@ -19,8 +19,25 @@ import type {
   ProtocolRequest,
 } from './types.js';
 
+import { ServiceConfigProtocolDefinition } from '@enbox/agent';
+
 import { DEFAULT_PERMISSIONS } from './types.js';
 import { WalletConnect } from './wallet-connect-client.js';
+
+/**
+ * Read-only connect request for the endpoint-change announcement protocol.
+ *
+ * Include this alongside an application's own protocols before starting a
+ * service-config watch. The resulting Messages.Read grant lets sync replicate
+ * public owner announcements; their endpoint payload remains informational and
+ * consumers must freshly resolve the DID document.
+ */
+export function serviceConfigProtocolRequest(): ProtocolRequest {
+  return {
+    definition  : ServiceConfigProtocolDefinition,
+    permissions : ['read'],
+  };
+}
 
 /**
  * Normalize simplified `ProtocolRequest[]` into agent-level

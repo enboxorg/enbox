@@ -55,6 +55,21 @@ The explicit `{ definition: RawDefinition, permissions }` form remains
 available. A non-empty `protocols` array intentionally selects delegated
 handler routing; owner applications should continue to use `connectVault()`.
 
+## DID Endpoint Recovery and Changes
+
+Vault recovery force-resolves the deterministic vault DID before publishing or
+committing anything. Its resolved document is authoritative. Product-level
+`dwnEndpoints` defaults bootstrap newly created or definitively unpublished
+DIDs; only a `dwnEndpoints` value deliberately supplied on the individual
+recovery call replaces an existing document.
+
+Connected apps can opt into prompt endpoint changes by including
+`serviceConfigProtocolRequest()` in their delegated protocol requests and then
+calling `auth.startServiceConfigWatch()`. The resulting
+`connection-endpoints-changed` event carries the added/removed delta after a
+cache-bypassing DID resolution. The announcement record is never trusted as an
+endpoint source.
+
 ## Storage
 
 `BrowserStorage`, `MemoryStorage`, `LevelStorage`, and `createDefaultStorage()`

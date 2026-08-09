@@ -1,3 +1,4 @@
+import type { DwnEndpointResolution } from '@enbox/dids';
 import type { RequireOnly } from '@enbox/common';
 
 import type { AgentDataStore } from './store-data.js';
@@ -6,10 +7,21 @@ import type { DidMethodCreateOptions } from './did-api.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 
-import { isPortableDid } from '@enbox/dids';
-
 import { BearerIdentity } from './bearer-identity.js';
+import { canonicalize } from '@enbox/crypto';
+import { DidUpdateLocalCommitError } from './did-api.js';
 import { InMemoryIdentityStore } from './store-identity.js';
+import { logger } from '@enbox/common';
+import { publishServiceConfig } from './service-config.js';
+import {
+  DwnEndpointResolutionError,
+  DwnEndpointResolutionErrorCode,
+  extractDwnServiceEndpointUrls,
+  isDwnEndpointResolutionError,
+  isPortableDid,
+  resolveDwnEndpointStatus,
+  setDwnServiceEndpointUrls,
+} from '@enbox/dids';
 
 export interface IdentityApiParams<TKeyManager extends AgentKeyManager> {
   agent?: EnboxPlatformAgent<TKeyManager>;
@@ -46,6 +58,9 @@ export function isPortableIdentity(obj: unknown): obj is PortableIdentity {
  * When a DWN Data Store is used, the Identity and DID information are stored under the Agent DID's tenant.
  */
 export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyManager> {
+  /** Capability marker for consumers that require authoritative, rollback-safe portable DID import. */
+  public readonly supportsAuthoritativeDidImport = true;
+
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
    * the `AgentIdentityApi`. This agent is used to interact with other Enbox agent components. It's
@@ -53,6 +68,10 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
    * Enbox Agent framework.
    */
   private _agent?: EnboxPlatformAgent<TKeyManager>;
+
+  private readonly _dwnEndpointUpdateTails = new Map<string, Promise<void>>();
+
+  private readonly _identityImportTails = new Map<string, Promise<void>>();
 
   private readonly _store: AgentDataStore<IdentityMetadata>;
 
@@ -116,6 +135,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
         preventDuplicates : false,
         useCache          : true
       });
+      this.agent.dwn.invalidateLocalManagedDidCache();
     }
 
     return identity;
@@ -163,35 +183,90 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
   public async import({ portableIdentity }: {
     portableIdentity: PortableIdentity;
   }): Promise<BearerIdentity> {
+    const didUri = portableIdentity.portableDid.uri;
+    const previous = this._identityImportTails.get(didUri) ?? Promise.resolve();
+    let release!: () => void;
+    const turn = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => turn);
+    this._identityImportTails.set(didUri, tail);
 
-    // set the tenant of the portable identity to the agent's tenant
-    portableIdentity.metadata.tenant = this.tenant;
-
-    // Import the PortableDid to the Agent's DID store.
-    const storedDid = await this.agent.did.import({
-      portableDid : portableIdentity.portableDid,
-      tenant      : portableIdentity.metadata.tenant
-    });
-
-    // Verify the DID is present in the Agent's DID store.
-    if (!storedDid) {
-      throw new Error(`AgentIdentityApi: Failed to import Identity: ${portableIdentity.metadata.uri}`);
+    await previous;
+    try {
+      return await this._import({ portableIdentity });
+    } finally {
+      release();
+      if (this._identityImportTails.get(didUri) === tail) {
+        this._identityImportTails.delete(didUri);
+      }
     }
+  }
 
-    // Create the BearerIdentity object.
-    const identity = new BearerIdentity({ did: storedDid, metadata: portableIdentity.metadata });
+  /** Import one identity while holding its per-DID integrity turn. */
+  private async _import({ portableIdentity }: {
+    portableIdentity: PortableIdentity;
+  }): Promise<BearerIdentity> {
+    const didUri = portableIdentity.portableDid.uri;
+    if (portableIdentity.metadata.uri !== didUri) {
+      throw new Error(
+        `AgentIdentityApi: Identity metadata URI '${portableIdentity.metadata.uri}' does not match DID '${didUri}'.`
+      );
+    }
+    await this._assertIdentityImportAvailable(didUri);
 
-    // Store the Identity metadata in the Agent's Identity store.
-    await this._store.set({
-      id                : identity.did.uri,
-      data              : identity.metadata,
-      agent             : this.agent,
-      tenant            : identity.metadata.tenant,
-      preventDuplicates : true,
-      useCache          : true
+    let resolution;
+    try {
+      resolution = await this.agent.did.refreshResolution(didUri);
+    } catch (cause: unknown) {
+      throw new DwnEndpointResolutionError({
+        code    : DwnEndpointResolutionErrorCode.DidResolutionFailed,
+        didUri,
+        message : `Unable to resolve DID '${didUri}' before importing its identity.`,
+        cause,
+      });
+    }
+    if (resolution.didResolutionMetadata.error !== undefined || resolution.didDocument === null) {
+      throw new Error(
+        `AgentIdentityApi: Failed to import because authoritative DID resolution failed for '${didUri}': `
+        + JSON.stringify(resolution.didResolutionMetadata)
+      );
+    }
+    await this._assertIdentityImportAvailable(didUri);
+
+    // Reconcile the portable keys with the authoritative public document before
+    // importing anything into the KMS or durable stores. Portable snapshots are
+    // key transport, not routing authority.
+    const metadata: IdentityMetadata = { ...portableIdentity.metadata, tenant: this.tenant };
+    const portableDid = {
+      ...portableIdentity.portableDid,
+      document : resolution.didDocument,
+      metadata : resolution.didDocumentMetadata,
+    };
+
+    return this.agent.did.importWithCommit({
+      portableDid,
+      tenant : metadata.tenant,
+      commit : async (storedDid): Promise<BearerIdentity> => {
+        const identity = new BearerIdentity({ did: storedDid, metadata });
+        await this._store.set({
+          id                : identity.did.uri,
+          data              : identity.metadata,
+          agent             : this.agent,
+          tenant            : identity.metadata.tenant,
+          preventDuplicates : true,
+          useCache          : true
+        });
+        this.agent.dwn.invalidateLocalManagedDidCache();
+        return identity;
+      },
     });
+  }
 
-    return identity;
+  /** Reject a duplicate before any key or durable DID mutation begins. */
+  private async _assertIdentityImportAvailable(didUri: string): Promise<void> {
+    const existing = await this._store.get({ id: didUri, agent: this.agent, useCache: true });
+    if (existing !== undefined) {
+      throw new Error(`AgentIdentityApi: Identity already exists: ${didUri}`);
+    }
   }
 
   public async list({ tenant }: {
@@ -215,6 +290,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
 
     // Delete the Identity from the Agent's Identity store.
     await this._store.delete({ id: didUri, agent: this.agent });
+    this.agent.dwn.invalidateLocalManagedDidCache();
   }
 
   /**
@@ -225,7 +301,37 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
    * @throws An error if the DID is not found, or no DWN service exists.
    */
   public getDwnEndpoints({ didUri }: { didUri: string; }): Promise<string[]> {
-    return this.agent.dwn.getDwnEndpointUrlsForTarget(didUri);
+    return this.agent.dwn.getRemoteDwnEndpointUrls(didUri);
+  }
+
+  /** Force resolution and return a non-throwing, application-facing endpoint status. */
+  public refreshDwnEndpointStatus({ didUri }: { didUri: string }): Promise<DwnEndpointResolution> {
+    return resolveDwnEndpointStatus(didUri, {
+      resolve: async () => {
+        const result = await this.agent.did.refreshResolutionAndReconcile({
+          didUri,
+          tenant: this.tenant,
+        });
+        if (result.didResolutionMetadata.error === undefined && result.didDocument !== null) {
+          this.agent.sync.invalidateSyncTargets();
+        }
+        return result;
+      },
+    });
+  }
+
+  /**
+   * Force resolution of a DID document and return its advertised DWN endpoints.
+   *
+   * The sync target plan is invalidated only after successful resolution. Expected
+   * absence and malformed services are surfaced as typed endpoint-resolution errors.
+   */
+  public async refreshDwnEndpoints({ didUri }: { didUri: string }): Promise<string[]> {
+    const status = await this.refreshDwnEndpointStatus({ didUri });
+    if (status.status !== 'ready') {
+      throw status.error;
+    }
+    return status.endpoints;
   }
 
   /**
@@ -233,39 +339,141 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
    *
    * @param didUri - The DID URI to set the DWN endpoints for.
    * @param endpoints - The array of DWN endpoints to set.
+   * @param announce - Publish a best-effort endpoint-change prompt after the DID update. Defaults to `true`.
    * @throws An error if the DID is not found, or if an update cannot be performed.
    */
-  public async setDwnEndpoints({ didUri, endpoints }: { didUri: string; endpoints: string[] }): Promise<void> {
-    const bearerDid = await this.agent.did.get({ didUri });
-    if (!bearerDid) {
-      throw new Error(`AgentIdentityApi: Failed to set DWN endpoints due to DID not found: ${didUri}`);
-    }
+  public async setDwnEndpoints({ didUri, endpoints, announce = true }: {
+    didUri: string;
+    endpoints: string[];
+    announce?: boolean;
+  }): Promise<void> {
+    const previous = this._dwnEndpointUpdateTails.get(didUri) ?? Promise.resolve();
+    let release!: () => void;
+    const turn = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => turn);
+    this._dwnEndpointUpdateTails.set(didUri, tail);
 
-    const portableDid = await bearerDid.export();
-    const dwnService = portableDid.document.service?.find(service => service.id.endsWith('dwn'));
-    if (dwnService) {
-      // Update the existing DWN Service with the provided endpoints
-      dwnService.serviceEndpoint = endpoints;
-    } else {
-
-      // create a DWN Service to add to the DID document
-      const newDwnService = {
-        id              : 'dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : endpoints,
-      };
-
-      // if no other services exist, create a new array with the DWN service
-      if (portableDid.document.service) {
-        // push the new DWN service to the existing services
-        portableDid.document.service.push(newDwnService);
-      } else {
-        // no other services exist, create a new array with the DWN service
-        portableDid.document.service = [newDwnService];
+    await previous;
+    try {
+      await this._setDwnEndpoints({ didUri, endpoints, announce });
+    } finally {
+      release();
+      if (this._dwnEndpointUpdateTails.get(didUri) === tail) {
+        this._dwnEndpointUpdateTails.delete(didUri);
       }
     }
+  }
 
-    await this.agent.did.update({ portableDid, tenant: this.agent.agentDid.uri });
+  /** Execute one endpoint update while holding the per-DID update turn. */
+  private async _setDwnEndpoints({ didUri, endpoints, announce }: {
+    didUri: string;
+    endpoints: string[];
+    announce: boolean;
+  }): Promise<void> {
+    let previousEndpoints: string[] = [];
+    let publish = false;
+    const announcePublishedChange = async (): Promise<void> => {
+      if (!announce || !publish) {
+        return;
+      }
+      try {
+        await this.publishServiceConfig({ didUri, deliveryEndpoints: previousEndpoints });
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
+        logger.error(`AgentIdentityApi: Failed to publish service-config announcement for ${didUri}: ${detail}`);
+      }
+    };
+
+    try {
+      await this.agent.did.runMutation({
+        didUri,
+        operation: async ({ update }): Promise<void> => {
+          const bearerDid = await this.agent.did.get({ didUri, tenant: this.tenant });
+          if (!bearerDid) {
+            throw new Error(`AgentIdentityApi: Failed to set DWN endpoints due to DID not found: ${didUri}`);
+          }
+
+          let resolutionResult;
+          try {
+            resolutionResult = await this.agent.did.refreshResolution(didUri);
+          } catch (cause: unknown) {
+            throw new DwnEndpointResolutionError({
+              code    : DwnEndpointResolutionErrorCode.DidResolutionFailed,
+              didUri,
+              message : `Unable to resolve DID '${didUri}' before updating its DWN service.`,
+              cause,
+            });
+          }
+
+          const resolutionError = resolutionResult.didResolutionMetadata.error;
+          if (resolutionError !== undefined || resolutionResult.didDocument === null) {
+            throw new DwnEndpointResolutionError({
+              code    : DwnEndpointResolutionErrorCode.DidResolutionFailed,
+              didUri,
+              message : `Unable to resolve DID '${didUri}' before updating its DWN service${
+                resolutionError === undefined ? '.' : `: ${resolutionError}.`
+              }`,
+              resolutionError,
+            });
+          }
+
+          try {
+            previousEndpoints = extractDwnServiceEndpointUrls(resolutionResult.didDocument);
+          } catch (error: unknown) {
+            if (!isDwnEndpointResolutionError(error)) {
+              throw error;
+            }
+          }
+
+          const portableDid = await bearerDid.export();
+          const desiredDocument = setDwnServiceEndpointUrls({
+            didDocument: resolutionResult.didDocument,
+            endpoints,
+          });
+          const matchesAuthoritativeDocument = canonicalize(desiredDocument) === canonicalize(resolutionResult.didDocument);
+          const matchesStoredDocument = canonicalize(desiredDocument) === canonicalize(bearerDid.document);
+          if (matchesAuthoritativeDocument && matchesStoredDocument) {
+            throw new Error('AgentDidApi: No changes detected, update aborted');
+          }
+
+          portableDid.document = desiredDocument;
+          portableDid.metadata = resolutionResult.didDocumentMetadata;
+          publish = !matchesAuthoritativeDocument;
+          await update({
+            force  : publish && matchesStoredDocument,
+            portableDid,
+            publish,
+            tenant : this.agent.agentDid.uri,
+          });
+        },
+      });
+    } catch (error: unknown) {
+      if (error instanceof DidUpdateLocalCommitError && error.published && publish) {
+        this.agent.sync.invalidateSyncTargets();
+        await announcePublishedChange();
+      }
+      throw error;
+    }
+
+    this.agent.sync.invalidateSyncTargets();
+    await announcePublishedChange();
+  }
+
+  /**
+   * Publish a prompt that tells connected apps to freshly resolve this DID.
+   *
+   * The record payload is resolved from the DID document and is not treated as
+   * an alternate source of endpoint configuration.
+   */
+  public async publishServiceConfig({ didUri, deliveryEndpoints }: {
+    didUri: string;
+    deliveryEndpoints?: string[];
+  }): Promise<void> {
+    await publishServiceConfig({
+      agent    : this.agent,
+      ownerDid : didUri,
+      deliveryEndpoints,
+    });
   }
 
   /**

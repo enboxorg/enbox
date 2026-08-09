@@ -332,10 +332,12 @@ export class AgentDwnApi {
 
   /**
    * Cache of locally-managed DIDs (agent DID + identities). Used to decide
-   * whether a target DID should be routed through the local DWN server.
+   * whether a target DID should be routed through the local DWN server. The
+   * short TTL bounds stale membership when another browser context mutates the
+   * shared identity store without passing through this agent instance.
    */
   private readonly _localManagedDidCache = new TtlCache<string, boolean>({
-    ttl: 30 * 60 * 1000
+    ttl: 30 * 1000
   });
 
   /**
@@ -429,6 +431,11 @@ export class AgentDwnApi {
 
   public setLocalDwnStrategy(strategy: LocalDwnStrategy): void {
     this._localDwnStrategy = strategy;
+  }
+
+  /** @internal Clears process-local identity topology used by local DWN routing. */
+  public invalidateLocalManagedDidCache(): void {
+    this._localManagedDidCache.clear();
   }
 
   /**
@@ -2721,11 +2728,17 @@ export class AgentDwnApi {
     granteeDid?: string,
   ): Promise<ProtocolDefinition | undefined> {
     if (!this._dwn) {
-      // Remote mode: query via RPC (same as fetchRemoteProtocolDefinition,
-      // but for locally-managed DIDs). The remote protocol definition
-      // cache uses a different key prefix, so we use a dedicated call.
+      // Remote mode still has a distinct paired local DWN. Query that endpoint
+      // directly rather than resolving the DID-advertised hosted endpoints.
       try {
-        return await this.fetchRemoteProtocolDefinition(tenantDid, protocolUri);
+        return await fetchRemoteProtocolDefinitionFn(
+          tenantDid,
+          protocolUri,
+          async (): Promise<string[]> => [this._localDwnEndpoint!],
+          this.sendDwnRpcRequest.bind(this),
+          this._protocolDefinitionCache,
+          'local-rpc',
+        );
       } catch (error: unknown) {
         // Only treat "not found" responses as missing protocols.  Transient
         // errors (network timeouts, auth failures) are rethrown so the
@@ -2773,7 +2786,7 @@ export class AgentDwnApi {
     protocolUri: string,
   ): Promise<ProtocolDefinition> {
     return fetchRemoteProtocolDefinitionFn(
-      targetDid, protocolUri, this.getDwnEndpointUrlsForTarget.bind(this),
+      targetDid, protocolUri, this.getRemoteDwnEndpointUrls.bind(this),
       this.sendDwnRpcRequest.bind(this), this._protocolDefinitionCache,
     );
   }

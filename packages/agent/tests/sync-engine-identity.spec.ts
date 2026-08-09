@@ -389,6 +389,19 @@ describe('SyncEngineLevel — identity management', () => {
       expect(internal.targetResolver).not.toBe(initialResolver);
       expect(internal._targetPlanner.topologyGeneration).toBe(initialTopologyGeneration + 1);
     });
+
+    it('invalidates the target plan without rebuilding it synchronously', () => {
+      const engine = new SyncEngineLevel({ db });
+      const internal = engine as any;
+      const initialTopologyGeneration = internal._targetPlanner.topologyGeneration;
+      const getTargets = sinon.spy(internal._targetPlanner, 'getTargets');
+
+      engine.invalidateSyncTargets();
+
+      expect(internal._targetPlanner.topologyGeneration).toBe(initialTopologyGeneration + 1);
+      expect(internal._targetPlanner.lastResolutionComplete).toBe(false);
+      expect(getTargets.notCalled).toBe(true);
+    });
   });
 
   describe('sync lock', () => {

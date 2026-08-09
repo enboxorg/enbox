@@ -1,15 +1,24 @@
 import type { KeyValueStore } from '@enbox/common';
 import type { JweHeaderParams, Jwk } from '@enbox/crypto';
 
-import type { DidDhtCreateOptions, PortableDid } from '@enbox/dids';
+import type { DidDhtCreateOptions, DidResolutionResult, DidVerificationMethod, PortableDid } from '@enbox/dids';
 
-import { CompactJwe } from '@enbox/crypto';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { BearerDid, DidDht, isPortableDid } from '@enbox/dids';
-import { Convert, MemoryStore } from '@enbox/common';
+import { BearerDid, DidDht, DidErrorCode, utils as didUtils, isPortableDid, setDwnServiceEndpointUrls } from '@enbox/dids';
+import { CompactJwe, LocalKeyManager as PortableDidKeyManager } from '@enbox/crypto';
+import { Convert, MemoryStore, runWithCrossContextLock } from '@enbox/common';
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from '@scure/bip39';
 
-import type { IdentityVault, IdentityVaultBackup, IdentityVaultBackupData, IdentityVaultParams, IdentityVaultStatus } from './types/identity-vault.js';
+import type {
+  IdentityVault,
+  IdentityVaultBackup,
+  IdentityVaultBackupData,
+  IdentityVaultInitializeParams,
+  IdentityVaultParams,
+  IdentityVaultResetPasswordWithRecoveryPhraseParams,
+  IdentityVaultRestoreParams,
+  IdentityVaultStatus,
+} from './types/identity-vault.js';
 
 import { AgentCryptoApi } from './crypto-api.js';
 import { DeterministicKeyGenerator } from './utils-internal.js';
@@ -20,40 +29,12 @@ import { LocalKeyManager } from './local-key-manager.js';
  * Extended initialization parameters for HdIdentityVault, including an optional recovery phrase
  * that can be used to derive keys to encrypt the vault and generate a DID.
  */
-export type HdIdentityVaultInitializeParams = {
-  /**
-    * The password used to secure the vault.
-    *
-    * The password selected should be strong and securely managed to prevent unauthorized access.
-    */
-   password: string;
+/** HD vault initialization parameters. */
+export type HdIdentityVaultInitializeParams = IdentityVaultInitializeParams;
 
-   /**
-    * An optional recovery phrase used to derive the cryptographic keys for the vault.
-    *
-    * Providing a recovery phrase can be used to recover the vault's content or establish a
-    * deterministic key generation scheme. If not provided, a new recovery phrase will be generated
-    * during the initialization process.
-    */
-   recoveryPhrase?: string;
-
-   /**
-    * Optional dwnEndpoints to register didService endpoints during HdIdentityVault initialization
-    *
-    * The dwnEndpoints are used to register a DWN endpoint during DidDht.create(). This allows the
-    * agent to properly recover connectedDids from DWN. Also, this pattern can be used on the server
-    * side in place of the agentDid-->connectedDids pattern.
-    */
-    dwnEndpoints?: string[];
- };
-
-export type HdIdentityVaultResetPasswordWithRecoveryPhraseParams = {
-  /** The BIP-39 recovery phrase originally used to initialize the vault. */
-  recoveryPhrase: string;
-
-  /** The new password used to unlock the existing vault from this point forward. */
-  password: string;
-};
+/** HD vault recovery-password reset parameters. */
+export type HdIdentityVaultResetPasswordWithRecoveryPhraseParams =
+  IdentityVaultResetPasswordWithRecoveryPhraseParams;
 
 type HdIdentityVaultDerivedMaterial = {
   recoveryPhrase: string;
@@ -62,12 +43,62 @@ type HdIdentityVaultDerivedMaterial = {
   portableDid: PortableDid;
 };
 
+type PreparedVaultDid = {
+  portableDid: PortableDid;
+  published: boolean;
+};
+
+type StoredVaultState = {
+  version: 1;
+  generation: number;
+  did: string;
+  contentEncryptionKey: string;
+  status: IdentityVaultStatus;
+};
+
+const vaultStateKey = 'vaultState';
+const vaultStateLockName = '@enbox/agent:hd-identity-vault-state';
+
+function isStoredVaultState(obj: unknown): obj is StoredVaultState {
+  return typeof obj === 'object' && obj !== null
+    && 'version' in obj && obj.version === 1
+    && 'generation' in obj && typeof obj.generation === 'number'
+    && Number.isSafeInteger(obj.generation) && obj.generation > 0
+    && 'did' in obj && typeof obj.did === 'string' && obj.did.length > 0
+    && 'contentEncryptionKey' in obj
+    && typeof obj.contentEncryptionKey === 'string' && obj.contentEncryptionKey.length > 0
+    && 'status' in obj && isIdentityVaultStatus(obj.status) && obj.status.initialized === true;
+}
+
 export class HdIdentityVaultRecoveryPhraseMismatchError extends Error {
   public readonly code = 'HD_IDENTITY_VAULT_RECOVERY_PHRASE_MISMATCH';
 
   constructor(message = 'HdIdentityVault: Recovery phrase does not match the initialized vault.') {
     super(message);
     this.name = 'HdIdentityVaultRecoveryPhraseMismatchError';
+  }
+}
+
+/** A DID publication succeeded, but the corresponding local vault generation was not committed. */
+export class HdIdentityVaultPartialCommitError extends Error {
+  public readonly code = 'HD_IDENTITY_VAULT_PARTIAL_COMMIT';
+  public readonly didUri: string;
+  public readonly operation: 'initialize' | 'resetPasswordWithRecoveryPhrase' | 'restore';
+  public readonly published = true;
+
+  public constructor({ cause, didUri, operation }: {
+    cause: unknown;
+    didUri: string;
+    operation: 'initialize' | 'resetPasswordWithRecoveryPhrase' | 'restore';
+  }) {
+    super(
+      `HdIdentityVault: DID document '${didUri}' was published, but the local vault state ` +
+      `could not be committed during ${operation}.`,
+      { cause }
+    );
+    this.name = 'HdIdentityVaultPartialCommitError';
+    this.didUri = didUri;
+    this.operation = operation;
   }
 }
 
@@ -85,6 +116,32 @@ export class HdIdentityVaultRecoveryPhraseMismatchError extends Error {
  */
 function isEmptyString(obj: unknown): obj is string {
   return typeof obj !== 'string' || obj.trim().length === 0;
+}
+
+/**
+ * Key manager used while reconciling a locally controlled portable DID with its public document.
+ * Public-only verification methods remain available for document validation without being exported
+ * as private vault key material.
+ */
+class RecoveredDidKeyManager extends PortableDidKeyManager {
+  private readonly _publicKeys = new Map<string, Jwk>();
+
+  public async addPublicKey(key: Jwk): Promise<void> {
+    const keyUri = await this.getKeyUri({ key });
+    this._publicKeys.set(keyUri, structuredClone(key));
+  }
+
+  public override async getPublicKey({ keyUri }: { keyUri: string }): Promise<Jwk> {
+    try {
+      return await super.getPublicKey({ keyUri });
+    } catch (cause: unknown) {
+      const publicKey = this._publicKeys.get(keyUri);
+      if (publicKey === undefined) {
+        throw cause;
+      }
+      return structuredClone(publicKey);
+    }
+  }
 }
 
 /**
@@ -124,6 +181,15 @@ function isIdentityVaultStatus(obj: unknown): obj is IdentityVaultStatus {
     && 'initialized' in obj && typeof obj.initialized === 'boolean'
     && 'lastBackup' in obj
     && 'lastRestore' in obj;
+}
+
+/** Type guard for the decoded contents of an encrypted identity vault backup. */
+function isIdentityVaultBackupData(obj: unknown): obj is IdentityVaultBackupData {
+  return typeof obj === 'object' && obj !== null
+    && 'did' in obj && typeof obj.did === 'string'
+    && 'contentEncryptionKey' in obj && typeof obj.contentEncryptionKey === 'string'
+    && 'status' in obj && isIdentityVaultStatus(obj.status)
+    && obj.status.initialized === true;
 }
 
 /**
@@ -174,6 +240,9 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   /** The cryptographic key used to encrypt and decrypt the vault's content securely. */
   private _contentEncryptionKey: Jwk | undefined;
 
+  /** Generation of the persisted vault state for which the in-memory CEK is valid. */
+  private _contentEncryptionKeyGeneration: number | undefined;
+
   /**
    * Cached initialization state. Once read from the store, avoids redundant LevelDB reads on
    * subsequent checks. The `initialized` flag is write-once (false → true) and never reverts,
@@ -189,6 +258,9 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * BearerDid instance each time so callers cannot mutate shared state.
    */
   private _cachedPortableDid: PortableDid | undefined;
+
+  /** Generation of the persisted vault state represented by {@link _cachedPortableDid}. */
+  private _cachedPortableDidGeneration: number | undefined;
 
   /**
    * Constructs an instance of `HdIdentityVault`, initializing the key derivation factor and data
@@ -219,34 +291,36 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    *          encrypted backup data.
    */
   public async backup(): Promise<IdentityVaultBackup> {
-    // Verify the identity vault has already been initialized and unlocked.
-    if (this.isLocked() || await this.isInitialized() === false) {
-      throw new Error(
-        'HdIdentityVault: Unable to proceed with the backup operation because the identity vault ' +
-        'has not been initialized and unlocked. Please ensure the vault is properly initialized ' +
-        'with a secure password before attempting to backup its contents.'
-      );
-    }
+    return runWithCrossContextLock(vaultStateLockName, async (): Promise<IdentityVaultBackup> => {
+      const state = await this.getStoredVaultState();
+      if (state === undefined || this.isLocked()) {
+        throw new Error(
+          'HdIdentityVault: Unable to proceed with the backup operation because the identity vault ' +
+          'has not been initialized and unlocked. Please ensure the vault is properly initialized ' +
+          'with a secure password before attempting to backup its contents.'
+        );
+      }
+      this.requireCurrentContentEncryptionKey(state);
 
-    // Encode the encrypted CEK and DID as a single Base64Url string.
-    const backupData: IdentityVaultBackupData = {
-      did                  : await this.getStoredDid(),
-      contentEncryptionKey : await this.getStoredContentEncryptionKey(),
-      status               : await this.getStatus()
-    };
-    const backupDataString = Convert.object(backupData).toBase64Url();
+      // Encode one immutable generation so concurrent restore/reset operations cannot mix records.
+      const backupData: IdentityVaultBackupData = {
+        did                  : state.did,
+        contentEncryptionKey : state.contentEncryptionKey,
+        status               : structuredClone(state.status),
+      };
+      const backupDataString = Convert.object(backupData).toBase64Url();
+      const backup: IdentityVaultBackup = {
+        data        : backupDataString,
+        dateCreated : new Date().toISOString(),
+        size        : backupDataString.length,
+      };
 
-    // Create a backup object containing the encrypted vault contents.
-    const backup: IdentityVaultBackup = {
-      data        : backupDataString,
-      dateCreated : new Date().toISOString(),
-      size        : backupDataString.length
-    };
-
-    // Update the last backup timestamp in the data store.
-    await this.setStatus({ lastBackup: backup.dateCreated });
-
-    return backup;
+      await this.setStoredVaultState({
+        ...state,
+        status: { ...state.status, lastBackup: backup.dateCreated },
+      });
+      return backup;
+    });
   }
 
   /**
@@ -266,55 +340,57 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     oldPassword: string;
     newPassword: string;
   }): Promise<void> {
-    // Verify the identity vault has already been initialized.
-    if (await this.isInitialized() === false) {
-      throw new Error(
-        'HdIdentityVault: Unable to proceed with the change password operation because the ' +
-        'identity vault has not been initialized. Please ensure the vault is properly ' +
-        'initialized with a secure password before trying again.'
-      );
-    }
+    // Reject an invalid replacement before reading, decrypting, clearing, or mutating vault state.
+    this.validatePassword(newPassword);
 
-    // Lock the vault.
-    await this.lock();
+    await runWithCrossContextLock(vaultStateLockName, async (): Promise<void> => {
+      const state = await this.getStoredVaultState();
+      if (state === undefined) {
+        throw new Error(
+          'HdIdentityVault: Unable to proceed with the change password operation because the ' +
+          'identity vault has not been initialized. Please ensure the vault is properly ' +
+          'initialized with a secure password before trying again.'
+        );
+      }
 
-    // Retrieve the content encryption key (CEK) record as a compact JWE from the data store.
-    const cekJwe = await this.getStoredContentEncryptionKey();
+      this.clearInMemoryVault();
 
-    // Decrypt the compact JWE using the given `oldPassword` to verify it is correct.
-    let protectedHeader: JweHeaderParams;
-    let contentEncryptionKey: Jwk;
-    try {
-      let contentEncryptionKeyBytes: Uint8Array;
-      ({ plaintext: contentEncryptionKeyBytes, protectedHeader } = await CompactJwe.decrypt({
-        jwe        : cekJwe,
-        key        : Convert.string(oldPassword).toUint8Array(),
+      // Decrypt the compact JWE using the given `oldPassword` to verify it is correct.
+      let protectedHeader: JweHeaderParams;
+      let contentEncryptionKey: Jwk;
+      try {
+        let contentEncryptionKeyBytes: Uint8Array;
+        ({ plaintext: contentEncryptionKeyBytes, protectedHeader } = await CompactJwe.decrypt({
+          jwe        : state.contentEncryptionKey,
+          key        : Convert.string(oldPassword).toUint8Array(),
+          keyManager : new LocalKeyManager(),
+          options    : {
+            allowedAlgs : ['PBES2-HS512+A256KW'],
+            allowedEncs : ['A256GCM'],
+            minP2cCount : 1, // Vault decrypts its own JWEs; no external-input floor needed.
+          },
+        }));
+        contentEncryptionKey = Convert.uint8Array(contentEncryptionKeyBytes).toObject() as Jwk;
+      } catch {
+        throw new Error(`HdIdentityVault: Unable to change the vault password due to an incorrectly entered old password.`);
+      }
+
+      const newCekJwe = await CompactJwe.encrypt({
+        key        : Convert.string(newPassword).toUint8Array(),
+        protectedHeader,
+        plaintext  : Convert.object(contentEncryptionKey).toUint8Array(),
         keyManager : new LocalKeyManager(),
-        options    : {
-          allowedAlgs : ['PBES2-HS512+A256KW'],
-          allowedEncs : ['A256GCM'],
-          minP2cCount : 1, // Vault decrypts its own JWEs; no external-input floor needed.
-        },
-      }));
-      contentEncryptionKey = Convert.uint8Array(contentEncryptionKeyBytes).toObject() as Jwk;
+      });
 
-    } catch {
-      throw new Error(`HdIdentityVault: Unable to change the vault password due to an incorrectly entered old password.`);
-    }
-
-    // Re-encrypt the vault content encryption key (CEK) using the new password.
-    const newCekJwe = await CompactJwe.encrypt({
-      key        : Convert.string(newPassword).toUint8Array(),
-      protectedHeader, // Re-use the protected header from the original JWE.
-      plaintext  : Convert.object(contentEncryptionKey).toUint8Array(),
-      keyManager : new LocalKeyManager()
+      const nextGeneration = state.generation + 1;
+      await this.setStoredVaultState({
+        ...state,
+        generation           : nextGeneration,
+        contentEncryptionKey : newCekJwe,
+      });
+      this._contentEncryptionKey = contentEncryptionKey;
+      this._contentEncryptionKeyGeneration = nextGeneration;
     });
-
-    // Update the vault with the new CEK JWE.
-    await this._store.set('contentEncryptionKey', newCekJwe);
-
-    // Update the vault CEK in memory, effectively unlocking the vault.
-    this._contentEncryptionKey = contentEncryptionKey;
   }
 
   /**
@@ -327,24 +403,28 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @returns A promise that resolves with a {@link BearerDid}.
    */
   public async getDid(): Promise<BearerDid> {
-    // Verify the identity vault is unlocked.
-    if (this.isLocked()) {
-      throw new Error(`HdIdentityVault: Vault has not been initialized and unlocked.`);
-    }
+    return runWithCrossContextLock(vaultStateLockName, async (): Promise<BearerDid> => {
+      const state = await this.getStoredVaultState();
+      if (state === undefined || this.isLocked()) {
+        throw new Error(`HdIdentityVault: Vault has not been initialized and unlocked.`);
+      }
+      const contentEncryptionKey = this.requireCurrentContentEncryptionKey(state);
 
-    // If the decrypted PortableDid is not yet cached, decrypt it from the
-    // vault store.  This avoids the expensive LevelDB read + JWE decrypt on
-    // every call while the vault is unlocked.
-    if (!this._cachedPortableDid) {
-      this._cachedPortableDid = await this.decryptStoredPortableDid(this._contentEncryptionKey!);
-    }
+      if (
+        this._cachedPortableDid === undefined
+        || this._cachedPortableDidGeneration !== state.generation
+      ) {
+        this._cachedPortableDid = await this.decryptPortableDid({
+          jwe: state.did,
+          contentEncryptionKey,
+        });
+        this._cachedPortableDidGeneration = state.generation;
+      }
 
-    // Always return a fresh BearerDid from a deep copy of the cached
-    // PortableDid.  BearerDid is mutable (document, metadata, keyManager
-    // are public) and BearerDid.import() takes document/metadata by
-    // reference, so without the clone a caller mutating a returned DID
-    // would corrupt the cache for all subsequent getDid() calls.
-    return await BearerDid.import({ portableDid: structuredClone(this._cachedPortableDid) });
+      // Always return a fresh BearerDid from a deep copy of the cached PortableDid. BearerDid is
+      // mutable, so without the clone a caller mutating a returned DID would corrupt the cache.
+      return this.importRecoveredBearerDid(structuredClone(this._cachedPortableDid));
+    });
   }
 
   /**
@@ -355,31 +435,19 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    *          its initialization, lock state, and the timestamps of the last backup and restore.
    */
   public async getStatus(): Promise<IdentityVaultStatus> {
-    const storedStatus = await this._store.get('vaultStatus');
+    return runWithCrossContextLock(vaultStateLockName, async (): Promise<IdentityVaultStatus> => {
+      const state = await this.getStoredVaultState();
+      if (state === undefined) {
+        return {
+          initialized : false,
+          lastBackup  : null,
+          lastRestore : null,
+        };
+      }
 
-    // On the first run, the store will not contain an IdentityVaultStatus object yet, so return an
-    // uninitialized status.
-    if (!storedStatus) {
-      return {
-        initialized : false,
-        lastBackup  : null,
-        lastRestore : null
-      };
-    }
-
-    const vaultStatus = Convert.string(storedStatus).toObject();
-    if (!isIdentityVaultStatus(vaultStatus)) {
-      throw new Error('HdIdentityVault: Invalid IdentityVaultStatus object in store');
-    }
-
-    // Only cache the `true` state — `initialized` is write-once (false → true) and never reverts,
-    // so a cached `true` is always valid. Leaving `false` uncached ensures a subsequent
-    // `isInitialized()` call after `initialize()` correctly reads the updated store.
-    if (vaultStatus.initialized) {
       this._cachedInitialized = true;
-    }
-
-    return vaultStatus;
+      return structuredClone(state.status);
+    });
   }
 
   /**
@@ -405,64 +473,135 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @returns A promise that resolves with the recovery phrase used during the initialization, which
    *          should be securely stored by the user.
    */
-  public async initialize({ password, recoveryPhrase, dwnEndpoints }:
+  public async initialize({ password, recoveryPhrase, dwnEndpoints, replaceDwnEndpoints = false }:
     HdIdentityVaultInitializeParams
   ): Promise<string> {
-    // Verify that the identity vault was not previously initialized.
-    if (await this.isInitialized()) {
-      throw new Error(`HdIdentityVault: Vault has already been initialized.`);
-    }
+    return runWithCrossContextLock(vaultStateLockName, async (): Promise<string> => {
+      if (await this.getStoredVaultState() !== undefined) {
+        throw new Error(`HdIdentityVault: Vault has already been initialized.`);
+      }
 
-    const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints });
+      this.validateEndpointReplacement({ dwnEndpoints, replaceDwnEndpoints });
 
-    await this._store.set('contentEncryptionKey', derivedMaterial.contentEncryptionKeyJwe);
-    await this._store.set(
-      'did',
-      await this.encryptPortableDid(derivedMaterial.portableDid, derivedMaterial.contentEncryptionKey)
-    );
+      const isRecovery = recoveryPhrase !== undefined;
+      const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints });
+      const preparedDid = isRecovery
+        ? await this.resolveOrPublishRecoveredDid({
+          portableDid: derivedMaterial.portableDid,
+          dwnEndpoints,
+          replaceDwnEndpoints,
+        })
+        : {
+          portableDid : await this.publishPortableDid(derivedMaterial.portableDid),
+          published   : true,
+        };
+      const { portableDid } = preparedDid;
+      let state: StoredVaultState;
+      try {
+        state = {
+          version              : 1,
+          generation           : 1,
+          did                  : await this.encryptPortableDid(portableDid, derivedMaterial.contentEncryptionKey),
+          contentEncryptionKey : derivedMaterial.contentEncryptionKeyJwe,
+          status               : {
+            initialized : true,
+            lastBackup  : null,
+            lastRestore : null,
+          },
+        };
+        await this.setStoredVaultState(state);
+      } catch (cause: unknown) {
+        if (preparedDid.published) {
+          throw new HdIdentityVaultPartialCommitError({
+            cause,
+            didUri    : portableDid.uri,
+            operation : 'initialize',
+          });
+        }
+        throw cause;
+      }
+      this._contentEncryptionKey = derivedMaterial.contentEncryptionKey;
+      this._contentEncryptionKeyGeneration = state.generation;
+      this._cachedPortableDid = portableDid;
+      this._cachedPortableDidGeneration = state.generation;
+      this._cachedInitialized = true;
 
-    this._contentEncryptionKey = derivedMaterial.contentEncryptionKey;
-    this._cachedPortableDid = derivedMaterial.portableDid;
-    await this.setStatus({ initialized: true });
-
-    // Return the recovery phrase in case it was generated so that it can be displayed to the user
-    // for safekeeping.
-    return derivedMaterial.recoveryPhrase;
+      return derivedMaterial.recoveryPhrase;
+    });
   }
 
   /**
    * Resets the vault password using the original recovery phrase.
    *
    * The recovery phrase must derive the same vault CEK and agent DID that are already stored in
-   * this vault. If it does not, no stored state is changed. On success, only the password-wrapped
-   * CEK is replaced; the encrypted DID and all local vault data are preserved.
+   * this vault. If it does not, no network or stored state is changed. On success, the DID document
+   * is reconciled with resolution before the password-wrapped CEK and encrypted DID are replaced;
+   * all other local vault data is preserved.
    */
   public async resetPasswordWithRecoveryPhrase({
     recoveryPhrase,
     password,
+    dwnEndpoints,
+    replaceDwnEndpoints = false,
   }: HdIdentityVaultResetPasswordWithRecoveryPhraseParams): Promise<void> {
-    if (await this.isInitialized() === false) {
-      throw new Error(
-        'HdIdentityVault: Unable to reset the vault password because the identity vault has not ' +
-        'been initialized.'
-      );
-    }
+    await runWithCrossContextLock(vaultStateLockName, async (): Promise<void> => {
+      const state = await this.getStoredVaultState();
+      if (state === undefined) {
+        throw new Error(
+          'HdIdentityVault: Unable to reset the vault password because the identity vault has not ' +
+          'been initialized.'
+        );
+      }
 
-    const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase });
-    let storedPortableDid: PortableDid;
-    try {
-      storedPortableDid = await this.decryptStoredPortableDid(derivedMaterial.contentEncryptionKey);
-    } catch {
-      throw new HdIdentityVaultRecoveryPhraseMismatchError();
-    }
+      this.validateEndpointReplacement({ dwnEndpoints, replaceDwnEndpoints });
 
-    if (storedPortableDid.uri !== derivedMaterial.portableDid.uri) {
-      throw new HdIdentityVaultRecoveryPhraseMismatchError();
-    }
+      // DID derivation is deliberately offline. The phrase must be proven against the encrypted
+      // vault before any resolution or publication is attempted.
+      const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase });
+      let storedPortableDid: PortableDid;
+      try {
+        storedPortableDid = await this.decryptPortableDid({
+          jwe                  : state.did,
+          contentEncryptionKey : derivedMaterial.contentEncryptionKey,
+        });
+      } catch {
+        throw new HdIdentityVaultRecoveryPhraseMismatchError();
+      }
 
-    await this._store.set('contentEncryptionKey', derivedMaterial.contentEncryptionKeyJwe);
-    this._contentEncryptionKey = derivedMaterial.contentEncryptionKey;
-    this._cachedPortableDid = storedPortableDid;
+      if (storedPortableDid.uri !== derivedMaterial.portableDid.uri) {
+        throw new HdIdentityVaultRecoveryPhraseMismatchError();
+      }
+
+      const preparedDid = await this.resolveOrPublishRecoveredDid({
+        portableDid: storedPortableDid,
+        dwnEndpoints,
+        replaceDwnEndpoints,
+      });
+      const { portableDid } = preparedDid;
+      const nextGeneration = state.generation + 1;
+      try {
+        await this.setStoredVaultState({
+          ...state,
+          generation           : nextGeneration,
+          did                  : await this.encryptPortableDid(portableDid, derivedMaterial.contentEncryptionKey),
+          contentEncryptionKey : derivedMaterial.contentEncryptionKeyJwe,
+        });
+      } catch (cause: unknown) {
+        if (preparedDid.published) {
+          throw new HdIdentityVaultPartialCommitError({
+            cause,
+            didUri    : portableDid.uri,
+            operation : 'resetPasswordWithRecoveryPhrase',
+          });
+        }
+        throw cause;
+      }
+      this.clearInMemoryVault();
+      this._contentEncryptionKey = derivedMaterial.contentEncryptionKey;
+      this._contentEncryptionKeyGeneration = nextGeneration;
+      this._cachedPortableDid = portableDid;
+      this._cachedPortableDidGeneration = nextGeneration;
+    });
   }
 
   /**
@@ -538,10 +677,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       throw new Error(`HdIdentityVault: Lock operation failed. Vault has not been initialized.`);
     }
 
-    // Clear the vault content encryption key (CEK), effectively locking the vault.
-    if (this._contentEncryptionKey) {this._contentEncryptionKey.k = '';}
-    this._contentEncryptionKey = undefined;
-    this._cachedPortableDid = undefined;
+    this.clearInMemoryVault();
   }
 
   /**
@@ -565,62 +701,109 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @param params - The parameters required for the restore operation.
    * @param params.backup - The backup object containing the encrypted vault data.
    * @param params.password - The password used to encrypt the backup, necessary for decryption.
+   * @param params.dwnEndpoints - Endpoints used to bootstrap the restored DID only when it does not
+   *                              resolve.
+   * @param params.replaceDwnEndpoints - Whether to deliberately replace endpoints in an existing
+   *                                     resolved DID document before publishing it.
    * @returns A promise that resolves when the vault has been successfully restored.
-   * @throws An error if the backup object is invalid or if the password is incorrect.
+   * @throws An error if the backup object is invalid, the password is incorrect, DID resolution
+   *         fails, or DID publication fails.
    */
-  public async restore({ backup, password }: {
-    backup: IdentityVaultBackup;
-    password: string;
-  }): Promise<void> {
+  public async restore({
+    backup,
+    password,
+    dwnEndpoints,
+    replaceDwnEndpoints = false,
+  }: IdentityVaultRestoreParams): Promise<void> {
     // Validate the backup object.
     if (!isIdentityVaultBackup(backup)) {
       throw new Error(`HdIdentityVault: Restore operation failed due to invalid backup object.`);
     }
+    this.validateEndpointReplacement({ dwnEndpoints, replaceDwnEndpoints });
 
-    // Temporarily save the status and contents of the data store while attempting to restore the
-    // backup so that they are not lost in case the restore operation fails.
-    let previousStatus: IdentityVaultStatus;
-    let previousContentEncryptionKey: string;
-    let previousDid: string;
-    try {
-      previousDid = await this.getStoredDid();
-      previousContentEncryptionKey = await this.getStoredContentEncryptionKey();
-      previousStatus = await this.getStatus();
-    } catch {
-      throw new Error(
-        'HdIdentityVault: The restore operation cannot proceed because the existing vault ' +
-        'contents are missing or inaccessible. If the problem persists consider re-initializing ' +
-        'the vault and retrying the restore.'
-      );
-    }
+    await runWithCrossContextLock(vaultStateLockName, async (): Promise<void> => {
+      let currentState: StoredVaultState | undefined;
+      try {
+        currentState = await this.getStoredVaultState();
+      } catch (cause: unknown) {
+        throw new Error(
+          'HdIdentityVault: The restore operation cannot proceed because the existing vault ' +
+          'contents are missing or inaccessible. If the problem persists consider re-initializing ' +
+          'the vault and retrying the restore.',
+          { cause }
+        );
+      }
+      if (currentState === undefined) {
+        throw new Error(
+          'HdIdentityVault: The restore operation cannot proceed because the existing vault ' +
+          'contents are missing or inaccessible. If the problem persists consider re-initializing ' +
+          'the vault and retrying the restore.'
+        );
+      }
 
-    try {
-      // Convert the backup data to a JSON object.
-      const backupData = Convert.base64Url(backup.data).toObject() as IdentityVaultBackupData;
+      let backupData: IdentityVaultBackupData;
+      let contentEncryptionKey: Jwk;
+      let portableDid: PortableDid;
+      try {
+        const decodedBackupData = Convert.base64Url(backup.data).toObject();
+        if (!isIdentityVaultBackupData(decodedBackupData)) {
+          throw new Error('Invalid identity vault backup data.');
+        }
+        backupData = decodedBackupData;
+        contentEncryptionKey = await this.decryptContentEncryptionKey({
+          jwe: backupData.contentEncryptionKey,
+          password,
+        });
+        portableDid = await this.decryptPortableDid({
+          jwe: backupData.did,
+          contentEncryptionKey,
+        });
+      } catch {
+        throw new Error(
+          'HdIdentityVault: Restore operation failed due to invalid backup data or an incorrect ' +
+          'password. Please verify the password is correct for the provided backup and try again.'
+        );
+      }
 
-      // Restore the backup to the data store.
-      await this._store.set('did', backupData.did);
-      await this._store.set('contentEncryptionKey', backupData.contentEncryptionKey);
-      await this.setStatus(backupData.status);
+      const preparedDid = await this.resolveOrPublishRecoveredDid({
+        portableDid,
+        dwnEndpoints,
+        replaceDwnEndpoints,
+      });
+      const reconciledPortableDid = preparedDid.portableDid;
+      const restoredStatus: IdentityVaultStatus = {
+        ...backupData.status,
+        lastRestore: new Date().toISOString(),
+      };
+      let restoredState: StoredVaultState;
+      try {
+        restoredState = {
+          version              : 1,
+          generation           : currentState.generation + 1,
+          did                  : await this.encryptPortableDid(reconciledPortableDid, contentEncryptionKey),
+          contentEncryptionKey : backupData.contentEncryptionKey,
+          status               : restoredStatus,
+        };
+        await this.setStoredVaultState(restoredState);
+      } catch (cause: unknown) {
+        if (preparedDid.published) {
+          throw new HdIdentityVaultPartialCommitError({
+            cause,
+            didUri    : reconciledPortableDid.uri,
+            operation : 'restore',
+          });
+        }
+        // `vaultState` is one Level/IndexedDB/Map value, so a failed put leaves currentState intact.
+        throw new Error('HdIdentityVault: Restore operation failed while committing the restored vault.', { cause });
+      }
 
-      // Attempt to unlock the vault with the given `password`.
-      await this.unlock({ password });
-
-    } catch {
-      // If the restore operation fails, revert the data store to the status and contents that were
-      // saved before the restore operation was attempted.
-      await this.setStatus(previousStatus);
-      await this._store.set('contentEncryptionKey', previousContentEncryptionKey);
-      await this._store.set('did', previousDid);
-
-      throw new Error(
-        'HdIdentityVault: Restore operation failed due to invalid backup data or an incorrect ' +
-        'password. Please verify the password is correct for the provided backup and try again.'
-      );
-    }
-
-    // Update the last restore timestamp in the data store.
-    await this.setStatus({ lastRestore: new Date().toISOString() });
+      this.clearInMemoryVault();
+      this._contentEncryptionKey = contentEncryptionKey;
+      this._contentEncryptionKeyGeneration = restoredState.generation;
+      this._cachedPortableDid = reconciledPortableDid;
+      this._cachedPortableDidGeneration = restoredState.generation;
+      this._cachedInitialized = true;
+    });
   }
 
   /**
@@ -648,40 +831,23 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    *         incorrect.
    */
   public async unlock({ password }: { password: string }): Promise<void> {
-    // Verify the vault has been initialized before attempting to unlock.
-    if (await this.isInitialized() === false) {
-      throw new Error(`HdIdentityVault: Unable to unlock the vault. Vault has not been initialized.`);
-    }
+    await runWithCrossContextLock(vaultStateLockName, async (): Promise<void> => {
+      const state = await this.getStoredVaultState();
+      if (state === undefined) {
+        throw new Error(`HdIdentityVault: Unable to unlock the vault. Vault has not been initialized.`);
+      }
 
-    // Lock the vault if not already locked — avoids an unnecessary
-    // redundant isInitialized() store read inside lock().
-    if (!this.isLocked()) {
-      await this.lock();
-    }
-
-    // Retrieve the content encryption key (CEK) record as a compact JWE from the data store.
-    const cekJwe = await this.getStoredContentEncryptionKey();
-
-    // Decrypt the compact JWE.
-    try {
-      const { plaintext: contentEncryptionKeyBytes } = await CompactJwe.decrypt({
-        jwe        : cekJwe,
-        key        : Convert.string(password).toUint8Array(),
-        keyManager : new LocalKeyManager(),
-        options    : {
-          allowedAlgs : ['PBES2-HS512+A256KW'],
-          allowedEncs : ['A256GCM'],
-          minP2cCount : 1, // Vault decrypts its own JWEs; no external-input floor needed.
-        },
-      });
-      const contentEncryptionKey = Convert.uint8Array(contentEncryptionKeyBytes).toObject() as Jwk;
-
-      // Save the content encryption key in memory, thereby unlocking the vault.
-      this._contentEncryptionKey = contentEncryptionKey;
-
-    } catch {
-      throw new Error(`HdIdentityVault: Unable to unlock the vault due to an incorrect password.`);
-    }
+      this.clearInMemoryVault();
+      try {
+        this._contentEncryptionKey = await this.decryptContentEncryptionKey({
+          jwe: state.contentEncryptionKey,
+          password,
+        });
+        this._contentEncryptionKeyGeneration = state.generation;
+      } catch {
+        throw new Error(`HdIdentityVault: Unable to unlock the vault due to an incorrect password.`);
+      }
+    });
   }
 
   /**
@@ -696,15 +862,18 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @throws If the vault is locked.
    */
   public async encryptData({ plaintext }: { plaintext: Uint8Array }): Promise<string> {
-    if (this.isLocked() || !this._contentEncryptionKey) {
-      throw new Error('HdIdentityVault: Cannot encrypt data — vault is locked.');
-    }
-
-    return CompactJwe.encrypt({
-      key             : this._contentEncryptionKey,
-      plaintext,
-      protectedHeader : { alg: 'dir', enc: 'A256GCM' },
-      keyManager      : new LocalKeyManager(),
+    return runWithCrossContextLock(vaultStateLockName, async (): Promise<string> => {
+      const state = await this.getStoredVaultState();
+      if (state === undefined || this.isLocked()) {
+        throw new Error('HdIdentityVault: Cannot encrypt data — vault is locked.');
+      }
+      const contentEncryptionKey = this.requireCurrentContentEncryptionKey(state);
+      return CompactJwe.encrypt({
+        key             : contentEncryptionKey,
+        plaintext,
+        protectedHeader : { alg: 'dir', enc: 'A256GCM' },
+        keyManager      : new LocalKeyManager(),
+      });
     });
   }
 
@@ -718,22 +887,25 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @throws If the vault is locked or the JWE is invalid.
    */
   public async decryptData({ jwe }: { jwe: string }): Promise<Uint8Array> {
-    if (this.isLocked() || !this._contentEncryptionKey) {
-      throw new Error('HdIdentityVault: Cannot decrypt data — vault is locked.');
-    }
+    return runWithCrossContextLock(vaultStateLockName, async (): Promise<Uint8Array> => {
+      const state = await this.getStoredVaultState();
+      if (state === undefined || this.isLocked()) {
+        throw new Error('HdIdentityVault: Cannot decrypt data — vault is locked.');
+      }
+      const contentEncryptionKey = this.requireCurrentContentEncryptionKey(state);
+      const { plaintext } = await CompactJwe.decrypt({
+        jwe,
+        key        : contentEncryptionKey,
+        keyManager : new LocalKeyManager(),
+        options    : {
+          allowedAlgs : ['dir'],
+          allowedEncs : ['A256GCM'],
+          minP2cCount : 1,
+        },
+      });
 
-    const { plaintext } = await CompactJwe.decrypt({
-      jwe,
-      key        : this._contentEncryptionKey,
-      keyManager : new LocalKeyManager(),
-      options    : {
-        allowedAlgs : ['dir'],
-        allowedEncs : ['A256GCM'],
-        minP2cCount : 1,
-      },
+      return plaintext;
     });
-
-    return plaintext;
   }
 
   private async deriveVaultMaterial({
@@ -764,6 +936,11 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       length       : 256,
     });
 
+    let portableDid = await this.derivePortableDid({ rootHdKey });
+    if (dwnEndpoints !== undefined) {
+      portableDid = this.replacePortableDidDwnEndpoints(portableDid, dwnEndpoints);
+    }
+
     return {
       recoveryPhrase          : resolvedRecoveryPhrase,
       contentEncryptionKey,
@@ -772,7 +949,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
         contentEncryptionKey,
         saltInput,
       }),
-      portableDid: await this.derivePortableDid({ rootHdKey, dwnEndpoints }),
+      portableDid,
     };
   }
 
@@ -829,12 +1006,28 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     });
   }
 
+  private async decryptContentEncryptionKey({ jwe, password }: {
+    jwe: string;
+    password: string;
+  }): Promise<Jwk> {
+    const { plaintext } = await CompactJwe.decrypt({
+      jwe,
+      key        : Convert.string(password).toUint8Array(),
+      keyManager : new LocalKeyManager(),
+      options    : {
+        allowedAlgs : ['PBES2-HS512+A256KW'],
+        allowedEncs : ['A256GCM'],
+        minP2cCount : 1, // Vault decrypts its own JWEs; no external-input floor needed.
+      },
+    });
+
+    return Convert.uint8Array(plaintext).toObject() as Jwk;
+  }
+
   private async derivePortableDid({
     rootHdKey,
-    dwnEndpoints,
   }: {
     rootHdKey: Ed25519HdKey;
-    dwnEndpoints?: string[];
   }): Promise<PortableDid> {
     const identityHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/0'`);
     const identityPrivateKey = await this.crypto.bytesToPrivateKey({
@@ -860,7 +1053,8 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     });
 
     const options = {
-      verificationMethods: [
+      publish             : false,
+      verificationMethods : [
         {
           algorithm : 'Ed25519',
           id        : 'sig',
@@ -874,17 +1068,203 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       ],
     } as DidDhtCreateOptions<DeterministicKeyGenerator>;
 
-    if (dwnEndpoints && dwnEndpoints.length > 0) {
-      options.services = [
-        {
-          id              : 'dwn',
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : dwnEndpoints,
-        },
-      ];
+    return (await DidDht.create({ keyManager: deterministicKeyGenerator, options })).export();
+  }
+
+  private validateEndpointReplacement({ dwnEndpoints, replaceDwnEndpoints }: {
+    dwnEndpoints?: string[];
+    replaceDwnEndpoints: boolean;
+  }): void {
+    if (replaceDwnEndpoints && dwnEndpoints === undefined) {
+      throw new TypeError(
+        'HdIdentityVault: dwnEndpoints must be provided when replaceDwnEndpoints is true.'
+      );
+    }
+  }
+
+  /**
+   * Resolve an existing deterministic vault DID before deciding whether to publish anything.
+   * Resolution is authoritative unless the caller explicitly requested an endpoint replacement.
+   */
+  private async resolveOrPublishRecoveredDid({
+    portableDid,
+    dwnEndpoints,
+    replaceDwnEndpoints,
+  }: {
+    portableDid: PortableDid;
+    dwnEndpoints?: string[];
+    replaceDwnEndpoints: boolean;
+  }): Promise<PreparedVaultDid> {
+    const resolutionResult = await this.resolveDidForRecovery(portableDid.uri);
+
+    if (resolutionResult.didResolutionMetadata.error === DidErrorCode.NotFound) {
+      const didToPublish = dwnEndpoints !== undefined
+        ? this.replacePortableDidDwnEndpoints(portableDid, dwnEndpoints)
+        : portableDid;
+      return {
+        portableDid : await this.publishPortableDid(didToPublish),
+        published   : true,
+      };
     }
 
-    return (await DidDht.create({ keyManager: deterministicKeyGenerator, options })).export();
+    if (
+      resolutionResult.didResolutionMetadata.error !== undefined
+      || resolutionResult.didDocument === null
+    ) {
+      const resolutionError = resolutionResult.didResolutionMetadata.error ?? 'missingDocument';
+      throw new Error(
+        `HdIdentityVault: Unable to recover DID '${portableDid.uri}' because DID resolution failed: ${resolutionError}.`
+      );
+    }
+
+    let resolvedPortableDid: PortableDid = {
+      ...portableDid,
+      document : structuredClone(resolutionResult.didDocument),
+      metadata : structuredClone(resolutionResult.didDocumentMetadata),
+    };
+
+    if (replaceDwnEndpoints) {
+      resolvedPortableDid = this.replacePortableDidDwnEndpoints(resolvedPortableDid, dwnEndpoints!);
+      return {
+        portableDid : await this.publishPortableDid(resolvedPortableDid),
+        published   : true,
+      };
+    }
+
+    // Validate that the recovered document can be used with the recovered vault key material before
+    // committing any vault state.
+    await this.importRecoveredBearerDid(resolvedPortableDid);
+    return { portableDid: resolvedPortableDid, published: false };
+  }
+
+  private async resolveDidForRecovery(didUri: string): Promise<DidResolutionResult> {
+    try {
+      return await DidDht.resolve(didUri);
+    } catch (cause: unknown) {
+      throw new Error(
+        `HdIdentityVault: Unable to recover DID '${didUri}' because DID resolution failed.`,
+        { cause }
+      );
+    }
+  }
+
+  private replacePortableDidDwnEndpoints(portableDid: PortableDid, dwnEndpoints: string[]): PortableDid {
+    return {
+      ...portableDid,
+      document: setDwnServiceEndpointUrls({
+        didDocument : portableDid.document,
+        endpoints   : dwnEndpoints,
+      }),
+    };
+  }
+
+  private async publishPortableDid(portableDid: PortableDid): Promise<PortableDid> {
+    const bearerDid = await this.importRecoveredBearerDid(portableDid);
+    const registrationResult = await DidDht.publish({ did: bearerDid });
+    if (
+      registrationResult.didDocumentMetadata.published !== true
+      || registrationResult.didDocument === null
+    ) {
+      throw new Error(`HdIdentityVault: Failed to publish DID document: ${portableDid.uri}`);
+    }
+
+    return {
+      ...portableDid,
+      document : structuredClone(registrationResult.didDocument),
+      metadata : structuredClone(registrationResult.didDocumentMetadata),
+    };
+  }
+
+  private async importRecoveredBearerDid(portableDid: PortableDid): Promise<BearerDid> {
+    const keyManager = new RecoveredDidKeyManager();
+    for (const privateKey of portableDid.privateKeys ?? []) {
+      await keyManager.importKey({ key: privateKey });
+    }
+
+    const verificationMethods = didUtils.getVerificationMethods({ didDocument: portableDid.document });
+    for (const verificationMethod of verificationMethods) {
+      if (verificationMethod.publicKeyJwk !== undefined) {
+        const keyUri = await keyManager.getKeyUri({ key: verificationMethod.publicKeyJwk });
+        const isControlled = await keyManager.getPublicKey({ keyUri }).then(() => true).catch(() => false);
+        if (!isControlled) {
+          await keyManager.addPublicKey(verificationMethod.publicKeyJwk);
+        }
+      }
+    }
+
+    const bearerDid = await BearerDid.import({ portableDid, keyManager });
+    const identityVerificationMethod = verificationMethods.find(
+      verificationMethod => didUtils.extractDidFragment(verificationMethod.id) === '0'
+    );
+    if (identityVerificationMethod?.publicKeyJwk === undefined) {
+      throw new Error(
+        `HdIdentityVault: Recovered DID '${portableDid.uri}' does not contain its identity verification method.`
+      );
+    }
+
+    await this.requirePrivateVerificationMethod({
+      keyManager,
+      portableDid,
+      verificationMethod : identityVerificationMethod,
+      purpose            : 'identity',
+    });
+
+    for (const relationship of ['assertionMethod', 'keyAgreement'] as const) {
+      const reference = portableDid.document[relationship]?.[0];
+      const verificationMethod = typeof reference === 'string'
+        ? verificationMethods.find(
+          method => didUtils.extractDidFragment(method.id) === didUtils.extractDidFragment(reference)
+        )
+        : reference;
+      if (verificationMethod === undefined) {
+        throw new Error(
+          `HdIdentityVault: Recovered DID '${portableDid.uri}' does not contain a default ${relationship} verification method.`
+        );
+      }
+      await this.requirePrivateVerificationMethod({
+        keyManager,
+        portableDid,
+        verificationMethod,
+        purpose: relationship,
+      });
+    }
+
+    return bearerDid;
+  }
+
+  private async requirePrivateVerificationMethod({
+    keyManager,
+    portableDid,
+    verificationMethod,
+    purpose,
+  }: {
+    keyManager: RecoveredDidKeyManager;
+    portableDid: PortableDid;
+    verificationMethod: DidVerificationMethod;
+    purpose: string;
+  }): Promise<void> {
+    if (verificationMethod.publicKeyJwk === undefined) {
+      throw new Error(
+        `HdIdentityVault: Recovered DID '${portableDid.uri}' has no public JWK for its ${purpose} verification method.`
+      );
+    }
+
+    try {
+      const keyUri = await keyManager.getKeyUri({ key: verificationMethod.publicKeyJwk });
+      const privateKey = await keyManager.exportKey({ keyUri });
+      if (typeof privateKey.d === 'string') {
+        return;
+      }
+    } catch (cause: unknown) {
+      throw new Error(
+        `HdIdentityVault: Recovered vault key material does not control the ${purpose} key for DID '${portableDid.uri}'.`,
+        { cause }
+      );
+    }
+
+    throw new Error(
+      `HdIdentityVault: Recovered vault key material does not control the ${purpose} key for DID '${portableDid.uri}'.`
+    );
   }
 
   private async encryptPortableDid(portableDid: PortableDid, contentEncryptionKey: Jwk): Promise<string> {
@@ -896,9 +1276,12 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     });
   }
 
-  private async decryptStoredPortableDid(contentEncryptionKey: Jwk): Promise<PortableDid> {
+  private async decryptPortableDid({ jwe, contentEncryptionKey }: {
+    jwe: string;
+    contentEncryptionKey: Jwk;
+  }): Promise<PortableDid> {
     const { plaintext: portableDidBytes } = await CompactJwe.decrypt({
-      jwe        : await this.getStoredDid(),
+      jwe,
       key        : contentEncryptionKey,
       keyManager : new LocalKeyManager(),
       options    : {
@@ -916,48 +1299,47 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     return portableDid;
   }
 
-  /**
-   * Retrieves the Decentralized Identifier (DID) associated with the identity vault from the vault
-   * store.
-   *
-   * This DID is encrypted in compact JWE format and needs to be decrypted after the vault is
-   * unlocked. The method is intended to be used internally within the HdIdentityVault class to access
-   * the encrypted PortableDid.
-   *
-   * @returns A promise that resolves to the encrypted DID stored in the vault as a compact JWE.
-   * @throws Will throw an error if the DID cannot be retrieved from the vault.
-   */
-  private async getStoredDid(): Promise<string> {
-    // Retrieve the DID record as a compact JWE from the data store.
-    const didJwe = await this._store.get('did');
+  /** Read the atomic state envelope, migrating the legacy three-record layout when encountered. */
+  private async getStoredVaultState(): Promise<StoredVaultState | undefined> {
+    const serializedState = await this._store.get(vaultStateKey);
+    if (serializedState !== undefined) {
+      const state = Convert.string(serializedState).toObject();
+      if (!isStoredVaultState(state)) {
+        throw new Error('HdIdentityVault: Invalid vault state object in store.');
+      }
+      return state;
+    }
 
-    if (!didJwe) {
+    const [did, contentEncryptionKey, serializedStatus] = await Promise.all([
+      this._store.get('did'),
+      this._store.get('contentEncryptionKey'),
+      this._store.get('vaultStatus'),
+    ]);
+    if (did === undefined && contentEncryptionKey === undefined && serializedStatus === undefined) {
+      return undefined;
+    }
+
+    if (serializedStatus === undefined) {
+      throw new Error('HdIdentityVault: Invalid IdentityVaultStatus object in store.');
+    }
+    const status = Convert.string(serializedStatus).toObject();
+    if (!isIdentityVaultStatus(status)) {
+      throw new Error('HdIdentityVault: Invalid IdentityVaultStatus object in store.');
+    }
+    if (!status.initialized) {
+      if (did === undefined && contentEncryptionKey === undefined) {
+        return undefined;
+      }
+      throw new Error('HdIdentityVault: Invalid uninitialized vault contents in store.');
+    }
+    if (did === undefined) {
       throw new Error(
         'HdIdentityVault: Unable to retrieve the DID record from the vault. Please check the ' +
         'vault status and if the problem persists consider re-initializing the vault and ' +
         'restoring the contents from a previous backup.'
       );
     }
-
-    return didJwe;
-  }
-
-  /**
-   * Retrieves the encrypted Content Encryption Key (CEK) from the vault's storage.
-   *
-   * This CEK is used for encrypting and decrypting the vault's contents. It is stored as a
-   * compact JWE and should be decrypted with the user's password to be used for further
-   * cryptographic operations.
-   *
-   * @returns A promise that resolves to the stored CEK as a string in compact JWE format.
-   * @throws Will throw an error if the CEK cannot be retrieved, indicating potential issues with
-   *         the vault's integrity or state.
-   */
-  private async getStoredContentEncryptionKey(): Promise<string> {
-    // Retrieve the content encryption key (CEK) record as a compact JWE from the data store.
-    const cekJwe = await this._store.get('contentEncryptionKey');
-
-    if (!cekJwe) {
+    if (contentEncryptionKey === undefined) {
       throw new Error(
         'HdIdentityVault: Unable to retrieve the Content Encryption Key record from the vault. ' +
         'Please check the vault status and if the problem persists consider re-initializing the ' +
@@ -965,37 +1347,50 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       );
     }
 
-    return cekJwe;
+    const migratedState: StoredVaultState = {
+      version    : 1,
+      generation : 1,
+      did,
+      contentEncryptionKey,
+      status,
+    };
+    await this._store.set(vaultStateKey, JSON.stringify(migratedState));
+
+    // Once the complete legacy state is durably represented by one value, stale split records are
+    // no longer authoritative and can be removed independently without risking the new state.
+    await Promise.allSettled([
+      this._store.delete('did'),
+      this._store.delete('contentEncryptionKey'),
+      this._store.delete('vaultStatus'),
+    ]);
+    return migratedState;
   }
 
-  /**
-   * Updates the status of the `HdIdentityVault`, reflecting changes in its initialization, lock
-   * state, and the timestamps of the last backup and restore operations.
-   *
-   * This method directly manipulates the internal state stored in the vault's key-value store.
-   *
-   * @param params - The status properties to be updated.
-   * @param params.initialized - Updates the initialization state of the vault.
-   * @param params.lastBackup - Updates the timestamp of the last successful backup.
-   * @param params.lastRestore - Updates the timestamp of the last successful restore.
-   * @returns A promise that resolves to a boolean indicating successful status update.
-   * @throws Will throw an error if the status cannot be updated in the key-value store.
-   */
-  private async setStatus({ initialized, lastBackup, lastRestore }: Partial<IdentityVaultStatus>): Promise<boolean> {
-    // Get the current status values from the store, if any.
-    const vaultStatus = await this.getStatus();
+  /** Atomically commit one complete vault generation. */
+  private async setStoredVaultState(state: StoredVaultState): Promise<void> {
+    await this._store.set(vaultStateKey, JSON.stringify(state));
+  }
 
-    // Update the status properties with new values specified, if any.
-    vaultStatus.initialized = initialized ?? vaultStatus.initialized;
-    vaultStatus.lastBackup = lastBackup ?? vaultStatus.lastBackup;
-    vaultStatus.lastRestore = lastRestore ?? vaultStatus.lastRestore;
+  private requireCurrentContentEncryptionKey(state: StoredVaultState): Jwk {
+    if (
+      this._contentEncryptionKey === undefined
+      || this._contentEncryptionKeyGeneration !== state.generation
+    ) {
+      this.clearInMemoryVault();
+      throw new Error(
+        'HdIdentityVault: Vault contents changed in another context. Unlock the vault again.'
+      );
+    }
+    return this._contentEncryptionKey;
+  }
 
-    // Write the changes to the store.
-    await this._store.set('vaultStatus', JSON.stringify(vaultStatus));
-
-    // Update the in-memory cache so subsequent reads skip the store.
-    this._cachedInitialized = vaultStatus.initialized;
-
-    return true;
+  private clearInMemoryVault(): void {
+    if (this._contentEncryptionKey !== undefined) {
+      this._contentEncryptionKey.k = '';
+    }
+    this._contentEncryptionKey = undefined;
+    this._contentEncryptionKeyGeneration = undefined;
+    this._cachedPortableDid = undefined;
+    this._cachedPortableDidGeneration = undefined;
   }
 }

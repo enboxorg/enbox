@@ -1,5 +1,6 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
+import type { DwnEndpointResolution } from '@enbox/dids';
 import type { EnboxPlatformAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
@@ -31,7 +32,7 @@ import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { fetchConnectionStatus } from '@enbox/auth';
 import { omitUndefined } from '@enbox/common';
-import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, resolveDwnEndpointStatus, UniversalResolver } from '@enbox/dids';
 
 import { createProtocolReadinessApi } from './protocol-readiness.js';
 import { DidApi } from './did-api.js';
@@ -179,6 +180,61 @@ export class Enbox {
    */
   public get delegateDid(): string | undefined {
     return this._delegateDid;
+  }
+
+  /**
+   * Resolve the DWN endpoints advertised by a DID without collapsing expected absence into a
+   * generic transport error. Defaults to this session's connected DID.
+   */
+  public getDwnEndpointStatus(didUri = this._connectedDid): Promise<DwnEndpointResolution> {
+    return resolveDwnEndpointStatus(didUri, this.agent.did);
+  }
+
+  /** Force-refresh the DID document and return its application-facing DWN endpoint status. */
+  public refreshDwnEndpointStatus(didUri = this._connectedDid): Promise<DwnEndpointResolution> {
+    return resolveDwnEndpointStatus(didUri, {
+      resolve: async () => {
+        const result = await this.agent.did.refreshResolution(didUri);
+        if (result.didResolutionMetadata.error === undefined && result.didDocument !== null) {
+          this.agent.sync.invalidateSyncTargets();
+        }
+        return result;
+      },
+    });
+  }
+
+  /** Force-refresh and return the HTTP(S) DWN endpoints advertised by a DID document. */
+  public async refreshDwnEndpoints(didUri = this._connectedDid): Promise<string[]> {
+    const status = await this.refreshDwnEndpointStatus(didUri);
+    if (status.status !== 'ready') {
+      throw status.error;
+    }
+    return status.endpoints;
+  }
+
+  /**
+   * Reconcile this connected session with a freshly resolved DID document.
+   *
+   * Unlike {@link refreshDwnEndpointStatus}, this uses the owning auth manager
+   * and emits `connection-endpoints-changed` when the endpoint state changes.
+   * Expected endpoint absence is returned as a typed status.
+   */
+  public async refreshConnection(): Promise<DwnEndpointResolution> {
+    const auth = this._auth;
+    if (auth === undefined) {
+      throw new Error(
+        '[@enbox/api] Enbox.refreshConnection() requires the AuthManager used to create this session. ' +
+        'Call auth.refreshConnection() on the owning AuthManager.'
+      );
+    }
+    const authSession = auth.session;
+    if (authSession?.did !== this._connectedDid || authSession.delegateDid !== this._delegateDid) {
+      throw new Error(
+        '[@enbox/api] Enbox.refreshConnection() cannot use an AuthManager whose active session no longer matches this Enbox instance.'
+      );
+    }
+
+    return auth.refreshConnection();
   }
 
   /**

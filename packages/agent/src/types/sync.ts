@@ -799,6 +799,12 @@ export interface SyncEngine {
   readonly hasActiveSubscriptions: boolean;
 
   /**
+   * Invalidates the memoized sync target plan without rebuilding active links synchronously.
+   * The next plan request or sync tick re-resolves identity endpoint topology.
+   */
+  invalidateSyncTargets(): void;
+
+  /**
    * Register an identity to be managed by the SyncEngine for syncing.
    * Callers must explicitly specify which protocols to sync (`'all'` for a
    * full replica, or a list of protocol URIs) so that sync scope is always

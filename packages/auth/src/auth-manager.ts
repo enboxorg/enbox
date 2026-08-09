@@ -14,8 +14,9 @@
  * @module
  */
 
-import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, HdIdentityVault, PortableIdentity } from '@enbox/agent';
+import type { DwnEndpointResolution } from '@enbox/dids';
+import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, DwnMessageSubscription, DwnSubscriptionMessage, HdIdentityVault, PortableIdentity } from '@enbox/agent';
+import type { RecordsSubscribeReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import type { FlowContext } from './connect/lifecycle.js';
 import type { PasswordProvider } from './password-provider.js';
@@ -52,9 +53,16 @@ import type {
   LocalDwnProbeResult,
 } from './discovery.js';
 
-import { Convert } from '@enbox/common';
 import { DataStream } from '@enbox/dwn-sdk-js';
-import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
+import { resolveDwnEndpointStatus } from '@enbox/dids';
+import { Convert, logger } from '@enbox/common';
+import {
+  DwnInterface,
+  DwnPermissionGrant,
+  EnboxUserAgent,
+  SERVICE_CONFIG_PROTOCOL_PATH,
+  SERVICE_CONFIG_PROTOCOL_URI,
+} from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
@@ -63,6 +71,7 @@ import { createDefaultStorage } from './storage/storage.js';
 import { fetchConnectionStatus } from './connect/status.js';
 import { importFromPortable } from './connect/import.js';
 import { normalizeProtocolRequests } from './permissions.js';
+import { registerWithDwnEndpoints } from './registration.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
@@ -77,7 +86,7 @@ import {
   readLocalDwnEjectionRecordForPairing,
   requestLocalDwnPairing,
 } from './discovery.js';
-import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
+import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, refreshDwnEndpointsForConnection, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
 
 type ConnectionMonitorState = {
   options: ConnectionMonitorOptions;
@@ -86,6 +95,21 @@ type ConnectionMonitorState = {
   isPolling: boolean;
   autoRefreshAttempts: Set<string>;
 };
+
+type ServiceConfigWatchState = {
+  subscription?: DwnMessageSubscription;
+  stopped: boolean;
+  refreshInFlight: boolean;
+  refreshQueued: boolean;
+};
+
+type ConnectionEndpointBaseline = {
+  session: AuthSession;
+  status: DwnEndpointResolution;
+};
+
+const SERVICE_CONFIG_REFRESH_RETRY_DELAY_MS = 250;
+const SERVICE_CONFIG_REFRESH_MAX_ATTEMPTS = 3;
 
 type ConnectionAttemptGuard = {
   lifecycleGeneration: number;
@@ -127,6 +151,11 @@ type ConnectionAttemptGuard = {
  * ```
  */
 export class AuthManager {
+  /** Capability marker for recovery flows that resolve before preserving or replacing DID services. */
+  public get supportsAuthoritativeVaultRecovery(): true {
+    return true;
+  }
+
   private readonly _userAgent: EnboxUserAgent;
   private readonly _emitter: AuthEventEmitter;
   private readonly _storage: StorageAdapter;
@@ -136,6 +165,9 @@ export class AuthManager {
   private _isShutDown = false;
   private _isShuttingDown = false;
   private _connectionMonitor?: ConnectionMonitorState;
+  private _connectionEndpointBaseline?: ConnectionEndpointBaseline;
+  private _serviceConfigWatch?: ServiceConfigWatchState;
+  private _serviceConfigWatchGeneration = 0;
   private _sessionLifetime?: AbortController;
   private _lifecycleGeneration = 0;
   private _lifecycleCommitTail: Promise<void> = Promise.resolve();
@@ -429,6 +461,68 @@ export class AuthManager {
   }
 
   /**
+   * Freshly resolve the connected identity's DID document and reconcile its
+   * advertised DWN endpoint state without replacing the auth session.
+   *
+   * Expected endpoint absence, malformed services, and DID-resolution failures
+   * are returned as a discriminated status so a dapp can expose them directly.
+   * The service-config announcement that may have prompted this call is not
+   * trusted as configuration; the DID document remains authoritative.
+   */
+  async refreshConnection(): Promise<DwnEndpointResolution> {
+    return this._refreshConnection();
+  }
+
+  /** Resolve endpoint state, optionally emitting even when no prior baseline was available. */
+  private async _refreshConnection(announcementObserved = false): Promise<DwnEndpointResolution> {
+    this._guardShutdown();
+
+    const session = this._session;
+    if (session === undefined) {
+      throw new Error('[@enbox/auth] refreshConnection() requires an active session.');
+    }
+    const connectedDid = session.did;
+
+    const existingBaseline = this._connectionEndpointBaseline?.session === session
+      ? this._connectionEndpointBaseline
+      : undefined;
+    const previous = existingBaseline?.status
+      ?? await resolveDwnEndpointStatus(connectedDid, this._userAgent.did);
+    const current = await this._userAgent.identity.refreshDwnEndpointStatus({ didUri: connectedDid });
+
+    if (this._session !== session) {
+      throw new Error('[@enbox/auth] refreshConnection() was invalidated by a session lifecycle change.');
+    }
+    this._connectionEndpointBaseline = { session, status: current };
+
+    const previousEndpoints = previous.status === 'ready' ? previous.endpoints : [];
+    const endpoints = current.status === 'ready' ? current.endpoints : [];
+    const previousSet = new Set(previousEndpoints);
+    const currentSet = new Set(endpoints);
+    const added = endpoints.filter((endpoint) => !previousSet.has(endpoint));
+    const removed = previousEndpoints.filter((endpoint) => !currentSet.has(endpoint));
+
+    if (
+      announcementObserved
+      || existingBaseline === undefined
+      || previous.status !== current.status
+      || added.length > 0
+      || removed.length > 0
+    ) {
+      this._emitter.emit('connection-endpoints-changed', {
+        connectedDid,
+        previous,
+        current,
+        endpoints,
+        added,
+        removed,
+      });
+    }
+
+    return current;
+  }
+
+  /**
    * Start opt-in polling for delegated connection expiry and revocation.
    *
    * Events are emitted only when the newest session enters a new state.
@@ -473,6 +567,167 @@ export class AuthManager {
       clearInterval(this._connectionMonitor.timer);
     }
     this._connectionMonitor = undefined;
+  }
+
+  /**
+   * Watch locally replicated service-config records for the active delegated
+   * session and freshly resolve its DID whenever the wallet publishes a change
+   * prompt. Rapid record events are coalesced while a refresh is in flight.
+   *
+   * The connect request must include {@link serviceConfigProtocolRequest} so
+   * sync is authorized to replicate announcements into the local DWN.
+   */
+  async startServiceConfigWatch(): Promise<() => void> {
+    this._guardShutdown();
+
+    const session = this._session;
+    if (session === undefined || session.delegateDid === undefined) {
+      throw new Error('[@enbox/auth] startServiceConfigWatch() requires an active delegated session.');
+    }
+    const connectedDid = session.did;
+    const delegateDid = session.delegateDid;
+
+    this.stopServiceConfigWatch();
+    const watchGeneration = ++this._serviceConfigWatchGeneration;
+    const watch: ServiceConfigWatchState = {
+      stopped         : false,
+      refreshInFlight : true,
+      refreshQueued   : false,
+    };
+    this._serviceConfigWatch = watch;
+
+    const isCurrentWatch = (): boolean => {
+      return !watch.stopped
+        && this._serviceConfigWatch === watch
+        && this._serviceConfigWatchGeneration === watchGeneration
+        && this._session === session
+        && !session.signal.aborted;
+    };
+
+    const scheduleRefresh = (): void => {
+      if (watch.stopped) {
+        return;
+      }
+      if (watch.refreshInFlight) {
+        watch.refreshQueued = true;
+        return;
+      }
+
+      watch.refreshInFlight = true;
+      void (async (): Promise<void> => {
+        let consecutiveFailures = 0;
+        try {
+          do {
+            watch.refreshQueued = false;
+            if (watch.stopped) {
+              break;
+            }
+            try {
+              await this._refreshConnection(true);
+              consecutiveFailures = 0;
+            } catch (error: unknown) {
+              consecutiveFailures++;
+              const detail = error instanceof Error ? error.message : String(error);
+              logger.error(`[@enbox/auth] Service-config watch refresh failed: ${detail}`);
+              if (consecutiveFailures < SERVICE_CONFIG_REFRESH_MAX_ATTEMPTS && !watch.stopped) {
+                watch.refreshQueued = true;
+                await new Promise((resolve) => setTimeout(resolve, SERVICE_CONFIG_REFRESH_RETRY_DELAY_MS));
+              }
+            }
+          } while (watch.refreshQueued && consecutiveFailures < SERVICE_CONFIG_REFRESH_MAX_ATTEMPTS);
+        } finally {
+          watch.refreshInFlight = false;
+        }
+      })();
+    };
+
+    let reply: RecordsSubscribeReply;
+    try {
+      ({ reply } = await this._userAgent.dwn.processRequest({
+        author        : delegateDid,
+        target        : connectedDid,
+        messageType   : DwnInterface.RecordsSubscribe,
+        messageParams : {
+          filter: {
+            protocol     : SERVICE_CONFIG_PROTOCOL_URI,
+            protocolPath : SERVICE_CONFIG_PROTOCOL_PATH,
+          },
+        },
+        subscriptionHandler: (message: DwnSubscriptionMessage): void => {
+          if (message.type === 'event') {
+            scheduleRefresh();
+          }
+        },
+      }));
+    } catch (error: unknown) {
+      if (this._serviceConfigWatch === watch) {
+        this.stopServiceConfigWatch();
+      }
+      throw error;
+    }
+
+    if (reply.status.code !== 200 || reply.subscription === undefined) {
+      if (this._serviceConfigWatch === watch) {
+        this.stopServiceConfigWatch();
+      }
+      throw new Error(
+        `[@enbox/auth] Failed to start service-config watch: ${reply.status.code} - ${reply.status.detail}`
+      );
+    }
+
+    if (!isCurrentWatch()) {
+      await reply.subscription.close();
+      throw new Error('[@enbox/auth] startServiceConfigWatch() was invalidated by a session lifecycle change.');
+    }
+
+    watch.subscription = reply.subscription;
+    try {
+      // Establish the subscription before resolving so an announcement that
+      // races watch startup is either covered by this refresh or queues one
+      // more cache-bypassing refresh through the subscription callback.
+      await this._refreshConnection(true);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.error(`[@enbox/auth] Initial service-config watch refresh failed: ${detail}`);
+      watch.refreshQueued = true;
+    } finally {
+      watch.refreshInFlight = false;
+      if (watch.refreshQueued && isCurrentWatch()) {
+        scheduleRefresh();
+      }
+    }
+
+    if (!isCurrentWatch()) {
+      const subscription = watch.subscription;
+      watch.subscription = undefined;
+      await Promise.resolve(subscription?.close()).catch(() => {
+        // Best-effort resource cleanup after concurrent watch replacement.
+      });
+      throw new Error('[@enbox/auth] startServiceConfigWatch() was invalidated by a session lifecycle change.');
+    }
+
+    return (): void => {
+      if (this._serviceConfigWatch === watch) {
+        this.stopServiceConfigWatch();
+      }
+    };
+  }
+
+  /** Stop the active service-config watch, if any. */
+  stopServiceConfigWatch(): void {
+    const watch = this._serviceConfigWatch;
+    if (watch === undefined) {
+      return;
+    }
+
+    watch.stopped = true;
+    this._serviceConfigWatch = undefined;
+    this._serviceConfigWatchGeneration++;
+    const subscription = watch.subscription;
+    watch.subscription = undefined;
+    void Promise.resolve(subscription?.close()).catch(() => {
+      // Best-effort resource cleanup during session teardown.
+    });
   }
 
   /**
@@ -1093,6 +1348,32 @@ export class AuthManager {
         : undefined;
       this._assertConnectionAttemptActive(guard);
 
+      const dwnEndpoints = await refreshDwnEndpointsForConnection({
+        userAgent : this._userAgent,
+        didUri    : connectedDid,
+        required  : this._registration !== undefined || this._defaultSync !== 'off',
+      });
+      this._assertConnectionAttemptActive(guard);
+
+      if (this._registration !== undefined) {
+        if (dwnEndpoints === undefined) {
+          throw new Error(`[@enbox/auth] No DWN endpoints are available for registration of '${connectedDid}'.`);
+        }
+        await registerWithDwnEndpoints(
+          {
+            userAgent    : this._userAgent,
+            targets      : [{ did: connectedDid, dwnEndpoints }],
+            secretStore  : this._userAgent.secrets,
+            storage      : this._storage,
+            assertActive : (): void => this._assertConnectionAttemptActive(guard),
+            runMutation  : <T>(operation: () => Promise<T>): Promise<T> =>
+              this._runConnectionMutation(guard, operation),
+          },
+          this._registration,
+        );
+        this._assertConnectionAttemptActive(guard);
+      }
+
       return this._commitConnectionResult(guard, async (): Promise<AuthSession> => {
         await Promise.all([
           this._storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true'),
@@ -1430,12 +1711,18 @@ export class AuthManager {
       throw new ConnectDeniedError('[@enbox/auth] Connect was denied or cancelled by the user.');
     }
 
-    return this._commitConnectionResult(guard, async (): Promise<AuthSession> => {
-      // 5. Validate the returned grants against the request before importing
-      //    anything — grantee must be the delegate DID and every scope must
-      //    have been requested.
-      validateConnectResultGrants(result, permissionRequests);
+    // 5. Validate the returned grants and freshly resolve the connected DID
+    //    before importing any delegate or grant state. Delegated sync requires
+    //    a real advertised endpoint and must not inherit a resolver default.
+    validateConnectResultGrants(result, permissionRequests);
+    await refreshDwnEndpointsForConnection({
+      userAgent,
+      didUri   : result.connectedDid,
+      required : true,
+    });
+    this._assertConnectionAttemptActive(guard);
 
+    return this._commitConnectionResult(guard, async (): Promise<AuthSession> => {
       // 6. Import delegate DID, process grants, set up sync.
       const {
         delegatePortableDid, connectedDid, delegateGrants, sessionRevocations,
@@ -1544,8 +1831,15 @@ export class AuthManager {
       );
     }
 
+    validateConnectResultGrants(result, permissionRequests);
+    await refreshDwnEndpointsForConnection({
+      userAgent : this._userAgent,
+      didUri    : connectedDid,
+      required  : true,
+    });
+    this._assertConnectionAttemptActive(guard);
+
     return this._commitConnectionResult(guard, async (): Promise<AuthSession> => {
-      validateConnectResultGrants(result, permissionRequests);
       await processDelegateGrantsForExistingIdentity({
         userAgent      : this._userAgent,
         connectedDid,
@@ -1865,6 +2159,8 @@ export class AuthManager {
 
   /** Abort and release the current application-session lifetime, if any. */
   private _abortSessionLifetime(): void {
+    this.stopServiceConfigWatch();
+    this._connectionEndpointBaseline = undefined;
     this._sessionLifetime?.abort();
     this._sessionLifetime = undefined;
   }

@@ -3,9 +3,9 @@
  * Public types for the authentication and identity management SDK.
  */
 
-import type { PortableDid } from '@enbox/dids';
 import type { AgentSessionIdentity, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
 import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult, ConnectSessionMetadata } from '@enbox/connect';
+import type { DwnEndpointResolution, PortableDid } from '@enbox/dids';
 
 import type { PasswordProvider } from './password-provider.js';
 
@@ -79,7 +79,8 @@ export type AuthEvent =
   | 'local-dwn-available'
   | 'local-dwn-unavailable'
   | 'connection-expiring'
-  | 'connection-expired';
+  | 'connection-expired'
+  | 'connection-endpoints-changed';
 
 /** Payload type for each event, keyed by event name. */
 export interface AuthEventMap {
@@ -99,6 +100,15 @@ export interface AuthEventMap {
   'connection-expiring': { status: ConnectionStatus };
   /** Emitted when the newest delegated connect session becomes expired or revoked. */
   'connection-expired': { status: ConnectionStatus };
+  /** Emitted after fresh DID resolution changes the connected identity's endpoint state. */
+  'connection-endpoints-changed': {
+    connectedDid: string;
+    previous: DwnEndpointResolution;
+    current: DwnEndpointResolution;
+    endpoints: string[];
+    added: string[];
+    removed: string[];
+  };
 }
 
 /** A type-safe event handler for a specific event. */
@@ -166,10 +176,15 @@ export interface RegistrationTokenData {
  *    solving a PoW challenge to register.
  */
 export interface RegistrationOptions {
-  /** Called when all DWN registrations complete successfully. */
+  /**
+   * Called when one DWN registration phase completes successfully.
+   *
+   * Flows that discover targets in stages (for example, registering the agent DID before remote
+   * identity recovery) may invoke this callback more than once during a single connect operation.
+   */
   onSuccess: () => void;
 
-  /** Called when any DWN registration fails. */
+  /** Called when a DWN registration phase fails. */
   onFailure: (error: unknown) => void;
 
   /**
@@ -437,7 +452,13 @@ export interface VaultConnectOptions {
   /** Override manager default local identity sync scope. */
   identitySyncProtocols?: IdentitySyncProtocols;
 
-  /** Override manager default DWN endpoints. */
+  /**
+   * DWN endpoints for DIDs created by this call.
+   *
+   * During phrase recovery, omitting this field preserves the resolved DID document even when the
+   * manager has creation defaults. Supplying it during recovery is an explicit request to replace
+   * the recovered vault DID's advertised DWN endpoints after resolving the current document.
+   */
   dwnEndpoints?: string[];
 
   /** Identity metadata. */
