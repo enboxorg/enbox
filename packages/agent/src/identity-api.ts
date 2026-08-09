@@ -7,10 +7,12 @@ import type { DidMethodCreateOptions } from './did-api.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 
+import { logger } from '@enbox/common';
 import { Did, DidDht, DidErrorCode, getDwnEndpointStatus, isPortableDid, replaceDwnServiceEndpointUrls, resolveDwnEndpointStatus } from '@enbox/dids';
 
 import { BearerIdentity } from './bearer-identity.js';
 import { InMemoryIdentityStore } from './store-identity.js';
+import { publishServiceConfigNotice } from './service-config.js';
 
 export interface IdentityApiParams<TKeyManager extends AgentKeyManager> {
   agent?: EnboxPlatformAgent<TKeyManager>;
@@ -317,6 +319,20 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
         didDocumentMetadata   : publishedMetadata,
         didResolutionMetadata : {},
       });
+
+      await publishServiceConfigNotice({
+        agent            : this.agent,
+        currentEndpoints : requested.endpoints,
+        formerEndpoints  : current?.status === 'ready' ? current.endpoints : [],
+        ownerDid         : didUri,
+      }).catch((error: unknown): void => {
+        logger.error(`AgentIdentityApi: Failed to announce DWN endpoint change for '${didUri}': ${String(error)}`);
+      });
+    }
+
+    const syncOptions = await this.agent.sync.getIdentityOptions(didUri);
+    if (syncOptions !== undefined) {
+      await this.agent.sync.updateIdentityOptions({ did: didUri, options: syncOptions });
     }
   }
 

@@ -42,6 +42,7 @@ export {
   RecordConflictError,
   RecordValidationError,
   recordCodecs,
+  ServiceConfigProtocol,
 } from '@enbox/api';
 
 export type {
@@ -110,6 +111,7 @@ export type {
   RecordValidator,
   ReplicationCurrentness,
   RoleDeliveryState,
+  ServiceConfigNotice,
   SyncStatusSnapshot,
 } from '@enbox/api';
 

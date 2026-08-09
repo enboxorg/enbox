@@ -55,6 +55,14 @@ describe('@enbox/browser exports', () => {
     expect(browser.recordCodecs).toBe(api.recordCodecs);
   });
 
+  it('re-exports ServiceConfigProtocol from @enbox/api', async () => {
+    const [browser, api] = await Promise.all([
+      getBrowserExports(),
+      import('@enbox/api'),
+    ]);
+    expect(browser.ServiceConfigProtocol).toBe(api.ServiceConfigProtocol);
+  });
+
   it('re-exports the canonical Record class from @enbox/api', async () => {
     const [browser, api] = await Promise.all([
       getBrowserExports(),

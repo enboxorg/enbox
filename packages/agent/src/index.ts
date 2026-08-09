@@ -38,6 +38,11 @@ export * from './local-dwn.js';
 export * from './local-key-manager.js';
 export * from './permissions-api.js';
 export * from './secret-store.js';
+export {
+  ServiceConfigProtocolDefinition,
+  isServiceConfigNoticeDelivery,
+} from './service-config.js';
+export type { ServiceConfigNotice } from './service-config.js';
 export * from './store-data.js';
 export * from './store-did.js';
 export * from './store-identity.js';

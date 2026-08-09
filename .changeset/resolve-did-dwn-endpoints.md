@@ -6,4 +6,4 @@
 "@enbox/browser": patch
 ---
 
-Resolve and cache DID-advertised DWN endpoints, expose friendly endpoint status, and preserve authoritative endpoints during recovery unless explicitly replaced.
+Resolve and cache DID-advertised DWN endpoints, expose friendly endpoint status with an opt-in live change prompt, and preserve authoritative endpoints during recovery unless explicitly replaced.

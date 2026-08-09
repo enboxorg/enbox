@@ -1,6 +1,7 @@
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import type { DwnEndpointResolution } from '@enbox/dids';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { AuthState, ConnectionStatus } from '@enbox/auth';
 import type {
@@ -24,6 +25,7 @@ import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { Enbox } from '../src/enbox.js';
 import { ProtocolReadinessError } from '../src/protocol-readiness.js';
+import { ServiceConfigProtocol } from '../src/service-config-protocol.js';
 import { WalletReapprovalRequiredError } from '../src/typed-enbox.js';
 
 const OWNER_DID = 'did:dht:store-owner';
@@ -78,6 +80,7 @@ type FakeSyncStatusEngine = {
   linkReads: number;
   links: ReplicationLinkSnapshot[];
   listenerCount(): number;
+  optionUpdates: { did: string; options: SyncIdentityOptions }[];
   options?: SyncIdentityOptions;
   readLinks(): Promise<ReplicationLinkSnapshot[]>;
   settledLinkReads: number;
@@ -96,6 +99,7 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
     linkReads        : 0,
     links            : [],
     listenerCount    : (): number => listeners.size,
+    optionUpdates    : [],
     options          : { protocols: 'all' },
     readLinks        : async (): Promise<ReplicationLinkSnapshot[]> => state.links,
     settledLinkReads : 0,
@@ -116,6 +120,10 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
       listeners.add(listener);
       return (): void => { listeners.delete(listener); };
     },
+    updateIdentityOptions: async ({ did, options }): Promise<void> => {
+      state.optionUpdates.push({ did, options });
+      state.options = options;
+    },
   } as SyncEngine;
   return state;
 }
@@ -129,6 +137,22 @@ function syncLink(overrides: Partial<ReplicationLinkSnapshot> = {}): Replication
     connectivity   : 'unknown',
     isPullCurrent  : false,
     ...overrides,
+  };
+}
+
+function serviceConfigNotice(author: string = OWNER_DID): SyncEvent {
+  return {
+    type           : 'delivery:applied',
+    tenantDid      : OWNER_DID,
+    remoteEndpoint : 'https://dwn.example',
+    messageCid     : 'service-config-notice',
+    descriptor     : {
+      interface    : 'Records',
+      method       : 'Write',
+      protocol     : ServiceConfigProtocol.definition.protocol,
+      protocolPath : 'serviceConfig',
+      author,
+    },
   };
 }
 
@@ -152,6 +176,7 @@ type FakeAuthManager = {
 
 describe('createConnectionStore()', () => {
   let testHarness: PlatformAgentTestHarness;
+  let getDwnEndpointStatus: sinon.SinonStub;
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
@@ -164,6 +189,12 @@ describe('createConnectionStore()', () => {
     sinon.restore();
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
+    getDwnEndpointStatus = sinon.stub(testHarness.agent.identity, 'getDwnEndpointStatus')
+      .callsFake(async ({ didUri }): Promise<DwnEndpointResolution> => ({
+        status    : 'ready',
+        didUri,
+        endpoints : ['https://dwn.example'],
+      }));
   });
 
   afterEach(() => {
@@ -521,6 +552,171 @@ describe('createConnectionStore()', () => {
       expect(store.getSnapshot().sync).toBeUndefined();
       expect(engine.listenerCount()).toBe(0);
       expect(notifications).toBe(1);
+    });
+  });
+
+  describe('remote DWN status', () => {
+    it('should seed from a fresh resolution and retarget sync only for semantic changes', async () => {
+      const engine = createSyncStatusEngine();
+      const { store } = await connectWithSync(engine);
+
+      expect(store.getSnapshot().remoteDwn).toEqual({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://dwn.example'],
+      });
+      expect(Object.isFrozen(store.getSnapshot().remoteDwn)).toBe(true);
+      expect(Object.isFrozen((store.getSnapshot().remoteDwn as { endpoints: string[] }).endpoints)).toBe(true);
+      expect(getDwnEndpointStatus.calledOnceWith({ didUri: OWNER_DID, refresh: true })).toBe(true);
+      expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { protocols: 'all' } }]);
+
+      getDwnEndpointStatus.resetHistory();
+      engine.optionUpdates.length = 0;
+      getDwnEndpointStatus.resolves({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://new-dwn.example'],
+      });
+      const changed = await store.refreshDwnEndpoints();
+
+      expect(changed.remoteDwn).toEqual({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://new-dwn.example'],
+      });
+      expect(getDwnEndpointStatus.calledOnceWith({ didUri: OWNER_DID, refresh: true })).toBe(true);
+      expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { protocols: 'all' } }]);
+
+      const stable = store.getSnapshot();
+      await store.refreshDwnEndpoints();
+      expect(store.getSnapshot()).toBe(stable);
+      expect(engine.optionUpdates).toHaveLength(1);
+    });
+
+    it('should retry unchanged routing after an update failure', async () => {
+      const engine = createSyncStatusEngine();
+      const updateIdentityOptions = sinon.stub(engine.sync, 'updateIdentityOptions');
+      updateIdentityOptions.onFirstCall().rejects(new Error('routing unavailable'));
+      updateIdentityOptions.onSecondCall().callsFake(async ({ did, options }): Promise<void> => {
+        engine.optionUpdates.push({ did, options });
+        engine.options = options;
+      });
+      sinon.stub(console, 'error');
+
+      const { store } = await connectWithSync(engine);
+      const initial = store.getSnapshot();
+      expect(initial.remoteDwn).toEqual({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://dwn.example'],
+      });
+      expect(updateIdentityOptions.callCount).toBe(1);
+
+      const retried = await store.refreshDwnEndpoints();
+      expect(retried).toBe(initial);
+      expect(updateIdentityOptions.callCount).toBe(2);
+      expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { protocols: 'all' } }]);
+
+      await store.refreshDwnEndpoints();
+      expect(updateIdentityOptions.callCount).toBe(2);
+    });
+
+    it('should expose missing and failed resolution states without dropping routing on transient failure', async () => {
+      const engine = createSyncStatusEngine();
+      const { store } = await connectWithSync(engine);
+      engine.optionUpdates.length = 0;
+
+      getDwnEndpointStatus.resolves({
+        status  : 'service-missing',
+        didUri  : OWNER_DID,
+        message : `DID '${OWNER_DID}' does not advertise a #dwn service.`,
+      });
+      await store.refreshDwnEndpoints();
+      expect(store.getSnapshot().remoteDwn?.status).toBe('service-missing');
+      expect(engine.optionUpdates).toHaveLength(1);
+
+      engine.optionUpdates.length = 0;
+      getDwnEndpointStatus.resolves({
+        status          : 'resolution-failed',
+        didUri          : OWNER_DID,
+        message         : 'Resolver unavailable.',
+        resolutionError : 'internalError',
+      });
+      await store.refreshDwnEndpoints();
+
+      expect(store.getSnapshot().remoteDwn).toMatchObject({
+        status  : 'resolution-failed',
+        message : 'Resolver unavailable.',
+      });
+      expect(engine.optionUpdates).toHaveLength(0);
+    });
+
+    it('should filter and coalesce service-config delivery wakes into fresh resolutions', async () => {
+      const engine = createSyncStatusEngine();
+      const { store } = await connectWithSync(engine);
+      getDwnEndpointStatus.resetHistory();
+      engine.optionUpdates.length = 0;
+
+      let resolveFirst!: (status: DwnEndpointResolution) => void;
+      const firstRead = new Promise<DwnEndpointResolution>((resolve) => { resolveFirst = resolve; });
+      getDwnEndpointStatus.onCall(0).returns(firstRead);
+      getDwnEndpointStatus.onCall(1).resolves({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://latest-dwn.example'],
+      });
+
+      engine.emit(serviceConfigNotice('did:dht:someone-else'));
+      await Promise.resolve();
+      expect(getDwnEndpointStatus.callCount).toBe(0);
+
+      engine.emit(serviceConfigNotice());
+      await waitFor(() => { expect(getDwnEndpointStatus.callCount).toBe(1); });
+      engine.emit(serviceConfigNotice());
+      engine.emit(serviceConfigNotice());
+      expect(getDwnEndpointStatus.callCount).toBe(1);
+
+      resolveFirst({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://superseded-dwn.example'],
+      });
+      await waitFor(() => { expect(getDwnEndpointStatus.callCount).toBe(2); });
+      await waitFor(() => {
+        expect(store.getSnapshot().remoteDwn?.status).toBe('ready');
+        expect((store.getSnapshot().remoteDwn as { endpoints: string[] }).endpoints)
+          .toEqual(['https://latest-dwn.example']);
+      });
+
+      expect(getDwnEndpointStatus.alwaysCalledWith({ didUri: OWNER_DID, refresh: true })).toBe(true);
+      expect(engine.optionUpdates).toHaveLength(1);
+    });
+
+    it('should discard a late fresh resolution after the exact session aborts', async () => {
+      const engine = createSyncStatusEngine();
+      const lifetime = new AbortController();
+      const { store } = await connectWithSync(engine, { signal: lifetime.signal });
+      getDwnEndpointStatus.resetHistory();
+      engine.optionUpdates.length = 0;
+
+      let resolveStatus!: (status: DwnEndpointResolution) => void;
+      getDwnEndpointStatus.returns(new Promise<DwnEndpointResolution>((resolve) => { resolveStatus = resolve; }));
+      engine.emit(serviceConfigNotice());
+      await waitFor(() => { expect(getDwnEndpointStatus.calledOnce).toBe(true); });
+
+      lifetime.abort();
+      const aborted = store.getSnapshot();
+      expect(aborted.remoteDwn).toBeUndefined();
+      resolveStatus({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://stale-dwn.example'],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(store.getSnapshot()).toBe(aborted);
+      expect(engine.optionUpdates).toHaveLength(0);
     });
   });
 
@@ -906,7 +1102,7 @@ describe('createConnectionStore()', () => {
 
       const snapshot = await store.connect({ protocols: PROTOCOLS });
 
-      expect(phases).toEqual(['connecting', 'connected', 'connected']);
+      expect(phases).toEqual(['connecting', 'connected', 'connected', 'connected', 'connected']);
       expect(snapshot.phase).toBe('connected');
       expect(snapshot.session).toBe(session);
       expect(snapshot.enbox).toBeInstanceOf(Enbox);
