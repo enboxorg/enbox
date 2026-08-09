@@ -53,6 +53,7 @@ describe('@enbox/browser exports', () => {
       import('@enbox/api'),
     ]);
     expect(browser.recordCodecs).toBe(api.recordCodecs);
+    expect(typeof (browser.recordCodecs as typeof api.recordCodecs).fileEnvelope).toBe('function');
   });
 
   it('re-exports the canonical Record class from @enbox/api', async () => {

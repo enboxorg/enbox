@@ -120,6 +120,22 @@ const data = await record.value(); // { title: string; body: string }
 record methods infer paths and application values while using the same codec
 for writes and reads.
 
+For encrypted file records, use a private envelope:
+
+```ts
+const attachmentCodec = recordCodecs.fileEnvelope({
+  formatId: 'myapp1', // exactly six ASCII bytes
+});
+```
+
+The descriptor stays `application/octet-stream`; the safe filename and
+canonicalized media type remain inside the payload. Declare the protocol type
+with `encryptionRequired: true`. Use
+`attachmentCodec.maxEncodedBytesFor(contentBytes)` when its `$size.max` rule
+should reserve room for that content plus maximum envelope metadata. Pass
+`maxContentBytes` to the codec only when the dapp also wants to reject larger
+files locally; otherwise the codec adds no application size policy.
+
 Register all of an application's typed protocols and delegated permission
 policies once with `defineApplicationManifest()`:
 

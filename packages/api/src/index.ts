@@ -35,6 +35,11 @@ export { DwnResponseError, RecordParentNotFoundError, RecordSquashBackstopError 
 export * from './dwn-reader-api.js';
 export * from './enbox.js';
 export type * from './enbox-types.js';
+export type {
+  FileEnvelopeCodec,
+  FileEnvelopeCodecOptions,
+  FileEnvelopeData,
+} from './file-envelope-codec.js';
 export * from './protocol.js';
 export { ProtocolReadinessError } from './protocol-readiness.js';
 export type { EnsureProtocolsReadyOptions, ProtocolReadinessApi } from './protocol-readiness.js';
