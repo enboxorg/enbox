@@ -664,6 +664,7 @@ describe('TypedProtocol API', () => {
         // (non-squashing) write — the descriptor would lack the directive.
         const descriptor = record.rawMessage.descriptor as { squash?: true };
         expect(descriptor.squash).toBe(true);
+        expect(record.squash).toBe(true);
       });
 
       it('omits squash when not requested (no false-y field)', async () => {
@@ -674,6 +675,7 @@ describe('TypedProtocol API', () => {
         });
         const descriptor = record.rawMessage.descriptor as { squash?: true };
         expect(descriptor.squash).toBeUndefined();
+        expect(record.squash).toBe(false);
       });
 
       it('compacts older siblings end-to-end — a squash write purges prior snapshots', async () => {
@@ -704,9 +706,13 @@ describe('TypedProtocol API', () => {
 
       it('throws a DwnResponseError when squash is rejected by the DWN', async () => {
         // `doc` has no $squash — the squash backstop must reject the write,
-        // and the typed surface must preserve its machine-readable response.
+        // and a dynamically widened caller must preserve its machine-readable response.
+        const dynamicCreate = squashed.records.create as (
+          path: 'doc',
+          request: { data: { n?: string }; squash: true },
+        ) => Promise<Record<{ n?: string }>>;
         try {
-          await squashed.records.create('doc', {
+          await dynamicCreate('doc', {
             data   : { n: 'nope' },
             squash : true,
           });

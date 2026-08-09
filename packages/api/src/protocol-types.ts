@@ -116,6 +116,15 @@ export type ProtocolRolePaths<D extends ProtocolDefinition> = {
     : never;
 }[ProtocolPaths<D>];
 
+/** Protocol paths whose literal rule declares `$squash: true`. */
+export type SquashProtocolPaths<D extends ProtocolDefinition> = {
+  [Path in ProtocolPaths<D>]: RuleSetAtPath<D['structure'], Path> extends {
+    readonly $squash: true;
+  }
+    ? Path
+    : never;
+}[ProtocolPaths<D>];
+
 type EncryptedTypeNames<D extends ProtocolDefinition> = {
   [Name in keyof D['types']]: D['types'][Name] extends { readonly encryptionRequired: true } ? Name : never;
 }[keyof D['types']];

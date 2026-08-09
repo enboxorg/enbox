@@ -23,7 +23,7 @@ import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
-import { type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
+import { protocolContextKey, type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
 
 const connectedDid = 'did:example:member';
 const contextId = 'workspaceRecord';
@@ -416,10 +416,26 @@ describe('TypedEnbox contexts', () => {
     });
   });
 
+  it('should encode owner and context coordinates without delimiter collisions', () => {
+    expect(protocolContextKey('did:example:a', 'root/child')).toBe(
+      JSON.stringify(['did:example:a', 'root/child']),
+    );
+    expect(protocolContextKey('did:example:a/root', 'child')).not.toBe(
+      protocolContextKey('did:example:a', 'root/child'),
+    );
+  });
+
   it('binds owner and member contexts to the same records contract', async () => {
     const owned = await typed.contexts.open('workspace', contextId);
 
-    expect(owned).toMatchObject({ access: 'owner', id: contextId, ownerDid: connectedDid, path: 'workspace' });
+    expect(owned).toMatchObject({
+      access       : 'owner',
+      id           : contextId,
+      key          : protocolContextKey(connectedDid, contextId),
+      ownerDid     : connectedDid,
+      path         : 'workspace',
+      rootRecordId : contextId,
+    });
     await owned.records.query('workspace/note');
     const recordsQuery = agent.processDwnRequest.getCalls()
       .find(call => call.args[0].messageType === DwnInterface.RecordsQuery);
@@ -625,11 +641,13 @@ describe('TypedEnbox contexts', () => {
       sourceDid,
     });
     expect(shared).toMatchObject({
-      access   : 'member',
-      id       : contextId,
-      ownerDid : sourceDid,
-      path     : 'workspace',
-      role     : protocolRole,
+      access       : 'member',
+      id           : contextId,
+      key          : protocolContextKey(sourceDid, contextId),
+      ownerDid     : sourceDid,
+      path         : 'workspace',
+      role         : protocolRole,
+      rootRecordId : contextId,
     });
 
     await shared.records.query('workspace/note');
@@ -1070,9 +1088,14 @@ describe('TypedEnbox contexts', () => {
       permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
     }), NestedProtocol);
 
-    expect(await local.contexts.list()).toMatchObject([
-      { access: 'owner', id: pageContextId, ownerDid: connectedDid, path: 'notebook/page' },
-    ]);
+    expect(await local.contexts.list()).toMatchObject([{
+      access       : 'owner',
+      id           : pageContextId,
+      key          : protocolContextKey(connectedDid, pageContextId),
+      ownerDid     : connectedDid,
+      path         : 'notebook/page',
+      rootRecordId : 'pageRecord',
+    }]);
     expect(queries).toEqual([
       { protocol: NestedDefinition.protocol, protocolPath: 'notebook' },
       { contextId: notebookId, protocol: NestedDefinition.protocol, protocolPath: 'notebook/page' },

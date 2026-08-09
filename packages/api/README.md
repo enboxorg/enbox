@@ -284,35 +284,39 @@ await view.close();
 await changes.close();
 ```
 
-Typed record operations return application values directly: `create()` returns
-a `Record`, `query()` returns a `RecordPage`, `count()` returns a number, and
-`read()` returns a `Record` or `undefined`. `Record.update()` mutates and returns
-the same handle, while `TypedEnbox.records.patch()` returns the freshly read and
-updated record. Successful delete operations resolve without a value.
+Typed record operations return protocol-bound `TypedRecord<T>` handles.
+`contextId`, `protocol`, and `protocolPath` are therefore required strings on
+every create, read, query, observe, subscription, and materialization result.
+`update()` mutates and returns the same refined handle. Successful delete
+operations resolve without a value.
 Context-bound deletion requires authority-backed proof: an authorized existing
 tombstone is idempotent, while a plain scoped 404 remains a 404 because the ID
 may name a record outside the context.
 
-Other non-success DWN statuses throw a `DwnResponseError` with the original
-status:
+Structured write failures preserve the original DWN status and expose exact
+subclasses:
 
 ```ts
-import { DwnResponseError } from '@enbox/api';
+import { RecordParentNotFoundError, RecordSquashBackstopError } from '@enbox/api';
 
-try {
-  await notes.records.delete('note', { recordId: record.id });
-} catch (error) {
-  if (error instanceof DwnResponseError) {
-    console.error(error.status.code, error.status.errorCode, error.status.detail);
+function reportWriteError(error: unknown) {
+  if (error instanceof RecordSquashBackstopError) {
+    console.error(error.squashFloorTimestamp);
+  } else if (error instanceof RecordParentNotFoundError) {
+    console.error('The parent record no longer exists.');
   }
 }
 ```
+
+Other non-success replies throw `DwnResponseError` with the same `status`.
 
 ### Delta history compaction
 
 The typed records API exposes the timestamp and `squash` primitives needed by
 delta-based applications. The canonical [API guide](https://enbox-docs.pages.dev/docs/packages/api)
 documents the bounded rebase recipe and machine-readable squash backstop.
+`record.squash` reports the immutable initial-write fact and remains stable
+after updates and deletion; anonymous `ReadOnlyRecord` handles expose it too.
 
 Returned records are canonical `Record<T>` instances. `value()` decodes the
 typed application value through the protocol codec, while `data.json()`,
@@ -368,6 +372,9 @@ plus declarative membership, invitations, live catalogs, exact-context
 replication, and explicit `refresh()`, `forget()`, and `leave()` lifecycle
 operations. Tenant routing, role records, grants, delivery keys, and feed
 cursors remain internal.
+
+Each context exposes its `rootRecordId` and a collision-safe `key` equivalent
+to `protocolContextKey(context.ownerDid, context.id)`.
 
 The complete owner/member workflow and current limitations live in the
 canonical [API guide](https://enbox-docs.pages.dev/docs/packages/api).
@@ -443,10 +450,13 @@ coordinates writes across browser contexts.
 | `ProtocolContext` | Discriminated owner/member entry returned by a context catalog. |
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
 | `ContextMember` | One owner-managed member and its audience-key delivery state. |
-| `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |
+| `MaterializedRecord<T, Handle>` | A decoded value paired with its retained record handle. |
+| `TypedRecord<T>` | A canonical record with required protocol coordinates. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |
 | `DwnResponseError` | Typed-operation error carrying the original non-success DWN status. |
+| `RecordSquashBackstopError` | Exact squash-floor rejection with the reported floor timestamp. |
+| `RecordParentNotFoundError` | Exact same-protocol missing-parent write rejection. |
 | `ReadOnlyRecord` | Anonymous-read record handle. |
 | `DidApi` | DID resolution helpers. |
 | `DwnReaderApi` | Anonymous read-only DWN API. |

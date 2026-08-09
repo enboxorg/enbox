@@ -296,6 +296,50 @@ describe('Record — coverage gaps (stubbed)', () => {
     });
   });
 
+  it('should retain the initial squash fact through update and delete', async () => {
+    const options = createRecordOptions({
+      descriptor: { ...createRecordOptions().descriptor, squash: true },
+    });
+    const record = new Record(agentStub as unknown as EnboxAgent, options);
+    const updatedDescriptor = {
+      ...options.descriptor,
+      messageTimestamp: '2024-01-02T00:00:00.000000Z',
+    };
+    delete updatedDescriptor.squash;
+    const updatedMessage = {
+      recordId      : record.id,
+      contextId     : options.contextId,
+      descriptor    : updatedDescriptor,
+      authorization : createValidAuthorization(),
+    };
+    agentStub.processDwnRequest.onCall(0).resolves({
+      messageCid : 'updated-cid',
+      message    : updatedMessage,
+      reply      : { status: { code: 202, detail: 'Accepted' } },
+    } as any);
+    agentStub.processDwnRequest.onCall(1).resolves({
+      messageCid : 'initial-cid',
+      message    : record.rawMessage,
+      reply      : { status: { code: 202, detail: 'Accepted' } },
+    } as any);
+    agentStub.processDwnRequest.onCall(2).resolves({
+      messageCid : 'deleted-cid',
+      message    : {
+        recordId      : record.id,
+        descriptor    : createDeleteDescriptor(record.id),
+        authorization : createValidAuthorization(),
+      },
+      reply: { status: { code: 202, detail: 'Accepted' } },
+    } as any);
+
+    expect(record.squash).toBe(true);
+    expect((await record.update({ timestamp: updatedDescriptor.messageTimestamp })).squash).toBe(true);
+    await record.delete();
+    expect(record.deleted).toBe(true);
+    expect(record.squash).toBe(true);
+    expect(record.toJSON().squash).toBe(true);
+  });
+
   describe('data accessor — inline stored bytes as base64url string', () => {
     it('should decode base64url stored data', async () => {
       // Convert "hello" to base64url.
