@@ -99,6 +99,44 @@ The codec for each type encodes writes and decodes `record.value()`. Encrypted
 types use the managed audience-key lifecycle. Dapp code does not provision or
 deliver those keys directly.
 
+### Private file records
+
+`recordCodecs.fileEnvelope()` keeps a safe filename and canonicalized media type
+inside one bounded binary payload. The record descriptor always uses
+`application/octet-stream`; declare the protocol type as encrypted to keep the
+embedded metadata private with the file bytes.
+
+```ts
+const attachmentCodec = recordCodecs.fileEnvelope({
+  formatId        : 'myapp1', // exactly six ASCII bytes
+  maxContentBytes : 50_000_000,
+});
+
+const definition = {
+  protocol  : 'https://example.com/protocols/files',
+  published : true,
+  types     : {
+    attachment: {
+      dataFormats        : ['application/octet-stream'],
+      encryptionRequired : true,
+    },
+  },
+  structure: {
+    attachment: {
+      $size: { max: attachmentCodec.maxEncodedBytes },
+    },
+  },
+} as const;
+
+const FilesProtocol = defineProtocol(definition, {
+  attachment: attachmentCodec,
+});
+```
+
+`maxEncodedBytes` includes the V1 prefix and bounded metadata, so it is the
+exact protocol size ceiling. Treat the decoded `mimeType` as untrusted and
+allowlist renderable types before displaying file content inline.
+
 ### 2. Register and connect the application
 
 ```ts

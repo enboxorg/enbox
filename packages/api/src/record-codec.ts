@@ -1,5 +1,8 @@
 import type { Record } from './record.js';
 import type { RecordData } from './record-data.js';
+import type { FileEnvelopeCodec, FileEnvelopeCodecOptions } from './file-envelope-codec.js';
+
+import { createFileEnvelopeCodec } from './file-envelope-codec.js';
 
 /** Encoded plaintext ready for a DWN RecordsWrite operation. */
 export type EncodedRecordData = {
@@ -181,6 +184,14 @@ export const recordCodecs = {
         return await data.blob();
       },
     };
+  },
+
+  /**
+   * A bounded private-file envelope with filename and media type inside the
+   * payload. Use it with a protocol type declaring `encryptionRequired: true`.
+   */
+  fileEnvelope(options: FileEnvelopeCodecOptions): FileEnvelopeCodec {
+    return createFileEnvelopeCodec(options);
   },
 } as const;
 
