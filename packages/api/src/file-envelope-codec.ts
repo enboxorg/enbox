@@ -28,27 +28,16 @@ export type FileEnvelopeCodec = RecordCodec<FileEnvelopeData> & Readonly<{
   maxEncodedBytesFor(contentBytes: number): number;
 }>;
 
-type FileEnvelopeMetadata = Readonly<{
-  filename: string;
-  mimeType: string;
-}>;
+type FileEnvelopeMetadata = { filename: string; mimeType: string };
 
-type ContentBlocks = {
-  blocks: Uint8Array[];
-  pending: Uint8Array | undefined;
-  pendingBytes: number;
-};
-
-const CONTENT_BLOCK_BYTES = 64 * 1_024;
 const DATA_FORMAT = 'application/octet-stream';
 const FILENAME_MAX_BYTES = 1_024;
 const FORMAT_ID_BYTES = 6;
+const MAGIC_BYTES = 8;
 const METADATA_MAX_BYTES = 4_096;
 const MIME_TYPE_MAX_BYTES = 255;
 const PREFIX_BYTES = 12;
 const MAX_SAFE_CONTENT_BYTES = Number.MAX_SAFE_INTEGER - PREFIX_BYTES - METADATA_MAX_BYTES;
-const RESERVED_BYTE = 0;
-const VERSION = 1;
 const MIME_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+*-]*$/;
 
 const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -58,27 +47,22 @@ function fail(detail: string): never {
   throw new TypeError(`File envelope: ${detail}`);
 }
 
-function normalizeFormatId(value: unknown): Uint8Array {
-  if (typeof value !== 'string' || value.length !== FORMAT_ID_BYTES) {
-    return fail(`formatId must contain exactly ${FORMAT_ID_BYTES} ASCII bytes.`);
+function normalizeByteCount(value: unknown, name: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > MAX_SAFE_CONTENT_BYTES) {
+    return fail(`${name} must be a non-negative safe integer with room for the envelope.`);
   }
-  for (let index = 0; index < value.length; index += 1) {
-    if (value.charCodeAt(index) > 0x7f) {
-      return fail(`formatId must contain exactly ${FORMAT_ID_BYTES} ASCII bytes.`);
-    }
-  }
-  return encoder.encode(value);
+  return value;
 }
 
-function normalizeMaxContentBytes(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    return fail('maxContentBytes must be a non-negative safe integer.');
+function createMagic(formatId: unknown): Uint8Array {
+  if (typeof formatId !== 'string' || formatId.length !== FORMAT_ID_BYTES || encoder.encode(formatId).byteLength !== FORMAT_ID_BYTES) {
+    return fail(`formatId must contain exactly ${FORMAT_ID_BYTES} ASCII bytes.`);
   }
-  const maxContentBytes = value as number;
-  if (maxContentBytes > MAX_SAFE_CONTENT_BYTES) {
-    return fail('maxContentBytes is too large to calculate a safe encoded-size bound.');
-  }
-  return maxContentBytes;
+
+  const magic = new Uint8Array(MAGIC_BYTES);
+  magic.set(encoder.encode(formatId));
+  magic[FORMAT_ID_BYTES] = 1;
+  return magic;
 }
 
 function validateFilename(value: unknown): string {
@@ -103,25 +87,15 @@ function normalizeMimeType(value: unknown): string {
     return DATA_FORMAT;
   }
   const normalized = value.split(';', 1)[0].trim().toLowerCase();
-  if (
-    normalized === ''
-    || encoder.encode(normalized).byteLength > MIME_TYPE_MAX_BYTES
-    || !MIME_TYPE.test(normalized)
-  ) {
+  if (normalized === '' || encoder.encode(normalized).byteLength > MIME_TYPE_MAX_BYTES || !MIME_TYPE.test(normalized)) {
     return DATA_FORMAT;
   }
   return normalized;
 }
 
-function metadataFrom(value: unknown, exactShape: boolean): FileEnvelopeMetadata {
+function metadataFrom(value: unknown): FileEnvelopeMetadata {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return fail('metadata must be an object.');
-  }
-  if (exactShape) {
-    const keys = Object.keys(value);
-    if (keys.length !== 2 || !Object.hasOwn(value, 'filename') || !Object.hasOwn(value, 'mimeType')) {
-      return fail('metadata must contain only filename and mimeType.');
-    }
   }
   const candidate = value as Partial<FileEnvelopeMetadata>;
   return {
@@ -130,39 +104,65 @@ function metadataFrom(value: unknown, exactShape: boolean): FileEnvelopeMetadata
   };
 }
 
-async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
-  try {
-    await reader.cancel();
-  } catch {
-    // Preserve the envelope validation error if the source also fails during cancellation.
-  }
+function guardStream(stream: ReadableStream<Uint8Array>, maxContentBytes: number): ReadableStream<Uint8Array> {
+  // Bound buffering before metadata is known; the exact content size is checked after slicing.
+  const maxEnvelopeBytes = PREFIX_BYTES + METADATA_MAX_BYTES + maxContentBytes;
+  let envelopeBytes = 0;
+
+  return stream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller): void {
+      if (!(chunk instanceof Uint8Array)) {
+        return fail('record stream must contain byte chunks.');
+      }
+      if (chunk.byteLength > maxEnvelopeBytes - envelopeBytes) {
+        return fail(`content exceeds ${maxContentBytes} bytes.`);
+      }
+      envelopeBytes += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+  }));
 }
 
-function appendContent(blocks: ContentBlocks, bytes: Uint8Array): void {
-  let offset = 0;
-  while (offset < bytes.byteLength) {
-    const block = blocks.pending ?? new Uint8Array(CONTENT_BLOCK_BYTES);
-    blocks.pending = block;
-    const copied = Math.min(CONTENT_BLOCK_BYTES - blocks.pendingBytes, bytes.byteLength - offset);
-    block.set(bytes.subarray(offset, offset + copied), blocks.pendingBytes);
-    blocks.pendingBytes += copied;
-    offset += copied;
+async function decodeEnvelope(data: RecordData, dataFormat: string, magic: Uint8Array, maxContentBytes: number): Promise<FileEnvelopeData> {
+  if (dataFormat !== DATA_FORMAT) {
+    return fail(`dataFormat must be '${DATA_FORMAT}'.`);
+  }
 
-    if (blocks.pendingBytes === CONTENT_BLOCK_BYTES) {
-      blocks.blocks.push(block);
-      blocks.pending = undefined;
-      blocks.pendingBytes = 0;
+  const stream = await data.stream() as ReadableStream<Uint8Array>;
+  const envelope = await new Response(guardStream(stream, maxContentBytes)).blob();
+  if (envelope.size < PREFIX_BYTES) {
+    return fail('record is shorter than its fixed prefix.');
+  }
+
+  const prefix = new Uint8Array(await envelope.slice(0, PREFIX_BYTES).arrayBuffer());
+  for (let index = 0; index < magic.byteLength; index += 1) {
+    if (prefix[index] !== magic[index]) {
+      return fail('format identifier or version does not match this codec.');
     }
   }
-}
 
-function finishContent(blocks: ContentBlocks): Uint8Array[] {
-  if (blocks.pending !== undefined && blocks.pendingBytes > 0) {
-    blocks.blocks.push(blocks.pending.subarray(0, blocks.pendingBytes));
-    blocks.pending = undefined;
-    blocks.pendingBytes = 0;
+  const metadataLength = new DataView(prefix.buffer).getUint32(MAGIC_BYTES, false);
+  if (metadataLength === 0 || metadataLength > METADATA_MAX_BYTES) {
+    return fail('metadata length is outside the allowed range.');
   }
-  return blocks.blocks;
+  const contentOffset = PREFIX_BYTES + metadataLength;
+  if (envelope.size < contentOffset) {
+    return fail('metadata extends past the record.');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoder.decode(await envelope.slice(PREFIX_BYTES, contentOffset).arrayBuffer()));
+  } catch {
+    return fail('metadata is not valid UTF-8 JSON.');
+  }
+  const metadata = metadataFrom(parsed);
+  const blob = envelope.slice(contentOffset, envelope.size, metadata.mimeType);
+  if (blob.size > maxContentBytes) {
+    return fail(`content exceeds ${maxContentBytes} bytes.`);
+  }
+
+  return { filename: metadata.filename, mimeType: metadata.mimeType, blob };
 }
 
 /** @internal Create one V1 private-file envelope codec. */
@@ -170,14 +170,14 @@ export function createFileEnvelopeCodec(options: FileEnvelopeCodecOptions): File
   if (typeof options !== 'object' || options === null) {
     return fail('options must be an object.');
   }
-  const formatId = normalizeFormatId(options.formatId);
+  const magic = createMagic(options.formatId);
   const maxContentBytes = options.maxContentBytes === undefined
     ? MAX_SAFE_CONTENT_BYTES
-    : normalizeMaxContentBytes(options.maxContentBytes);
+    : normalizeByteCount(options.maxContentBytes, 'maxContentBytes');
 
-  return Object.freeze({
+  return {
     maxEncodedBytesFor(contentBytes: number): number {
-      return PREFIX_BYTES + METADATA_MAX_BYTES + normalizeMaxContentBytes(contentBytes);
+      return PREFIX_BYTES + METADATA_MAX_BYTES + normalizeByteCount(contentBytes, 'contentBytes');
     },
 
     encode(value: FileEnvelopeData): EncodedRecordData {
@@ -188,16 +188,13 @@ export function createFileEnvelopeCodec(options: FileEnvelopeCodecOptions): File
         return fail(`content exceeds ${maxContentBytes} bytes.`);
       }
 
-      const metadataBytes = encoder.encode(JSON.stringify(metadataFrom(value, false)));
+      const metadataBytes = encoder.encode(JSON.stringify(metadataFrom(value)));
       if (metadataBytes.byteLength > METADATA_MAX_BYTES) {
         return fail(`metadata exceeds ${METADATA_MAX_BYTES} bytes.`);
       }
-
       const prefix = new Uint8Array(PREFIX_BYTES);
-      prefix.set(formatId);
-      prefix[FORMAT_ID_BYTES] = VERSION;
-      prefix[FORMAT_ID_BYTES + 1] = RESERVED_BYTE;
-      new DataView(prefix.buffer).setUint32(8, metadataBytes.byteLength, false);
+      prefix.set(magic);
+      new DataView(prefix.buffer).setUint32(MAGIC_BYTES, metadataBytes.byteLength, false);
 
       return {
         data       : new Blob([prefix as BlobPart, metadataBytes as BlobPart, value.blob], { type: DATA_FORMAT }),
@@ -205,101 +202,8 @@ export function createFileEnvelopeCodec(options: FileEnvelopeCodecOptions): File
       };
     },
 
-    async decode(data: RecordData, dataFormat: string): Promise<FileEnvelopeData> {
-      if (dataFormat !== DATA_FORMAT) {
-        return fail(`dataFormat must be '${DATA_FORMAT}'.`);
-      }
-
-      const stream = await data.stream() as ReadableStream<Uint8Array>;
-      const reader = stream.getReader();
-      const header = new Uint8Array(PREFIX_BYTES + METADATA_MAX_BYTES);
-      const content: ContentBlocks = { blocks: [], pending: undefined, pendingBytes: 0 };
-      let contentBytes = 0;
-      let headerBytes = 0;
-      let metadata: FileEnvelopeMetadata | undefined;
-      let requiredHeaderBytes = PREFIX_BYTES;
-      let streamFinished = false;
-
-      try {
-        while (true) {
-          const result = await reader.read();
-          if (result.done) {
-            streamFinished = true;
-            break;
-          }
-          const chunk = result.value;
-          if (!(chunk instanceof Uint8Array)) {
-            return fail('record stream must contain byte chunks.');
-          }
-
-          let chunkOffset = 0;
-          while (chunkOffset < chunk.byteLength) {
-            if (headerBytes < requiredHeaderBytes) {
-              const copied = Math.min(requiredHeaderBytes - headerBytes, chunk.byteLength - chunkOffset);
-              header.set(chunk.subarray(chunkOffset, chunkOffset + copied), headerBytes);
-              headerBytes += copied;
-              chunkOffset += copied;
-
-              if (headerBytes === PREFIX_BYTES && requiredHeaderBytes === PREFIX_BYTES) {
-                for (let index = 0; index < formatId.byteLength; index += 1) {
-                  if (header[index] !== formatId[index]) {
-                    return fail('format identifier does not match this codec.');
-                  }
-                }
-                if (header[FORMAT_ID_BYTES] !== VERSION) {
-                  return fail(`unsupported envelope version '${header[FORMAT_ID_BYTES]}'.`);
-                }
-                if (header[FORMAT_ID_BYTES + 1] !== RESERVED_BYTE) {
-                  return fail('reserved envelope byte must be zero.');
-                }
-
-                const metadataLength = new DataView(header.buffer).getUint32(8, false);
-                if (metadataLength === 0 || metadataLength > METADATA_MAX_BYTES) {
-                  return fail('metadata length is outside the allowed range.');
-                }
-                requiredHeaderBytes = PREFIX_BYTES + metadataLength;
-              }
-
-              if (headerBytes === requiredHeaderBytes && requiredHeaderBytes > PREFIX_BYTES) {
-                let parsed: unknown;
-                try {
-                  parsed = JSON.parse(decoder.decode(header.subarray(PREFIX_BYTES, requiredHeaderBytes)));
-                } catch {
-                  return fail('metadata is not valid UTF-8 JSON.');
-                }
-                metadata = metadataFrom(parsed, true);
-              }
-              continue;
-            }
-
-            const remaining = chunk.byteLength - chunkOffset;
-            if (remaining > maxContentBytes - contentBytes) {
-              return fail(`content exceeds ${maxContentBytes} bytes.`);
-            }
-            appendContent(content, chunk.subarray(chunkOffset));
-            contentBytes += remaining;
-            chunkOffset = chunk.byteLength;
-          }
-        }
-
-        if (headerBytes < PREFIX_BYTES) {
-          return fail('record is shorter than its fixed prefix.');
-        }
-        if (headerBytes < requiredHeaderBytes || metadata === undefined) {
-          return fail('metadata extends past the record.');
-        }
-
-        return {
-          filename : metadata.filename,
-          mimeType : metadata.mimeType,
-          blob     : new Blob(finishContent(content) as BlobPart[], { type: metadata.mimeType }),
-        };
-      } finally {
-        if (!streamFinished) {
-          await cancelReader(reader);
-        }
-        reader.releaseLock();
-      }
+    decode(data: RecordData, dataFormat: string): Promise<FileEnvelopeData> {
+      return decodeEnvelope(data, dataFormat, magic, maxContentBytes);
     },
-  });
+  };
 }
