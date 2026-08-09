@@ -12,13 +12,23 @@ export async function openView(
   try {
     await whileSignalsActive(() => view.open(), [signal]);
   } catch (error: unknown) {
+    let closing: Promise<void>;
     try {
-      await view.close();
+      closing = view.close();
     } catch (closeError: unknown) {
       signal?.throwIfAborted();
       throw closeError;
     }
-    signal?.throwIfAborted();
+
+    try {
+      await whileSignalsActive(() => closing, [signal]);
+    } catch (closeError: unknown) {
+      if (signal?.aborted === true) {
+        void closing.catch((): void => {});
+        signal.throwIfAborted();
+      }
+      throw closeError;
+    }
     throw error;
   }
 }
