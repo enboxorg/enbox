@@ -288,9 +288,11 @@ the complete bounded result after matching changes. Event payloads are hints;
 the canonical query remains collection truth.
 
 ```ts
+const viewLifetime = new AbortController();
 const view = await notebooks.records.observe('notebook/page', {
   within     : notebook.contextId,
   pagination : { limit: 25 },
+  signal     : viewLifetime.signal,
 });
 
 const renderView = (next) => {
@@ -303,7 +305,8 @@ await view.ready();
 await view.loadMore();
 
 unsubscribe();
-await view.close();
+viewLifetime.abort();
+await view.close(); // joins the caller-triggered cleanup
 ```
 
 The original pagination limit is both the initial retained-record bound and
@@ -318,6 +321,11 @@ Every observable view uses the same lifecycle:
 - `status: 'error'` retains the last result and exposes the failure.
 - `ready({ signal })` waits for the first locally usable result.
 - `close()` is async, idempotent, and stops owned subscriptions.
+
+Pass `signal` to a typed record observation or subscription, or to a context,
+invitation, or member observation, when its lifetime belongs to one caller.
+Aborting it rejects an opening call or closes the opened resource without
+ending the typed API or bound context; `close()` safely joins the same cleanup.
 
 `RecordView` additionally exposes `current`. `false` means the rendered local
 replica is still catching up or is offline; `true` means the relevant
