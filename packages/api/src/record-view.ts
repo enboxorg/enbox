@@ -166,15 +166,10 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   private _syncUnsubscribe?: () => void;
   private _wakeUnsubscribe?: () => void;
 
-  private readonly _handleAbort = (): void => {
-    this.captureTerminationReason(this._signal?.reason);
-    this.publishError(new Error('RecordView: owning session ended.', { cause: this._signal?.reason }));
-    void this.close().catch((): void => {});
-  };
+  private readonly _handleAbort = (): void => { this.handleLifetimeAbort(true); };
 
   private readonly _handleCallerAbort = (): void => {
-    this.captureTerminationReason(this._callerSignal?.reason);
-    void this.close().catch((): void => {});
+    this.handleLifetimeAbort(this._signal?.aborted === true);
   };
 
   public constructor(options: RecordViewOptions<Item>) {
@@ -298,6 +293,16 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       this._hasTerminationReason = true;
       this._terminationReason = reason;
     }
+  }
+
+  /** Preserve owning-session semantics when caller and session lifetimes share an abort. */
+  private handleLifetimeAbort(sessionEnded: boolean): void {
+    const signal = sessionEnded ? this._signal : this._callerSignal;
+    this.captureTerminationReason(signal?.reason);
+    if (sessionEnded) {
+      this.publishError(new Error('RecordView: owning session ended.', { cause: signal?.reason }));
+    }
+    void this.close().catch((): void => {});
   }
 
   /** Open one wake subscription and retain its handle only after validating the reply. */

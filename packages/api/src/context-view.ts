@@ -53,13 +53,10 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
 
   private _wakeSubscription?: { close(): Promise<void> };
 
-  private readonly _handleAbort = (): void => {
-    this.publishError(new Error('ContextView: owning session ended.', { cause: this._signal?.reason }));
-    void this.close().catch((): void => {});
-  };
+  private readonly _handleAbort = (): void => { this.handleLifetimeAbort(true); };
 
   private readonly _handleCallerAbort = (): void => {
-    void this.close().catch((): void => {});
+    this.handleLifetimeAbort(this._signal?.aborted === true);
   };
 
   public constructor(options: ContextViewOptions<Context>) {
@@ -120,6 +117,14 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
 
   protected statesEqual(previous: ContextViewState<Context>, next: ContextViewState<Context>): boolean {
     return statesEqual(previous, next);
+  }
+
+  /** Preserve owning-session semantics when caller and session lifetimes share an abort. */
+  private handleLifetimeAbort(sessionEnded: boolean): void {
+    if (sessionEnded) {
+      this.publishError(new Error('ContextView: owning session ended.', { cause: this._signal?.reason }));
+    }
+    void this.close().catch((): void => {});
   }
 
   private publishError(error: Error): void {

@@ -14,6 +14,7 @@ import type {
 
 import { CONTEXT_INVITATION_PATH } from '../src/context-invitations.js';
 import { Convert } from '@enbox/common';
+import { createContextView } from '../src/context-view.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Poller } from '@enbox/dwn-sdk-js';
@@ -1121,6 +1122,29 @@ describe('TypedEnbox contexts', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(view.getState().status).toBe('ready');
     expect(transport.close.calledOnce).toBe(true);
+  });
+
+  it('preserves owning-session termination when a context caller shares its signal', async () => {
+    const lifetime = new AbortController();
+    const close = sinon.stub().resolves();
+    const view = await createContextView({
+      callerSignal         : lifetime.signal,
+      list                 : async () => [],
+      openWakeSubscription : async () => ({ close }),
+      signal               : lifetime.signal,
+    });
+    await view.ready();
+
+    const reason = new Error('session replaced');
+    lifetime.abort(reason);
+
+    expect(view.getState()).toMatchObject({
+      status : 'error',
+      error  : { message: 'ContextView: owning session ended.', cause: reason },
+    });
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(close.calledOnce).toBe(true);
+    });
   });
 
   it('rejects a caller abort while the context catalog opens and closes the late subscription', async () => {

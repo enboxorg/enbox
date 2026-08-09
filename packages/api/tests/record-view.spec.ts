@@ -1494,6 +1494,25 @@ describe('RecordView', () => {
     expect(view.getState().status).toBe('ready');
   });
 
+  it('preserves owning-session termination when the caller shares its signal', async () => {
+    const harness = createHarness(async () => ok([testRecord('retained')]));
+    const lifetime = new AbortController();
+    const view = await createTyped(harness, { signal: lifetime.signal }).records.observe('note', {
+      pagination : { limit: 10 },
+      signal     : lifetime.signal,
+    });
+    await view.ready();
+
+    const reason = new Error('session replaced');
+    lifetime.abort(reason);
+
+    expect(view.getState()).toMatchObject({
+      status : 'error',
+      error  : { message: 'RecordView: owning session ended.', cause: reason },
+    });
+    await waitFor(() => { expect(harness.closeCount()).toBe(1); });
+  });
+
   it('rejects failed subscription setup and releases every opened lifecycle resource', async () => {
     const harness = createHarness(async () => ok([]));
     const fakeSync = createSync();
