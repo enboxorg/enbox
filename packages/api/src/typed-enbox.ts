@@ -30,6 +30,7 @@
 
 import type { ContextInvitationPreview } from './context-invitations.js';
 import type { ContextView } from './context-view.js';
+import type { MaterializedMemberContext as MaterializedMemberContextRow } from './materialized-member-context-view.js';
 import type { Protocol } from './protocol.js';
 import type {
   AudienceKeyDeliveryOutcome,
@@ -51,7 +52,7 @@ import type {
   TypeNameAtPath,
 } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
-import type { ExpandableRecordView, RecordView, RecordViewState } from './record-view.js';
+import type { ExpandableRecordView, RecordView } from './record-view.js';
 import type { MaterializedRecord, Record, RecordPatch } from './record.js';
 import type { ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
@@ -59,6 +60,7 @@ import type { RecordDeleteParams, RecordUpdateParams } from './record-types.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createContextView } from './context-view.js';
+import { createMaterializedMemberContextView } from './materialized-member-context-view.js';
 import { Did } from '@enbox/dids';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
@@ -92,7 +94,6 @@ import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual } from '@enb
 
 const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
-const MEMBER_ROOT_OPEN_CONCURRENCY = 4;
 
 function compareCodeUnits(left: string, right: string): number {
   if (left < right) {
@@ -653,10 +654,7 @@ export type ProtocolContext<
 export type MaterializedMemberContext<
   Context = MemberContext,
   Root = ContextMaterializedRecord,
-> = Readonly<{
-  context: Context;
-  root: RecordViewState<Root>;
-}>;
+> = MaterializedMemberContextRow<Context, Root>;
 
 type SelectedMaterializedMemberContext<
   D extends ProtocolDefinition,
@@ -1688,10 +1686,9 @@ export class TypedEnbox<
         contexts.set(protocolContextKey(context.ownerDid, context.id), context);
       }
       for (const member of bindCatalogMembers(sources)) {
-        const catalogMember = member as unknown as CatalogContext;
-        const key = protocolContextKey(catalogMember.ownerDid, catalogMember.id);
+        const key = protocolContextKey(member.ownerDid, member.id);
         if (!contexts.has(key)) {
-          contexts.set(key, catalogMember);
+          contexts.set(key, member);
         }
       }
       return [...contexts.values()].sort(compareProtocolContexts);
@@ -1742,178 +1739,17 @@ export class TypedEnbox<
     ): Promise<ContextView<MaterializedMemberContext<
       CatalogMemberContext,
       ContextMaterializedRecord<unknown>
-    >>> => {
-      type Root = ContextMaterializedRecord<unknown>;
-      type Row = MaterializedMemberContext<CatalogMemberContext, Root>;
-      type Binding = {
-        context: CatalogMemberContext;
-        controller: AbortController;
-        row: Row;
-        unsubscribe?: () => void;
-        view?: RecordView<Root>;
-      };
-
-      const loading = Object.freeze({
-        status  : 'loading',
-        records : Object.freeze([]),
-        hasMore : false,
-        current : false,
-      }) as RecordViewState<Root>;
-      let bindings = new Map<string, Binding>();
-      let ordered: Binding[] = [];
-      let catalogVersion = 0;
-      let listedVersion = -1;
-      let closed = false;
-      let wakeView = (): void => {};
-      let activeOpenings = 0;
-      const openingQueue: Binding[] = [];
-      const openingTasks = new Set<Promise<void>>();
-      const cleanupTasks = new Set<Promise<void>>();
-
-      const row = (context: CatalogMemberContext, root: RecordViewState<Root>): Row =>
-        Object.freeze({ context, root });
-
-      const dispose = (binding: Binding): Promise<void> | undefined => {
-        if (binding.controller.signal.aborted) { return; }
-        binding.controller.abort();
-        binding.unsubscribe?.();
-        binding.unsubscribe = undefined;
-        const view = binding.view;
-        binding.view = undefined;
-        return view?.close();
-      };
-
-      const disposeQuietly = (binding: Binding): void => {
-        const task = dispose(binding)?.catch((): void => {});
-        if (task === undefined) { return; }
-        cleanupTasks.add(task);
-        void task.then((): void => { cleanupTasks.delete(task); });
-      };
-
-      const publishRoot = (binding: Binding, root: RecordViewState<Root>): void => {
-        if (
-          closed || binding.controller.signal.aborted ||
-          bindings.get(binding.context.key) !== binding || binding.row.root === root
-        ) {
-          return;
-        }
-        binding.row = row(binding.context, root);
-        wakeView();
-      };
-
-      const openBinding = async (binding: Binding): Promise<void> => {
-        try {
-          const view = await binding.context.records.observe(binding.context.path, {
-            materialize : true,
-            pagination  : { limit: 1 },
-            signal      : binding.controller.signal,
-          });
-          if (closed || binding.controller.signal.aborted || bindings.get(binding.context.key) !== binding) {
-            await view.close();
-            return;
-          }
-          binding.view = view;
-          binding.unsubscribe = view.subscribe((state): void => { publishRoot(binding, state); });
-          publishRoot(binding, view.getState());
-        } catch (error: unknown) {
-          if (closed || binding.controller.signal.aborted || bindings.get(binding.context.key) !== binding) {
-            return;
-          }
-          publishRoot(binding, Object.freeze({
-            status  : 'error',
-            records : Object.freeze([]),
-            hasMore : false,
-            current : false,
-            error   : error instanceof Error ? error : new Error(String(error)),
-          }));
-        }
-      };
-
-      const drainOpenings = (): void => {
-        while (!closed && activeOpenings < MEMBER_ROOT_OPEN_CONCURRENCY && openingQueue.length > 0) {
-          const binding = openingQueue.shift()!;
-          if (binding.controller.signal.aborted || bindings.get(binding.context.key) !== binding) { continue; }
-          activeOpenings += 1;
-          const task = openBinding(binding);
-          openingTasks.add(task);
-          void task.finally((): void => {
-            openingTasks.delete(task);
-            activeOpenings -= 1;
-            drainOpenings();
-          });
-        }
-      };
-
-      const reconcile = (contexts: readonly CatalogMemberContext[]): void => {
-        const next = new Map<string, Binding>();
-        const nextOrdered: Binding[] = [];
-        for (const context of contexts) {
-          let binding = bindings.get(context.key);
-          if (
-            binding === undefined || binding.context !== context ||
-            (binding.view === undefined && binding.row.root.status === 'error')
-          ) {
-            if (binding !== undefined) { disposeQuietly(binding); }
-            binding = {
-              context,
-              controller : new AbortController(),
-              row        : row(context, loading),
-            };
-            openingQueue.push(binding);
-          }
-          next.set(context.key, binding);
-          nextOrdered.push(binding);
-        }
-        for (const binding of bindings.values()) {
-          if (next.get(binding.context.key) !== binding) { disposeQuietly(binding); }
-        }
-        bindings = next;
-        ordered = nextOrdered;
-        drainOpenings();
-      };
-
-      return createContextView({
-        callerSignal : options.signal,
-        list         : async (): Promise<readonly Row[]> => {
-          const version = catalogVersion;
-          if (listedVersion !== version) {
-            const sources = await listSources();
-            if (closed) { return []; }
-            reconcile(bindCatalogMembers(sources));
-            listedVersion = version;
-          }
-          return ordered.map(binding => binding.row);
-        },
-        openWakeSubscription: async (wake, fail) => {
-          wakeView = wake;
-          const catalog = await openCatalogWakeSubscription((): void => {
-            catalogVersion += 1;
-            wake();
-          }, fail, options.signal, false);
-          return {
-            close: async (): Promise<void> => {
-              closed = true;
-              wakeView = (): void => {};
-              openingQueue.length = 0;
-              const closingViews = [...bindings.values()]
-                .map(dispose)
-                .filter((task): task is Promise<void> => task !== undefined);
-              bindings.clear();
-              ordered = [];
-              const results = await Promise.allSettled([
-                catalog.close(),
-                ...openingTasks,
-                ...closingViews,
-                ...cleanupTasks,
-              ]);
-              const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-              if (failure !== undefined) { throw failure.reason; }
-            },
-          };
-        },
-        signal: this._options.signal,
-      });
-    };
+    >>> => createMaterializedMemberContextView<CatalogMemberContext, ContextMaterializedRecord<unknown>>({
+      callerSignal : options.signal,
+      listContexts : async () => bindCatalogMembers(await listSources()),
+      openRootView : (context, signal) => context.records.observe(context.path, {
+        materialize : true,
+        pagination  : { limit: 1 },
+        signal,
+      }),
+      openWakeSubscription : (wake, fail) => openCatalogWakeSubscription(wake, fail, options.signal, false),
+      signal               : this._options.signal,
+    });
 
     this._contexts = {
       open   : openContext,
