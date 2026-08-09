@@ -64,7 +64,7 @@ const ContextProtocol = defineProtocol(ContextDefinition, {
   member    : recordCodecs.json<{ label: string }>(),
   note      : recordCodecs.json<{ text: string }>(),
   outsider  : recordCodecs.json<{ label: string }>(),
-  project   : recordCodecs.json<{ name: string }>(),
+  project   : recordCodecs.json<{ projectCode: number }>(),
   session   : recordCodecs.json<{ peer: string }>(),
   title     : recordCodecs.json<{ text: string }>(),
   viewer    : recordCodecs.json<{ expires: boolean }>(),
@@ -132,6 +132,23 @@ const observed: Promise<ContextView<ProtocolContext<
   typed.contexts.observe({ signal: callerSignal });
 void listed;
 void observed;
+void typed.contexts.observe({ access: 'member', materializeRoot: true, signal: callerSignal })
+  .then((view): void => {
+    const row = view.getState().contexts[0];
+    const value: { name: string } | { projectCode: number } | undefined = row?.root.records[0]?.value;
+    const rootError: Error | undefined = row?.root.status === 'error' ? row.root.error : undefined;
+    const memberAccess: 'member' | undefined = row?.context.access;
+    void value;
+    void rootError;
+    void memberAccess;
+    void row?.context.leave();
+    // @ts-expect-error a member-only selection never exposes owner membership management.
+    void row?.context.members();
+  });
+// @ts-expect-error one-shot root materialization is not part of the catalog API.
+void typed.contexts.list({ access: 'member', materializeRoot: true });
+// @ts-expect-error root materialization is only supported for accepted member contexts.
+void typed.contexts.observe({ access: 'owner', materializeRoot: true });
 declare const listedContext: ProtocolContext<
   typeof ContextDefinition,
   typeof ContextProtocol.codecs,

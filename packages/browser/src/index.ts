@@ -93,6 +93,7 @@ export type {
   FileEnvelopeData,
   FollowContextOptions,
   JsonRecordCodecOptions,
+  MaterializedMemberContext,
   MaterializedRecord,
   MemberContext,
   OwnedContext,
