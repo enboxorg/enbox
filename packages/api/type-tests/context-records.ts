@@ -100,6 +100,8 @@ declare const typed: TypedEnbox<
   typeof ContextProtocol.codecs,
   typeof ContextProtocol.roleGroups
 >;
+declare const callerSignal: AbortSignal;
+void typed.records.subscribe('workspace/note', { signal: callerSignal }, (): void => {});
 
 if (catalogContext.role === 'workspace/member') {
   const root: 'workspace' = catalogContext.path;
@@ -127,7 +129,7 @@ const observed: Promise<ContextView<ProtocolContext<
   typeof ContextProtocol.codecs,
   typeof ContextProtocol.roleGroups
 >>> =
-  typed.contexts.observe();
+  typed.contexts.observe({ signal: callerSignal });
 void listed;
 void observed;
 declare const listedContext: ProtocolContext<
@@ -200,7 +202,7 @@ void owned.then((value): void => {
     typeof ContextDefinition,
     typeof ContextProtocol.codecs,
     'workspace/member' | 'workspace/viewer'
-  >>> = members.observe();
+  >>> = members.observe({ signal: callerSignal });
   void memberView.then((view): void => {
     void view.getState().records;
     const member = view.getState().records[0];
@@ -262,7 +264,7 @@ void typed.contexts.invitations.list().then((invitations): void => {
   }
 });
 
-void typed.contexts.invitations.observe().then((view): void => {
+void typed.contexts.invitations.observe({ signal: callerSignal }).then((view): void => {
   const status: 'loading' | 'ready' | 'error' = view.getState().status;
   const current: boolean = view.getState().current;
   void status;
@@ -361,7 +363,8 @@ void context.records.query('workspace', {
 });
 
 void context.records.observe('workspace/note', {
-  pagination: { limit: 20 },
+  pagination : { limit: 20 },
+  signal     : callerSignal,
 }).then((view): void => {
   const note: ContextRecord<{ text: string }> | undefined = view.getState().records[0];
   void view.loadMore();
@@ -370,7 +373,7 @@ void context.records.observe('workspace/note', {
   void view.getState().records[0]?.rawMessage;
 });
 
-void context.records.subscribe('workspace/note', async (event): Promise<void> => {
+void context.records.subscribe('workspace/note', { signal: callerSignal }, async (event): Promise<void> => {
   if (event.type === 'error') {
     const error: Error = event.error;
     void error;

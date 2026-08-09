@@ -72,9 +72,10 @@ export type { RecordPatch } from './record-patch.js';
  * the query or view to obtain a new value snapshot.
  *
  * @typeParam T - The decoded application value.
+ * @typeParam Handle - The retained record-handle representation.
  */
-export type MaterializedRecord<T = unknown> = Readonly<{
-  record: Record<T>;
+export type MaterializedRecord<T = unknown, Handle = Record<T>> = Readonly<{
+  record: Handle;
   value: T;
 }>;
 
@@ -186,6 +187,11 @@ export class Record<T = unknown> implements RecordModel {
 
   /** Record's schema */
   get schema(): string | undefined { return this._immutableProperties.schema; }
+
+  /** Whether the initial write carried the protocol squash directive. */
+  get squash(): boolean {
+    return (this._initialWrite?.descriptor ?? this._recordsWriteDescriptor)?.squash === true;
+  }
 
 
   // Getters for mutable DWN RecordsWrite properties that may be undefined in a deleted state.
@@ -383,6 +389,7 @@ export class Record<T = unknown> implements RecordModel {
       recipient     : this.recipient,
       recordId      : this.id,
       schema        : this.schema,
+      squash        : this.squash,
       tags          : this.tags,
       timestamp     : this.timestamp,
     };

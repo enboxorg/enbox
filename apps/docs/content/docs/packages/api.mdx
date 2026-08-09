@@ -199,8 +199,8 @@ The main operations are:
 
 | Method | Result |
 |---|---|
-| `create(path, request)` | A typed `Record<T>` |
-| `read(path, idOrRequest)` | `Record<T> \| undefined` |
+| `create(path, request)` | A `TypedRecord<T>` |
+| `read(path, idOrRequest)` | `TypedRecord<T> \| undefined` |
 | `query(path, selection?)` | A lazily async-iterable `RecordPage` with `next()` |
 | `count(path, selection?)` | The full matching count before pagination |
 | `set(path, request)` | Create or replace a `$recordLimit.max: 1` record |
@@ -215,10 +215,12 @@ The main operations are:
 and may invoke its side-effect-free producer twice when retrying one conflict.
 
 A missing read returns `undefined`; other non-success statuses normally throw
-`DwnResponseError`. An unbound typed delete also treats an already-absent record
-or a canonical tombstone conflict as complete. Context-bound deletion is
-stricter: its initial authority miss requires an authorized tombstone because
-the ID may identify a record outside that context.
+`DwnResponseError`. Typed records expose required `contextId`, `protocol`, and
+`protocolPath` coordinates. An unbound typed delete also treats an
+already-absent record or a canonical tombstone conflict as complete.
+Context-bound deletion is stricter: its initial authority miss requires an
+authorized tombstone because the ID may identify a record outside that context.
+An exact same-protocol missing-parent write throws `RecordParentNotFoundError`.
 
 ### Compact a delta history
 
@@ -228,7 +230,7 @@ on that path must use one monotonic application clock with identical explicit
 Create an ordinary delta and a full-state snapshot like this:
 
 ```ts
-import { DwnResponseError } from '@enbox/browser';
+import { RecordSquashBackstopError } from '@enbox/browser';
 
 const writeDelta = (data, timestamp) => notebooks.records.create(
   'notebook/page/change',
@@ -252,26 +254,28 @@ const writeSnapshot = (data, timestamp) => notebooks.records.create(
 );
 
 try {
-  await writeSnapshot(compactedState, nextDwnTimestampAfter());
+  await writeSnapshot(compactedState, snapshotTimestamp);
 } catch (error) {
-  if (!(error instanceof DwnResponseError)
-    || error.status.errorCode !== 'ProtocolAuthorizationSquashBackstop') {
+  if (!(error instanceof RecordSquashBackstopError)) {
     throw error;
   }
 
-  const floor = error.status.info?.squashFloorTimestamp;
-  if (typeof floor !== 'string') throw error;
+  const floor = error.squashFloorTimestamp;
+  if (floor === undefined) {
+    throw error;
+  }
 
   const authoritative = await readAuthoritativeHistory();
   const rebased = applyPendingChanges(authoritative, pendingChanges);
-  await writeSnapshot(rebased, nextDwnTimestampAfter(floor));
+  scheduleSnapshotRebase({ data: rebased, squashFloorTimestamp: floor });
 }
 ```
 
 A successful squash removes older siblings and establishes a temporal floor.
-`nextDwnTimestampAfter()` represents an application helper that produces a
-DWN-compatible timestamp strictly newer than both wall-clock now and the
-provided floor. If the rebased write also races, repeat the authoritative
+The returned record's immutable `squash` property remains `true` through later
+updates or deletion and is also available on anonymous read-only records.
+A rebased write must use `dateCreated` and `messageTimestamp` values strictly
+newer than the reported floor. If it also races, repeat the authoritative
 read/rebase/write sequence with a bounded retry count. Never blindly retry the
 rejected snapshot.
 
@@ -288,9 +292,11 @@ the complete bounded result after matching changes. Event payloads are hints;
 the canonical query remains collection truth.
 
 ```ts
+const viewLifetime = new AbortController();
 const view = await notebooks.records.observe('notebook/page', {
   within     : notebook.contextId,
   pagination : { limit: 25 },
+  signal     : viewLifetime.signal,
 });
 
 const renderView = (next) => {
@@ -303,7 +309,8 @@ await view.ready();
 await view.loadMore();
 
 unsubscribe();
-await view.close();
+viewLifetime.abort();
+await view.close(); // joins the caller-triggered cleanup
 ```
 
 The original pagination limit is both the initial retained-record bound and
@@ -318,6 +325,11 @@ Every observable view uses the same lifecycle:
 - `status: 'error'` retains the last result and exposes the failure.
 - `ready({ signal })` waits for the first locally usable result.
 - `close()` is async, idempotent, and stops owned subscriptions.
+
+Pass `signal` to a typed record observation or subscription, or to a context,
+invitation, or member observation, when its lifetime belongs to one caller.
+Aborting it rejects an opening call or closes the opened resource without
+ending the typed API or bound context; `close()` safely joins the same cleanup.
 
 `RecordView` additionally exposes `current`. `false` means the rendered local
 replica is still catching up or is offline; `true` means the relevant
@@ -351,6 +363,8 @@ stream if setup or the async listener fails.
 A context binds the existing records API to one owner, protocol root, and
 context ID. Owner and member handles expose the same `context.records` verbs;
 app code does not pass `from`, `protocolRole`, grants, or root `within` values.
+Every handle also exposes its root record ID and the collision-safe
+`protocolContextKey(ownerDid, id)` as `rootRecordId` and `key`.
 
 ### Owner workflow
 

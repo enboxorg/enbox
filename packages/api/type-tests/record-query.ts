@@ -64,6 +64,7 @@ type QueryCodecs = typeof QueryProtocol.codecs;
 void QueryProtocol;
 
 declare const typed: TypedEnbox<typeof QueryDefinition, QueryCodecs>;
+declare const callerSignal: AbortSignal;
 declare const authors: string[];
 
 const countResponse: Promise<number> = typed.records.count('note');
@@ -86,7 +87,8 @@ void typed.records.query('note', reusableQuery);
 void typed.records.count('note', reusableQuery);
 const observedNotes: Promise<RecordView<Record<RecordCodecValue<QueryCodecs['note']>>>> = typed.records.observe('note', {
   ...reusableQuery,
-  pagination: { limit: 20 },
+  pagination : { limit: 20 },
+  signal     : callerSignal,
 });
 void observedNotes;
 void typed.records.observe('note', { pagination: { limit: 20 } }).then(view => view.loadMore());

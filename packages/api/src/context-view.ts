@@ -1,4 +1,5 @@
 import { ObservedView } from './observed-view.js';
+import { openView } from './view-opening.js';
 
 /** Immutable state of one protocol's local context catalog. */
 export type ContextViewState<Context> = Readonly<{
@@ -24,6 +25,7 @@ export interface ContextView<Context> {
 }
 
 type ContextViewOptions<Context> = {
+  callerSignal?: AbortSignal;
   list(): Promise<readonly Context[]>;
   openWakeSubscription(
     wake: () => void,
@@ -36,36 +38,29 @@ type ContextViewOptions<Context> = {
 export async function createContextView<Context>(
   options: ContextViewOptions<Context>,
 ): Promise<ContextView<Context>> {
+  options.callerSignal?.throwIfAborted();
   options.signal?.throwIfAborted();
   const view = new ObservedContextView(options);
-  await view.open();
+  await openView(view, [options.callerSignal, options.signal]);
   return view;
 }
 
 class ObservedContextView<Context> extends ObservedView<ContextViewState<Context>> implements ContextView<Context> {
   private readonly _list: ContextViewOptions<Context>['list'];
   private readonly _openWakeSubscription: ContextViewOptions<Context>['openWakeSubscription'];
-  private readonly _signal?: AbortSignal;
 
   private _wakeSubscription?: { close(): Promise<void> };
 
-  private readonly _handleAbort = (): void => {
-    this.publishError(new Error('ContextView: owning session ended.', { cause: this._signal?.reason }));
-    void this.close().catch((): void => {});
-  };
-
   public constructor(options: ContextViewOptions<Context>) {
-    super(immutableState({ status: 'loading', contexts: [] }));
+    super(immutableState({ status: 'loading', contexts: [] }), options.callerSignal, options.signal);
     this._list = options.list;
     this._openWakeSubscription = options.openWakeSubscription;
-    this._signal = options.signal;
-    this._signal?.addEventListener('abort', this._handleAbort, { once: true });
   }
 
   /** Install wake delivery before the initial list so changes cannot fall through the handoff. */
   public async open(): Promise<void> {
     try {
-      this._wakeSubscription = await this._openWakeSubscription(
+      const wakeSubscription = await this._openWakeSubscription(
         (): void => { this.requestMaterialization(); },
         (error): void => {
           if (!this.isClosed) {
@@ -75,9 +70,12 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
         },
       );
       if (this.isClosed) {
-        await this._wakeSubscription.close();
+        await wakeSubscription.close();
+        this._callerSignal?.throwIfAborted();
+        this._sessionSignal?.throwIfAborted();
         return;
       }
+      this._wakeSubscription = wakeSubscription;
       this.requestMaterialization();
     } catch (error: unknown) {
       await this.close();
@@ -86,7 +84,6 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
   }
 
   protected async closeOwnedResources(): Promise<void> {
-    this._signal?.removeEventListener('abort', this._handleAbort);
     await this._wakeSubscription?.close();
     this._wakeSubscription = undefined;
   }
@@ -106,6 +103,13 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
 
   protected statesEqual(previous: ContextViewState<Context>, next: ContextViewState<Context>): boolean {
     return statesEqual(previous, next);
+  }
+
+  /** Keep caller abort silent; publish owning-session termination. */
+  protected handleLifetimeAbort(reason: unknown, sessionEnded: boolean): void {
+    if (sessionEnded) {
+      this.publishError(new Error('ContextView: owning session ended.', { cause: reason }));
+    }
   }
 
   private publishError(error: Error): void {

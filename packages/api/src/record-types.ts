@@ -111,6 +111,9 @@ export type RecordModel = ImmutableRecordProperties & OptionalRecordProperties &
 
   /** The protocol role under which this record is written. */
   protocolRole?: RecordOptions['protocolRole'];
+
+  /** Whether the initial write carried the protocol squash directive. */
+  squash?: boolean;
 };
 
 /**
