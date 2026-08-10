@@ -155,7 +155,7 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   describe('setIdentityOptions validation', () => {
-    it('should update options for a registered identity', async () => {
+    it('should accept valid replacement options for an existing identity', async () => {
       await syncEngine.setIdentityOptions({ did: 'did:example:upd1', options: { protocols: ['old'] } });
       await syncEngine.setIdentityOptions({
         did     : 'did:example:upd1',
