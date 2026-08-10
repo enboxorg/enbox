@@ -140,42 +140,14 @@ describe('DwnDiscoveryFile', () => {
       expect(result).toBeUndefined();
     });
 
-    it('should return undefined and remove the file when JSON is invalid', async () => {
+    it.each([
+      ['JSON is invalid', 'not valid json {{{'],
+      ['endpoint is missing', JSON.stringify({ pid: 123 })],
+      ['endpoint is empty', JSON.stringify({ endpoint: '', pid: 123 })],
+      ['pid is missing', JSON.stringify({ endpoint: 'http://127.0.0.1:55557' })],
+    ] as const)('should return undefined and remove the file when %s', async (_name, contents) => {
       const fs = createMemoryFs();
-      fs.files.set(testFilePath, 'not valid json {{{');
-
-      const file = new DwnDiscoveryFile(fs, testFilePath);
-      const result = await file.read();
-
-      expect(result).toBeUndefined();
-      expect(fs.files.has(testFilePath)).toBe(false);
-    });
-
-    it('should return undefined and remove the file when endpoint is missing', async () => {
-      const fs = createMemoryFs();
-      fs.files.set(testFilePath, JSON.stringify({ pid: 123 }));
-
-      const file = new DwnDiscoveryFile(fs, testFilePath);
-      const result = await file.read();
-
-      expect(result).toBeUndefined();
-      expect(fs.files.has(testFilePath)).toBe(false);
-    });
-
-    it('should return undefined and remove the file when endpoint is empty', async () => {
-      const fs = createMemoryFs();
-      fs.files.set(testFilePath, JSON.stringify({ endpoint: '', pid: 123 }));
-
-      const file = new DwnDiscoveryFile(fs, testFilePath);
-      const result = await file.read();
-
-      expect(result).toBeUndefined();
-      expect(fs.files.has(testFilePath)).toBe(false);
-    });
-
-    it('should return undefined and remove the file when pid is missing', async () => {
-      const fs = createMemoryFs();
-      fs.files.set(testFilePath, JSON.stringify({ endpoint: 'http://127.0.0.1:55557' }));
+      fs.files.set(testFilePath, contents);
 
       const file = new DwnDiscoveryFile(fs, testFilePath);
       const result = await file.read();

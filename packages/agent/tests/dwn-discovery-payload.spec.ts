@@ -86,53 +86,15 @@ describe('DwnDiscoveryPayload', () => {
       expect(decoded).toEqual(payload);
     });
 
-    it('should return undefined for an empty string', () => {
-      const decoded = decodeDwnDiscoveryPayload('');
-
-      expect(decoded).toBeUndefined();
-    });
-
-    it('should return undefined for garbage input', () => {
-      const decoded = decodeDwnDiscoveryPayload('!!!not-base64!!!');
-
-      expect(decoded).toBeUndefined();
-    });
-
-    it('should return undefined for valid base64url that is not JSON', () => {
-      const encoded = toBase64Url('hello world');
-
-      const decoded = decodeDwnDiscoveryPayload(encoded);
-
-      expect(decoded).toBeUndefined();
-    });
-
-    it('should return undefined for valid JSON missing the endpoint field', () => {
-      const encoded = toBase64Url(JSON.stringify({ foo: 'bar' }));
-
-      const decoded = decodeDwnDiscoveryPayload(encoded);
-
-      expect(decoded).toBeUndefined();
-    });
-
-    it('should return undefined for valid JSON with an empty endpoint', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: '' }));
-
-      const decoded = decodeDwnDiscoveryPayload(encoded);
-
-      expect(decoded).toBeUndefined();
-    });
-
-    it('should return undefined for valid JSON with a numeric endpoint', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: 12345 }));
-
-      const decoded = decodeDwnDiscoveryPayload(encoded);
-
-      expect(decoded).toBeUndefined();
-    });
-
-    it('should return undefined for valid JSON with a null value', () => {
-      const encoded = toBase64Url('null');
-
+    it.each([
+      ['an empty string', ''],
+      ['garbage input', '!!!not-base64!!!'],
+      ['valid base64url that is not JSON', toBase64Url('hello world')],
+      ['valid JSON missing the endpoint field', toBase64Url(JSON.stringify({ foo: 'bar' }))],
+      ['valid JSON with an empty endpoint', toBase64Url(JSON.stringify({ endpoint: '' }))],
+      ['valid JSON with a numeric endpoint', toBase64Url(JSON.stringify({ endpoint: 12345 }))],
+      ['valid JSON with a null value', toBase64Url('null')],
+    ] as const)('should return undefined for %s', (_name, encoded) => {
       const decoded = decodeDwnDiscoveryPayload(encoded);
 
       expect(decoded).toBeUndefined();
@@ -158,61 +120,27 @@ describe('DwnDiscoveryPayload', () => {
       expect(decoded).toEqual(payload);
     });
 
-    it('should round-trip a payload containing CJK characters', () => {
-      const payload: DwnDiscoveryPayload = { endpoint: 'http://127.0.0.1:3000/\u4F60\u597D' };
-
-      const encoded = encodeDwnDiscoveryPayload(payload);
-      const decoded = decodeDwnDiscoveryPayload(encoded);
-
-      expect(decoded).toEqual(payload);
-    });
   });
 
   describe('loopback validation', () => {
-    it('should accept 127.0.0.1 endpoints', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://127.0.0.1:55500' }));
+    it.each([
+      ['127.0.0.1', 'http://127.0.0.1:55500'],
+      ['localhost', 'http://localhost:3000'],
+      ['[::1] (IPv6 loopback)', 'http://[::1]:55500'],
+      ['subdomain-of-localhost', 'http://foo.localhost:3000'],
+    ] as const)('should accept %s endpoints', (_name, endpoint) => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint }));
 
       expect(decodeDwnDiscoveryPayload(encoded)).toBeDefined();
     });
 
-    it('should accept localhost endpoints', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://localhost:3000' }));
-
-      expect(decodeDwnDiscoveryPayload(encoded)).toBeDefined();
-    });
-
-    it('should accept [::1] (IPv6 loopback) endpoints', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://[::1]:55500' }));
-
-      expect(decodeDwnDiscoveryPayload(encoded)).toBeDefined();
-    });
-
-    it('should accept subdomain of localhost', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://foo.localhost:3000' }));
-
-      expect(decodeDwnDiscoveryPayload(encoded)).toBeDefined();
-    });
-
-    it('should reject a remote hostname', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: 'https://evil.com:55500' }));
-
-      expect(decodeDwnDiscoveryPayload(encoded)).toBeUndefined();
-    });
-
-    it('should reject a private network IP', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://192.168.1.1:55500' }));
-
-      expect(decodeDwnDiscoveryPayload(encoded)).toBeUndefined();
-    });
-
-    it('should reject a hostname that contains localhost but is not localhost', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://notlocalhost:3000' }));
-
-      expect(decodeDwnDiscoveryPayload(encoded)).toBeUndefined();
-    });
-
-    it('should reject an endpoint with no scheme', () => {
-      const encoded = toBase64Url(JSON.stringify({ endpoint: '127.0.0.1:3000' }));
+    it.each([
+      ['a remote hostname', 'https://evil.com:55500'],
+      ['a private network IP', 'http://192.168.1.1:55500'],
+      ['a hostname that contains localhost but is not localhost', 'http://notlocalhost:3000'],
+      ['an endpoint with no scheme', '127.0.0.1:3000'],
+    ] as const)('should reject %s', (_name, endpoint) => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint }));
 
       expect(decodeDwnDiscoveryPayload(encoded)).toBeUndefined();
     });

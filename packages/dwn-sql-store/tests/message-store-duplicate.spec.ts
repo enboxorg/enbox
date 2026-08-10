@@ -7,38 +7,27 @@ import { isDuplicateKeyError, isMessageCidDuplicateKeyError } from '../src/messa
 // ---------------------------------------------------------------------------
 
 describe('isDuplicateKeyError', () => {
-  it('detects PostgreSQL unique_violation (code 23505)', () => {
-    const err = new Error('duplicate key value violates unique constraint "index_tenant_messageCid"');
-    (err as any).code = '23505';
-    expect(isDuplicateKeyError(err)).toBe(true);
-  });
-
-  it('detects MySQL ER_DUP_ENTRY (errno 1062)', () => {
-    const err = new Error('Duplicate entry \'did:dht:abc-bafyrei123\' for key \'index_tenant_messageCid\'');
-    (err as any).errno = 1062;
-    (err as any).code = 'ER_DUP_ENTRY';
-    expect(isDuplicateKeyError(err)).toBe(true);
-  });
-
-  it('detects SQLite SQLITE_CONSTRAINT with UNIQUE', () => {
-    const err = new Error('UNIQUE constraint failed: messageStoreMessages.tenant, messageStoreMessages.messageCid');
-    (err as any).code = 'SQLITE_CONSTRAINT';
-    expect(isDuplicateKeyError(err)).toBe(true);
-  });
-
-  it('detects bun:sqlite SQLITE_CONSTRAINT_PRIMARYKEY with UNIQUE message', () => {
-    const err = new Error('UNIQUE constraint failed: messageStoreMessages.tenant, messageStoreMessages.messageCid');
-    (err as any).code = 'SQLITE_CONSTRAINT_PRIMARYKEY';
-    expect(isDuplicateKeyError(err)).toBe(true);
-  });
-
-  it('detects via fallback message matching (duplicate key + messageCid)', () => {
-    const err = new Error('duplicate key value violates unique constraint on messageCid column');
-    expect(isDuplicateKeyError(err)).toBe(true);
-  });
-
-  it('detects via fallback message matching (Duplicate entry + unique constraint)', () => {
-    const err = new Error('Duplicate entry for key \'unique constraint\'');
+  it.each([
+    ['PostgreSQL unique_violation (code 23505)',
+      'duplicate key value violates unique constraint "index_tenant_messageCid"',
+      { code: '23505' }],
+    ['MySQL ER_DUP_ENTRY (errno 1062)',
+      'Duplicate entry \'did:dht:abc-bafyrei123\' for key \'index_tenant_messageCid\'',
+      { code: 'ER_DUP_ENTRY', errno: 1062 }],
+    ['SQLite SQLITE_CONSTRAINT with UNIQUE',
+      'UNIQUE constraint failed: messageStoreMessages.tenant, messageStoreMessages.messageCid',
+      { code: 'SQLITE_CONSTRAINT' }],
+    ['bun:sqlite SQLITE_CONSTRAINT_PRIMARYKEY with UNIQUE message',
+      'UNIQUE constraint failed: messageStoreMessages.tenant, messageStoreMessages.messageCid',
+      { code: 'SQLITE_CONSTRAINT_PRIMARYKEY' }],
+    ['fallback message matching (duplicate key + messageCid)',
+      'duplicate key value violates unique constraint on messageCid column',
+      {}],
+    ['fallback message matching (Duplicate entry + unique constraint)',
+      'Duplicate entry for key \'unique constraint\'',
+      {}],
+  ])('detects %s', (_name, message, properties) => {
+    const err = Object.assign(new Error(message), properties);
     expect(isDuplicateKeyError(err)).toBe(true);
   });
 

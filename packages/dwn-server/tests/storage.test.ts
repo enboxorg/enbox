@@ -4,18 +4,12 @@ import { BackendTypes, getDialectFromUrl } from '../src/storage.js';
 
 describe('storage', () => {
   describe('getDialectFromUrl()', () => {
-    it('should return a SqliteDialect for a sqlite:// URL', () => {
-      const dialect = getDialectFromUrl(new URL('sqlite://'));
-      expect(dialect).toBeDefined();
-    });
-
-    it('should return a MysqlDialect for a mysql:// URL', () => {
-      const dialect = getDialectFromUrl(new URL('mysql://user:pass@localhost:3306/db'));
-      expect(dialect).toBeDefined();
-    });
-
-    it('should return a PostgresDialect for a postgres:// URL', () => {
-      const dialect = getDialectFromUrl(new URL('postgres://user:pass@localhost:5432/db'));
+    it.each([
+      ['SqliteDialect', 'sqlite://'],
+      ['MysqlDialect', 'mysql://user:pass@localhost:3306/db'],
+      ['PostgresDialect', 'postgres://user:pass@localhost:5432/db'],
+    ] as const)('should return a %s for its URL scheme', (_name, url) => {
+      const dialect = getDialectFromUrl(new URL(url));
       expect(dialect).toBeDefined();
     });
 

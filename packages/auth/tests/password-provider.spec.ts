@@ -356,17 +356,20 @@ describe('PasswordProvider', () => {
   });
 
   describe('readPasswordRawMode()', () => {
-    test('reads typed characters and resolves on Enter', async () => {
+    test.each([
+      ['typed characters then Enter', 'hello\n', 'hello'],
+      ['a carriage return as Enter', 'test\r', 'test'],
+      ['backspace (code 127)', `ab${String.fromCharCode(127)}c\n`, 'ac'],
+      ['delete (code 8)', `xyz${String.fromCharCode(8)}\n`, 'xy'],
+    ])('reads %s', async (_name, input, expected) => {
       const stdin = createMockStdin();
       const stdout = createMockStdout();
 
       const promise = readPasswordRawMode(stdin, stdout, 'Password: ');
-
-      // Simulate typing "hello" then pressing Enter
-      stdin.feedChars('hello\n');
+      stdin.feedChars(input);
 
       const password = await promise;
-      expect(password).toBe('hello');
+      expect(password).toBe(expected);
     });
 
     test('writes prompt to stdout', async () => {
@@ -389,46 +392,6 @@ describe('PasswordProvider', () => {
 
       await promise;
       expect(stdout.output).toEqual(['PW: ', '\n']);
-    });
-
-    test('handles carriage return as Enter', async () => {
-      const stdin = createMockStdin();
-      const stdout = createMockStdout();
-
-      const promise = readPasswordRawMode(stdin, stdout, '> ');
-      stdin.feedChars('test\r');
-
-      const password = await promise;
-      expect(password).toBe('test');
-    });
-
-    test('handles backspace (code 127)', async () => {
-      const stdin = createMockStdin();
-      const stdout = createMockStdout();
-
-      const promise = readPasswordRawMode(stdin, stdout, '> ');
-
-      // Type "ab", backspace, "c", Enter → "ac"
-      stdin.feedChars('ab');
-      stdin.feedChar(String.fromCharCode(127)); // backspace
-      stdin.feedChars('c\n');
-
-      const password = await promise;
-      expect(password).toBe('ac');
-    });
-
-    test('handles delete (code 8)', async () => {
-      const stdin = createMockStdin();
-      const stdout = createMockStdout();
-
-      const promise = readPasswordRawMode(stdin, stdout, '> ');
-
-      stdin.feedChars('xyz');
-      stdin.feedChar(String.fromCharCode(8)); // delete
-      stdin.feedChar('\n');
-
-      const password = await promise;
-      expect(password).toBe('xy');
     });
 
     test('ignores backspace on empty buffer', async () => {

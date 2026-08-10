@@ -23,22 +23,14 @@ describe('AesKwAlgorithm', () => {
       expect(privateKey).toHaveProperty('alg', 'A128KW');
     });
 
-    it('sets alg to A128KW for 128-bit keys', async () => {
-      const privateKeyBytes = new Uint8Array(16);
+    it.each([
+      ['A128KW', 128, 16],
+      ['A192KW', 192, 24],
+      ['A256KW', 256, 32],
+    ] as const)('sets alg to %s for %d-bit keys', async (alg, _bits, byteLength) => {
+      const privateKeyBytes = new Uint8Array(byteLength);
       const privateKey = await aesKw.bytesToPrivateKey({ privateKeyBytes });
-      expect(privateKey.alg).toBe('A128KW');
-    });
-
-    it('sets alg to A192KW for 192-bit keys', async () => {
-      const privateKeyBytes = new Uint8Array(24);
-      const privateKey = await aesKw.bytesToPrivateKey({ privateKeyBytes });
-      expect(privateKey.alg).toBe('A192KW');
-    });
-
-    it('sets alg to A256KW for 256-bit keys', async () => {
-      const privateKeyBytes = new Uint8Array(32);
-      const privateKey = await aesKw.bytesToPrivateKey({ privateKeyBytes });
-      expect(privateKey.alg).toBe('A256KW');
+      expect(privateKey.alg).toBe(alg);
     });
 
     it('round-trips with privateKeyToBytes', async () => {
