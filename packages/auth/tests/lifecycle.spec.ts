@@ -164,25 +164,18 @@ describe('deriveSyncScopeFromGrants', () => {
     expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://proto.example/a']);
   });
 
-  test('ignores non-Messages grants (Records.Write does not authorize sync)', () => {
-    const grants = [
+  test.each([
+    ['non-Messages grants (Records.Write does not authorize sync)', [
       mockGrant({ interface: 'Records', method: 'Write', protocol: 'https://proto.example/chat' }),
       mockGrant({ interface: 'Protocols', method: 'Query', protocol: 'https://proto.example/chat' }),
-    ];
-    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
-  });
-
-  test('ignores Messages grants with method !== Read', () => {
-    const grants = [
+    ]],
+    ['Messages grants with method !== Read', [
       mockGrant({ interface: 'Messages', method: 'Subscribe', protocol: 'https://proto.example/chat' }),
-    ];
-    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
-  });
-
-  test('excludes expired Messages.Read grants', () => {
-    const grants = [
+    ]],
+    ['expired Messages.Read grants', [
       mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/a' }, '2020-01-01T00:00:00Z'),
-    ];
+    ]],
+  ])('derives an empty scope from %s', (_name, grants) => {
     expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
   });
 

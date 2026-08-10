@@ -2001,18 +2001,12 @@ describe('AdminApi — tenant search/filter (#390)', () => {
     expect(body.totalCount).toBe(1);
   });
 
-  it('should reject invalid status parameter', async () => {
-    const response = await adminFetch({ port }, '/tenants?status=invalid');
-    expect(response.status).toBe(400);
-  });
-
-  it('should reject invalid sort parameter', async () => {
-    const response = await adminFetch({ port }, '/tenants?sort=invalid');
-    expect(response.status).toBe(400);
-  });
-
-  it('should reject invalid order parameter', async () => {
-    const response = await adminFetch({ port }, '/tenants?order=invalid');
+  it.each([
+    'status',
+    'sort',
+    'order',
+  ] as const)('should reject an invalid %s parameter', async (parameter) => {
+    const response = await adminFetch({ port }, `/tenants?${parameter}=invalid`);
     expect(response.status).toBe(400);
   });
 });

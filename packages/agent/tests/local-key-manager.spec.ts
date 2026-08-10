@@ -158,21 +158,12 @@ describe('LocalKeyManager', () => {
           expect(keyUri.indexOf('urn:jwk:')).toBe(0);
         });
 
-        it(`supports generating 'secp256k1' keys`, async () => {
-          const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
-          expect(typeof keyUri).toBe('string');
-        });
-
-        it(`supports generating 'Ed25519' keys`, async () => {
-          const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
-
-          expect(keyUri).toBeDefined();
-          expect(typeof keyUri).toBe('string');
-          expect(keyUri.indexOf('urn:jwk:')).toBe(0);
-        });
-
-        it(`supports generating 'X25519' keys`, async () => {
-          const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'X25519' });
+        it.each([
+          'secp256k1',
+          'Ed25519',
+          'X25519',
+        ] as const)(`supports generating '%s' keys`, async (algorithm) => {
+          const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm });
 
           expect(keyUri).toBeDefined();
           expect(typeof keyUri).toBe('string');

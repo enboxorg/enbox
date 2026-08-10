@@ -330,22 +330,14 @@ describe('Ed25519', () => {
   });
 
   describe('validatePublicKey()', () => {
-    it('returns true for valid public keys', async () => {
-      const publicKeyBytes = Convert.hex('a12c2beb77265f2aac953b5009349d94155a03ada416aad451319480e983ca4c').toUint8Array();
+    it.each([
+      ['true for valid public keys', 'a12c2beb77265f2aac953b5009349d94155a03ada416aad451319480e983ca4c', true],
+      ['false for invalid public keys', '02fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f', false],
+      ['false if a private key is given', '0a23a20072891237aa0864b5765139514908787878cd77135a0059881d313f00', false],
+    ] as const)('returns %s', async (_name, publicKeyHex, expected) => {
+      const publicKeyBytes = Convert.hex(publicKeyHex).toUint8Array();
       const isValid = await Ed25519.validatePublicKey({ publicKeyBytes });
-      expect(isValid).toBe(true);
-    });
-
-    it('returns false for invalid public keys', async () => {
-      const publicKeyBytes = Convert.hex('02fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f').toUint8Array();
-      const isValid = await Ed25519.validatePublicKey({ publicKeyBytes });
-      expect(isValid).toBe(false);
-    });
-
-    it('returns false if a private key is given', async () => {
-      const publicKeyBytes = Convert.hex('0a23a20072891237aa0864b5765139514908787878cd77135a0059881d313f00').toUint8Array();
-      const isValid = await Ed25519.validatePublicKey({ publicKeyBytes });
-      expect(isValid).toBe(false);
+      expect(isValid).toBe(expected);
     });
   });
 
