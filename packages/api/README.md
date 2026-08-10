@@ -76,9 +76,12 @@ aggregation rule: any online link makes the identity online; otherwise an
 offline link makes it offline, and no links fall back to the engine-wide state.
 
 The frozen sync projection updates from existing events and local state without
-polling. `remoteDwn` is freshly resolved for a new session, after an opted-in
-service-config wake, or when `refreshDwnEndpoints()` is called. Its reference
-stays stable until a field changes. During sign-out, `phase` becomes
+polling. Its `remotes` rows cover only the DID's currently advertised endpoints,
+in document order. `remoteDwn` is freshly resolved for a new session, after an
+opted-in service-config wake, or when `refreshDwnEndpoints()` is called; use
+`retryRemote(endpoint)` to validate that routing again before retrying that
+remote's quota-blocked messages. References stay stable until a field changes.
+During sign-out, `phase` becomes
 `'disconnecting'` and session fields clear immediately; call `store.disconnect()`
 so the store can expose that transition. Call `unsubscribe()` when the consumer
 is released and `store.dispose()` at shutdown.
