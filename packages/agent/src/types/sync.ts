@@ -807,6 +807,8 @@ export interface SyncEngine {
    * When live sync is active, a new identity is hot-added without disrupting
    * other identities. Replacing existing options rebuilds only that identity's
    * links when needed.
+   * Repeated calls with equal options are value-idempotent, not cost-free: they
+   * clear tenant quota state and rebuild any existing live routing.
    *
    * `lifecycleOptions.timeout` bounds only preparation waits. A timed-out
    * mutation preserves the previous durable options and may be retried.
