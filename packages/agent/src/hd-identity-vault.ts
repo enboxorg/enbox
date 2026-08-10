@@ -472,8 +472,8 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * Resets the vault password using the original recovery phrase.
    *
    * The recovery phrase must derive the same vault CEK and agent DID that are already stored in
-   * this vault. If it does not, no stored state is changed. On success, the encrypted DID and all
-   * local vault data are preserved unless endpoint replacement was explicitly requested.
+   * this vault. If it does not, no stored state is changed. A direct reset without endpoint
+   * migration only replaces the password-wrapped CEK and requires no network access.
    */
   public async resetPasswordWithRecoveryPhrase({
     recoveryPhrase,
@@ -500,16 +500,18 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       throw new HdIdentityVaultRecoveryPhraseMismatchError();
     }
 
-    storedPortableDid = await this.reconcileRecoveredDid({
-      portableDid          : storedPortableDid,
-      replacementEndpoints : dwnEndpoints,
-      deferReplacement     : deferDwnEndpointReplacement,
-      useStoredOnNotFound  : true,
-    });
-    await this._store.set(
-      'did',
-      await this.encryptPortableDid(storedPortableDid, derivedMaterial.contentEncryptionKey),
-    );
+    if (dwnEndpoints !== undefined || deferDwnEndpointReplacement) {
+      storedPortableDid = await this.reconcileRecoveredDid({
+        portableDid          : storedPortableDid,
+        replacementEndpoints : dwnEndpoints,
+        deferReplacement     : deferDwnEndpointReplacement,
+        useStoredOnNotFound  : true,
+      });
+      await this._store.set(
+        'did',
+        await this.encryptPortableDid(storedPortableDid, derivedMaterial.contentEncryptionKey),
+      );
+    }
 
     await this._store.set('contentEncryptionKey', derivedMaterial.contentEncryptionKeyJwe);
     this._contentEncryptionKey = derivedMaterial.contentEncryptionKey;

@@ -94,15 +94,15 @@ async function registerRecoveredIdentityTenant(params: {
   connectedDid: string;
   registration?: RegistrationOptions;
   storage: StorageAdapter;
-} & RecoveryLifecycle): Promise<void> {
+} & RecoveryLifecycle): Promise<boolean> {
   const { userAgent, dwnEndpoints, agentDid, connectedDid, registration, storage, assertActive, runMutation } = params;
 
   if (registration === undefined) {
-    return;
+    return true;
   }
 
   try {
-    await registerWithDwnEndpoints(
+    return await registerWithDwnEndpoints(
       {
         userAgent,
         dwnEndpoints,
@@ -118,6 +118,7 @@ async function registerRecoveredIdentityTenant(params: {
   } catch {
     // Best effort — the DID may already be registered, or the
     // endpoint may be temporarily unreachable.
+    return false;
   }
 }
 
@@ -274,11 +275,7 @@ export async function recoverIdentitiesFromRemote(params: {
   // authoritative endpoints and completed both pulls.
   for (const { ownedDid, replacementEndpoints } of resolvedIdentities) {
     if (replacementEndpoints !== undefined) {
-      await runRecoveryMutation(
-        params,
-        () => userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: replacementEndpoints }),
-      );
-      await registerRecoveredIdentityTenant({
+      const isReplacementReady = await registerRecoveredIdentityTenant({
         userAgent,
         dwnEndpoints : replacementEndpoints,
         agentDid     : ownedDid,
@@ -289,6 +286,13 @@ export async function recoverIdentitiesFromRemote(params: {
         runMutation  : params.runMutation,
       });
       assertRecoveryActive(params);
+      if (!isReplacementReady) {
+        continue;
+      }
+      await runRecoveryMutation(
+        params,
+        () => userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: replacementEndpoints }),
+      );
     }
   }
 

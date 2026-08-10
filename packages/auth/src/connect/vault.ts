@@ -51,6 +51,26 @@ async function migrateVaultDwnEndpoints(
   }
 
   const { userAgent, storage } = ctx;
+  if (ctx.registration) {
+    const isReplacementReady = await registerWithDwnEndpoints(
+      {
+        userAgent,
+        dwnEndpoints : replacementEndpoints,
+        agentDid     : userAgent.agentDid.uri,
+        connectedDid : userAgent.agentDid.uri,
+        secretStore  : userAgent.secrets,
+        storage,
+        assertActive : ctx.assertActive,
+        runMutation  : ctx.runMutation,
+      },
+      ctx.registration,
+    );
+    assertFlowActive(ctx);
+    if (!isReplacementReady) {
+      return;
+    }
+  }
+
   await runFlowMutation(ctx, async (): Promise<void> => {
     await userAgent.vault.resetPasswordWithRecoveryPhrase({
       recoveryPhrase,
@@ -67,23 +87,6 @@ async function migrateVaultDwnEndpoints(
       console.error(`[@enbox/auth] Failed to announce vault DWN endpoint change: ${String(error)}`);
     });
   });
-
-  if (ctx.registration) {
-    await registerWithDwnEndpoints(
-      {
-        userAgent,
-        dwnEndpoints : replacementEndpoints,
-        agentDid     : userAgent.agentDid.uri,
-        connectedDid : userAgent.agentDid.uri,
-        secretStore  : userAgent.secrets,
-        storage,
-        assertActive : ctx.assertActive,
-        runMutation  : ctx.runMutation,
-      },
-      ctx.registration,
-    );
-    assertFlowActive(ctx);
-  }
   await runFlowMutation(ctx, () => registerAgentDidForSync(userAgent));
 }
 

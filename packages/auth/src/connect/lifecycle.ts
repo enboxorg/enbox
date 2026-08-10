@@ -172,11 +172,11 @@ export async function ensureVaultReady(params: {
   } else if (params.recoveryPhrase !== undefined) {
     try {
       await userAgent.vault.resetPasswordWithRecoveryPhrase({
-        recoveryPhrase: params.recoveryPhrase,
+        recoveryPhrase              : params.recoveryPhrase,
         password,
+        deferDwnEndpointReplacement : true,
         ...(params.dwnEndpoints === undefined ? {} : {
-          dwnEndpoints                : params.dwnEndpoints,
-          deferDwnEndpointReplacement : true,
+          dwnEndpoints: params.dwnEndpoints,
         }),
       });
     } catch (error) {

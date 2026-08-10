@@ -85,12 +85,13 @@ async function runRegistrationMutation<T>(
  * 3. Otherwise falls back to PoW registration.
  * 4. Calls `onSuccess` when all endpoints succeed, `onFailure` on error.
  *
+ * @returns Whether every endpoint was prepared successfully.
  * @internal
  */
 export async function registerWithDwnEndpoints(
   ctx: RegistrationContext,
   registration: RegistrationOptions,
-): Promise<void> {
+): Promise<boolean> {
   const { dwnEndpoints } = ctx;
 
   try {
@@ -118,11 +119,13 @@ export async function registerWithDwnEndpoints(
     }
 
     registration.onSuccess();
+    return true;
   } catch (error: unknown) {
     // Lifecycle invalidation is a cancellation signal, not a registration
     // failure callback. Re-throw it before invoking app-owned code.
     assertRegistrationActive(ctx);
     registration.onFailure(error);
+    return false;
   }
 }
 

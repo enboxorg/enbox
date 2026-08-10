@@ -122,13 +122,17 @@ describe('HdIdentityVault', () => {
         const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
         const otherRecoveryPhrase = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
 
-        it('resets the password when the recovery phrase matches the initialized vault', async () => {
+        it('resets the password locally when the recovery phrase matches the initialized vault', async () => {
           await identityVault.initialize({
             password     : 'old-password',
             recoveryPhrase,
             dwnEndpoints : ['https://dwn.example.com'],
           });
           const didBefore = (await identityVault.getDid()).uri;
+          const storedDidBefore = await vaultStore.get('did');
+          const resolve = sinon.stub().rejects(new Error('resolver offline'));
+          const publish = sinon.stub(DidDht, 'publish').rejects(new Error('publisher offline'));
+          identityVault.didResolver = { resolve };
 
           await identityVault.lock();
           await identityVault.resetPasswordWithRecoveryPhrase({
@@ -138,6 +142,9 @@ describe('HdIdentityVault', () => {
 
           expect(identityVault.isLocked()).toBe(false);
           expect((await identityVault.getDid()).uri).toBe(didBefore);
+          expect(await vaultStore.get('did')).toBe(storedDidBefore);
+          expect(resolve.notCalled).toBe(true);
+          expect(publish.notCalled).toBe(true);
 
           await identityVault.lock();
           await expect(identityVault.unlock({ password: 'old-password' })).rejects.toThrow('incorrect password');
@@ -146,13 +153,16 @@ describe('HdIdentityVault', () => {
           expect((await identityVault.getDid()).uri).toBe(didBefore);
         });
 
-        it('republishes validated stored endpoints when the existing vault DID is not found', async () => {
+        it('republishes validated stored endpoints when auth recovery finds no existing vault DID', async () => {
+          const resolve = sinon.stub().rejects(new Error('cached resolution must not be used'));
+          const refreshResolution = sinon.stub().resolves({
+            didDocument           : null,
+            didDocumentMetadata   : {},
+            didResolutionMetadata : { error: DidErrorCode.NotFound },
+          });
           identityVault.didResolver = {
-            resolve: async (): Promise<any> => ({
-              didDocument           : null,
-              didDocumentMetadata   : {},
-              didResolutionMetadata : { error: DidErrorCode.NotFound },
-            }),
+            resolve,
+            refreshResolution,
           };
           const publish = sinon.stub(DidDht, 'publish').resolves({ didDocumentMetadata: {} } as any);
 
@@ -162,14 +172,16 @@ describe('HdIdentityVault', () => {
             dwnEndpoints : ['https://stored.example'],
           });
           publish.resetHistory();
+          refreshResolution.resetHistory();
 
           await identityVault.resetPasswordWithRecoveryPhrase({
             recoveryPhrase,
             password                    : 'new-password',
-            dwnEndpoints                : ['https://replacement.example'],
             deferDwnEndpointReplacement : true,
           });
 
+          expect(refreshResolution.calledOnce).toBe(true);
+          expect(resolve.notCalled).toBe(true);
           expect(publish.calledOnce).toBe(true);
           expect(publish.firstCall.args[0].did.document.service?.[0].serviceEndpoint)
             .toEqual(['https://stored.example']);

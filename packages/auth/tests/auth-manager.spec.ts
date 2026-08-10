@@ -372,7 +372,11 @@ describe('AuthManager', () => {
         sync           : 'off',
       });
 
-      expect(resetCalls).toEqual([{ recoveryPhrase: 'test phrase', password: 'new-password' }]);
+      expect(resetCalls).toEqual([{
+        recoveryPhrase              : 'test phrase',
+        password                    : 'new-password',
+        deferDwnEndpointReplacement : true,
+      }]);
       expect(session.did).toBe('did:dht:testuser123');
     });
   });
