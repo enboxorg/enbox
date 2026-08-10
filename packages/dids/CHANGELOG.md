@@ -1,5 +1,17 @@
 # @enbox/dids
 
+## 0.1.10
+
+### Patch Changes
+
+- [#1616](https://github.com/enboxorg/enbox/pull/1616) [`175222e`](https://github.com/enboxorg/enbox/commit/175222e679ab2c1c7cf293eaea8a59dab906e4f2) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: canonicalize absent JWK algorithms in the DID-DHT DNS codec and restrict CLI connect URLs to http(s)
+
+- [#1614](https://github.com/enboxorg/enbox/pull/1614) [`2cf5cfc`](https://github.com/enboxorg/enbox/commit/2cf5cfcaf8046fe4895233e45ff5760e083bf6bc) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Resolve and cache DID-advertised DWN endpoints, expose friendly endpoint status with an opt-in service-config wake, and preserve authoritative endpoints during recovery unless explicitly replaced. Connection snapshots now expose an immediate `disconnecting` phase, and owned `Enbox.disconnect()` calls surface teardown failures.
+
+  Remove the obsolete `getDwnEndpointUrlsForTarget()` local/remote union API and `remoteEndpointsOnly` request marker; callers now use DID-advertised endpoints and explicitly compose any known local endpoint they need.
+
+  Use `AuthManager.restoreFromPhrase()` as the single phrase-recovery entry point; generic `connect()` and `connectVault()` no longer accept a recovery phrase.
+
 ## 0.1.9
 
 ### Patch Changes
