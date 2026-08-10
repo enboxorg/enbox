@@ -5,7 +5,31 @@ import { describe, expect, it } from 'bun:test';
 import { createEnboxTestContext } from '../src/testing.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineProtocol } from '../src/define-protocol.js';
+import { mergeRecordPatch } from '../src/record-patch.js';
 import { recordCodecs } from '../src/record-codec.js';
+
+describe('mergeRecordPatch()', () => {
+  it('should preserve an own __proto__ patch key as an own enumerable property', () => {
+    const patch = JSON.parse('{ "__proto__": { "polluted": true }, "note": "kept" }');
+    const merged = mergeRecordPatch<globalThis.Record<string, unknown>>({ existing: 1 }, patch);
+
+    expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(merged, '__proto__')).toBe(true);
+    expect((merged as { polluted?: boolean }).polluted).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(merged))).toEqual(
+      JSON.parse('{ "existing": 1, "__proto__": { "polluted": true }, "note": "kept" }')
+    );
+  });
+
+  it('should keep undefined-ignore and null-delete semantics', () => {
+    const merged = mergeRecordPatch<globalThis.Record<string, unknown>>(
+      { drop: 'b', keep: 'a' },
+      { added: 'c', drop: null, missing: undefined },
+    );
+
+    expect(merged).toEqual({ added: 'c', keep: 'a' });
+  });
+});
 
 describe('TypedEnbox.records.patch() integration', () => {
   it('stores the complete shallow-merged value through a real local DWN', async () => {

@@ -6,7 +6,6 @@ export * from './http-dwn-rpc-framing.js';
 export * from './http-dwn-rpc-client.js';
 export * from './json-rpc.js';
 export * from './json-rpc-socket.js';
-export * from './provider-directory-types.js';
 export * from './rate-limit-error.js';
 export * from './readable-stream.js';
 export * from './registration-types.js';

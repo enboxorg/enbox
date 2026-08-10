@@ -5,11 +5,6 @@ import { DidResolverCacheMemory } from '../../src/resolver/resolver-cache-memory
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
-// Helper function to pause execution for a specified amount of time (in milliseconds).
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 describe('DidResolverCacheMemory', () => {
   let cache: DidResolverCacheMemory;
 
@@ -47,30 +42,38 @@ describe('DidResolverCacheMemory', () => {
     });
 
     it('uses a custom TTL, when specified', async () => {
-      // Instantiate DID resolution cache with custom TTL of 5 milliseconds.
-      cache = new DidResolverCacheMemory({ ttl: '5' });
+      // Drive the cache clock directly so expiry is proven by controlled time advancement
+      // rather than racing wall-clock scheduling (a real 5 ms TTL loses under CI load).
+      const baseTime = performance.now();
+      const nowSpy = spyOn(performance, 'now').mockReturnValue(baseTime);
 
-      const testDid = 'did:example:alice';
+      try {
+        // Instantiate DID resolution cache with custom TTL of 1 minute.
+        cache = new DidResolverCacheMemory({ ttl: '1m' });
 
-      const testDidResolutionResult = {
-        didResolutionMetadata : {},
-        didDocument           : { id: 'abc123' },
-        didDocumentMetadata   : {}
-      };
+        const testDid = 'did:example:alice';
 
-      // Write an entry into the cache.
-      await cache.set(testDid, testDidResolutionResult);
+        const testDidResolutionResult = {
+          didResolutionMetadata : {},
+          didDocument           : { id: 'abc123' },
+          didDocumentMetadata   : {}
+        };
 
-      // Confirm a cache hit.
-      let valueInCache = await cache.get(testDid);
-      expect(valueInCache).toEqual(testDidResolutionResult);
+        // Write an entry into the cache.
+        await cache.set(testDid, testDidResolutionResult);
 
-      // Sleep for 10 milliseconds.
-      await sleep(10);
+        // Confirm a cache hit immediately before the TTL boundary.
+        nowSpy.mockReturnValue(baseTime + 60_000 - 1);
+        let valueInCache = await cache.get(testDid);
+        expect(valueInCache).toEqual(testDidResolutionResult);
 
-      // Confirm a cache miss.
-      valueInCache = await cache.get(testDid);
-      expect(valueInCache).toBeUndefined();
+        // Confirm a cache miss once the TTL has elapsed.
+        nowSpy.mockReturnValue(baseTime + 60_000 + 1);
+        valueInCache = await cache.get(testDid);
+        expect(valueInCache).toBeUndefined();
+      } finally {
+        nowSpy.mockRestore();
+      }
     });
   });
 

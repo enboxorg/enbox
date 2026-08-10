@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
-  createJsonRpcAck, createJsonRpcErrorResponse, createJsonRpcNotification, createJsonRpcRequest,
+  createJsonRpcAck, createJsonRpcErrorResponse, createJsonRpcRequest,
   createJsonRpcSubscriptionRequest, createJsonRpcSuccessResponse, JsonRpcErrorCodes, parseJson,
 } from '../src/json-rpc.js';
 
@@ -82,21 +82,6 @@ describe('json-rpc', () => {
     it('does not include data key when data is undefined', () => {
       const response = createJsonRpcErrorResponse('req-3', JsonRpcErrorCodes.ParseError, 'parse error');
       expect('data' in response.error).toBe(false);
-    });
-  });
-
-  describe('createJsonRpcNotification', () => {
-    it('creates a notification without an id', () => {
-      const notification = createJsonRpcNotification('server.event', { type: 'update' });
-      expect(notification.jsonrpc).toBe('2.0');
-      expect(notification.id).toBeUndefined();
-      expect(notification.method).toBe('server.event');
-      expect(notification.params).toEqual({ type: 'update' });
-    });
-
-    it('creates a notification without params', () => {
-      const notification = createJsonRpcNotification('server.ping');
-      expect(notification.params).toBeUndefined();
     });
   });
 

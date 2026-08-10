@@ -28,7 +28,9 @@ export function mergeRecordPatch<T>(current: unknown, patch: RecordPatch<T>): T 
     if (value === null) {
       delete merged[key];
     } else {
-      merged[key] = value;
+      // Define instead of assign: an own `__proto__` patch key must become an own enumerable
+      // property rather than invoking the inherited prototype setter and vanishing from JSON.
+      Object.defineProperty(merged, key, { configurable: true, enumerable: true, value, writable: true });
     }
   }
   return merged as T;
