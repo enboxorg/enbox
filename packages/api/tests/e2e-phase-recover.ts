@@ -100,11 +100,7 @@ async function main(): Promise<void> {
   // Now sync the identity DID's records (profile, protocols, etc.)
   log('Pulling identity records from remote DWN...');
 
-  try {
-    await agent.sync.setIdentityOptions({ did: recoveredDid, options: { protocols: 'all' } });
-  } catch {
-    // May already be registered if agent DID === identity DID; ignore
-  }
+  await agent.sync.setIdentityOptions({ did: recoveredDid, options: { protocols: 'all' } });
 
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {

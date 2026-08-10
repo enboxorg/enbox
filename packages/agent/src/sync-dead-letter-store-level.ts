@@ -105,7 +105,7 @@ export class SyncDeadLetterStoreLevel implements SyncDeadLetterStore {
   private static identityFromKey(key: string): DeletedDeadLetter | undefined {
     const firstSeparator = key.indexOf('|');
     const secondSeparator = key.indexOf('|', firstSeparator + 1);
-    if (firstSeparator < 1 || secondSeparator <= firstSeparator + 1) {
+    if (firstSeparator < 1 || secondSeparator <= firstSeparator + 1 || secondSeparator === key.length - 1) {
       return undefined;
     }
     return {
