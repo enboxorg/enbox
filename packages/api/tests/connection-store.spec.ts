@@ -897,6 +897,30 @@ describe('createConnectionStore()', () => {
       expect(setIdentityOptions.callCount).toBe(2);
     });
 
+    it('should surface routing failures before retrying an endpoint', async () => {
+      const engine = createSyncStatusEngine();
+      const { store } = await connectWithSync(engine);
+      const setIdentityOptions = sinon.stub(engine.sync, 'setIdentityOptions').rejects(new Error('routing unavailable'));
+      const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow');
+      sinon.stub(console, 'error');
+      getDwnEndpointStatus.resolves(readyDwn('https://new-dwn.example'));
+
+      const failedRefresh = await store.refreshDwnEndpoints();
+      expect(failedRefresh.error?.message).toBe('routing unavailable');
+
+      const failedRetry = await store.retryRemote('https://new-dwn.example');
+      expect(failedRetry.error?.message).toBe('routing unavailable');
+      expect(failedRetry.sync?.retryingRemoteEndpoint).toBeUndefined();
+      expect(retryRemoteNow.called).toBe(false);
+      expect(setIdentityOptions.callCount).toBe(2);
+
+      setIdentityOptions.resolves();
+      const recovered = await store.retryRemote('https://new-dwn.example');
+      expect(recovered.error).toBeUndefined();
+      expect(setIdentityOptions.callCount).toBe(3);
+      expect(retryRemoteNow.calledOnceWithExactly(OWNER_DID, 'https://new-dwn.example')).toBe(true);
+    });
+
     it('should expose missing and failed resolution states without dropping routing on transient failure', async () => {
       const engine = createSyncStatusEngine();
       const { store } = await connectWithSync(engine);

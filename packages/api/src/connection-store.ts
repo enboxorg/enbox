@@ -1426,16 +1426,12 @@ class HeadlessConnectionStore implements ConnectionStore {
       return;
     }
 
-    try {
-      const options = await session.agent.sync.getIdentityOptions(session.did);
-      if (options !== undefined && this._isCurrentSession(session)) {
-        await session.agent.sync.setIdentityOptions({ did: session.did, options });
-      }
-      if (this._syncBinding === binding && this._isCurrentSession(session)) {
-        binding.routedDwn = remoteDwn;
-      }
-    } catch (cause: unknown) {
-      console.error('[@enbox/api] ConnectionStore: failed to refresh remote DWN sync routing:', toError(cause));
+    const options = await session.agent.sync.getIdentityOptions(session.did);
+    if (options !== undefined && this._isCurrentSession(session)) {
+      await session.agent.sync.setIdentityOptions({ did: session.did, options });
+    }
+    if (this._syncBinding === binding && this._isCurrentSession(session)) {
+      binding.routedDwn = remoteDwn;
     }
     if (this._isCurrentSession(session)) {
       void this._requestSyncStatus(binding);

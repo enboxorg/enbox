@@ -114,11 +114,13 @@ export class SyncStatusReporter {
       SyncStatusReporter.linkSnapshotFrom(link));
     const remotes = [...rows.values()].map((row): RemoteSyncStatus =>
       SyncStatusReporter.remoteStatusFromRow(row));
+    linkSnapshots.sort(SyncStatusReporter.compareRemoteRows);
+    remotes.sort(SyncStatusReporter.compareRemoteRows);
 
     return {
       health,
-      links   : linkSnapshots.sort(SyncStatusReporter.compareRemoteRows),
-      remotes : remotes.sort(SyncStatusReporter.compareRemoteRows),
+      links: linkSnapshots,
+      remotes,
     };
   }
 
