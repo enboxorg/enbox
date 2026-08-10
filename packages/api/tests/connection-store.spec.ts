@@ -766,7 +766,7 @@ describe('createConnectionStore()', () => {
       store.subscribe((snapshot): void => {
         if (!requestedTrailingRefresh
           && snapshot.remoteDwn?.status === 'ready'
-          && snapshot.remoteDwn.endpoints.includes('https://backup.example')) {
+          && snapshot.remoteDwn.endpoints.some((endpoint): boolean => endpoint === 'https://backup.example')) {
           requestedTrailingRefresh = true;
           engine.emit(serviceConfigNotice());
         }
