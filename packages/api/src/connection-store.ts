@@ -56,6 +56,7 @@ import type {
   RemoteSyncStatus,
   ReplicationLinkSnapshot,
   SyncConnectivityState,
+  SyncIdentityOptions,
 } from '@enbox/agent';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
@@ -64,6 +65,7 @@ import { omitUndefined } from '@enbox/common';
 import {
   isServiceConfigNoticeDelivery,
   resolveSyncConnectivityState,
+  syncRegistrationCoversProtocol,
 } from '@enbox/agent';
 
 import { Enbox } from './enbox.js';
@@ -77,7 +79,9 @@ import { WalletReapprovalRequiredError } from './typed-enbox.js';
  *
  * - `'initializing'` — the store has been created but {@link ConnectionStore.initialize}
  *   has not completed yet (or is re-running after a failed bootstrap).
- * - `'disconnected'` — no active session. This is also the resting phase after a
+ * - `'disconnected'` — no application-ready session is exposed. A delegated
+ *   auth session may remain privately repairable when manifest sync coverage
+ *   requires wallet reapproval. This is also the resting phase after a
  *   **denied** connect: denial is a user decision, not a failure, so the store
  *   returns here with {@link ConnectionSnapshot.error} set to the `ConnectDeniedError`.
  * - `'connecting'` — a connect, vault-connect, or refresh flow is in flight,
@@ -176,11 +180,14 @@ export type ConnectionSnapshot = {
   vaultLocked?: boolean;
 
   /**
-   * Whether delegated grants have expired or been revoked, or the wallet's
-   * protocol configuration is missing or incompatible, so continuing requires
-   * fresh wallet approval. Use {@link ConnectionStore.refresh} while a session
-   * survives, or {@link ConnectionStore.connect} after it has ended. Cleared
-   * when a session (re)connects or an `'active'` connection status is observed.
+   * Whether delegated grants have expired or been revoked, the wallet's
+   * protocol configuration is missing or incompatible, or the session's sync
+   * registration no longer covers every application protocol that requested
+   * read access. Continuing requires fresh wallet approval. Use
+   * {@link ConnectionStore.refresh} while a session survives, or
+   * {@link ConnectionStore.connect} after it has ended. Cleared when a session
+   * (re)connects with complete coverage or an `'active'` connection status is
+   * observed for a session without a sync-coverage failure.
    */
   walletReapprovalRequired?: boolean;
 
@@ -333,8 +340,10 @@ export interface ConnectionStore {
    * Runs `AuthManager.refresh()` to re-grant the current delegated session.
    * On success the reapproval flag clears and the connection status reseeds.
    * An auth/approval failure before replacement keeps the surviving session
-   * `'connected'`; a readiness failure keeps the replacement unpublished.
-   * Both outcomes are surfaced via `error`.
+   * `'connected'` when it was already public. A coverage-hidden session stays
+   * hidden, retains `walletReapprovalRequired`, and remains available to retry.
+   * A readiness failure keeps the replacement unpublished. These outcomes are
+   * surfaced via `error`.
    */
   refresh(options: RefreshOptions): Promise<ConnectionSnapshot>;
 
@@ -472,6 +481,37 @@ function requiresWalletReapproval(error: Error): boolean {
     error.cause instanceof WalletReapprovalRequiredError;
 }
 
+/** Internal actionable failure for an incomplete delegated application sync registration. */
+class ManifestSyncRegistrationCoverageError extends Error {
+  public constructor(session: AuthSession, requiredProtocols: readonly string[]) {
+    super(
+      `[@enbox/api] The delegated session for '${session.did}' does not have a sync registration ` +
+      `for delegate '${session.delegateDid}' covering every read protocol: ${requiredProtocols.join(', ')}. ` +
+      'Refresh the wallet approval to continue.'
+    );
+    this.name = 'ManifestSyncRegistrationCoverageError';
+  }
+}
+
+type ManifestCoverageBinding = {
+  onAbort: () => void;
+  revision: number;
+  session: AuthSession;
+  unsubscribe?: () => void;
+};
+
+/** Whether one exact registration matches the delegate and every manifest read protocol. */
+function manifestRegistrationCoversSession(
+  session: AuthSession,
+  requiredProtocols: readonly string[],
+  registration: SyncIdentityOptions | undefined,
+): boolean {
+  return registration?.delegateDid === session.delegateDid
+    && requiredProtocols.every((protocol): boolean => (
+      syncRegistrationCoversProtocol(registration, protocol)
+    ));
+}
+
 type SyncStatusBinding = {
   dwnRefresh?: Promise<Error | boolean>;
   dwnRefreshRequested: boolean;
@@ -510,6 +550,7 @@ type SyncStatusBinding = {
 class HeadlessConnectionStore implements ConnectionStore {
   private readonly _application?: ApplicationManifest;
   private readonly _authManagerOptions: AuthManagerOptions;
+  private readonly _manifestReadProtocols: readonly string[];
   private readonly _providedAuth?: AuthManager;
   private readonly _monitor: Exclude<ConnectionStoreOptions['monitor'], undefined>;
   private readonly _requireHostedReadiness: boolean;
@@ -527,6 +568,8 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _initialized = false;
   private _disposed = false;
   private _actionGeneration = 0;
+  private _manifestCoverageBinding?: ManifestCoverageBinding;
+  private _manifestCoverageMissing = false;
   private _syncBinding?: SyncStatusBinding;
 
   public constructor(options: ConnectionStoreOptions) {
@@ -535,6 +578,13 @@ class HeadlessConnectionStore implements ConnectionStore {
       throw new TypeError('[@enbox/api] createConnectionStore requires at least one application protocol.');
     }
     this._application = application;
+    this._manifestReadProtocols = application === undefined
+      ? []
+      : application.protocols.flatMap(({ permissions, protocol }): string[] => (
+        permissions === undefined || permissions.includes('read')
+          ? [protocol.definition.protocol]
+          : []
+      ));
     this._providedAuth = auth;
     this._monitor = monitor ?? {};
     this._requireHostedReadiness = requireHostedReadiness ?? false;
@@ -620,6 +670,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._disposed = true;
     this._actionGeneration++;
     this._stopDelegateMonitor();
+    this._unbindManifestCoverage();
     this._unbindSyncStatus();
 
     for (const unsubscribe of this._unsubscribers) {
@@ -692,6 +743,7 @@ class HeadlessConnectionStore implements ConnectionStore {
 
       if (session === undefined) {
         this._initialized = true;
+        this._manifestCoverageMissing = false;
         const snapshot = this._apply({
           ...CLEARED_SESSION_FIELDS,
           phase       : 'disconnected',
@@ -746,6 +798,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   private async _runDisconnect(options?: DisconnectOptions): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
     this._stopDelegateMonitor();
+    this._unbindManifestCoverage();
     // Auth aborts the session lifetime before teardown can fail. Remove the
     // unusable session immediately while exposing the in-flight transition.
     this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnecting' });
@@ -772,11 +825,14 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
       return this._settlePublication(
         generation,
-        this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' }),
+        this._publishDisconnected(),
       );
     } catch (cause: unknown) {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
+      }
+      if (!isActiveAuthSession(this._auth?.session)) {
+        this._manifestCoverageMissing = false;
       }
       return this._settlePublication(generation, this._applyActionFailure(generation, cause));
     }
@@ -934,10 +990,26 @@ class HeadlessConnectionStore implements ConnectionStore {
 
     const shouldSeedRemoteDwn = this._snapshot.session !== activeSession || this._snapshot.remoteDwn === undefined;
     const patch = this._connectedPatch(activeSession);
+    const coverageBinding = this._bindManifestCoverage(activeSession);
     if (this._snapshot.enbox !== patch.enbox) {
       this._unpublishedEnboxes.add(patch.enbox);
     }
     try {
+      const coverageRevision = coverageBinding === undefined
+        ? undefined
+        : await this._assertManifestSyncCoverage(coverageBinding);
+      if (this._isStale(generation)) {
+        return this._snapshot;
+      }
+      if (coverageBinding !== undefined && coverageRevision === undefined) {
+        return undefined;
+      }
+      if (coverageBinding === undefined) {
+        // Owner, plain-store, and zero-read manifests vacuously repair only
+        // the sync-coverage reason before independent readiness begins.
+        this._manifestCoverageMissing = false;
+      }
+
       const readinessError = this._application === undefined
         ? undefined
         : await this._getApplicationReadinessError(patch.enbox, this._application);
@@ -952,16 +1024,44 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (readySession !== activeSession) {
         return undefined;
       }
+      let validatedCoverageRevision = coverageRevision;
+      while (coverageBinding !== undefined
+        && (this._manifestCoverageBinding !== coverageBinding
+          || coverageBinding.revision !== validatedCoverageRevision)) {
+        validatedCoverageRevision = await this._assertManifestSyncCoverage(coverageBinding);
+        if (validatedCoverageRevision === undefined) {
+          return undefined;
+        }
+      }
+      if (this._isStale(generation)) {
+        return this._snapshot;
+      }
+
+      const coveredSession = auth.session;
+      if (!isActiveAuthSession(coveredSession)) {
+        return this._publishDisconnected();
+      }
+      if (coveredSession !== activeSession) {
+        return undefined;
+      }
       if (readinessError !== undefined) {
         await this._rejectUnreadySession(auth, readinessError);
       }
 
       this._apply(patch);
+      if (this._manifestCoverageBinding === coverageBinding) {
+        // `_apply` synchronously installs the published session's permanent
+        // sync observer before this provisional read-to-publish guard leaves.
+        this._unbindManifestCoverage();
+      }
       const binding = this._syncBinding;
       if (shouldSeedRemoteDwn && binding?.session === activeSession) {
         await this._requestDwnEndpointRefresh(binding);
       }
       if (this._isStale(generation)) {
+        return this._snapshot;
+      }
+      if (!this._isCurrentSession(activeSession)) {
         return this._snapshot;
       }
       this._restartMonitor(auth, activeSession);
@@ -983,7 +1083,121 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (this._snapshot.enbox !== patch.enbox) {
         patch.enbox.close();
       }
+      if (this._snapshot.session !== activeSession
+        && this._manifestCoverageBinding?.session === activeSession) {
+        this._unbindManifestCoverage();
+      }
     }
+  }
+
+  /**
+   * Subscribe before the first registration read and retain the observer
+   * through readiness/publication so no registration transition can land in a
+   * read-to-publish gap.
+   */
+  private _bindManifestCoverage(session: AuthSession): ManifestCoverageBinding | undefined {
+    const existing = this._manifestCoverageBinding;
+    if (existing?.session === session) {
+      return existing;
+    }
+    this._unbindManifestCoverage();
+    if (session.delegateDid === undefined || this._manifestReadProtocols.length === 0) {
+      return undefined;
+    }
+
+    const binding: ManifestCoverageBinding = {
+      onAbort: (): void => {
+        if (this._manifestCoverageBinding === binding) {
+          this._unbindManifestCoverage();
+        }
+      },
+      revision: 0,
+      session,
+    };
+    this._manifestCoverageBinding = binding;
+    session.signal.addEventListener('abort', binding.onAbort, { once: true });
+    binding.unsubscribe = session.agent.sync.on((event): void => {
+      if (this._manifestCoverageBinding !== binding
+        || event.type !== 'identity:registration-change'
+        || event.tenantDid !== session.did) {
+        return;
+      }
+
+      binding.revision++;
+      if (this._isAuthoritativeSession(session)) {
+        this._manifestCoverageMissing = !manifestRegistrationCoversSession(
+          session,
+          this._manifestReadProtocols,
+          event.options,
+        );
+      }
+    });
+    return binding;
+  }
+
+  /** Read until one revision remains stable; registration events request a trailing read. */
+  private async _assertManifestSyncCoverage(binding: ManifestCoverageBinding): Promise<number | undefined> {
+    while (this._manifestCoverageBinding === binding) {
+      const revision = binding.revision;
+      let registration: SyncIdentityOptions | undefined;
+      try {
+        const status = await binding.session.agent.sync.getIdentitySyncStatus(binding.session.did);
+        registration = status.registration;
+      } catch (cause: unknown) {
+        if (this._manifestCoverageBinding !== binding
+          || !this._isAuthoritativeSession(binding.session)) {
+          return undefined;
+        }
+        throw cause;
+      }
+
+      if (this._manifestCoverageBinding !== binding
+        || !this._isAuthoritativeSession(binding.session)) {
+        return undefined;
+      }
+      if (binding.revision !== revision) {
+        continue;
+      }
+      const covered = manifestRegistrationCoversSession(
+        binding.session,
+        this._manifestReadProtocols,
+        registration,
+      );
+      this._manifestCoverageMissing = !covered;
+      if (!covered) {
+        throw new ManifestSyncRegistrationCoverageError(binding.session, this._manifestReadProtocols);
+      }
+      return revision;
+    }
+    return undefined;
+  }
+
+  /** Fail closed on missing coverage without ending the repairable auth session. */
+  private _publishManifestCoverageFailure(
+    error: ManifestSyncRegistrationCoverageError,
+    expectedSession?: AuthSession,
+  ): ConnectionSnapshot {
+    if (expectedSession !== undefined && !this._isCurrentSession(expectedSession)) {
+      return this._snapshot;
+    }
+    this._manifestCoverageMissing = true;
+    this._stopDelegateMonitor();
+    return this._apply({
+      ...CLEARED_SESSION_FIELDS,
+      error,
+      phase                    : 'disconnected',
+      walletReapprovalRequired : true,
+    });
+  }
+
+  private _unbindManifestCoverage(): void {
+    const binding = this._manifestCoverageBinding;
+    if (binding === undefined) {
+      return;
+    }
+    this._manifestCoverageBinding = undefined;
+    binding.unsubscribe?.();
+    binding.session.signal.removeEventListener('abort', binding.onAbort);
   }
 
   /** Run the existing readiness lifecycle while keeping its failure behind the session fence. */
@@ -1050,10 +1264,13 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
 
     const error = toError(cause);
+    if (error instanceof ManifestSyncRegistrationCoverageError) {
+      return this._publishManifestCoverageFailure(error);
+    }
     if (error instanceof ProtocolReadinessError) {
       const walletReapprovalRequired = requiresWalletReapproval(error)
         ? true
-        : undefined;
+        : this._manifestCoverageMissing || undefined;
       return this._apply({
         ...CLEARED_SESSION_FIELDS,
         error,
@@ -1074,11 +1291,12 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
     }
 
-    if (isConnectDeniedError(error)) {
-      return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected', error });
-    }
-
-    return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'error', error });
+    return this._apply({
+      ...CLEARED_SESSION_FIELDS,
+      error,
+      phase                    : isConnectDeniedError(error) ? 'disconnected' : 'error',
+      walletReapprovalRequired : this._manifestCoverageMissing || undefined,
+    });
   }
 
   // ─── AuthManager wiring ────────────────────────────────────────
@@ -1185,7 +1403,9 @@ class HeadlessConnectionStore implements ConnectionStore {
         return;
       }
       const error = toError(cause);
-      if (error instanceof ProtocolReadinessError) {
+      if (error instanceof ProtocolReadinessError
+        || error instanceof ManifestSyncRegistrationCoverageError
+        || this._snapshot.session !== auth.session) {
         this._applyActionFailure(generation, error);
       } else {
         console.error('[@enbox/api] ConnectionStore: failed to reconcile an externally changed session:', error);
@@ -1220,6 +1440,8 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   private _publishDisconnected(): ConnectionSnapshot {
     this._stopDelegateMonitor();
+    this._manifestCoverageMissing = false;
+    this._unbindManifestCoverage();
     return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
   }
 
@@ -1258,10 +1480,14 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   /** Applies a delegated connection status, deriving the wallet-reapproval flag. */
   private _applyConnectionStatus(connection: ConnectionStatus): void {
+    if (!isActiveAuthSession(this._snapshot.session)
+      || this._snapshot.session.delegateDid === undefined) {
+      return;
+    }
     let walletReapprovalRequired = this._snapshot.walletReapprovalRequired;
     if (connection.state === 'expired' || connection.state === 'revoked') {
       walletReapprovalRequired = true;
-    } else if (connection.state === 'active') {
+    } else if (connection.state === 'active' && !this._manifestCoverageMissing) {
       walletReapprovalRequired = undefined;
     }
     this._apply({ connection, walletReapprovalRequired });
@@ -1286,6 +1512,16 @@ class HeadlessConnectionStore implements ConnectionStore {
     session.signal.addEventListener('abort', binding.onAbort, { once: true });
     binding.unsubscribe = session.agent.sync.on((event): void => {
       if (event.tenantDid !== session.did) {
+        return;
+      }
+      if (event.type === 'identity:registration-change'
+        && session.delegateDid !== undefined
+        && this._manifestReadProtocols.length > 0
+        && !manifestRegistrationCoversSession(session, this._manifestReadProtocols, event.options)) {
+        this._publishManifestCoverageFailure(
+          new ManifestSyncRegistrationCoverageError(session, this._manifestReadProtocols),
+          session,
+        );
         return;
       }
       if (isServiceConfigNoticeDelivery(event, session.did)) {
@@ -1483,6 +1719,9 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _apply(patch: Partial<ConnectionSnapshot>): ConnectionSnapshot {
     const next: ConnectionSnapshot = { ...this._snapshot, ...patch };
     if (next.session !== this._snapshot.session) {
+      if (this._manifestCoverageBinding?.session !== next.session) {
+        this._unbindManifestCoverage();
+      }
       // A changed session also guarantees snapshot inequality, so this binding reaches publication.
       next.sync = this._bindSyncStatus(next.session);
     }
@@ -1529,6 +1768,13 @@ class HeadlessConnectionStore implements ConnectionStore {
       && isActiveAuthSession(session)
       && this._auth?.session === session
       && this._snapshot.session === session;
+  }
+
+  /** Whether one candidate still owns the authoritative auth session before publication. */
+  private _isAuthoritativeSession(session: AuthSession | undefined): session is AuthSession {
+    return !this._disposed
+      && isActiveAuthSession(session)
+      && this._auth?.session === session;
   }
 
   /**

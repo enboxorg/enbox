@@ -219,8 +219,12 @@ Transient readiness failures retain the underlying `store.auth.session` for a
 retry while keeping it out of the public snapshot. A missing or incompatible
 wallet protocol configuration instead ends the unusable delegate session and
 sets `walletReapprovalRequired`, so the next `connect()` requests fresh
-approval. On a manifest-backed store, `connect()` is delegated and a per-call
-`password` unlocks the delegate vault; use `connectVault()` for an owner.
+approval. A delegated sync registration that is missing, belongs to another
+delegate, or omits any manifest protocol with read permission also fails closed:
+the store closes and hides the public facade, stops its monitor, and preserves
+the underlying auth session so `store.refresh()` can repair approval. On a
+manifest-backed store, `connect()` is delegated and a per-call `password`
+unlocks the delegate vault; use `connectVault()` for an owner.
 
 Advanced integrations that own auth directly must project and ready the
 manifest explicitly, and separately close both the session facade and manager:
