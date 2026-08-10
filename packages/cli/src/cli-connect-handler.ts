@@ -283,7 +283,13 @@ function normalizeUrl(url: string): string | undefined {
     : `https://${trimmedUrl}`;
 
   try {
-    return new URL(candidate).toString();
+    const parsed = new URL(candidate);
+    // Wallet and connect relay URLs are always fetched or opened over HTTP(S); any other
+    // scheme would only fail later with a less understandable transport error.
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return undefined;
+    }
+    return parsed.toString();
   } catch {
     return undefined;
   }
@@ -302,8 +308,8 @@ async function handleAuthUrl(uri: string, options: CliConnectHandlerOptions): Pr
   await options.onAuthUrl?.(uri);
 
   if (options.openBrowser === true) {
-    await (options.browserOpener ?? defaultOpenBrowser)(uri);
     writeLine(options, 'Opening wallet for approval...');
+    await (options.browserOpener ?? defaultOpenBrowser)(uri);
     writeLine(options, 'Waiting for approval...');
     return;
   }

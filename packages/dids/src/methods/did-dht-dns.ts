@@ -256,7 +256,12 @@ async function applyVerificationMethodRecord({ didUri, dnsRecordId, answer, didD
   // Convert the public key from a byte array to JWK format.
   const publicKey = await keyConverter(namedCurve).bytesToPublicKey({ publicKeyBytes });
 
-  publicKey.alg = parsedAlg || KeyTypeToDefaultAlgorithmMap[Number(t) as DidDhtRegisteredKeyType];
+  // Use the parsed algorithm, or fall back to the key type's default. Records published by
+  // `@enbox/dids` <= 0.1.3 serialized an absent `alg` as the literal string `a=undefined`;
+  // decode that legacy value as the default so the resolved JWK is canonical.
+  publicKey.alg = !parsedAlg || parsedAlg === 'undefined'
+    ? KeyTypeToDefaultAlgorithmMap[Number(t) as DidDhtRegisteredKeyType]
+    : parsedAlg;
 
   // TODO: when this is complete https://github.com/enboxorg/enbox/issues/638 then we can add this back and
   // update the test vectors kid back to '0'
@@ -549,8 +554,9 @@ async function processVerificationMethodForDnsPacket({ index, verificationMethod
   if (methodId !== '0' && await computeJwkThumbprint({ jwk: publicKey }) !== methodId) {
     txtData.unshift(`id=${methodId}`);
   }
-  // Only set the algorithm property (`a`) if it differs from the default algorithm for the key type.
-  if (publicKey.alg !== KeyTypeToDefaultAlgorithmMap[keyType]) {
+  // Only set the algorithm property (`a`) if the key carries one that differs from the default
+  // algorithm for the key type. A JWK without `alg` must never serialize as `a=undefined`.
+  if (publicKey.alg !== undefined && publicKey.alg !== KeyTypeToDefaultAlgorithmMap[keyType]) {
     txtData.push(`a=${publicKey.alg}`);
   }
 

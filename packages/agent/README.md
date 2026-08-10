@@ -16,7 +16,7 @@ The agent is the core runtime that ties everything together. It manages:
 - **Identity lifecycle** — Create, list, import/export identities and DIDs (`AgentIdentityApi`, `AgentDidApi`)
 - **Sync** — Bidirectional sync between local and remote DWNs (`SyncEngineLevel`)
 - **Permissions** — DWN permission grants, requests, and revocations (`AgentPermissionsApi`)
-- **Wallet connect** — OIDC/SIOPv2-based connection flow for external wallets (`WalletConnect`, `Oidc`)
+- **Wallet connect** — Enbox Connect approval ceremony granting delegated access to external apps (`executeConnectApproval`)
 
 Durable `grantKey` records hydrate delegate decryption keys for encrypted read grants.
 They are usable only while the referenced permission grant is active. Revocation is

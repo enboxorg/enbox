@@ -75,6 +75,7 @@ import {
   AlgorithmToKeyTypeMap,
   chunkDataIfNeeded,
   fromDnsPacket,
+  KeyTypeToDefaultAlgorithmMap,
   parseTxtDataToObject,
   parseTxtDataToString,
   toDnsPacket,
@@ -292,6 +293,11 @@ export class DidDht extends DidMethod {
         : await keyManager.generateKey({ algorithm: verificationMethod.algorithm });
 
       const publicKey = await keyManager.getPublicKey({ keyUri });
+
+      // Canonicalize the public key: key managers omit `alg` on some keys (e.g. generated X25519
+      // keys), while the DNS codec decodes an absent `a` property as the key type's default — fill
+      // the default in here so create/encode/decode round trips produce identical documents.
+      publicKey.alg ??= KeyTypeToDefaultAlgorithmMap[AlgorithmToKeyTypeMap[publicKey.crv as keyof typeof AlgorithmToKeyTypeMap]];
 
       // Use the given ID, the key's ID, or the key's thumbprint as the verification method ID.
       let methodId = verificationMethod.id ?? publicKey.kid ?? await computeJwkThumbprint({ jwk: publicKey });
