@@ -13,7 +13,7 @@ describe('RecordsQuery schema validation', () => {
       },
       authorization: TestDataGenerator.generateAuthorization()
     };
-    Message.validateJsonSchema(validMessage);
+    expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 
   it('should throw if unknown property is given in message', () => {
@@ -29,7 +29,7 @@ describe('RecordsQuery schema validation', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must NOT have additional properties');
   });
 
@@ -46,7 +46,7 @@ describe('RecordsQuery schema validation', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must NOT have additional properties');
   });
 
@@ -65,7 +65,7 @@ describe('RecordsQuery schema validation', () => {
         authorization: TestDataGenerator.generateAuthorization()
       };
 
-      Message.validateJsonSchema(validMessage);
+      expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
     }
 
     // test an invalid values of `dateSort`
@@ -81,7 +81,7 @@ describe('RecordsQuery schema validation', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('dateSort: must be equal to one of the allowed values');
   });
 
@@ -100,7 +100,7 @@ describe('RecordsQuery schema validation', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must NOT have additional properties');
   });
 
@@ -117,7 +117,7 @@ describe('RecordsQuery schema validation', () => {
       };
 
       expect(() => {
-        Message.validateJsonSchema(invalidMessage);
+        expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
       }).toThrow('/descriptor/filter: must NOT have fewer than 1 properties');
     });
 
@@ -133,7 +133,7 @@ describe('RecordsQuery schema validation', () => {
       };
 
       expect(() => {
-        Message.validateJsonSchema(invalidMessage);
+        expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
       }).toThrow('dateCreated: must NOT have fewer than 1 properties');
     });
 
@@ -149,7 +149,7 @@ describe('RecordsQuery schema validation', () => {
       };
 
       expect(() => {
-        Message.validateJsonSchema(invalidMessage);
+        expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
       }).toThrow('must NOT have additional properties');
     });
   });

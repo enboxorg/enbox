@@ -60,7 +60,7 @@ describe('SqlTtlCache', () => {
     });
 
     it('should not throw when deleting a non-existent key', async () => {
-      await cache.delete('non-existent-key');
+      await expect(cache.delete('non-existent-key')).resolves.toBeUndefined();
     });
   });
 

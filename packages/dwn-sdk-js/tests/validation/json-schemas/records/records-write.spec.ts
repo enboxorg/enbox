@@ -21,7 +21,7 @@ describe('RecordsWrite schema definition', () => {
       },
       authorization: TestDataGenerator.generateAuthorization()
     };
-    Message.validateJsonSchema(validMessage);
+    expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 
   it('should throw if `recordId` is missing', async () => {
@@ -42,7 +42,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(message);
+      expect(() => Message.validateJsonSchema(message)).not.toThrow();
     }).toThrow('must have required property \'recordId\'');
   });
 
@@ -64,7 +64,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must have required property \'authorization\'');
   });
 
@@ -88,7 +88,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('unevaluated properties: RecordsWrite: unknownProperty');
   });
 
@@ -112,7 +112,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must NOT have additional properties');
   });
 
@@ -135,7 +135,7 @@ describe('RecordsWrite schema definition', () => {
       authorization: TestDataGenerator.generateAuthorization()
     };
 
-    Message.validateJsonSchema(validMessage);
+    expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 
   it('should throw if `protocolPath` contains invalid characters', () => {
@@ -158,7 +158,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('protocolPath: must match pattern');
   });
 
@@ -182,7 +182,7 @@ describe('RecordsWrite schema definition', () => {
         authorization: TestDataGenerator.generateAuthorization()
       };
 
-      Message.validateJsonSchema(message);
+      expect(() => Message.validateJsonSchema(message)).not.toThrow();
     }
   });
 
@@ -236,19 +236,19 @@ describe('RecordsWrite schema definition', () => {
     const invalidMessage1 = { ...validMessage };
     invalidMessage1.contextId = 'invalid:path', // `:` is not a valid char in `contextId`
     expect(() => {
-      Message.validateJsonSchema(invalidMessage1);
+      expect(() => Message.validateJsonSchema(invalidMessage1)).not.toThrow();
     }).toThrow(expectedErrorMessage);
 
     const invalidMessage2 = { ...validMessage };
     invalidMessage2.contextId = '/invalid/context'; // not allowed to start with `/`
     expect(() => {
-      Message.validateJsonSchema(invalidMessage2);
+      expect(() => Message.validateJsonSchema(invalidMessage2)).not.toThrow();
     }).toThrow(expectedErrorMessage);
 
     const invalidMessage3 = { ...validMessage };
     invalidMessage3.contextId = 'invalid/context/'; // not allowed to end with `/`
     expect(() => {
-      Message.validateJsonSchema(invalidMessage3);
+      expect(() => Message.validateJsonSchema(invalidMessage3)).not.toThrow();
     }).toThrow(expectedErrorMessage);
   });
 
@@ -270,7 +270,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must have required property \'contextId\'');
   });
 
@@ -291,7 +291,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must have required property \'protocol\'');
   });
 
@@ -313,7 +313,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must have required property \'contextId\'');
   });
 
@@ -337,7 +337,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('descriptor: must have required property \'protocol\'');
   });
 
@@ -360,7 +360,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('descriptor: must have required property \'protocolPath\'');
   });
 
@@ -383,7 +383,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('descriptor: must have required property \'protocol\'');
   });
 
@@ -408,7 +408,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('descriptor: must have required property \'protocol\'');
   });
 
@@ -432,7 +432,7 @@ describe('RecordsWrite schema definition', () => {
       authorization: TestDataGenerator.generateAuthorization()
     };
 
-    Message.validateJsonSchema(invalidMessage);
+    expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
   });
 
   it('should pass if `protocol` and `recipient` are both defined', () => {
@@ -455,7 +455,7 @@ describe('RecordsWrite schema definition', () => {
       authorization: TestDataGenerator.generateAuthorization()
     };
 
-    Message.validateJsonSchema(invalidMessage);
+    expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
   });
 
   it('should throw if published is false but datePublished is present', () => {
@@ -479,7 +479,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('published: must be equal to one of the allowed values');
   });
 
@@ -503,7 +503,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must have required property \'datePublished\'');
   });
 
@@ -527,7 +527,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must have required property \'published\'');
   });
 });

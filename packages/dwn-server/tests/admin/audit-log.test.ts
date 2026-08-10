@@ -275,7 +275,7 @@ describe('AuditLog', () => {
       });
 
       // The timer is running — close normally to stop it.
-      await retentionLog.close();
+      await expect(retentionLog.close()).resolves.toBeUndefined();
       rmSync(retentionTmpDir, { recursive: true, force: true });
     });
   });
@@ -290,7 +290,7 @@ describe('AuditLog', () => {
       const dialect = await createMigratedFileDialect(`sqlite://${closeTmpDir}/close.db`);
       const log = await AuditLog.create(dialect);
       await log.record({ actor: 'system', action: 'test.close' });
-      await log.close();
+      await expect(log.close()).resolves.toBeUndefined();
       rmSync(closeTmpDir, { recursive: true, force: true });
     });
   });

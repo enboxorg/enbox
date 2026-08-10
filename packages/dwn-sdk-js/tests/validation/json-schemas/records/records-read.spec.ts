@@ -12,7 +12,7 @@ describe('RecordsRead schema validation', () => {
         filter           : { recordId: 'bafyreigs3em42x3dp4oeq543mpxwdi32gp4ag2e4qgqfnbyqbae5bxarau' }
       }
     };
-    Message.validateJsonSchema(validMessage);
+    expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 
   it('should throw if unknown property is given in message', () => {
@@ -27,7 +27,7 @@ describe('RecordsRead schema validation', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must NOT have additional properties');
   });
 
@@ -43,7 +43,7 @@ describe('RecordsRead schema validation', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('must NOT have additional properties');
   });
 
@@ -61,7 +61,7 @@ describe('RecordsRead schema validation', () => {
         }
       };
 
-      Message.validateJsonSchema(validMessage);
+      expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
     }
 
     // test an invalid value of `dateSort`
@@ -76,7 +76,7 @@ describe('RecordsRead schema validation', () => {
     };
 
     expect(() => {
-      Message.validateJsonSchema(invalidMessage);
+      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
     }).toThrow('dateSort: must be equal to one of the allowed values');
   });
 
@@ -89,7 +89,7 @@ describe('RecordsRead schema validation', () => {
         filter           : { recordId: 'bafyreigs3em42x3dp4oeq543mpxwdi32gp4ag2e4qgqfnbyqbae5bxarau' }
       }
     };
-    Message.validateJsonSchema(validMessage);
+    expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 
   it('should allow `authorization` to be present', () => {
@@ -102,6 +102,6 @@ describe('RecordsRead schema validation', () => {
       },
       authorization: TestDataGenerator.generateAuthorization()
     };
-    Message.validateJsonSchema(validMessage);
+    expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 });

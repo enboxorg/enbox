@@ -36,6 +36,7 @@ describe('JsonRpcSocket', () => {
 
   it('connects to a url', async () => {
     const client = await JsonRpcSocket.connect(socketDwnUrl);
+    expect(client).toBeInstanceOf(JsonRpcSocket);
     client.close();
   });
 

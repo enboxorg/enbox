@@ -275,7 +275,7 @@ describe('e2e: two-layer encryption recovery', () => {
     });
 
     it('should close the agent cleanly', async () => {
-      await harness.closeStorage();
+      await expect(harness.closeStorage()).resolves.toBeUndefined();
     });
   });
 
@@ -387,8 +387,8 @@ describe('e2e: two-layer encryption recovery', () => {
     });
 
     it('should clean up', async () => {
-      await harness.clearStorage();
-      await harness.closeStorage();
+      await expect(harness.clearStorage()).resolves.toBeUndefined();
+      await expect(harness.closeStorage()).resolves.toBeUndefined();
     });
   });
 });

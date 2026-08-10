@@ -1038,11 +1038,11 @@ describe('SyncEngineLevel', () => {
         const queued = syncEngine.sync();
 
         await clock.tickAsync(50);
-        await first;
-        await queued;
+        await expect(first).resolves.toBeUndefined();
+        await expect(queued).resolves.toBeUndefined();
 
         // The lock is free again — a fresh sync runs immediately.
-        await syncEngine.sync();
+        await expect(syncEngine.sync()).resolves.toBeUndefined();
 
         clock.restore();
       });

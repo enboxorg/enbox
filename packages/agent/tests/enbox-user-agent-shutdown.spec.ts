@@ -55,7 +55,7 @@ describe('EnboxUserAgent.shutdown()', () => {
       syncApi        : { stopSync: failing, close: failing } as any,
     });
 
-    await agent.shutdown();
+    await expect(agent.shutdown()).resolves.toBeUndefined();
   });
 
   describe('store lock release', () => {

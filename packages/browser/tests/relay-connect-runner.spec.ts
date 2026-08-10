@@ -298,8 +298,10 @@ describe('visibilityAwareSleep', () => {
     // A 60s sleep must be cut short by the visibility signal (the test page
     // is visible, so dispatching the event stands in for a tab return) —
     // well inside the test timeout proves the short-circuit.
+    const started = Date.now();
     const sleeping = visibilityAwareSleep(60_000);
     document.dispatchEvent(new Event('visibilitychange'));
     await sleeping;
+    expect(Date.now() - started).toBeLessThan(60_000);
   });
 });

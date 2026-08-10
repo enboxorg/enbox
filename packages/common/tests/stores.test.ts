@@ -83,7 +83,7 @@ describe('LevelStore', () => {
 
     it('should not throw when deleting a non-existing key', async () => {
       // Delete a non-existent key-value pair.
-      await levelStore.delete('non-existing');
+      await expect(levelStore.delete('non-existing')).resolves.toBeUndefined();
     });
   });
 
@@ -205,7 +205,7 @@ describe('MemoryStore', () => {
 
   describe('close()', () => {
     it('should no-op when trying to close the store', async () => {
-      await memoryStore.close();
+      await expect(memoryStore.close()).resolves.toBeUndefined();
     });
   });
 

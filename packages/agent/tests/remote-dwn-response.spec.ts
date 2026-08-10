@@ -60,8 +60,8 @@ describe('verifyRemoteDwnResponse', () => {
     ]);
     const reply = { status: { code: 500, detail: 'Internal Server Error' } };
 
-    await verifyResponse(protocolsQuery.message, reply);
-    await verifyResponse(recordsQuery.message, reply);
+    await expect(verifyResponse(protocolsQuery.message, reply)).resolves.toBeUndefined();
+    await expect(verifyResponse(recordsQuery.message, reply)).resolves.toBeUndefined();
   });
 
   describe('ProtocolsQuery', () => {
@@ -76,7 +76,7 @@ describe('verifyRemoteDwnResponse', () => {
         status  : { code: 200, detail: 'OK' },
       };
 
-      await verifyResponse(query.message, reply);
+      await expect(verifyResponse(query.message, reply)).resolves.toBeUndefined();
     });
 
     it('rejects a configuration signed by an attacker', async () => {
@@ -159,7 +159,7 @@ describe('verifyRemoteDwnResponse', () => {
       });
       const reply = recordsQueryReply(recordsWrite.message, data);
 
-      await verifyResponse(query.message, reply);
+      await expect(verifyResponse(query.message, reply)).resolves.toBeUndefined();
     });
 
     it('rejects signed records whose descriptor or signature was changed in transit', async () => {
@@ -237,7 +237,7 @@ describe('verifyRemoteDwnResponse', () => {
         status  : { code: 200, detail: 'OK' },
       };
 
-      await verifyResponse(query.message, reply);
+      await expect(verifyResponse(query.message, reply)).resolves.toBeUndefined();
     });
 
     it('rejects an update with a missing or mismatched initial write', async () => {
@@ -275,7 +275,7 @@ describe('verifyRemoteDwnResponse', () => {
         subscription : { id: 'valid-snapshot', close: async (): Promise<void> => {} },
       };
 
-      await verifyResponse(subscribe.message, reply);
+      await expect(verifyResponse(subscribe.message, reply)).resolves.toBeUndefined();
     });
 
     it('closes a subscription whose initial snapshot fails verification', async () => {
@@ -304,7 +304,7 @@ describe('verifyRemoteDwnResponse', () => {
       const read = await RecordsRead.create({ filter: { recordId: recordsWrite.message.recordId }, signer: targetSigner });
       const reply = recordsReadReply(recordsWrite.message, data);
 
-      await verifyResponse(read.message, reply);
+      await expect(verifyResponse(read.message, reply)).resolves.toBeUndefined();
 
       expect(await DataStream.toBytes(reply.entry!.data!)).toEqual(data);
     });
@@ -321,7 +321,7 @@ describe('verifyRemoteDwnResponse', () => {
 
       for (const invalidData of invalidPayloads) {
         const reply = recordsReadReply(recordsWrite.message, invalidData);
-        await verifyResponse(read.message, reply);
+        await expect(verifyResponse(read.message, reply)).resolves.toBeUndefined();
 
         await expect(DataStream.toBytes(reply.entry!.data!)).rejects.toThrow();
       }
@@ -333,7 +333,7 @@ describe('verifyRemoteDwnResponse', () => {
       const read = await RecordsRead.create({ filter: { recordId: recordsWrite.message.recordId } });
       const reply = recordsReadReply(recordsWrite.message, data);
 
-      await verifyResponse(read.message, reply);
+      await expect(verifyResponse(read.message, reply)).resolves.toBeUndefined();
 
       expect(await DataStream.toBytes(reply.entry!.data!)).toEqual(data);
     });
@@ -368,7 +368,7 @@ describe('verifyRemoteDwnResponse', () => {
           status : { code: 410, detail: 'Record data not available' },
         };
 
-        await verifyResponse(read.message, reply);
+        await expect(verifyResponse(read.message, reply)).resolves.toBeUndefined();
       }
     });
 
@@ -388,7 +388,7 @@ describe('verifyRemoteDwnResponse', () => {
         status: { code: 404, detail: 'Not Found' },
       };
 
-      await verifyResponse(read.message, reply);
+      await expect(verifyResponse(read.message, reply)).resolves.toBeUndefined();
     });
 
     it('rejects a tombstone when the read filter depends on the missing last write', async () => {
