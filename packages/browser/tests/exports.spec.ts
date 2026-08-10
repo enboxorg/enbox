@@ -110,6 +110,12 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.BrowserConnectHandler).toBe('function');
   });
 
+  it('exports browser object URL resources', async () => {
+    const mod = await getBrowserExports();
+    expect(typeof mod.createBlobUrlPool).toBe('function');
+    expect(typeof mod.createFileEnvelopeUrlStore).toBe('function');
+  });
+
   it('exports the ordered default wallet catalog', async () => {
     const mod = await getBrowserExports();
     const wallets = mod.DEFAULT_WALLETS as Array<{ name: string; url: string; description?: string }>;
