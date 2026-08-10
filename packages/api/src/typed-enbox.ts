@@ -3029,7 +3029,13 @@ export class TypedEnbox<
       return;
     }
 
-    this._ensureReadyPromise ??= this._autoConfigureOnce();
+    // Clear a rejected attempt so a later operation can retry after
+    // connectivity or authority recovers; concurrent callers still share
+    // the one in-flight attempt.
+    this._ensureReadyPromise ??= this._autoConfigureOnce().catch((cause: unknown): never => {
+      this._ensureReadyPromise = null;
+      throw cause;
+    });
 
     await this._ensureReadyPromise;
     this._assertValidPath(path);
@@ -3116,10 +3122,8 @@ export class TypedEnbox<
     const result = await this._dwn.protocols.configure({
       definition: this._definition,
     });
-
-    if (result.status.code === 202) {
-      this._configured = true;
-    }
+    requireDwnSuccess('TypedEnbox automatic protocol configure', result);
+    this._configured = true;
   }
 
   /**
