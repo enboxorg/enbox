@@ -36,6 +36,57 @@ function endpointsEqual(left: string[], right: string[]): boolean {
     && left.every((endpoint, index) => endpoint === right[index]);
 }
 
+async function migrateVaultDwnEndpoints(
+  ctx: FlowContext,
+  password: string,
+  recoveryPhrase: string | undefined,
+  advertisedEndpoints: string[] | undefined,
+  replacementEndpoints: string[] | undefined,
+): Promise<void> {
+  if (replacementEndpoints === undefined
+    || advertisedEndpoints === undefined
+    || recoveryPhrase === undefined
+    || endpointsEqual(advertisedEndpoints, replacementEndpoints)) {
+    return;
+  }
+
+  const { userAgent, storage } = ctx;
+  await runFlowMutation(ctx, async (): Promise<void> => {
+    await userAgent.vault.resetPasswordWithRecoveryPhrase({
+      recoveryPhrase,
+      password,
+      dwnEndpoints: replacementEndpoints,
+    });
+    userAgent.agentDid = await userAgent.vault.getDid();
+    await publishServiceConfigNotice({
+      agent            : userAgent,
+      currentEndpoints : replacementEndpoints,
+      formerEndpoints  : advertisedEndpoints,
+      ownerDid         : userAgent.agentDid.uri,
+    }).catch((error: unknown): void => {
+      console.error(`[@enbox/auth] Failed to announce vault DWN endpoint change: ${String(error)}`);
+    });
+  });
+
+  if (ctx.registration) {
+    await registerWithDwnEndpoints(
+      {
+        userAgent,
+        dwnEndpoints : replacementEndpoints,
+        agentDid     : userAgent.agentDid.uri,
+        connectedDid : userAgent.agentDid.uri,
+        secretStore  : userAgent.secrets,
+        storage,
+        assertActive : ctx.assertActive,
+        runMutation  : ctx.runMutation,
+      },
+      ctx.registration,
+    );
+    assertFlowActive(ctx);
+  }
+  await runFlowMutation(ctx, () => registerAgentDidForSync(userAgent));
+}
+
 /**
  * Execute the vault connect flow.
  *
@@ -148,45 +199,13 @@ export async function vaultConnect(
   // Migrate the vault DID only after identity recovery has read the
   // authoritative endpoints. A missing DID/service was already bootstrapped
   // during initialization when explicit endpoints were supplied.
-  if (replacementDwnEndpoints !== undefined
-    && advertisedVaultEndpoints !== undefined
-    && suppliedRecoveryPhrase !== undefined
-    && !endpointsEqual(advertisedVaultEndpoints, replacementDwnEndpoints)) {
-    await runFlowMutation(ctx, async (): Promise<void> => {
-      await userAgent.vault.resetPasswordWithRecoveryPhrase({
-        recoveryPhrase : suppliedRecoveryPhrase,
-        password,
-        dwnEndpoints   : replacementDwnEndpoints,
-      });
-      userAgent.agentDid = await userAgent.vault.getDid();
-      await publishServiceConfigNotice({
-        agent            : userAgent,
-        currentEndpoints : replacementDwnEndpoints,
-        formerEndpoints  : advertisedVaultEndpoints,
-        ownerDid         : userAgent.agentDid.uri,
-      }).catch((error: unknown): void => {
-        console.error(`[@enbox/auth] Failed to announce vault DWN endpoint change: ${String(error)}`);
-      });
-    });
-
-    if (ctx.registration) {
-      await registerWithDwnEndpoints(
-        {
-          userAgent,
-          dwnEndpoints : replacementDwnEndpoints,
-          agentDid     : userAgent.agentDid.uri,
-          connectedDid : userAgent.agentDid.uri,
-          secretStore  : userAgent.secrets,
-          storage,
-          assertActive : ctx.assertActive,
-          runMutation  : ctx.runMutation,
-        },
-        ctx.registration,
-      );
-      assertFlowActive(ctx);
-    }
-    await runFlowMutation(ctx, () => registerAgentDidForSync(userAgent));
-  }
+  await migrateVaultDwnEndpoints(
+    ctx,
+    password,
+    suppliedRecoveryPhrase,
+    advertisedVaultEndpoints,
+    replacementDwnEndpoints,
+  );
 
   // Create a default identity if none were found or recovered and the caller asked for one.
   if (!identity && shouldCreateIdentity) {

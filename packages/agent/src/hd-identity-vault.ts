@@ -78,6 +78,13 @@ type HdIdentityVaultDerivedMaterial = {
   portableDid: PortableDid;
 };
 
+type HdIdentityVaultReconcileRecoveredDidParams = {
+  portableDid: PortableDid;
+  replacementEndpoints?: string[];
+  deferReplacement?: boolean;
+  useStoredOnNotFound?: boolean;
+};
+
 export class HdIdentityVaultRecoveryPhraseMismatchError extends Error {
   public readonly code = 'HD_IDENTITY_VAULT_RECOVERY_PHRASE_MISMATCH';
 
@@ -933,34 +940,18 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     replacementEndpoints,
     deferReplacement = false,
     useStoredOnNotFound = false,
-  }: {
-    portableDid: PortableDid;
-    replacementEndpoints?: string[];
-    deferReplacement?: boolean;
-    useStoredOnNotFound?: boolean;
-  }): Promise<PortableDid> {
+  }: HdIdentityVaultReconcileRecoveredDidParams): Promise<PortableDid> {
     const resolution = this._didResolver.refreshResolution === undefined
       ? await this._didResolver.resolve(portableDid.uri, {})
       : await this._didResolver.refreshResolution(portableDid.uri);
 
     if (resolution.didResolutionMetadata.error === DidErrorCode.NotFound) {
-      if (useStoredOnNotFound && (replacementEndpoints === undefined || deferReplacement)) {
-        const storedEndpoints = getDwnEndpointStatus(portableDid.uri, portableDid.document);
-        if (storedEndpoints.status === 'ready') {
-          return this.publishPortableDid(portableDid);
-        }
-        if (replacementEndpoints === undefined) {
-          throw new Error(storedEndpoints.message);
-        }
-      }
-      if (replacementEndpoints !== undefined) {
-        const document = replaceDwnServiceEndpointUrls(portableDid.document, replacementEndpoints);
-        return this.publishPortableDid(portableDid, document, document);
-      }
-      throw new Error(
-        `HdIdentityVault: Recovered DID '${portableDid.uri}' was not found. ` +
-        'Provide DWN endpoints explicitly to bootstrap recovery.'
-      );
+      return this.reconcileNotFoundDid({
+        portableDid,
+        replacementEndpoints,
+        deferReplacement,
+        useStoredOnNotFound,
+      });
     }
     if (resolution.didResolutionMetadata.error !== undefined || resolution.didDocument === null) {
       throw new Error(
@@ -992,6 +983,31 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     const publicDocument = replaceDwnServiceEndpointUrls(resolvedDocument, replacementEndpoints);
     const updatedLocalDocument = replaceDwnServiceEndpointUrls(localDocument, replacementEndpoints);
     return this.publishPortableDid(portableDid, publicDocument, updatedLocalDocument);
+  }
+
+  private async reconcileNotFoundDid({
+    portableDid,
+    replacementEndpoints,
+    deferReplacement = false,
+    useStoredOnNotFound = false,
+  }: HdIdentityVaultReconcileRecoveredDidParams): Promise<PortableDid> {
+    if (useStoredOnNotFound && (replacementEndpoints === undefined || deferReplacement)) {
+      const storedEndpoints = getDwnEndpointStatus(portableDid.uri, portableDid.document);
+      if (storedEndpoints.status === 'ready') {
+        return this.publishPortableDid(portableDid);
+      }
+      if (replacementEndpoints === undefined) {
+        throw new Error(storedEndpoints.message);
+      }
+    }
+    if (replacementEndpoints !== undefined) {
+      const document = replaceDwnServiceEndpointUrls(portableDid.document, replacementEndpoints);
+      return this.publishPortableDid(portableDid, document, document);
+    }
+    throw new Error(
+      `HdIdentityVault: Recovered DID '${portableDid.uri}' was not found. ` +
+      'Provide DWN endpoints explicitly to bootstrap recovery.'
+    );
   }
 
   /** Publish using locally controlled keys while allowing the public document to remain authoritative. */
