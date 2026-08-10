@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 
-import { BackendTypes, getDialectFromUrl } from '../src/storage.js';
+import { BackendTypes, createCloseOncePool, getDialectFromUrl } from '../src/storage.js';
+
+type FakePool = Parameters<typeof createCloseOncePool>[0];
 
 describe('storage', () => {
   describe('getDialectFromUrl()', () => {
@@ -30,6 +32,43 @@ describe('storage', () => {
       expect(BackendTypes.SQLITE).toBe('sqlite');
       expect(BackendTypes.MYSQL).toBe('mysql');
       expect(BackendTypes.POSTGRES).toBe('postgres');
+    });
+  });
+
+  describe('createCloseOncePool()', () => {
+    it('should end the underlying pool exactly once and share the completion', async () => {
+      let endCalls = 0;
+      const fakePool = {
+        connect : async (): Promise<string> => 'client',
+        end     : async (): Promise<void> => {
+          endCalls += 1;
+        },
+      } as unknown as FakePool;
+
+      const pool = createCloseOncePool(fakePool);
+      await Promise.all([pool.end(), pool.end()]);
+      await pool.end();
+
+      expect(endCalls).toBe(1);
+      // Non-end members still delegate to the underlying pool.
+      expect(await (pool as unknown as { connect(): Promise<string> }).connect()).toBe('client');
+    });
+
+    it('should invoke onFirstEnd exactly once before ending', async () => {
+      const order: string[] = [];
+      const fakePool = {
+        end: async (): Promise<void> => {
+          order.push('end');
+        },
+      } as unknown as FakePool;
+
+      const pool = createCloseOncePool(fakePool, (): void => {
+        order.push('evict');
+      });
+      await pool.end();
+      await pool.end();
+
+      expect(order).toEqual(['evict', 'end']);
     });
   });
 });

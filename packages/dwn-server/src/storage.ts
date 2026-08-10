@@ -148,13 +148,47 @@ function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialec
     idleTimeoutMillis : config.pgPoolIdleTimeout,
   });
 
+  // Multiple stores share this dialect and each destroys its own Kysely
+  // instance during shutdown; guard the pool so graceful shutdown stays
+  // idempotent, and evict the cache entry so a later server start builds a
+  // fresh pool instead of reusing the ended one.
+  const closeOncePool = createCloseOncePool(pool, (): void => {
+    postgresDialectCache.delete(key);
+  });
+
   const dialect = new PostgresDialect({
-    pool   : async (): Promise<PgPool> => pool,
+    pool   : async (): Promise<PgPool> => closeOncePool,
     cursor : Cursor,
   });
 
   postgresDialectCache.set(key, dialect);
   return dialect;
+}
+
+/**
+ * Wrap a shared `pg.Pool` so shutdown stays idempotent: Kysely destroys each
+ * store's dialect during `close()` and `PostgresDialect` then ends its pool,
+ * but `pg` rejects a second `end()` with `Called end on pool more than once`.
+ * Every `end()` after the first awaits the same completion, and `onFirstEnd`
+ * runs exactly once before the underlying pool ends.
+ */
+export function createCloseOncePool(pool: PgPool, onFirstEnd?: () => void): PgPool {
+  let ended: Promise<void> | undefined;
+  return new Proxy(pool, {
+    get(target: PgPool, property: string | symbol): unknown {
+      if (property === 'end') {
+        return (): Promise<void> => {
+          if (ended === undefined) {
+            onFirstEnd?.();
+            ended = target.end();
+          }
+          return ended;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
 }
 
 export async function getDwnConfig(
