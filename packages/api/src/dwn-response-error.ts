@@ -47,7 +47,10 @@ export function requireDwnSuccess(operation: string, response: DwnResponseStatus
     if (code === 409 && errorCode === DwnErrorCode.ProtocolAuthorizationSquashBackstop) {
       throw new RecordSquashBackstopError(operation, response.status);
     }
-    if (code === 400 && errorCode === DwnErrorCode.ProtocolAuthorizationParentRecordNotFound) {
+    if (code === 400 && (
+      errorCode === DwnErrorCode.ProtocolAuthorizationParentRecordNotFound ||
+      errorCode === DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain
+    )) {
       throw new RecordParentNotFoundError(operation, response.status);
     }
     throw new DwnResponseError(operation, response.status);

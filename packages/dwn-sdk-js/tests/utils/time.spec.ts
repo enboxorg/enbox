@@ -100,4 +100,46 @@ describe('time', () => {
       expect(Time.createOffsetTimestamp({ seconds: 1 }, baseTimestamp)).toBe('2022-04-30T00:00:00.123456Z');
     });
   });
+
+  describe('createTimestampAfter', () => {
+    it('should return wall-clock now when it is later than the floor', () => {
+      expect(Time.createTimestampAfter('2025-12-31T23:59:59.999999Z', Date.UTC(2026, 0, 2, 3, 4, 5, 678)))
+        .toBe('2026-01-02T03:04:05.678000Z');
+    });
+
+    it('should advance the floor by one microsecond with canonical carries', () => {
+      const nowMillis = Date.UTC(2025, 0, 1);
+      const cases = [
+        ['2026-04-29T10:30:00.123456Z', '2026-04-29T10:30:00.123457Z'],
+        ['2026-04-29T10:30:00.123999Z', '2026-04-29T10:30:00.124000Z'],
+        ['2026-12-31T23:59:59.999999Z', '2027-01-01T00:00:00.000000Z'],
+        ['2026-12-31T23:59:60.123999Z', '2026-12-31T23:59:60.124000Z'],
+        ['2026-12-31T23:59:60.999999Z', '2027-01-01T00:00:00.000000Z'],
+      ] as const;
+
+      for (const [floor, expected] of cases) {
+        expect(Time.createTimestampAfter(floor, nowMillis)).toBe(expected);
+      }
+    });
+
+    it('should compare accepted leap seconds with wall-clock now chronologically', () => {
+      const floor = '2026-12-31T23:59:60.123456Z';
+
+      expect(Time.createTimestampAfter(floor, Date.UTC(2026, 11, 31, 23, 59, 59, 999)))
+        .toBe('2026-12-31T23:59:60.123457Z');
+      expect(Time.createTimestampAfter(floor, Date.UTC(2027, 0, 1, 0, 0, 0, 1)))
+        .toBe('2027-01-01T00:00:00.001000Z');
+    });
+
+    it('should reject invalid floors and wall-clock values', () => {
+      expect(() => Time.createTimestampAfter('2026-04-29T10:30:00.123Z'))
+        .toThrow(DwnErrorCode.TimestampInvalid);
+      expect(() => Time.createTimestampAfter('2026-04-29T10:30:00.123456Z', 0.5))
+        .toThrow('finite safe integer');
+      expect(() => Time.createTimestampAfter('2026-04-29T10:30:00.123456Z', Number.MAX_SAFE_INTEGER))
+        .toThrow('outside the supported Date range');
+      expect(() => Time.createTimestampAfter('9999-12-31T23:59:59.999999Z', Date.UTC(2025, 0, 1)))
+        .toThrow('timestamp year must be between 0000 and 9999');
+    });
+  });
 });
