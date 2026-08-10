@@ -205,14 +205,14 @@ describe('delegated connection lifecycle', () => {
       const syncStart = sinon.spy(async (): Promise<void> => {});
       const syncUnregister = sinon.spy(async (): Promise<void> => {});
       const agent = createMockAgent({
-        identityList           : async () => [identity],
+        identityList       : async () => [identity],
         identityImport,
         identityDelete,
-        didExport              : async () => exportedDelegate,
+        didExport          : async () => exportedDelegate,
         didDelete,
         permissionsClear,
-        syncStartSync          : syncStart,
-        syncUnregisterIdentity : syncUnregister,
+        syncStartSync      : syncStart,
+        syncRemoveIdentity : syncUnregister,
       });
       const requestAccess = sinon.spy(async (): Promise<any> => createRefreshResult());
       const manager = createTestManager(agent, { connectHandler: { requestAccess } });
@@ -288,10 +288,10 @@ describe('delegated connection lifecycle', () => {
       const identityDelete = sinon.spy(async (): Promise<void> => {});
       const didDelete = sinon.spy(async (): Promise<void> => {});
       const agent = createMockAgent({
-        identityList           : async () => [identity],
+        identityList       : async () => [identity],
         identityDelete,
         didDelete,
-        syncUnregisterIdentity : async (): Promise<void> => {
+        syncRemoveIdentity : async (): Promise<void> => {
           throw new Error('sync store unavailable');
         },
       });
@@ -521,7 +521,7 @@ describe('delegated connection lifecycle', () => {
         }));
         const permissionsClear = sinon.spy(async (): Promise<void> => {});
         const clearDelegateDecryptionKeys = sinon.spy((): void => {});
-        const syncRegisterIdentity = sinon.spy(async (): Promise<void> => {});
+        const syncSetIdentityOptions = sinon.spy(async (): Promise<void> => {});
         const syncStart = sinon.spy(async (): Promise<void> => {});
         const storage = new MemoryStorage();
         const storageSet = sinon.spy(storage, 'set');
@@ -531,7 +531,7 @@ describe('delegated connection lifecycle', () => {
           dwnProcessRawMessage           : processRawMessage,
           permissionsClear,
           dwnClearDelegateDecryptionKeys : clearDelegateDecryptionKeys,
-          syncRegisterIdentity,
+          syncSetIdentityOptions,
           syncStartSync                  : syncStart,
         });
         const manager = createTestManager(agent, { delegatedSession: false, storage });
@@ -564,7 +564,7 @@ describe('delegated connection lifecycle', () => {
           identityImport  : identityImport.callCount,
           permissionClear : permissionsClear.callCount,
           storageSet      : storageSet.callCount,
-          syncRegister    : syncRegisterIdentity.callCount,
+          syncRegister    : syncSetIdentityOptions.callCount,
           syncStart       : syncStart.callCount,
         };
         handlerResult.resolve(createRefreshResult());
@@ -579,7 +579,7 @@ describe('delegated connection lifecycle', () => {
         expect(identityImport.callCount).toBe(callsAfterTeardown.identityImport);
         expect(permissionsClear.callCount).toBe(callsAfterTeardown.permissionClear);
         expect(storageSet.callCount).toBe(callsAfterTeardown.storageSet);
-        expect(syncRegisterIdentity.callCount).toBe(callsAfterTeardown.syncRegister);
+        expect(syncSetIdentityOptions.callCount).toBe(callsAfterTeardown.syncRegister);
         expect(syncStart.callCount).toBe(callsAfterTeardown.syncStart);
       });
     }
@@ -601,7 +601,7 @@ describe('delegated connection lifecycle', () => {
       const processRawMessage = sinon.spy(async (): Promise<any> => ({
         status: { code: 202, detail: 'Accepted' },
       }));
-      const syncRegisterIdentity = sinon.spy(async (): Promise<void> => {});
+      const syncSetIdentityOptions = sinon.spy(async (): Promise<void> => {});
       const syncStart = sinon.spy(async (): Promise<void> => {});
       const storage = new MemoryStorage();
       const storageSet = sinon.spy(storage, 'set');
@@ -609,7 +609,7 @@ describe('delegated connection lifecycle', () => {
         identityImport,
         processDwnRequest,
         dwnProcessRawMessage : processRawMessage,
-        syncRegisterIdentity,
+        syncSetIdentityOptions,
         syncStartSync        : syncStart,
       });
       const manager = createTestManager(agent, { delegatedSession: false, storage });
@@ -638,7 +638,7 @@ describe('delegated connection lifecycle', () => {
       expect(identityImport.called).toBe(false);
       expect(processDwnRequest.called).toBe(false);
       expect(processRawMessage.called).toBe(false);
-      expect(syncRegisterIdentity.called).toBe(false);
+      expect(syncSetIdentityOptions.called).toBe(false);
       expect(syncStart.called).toBe(false);
       expect(storageSet.called).toBe(false);
       expect(sessionStarts).toBe(0);

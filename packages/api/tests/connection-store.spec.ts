@@ -120,7 +120,7 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
       listeners.add(listener);
       return (): void => { listeners.delete(listener); };
     },
-    updateIdentityOptions: async ({ did, options }): Promise<void> => {
+    setIdentityOptions: async ({ did, options }): Promise<void> => {
       state.optionUpdates.push({ did, options });
       state.options = options;
     },
@@ -581,9 +581,9 @@ describe('createConnectionStore()', () => {
 
     it('should retry unchanged routing after an update failure', async () => {
       const engine = createSyncStatusEngine();
-      const updateIdentityOptions = sinon.stub(engine.sync, 'updateIdentityOptions');
-      updateIdentityOptions.onFirstCall().rejects(new Error('routing unavailable'));
-      updateIdentityOptions.onSecondCall().callsFake(async ({ did, options }): Promise<void> => {
+      const setIdentityOptions = sinon.stub(engine.sync, 'setIdentityOptions');
+      setIdentityOptions.onFirstCall().rejects(new Error('routing unavailable'));
+      setIdentityOptions.onSecondCall().callsFake(async ({ did, options }): Promise<void> => {
         engine.optionUpdates.push({ did, options });
         engine.options = options;
       });
@@ -591,14 +591,14 @@ describe('createConnectionStore()', () => {
 
       const { store } = await connectWithSync(engine);
       const initial = store.getSnapshot();
-      expect(updateIdentityOptions.callCount).toBe(1);
+      expect(setIdentityOptions.callCount).toBe(1);
 
       const retried = await store.refreshDwnEndpoints();
       expect(retried).toBe(initial);
-      expect(updateIdentityOptions.callCount).toBe(2);
+      expect(setIdentityOptions.callCount).toBe(2);
 
       await store.refreshDwnEndpoints();
-      expect(updateIdentityOptions.callCount).toBe(2);
+      expect(setIdentityOptions.callCount).toBe(2);
     });
 
     it('should expose missing and failed resolution states without dropping routing on transient failure', async () => {

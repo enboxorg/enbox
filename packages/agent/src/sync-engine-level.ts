@@ -858,13 +858,13 @@ export class SyncEngineLevel implements SyncEngine {
     this._runtime = replacement;
   }
 
-  public registerIdentity(
+  public setIdentityOptions(
     params: { did: string; options: SyncIdentityOptions },
     lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<void> {
     return this.runExclusiveIdentityMutation(
       params.did,
-      (deadline): Promise<void> => this.doRegisterIdentity(params, deadline),
+      (deadline): Promise<void> => this.doSetIdentityOptions(params, deadline),
       lifecycleOptions,
     );
   }
@@ -885,33 +885,68 @@ export class SyncEngineLevel implements SyncEngine {
     }, deadline);
   }
 
-  private async doRegisterIdentity(
+  private async doSetIdentityOptions(
     { did, options }: { did: string; options: SyncIdentityOptions },
     deadline?: SyncLifecycleDeadline,
   ): Promise<void> {
     this._scopeClosureValidator.validateOptions(options);
 
-    const existing = await this.waitForLifecycleBarrier(
+    const existingOptions = await this.waitForLifecycleBarrier(
       this.getIdentityOptions(did),
       deadline,
-      'Identity registration preparation did not complete',
+      'Identity options preparation did not complete',
     );
-    if (existing) {
-      throw new Error(`SyncEngineLevel: Identity with DID ${did} is already registered.`);
-    }
 
     await this.waitForLifecycleBarrier(
       this._scopeClosureValidator.validateClosure(did, options),
       deadline,
-      'Identity registration preparation did not complete',
+      'Identity options preparation did not complete',
     );
+
+    // A pending rate-limit init retry captured the PREVIOUS options' target
+    // (old scope, old authorization epoch). Remember that it represented an
+    // active live-sync attempt before cancelling it: the replacement options
+    // still need their own live links even though the rate-limited link has no
+    // controller yet. The runtime's ownership-token check neutralizes a timer
+    // firing that was queued but had not started before this cancellation.
+    const hadPendingLinkInitRetry = existingOptions !== undefined && this.hasLinkInitRetriesForDid(did);
+    if (existingOptions !== undefined) {
+      this.cancelLinkInitRetriesForDid(did);
+    }
+
+    // A retry that fired earlier may already be RUNNING as an identity task.
+    // It is invisible to timer cancellation. Treat armed, running, and active
+    // states alike as a prior live runtime that must be stopped. The normal
+    // identity stop pauses task intake before settling, then cancels
+    // any retry re-armed by work that was already in flight.
+    const hadPriorLiveRuntime = existingOptions !== undefined && (hadPendingLinkInitRetry ||
+      this._lifecycle.hasIdentityTasks(did) ||
+      this.hasActiveLinksForDid(did));
+    const rebuildLiveLinks = this._runtime.live && hadPriorLiveRuntime;
+    if (hadPriorLiveRuntime) {
+      await this.removeIdentityFromLiveSync(did, deadline);
+    }
+
+    // Scope/delegate changes define different replication links. A block from
+    // the previous authorization must not suppress the replacement link's
+    // first delivery attempt. Clear only after old link work has drained so it
+    // cannot recreate stale state after the quota state is cleared.
+    if (existingOptions !== undefined) {
+      await this._quotaManager.clearTenant(did);
+    }
+
+    // Persist the new identity options only after every timeout-bounded
+    // preparation barrier has completed. From this commit point onward the
+    // mutation runs to completion and is never abandoned halfway through.
     await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
     await this.refreshRoleLinksForActor(did, options.delegateDid);
     this.emitEvent({ type: 'identity:registration-change', tenantDid: did, options: structuredClone(options) });
 
-    // If live sync is active, hot-add subscriptions for this identity.
-    if (this._runtime.live) {
+    // New identities are hot-added while replacements rebuild only prior live
+    // links. Delegate/scope changes derive a new authorization epoch, so
+    // durable links are not mutated in place.
+    if ((existingOptions === undefined && this._runtime.live) || rebuildLiveLinks) {
       const currentIdentityKeys = await this.addIdentityToLiveSync(did, options);
       if (currentIdentityKeys.size > 0) {
         await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
@@ -921,22 +956,22 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  public unregisterIdentity(did: string, lifecycleOptions: SyncLifecycleOptions = {}): Promise<void> {
+  public removeIdentity(did: string, lifecycleOptions: SyncLifecycleOptions = {}): Promise<void> {
     return this.runExclusiveIdentityMutation(
       did,
-      (deadline): Promise<void> => this.doUnregisterIdentity(did, deadline),
+      (deadline): Promise<void> => this.doRemoveIdentity(did, deadline),
       lifecycleOptions,
     );
   }
 
-  private async doUnregisterIdentity(did: string, deadline?: SyncLifecycleDeadline): Promise<void> {
+  private async doRemoveIdentity(did: string, deadline?: SyncLifecycleDeadline): Promise<void> {
     const existing = await this.waitForLifecycleBarrier(
       this.getIdentityOptions(did),
       deadline,
-      'Identity unregistration preparation did not complete',
+      'Identity removal preparation did not complete',
     );
-    if (!existing) {
-      throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
+    if (existing === undefined) {
+      return;
     }
 
     // A timed-out stop may leave already-running identity work after the live
@@ -960,10 +995,10 @@ export class SyncEngineLevel implements SyncEngine {
     // Tenant-scoped deletion runs first; the identity marker is deleted LAST
     // as the durable commit point. A failure at any earlier step — including
     // durable-link pruning — leaves the registration intact so the caller can
-    // simply retry the unregister. Pruning must precede the marker deletion:
-    // a paused link surviving an unregister shares its durable identity key
-    // with a same-scope re-registration, so supersession pruning would retain
-    // it and silently disable live replication.
+    // simply retry the removal. Pruning must precede the marker deletion: a
+    // paused link surviving removal shares its durable identity key with a
+    // same-scope re-registration, so supersession pruning would retain it and
+    // silently disable live replication.
     await this._quotaManager.clearTenant(did);
     await this.pruneSupersededDurableLinksForIdentity(did, new Set());
     await this.runDeferredPullLifecycle(did, async (): Promise<void> => {
@@ -980,86 +1015,6 @@ export class SyncEngineLevel implements SyncEngine {
     } catch (error: unknown) {
       const code = (error as { code?: string }).code;
       throw new Error(`SyncEngineLevel: Error reading level: ${code}.`);
-    }
-  }
-
-  public updateIdentityOptions(
-    params: { did: string, options: SyncIdentityOptions },
-    lifecycleOptions: SyncLifecycleOptions = {},
-  ): Promise<void> {
-    return this.runExclusiveIdentityMutation(
-      params.did,
-      (deadline): Promise<void> => this.doUpdateIdentityOptions(params, deadline),
-      lifecycleOptions,
-    );
-  }
-
-  private async doUpdateIdentityOptions(
-    { did, options }: { did: string, options: SyncIdentityOptions },
-    deadline?: SyncLifecycleDeadline,
-  ): Promise<void> {
-    this._scopeClosureValidator.validateOptions(options);
-
-    const existingOptions = await this.waitForLifecycleBarrier(
-      this.getIdentityOptions(did),
-      deadline,
-      'Identity update preparation did not complete',
-    );
-    if (!existingOptions) {
-      throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
-    }
-
-    await this.waitForLifecycleBarrier(
-      this._scopeClosureValidator.validateClosure(did, options),
-      deadline,
-      'Identity update preparation did not complete',
-    );
-
-    // A pending rate-limit init retry captured the PREVIOUS options' target
-    // (old scope, old authorization epoch). Remember that it represented an
-    // active live-sync attempt before cancelling it: the replacement options
-    // still need their own live links even though the rate-limited link has no
-    // controller yet. The runtime's ownership-token check neutralizes a timer
-    // firing that was queued but had not started before this cancellation.
-    const hadPendingLinkInitRetry = this.hasLinkInitRetriesForDid(did);
-    this.cancelLinkInitRetriesForDid(did);
-
-    // A retry that fired earlier may already be RUNNING as an identity task.
-    // It is invisible to timer cancellation. Treat armed, running, and active
-    // states alike as a prior live runtime that must be stopped. The normal
-    // identity stop pauses task intake before settling, then cancels
-    // any retry re-armed by work that was already in flight.
-    const hadPriorLiveRuntime = hadPendingLinkInitRetry ||
-      this._lifecycle.hasIdentityTasks(did) ||
-      this.hasActiveLinksForDid(did);
-    const rebuildLiveLinks = this._runtime.live && hadPriorLiveRuntime;
-    if (hadPriorLiveRuntime) {
-      await this.removeIdentityFromLiveSync(did, deadline);
-    }
-
-    // Scope/delegate changes define different replication links. A block from
-    // the previous authorization must not suppress the replacement link's
-    // first delivery attempt. Clear only after old link work has drained so it
-    // cannot recreate stale state after the quota state is cleared.
-    await this._quotaManager.clearTenant(did);
-
-    // Persist the new identity options only after every timeout-bounded
-    // preparation barrier has completed. From this commit point onward the
-    // update runs to completion and is never abandoned halfway through.
-    await this._identityStore.set(did, options);
-    this.invalidateSyncTargetsCache();
-    await this.refreshRoleLinksForActor(did, options.delegateDid);
-    this.emitEvent({ type: 'identity:registration-change', tenantDid: did, options: structuredClone(options) });
-
-    // Rebuild live subscriptions with the new options. Delegate/scope changes
-    // derive a new authorization epoch, so durable links are not mutated in place.
-    if (rebuildLiveLinks) {
-      const currentIdentityKeys = await this.addIdentityToLiveSync(did, options);
-      if (currentIdentityKeys.size > 0) {
-        await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
-      }
-    } else {
-      await this.tryPruneSupersededDurableLinksForRegisteredIdentity(did, options);
     }
   }
 
@@ -2990,7 +2945,7 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * DESTRUCTIVE: delete every durable link for `did` whose identity key is
    * NOT in `currentIdentityKeys`. An empty keep-set therefore deletes them
-   * all — which is exactly what `doUnregisterIdentity` wants (it passes
+   * all — which is exactly what `doRemoveIdentity` wants (it passes
    * `new Set()`), and exactly what a failed hot-add must avoid. See
    * {@link addIdentityToLiveSync} for the empty-set contract.
    */

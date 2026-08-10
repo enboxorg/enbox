@@ -1725,39 +1725,6 @@ export class AuthManager {
   }
 
   /**
-   * Register an identity for sync, or update an existing registration.
-   *
-   * If the identity is already registered (e.g. from a prior session),
-   * `updateIdentityOptions` is used instead of throwing.
-   */
-  private async _registerOrUpdateSyncIdentity(
-    connectedDid: string,
-    delegateDid: string | undefined,
-    protocols: 'all' | [string, ...string[]],
-  ): Promise<void> {
-    const options = { delegateDid, protocols };
-    try {
-      await this._userAgent.sync.registerIdentity({ did: connectedDid, options });
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : '';
-      if (msg.includes('already registered')) {
-        await this._userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  private async _unregisterSyncIdentityIfRegistered(connectedDid: string): Promise<void> {
-    try {
-      await this._userAgent.sync.unregisterIdentity(connectedDid);
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : '';
-      if (!msg.includes('is not registered')) { throw error; }
-    }
-  }
-
-  /**
    * Repair the sync registration for a connected DID based on derived protocols.
    * - `'all'` or non-empty list → register or update
    * - Empty list (zero grants) for a delegate → unregister stale registration
@@ -1770,7 +1737,10 @@ export class AuthManager {
   ): Promise<void> {
     if (delegateDid === undefined) {
       if (this._defaultIdentitySyncProtocols !== undefined) {
-        await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, this._defaultIdentitySyncProtocols);
+        await this._userAgent.sync.setIdentityOptions({
+          did     : connectedDid,
+          options : { protocols: this._defaultIdentitySyncProtocols },
+        });
       }
       return;
     }
@@ -1781,11 +1751,14 @@ export class AuthManager {
 
     const narrowed = toSyncIdentityProtocols(derivedProtocols);
     if (narrowed === undefined) {
-      await this._unregisterSyncIdentityIfRegistered(connectedDid);
+      await this._userAgent.sync.removeIdentity(connectedDid);
       return;
     }
 
-    await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, narrowed);
+    await this._userAgent.sync.setIdentityOptions({
+      did     : connectedDid,
+      options : { delegateDid, protocols: narrowed },
+    });
   }
 
   /** Serialize connection mutations against teardown without locking user waits. */

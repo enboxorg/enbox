@@ -329,7 +329,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
 
     const syncOptions = await this.agent.sync.getIdentityOptions(didUri);
     if (syncOptions !== undefined) {
-      await this.agent.sync.updateIdentityOptions({ did: didUri, options: syncOptions });
+      await this.agent.sync.setIdentityOptions({ did: didUri, options: syncOptions });
     }
   }
 

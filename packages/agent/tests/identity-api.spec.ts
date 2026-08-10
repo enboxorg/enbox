@@ -403,7 +403,7 @@ describe('AgentIdentityApi', () => {
           } as any);
           const syncOptions = { protocols: 'all' as const };
           syncOptionsStub.resolves(syncOptions);
-          const updateSyncSpy = sinon.stub(testHarness.agent.sync, 'updateIdentityOptions').resolves();
+          const updateSyncSpy = sinon.stub(testHarness.agent.sync, 'setIdentityOptions').resolves();
 
           // Announcement is best-effort and must not fail the authoritative DID update.
           processRequestStub.onSecondCall().resolves({
@@ -470,7 +470,7 @@ describe('AgentIdentityApi', () => {
           } as any);
           const syncOptions = { protocols: 'all' as const };
           syncOptionsStub.resolves(syncOptions);
-          const updateSyncStub = sinon.stub(testHarness.agent.sync, 'updateIdentityOptions');
+          const updateSyncStub = sinon.stub(testHarness.agent.sync, 'setIdentityOptions');
           updateSyncStub.onFirstCall().rejects(new Error('Unable to update sync routing'));
           updateSyncStub.onSecondCall().resolves();
 

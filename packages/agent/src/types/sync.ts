@@ -799,44 +799,35 @@ export interface SyncEngine {
   readonly hasActiveSubscriptions: boolean;
 
   /**
-   * Register an identity to be managed by the SyncEngine for syncing.
+   * Create or replace an identity's sync options.
    * Callers must explicitly specify which protocols to sync (`'all'` for a
    * full replica, or a list of protocol URIs) so that sync scope is always
    * a deliberate choice rather than an invisible default.
    *
-   * When live sync is active, the new identity is hot-added: its replication
-   * links are created and subscriptions opened immediately, without tearing
-   * down existing subscriptions for other identities. This enables
-   * multi-identity agents (e.g. ElectroBun desktop DWN, multi-persona dApps)
-   * to add identities at runtime without disrupting sync for others.
+   * When live sync is active, a new identity is hot-added without disrupting
+   * other identities. Replacing existing options rebuilds only that identity's
+   * links when needed.
    *
-   * `lifecycleOptions.timeout` bounds only pre-registration waits. A timed-out
-   * registration is cancelled before the durable identity marker is written.
+   * `lifecycleOptions.timeout` bounds only preparation waits. A timed-out
+   * mutation preserves the previous durable options and may be retried.
    */
-  registerIdentity(
+  setIdentityOptions(
     params: { did: string, options: SyncIdentityOptions },
     lifecycleOptions?: SyncLifecycleOptions,
   ): Promise<void>;
   /**
-   * Unregister an identity from the SyncEngine, this will stop syncing messages for this identity.
+   * Remove an identity from the SyncEngine, stopping sync for that identity.
    *
    * When live sync is active, the identity is hot-removed: its subscriptions
    * are closed and runtime state cleaned up without affecting other identities.
-   * A timed-out removal preserves the durable registration and may be retried.
+   * Removing an absent identity is a no-op. A timed-out removal preserves the
+   * durable registration and may be retried.
    */
-  unregisterIdentity(did: string, lifecycleOptions?: SyncLifecycleOptions): Promise<void>;
+  removeIdentity(did: string, lifecycleOptions?: SyncLifecycleOptions): Promise<void>;
   /**
    * Get the Sync Options for a specific identity.
    */
   getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined>;
-  /**
-   * Update the Sync Options for a specific identity, replaces the existing options.
-   * A timed-out update preserves the previous durable options and may be retried.
-   */
-  updateIdentityOptions(
-    params: { did: string, options: SyncIdentityOptions },
-    lifecycleOptions?: SyncLifecycleOptions,
-  ): Promise<void>;
   /** Resolve and follow one role-authorized foreign context. */
   followSource(source: FollowedSyncSourceInput): Promise<FollowedSyncSource>;
   /** Read one followed foreign context by accepted role-record ID. */

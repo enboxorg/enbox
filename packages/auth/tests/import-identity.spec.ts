@@ -65,9 +65,9 @@ describe('importFromPortable', () => {
     const syncStartCalls: any[] = [];
 
     const agent = createMockAgent({
-      identityImport       : async () => createMockIdentity(),
-      syncRegisterIdentity : async (params) => { syncRegCalls.push(params); },
-      syncStartSync        : async (params) => { syncStartCalls.push(params); },
+      identityImport         : async () => createMockIdentity(),
+      syncSetIdentityOptions : async (params) => { syncRegCalls.push(params); },
+      syncStartSync          : async (params) => { syncStartCalls.push(params); },
     });
 
     await importFromPortable(
@@ -94,9 +94,9 @@ describe('importFromPortable', () => {
     const syncStartCalls: any[] = [];
 
     const agent = createMockAgent({
-      identityImport         : async () => createMockIdentity(),
-      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
-      syncStartSync          : async (params) => { syncStartCalls.push(params); },
+      identityImport     : async () => createMockIdentity(),
+      syncRemoveIdentity : async (did) => { unregisterCalls.push(did); },
+      syncStartSync      : async (params) => { syncStartCalls.push(params); },
     });
 
     await importFromPortable(
@@ -114,8 +114,8 @@ describe('importFromPortable', () => {
     const syncCalls: any[] = [];
 
     const agent = createMockAgent({
-      identityImport       : async () => createMockIdentity(),
-      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+      identityImport         : async () => createMockIdentity(),
+      syncSetIdentityOptions : async (params) => { syncCalls.push(params); },
     });
 
     await importFromPortable(
@@ -144,9 +144,9 @@ describe('importFromPortable', () => {
     const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
     const agent = createMockAgent({
-      identityImport       : async () => delegateIdentity,
-      syncRegisterIdentity : async (params) => { syncRegCalls.push(params); },
-      processDwnRequest    : async (params: any) => {
+      identityImport         : async () => delegateIdentity,
+      syncSetIdentityOptions : async (params) => { syncRegCalls.push(params); },
+      processDwnRequest      : async (params: any) => {
         const filter = params?.messageParams?.filter;
         if (filter?.protocolPath === 'grant') {
           return { reply: { status  : { code: 200, detail: 'OK' }, entries : [{
@@ -257,9 +257,9 @@ describe('importFromPortable', () => {
     const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
     const agent = createMockAgent({
-      identityImport       : async () => delegateIdentity,
-      syncRegisterIdentity : async (params) => { syncRegCalls.push(params); },
-      processDwnRequest    : async (params: any) => {
+      identityImport         : async () => delegateIdentity,
+      syncSetIdentityOptions : async (params) => { syncRegCalls.push(params); },
+      processDwnRequest      : async (params: any) => {
         const filter = params?.messageParams?.filter;
         if (filter?.protocolPath === 'grant') {
           return { reply: { status  : { code: 200, detail: 'OK' }, entries : [{
@@ -284,7 +284,7 @@ describe('importFromPortable', () => {
     expect(syncRegCalls[0].options.delegateDid).toBe('did:jwk:delegate');
   });
 
-  test('unregisters identity for delegate with zero grants (clears stale registration)', async () => {
+  test('removes identity for a delegate with zero grants', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const unregisterCalls: string[] = [];
@@ -295,9 +295,9 @@ describe('importFromPortable', () => {
     });
 
     const agent = createMockAgent({
-      identityImport         : async () => delegateIdentity,
-      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
-      processDwnRequest      : async () => ({
+      identityImport     : async () => delegateIdentity,
+      syncRemoveIdentity : async (did) => { unregisterCalls.push(did); },
+      processDwnRequest  : async () => ({
         reply: { status: { code: 200, detail: 'OK' }, entries: [] },
       }),
     });
@@ -311,7 +311,7 @@ describe('importFromPortable', () => {
     expect(unregisterCalls[0]).toBe('did:dht:owner');
   });
 
-  test('tolerates "is not registered" error when unregistering zero-grant delegate', async () => {
+  test('rethrows I/O errors from removeIdentity on zero-grant delegate path', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
 
@@ -321,34 +321,9 @@ describe('importFromPortable', () => {
     });
 
     const agent = createMockAgent({
-      identityImport         : async () => delegateIdentity,
-      syncUnregisterIdentity : async () => { throw new Error('is not registered'); },
-      processDwnRequest      : async () => ({
-        reply: { status: { code: 200, detail: 'OK' }, entries: [] },
-      }),
-    });
-
-    const session = await importFromPortable(
-      { userAgent: agent, emitter, storage, defaultSync: '30s' },
-      { portableIdentity: {} as any },
-    );
-
-    expect(session).toBeDefined();
-  });
-
-  test('rethrows I/O errors from unregisterIdentity on zero-grant delegate path', async () => {
-    const emitter = new AuthEventEmitter();
-    const storage = new MemoryStorage();
-
-    const delegateIdentity = createMockIdentity({
-      did      : { uri: 'did:jwk:delegate' },
-      metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
-    });
-
-    const agent = createMockAgent({
-      identityImport         : async () => delegateIdentity,
-      syncUnregisterIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
-      processDwnRequest      : async () => ({
+      identityImport     : async () => delegateIdentity,
+      syncRemoveIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
+      processDwnRequest  : async () => ({
         reply: { status: { code: 200, detail: 'OK' }, entries: [] },
       }),
     });

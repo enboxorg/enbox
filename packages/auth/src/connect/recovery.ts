@@ -56,35 +56,16 @@ export const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
 ];
 
 /**
- * Register the agent DID for sync with the recovery-critical protocols.
+ * Set the agent DID's recovery-critical sync protocols.
  *
  * This is a prerequisite for both normal operation (pushing identity
  * metadata to the remote) and seed phrase recovery (pulling it back).
- * Repairs the registration if the agent DID was already registered with stale options.
  */
 export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promise<void> {
-  const options = { protocols: AGENT_DID_SYNC_PROTOCOLS };
-  try {
-    await userAgent.sync.registerIdentity({
-      did: userAgent.agentDid.uri,
-      options,
-    });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '';
-    if (message.includes('already registered')) {
-      await userAgent.sync.updateIdentityOptions({
-        did: userAgent.agentDid.uri,
-        options,
-      });
-      return;
-    }
-
-    throw error;
-  }
-}
-
-function isAlreadyRegisteredError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('already registered');
+  await userAgent.sync.setIdentityOptions({
+    did     : userAgent.agentDid.uri,
+    options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
+  });
 }
 
 async function registerRecoveredIdentityTenant(params: {
@@ -133,15 +114,7 @@ async function registerRecoveredIdentityForSync(params: {
     return false;
   }
 
-  const options = { protocols: identitySyncProtocols };
-  try {
-    await userAgent.sync.registerIdentity({ did, options });
-  } catch (error: unknown) {
-    if (!isAlreadyRegisteredError(error)) {
-      throw error;
-    }
-    await userAgent.sync.updateIdentityOptions({ did, options });
-  }
+  await userAgent.sync.setIdentityOptions({ did, options: { protocols: identitySyncProtocols } });
 
   return true;
 }

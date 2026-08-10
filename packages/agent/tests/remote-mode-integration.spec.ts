@@ -101,7 +101,7 @@ describe('Agent remote mode integration', () => {
 
     expect(grantedFeedCids).toContain(await Message.getCid(localWrite));
 
-    await testHarness.agent.sync.registerIdentity({
+    await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
       options : { protocols: [notesProtocol.protocol] },
     });
@@ -137,7 +137,7 @@ describe('Agent remote mode integration', () => {
     await configureProtocolOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesProtocol);
     const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'drained remote body');
 
-    await testHarness.agent.sync.registerIdentity({
+    await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
       options : { protocols: [notesProtocol.protocol] },
     });
@@ -183,7 +183,7 @@ describe('Agent remote mode integration', () => {
     const { alice, localServer, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync as any;
 
-    await testHarness.agent.sync.registerIdentity({
+    await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
       options : { protocols: [notesProtocol.protocol] },
     });
@@ -200,7 +200,7 @@ describe('Agent remote mode integration', () => {
     const { alice, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync as any;
 
-    await testHarness.agent.sync.registerIdentity({
+    await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
       options : { protocols: [notesProtocol.protocol] },
     });
@@ -233,7 +233,7 @@ describe('Agent remote mode integration', () => {
     const syncEngine = testHarness.agent.sync as any;
 
     await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
-    await testHarness.agent.sync.registerIdentity({
+    await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
       options : { protocols: [notesProtocol.protocol] },
     });

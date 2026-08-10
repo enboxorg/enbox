@@ -45,10 +45,10 @@ describe('AGENT_DID_SYNC_PROTOCOLS', () => {
 });
 
 describe('registerAgentDidForSync', () => {
-  test('registers agent DID with recovery protocols', async () => {
+  test('sets the agent DID recovery protocols', async () => {
     const syncCalls: any[] = [];
     const agent = createMockAgent({
-      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
+      syncSetIdentityOptions: async (params) => { syncCalls.push(params); },
     });
 
     await registerAgentDidForSync(agent);
@@ -58,23 +58,9 @@ describe('registerAgentDidForSync', () => {
     expect(syncCalls[0].options.protocols).toEqual(AGENT_DID_SYNC_PROTOCOLS);
   });
 
-  test('repairs stale options when already registered', async () => {
-    const updateCalls: any[] = [];
+  test('throws when setting sync options fails', async () => {
     const agent = createMockAgent({
-      syncRegisterIdentity      : async () => { throw new Error('already registered'); },
-      syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
-    });
-
-    await expect(registerAgentDidForSync(agent)).resolves.toBeUndefined();
-    expect(updateCalls).toEqual([{
-      did     : 'did:dht:testagent',
-      options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
-    }]);
-  });
-
-  test('throws when sync registration fails for another reason', async () => {
-    const agent = createMockAgent({
-      syncRegisterIdentity: async () => { throw new Error('storage unavailable'); },
+      syncSetIdentityOptions: async () => { throw new Error('storage unavailable'); },
     });
 
     await expect(registerAgentDidForSync(agent)).rejects.toThrow('storage unavailable');
@@ -86,7 +72,7 @@ describe('recoverIdentitiesFromRemote', () => {
     const identity = createMockIdentity();
     const syncCalls: any[] = [];
     const { agent, pulls } = recoveredAgent(identity, {
-      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
+      syncSetIdentityOptions: async (params) => { syncCalls.push(params); },
     });
 
     const result = await recover(agent, {
@@ -105,7 +91,7 @@ describe('recoverIdentitiesFromRemote', () => {
     const identity = createMockIdentity();
     const syncCalls: any[] = [];
     const { agent, pulls } = recoveredAgent(identity, {
-      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
+      syncSetIdentityOptions: async (params) => { syncCalls.push(params); },
     });
 
     const result = await recover(agent);
@@ -310,8 +296,8 @@ describe('recoverIdentitiesFromRemote', () => {
     const identity = createMockIdentity();
     const syncCalls: any[] = [];
     const { agent, pulls } = recoveredAgent(identity, {
-      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
-      rpcGetServerInfo     : async () => { throw new Error('network error'); },
+      syncSetIdentityOptions : async (params) => { syncCalls.push(params); },
+      rpcGetServerInfo       : async () => { throw new Error('network error'); },
     });
 
     const result = await recover(agent, {
@@ -333,7 +319,7 @@ describe('recoverIdentitiesFromRemote', () => {
     });
     const syncCalls: any[] = [];
     const { agent } = recoveredAgent(delegateIdentity, {
-      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
+      syncSetIdentityOptions: async (params) => { syncCalls.push(params); },
     });
 
     await recover(agent, {
@@ -343,30 +329,10 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(syncCalls[0].did).toBe('did:dht:external');
   });
 
-  test('updates the requested scope for an already-registered sync identity', async () => {
-    const identity = createMockIdentity();
-    const updates: any[] = [];
-    const { agent, pulls } = recoveredAgent(identity, {
-      syncRegisterIdentity      : async () => { throw new Error('already registered'); },
-      syncUpdateIdentityOptions : async params => { updates.push(params); },
-    });
-
-    const result = await recover(agent, {
-      identitySyncProtocols: ['https://proto.example/profile'],
-    });
-
-    expect(result).toHaveLength(1);
-    expect(pulls()).toBe(2);
-    expect(updates).toEqual([{
-      did     : identity.did.uri,
-      options : { protocols: ['https://proto.example/profile'] },
-    }]);
-  });
-
-  test('throws when recovered identity sync registration fails for another reason', async () => {
+  test('throws when setting recovered identity sync options fails', async () => {
     const identity = createMockIdentity();
     const { agent, pulls } = recoveredAgent(identity, {
-      syncRegisterIdentity: async () => { throw new Error('sync store unavailable'); },
+      syncSetIdentityOptions: async () => { throw new Error('sync store unavailable'); },
     });
 
     await expect(
