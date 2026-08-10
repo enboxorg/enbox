@@ -28,16 +28,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
-      # Runner routing: same-repo runs use the org's self-hosted runners —
-      # an ephemeral Docker-in-Docker fleet, so each job gets a fresh
-      # filesystem and its own network namespace (service containers and
-      # fixed ports like :3000/:5433/:7527 bind per-job, no host collisions).
-      # Fork PRs stay on GitHub-hosted runners so untrusted code never
-      # executes on the fleet. Kept on ubuntu-latest deliberately:
-      # test-browser (9-way matrix — hosted parallelism beats the fleet's
-      # slot count, and its Playwright apt setup assumes the hosted image)
-      # and the changes/ci-passed orchestration jobs (docs-only PRs and the
-      # branch protection gate must not depend on self-hosted availability).
+      # Runner routing: same-repo runs send the compute-only jobs (lint,
+      # build, test-lightweight, test-dwn-sdk) to the org's self-hosted
+      # ephemeral DinD fleet, where they are measurably faster than hosted
+      # runners. Fork PRs resolve to GitHub-hosted so untrusted code never
+      # executes on the fleet. Deliberately on ubuntu-latest: the
+      # service-backed test jobs (agent shards, api-clients, e2e,
+      # sql-store, dwn-server — DB/fsync-heavy, 2-4x slower under the
+      # fleet's shared-core concurrency and tight against their
+      # timeout-minutes), test-browser (9-way matrix; hosted parallelism,
+      # Playwright apt setup assumes the hosted image), and the
+      # changes/ci-passed orchestration jobs (docs-only PRs and the branch
+      # protection gate must not depend on self-hosted availability).
       runner: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || 'self-hosted' }}
       src: ${{ steps.src-filter.outputs.src }}
       needs_common_crypto: ${{ steps.propagate.outputs.needs_common_crypto }}
@@ -502,7 +504,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-agent:
     name: 'Test: agent (shard ${{ matrix.shard }}/3)'
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 8
     needs: [build, changes]
     if: needs.changes.outputs.needs_agent == 'true'
@@ -645,7 +647,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-api-clients:
     name: 'Test: dids / dwn-clients / api'
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 8
     needs: [build, changes]
     if: needs.changes.outputs.needs_agent_api_group == 'true'
@@ -781,7 +783,7 @@ jobs:
 
   test-e2e:
     name: 'Test: e2e (long-running)'
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [build, changes]
     if: needs.changes.outputs.needs_e2e == 'true'
@@ -886,7 +888,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-sql-store:
     name: 'Test: dwn-sql-store'
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 8
     needs: [build, changes]
     if: needs.changes.outputs.needs_dwn_sql_store == 'true'
@@ -994,7 +996,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-dwn-server:
     name: 'Test: dwn-server'
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [build, changes]
     if: needs.changes.outputs.needs_dwn_server == 'true'
