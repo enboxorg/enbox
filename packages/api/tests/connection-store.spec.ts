@@ -957,6 +957,30 @@ describe('createConnectionStore()', () => {
       expect(setIdentityOptions.callCount).toBe(2);
     });
 
+    it('should surface routing failures before retrying an endpoint', async () => {
+      const engine = createSyncStatusEngine();
+      const { store } = await connectWithSync(engine);
+      const setIdentityOptions = sinon.stub(engine.sync, 'setIdentityOptions').rejects(new Error('routing unavailable'));
+      const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow');
+      sinon.stub(console, 'error');
+      getDwnEndpointStatus.resolves(readyDwn('https://new-dwn.example'));
+
+      const failedRefresh = await store.refreshDwnEndpoints();
+      expect(failedRefresh.error?.message).toBe('routing unavailable');
+
+      const failedRetry = await store.retryRemote('https://new-dwn.example');
+      expect(failedRetry.error?.message).toBe('routing unavailable');
+      expect(failedRetry.sync?.retryingRemoteEndpoint).toBeUndefined();
+      expect(retryRemoteNow.called).toBe(false);
+      expect(setIdentityOptions.callCount).toBe(2);
+
+      setIdentityOptions.resolves();
+      const recovered = await store.retryRemote('https://new-dwn.example');
+      expect(recovered.error).toBeUndefined();
+      expect(setIdentityOptions.callCount).toBe(3);
+      expect(retryRemoteNow.calledOnceWithExactly(OWNER_DID, 'https://new-dwn.example')).toBe(true);
+    });
+
     it('should expose missing and failed resolution states without dropping routing on transient failure', async () => {
       const engine = createSyncStatusEngine();
       const { store } = await connectWithSync(engine);
@@ -2521,17 +2545,9 @@ describe('createConnectionStore()', () => {
       expect(fake.shutdown.calledOnce).toBe(true);
     });
 
-    it('should not shut down a manager built around a caller-supplied agent', async () => {
-      // A caller-supplied `agent` keeps its lifecycle with the caller, so
-      // dispose() must not lock its vault.
-      const fake = createFakeAuth();
-      sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
-      const store = createConnectionStore({ agent: testHarness.agent as EnboxUserAgent });
-      await store.initialize();
-
-      await store.dispose();
-
-      expect(fake.shutdown.called).toBe(false);
+    it('should reject the removed caller-supplied agent option at runtime', () => {
+      expect(() => Reflect.apply(createConnectionStore, undefined, [{ agent: testHarness.agent }]))
+        .toThrow(TypeError);
     });
 
     it('should make later actions throw and be idempotent', async () => {

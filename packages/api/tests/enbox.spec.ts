@@ -284,6 +284,17 @@ describe('Enbox API', () => {
     });
 
     describe('close()', () => {
+      const CloseProtocolDef = {
+        protocol  : 'https://example.com/protocols/close-test',
+        published : true,
+        types     : { item: {} },
+        structure : { item: {} },
+      } as const satisfies ProtocolDefinition;
+
+      const CloseProtocol = defineProtocol(CloseProtocolDef, {
+        item: recordCodecs.json<unknown>(),
+      });
+
       it('should release only facade-owned resources', async () => {
         const identity = await testHarness.agent.identity.create({
           metadata  : { name: 'Close' },
@@ -297,19 +308,10 @@ describe('Enbox API', () => {
           signal       : sessionLifetime.signal,
         });
 
-        const TestProtocolDef = {
-          protocol  : 'https://example.com/protocols/close-test',
-          published : true,
-          types     : { item: {} },
-          structure : { item: {} },
-        } as const satisfies ProtocolDefinition;
-
-        const TestProtocol = defineProtocol(TestProtocolDef, {
-          item: recordCodecs.json<unknown>(),
-        });
-
         // Cache a TypedEnbox instance.
-        expect(enbox.using(TestProtocol)).toBeDefined();
+        const typed = enbox.using(CloseProtocol);
+        expect(typed).toBeDefined();
+        const rawDwn = enbox.dwn;
         expect((enbox as any)._lifetimeSignal.aborted).toBe(false);
 
         const stopSync = sinon.spy(testHarness.agent.sync, 'stopSync');
@@ -320,6 +322,66 @@ describe('Enbox API', () => {
         expect(sessionLifetime.signal.aborted).toBe(false);
         expect(stopSync.called).toBe(false);
         expect((enbox as any)._typedInstances.size).toBe(0);
+        expect(rawDwn).toBeDefined();
+        expect(() => enbox.using(CloseProtocol)).toThrow();
+        expect(() => enbox.dwn).toThrow();
+        expect(() => enbox.getDwnEndpointStatus()).toThrow();
+        expect(() => typed.dwn).toThrow();
+        await expect(typed.configure()).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(typed.verifyInstalled()).rejects.toMatchObject({ name: 'AbortError' });
+      });
+
+      it('should fence a retained typed record after close', async () => {
+        const enbox = new Enbox({
+          agent        : testHarness.agent,
+          connectedDid : testHarness.agent.agentDid.uri,
+        });
+        const record = await enbox.using(CloseProtocol).records.create('item', {
+          data: { value: 'current' },
+        });
+        const processRequest = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+        enbox.close();
+
+        await expect(record.value()).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(record.data.blob()).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(record.update({ data: { value: 'updated' } })).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(record.delete()).rejects.toMatchObject({ name: 'AbortError' });
+        expect(processRequest.called).toBe(false);
+      });
+
+      it('should reject a stale typed query before touching the DWN', async () => {
+        const enbox = new Enbox({
+          agent        : testHarness.agent,
+          connectedDid : testHarness.agent.agentDid.uri,
+        });
+        const typed = enbox.using(CloseProtocol);
+        const processRequest = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+        enbox.close();
+
+        await expect(typed.records.query('item')).rejects.toMatchObject({ name: 'AbortError' });
+        expect(processRequest.called).toBe(false);
+      });
+
+      it('should reject a stale typed create after pending readiness settles', async () => {
+        const enbox = new Enbox({
+          agent        : testHarness.agent,
+          connectedDid : testHarness.agent.agentDid.uri,
+        });
+        const typed = enbox.using(CloseProtocol);
+        let resolveReadiness!: () => void;
+        const readiness = new Promise<void>((resolve): void => { resolveReadiness = resolve; });
+        const ensureReady = sinon.stub(typed as any, '_autoConfigureOnce').returns(readiness);
+        const processRequest = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+        const creating = typed.records.create('item', { data: { value: 'stale' } });
+        expect(ensureReady.calledOnce).toBe(true);
+        enbox.close();
+        resolveReadiness();
+
+        await expect(creating).rejects.toMatchObject({ name: 'AbortError' });
+        expect(processRequest.called).toBe(false);
       });
     });
 

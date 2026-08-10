@@ -198,6 +198,7 @@ export const recordCodecs = {
 type RecordCodecBinding<T> = {
   codec: RecordCodec<T>;
   dataFormats?: readonly string[];
+  signal?: AbortSignal;
 };
 
 const codecByRecord = new WeakMap<object, RecordCodecBinding<unknown>>();
@@ -207,9 +208,10 @@ export function bindRecordCodec<T, Existing = unknown>(
   record : Record<Existing>,
   codec : RecordCodec<T>,
   dataFormats?: readonly string[],
+  signal?: AbortSignal,
 ): Record<T> {
   // The WeakMap owns the sole runtime erasure point; callers stay fully typed.
-  codecByRecord.set(record, { codec: codec as RecordCodec<unknown>, dataFormats });
+  codecByRecord.set(record, { codec: codec as RecordCodec<unknown>, dataFormats, signal });
   return record as unknown as Record<T>;
 }
 

@@ -222,20 +222,23 @@ export type ApplicationConnectionStoreRefreshOptions = Omit<RefreshOptions, 'pro
 /**
  * Options shared by plain and manifest-backed connection stores.
  *
- * Extends `AuthManagerOptions` — everything the store does not consume itself
- * (`connectHandler`, `sync`, `storage`, `password`, …) is forwarded verbatim
- * to `AuthManager.create()` during the first action.
+ * Accepts `AuthManagerOptions` except `agent` — everything the store does not
+ * consume itself (`connectHandler`, `sync`, `storage`, `password`, …) is
+ * forwarded verbatim to `AuthManager.create()` during the first action. To
+ * use a caller-owned agent, create an `AuthManager` around it and pass that
+ * manager through `auth`.
  */
-type ConnectionStoreSharedOptions = AuthManagerOptions & {
+type ConnectionStoreSharedOptions = Omit<AuthManagerOptions, 'agent'> & {
+  /** Raw agents have ambiguous ownership; pass a caller-owned manager through {@link auth}. */
+  agent?: never;
+
   /**
    * A pre-built `AuthManager` to drive instead of creating one.
    *
    * When provided, all `AuthManagerOptions` fields are ignored and the caller
    * keeps ownership: {@link ConnectionStore.dispose} will not shut the
-   * manager down. When omitted, the store creates its manager lazily on the
-   * first action and owns it — unless `agent` is supplied, in which case the
-   * caller keeps the agent's lifecycle and `dispose()` leaves the manager
-   * running.
+   * manager down. When omitted, the store creates and owns its manager lazily
+   * on the first action.
    */
   auth?: AuthManager;
 
@@ -560,7 +563,6 @@ class HeadlessConnectionStore implements ConnectionStore {
   private readonly _unsubscribers: (() => void)[] = [];
 
   private _auth?: AuthManager;
-  private _ownsAuth = false;
   private _snapshot: ConnectionSnapshot = Object.freeze<ConnectionSnapshot>({ phase: 'initializing' });
   private _stopMonitor?: () => void;
   private _pendingAction?: Promise<ConnectionSnapshot>;
@@ -573,6 +575,11 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _syncBinding?: SyncStatusBinding;
 
   public constructor(options: ConnectionStoreOptions) {
+    if (Object.prototype.hasOwnProperty.call(options, 'agent')) {
+      throw new TypeError(
+        '[@enbox/api] createConnectionStore: agent is not supported; create an AuthManager and pass it as auth.',
+      );
+    }
     const { application, auth, monitor, requireHostedReadiness, restore, ...authManagerOptions } = options;
     if (application?.protocols.length === 0) {
       throw new TypeError('[@enbox/api] createConnectionStore requires at least one application protocol.');
@@ -683,7 +690,7 @@ class HeadlessConnectionStore implements ConnectionStore {
 
     const auth = this._auth;
     this._auth = undefined;
-    if (auth !== undefined && this._ownsAuth) {
+    if (auth !== undefined && this._providedAuth === undefined) {
       try {
         await auth.shutdown();
       } catch (cause: unknown) {
@@ -1302,16 +1309,6 @@ class HeadlessConnectionStore implements ConnectionStore {
   // ─── AuthManager wiring ────────────────────────────────────────
 
   /**
-   * Whether {@link dispose} should shut the `AuthManager` down. The store owns
-   * the manager only when it created it AND built the underlying agent itself.
-   * A caller-supplied `auth` or `agent` keeps its lifecycle with the caller
-   * (shutting the manager down would lock the caller's agent vault).
-   */
-  private get _wouldOwnAuth(): boolean {
-    return this._providedAuth === undefined && this._authManagerOptions.agent === undefined;
-  }
-
-  /**
    * Lazily creates (or adopts) the `AuthManager`, then re-checks staleness at
    * the await resumption BEFORE any auth flow can run.
    *
@@ -1329,7 +1326,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (this._disposed) {
         // Disposed while the manager was being created — shut the orphan down
         // (when store-owned) instead of leaking its storage handles.
-        if (this._auth === undefined && this._wouldOwnAuth) {
+        if (this._auth === undefined && this._providedAuth === undefined) {
           await materialized.shutdown().catch((): void => {});
         }
         throw new Error(DISPOSED_MESSAGE);
@@ -1367,7 +1364,6 @@ class HeadlessConnectionStore implements ConnectionStore {
   /** Installs the materialized manager as the store's manager and wires its events. */
   private _adoptAuth(auth: AuthManager): AuthManager {
     this._auth = auth;
-    this._ownsAuth = this._wouldOwnAuth;
     this._wireAuthEvents(auth);
     return auth;
   }
@@ -1694,16 +1690,12 @@ class HeadlessConnectionStore implements ConnectionStore {
       return;
     }
 
-    try {
-      const options = await session.agent.sync.getIdentityOptions(session.did);
-      if (options !== undefined && this._isCurrentSession(session)) {
-        await session.agent.sync.setIdentityOptions({ did: session.did, options });
-      }
-      if (this._syncBinding === binding && this._isCurrentSession(session)) {
-        binding.routedDwn = remoteDwn;
-      }
-    } catch (cause: unknown) {
-      console.error('[@enbox/api] ConnectionStore: failed to refresh remote DWN sync routing:', toError(cause));
+    const options = await session.agent.sync.getIdentityOptions(session.did);
+    if (options !== undefined && this._isCurrentSession(session)) {
+      await session.agent.sync.setIdentityOptions({ did: session.did, options });
+    }
+    if (this._syncBinding === binding && this._isCurrentSession(session)) {
+      binding.routedDwn = remoteDwn;
     }
     if (this._isCurrentSession(session)) {
       void this._requestSyncStatus(binding);
@@ -1886,7 +1878,7 @@ function remoteSyncRowsEqual(a: Readonly<RemoteSyncStatus>, b: Readonly<RemoteSy
  * one store for its lifetime, calls {@link ConnectionStore.initialize} once
  * on boot, and binds its UI to `subscribe`/`getSnapshot`.
  *
- * @param options - `AuthManagerOptions` plus store-specific fields
+ * @param options - `AuthManagerOptions` except `agent`, plus store-specific fields
  *   ({@link ConnectionStoreOptions.auth}, {@link ConnectionStoreOptions.monitor},
  *   {@link ConnectionStoreOptions.restore}).
  * @returns A new {@link ConnectionStore}.

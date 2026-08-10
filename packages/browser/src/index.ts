@@ -9,13 +9,15 @@
  * ```ts
  * import {
  *   BrowserConnectHandler, createConnectionStore,
- *   defineProtocol, recordCodecs,
+ *   defineApplicationManifest,
  * } from '@enbox/browser';
+ * import { MyProtocol } from './my-protocol.js';
  *
  * const store = createConnectionStore({
- *   connectHandler: BrowserConnectHandler({ appName: 'My App' }),
+ *   application    : defineApplicationManifest({ protocols: [MyProtocol] }),
+ *   connectHandler : BrowserConnectHandler({ appName: 'My App' }),
  * });
- * const snapshot = await store.connect({ protocols: [MyProtocol] });
+ * const snapshot = await store.connect();
  * if (snapshot.enbox === undefined) throw snapshot.error ?? new Error('Connection failed.');
  * ```
  *
