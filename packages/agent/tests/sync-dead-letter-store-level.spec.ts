@@ -80,6 +80,13 @@ describe('SyncDeadLetterStoreLevel', () => {
     expect(await store.getAll()).toEqual([]);
   });
 
+  it('does not project a malformed key with an empty remote endpoint', async () => {
+    await db.sublevel('deadLetters').put('did:example:alice|cid|', '{}');
+
+    expect(await store.clear()).toEqual([]);
+    expect(await store.getAll()).toEqual([]);
+  });
+
   it('surfaces unexpected storage errors', async () => {
     const expectedError = new Error('read failed');
     const failingStore = new SyncDeadLetterStoreLevel({
