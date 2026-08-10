@@ -132,6 +132,34 @@ describe('DidDht', () => {
       expect(did.document.verificationMethod?.[1].publicKeyJwk).toHaveProperty('crv', 'Ed25519');
     });
 
+    it('canonicalizes generated X25519 key algorithms so DNS round trips agree', async () => {
+      const did = await DidDht.create({
+        options: {
+          publish             : false,
+          verificationMethods : [
+            {
+              algorithm : 'X25519',
+              id        : 'enc',
+              purposes  : ['keyAgreement'],
+            }
+          ]
+        }
+      });
+
+      const encMethod = did.document.verificationMethod?.find(vm => vm.id.endsWith('#enc'));
+      expect(encMethod?.publicKeyJwk).toHaveProperty('alg', 'ECDH-ES+A256KW');
+
+      const dnsPacket = await DidDhtDocument.toDnsPacket({ didDocument: did.document, didMetadata: did.metadata });
+      for (const answer of dnsPacket.answers ?? []) {
+        expect(String(answer.data)).not.toContain('a=undefined');
+      }
+
+      const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri: did.uri, dnsPacket });
+      const resolvedEncMethod = didResolutionResult.didDocument?.verificationMethod?.find(vm => vm.id.endsWith('#enc'));
+      expect(resolvedEncMethod?.publicKeyJwk?.alg).toBe('ECDH-ES+A256KW');
+      expect(resolvedEncMethod?.publicKeyJwk?.x).toBe(encMethod?.publicKeyJwk?.x);
+    });
+
     it('handles creating DIDs with additional secp256k1 verification methods', async () => {
       const did = await DidDht.create({
         options: {
@@ -1525,6 +1553,60 @@ describe('DidDhtDocument', () => {
       expect(didResolutionResult.didDocument!.verificationMethod).toHaveLength(2);
       expect(didResolutionResult.didDocument!.verificationMethod![0].controller).toBe(didUri); // identity key
       expect(didResolutionResult.didDocument!.verificationMethod![1].controller).toBe(customController); // custom controller
+    });
+
+    it('never emits `a=undefined` and decodes the legacy literal as the key type default', async () => {
+      const didUri = 'did:dht:5cahcfh3zh8bqd5cn3y6inoea1b3d6kh85rjksne9e5dcyrc1ery';
+      const dnsPacket = await DidDhtDocument.toDnsPacket({
+        didDocument: {
+          id                 : didUri,
+          verificationMethod : [
+            {
+              id           : `${didUri}#0`,
+              type         : 'JsonWebKey',
+              controller   : didUri,
+              publicKeyJwk : {
+                crv : 'Ed25519',
+                kty : 'OKP',
+                x   : '2zHGF5m_DhcPbBZB6ooIxIOR-Vw-yJVYSPo2NgCMkgg',
+                kid : 'KDT9PKj4_z7gPk2s279Y-OGlMtt_L93oJzIaiVrrySU',
+                alg : 'EdDSA',
+              },
+            },
+            {
+              id           : `${didUri}#enc`,
+              type         : 'JsonWebKey',
+              controller   : didUri,
+              // An X25519 JWK generated without `alg`, as serialized by `@enbox/dids` <= 0.1.3.
+              publicKeyJwk : {
+                crv : 'X25519',
+                kty : 'OKP',
+                x   : 'FrrBhqvAWxE4lstj-IWgN8_5-O4L1KuZjdNjn5bX_dw',
+              },
+            },
+          ],
+          authentication : [`${didUri}#0`],
+          keyAgreement   : [`${didUri}#enc`],
+        },
+        didMetadata: {
+          published: false,
+        }
+      });
+
+      for (const answer of dnsPacket.answers ?? []) {
+        expect(String(answer.data)).not.toContain('a=undefined');
+      }
+
+      // Simulate a record published by an encoder that serialized the absent `alg` literally.
+      for (const answer of dnsPacket.answers ?? []) {
+        if (String(answer.data).includes('id=enc')) {
+          (answer as { data: string }).data = `${String(answer.data)};a=undefined`;
+        }
+      }
+
+      const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
+      const encMethod = didResolutionResult.didDocument?.verificationMethod?.find(vm => vm.id.endsWith('#enc'));
+      expect(encMethod?.publicKeyJwk?.alg).toBe('ECDH-ES+A256KW');
     });
   });
 
