@@ -1,5 +1,14 @@
 # @enbox/dwn-clients
 
+## 0.4.30
+
+### Patch Changes
+
+- [#1617](https://github.com/enboxorg/enbox/pull/1617) [`aa471e4`](https://github.com/enboxorg/enbox/commit/aa471e429731ae612f92e5df65a95c1c36036f79) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: preserve reserved JSON keys in record patches; remove unused provider-directory and notification exports
+
+- Updated dependencies []:
+  - @enbox/dwn-sdk-js@0.4.23
+
 ## 0.4.29
 
 ### Patch Changes

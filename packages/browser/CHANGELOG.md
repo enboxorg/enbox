@@ -1,5 +1,33 @@
 # @enbox/browser
 
+## 0.3.70
+
+### Patch Changes
+
+- [#1608](https://github.com/enboxorg/enbox/pull/1608) [`6cfbbd5`](https://github.com/enboxorg/enbox/commit/6cfbbd5fef64846aeb54fff8c07f94266cf4c5ec) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add lazy record-page iteration and fixed-step expansion for observed record views.
+
+- [#1612](https://github.com/enboxorg/enbox/pull/1612) [`5ecf249`](https://github.com/enboxorg/enbox/commit/5ecf249c93a0a820e26bbcab9d10673acd6cb4eb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add a live member-context catalog that composes independently observed, decoded roots.
+
+- [#1611](https://github.com/enboxorg/enbox/pull/1611) [`7d9e946`](https://github.com/enboxorg/enbox/commit/7d9e9469d6d642329e38e7a8281b5ed0af01bc02) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add a V1 file-envelope codec for encrypted private file records, with an
+  optional local content limit and a protocol-size calculation helper.
+
+- [#1614](https://github.com/enboxorg/enbox/pull/1614) [`2cf5cfc`](https://github.com/enboxorg/enbox/commit/2cf5cfcaf8046fe4895233e45ff5760e083bf6bc) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Resolve and cache DID-advertised DWN endpoints, expose friendly endpoint status with an opt-in service-config wake, and preserve authoritative endpoints during recovery unless explicitly replaced. Connection snapshots now expose an immediate `disconnecting` phase, and owned `Enbox.disconnect()` calls surface teardown failures.
+
+  Remove the obsolete `getDwnEndpointUrlsForTarget()` local/remote union API and `remoteEndpointsOnly` request marker; callers now use DID-advertised endpoints and explicitly compose any known local endpoint they need.
+
+  Use `AuthManager.restoreFromPhrase()` as the single phrase-recovery entry point; generic `connect()` and `connectVault()` no longer accept a recovery phrase.
+
+- [#1609](https://github.com/enboxorg/enbox/pull/1609) [`b5c2d3e`](https://github.com/enboxorg/enbox/commit/b5c2d3eb59ac0f63d8deccca12706303318667e0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose protocol-bound record facts, stable context coordinates, squash path typing, and structured record write errors.
+
+- Updated dependencies [[`6cfbbd5`](https://github.com/enboxorg/enbox/commit/6cfbbd5fef64846aeb54fff8c07f94266cf4c5ec), [`b5c2d3e`](https://github.com/enboxorg/enbox/commit/b5c2d3eb59ac0f63d8deccca12706303318667e0), [`5ecf249`](https://github.com/enboxorg/enbox/commit/5ecf249c93a0a820e26bbcab9d10673acd6cb4eb), [`aa471e4`](https://github.com/enboxorg/enbox/commit/aa471e429731ae612f92e5df65a95c1c36036f79), [`7d9e946`](https://github.com/enboxorg/enbox/commit/7d9e9469d6d642329e38e7a8281b5ed0af01bc02), [`175222e`](https://github.com/enboxorg/enbox/commit/175222e679ab2c1c7cf293eaea8a59dab906e4f2), [`2cf5cfc`](https://github.com/enboxorg/enbox/commit/2cf5cfcaf8046fe4895233e45ff5760e083bf6bc), [`b5c2d3e`](https://github.com/enboxorg/enbox/commit/b5c2d3eb59ac0f63d8deccca12706303318667e0)]:
+  - @enbox/api@0.6.78
+  - @enbox/dids@0.1.10
+  - @enbox/agent@0.8.39
+  - @enbox/auth@0.6.85
+  - @enbox/protocols@0.2.105
+  - @enbox/connect@0.1.19
+  - @enbox/dwn-sdk-js@0.4.23
+
 ## 0.3.69
 
 ### Patch Changes
