@@ -46,6 +46,7 @@ export {
   protocolContextKey,
   recordCodecs,
   ServiceConfigProtocol,
+  Time,
 } from '@enbox/api';
 
 export type {

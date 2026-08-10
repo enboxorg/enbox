@@ -83,3 +83,4 @@ export {
   type AudienceDecryptFailureCause,
 } from '@enbox/agent';
 export type { DwnEndpointResolution } from '@enbox/dids';
+export { Time } from '@enbox/dwn-sdk-js';

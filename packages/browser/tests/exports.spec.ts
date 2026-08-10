@@ -87,6 +87,16 @@ describe('@enbox/browser exports', () => {
     expect(browser.protocolContextKey).toBe(api.protocolContextKey);
   });
 
+  it('re-exports Time from @enbox/api', async () => {
+    const [browser, api, dwnSdk] = await Promise.all([
+      getBrowserExports(),
+      import('@enbox/api'),
+      import('@enbox/dwn-sdk-js'),
+    ]);
+    expect(browser.Time).toBe(dwnSdk.Time);
+    expect(api.Time).toBe(dwnSdk.Time);
+  });
+
   it('re-exports AuthManager from @enbox/auth', async () => {
     const mod = await getBrowserExports();
     expect(mod.AuthManager).toBeDefined();
