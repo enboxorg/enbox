@@ -27,11 +27,6 @@
  *    converge to the requested definition — attaching the per-endpoint
  *    failure reasons (rejected sends, non-2xx replies, non-converged states)
  *    to the error instead of swallowing them.
- *
- * When no remote DWN endpoints resolve for the provider, preparation is
- * local-only — grant delivery enforces the ≥1-endpoint invariant immediately
- * afterwards, so approval still cannot complete against a provider with no
- * reachable DWN.
  */
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -515,13 +510,6 @@ export async function prepareProtocol(
   const { queryResult, existingEntry, setupStatus } = await queryLocalProtocolStatus(selectedDid, agent, protocolDefinition);
 
   const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
-  if (dwnEndpointUrls.length === 0) {
-    if (setupStatus === 'install' || setupStatus === 'upgrade') {
-      await configureProtocolLocally(selectedDid, agent, protocolDefinition);
-    }
-    return;
-  }
-
   if (queryResult.message === undefined) {
     throw new Error('Could not query protocol: no signed query message was returned.');
   }

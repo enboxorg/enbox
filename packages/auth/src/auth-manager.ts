@@ -93,6 +93,23 @@ type ConnectionAttemptGuard = {
   sessionLifetime: AbortController;
 };
 
+function assertNoRecoveryPhrase(options: unknown, method: 'connect' | 'connectVault'): void {
+  if (typeof options === 'object' && options !== null && 'recoveryPhrase' in options) {
+    throw new TypeError(`AuthManager.${method}: recoveryPhrase is accepted only by restoreFromPhrase().`);
+  }
+}
+
+function assertRestoreFromPhraseOptions(options: unknown): asserts options is RestoreFromPhraseOptions {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new TypeError('AuthManager.restoreFromPhrase: options must be an object.');
+  }
+  if (!('recoveryPhrase' in options)
+    || typeof options.recoveryPhrase !== 'string'
+    || options.recoveryPhrase.trim().length === 0) {
+    throw new TypeError('AuthManager.restoreFromPhrase: recoveryPhrase must be a non-empty string.');
+  }
+}
+
 /**
  * The primary entry point for authentication and identity management.
  *
@@ -266,20 +283,15 @@ export class AuthManager {
    * This is the primary entry point for dapps. It routes to the
    * appropriate flow based on the options:
    *
-   * **Recovery phrase restore** (wallets / CLI): Explicitly restores or
-   * re-unlocks a vault. Triggered first when `recoveryPhrase` is provided.
-   *
    * **Handler-based connect** (dapps): Delegates credential acquisition
    * to a {@link ConnectHandler}. Triggered when `protocols` or
-   * `connectHandler` is provided and no `recoveryPhrase` is present.
+   * `connectHandler` is provided.
    *
    * **Local connect** (wallets / CLI): Creates or unlocks a local vault.
-   * Triggered when `password`, `createIdentity`, or `recoveryPhrase`
-   * is provided.
+   * Triggered otherwise.
    *
-   * `connect()` first attempts to restore a previous session unless a
-   * recovery phrase is provided. Recovery is an explicit user action and
-   * bypasses stored-session restore.
+   * `connect()` first attempts to restore a previous session. Use
+   * {@link restoreFromPhrase} for explicit recovery.
    *
    * @example Dapp (browser)
    * ```ts
@@ -307,12 +319,8 @@ export class AuthManager {
    * @throws If handler-based connect is attempted without a handler.
    */
   async connect(options?: ConnectOptions): Promise<AuthSession> {
+    assertNoRecoveryPhrase(options, 'connect');
     return this._withConnectionAttempt(async (guard) => {
-      // Recovery is an explicit user action. Do not let a stale stored session intercept it.
-      if (this._isPhraseRestore(options)) {
-        return vaultConnect(this._flowContext(guard), options);
-      }
-
       // 1. Try to restore a previous session first.
       const restored = await restoreSession(this._flowContext(guard));
       if (restored) { return restored; }
@@ -341,6 +349,7 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async connectVault(options?: VaultConnectOptions): Promise<AuthSession> {
+    assertNoRecoveryPhrase(options, 'connectVault');
     return this._withConnectionAttempt((guard) => vaultConnect(this._flowContext(guard), options));
   }
 
@@ -352,6 +361,7 @@ export class AuthManager {
    * - Different local vault: throws without clearing or replacing the existing vault.
    */
   async restoreFromPhrase(options: RestoreFromPhraseOptions): Promise<AuthSession> {
+    assertRestoreFromPhraseOptions(options);
     return this._withConnectionAttempt((guard) => vaultConnect(this._flowContext(guard), options));
   }
 
@@ -1367,12 +1377,6 @@ export class AuthManager {
     if ('protocols' in options && Array.isArray(options.protocols) && options.protocols.length > 0) { return false; }
     if ('connectHandler' in options && options.connectHandler !== undefined && options.connectHandler !== null) { return false; }
     return true;
-  }
-
-  private _isPhraseRestore(options?: ConnectOptions): options is RestoreFromPhraseOptions {
-    return options !== undefined
-      && options !== null
-      && typeof (options as { recoveryPhrase?: unknown }).recoveryPhrase === 'string';
   }
 
   /**

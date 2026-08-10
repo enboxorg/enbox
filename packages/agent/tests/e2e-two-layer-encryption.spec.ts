@@ -85,7 +85,10 @@ describe('e2e: two-layer encryption recovery', () => {
       // Initialize the vault — this creates the agent DID (did:dht with Ed25519 +
       // X25519) deterministically from a generated seed phrase, and encrypts
       // the PortableDid with the password (Layer 1).
-      recoveryPhrase = await (harness.agent as EnboxUserAgent).initialize({ password });
+      recoveryPhrase = await (harness.agent as EnboxUserAgent).initialize({
+        password,
+        dwnEndpoints: ['https://dwn.example.com'],
+      });
       expect(typeof recoveryPhrase).toBe('string');
       expect(recoveryPhrase.split(' ')).toHaveLength(12);
 

@@ -128,7 +128,7 @@ function stubAgent(options: StubAgentOptions = {}): {
     processDwnRequest,
     rpc : { sendDwnRequest },
     dwn : {
-      getRemoteDwnEndpointUrls : sinon.stub().resolves(options.endpoints ?? []),
+      getRemoteDwnEndpointUrls : sinon.stub().resolves(options.endpoints ?? ['https://dwn.example/']),
       getEncryptionKeyDeriver  : sinon.stub().resolves({
         rootKeyId        : 'urn:test:owner-root',
         derivationScheme : KeyDerivationScheme.ProtocolPath,
@@ -351,17 +351,6 @@ describe('connect protocol preparation', () => {
         .rejects.toThrow('DID does not advertise a #dwn service');
 
       expect(configureCalls(processDwnRequest)).toHaveLength(0);
-      expect(sendDwnRequest.callCount).toBe(0);
-    });
-
-    it('should configure locally without remote traffic when no endpoints resolve', async () => {
-      const { agent, processDwnRequest, sendDwnRequest } = stubAgent();
-
-      await prepareProtocol('did:example:owner', agent, encryptedProtocol);
-
-      const configures = configureCalls(processDwnRequest);
-      expect(configures).toHaveLength(1);
-      expect((configures[0].args[0] as Record<string, unknown>).encryption).toBeUndefined();
       expect(sendDwnRequest.callCount).toBe(0);
     });
 

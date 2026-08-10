@@ -29,7 +29,8 @@ function isDwnServiceId(id: string, didUri: string): boolean {
   return id === `${didUri}#dwn` || id === '#dwn' || id === 'dwn';
 }
 
-function normalizeEndpointUrls(values: unknown): string[] | undefined {
+/** Normalize a non-empty HTTP(S) DWN endpoint list, or return `undefined` when invalid. */
+export function normalizeDwnEndpointUrls(values: unknown): string[] | undefined {
   const candidates = typeof values === 'string' ? [values] : values;
   if (!Array.isArray(candidates) || candidates.length === 0 || candidates.some(value => typeof value !== 'string')) {
     return undefined;
@@ -65,7 +66,7 @@ export function getDwnEndpointStatus(
     return failure('service-malformed', didUri, `DID '${didUri}' has a malformed #dwn service.`);
   }
 
-  const endpoints = normalizeEndpointUrls(dwnService.serviceEndpoint);
+  const endpoints = normalizeDwnEndpointUrls(dwnService.serviceEndpoint);
   if (endpoints === undefined) {
     return failure('service-malformed', didUri, `DID '${didUri}' has an invalid #dwn service endpoint.`);
   }
@@ -78,7 +79,7 @@ export function replaceDwnServiceEndpointUrls(
   didDocument: DidDocument,
   endpointUrls: string[],
 ): DidDocument {
-  const endpoints = normalizeEndpointUrls(endpointUrls);
+  const endpoints = normalizeDwnEndpointUrls(endpointUrls);
   if (endpoints === undefined) {
     throw new TypeError(`DID '${didDocument.id}' has an invalid #dwn service endpoint.`);
   }

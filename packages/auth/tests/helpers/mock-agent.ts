@@ -91,6 +91,7 @@ export interface MockAgentOverrides {
   permissionsFetchGrants?: (params: any) => Promise<any[]>;
   permissionsIsGrantRevoked?: (params: any) => Promise<boolean>;
   rpcGetServerInfo?: (url: string) => Promise<any>;
+  rpcSendDwnRequest?: (params: any) => Promise<any>;
   vaultIsInitialized?: () => Promise<boolean>;
   vaultIsLocked?: () => boolean;
   vaultUnlock?: (params: any) => Promise<void>;
@@ -100,6 +101,7 @@ export interface MockAgentOverrides {
   vaultResetPasswordWithRecoveryPhrase?: (params: any) => Promise<void>;
   vaultBackup?: () => Promise<any>;
   vaultRestore?: (params: any) => Promise<void>;
+  vaultGetDid?: () => Promise<any>;
   vaultEncryptData?: (params: { plaintext: Uint8Array }) => Promise<string>;
   vaultDecryptData?: (params: { jwe: string }) => Promise<Uint8Array>;
 }
@@ -213,7 +215,8 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     dwn: {
       setCachedLocalDwnEndpoint: overrides.dwnSetCachedLocalDwnEndpoint
         ?? (async (): Promise<boolean> => false),
-      processRawMessage: overrides.dwnProcessRawMessage
+      processRequest    : processDwnRequest,
+      processRawMessage : overrides.dwnProcessRawMessage
         ?? (async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } })),
 
       isRemoteMode                : overrides.dwnIsRemoteMode ?? false,
@@ -240,9 +243,10 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
         version                  : '0.0.1',
         webSocketSupport         : true,
       })),
-      sendDidRequest     : async (): Promise<any> => ({ ok: true, status: { code: 200, message: 'OK' } }),
-      sendDwnRequest     : async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } }),
-      transportProtocols : ['http:', 'https:'],
+      sendDidRequest : async (): Promise<any> => ({ ok: true, status: { code: 200, message: 'OK' } }),
+      sendDwnRequest : overrides.rpcSendDwnRequest
+        ?? (async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } })),
+      transportProtocols: ['http:', 'https:'],
     },
 
     vault: {
@@ -255,6 +259,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
         overrides.vaultResetPasswordWithRecoveryPhrase ?? (async (): Promise<void> => {}),
       backup      : overrides.vaultBackup ?? (async (): Promise<any> => ({ data: 'backup' })),
       restore     : overrides.vaultRestore ?? (async (): Promise<void> => {}),
+      getDid      : overrides.vaultGetDid ?? (async (): Promise<any> => ({ uri: 'did:dht:testagent' })),
       encryptData : overrides.vaultEncryptData ?? mockEncryptData,
       decryptData : overrides.vaultDecryptData ?? mockDecryptData,
     },

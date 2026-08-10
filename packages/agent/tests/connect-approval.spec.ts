@@ -10,7 +10,7 @@ import { testDwnUrl } from './utils/test-config.js';
 
 import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
 import { Convert, logger } from '@enbox/common';
-import { DwnInterfaceName, DwnMethodName, EncryptionProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, Protocols } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi, DwnInterface, DwnPermissionGrant } from '../src/index.js';
 import {
@@ -394,21 +394,6 @@ describe('connect approval ceremony', () => {
       expect(sendStub.callCount).toBe(1);
     });
 
-    it('should report when no DWN endpoint is resolved for permission grant delivery', async () => {
-      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves([]);
-      const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest');
-      const createGrant = sinon.stub(AgentPermissionsApi.prototype, 'createGrant');
-
-      await expect(createPermissionGrants(
-        providerIdentity.did.uri,
-        delegateBearerDid.uri,
-        testHarness.agent,
-        permissionScopes,
-      )).rejects.toThrow('does not advertise a #dwn service');
-      expect(createGrant.notCalled).toBe(true);
-      expect(sendStub.callCount).toBe(0);
-    });
-
     it('should resolve remote endpoints before creating local permission grants', async () => {
       sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls')
         .rejects(new Error('DID does not advertise a #dwn service'));
@@ -527,7 +512,69 @@ describe('connect approval ceremony', () => {
       });
     }
 
-    function stubApprovalDependencies(): ApprovalStubs {
+    /** Simulates a real hosted DWN while requested protocols are installed locally and remotely. */
+    async function stubMissingProtocolPreparation(
+      definitions: DwnProtocolDefinition[],
+      options: {
+        endpoints?: string[];
+        otherReply?: (request: any) => { status: { code: number; detail: string } };
+      } = {},
+    ): Promise<{ processDwnRequest: sinon.SinonStub; rpcSendDwnRequest: sinon.SinonStub }> {
+      const installedDefinitions = new Map<string, DwnProtocolDefinition>();
+      for (const definition of definitions) {
+        const isEncrypted = Object.values(definition.types ?? {})
+          .some((type) => type.encryptionRequired === true);
+        const installedDefinition = isEncrypted
+          ? await Protocols.deriveAndInjectPublicEncryptionKeys(
+            definition,
+            await testHarness.agent.dwn.getEncryptionKeyDeriver(providerIdentity.did.uri),
+          ) as DwnProtocolDefinition
+          : definition;
+        installedDefinitions.set(definition.protocol, installedDefinition);
+      }
+
+      const remoteDefinitions = new Map<string, DwnProtocolDefinition>();
+      const processDwnRequest = sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any) => {
+        const protocol = request.messageParams.definition?.protocol ?? request.messageParams.filter.protocol;
+        if (request.messageType === DwnInterface.ProtocolsConfigure) {
+          return {
+            messageCid : '',
+            reply      : { status: { code: 202, detail: 'Accepted' } },
+            message    : {
+              descriptor: {
+                interface  : 'Protocols',
+                method     : 'Configure',
+                definition : installedDefinitions.get(protocol),
+              },
+            },
+          } as any;
+        }
+        return {
+          messageCid : '',
+          reply      : protocolQueryReply(),
+          message    : { descriptor: { interface: 'Protocols', method: 'Query', filter: { protocol } } },
+        } as any;
+      });
+      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls')
+        .resolves(options.endpoints ?? ['https://dwn.example/']);
+      const rpcSendDwnRequest = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async (request: any) => {
+        const descriptor = request.message?.descriptor;
+        if (descriptor?.method === 'Query') {
+          return protocolQueryReply(remoteDefinitions.get(descriptor.filter.protocol)) as any;
+        }
+        if (descriptor?.method === 'Configure') {
+          remoteDefinitions.set(descriptor.definition.protocol, descriptor.definition);
+          return { status: { code: 202, detail: 'Accepted' } } as any;
+        }
+        return options.otherReply?.(request) ?? { status: { code: 202, detail: 'Accepted' } };
+      });
+
+      return { processDwnRequest, rpcSendDwnRequest };
+    }
+
+    async function stubApprovalDependencies(
+      definitions: DwnProtocolDefinition[] = [protocolDefinition],
+    ): Promise<ApprovalStubs> {
       const capturedSessions: Array<{ createdAt: string; expiresAt: string }> = [];
       const capturedDelegateDids: string[] = [];
       sinon.stub(ConnectCeremony, 'createPermissionGrants').callsFake(async (
@@ -548,21 +595,7 @@ describe('connect approval ceremony', () => {
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-      // Protocol preparation sees "not installed" and installs locally; with
-      // zero endpoints resolved there is no remote verification or fan-out.
-      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any) =>
-        request.messageType === DwnInterface.ProtocolsConfigure
-          ? {
-            messageCid : '',
-            reply      : { status: { code: 202, detail: 'Accepted' } },
-            message    : { descriptor: { interface: 'Protocols', method: 'Configure' } },
-          } as any
-          : {
-            messageCid : '',
-            reply      : { status: { code: 200, detail: 'OK' }, entries: [] },
-            message    : signedProtocolQuery,
-          } as any);
-      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves([]);
+      await stubMissingProtocolPreparation(definitions);
 
       return { capturedDelegateDids, capturedSessions, revocationGrantStub };
     }
@@ -588,7 +621,7 @@ describe('connect approval ceremony', () => {
     }
 
     it('should mint a delegate DID with an appended X25519 key and return the ConnectApproval shape', async () => {
-      const { revocationGrantStub } = stubApprovalDependencies();
+      const { revocationGrantStub } = await stubApprovalDependencies();
 
       const result = await executeConnectApproval({
         agent       : testHarness.agent,
@@ -620,7 +653,7 @@ describe('connect approval ceremony', () => {
     });
 
     it('should create contextId-scoped revocation grants for each session grant', async () => {
-      const { revocationGrantStub } = stubApprovalDependencies();
+      const { revocationGrantStub } = await stubApprovalDependencies();
 
       await executeConnectApproval({
         agent       : testHarness.agent,
@@ -642,7 +675,7 @@ describe('connect approval ceremony', () => {
 
     it('should stamp requested session TTL onto permission and revocation grants', async () => {
       const requestedSessionTtlSeconds = 30 * 24 * 60 * 60;
-      const { capturedSessions, revocationGrantStub } = stubApprovalDependencies();
+      const { capturedSessions, revocationGrantStub } = await stubApprovalDependencies();
 
       await executeConnectApproval({
         agent       : testHarness.agent,
@@ -658,7 +691,7 @@ describe('connect approval ceremony', () => {
     });
 
     it('should clamp requested session TTL to the wallet maximum', async () => {
-      const { capturedSessions } = stubApprovalDependencies();
+      const { capturedSessions } = await stubApprovalDependencies();
 
       await executeConnectApproval({
         agent       : testHarness.agent,
@@ -674,7 +707,7 @@ describe('connect approval ceremony', () => {
 
     it('should grant to a pre-supplied delegate DID without returning delegate private material', async () => {
       const preSuppliedDelegateDid = 'did:jwk:requester-delegate';
-      const { capturedDelegateDids, revocationGrantStub } = stubApprovalDependencies();
+      const { capturedDelegateDids, revocationGrantStub } = await stubApprovalDependencies();
 
       const result = await executeConnectApproval({
         agent       : testHarness.agent,
@@ -693,7 +726,6 @@ describe('connect approval ceremony', () => {
 
     it('should create public-key wrapped grantKeys for encrypted read scopes when using a pre-supplied delegate DID', async () => {
       const preSuppliedDelegate = await DidJwk.create();
-      const { capturedDelegateDids } = stubApprovalDependencies();
       const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
       const encryptedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://pre-supplied-encrypted.xyz',
@@ -712,6 +744,7 @@ describe('connect approval ceremony', () => {
         method    : 'Read' as any,
         protocol  : encryptedProtocol.protocol,
       }];
+      const { capturedDelegateDids } = await stubApprovalDependencies([encryptedProtocol]);
 
       await executeConnectApproval({
         agent       : testHarness.agent,
@@ -733,7 +766,7 @@ describe('connect approval ceremony', () => {
     });
 
     it('should reject unusable pre-supplied delegate encryption keys before creating grants', async () => {
-      const { capturedDelegateDids, revocationGrantStub } = stubApprovalDependencies();
+      const { capturedDelegateDids, revocationGrantStub } = await stubApprovalDependencies();
       const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
       const encryptedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://pre-supplied-invalid-encryption.xyz',
@@ -945,55 +978,6 @@ describe('connect approval ceremony', () => {
       }
     });
 
-    it('should treat a 200 reply with no entries field as missing locally and trigger the safety fallback', async () => {
-      // Some local DWN replies omit the `entries` array entirely (empty result).
-      // The agent must treat that as "not installed" identically to `entries: []`.
-
-      stubApprovalCeremony();
-
-      const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 202, detail: 'OK' } }
-      });
-      const rpcSendRequestSpy = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
-        status: { code: 202, detail: 'Accepted' }
-      } as any);
-
-      // Endpoint resolution returns empty → local-only configuration, no fan-out.
-      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves([]);
-
-      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
-      processDwnRequestStub
-        .onFirstCall()
-        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' } } });
-      processDwnRequestStub
-        .onSecondCall()
-        .resolves({
-          messageCid : '',
-          reply      : { status: { code: 202, detail: 'OK' } },
-          message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
-        });
-
-      await executeConnectApproval({
-        agent       : testHarness.agent,
-        providerDid : providerIdentity.did.uri,
-        transport   : 'relay',
-        request     : approvalRequest(),
-      });
-
-      // Treated as missing → local configure attempted.
-      expect(processDwnRequestStub.callCount).toBe(2);
-      expect(processDwnRequestStub.secondCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
-
-      // No endpoints → no remote fan-out, no legacy send.
-      expect(sendRequestSpy.callCount).toBe(0);
-      expect(
-        rpcSendRequestSpy.getCalls().some(
-          (c) => (c.args[0]?.message as any)?.descriptor?.method === 'Configure'
-        ),
-      ).toBe(false);
-    });
-
     it('should fail if local ProtocolsConfigure fails when the protocol is missing locally', async () => {
       // Scenario: the ceremony's safety-fallback path attempts to install the
       // protocol locally before fanning out remotely. If the local install
@@ -1009,13 +993,18 @@ describe('connect approval ceremony', () => {
         reply      : { status: { code: 500, detail: 'Internal Server Error' } },
         messageCid : ''
       });
-      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves([]);
+      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves(['https://dwn.example/']);
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves(protocolQueryReply() as any);
 
       // ProtocolsQuery → empty (missing locally). Local ProtocolsConfigure → 500.
       const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
       processDwnRequestStub
         .onFirstCall()
-        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+        .resolves({
+          messageCid : '',
+          reply      : { status: { code: 200, detail: 'OK' }, entries: [] },
+          message    : signedProtocolQuery,
+        });
       processDwnRequestStub
         .onSecondCall()
         .resolves({ messageCid: '', reply: { status: { code: 500, detail: 'Local DWN error' } } });
@@ -1129,27 +1118,7 @@ describe('connect approval ceremony', () => {
       }];
 
       stubApprovalCeremony();
-
-      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 202, detail: 'OK' } }
-      });
-      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
-        status: { code: 202, detail: 'Accepted' }
-      } as any);
-      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves([]);
-
-      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
-      processDwnRequestStub
-        .onFirstCall()
-        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
-      processDwnRequestStub
-        .onSecondCall()
-        .resolves({
-          messageCid : '',
-          reply      : { status: { code: 202, detail: 'OK' } },
-          message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
-        });
+      const { processDwnRequest: processDwnRequestStub } = await stubMissingProtocolPreparation([encryptedProtocol]);
 
       await executeConnectApproval({
         agent       : testHarness.agent,
@@ -1196,28 +1165,7 @@ describe('connect approval ceremony', () => {
 
       stubApprovalCeremony();
       const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
-      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 202, detail: 'OK' } }
-      });
-      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves([]);
-      // Installed definition matches but lacks $keyAgreement keys for its
-      // encrypted types → encryption upgrade → local re-configure.
-      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
-      processDwnRequestStub
-        .onFirstCall()
-        .resolves({
-          messageCid : '',
-          reply      : {
-            status  : { code: 200, detail: 'OK' },
-            entries : [{ descriptor: { interface: 'Protocols', method: 'Configure', definition: mixedProtocol } }] as any,
-          },
-        });
-      processDwnRequestStub.resolves({
-        messageCid : '',
-        reply      : { status: { code: 202, detail: 'OK' } },
-        message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
-      });
+      await stubMissingProtocolPreparation([mixedProtocol]);
 
       const result = await executeConnectApproval({
         agent       : testHarness.agent,
@@ -1265,18 +1213,7 @@ describe('connect approval ceremony', () => {
 
       const { createGrantsStub } = stubApprovalCeremony({ permissionGrants: createdGrants });
       const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
-      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves([]);
-      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any) =>
-        request.messageType === DwnInterface.ProtocolsConfigure
-          ? {
-            messageCid : '',
-            reply      : { status: { code: 202, detail: 'Accepted' } },
-            message    : { descriptor: { interface: 'Protocols', method: 'Configure' } },
-          } as any
-          : {
-            messageCid : '',
-            reply      : { status: { code: 200, detail: 'OK' }, entries: [] },
-          } as any);
+      await stubMissingProtocolPreparation([protocolDefinition, encryptedProtocol]);
 
       await executeConnectApproval({
         agent       : testHarness.agent,
@@ -1333,35 +1270,10 @@ describe('connect approval ceremony', () => {
 
       stubApprovalCeremony();
       sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
-
-      // Protocol preparation runs local-only (no endpoints on its resolution
-      // call); the grantKey fan-out then sees the two endpoints; the final
-      // revocation fan-out sees none.
-      const endpointStub = sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls');
-      endpointStub.onFirstCall().resolves([]);
-      endpointStub.onSecondCall().resolves(endpoints);
-      endpointStub.resolves([]);
-      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 202, detail: 'OK' } }
-      });
-      // Installed-but-unencrypted definition → encryption upgrade locally.
-      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any) =>
-        request.messageType === DwnInterface.ProtocolsConfigure
-          ? {
-            messageCid : '',
-            reply      : { status: { code: 202, detail: 'Accepted' } },
-            message    : { descriptor: { interface: 'Protocols', method: 'Configure' } },
-          } as any
-          : {
-            messageCid : '',
-            reply      : {
-              status  : { code: 200, detail: 'OK' },
-              entries : [{ descriptor: { interface: 'Protocols', method: 'Configure', definition: encryptedProtocol } }],
-            },
-          } as any);
-      const rpcSendRequestStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
-        .resolves({ status: { code: 202, detail: 'Accepted' } } as any);
+      const { rpcSendDwnRequest: rpcSendRequestStub } = await stubMissingProtocolPreparation(
+        [encryptedProtocol],
+        { endpoints },
+      );
 
       await executeConnectApproval({
         agent       : testHarness.agent,
@@ -1372,8 +1284,10 @@ describe('connect approval ceremony', () => {
         }),
       });
 
-      expect(rpcSendRequestStub.callCount).toBe(endpoints.length);
-      for (const [index, call] of rpcSendRequestStub.getCalls().entries()) {
+      const grantKeySends = rpcSendRequestStub.getCalls()
+        .filter((call) => call.args[0].message?.recordId === grantKeyRecord.recordId);
+      expect(grantKeySends).toHaveLength(endpoints.length);
+      for (const [index, call] of grantKeySends.entries()) {
         const sendRequest = call.args[0];
         expect(sendRequest.dwnUrl).toBe(endpoints[index]);
         expect(sendRequest.targetDid).toBe(providerIdentity.did.uri);
@@ -1420,32 +1334,10 @@ describe('connect approval ceremony', () => {
 
       const { revocationGrantStub } = stubApprovalCeremony();
       sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
-
-      // Protocol preparation runs local-only; the grantKey fan-out sees the
-      // endpoints and every send is rejected.
-      const endpointStub = sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls');
-      endpointStub.onFirstCall().resolves([]);
-      endpointStub.resolves(['https://dwn-a.example/', 'https://dwn-b.example/']);
-      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 202, detail: 'OK' } }
+      await stubMissingProtocolPreparation([encryptedProtocol], {
+        endpoints  : ['https://dwn-a.example/', 'https://dwn-b.example/'],
+        otherReply : () => ({ status: { code: 500, detail: 'nope' } }),
       });
-      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any) =>
-        request.messageType === DwnInterface.ProtocolsConfigure
-          ? {
-            messageCid : '',
-            reply      : { status: { code: 202, detail: 'Accepted' } },
-            message    : { descriptor: { interface: 'Protocols', method: 'Configure' } },
-          } as any
-          : {
-            messageCid : '',
-            reply      : {
-              status  : { code: 200, detail: 'OK' },
-              entries : [{ descriptor: { interface: 'Protocols', method: 'Configure', definition: encryptedProtocol } }],
-            },
-          } as any);
-      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
-        .resolves({ status: { code: 500, detail: 'nope' } } as any);
 
       await expect(executeConnectApproval({
         agent       : testHarness.agent,

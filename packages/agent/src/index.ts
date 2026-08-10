@@ -39,6 +39,7 @@ export * from './local-key-manager.js';
 export * from './permissions-api.js';
 export * from './secret-store.js';
 export {
+  publishServiceConfigNotice,
   ServiceConfigProtocolDefinition,
   isServiceConfigNoticeDelivery,
 } from './service-config.js';

@@ -428,9 +428,6 @@ export async function createPermissionGrants(
   // Resolve before creating local grants so an unusable or unavailable DID
   // document fails the approval without leaving undeliverable grant records.
   const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
-  if (dwnEndpointUrls.length === 0) {
-    throw new Error(`DID '${selectedDid}' does not advertise a #dwn service.`);
-  }
 
   const permissionGrants = await Promise.all(
     scopes.map((scope) => permissionsApi.createGrant({
@@ -528,11 +525,8 @@ export async function createPermissionGrants(
       const remainingFailureSummary = remainingFailureCount > 0
         ? `${displayedFailures}; ${remainingFailureCount} more endpoint(s) failed`
         : displayedFailures;
-      const failureSummary = failures.length === 0
-        ? 'no DWN endpoints were resolved'
-        : remainingFailureSummary;
       throw new Error(
-        `Could not send permission grant to any DWN endpoint: grant ${g + 1} (${scope}); ${failureSummary}`,
+        `Could not send permission grant to any DWN endpoint: grant ${g + 1} (${scope}); ${remainingFailureSummary}`,
       );
     }
   }

@@ -75,6 +75,8 @@ import { WalletReapprovalRequiredError } from './typed-enbox.js';
  *   returns here with {@link ConnectionSnapshot.error} set to the `ConnectDeniedError`.
  * - `'connecting'` — a connect, vault-connect, or refresh flow is in flight,
  *   or a replacement session is completing application readiness.
+ * - `'disconnecting'` — sign-out has started and the prior session is no longer
+ *   available for new application work, while teardown is still completing.
  * - `'connected'` — an active, application-ready session exists; `session`,
  *   `enbox`, and the identity fields are populated.
  * - `'error'` — the last action failed for a reason other than denial and no
@@ -84,6 +86,7 @@ export type ConnectionPhase =
   | 'initializing'
   | 'disconnected'
   | 'connecting'
+  | 'disconnecting'
   | 'connected'
   | 'error';
 
@@ -124,7 +127,13 @@ export type ConnectionSnapshot = {
   /** The active auth session. Populated while `phase` is `'connected'`. */
   session?: AuthSession;
 
-  /** The {@link Enbox} instance bound to the active session. Populated while `phase` is `'connected'`. */
+  /**
+   * The {@link Enbox} instance bound to the active session.
+   *
+   * When this snapshot comes from a {@link ConnectionStore}, call
+   * {@link ConnectionStore.disconnect} rather than `enbox.disconnect()` so the
+   * store can publish the complete sign-out lifecycle.
+   */
   enbox?: Enbox;
 
   /** The connected identity's DID URI. Populated while `phase` is `'connected'`. */
@@ -184,7 +193,6 @@ export type ApplicationConnectionStoreConnectOptions = Omit<HandlerConnectOption
   identitySyncProtocols?: never;
   metadata?: never;
   protocols?: never;
-  recoveryPhrase?: never;
 };
 
 /** Refresh options for a manifest-backed store, whose protocols come only from the manifest. */
@@ -570,6 +578,9 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   public disconnect(options?: DisconnectOptions): Promise<ConnectionSnapshot> {
     this._assertNotDisposed();
+    if (this._snapshot.phase === 'disconnecting' && this._pendingAction !== undefined) {
+      return this._pendingAction;
+    }
     return this._track(this._runDisconnect(options));
   }
 
@@ -686,6 +697,9 @@ class HeadlessConnectionStore implements ConnectionStore {
   private async _runDisconnect(options?: DisconnectOptions): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
     this._stopDelegateMonitor();
+    // Auth aborts the session lifetime before teardown can fail. Remove the
+    // unusable session immediately while exposing the in-flight transition.
+    this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnecting' });
 
     try {
       // A disconnect must never resolve while a manager it did not clear can
@@ -765,7 +779,8 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (!isActiveAuthSession(activeSession)) {
       return this._publishDisconnected();
     }
-    if (this._snapshot.session !== undefined && this._snapshot.session !== activeSession) {
+    if (this._snapshot.phase === 'disconnecting'
+      || (this._snapshot.session !== undefined && this._snapshot.session !== activeSession)) {
       // Auth aborts the previous lifetime before publishing its replacement.
       // Do not expose that dead session while the replacement is readied.
       this._stopDelegateMonitor();
@@ -1136,7 +1151,14 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
     this._unbindSyncStatus();
     if (!this._disposed) {
-      this._apply({ remoteDwn: undefined, sync: undefined });
+      // Auth aborts the session lifetime synchronously when an external
+      // disconnect or lock starts. Reuse that existing wake to expose teardown
+      // immediately; a store-driven refresh already published `connecting` and
+      // must keep that replacement phase.
+      const phase = this._snapshot.phase === 'connected' && this._snapshot.session === binding.session
+        ? 'disconnecting'
+        : this._snapshot.phase;
+      this._apply({ ...CLEARED_SESSION_FIELDS, phase });
     }
   }
 

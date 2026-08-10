@@ -38,8 +38,7 @@ Common options:
 |---|---|
 | `password` | Local vault password. The default is insecure; production apps should pass one. |
 | `createIdentity` | Create a default identity when no identity exists. |
-| `recoveryPhrase` | Explicit BIP-39 vault recovery. |
-| `dwnEndpoints` | Remote DWN endpoints used for registration and sync. |
+| `dwnEndpoints` | Remote DWN endpoints used when creating new DIDs. |
 | `sync` | Omit for live sync, pass an interval like `'30s'`, or pass `'off'`. |
 | `protocols` | Protocol scopes for handler-based connect flows. |
 | `connectHandler` | Browser/wallet connect handler. |
@@ -76,10 +75,13 @@ For registered identities, connectivity uses the sync engine's existing
 aggregation rule: any online link makes the identity online; otherwise an
 offline link makes it offline, and no links fall back to the engine-wide state.
 
-The frozen snapshot updates from existing sync events and local state without
-polling or network requests. Its reference stays stable until a field changes,
-and sync state resets on lock, disconnect, replacement, or shutdown. Call
-`unsubscribe()` when the consumer is released and `store.dispose()` at shutdown.
+The frozen sync projection updates from existing events and local state without
+polling. `remoteDwn` is freshly resolved for a new session, after an opted-in
+service-config wake, or when `refreshDwnEndpoints()` is called. Its reference
+stays stable until a field changes. During sign-out, `phase` becomes
+`'disconnecting'` and session fields clear immediately; call `store.disconnect()`
+so the store can expose that transition. Call `unsubscribe()` when the consumer
+is released and `store.dispose()` at shutdown.
 
 ## Typed Protocols
 

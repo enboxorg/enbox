@@ -39,7 +39,6 @@ type AgentRequest = {
   };
   messageType: DwnInterface;
   rawMessage?: ConfigureMessage;
-  remoteEndpointsOnly?: boolean;
   store?: boolean;
   target: string;
 };
@@ -140,9 +139,6 @@ describe('ProtocolReadinessApi', () => {
     expect(fixture.configure.callCount).toBe(2);
     expect(callsFor(fixture.sendDwnRequest, DwnInterface.ProtocolsConfigure)).toHaveLength(2);
     expect(callsFor(fixture.sendDwnRequest, DwnInterface.ProtocolsQuery)).toHaveLength(2);
-    for (const call of fixture.sendDwnRequest.getCalls()) {
-      expect(call.args[0].remoteEndpointsOnly).toBe(true);
-    }
   });
 
   it('should support local owner readiness without hosted publication', async () => {

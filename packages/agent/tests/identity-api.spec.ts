@@ -441,27 +441,6 @@ describe('AgentIdentityApi', () => {
           })).toBe(true);
         });
 
-        it('does not republish or announce if the resolved service endpoints are unchanged', async () => {
-          // stub did.get to return the test DID
-          sinon.stub(testHarness.agent.did, 'get').resolves(new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager }));
-          sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
-            didDocument           : testPortableDid.document,
-            didDocumentMetadata   : {},
-            didResolutionMetadata : {},
-          });
-          sinon.stub(testHarness.agent.did, 'update').resolves();
-          const publishSpy = sinon.spy(DidDht, 'publish');
-
-          await expect(testHarness.agent.identity.setDwnEndpoints({
-            didUri    : testPortableDid.uri,
-            endpoints : ['https://example.com/dwn'],
-          })).resolves.toBeUndefined();
-
-          expect(publishSpy.notCalled).toBe(true);
-          expect(processRequestStub.notCalled).toBe(true);
-          expect(syncOptionsStub.calledOnceWithExactly(testPortableDid.uri)).toBe(true);
-        });
-
         it('retries sync routing without republishing or reannouncing unchanged endpoints', async () => {
           const bearerDid = new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager });
           sinon.stub(testHarness.agent.did, 'get').resolves(bearerDid);

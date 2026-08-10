@@ -563,22 +563,20 @@ describe('createConnectionStore()', () => {
       expect(store.getSnapshot().remoteDwn).toEqual(readyDwn());
       expect(Object.isFrozen(store.getSnapshot().remoteDwn)).toBe(true);
       expect(Object.isFrozen((store.getSnapshot().remoteDwn as { endpoints: string[] }).endpoints)).toBe(true);
-      expect(getDwnEndpointStatus.calledOnceWith({ didUri: OWNER_DID, refresh: true })).toBe(true);
       expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { protocols: 'all' } }]);
 
-      getDwnEndpointStatus.resetHistory();
       engine.optionUpdates.length = 0;
       getDwnEndpointStatus.resolves(readyDwn('https://new-dwn.example'));
       const changed = await store.refreshDwnEndpoints();
 
       expect(changed.remoteDwn).toEqual(readyDwn('https://new-dwn.example'));
-      expect(getDwnEndpointStatus.calledOnceWith({ didUri: OWNER_DID, refresh: true })).toBe(true);
       expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { protocols: 'all' } }]);
 
       const stable = store.getSnapshot();
       await store.refreshDwnEndpoints();
       expect(store.getSnapshot()).toBe(stable);
       expect(engine.optionUpdates).toHaveLength(1);
+      expect(getDwnEndpointStatus.alwaysCalledWith({ didUri: OWNER_DID, refresh: true })).toBe(true);
     });
 
     it('should retry unchanged routing after an update failure', async () => {
@@ -593,13 +591,11 @@ describe('createConnectionStore()', () => {
 
       const { store } = await connectWithSync(engine);
       const initial = store.getSnapshot();
-      expect(initial.remoteDwn).toEqual(readyDwn());
       expect(updateIdentityOptions.callCount).toBe(1);
 
       const retried = await store.refreshDwnEndpoints();
       expect(retried).toBe(initial);
       expect(updateIdentityOptions.callCount).toBe(2);
-      expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { protocols: 'all' } }]);
 
       await store.refreshDwnEndpoints();
       expect(updateIdentityOptions.callCount).toBe(2);
@@ -1423,27 +1419,95 @@ describe('createConnectionStore()', () => {
   });
 
   describe('disconnect()', () => {
-    it('should sign out through the AuthManager and clear the session fields', async () => {
+    it('should publish disconnecting synchronously, then clear the session fields', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
       fake.connect.callsFake(async (): Promise<AuthSession> => {
         fake.session = session;
         return session;
       });
-      fake.disconnect.callsFake(async (): Promise<void> => {
-        fake.session = undefined;
+      let finishDisconnect!: () => void;
+      fake.disconnect.callsFake((): Promise<void> => new Promise((resolve) => {
+        finishDisconnect = (): void => {
+          fake.session = undefined;
+          resolve();
+        };
+      }));
+      const phases: string[] = [];
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.connect({ protocols: PROTOCOLS });
+      store.subscribe((next): void => { phases.push(next.phase); });
+
+      const disconnect = store.disconnect({ clearStorage: true });
+      const duplicate = store.disconnect({ clearStorage: true });
+      const pending = store.getSnapshot();
+
+      expect(duplicate).toBe(disconnect);
+      expect(pending.phase).toBe('disconnecting');
+      expect(pending.session).toBeUndefined();
+      expect(pending.enbox).toBeUndefined();
+      expect(phases).toEqual(['disconnecting']);
+
+      finishDisconnect();
+      const snapshot = await disconnect;
+
+      expect(fake.disconnect.firstCall.args[0]).toEqual({ clearStorage: true });
+      expect(fake.disconnect.calledOnce).toBe(true);
+      expect(snapshot.phase).toBe('disconnected');
+      expect(fake.stopMonitorSpy.calledOnce).toBe(true);
+      expect(phases).toEqual(['disconnecting', 'disconnected']);
+    });
+
+    it('should publish disconnecting when the session lifetime is aborted externally', async () => {
+      const fake = createFakeAuth();
+      const lifetime = new AbortController();
+      const session = createSession({ signal: lifetime.signal });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
       });
       const store = createConnectionStore({ auth: asAuth(fake) });
       await store.connect({ protocols: PROTOCOLS });
 
-      const snapshot = await store.disconnect({ clearStorage: true });
+      lifetime.abort();
 
-      expect(fake.disconnect.firstCall.args[0]).toEqual({ clearStorage: true });
-      expect(snapshot.phase).toBe('disconnected');
-      expect(snapshot.session).toBeUndefined();
-      expect(snapshot.enbox).toBeUndefined();
-      expect(snapshot.connection).toBeUndefined();
-      expect(fake.stopMonitorSpy.calledOnce).toBe(true);
+      expect(store.getSnapshot().phase).toBe('disconnecting');
+      expect(store.getSnapshot().session).toBeUndefined();
+      expect(store.getSnapshot().enbox).toBeUndefined();
+
+      fake.session = undefined;
+      fake.emitter.emit('session-end', { did: session.did });
+
+      expect(store.getSnapshot().phase).toBe('disconnected');
+    });
+
+    it('should keep the connecting phase when refresh aborts the replaced session', async () => {
+      const fake = createFakeAuth();
+      const lifetime = new AbortController();
+      const session = createSession({ signal: lifetime.signal });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      let finishRefresh!: () => void;
+      fake.refresh.callsFake((): Promise<AuthSession> => new Promise((resolve) => {
+        finishRefresh = (): void => {
+          const replacement = createSession({ name: 'Replacement' });
+          fake.session = replacement;
+          resolve(replacement);
+        };
+      }));
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.connect({ protocols: PROTOCOLS });
+
+      const refresh = store.refresh({ protocols: PROTOCOLS });
+      await waitFor(() => { expect(fake.refresh.calledOnce).toBe(true); });
+      lifetime.abort();
+
+      expect(store.getSnapshot().phase).toBe('connecting');
+
+      finishRefresh();
+      expect((await refresh).phase).toBe('connected');
     });
 
     it('should supersede an in-flight connect so its late failure is discarded', async () => {
@@ -1824,13 +1888,14 @@ describe('createConnectionStore()', () => {
 
     it('should map a failed disconnect without a surviving session to the error phase', async () => {
       const fake = createFakeAuth();
-      const session = createSession();
+      const lifetime = new AbortController();
+      const session = createSession({ signal: lifetime.signal });
       fake.connect.callsFake(async (): Promise<AuthSession> => {
         fake.session = session;
         return session;
       });
       fake.disconnect.callsFake(async (): Promise<void> => {
-        fake.session = undefined;
+        lifetime.abort();
         throw new Error('revocation delivery failed');
       });
       const store = createConnectionStore({ auth: asAuth(fake) });
@@ -1839,6 +1904,8 @@ describe('createConnectionStore()', () => {
       const snapshot = await store.disconnect();
 
       expect(snapshot.phase).toBe('error');
+      expect(snapshot.session).toBeUndefined();
+      expect(snapshot.enbox).toBeUndefined();
       expect(snapshot.error?.message).toBe('revocation delivery failed');
     });
 

@@ -199,27 +199,6 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(endpointUpdates).toHaveLength(0);
   });
 
-  test('registers recovered identity DIDs as DWN tenants when registration is provided', async () => {
-    const identity = createMockIdentity();
-    let registrationSucceeded = false;
-    const { agent } = recoveredAgent(identity, {
-      rpcGetServerInfo: async () => ({
-        registrationRequirements : [],
-        maxFileSize              : 10_000_000,
-      }),
-    });
-
-    await recover(agent, {
-      identitySyncProtocols : ['https://proto.example/profile'],
-      registration          : {
-        onSuccess : () => { registrationSucceeded = true; },
-        onFailure : () => {},
-      },
-    });
-
-    expect(registrationSucceeded).toBe(true);
-  });
-
   test('registers each recovered DID at its own resolved endpoint', async () => {
     const identities = [
       createMockIdentity({ did: { uri: 'did:dht:alice' }, metadata: { name: 'Alice', tenant: 'did:dht:testagent' } }),
@@ -272,21 +251,29 @@ describe('recoverIdentitiesFromRemote', () => {
   test('replaces a resolved owned DID only when explicitly requested', async () => {
     const identity = createMockIdentity();
     const endpointUpdates: any[] = [];
-    const { agent } = recoveredAgent(identity, {
+    let pullsAtUpdate: number | undefined;
+    let getPullCount = (): number => 0;
+    const { agent, pulls } = recoveredAgent(identity, {
       identityGetDwnEndpointStatus: async ({ didUri }) => ({
         status: 'ready', didUri, endpoints: ['https://resolved.example'],
       }),
-      identitySetDwnEndpoints: async params => { endpointUpdates.push(params); },
+      identitySetDwnEndpoints: async params => {
+        endpointUpdates.push(params);
+        pullsAtUpdate = getPullCount();
+      },
     });
+    getPullCount = pulls;
 
     await recover(agent, {
-      replacementDwnEndpoints: ['https://replacement.example'],
+      replacementDwnEndpoints : ['https://replacement.example'],
+      identitySyncProtocols   : ['https://proto.example/profile'],
     });
 
     expect(endpointUpdates).toEqual([{
       didUri    : identity.did.uri,
       endpoints : ['https://replacement.example'],
     }]);
+    expect(pullsAtUpdate).toBe(2);
   });
 
   test('keeps registration callbacks outside the lifecycle mutation runner', async () => {
@@ -356,10 +343,12 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(syncCalls[0].did).toBe('did:dht:external');
   });
 
-  test('tolerates already-registered sync identity', async () => {
+  test('updates the requested scope for an already-registered sync identity', async () => {
     const identity = createMockIdentity();
+    const updates: any[] = [];
     const { agent, pulls } = recoveredAgent(identity, {
-      syncRegisterIdentity: async () => { throw new Error('already registered'); },
+      syncRegisterIdentity      : async () => { throw new Error('already registered'); },
+      syncUpdateIdentityOptions : async params => { updates.push(params); },
     });
 
     const result = await recover(agent, {
@@ -368,6 +357,10 @@ describe('recoverIdentitiesFromRemote', () => {
 
     expect(result).toHaveLength(1);
     expect(pulls()).toBe(2);
+    expect(updates).toEqual([{
+      did     : identity.did.uri,
+      options : { protocols: ['https://proto.example/profile'] },
+    }]);
   });
 
   test('throws when recovered identity sync registration fails for another reason', async () => {

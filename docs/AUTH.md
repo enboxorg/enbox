@@ -66,13 +66,13 @@ changes, vault lock/unlock, and local DWN discovery also emit typed events.
 ### `connect()`
 
 `connect()` is the routing entry point used by dapps and by `Enbox.connect()`.
-It first tries to restore a previous session unless the caller provides a
-recovery phrase. If restore does not produce a session, it chooses a flow from
-the supplied options:
+It first tries to restore a previous session. If restore does not produce a
+session, it chooses a flow from the supplied options:
 
-- `recoveryPhrase`: restore or re-unlock from a BIP-39 phrase.
 - `protocols` or `connectHandler`: use a handler-based connect flow.
 - `password`, `createIdentity`, or local vault options: use the vault flow.
+
+Use `restoreFromPhrase()` for explicit BIP-39 recovery.
 
 ```ts
 const auth = await AuthManager.create({
@@ -108,7 +108,10 @@ if (session.recoveryPhrase !== undefined) {
 Use this path when a user explicitly restores from their recovery phrase. A
 fresh device initializes from the phrase and recovers remote identities. An
 existing matching vault can reset the local password. A different existing
-vault is not overwritten.
+vault is not overwritten. Restore freshly resolves the vault DID and every
+identity routing DID, then uses each DID's advertised `#dwn` endpoints rather
+than application defaults. Passing `dwnEndpoints` is a deliberate endpoint
+migration performed after recovery.
 
 ```ts
 const session = await auth.restoreFromPhrase({
@@ -172,11 +175,15 @@ intentionally sync every protocol for an identity.
 | `'15s'`, `'2m'`, `'1h'` | Live sync with the periodic settle check at the requested interval. |
 | `'off'` | Disable sync. |
 
+Phrase restore still performs its required one-shot recovery pulls when
+`sync: 'off'`; the option disables ongoing synchronization afterward.
+
 ## Registration
 
-When `dwnEndpoints` and `registration` options are provided, auth registers the
-agent DID and active identity DID with the configured DWN endpoints. Servers may
-support provider auth (`provider-auth-v0`) or proof-of-work registration.
+For new DID creation, auth registers against the caller-selected or configured
+default endpoints. During recovery, each vault or identity routing DID is
+registered against its own advertised endpoints. Servers may support provider
+auth (`provider-auth-v0`) or proof-of-work registration.
 
 ```ts
 const auth = await AuthManager.create({

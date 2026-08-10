@@ -27,6 +27,7 @@ type RecoveryLifecycle = {
 };
 
 type RecoveredIdentityRouting = {
+  bootstrapEndpoints?: string[];
   ownedDid: string;
   replacementEndpoints?: string[];
   routingDid: string;
@@ -131,12 +132,14 @@ async function registerRecoveredIdentityForSync(params: {
     return false;
   }
 
+  const options = { protocols: identitySyncProtocols };
   try {
-    await userAgent.sync.registerIdentity({ did, options: { protocols: identitySyncProtocols } });
+    await userAgent.sync.registerIdentity({ did, options });
   } catch (error: unknown) {
     if (!isAlreadyRegisteredError(error)) {
       throw error;
     }
+    await userAgent.sync.updateIdentityOptions({ did, options });
   }
 
   return true;
@@ -163,18 +166,24 @@ async function resolveRecoveredIdentityRouting(
     || (status.status === 'resolution-failed' && status.resolutionError !== DidErrorCode.NotFound)) {
     throw new Error(status.message);
   }
-  if (replacementDwnEndpoints !== undefined) {
-    return { ...routing, replacementEndpoints: replacementDwnEndpoints };
-  }
-  if (status.status !== 'resolution-failed') {
-    throw new Error(status.message);
+  if (status.status === 'resolution-failed') {
+    const storedStatus = getDwnEndpointStatus(ownedDid, identity.did.document);
+    if (storedStatus.status === 'ready') {
+      return {
+        ...routing,
+        bootstrapEndpoints   : storedStatus.endpoints,
+        replacementEndpoints : replacementDwnEndpoints,
+      };
+    }
+    if (replacementDwnEndpoints === undefined) {
+      throw new Error(storedStatus.message);
+    }
   }
 
-  const storedStatus = getDwnEndpointStatus(ownedDid, identity.did.document);
-  if (storedStatus.status !== 'ready') {
-    throw new Error(storedStatus.message);
+  if (replacementDwnEndpoints === undefined) {
+    throw new Error(status.message);
   }
-  return { ...routing, replacementEndpoints: storedStatus.endpoints };
+  return { ...routing, bootstrapEndpoints: replacementDwnEndpoints };
 }
 
 /**
@@ -221,10 +230,13 @@ export async function recoverIdentitiesFromRemote(params: {
   // Tenant registration must come first — sync('pull') reads the durable
   // MessagesQuery feed, which requires the DID to be a recognised tenant.
   let registeredIdentityForSync = false;
-  for (const { ownedDid, routingDid, status, replacementEndpoints } of resolvedIdentities) {
+  for (const { bootstrapEndpoints, ownedDid, routingDid, status } of resolvedIdentities) {
     let resolvedEndpoints = status.status === 'ready' ? status.endpoints : undefined;
-    if (replacementEndpoints !== undefined) {
-      await userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: replacementEndpoints });
+    if (bootstrapEndpoints !== undefined) {
+      await runRecoveryMutation(
+        params,
+        () => userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: bootstrapEndpoints }),
+      );
       resolvedEndpoints = await userAgent.identity.getDwnEndpoints({ didUri: routingDid });
     }
     if (resolvedEndpoints === undefined) {
@@ -251,12 +263,34 @@ export async function recoverIdentitiesFromRemote(params: {
     ) || registeredIdentityForSync;
   }
 
-  return runRecoveryMutation(params, async (): Promise<BearerIdentity[]> => {
+  await runRecoveryMutation(params, async (): Promise<void> => {
     if (registeredIdentityForSync) {
       // Phase 2: pull explicitly scoped protocol configurations and records.
       await userAgent.sync.sync('pull');
     }
-
-    return userAgent.identity.list();
   });
+
+  // Deliberate endpoint migrations happen only after recovery has read the
+  // authoritative endpoints and completed both pulls.
+  for (const { ownedDid, replacementEndpoints } of resolvedIdentities) {
+    if (replacementEndpoints !== undefined) {
+      await runRecoveryMutation(
+        params,
+        () => userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: replacementEndpoints }),
+      );
+      await registerRecoveredIdentityTenant({
+        userAgent,
+        dwnEndpoints : replacementEndpoints,
+        agentDid     : ownedDid,
+        connectedDid : ownedDid,
+        registration,
+        storage,
+        assertActive : params.assertActive,
+        runMutation  : params.runMutation,
+      });
+      assertRecoveryActive(params);
+    }
+  }
+
+  return runRecoveryMutation(params, () => userAgent.identity.list());
 }

@@ -254,8 +254,6 @@ export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T>
   & {
     /** Send to one already-verified hosted endpoint instead of rediscovering the target DID. */
     remoteEndpoint?: string;
-    /** Compatibility marker; `sendRequest()` always uses DID-advertised endpoints. */
-    remoteEndpointsOnly?: boolean;
   };
 
 /** Retry disposition for a failed role-audience key delivery. */

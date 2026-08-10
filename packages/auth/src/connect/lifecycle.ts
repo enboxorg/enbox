@@ -159,7 +159,6 @@ export async function ensureVaultReady(params: {
   isFirstLaunch: boolean;
   recoveryPhrase?: string;
   dwnEndpoints?: string[];
-  recoveryDwnEndpoints?: string[];
 }): Promise<string | undefined> {
   const { userAgent, emitter, password, isFirstLaunch } = params;
   let recoveryPhrase: string | undefined;
@@ -167,16 +166,18 @@ export async function ensureVaultReady(params: {
   if (isFirstLaunch) {
     recoveryPhrase = await userAgent.initialize({
       password,
-      recoveryPhrase       : params.recoveryPhrase,
-      dwnEndpoints         : params.dwnEndpoints,
-      recoveryDwnEndpoints : params.recoveryDwnEndpoints,
+      recoveryPhrase : params.recoveryPhrase,
+      dwnEndpoints   : params.dwnEndpoints,
     });
-  } else if (params.recoveryPhrase) {
+  } else if (params.recoveryPhrase !== undefined) {
     try {
       await userAgent.vault.resetPasswordWithRecoveryPhrase({
-        recoveryPhrase : params.recoveryPhrase,
+        recoveryPhrase: params.recoveryPhrase,
         password,
-        dwnEndpoints   : params.recoveryDwnEndpoints,
+        ...(params.dwnEndpoints === undefined ? {} : {
+          dwnEndpoints                : params.dwnEndpoints,
+          deferDwnEndpointReplacement : true,
+        }),
       });
     } catch (error) {
       if (error instanceof HdIdentityVaultRecoveryPhraseMismatchError) {

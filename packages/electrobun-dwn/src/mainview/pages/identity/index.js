@@ -125,7 +125,7 @@ const identityRuntimeWindowKey = '__identityRuntime';
  * @typedef {Object} IdentityRuntime
  * @property {() => Promise<IdentityWalletSnapshot>} initialize
  * @property {() => Promise<IdentityWalletSnapshot>} refresh
- * @property {(options?: { password?: string; name?: string; dwnEndpoints?: string[]; recoveryPhrase?: string; }) => Promise<IdentityWalletSnapshot>} connectLocal
+ * @property {(options?: { password?: string; name?: string; dwnEndpoints?: string[]; }) => Promise<IdentityWalletSnapshot>} connectLocal
  * @property {(options?: { password?: string; name?: string; dwnEndpoints?: string[]; }) => Promise<IdentityWalletSnapshot>} createDid
  * @property {(options: { recoveryPhrase: string; password: string; dwnEndpoints?: string[]; }) => Promise<IdentityWalletSnapshot>} importFromPhrase
  * @property {(options: { portableIdentity: Record<string, unknown>; password?: string; dwnEndpoints?: string[]; }) => Promise<IdentityWalletSnapshot>} importFromPortable
