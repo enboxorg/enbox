@@ -228,10 +228,10 @@ export class Enbox {
    * it owns. Idempotent and synchronous; it does not stop shared sync, sign
    * out, lock the vault, or otherwise mutate the owning session.
    *
-   * Closing cannot revoke shared escape hatches already retained by the
-   * caller, such as `agent`, `did`, or a raw `dwn` reference obtained before
-   * close. Their lifetime remains with their owner and they must not be used
-   * as though this facade still authorizes application work.
+   * Closing does not revoke the shared `agent` or `did` surfaces, or a raw
+   * `dwn` reference obtained before close. Their lifetime remains with their
+   * owner and they must not be used as though this facade still authorizes
+   * application work.
    *
    * Applications using a connection store normally do not call this method:
    * the store closes replaced and disconnected facades automatically.

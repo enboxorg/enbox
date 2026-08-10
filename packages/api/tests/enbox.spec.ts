@@ -309,7 +309,8 @@ describe('Enbox API', () => {
         });
 
         // Cache a TypedEnbox instance.
-        expect(enbox.using(CloseProtocol)).toBeDefined();
+        const typed = enbox.using(CloseProtocol);
+        expect(typed).toBeDefined();
         const rawDwn = enbox.dwn;
         expect((enbox as any)._lifetimeSignal.aborted).toBe(false);
 
@@ -325,6 +326,28 @@ describe('Enbox API', () => {
         expect(() => enbox.using(CloseProtocol)).toThrow();
         expect(() => enbox.dwn).toThrow();
         expect(() => enbox.getDwnEndpointStatus()).toThrow();
+        expect(() => typed.dwn).toThrow();
+        await expect(typed.configure()).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(typed.verifyInstalled()).rejects.toMatchObject({ name: 'AbortError' });
+      });
+
+      it('should fence a retained typed record after close', async () => {
+        const enbox = new Enbox({
+          agent        : testHarness.agent,
+          connectedDid : testHarness.agent.agentDid.uri,
+        });
+        const record = await enbox.using(CloseProtocol).records.create('item', {
+          data: { value: 'current' },
+        });
+        const processRequest = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+        enbox.close();
+
+        await expect(record.value()).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(record.data.blob()).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(record.update({ data: { value: 'updated' } })).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(record.delete()).rejects.toMatchObject({ name: 'AbortError' });
+        expect(processRequest.called).toBe(false);
       });
 
       it('should reject a stale typed query before touching the DWN', async () => {

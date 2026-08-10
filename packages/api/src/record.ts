@@ -326,7 +326,7 @@ export class Record<T = unknown> implements RecordModel {
    */
   get data(): RecordData {
     return createRecordData(async (): Promise<ReadableStream<Uint8Array>> => {
-      await this._executionContext?.assertActive();
+      await this.assertActive();
       if (this.deleted) {
         throw new Error('Cannot access data of a deleted record.');
       }
@@ -351,6 +351,7 @@ export class Record<T = unknown> implements RecordModel {
    * @throws `Error` when this record did not come from a typed protocol API.
    */
   async value(): Promise<T> {
+    await this.assertActive();
     const binding = getRecordCodecBinding(this);
     if (binding === undefined) {
       throw new Error('Record.value: this record is not bound to a protocol codec.');
@@ -442,7 +443,7 @@ export class Record<T = unknown> implements RecordModel {
     { timestamp, data, protocolRole, recipientRolePublicKey, from, ...params }: RecordUpdateParams<T>
   ): Promise<Record<T>> {
 
-    await this._executionContext?.assertActive();
+    await this.assertActive();
 
     if (this._executionContext !== undefined && from !== undefined && from !== this._executionContext.tenantDid) {
       throw new TypeError('Context-bound records cannot be updated on another tenant.');
@@ -597,7 +598,7 @@ export class Record<T = unknown> implements RecordModel {
    *   unchanged because the authority did not return the winning tombstone.
    */
   async delete(deleteParams?: RecordDeleteParams): Promise<void> {
-    await this._executionContext?.assertActive();
+    await this.assertActive();
     const { protocolRole, timestamp } = deleteParams || {};
     const effectiveProtocolRole = this.resolveProtocolRole(protocolRole);
 
@@ -677,6 +678,14 @@ export class Record<T = unknown> implements RecordModel {
     this._storedData = undefined;
     this._rawMessageDirty = true;
     await invalidateRecordReplica(this._executionContext);
+  }
+
+  /** Reject operations after either the typed facade or bound context ends. */
+  private async assertActive(): Promise<void> {
+    const signal = getRecordCodecBinding(this)?.signal;
+    signal?.throwIfAborted();
+    await this._executionContext?.assertActive();
+    signal?.throwIfAborted();
   }
 
   private dispatchMutation<I extends DwnInterface.RecordsWrite | DwnInterface.RecordsDelete>(
