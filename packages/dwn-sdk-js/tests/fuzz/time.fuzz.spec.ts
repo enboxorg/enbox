@@ -41,8 +41,7 @@ describe('Time — fuzz', () => {
           }),
           (opts) => {
             const timestamp = Time.createTimestamp(opts);
-            // Should not throw
-            Time.validateTimestamp(timestamp);
+            expect(() => Time.validateTimestamp(timestamp)).not.toThrow();
           }
         ),
         { numRuns }
@@ -112,7 +111,7 @@ describe('Time — fuzz', () => {
       // Run a few times to check consistency
       for (let i = 0; i < 10; i++) {
         const timestamp = Time.getCurrentTimestamp();
-        Time.validateTimestamp(timestamp);
+        expect(() => Time.validateTimestamp(timestamp)).not.toThrow();
       }
     });
   });

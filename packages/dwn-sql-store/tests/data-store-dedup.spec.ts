@@ -254,8 +254,7 @@ describe('DataStoreSql — content-addressed dedup', () => {
       // ─── delete is a no-op for non-existent refs ───────────────────
 
       it('should not throw when deleting a non-existent ref', async () => {
-        // Should not throw.
-        await store.delete('did:example:nobody', 'no-record', 'bafkreinotfound');
+        await expect(store.delete('did:example:nobody', 'no-record', 'bafkreinotfound')).resolves.toBeUndefined();
       });
 
       // ─── Orphaned blocks edge case ──────────────────────────────────

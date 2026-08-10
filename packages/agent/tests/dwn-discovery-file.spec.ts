@@ -317,8 +317,7 @@ describe('DwnDiscoveryFile', () => {
       const fs = createMemoryFs();
       const file = new DwnDiscoveryFile(fs, testFilePath);
 
-      // Should not throw.
-      await file.remove();
+      await expect(file.remove()).resolves.toBeUndefined();
     });
   });
 

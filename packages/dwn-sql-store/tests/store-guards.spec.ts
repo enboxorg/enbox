@@ -111,7 +111,7 @@ describe('Store guards — db not open', () => {
 
       const freshStore = new DataStoreSql(freshDialect);
       await freshStore.open();
-      await freshStore.open(); // second call should be a no-op
+      await expect(freshStore.open()).resolves.toBeUndefined(); // second call is a no-op
       await freshStore.close();
     });
   });

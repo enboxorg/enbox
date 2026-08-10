@@ -100,11 +100,13 @@ describe('Jws — fuzz', () => {
         fc.property(
           fc.string({ minLength: 1, maxLength: 100 }),
           (protectedHeader) => {
+            let kid: string;
             try {
-              Jws.getKid({ protected: protectedHeader, signature: 'dummysig' });
+              kid = Jws.getKid({ protected: protectedHeader, signature: 'dummysig' });
             } catch {
-              // Any error is acceptable — we verify no unhandled crash
+              return; // Any error is acceptable — the property rejects only unhandled crashes
             }
+            expect(typeof kid).toBe('string');
           }
         ),
         { numRuns }

@@ -410,7 +410,7 @@ describe('e2e: agent lifecycle with encrypted stores', () => {
     }, 30_000);
 
     it('should close the agent', async () => {
-      await harness.closeStorage();
+      await expect(harness.closeStorage()).resolves.toBeUndefined();
     }, 30_000);
   });
 
@@ -451,8 +451,8 @@ describe('e2e: agent lifecycle with encrypted stores', () => {
     }, 30_000);
 
     it('should clean up', async () => {
-      await harness.clearStorage();
-      await harness.closeStorage();
+      await expect(harness.clearStorage()).resolves.toBeUndefined();
+      await expect(harness.closeStorage()).resolves.toBeUndefined();
     }, 30_000);
   });
 });

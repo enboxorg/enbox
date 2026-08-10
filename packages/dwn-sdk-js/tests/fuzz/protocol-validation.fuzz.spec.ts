@@ -65,7 +65,7 @@ describe('Protocol validation — fuzz', () => {
             const dataSize = minSize + Math.floor(extraMax / 2); // dataSize in [min, max]
             const ruleSet: ProtocolRuleSet = { $size: { min: minSize, max: maxSize } };
             // Should NOT throw
-            verifySizeLimit(stubRecordsWrite(dataSize), ruleSet);
+            expect(() => verifySizeLimit(stubRecordsWrite(dataSize), ruleSet)).not.toThrow();
           }
         ),
         { numRuns }
@@ -118,7 +118,7 @@ describe('Protocol validation — fuzz', () => {
             const dataSize = minSize + extra; // always >= minSize
             const ruleSet: ProtocolRuleSet = { $size: { min: minSize } };
             // Should NOT throw — no max means no upper bound
-            verifySizeLimit(stubRecordsWrite(dataSize), ruleSet);
+            expect(() => verifySizeLimit(stubRecordsWrite(dataSize), ruleSet)).not.toThrow();
           }
         ),
         { numRuns }
@@ -143,7 +143,7 @@ describe('Protocol validation — fuzz', () => {
               dataFormat   : chosenFormat,
             });
             // Should NOT throw
-            verifyType(msg, protocolTypes);
+            expect(() => verifyType(msg, protocolTypes)).not.toThrow();
           }
         ),
         { numRuns }
@@ -191,7 +191,7 @@ describe('Protocol validation — fuzz', () => {
               dataFormat,
             });
             // Should NOT throw
-            verifyType(msg, protocolTypes);
+            expect(() => verifyType(msg, protocolTypes)).not.toThrow();
           }
         ),
         { numRuns }

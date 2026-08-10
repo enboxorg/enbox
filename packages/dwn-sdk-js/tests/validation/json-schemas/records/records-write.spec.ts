@@ -21,7 +21,7 @@ describe('RecordsWrite schema definition', () => {
       },
       authorization: TestDataGenerator.generateAuthorization()
     };
-    Message.validateJsonSchema(validMessage);
+    expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 
   it('should throw if `recordId` is missing', async () => {
@@ -135,7 +135,7 @@ describe('RecordsWrite schema definition', () => {
       authorization: TestDataGenerator.generateAuthorization()
     };
 
-    Message.validateJsonSchema(validMessage);
+    expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 
   it('should throw if `protocolPath` contains invalid characters', () => {
@@ -182,7 +182,7 @@ describe('RecordsWrite schema definition', () => {
         authorization: TestDataGenerator.generateAuthorization()
       };
 
-      Message.validateJsonSchema(message);
+      expect(() => Message.validateJsonSchema(message)).not.toThrow();
     }
   });
 
@@ -432,7 +432,7 @@ describe('RecordsWrite schema definition', () => {
       authorization: TestDataGenerator.generateAuthorization()
     };
 
-    Message.validateJsonSchema(invalidMessage);
+    expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
   });
 
   it('should pass if `protocol` and `recipient` are both defined', () => {
@@ -455,7 +455,7 @@ describe('RecordsWrite schema definition', () => {
       authorization: TestDataGenerator.generateAuthorization()
     };
 
-    Message.validateJsonSchema(invalidMessage);
+    expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
   });
 
   it('should throw if published is false but datePublished is present', () => {

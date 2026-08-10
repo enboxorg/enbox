@@ -57,9 +57,12 @@ function normalizeUrl(url: string): string {
 }
 
 function removeTrailingSlash(str: string): string {
-  if (str.endsWith('/')) {
-    return str.slice(0, -1);
-  } else {
-    return str;
+  // Strip every trailing slash, not just one, so normalization is idempotent:
+  // an input like `https://a.example//` must normalize to `https://a.example`,
+  // otherwise the normalized form fails `validate*UrlNormalized()`.
+  let end = str.length;
+  while (end > 0 && str[end - 1] === '/') {
+    end -= 1;
   }
+  return str.slice(0, end);
 }

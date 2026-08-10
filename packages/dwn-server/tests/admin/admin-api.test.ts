@@ -1615,11 +1615,6 @@ describe('AdminApi — audit log disabled', () => {
     expect(response.status).toBe(501);
   });
 
-  it('should silently skip audit recording when auditLog is not set', async () => {
-    // AdminApi without auditLog should not throw on mutation operations.
-    // This is verified by the existing Phase 1/3 tests that don't use audit logs
-    // (they create DwnServer without explicit auditLog and still pass).
-  });
 });
 
 describe('AdminApi — config endpoint disabled (no admin store)', () => {

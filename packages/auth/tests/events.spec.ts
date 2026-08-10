@@ -91,7 +91,6 @@ describe('AuthEventEmitter', () => {
 
   test('emitting with no listeners is a no-op', () => {
     const emitter = new AuthEventEmitter();
-    // Should not throw
-    emitter.emit('vault-locked', {});
+    expect(() => emitter.emit('vault-locked', {})).not.toThrow();
   });
 });

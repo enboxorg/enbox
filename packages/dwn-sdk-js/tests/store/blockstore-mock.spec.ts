@@ -36,8 +36,8 @@ describe('BlockstoreMock', () => {
   });
 
   it('should implement open and close methods', async () => {
-    await blockstore.open();
-    await blockstore.close();
+    await expect(blockstore.open()).resolves.toBeUndefined();
+    await expect(blockstore.close()).resolves.toBeUndefined();
   });
 
   it('should facilitate the same CID computation as other implementations', async () => {
@@ -90,7 +90,7 @@ describe('BlockstoreMock', () => {
 
   it('should implement delete method', async () => {
     const cid = CID.parse('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
-    await blockstore.delete(cid);
+    await expect(blockstore.delete(cid)).resolves.toBeUndefined();
   });
 
   it('should implement isEmpty method', async () => {
@@ -162,7 +162,7 @@ describe('BlockstoreMock', () => {
   });
 
   it('should implement clear method', async () => {
-    await blockstore.clear();
+    await expect(blockstore.clear()).resolves.toBeUndefined();
   });
 
 });

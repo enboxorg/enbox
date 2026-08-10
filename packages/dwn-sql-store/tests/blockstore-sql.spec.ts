@@ -85,8 +85,8 @@ describe('BlockstoreSql', () => {
 
   describe('open() / close()', () => {
     it('should be no-ops and not throw', async () => {
-      await blockstore.open();
-      await blockstore.close();
+      await expect(blockstore.open()).resolves.toBeUndefined();
+      await expect(blockstore.close()).resolves.toBeUndefined();
     });
   });
 

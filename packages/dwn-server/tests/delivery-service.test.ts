@@ -542,7 +542,7 @@ describe('DeliveryService', () => {
       } as GenericMessage;
 
       // This should not throw — it resolves endpoints, finds none, and returns.
-      service.dispatchIfNeeded(alice.did, message, 202);
+      expect(() => service.dispatchIfNeeded(alice.did, message, 202)).not.toThrow();
 
       // Give async dispatch a chance to run
       await new Promise(resolve => setTimeout(resolve, 50));

@@ -257,8 +257,7 @@ describe.skipIf(!s3Available)('DataStoreS3', () => {
     });
 
     it('should be a no-op when deleting a non-existent ref', async () => {
-      // Should not throw.
-      await store.delete('did:key:nonexistent', 'no-record', 'no-cid');
+      await expect(store.delete('did:key:nonexistent', 'no-record', 'no-cid')).resolves.toBeUndefined();
     });
 
     it('should only delete the specified ref without affecting other records', async () => {

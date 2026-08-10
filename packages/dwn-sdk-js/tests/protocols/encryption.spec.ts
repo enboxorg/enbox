@@ -45,7 +45,7 @@ describe('EncryptionProtocol', () => {
 
       const encryptionProtocol = new EncryptionProtocol();
 
-      await encryptionProtocol.preProcessWrite(alice.did, recordsWrite.message, createValidationStateReader({}));
+      await expect(encryptionProtocol.preProcessWrite(alice.did, recordsWrite.message, createValidationStateReader({}))).resolves.toBeUndefined();
     });
 
     it('should accept grantKey records covered by an ancestor protocolPath read grant', async () => {
@@ -69,7 +69,7 @@ describe('EncryptionProtocol', () => {
 
       const encryptionProtocol = new EncryptionProtocol();
 
-      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }));
+      await expect(encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }))).resolves.toBeUndefined();
     });
 
     it('should reject plaintext grantKey records whose data cannot be inline validated', async () => {
@@ -127,7 +127,7 @@ describe('EncryptionProtocol', () => {
 
       const encryptionProtocol = new EncryptionProtocol();
 
-      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }));
+      await expect(encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }))).resolves.toBeUndefined();
     });
 
     it('should reject read-grant grantKey records for unreferenced role paths outside the read subtree', async () => {
@@ -213,7 +213,7 @@ describe('EncryptionProtocol', () => {
 
       const encryptionProtocol = new EncryptionProtocol();
 
-      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }));
+      await expect(encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }))).resolves.toBeUndefined();
     });
 
     it('should reject write-grant grantKey records for covered non-role paths', async () => {
@@ -524,7 +524,7 @@ describe('EncryptionProtocol', () => {
 
       const encryptionProtocol = new EncryptionProtocol();
 
-      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }));
+      await expect(encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }))).resolves.toBeUndefined();
     });
 
     it('should reject grantKey records for context-scoped permission grants', async () => {

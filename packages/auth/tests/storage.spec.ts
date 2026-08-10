@@ -33,8 +33,7 @@ describe('MemoryStorage', () => {
 
   test('remove() is a no-op for missing keys', async () => {
     const storage = new MemoryStorage();
-    // Should not throw
-    await storage.remove('nonexistent');
+    await expect(storage.remove('nonexistent')).resolves.toBeUndefined();
   });
 
   test('clear() removes all keys', async () => {
@@ -130,8 +129,7 @@ describe('BrowserStorage', () => {
 
   test('clear() handles empty storage', async () => {
     const storage = new BrowserStorage('test:');
-    // Should not throw on empty storage
-    await storage.clear();
+    await expect(storage.clear()).resolves.toBeUndefined();
   });
 });
 
@@ -213,8 +211,7 @@ describe('LevelStorage', () => {
   test('remove() is a no-op for missing keys', async () => {
     const storage = await createTmpStorage();
     try {
-      // Should not throw
-      await storage.remove('nonexistent');
+      await expect(storage.remove('nonexistent')).resolves.toBeUndefined();
     } finally {
       await storage.close();
     }
@@ -238,8 +235,7 @@ describe('LevelStorage', () => {
   test('clear() handles empty database', async () => {
     const storage = await createTmpStorage();
     try {
-      // Should not throw on empty db
-      await storage.clear();
+      await expect(storage.clear()).resolves.toBeUndefined();
     } finally {
       await storage.close();
     }

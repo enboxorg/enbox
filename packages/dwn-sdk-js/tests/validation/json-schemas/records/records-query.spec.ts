@@ -13,7 +13,7 @@ describe('RecordsQuery schema validation', () => {
       },
       authorization: TestDataGenerator.generateAuthorization()
     };
-    Message.validateJsonSchema(validMessage);
+    expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 
   it('should throw if unknown property is given in message', () => {
@@ -65,7 +65,7 @@ describe('RecordsQuery schema validation', () => {
         authorization: TestDataGenerator.generateAuthorization()
       };
 
-      Message.validateJsonSchema(validMessage);
+      expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
     }
 
     // test an invalid values of `dateSort`
