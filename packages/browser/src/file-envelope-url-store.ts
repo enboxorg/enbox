@@ -225,7 +225,7 @@ class DefaultFileEnvelopeUrlStore<Request> implements FileEnvelopeUrlStore<Reque
     this._abortReads();
     this._cache.clear();
     this._bytes = 0;
-    for (const entry of [...this._entries]) {
+    for (const entry of this._entries) {
       if (revokeActive || entry.url.references === 0) {
         this._revoke(entry);
       }
