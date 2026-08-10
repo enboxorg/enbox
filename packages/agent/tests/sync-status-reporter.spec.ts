@@ -35,6 +35,41 @@ type SyncStatusReporterState = {
 };
 
 describe('SyncStatusReporter', () => {
+  it('builds every tenant projection from one read of each durable source', async () => {
+    const currentLink = link({ connectivity: 'offline' });
+    const otherLink = link({ status: 'paused', tenantDid: BOB });
+    const operations = {
+      getConnectivityState       : sinon.stub().returns('online' as const),
+      getCurrentLinkIdentityKeys : sinon.stub().resolves(new Set([identityKey(currentLink), identityKey(otherLink)])),
+      getCurrentQuotaLinkKeys    : sinon.stub().resolves(new Set(['quota-current'])),
+      getDeadLetters             : sinon.stub().resolves([deadLetter(), deadLetter({ tenantDid: BOB })]),
+      getLinks                   : sinon.stub().resolves([currentLink, otherLink]),
+    } satisfies SyncStatusReporterOperations;
+    const quotaManager = sinon.createStubInstance(SyncQuotaManager);
+    quotaManager.getAllBlockStates.resolves([quotaBlock(), quotaBlock({ tenantDid: BOB })]);
+
+    const status = await new SyncStatusReporter({ operations, quotaManager }).getStatus(ALICE);
+
+    expect(status.health).toMatchObject({
+      connectivity             : 'offline',
+      degradedLinkCount        : 0,
+      failedMessageCount       : 1,
+      quotaBlockedMessageCount : 1,
+    });
+    expect(status.links).toHaveLength(1);
+    expect(status.remotes).toHaveLength(1);
+    for (const operation of [
+      operations.getCurrentLinkIdentityKeys,
+      operations.getCurrentQuotaLinkKeys,
+      operations.getDeadLetters,
+      operations.getLinks,
+    ]) {
+      expect(operation.calledOnce).toBe(true);
+    }
+    expect(operations.getConnectivityState.called).toBe(false);
+    expect(quotaManager.getAllBlockStates.calledOnce).toBe(true);
+  });
+
   it('reports an empty online snapshot as healthy', async () => {
     await expect(createReporter().getHealth()).resolves.toEqual({
       connectivity             : 'online',

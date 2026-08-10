@@ -1398,6 +1398,11 @@ describe('RecordView', () => {
       from           : 'live',
       to             : 'paused',
     });
+    fakeSync.emit({
+      type           : 'dead-letter:change',
+      tenantDid      : TENANT_DID,
+      remoteEndpoint : 'https://dwn.example',
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.queryRequests).toHaveLength(1);

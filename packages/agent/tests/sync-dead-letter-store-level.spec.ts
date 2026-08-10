@@ -17,7 +17,7 @@ describe('SyncDeadLetterStoreLevel', () => {
   });
 
   afterEach(async () => {
-    await store.clear();
+    await db.sublevel('deadLetters').clear();
   });
 
   afterAll(async () => {
@@ -41,12 +41,12 @@ describe('SyncDeadLetterStoreLevel', () => {
     const bobA = deadLetter({ tenantDid: 'did:example:bob' });
     await Promise.all([store.put(aliceA), store.put(aliceB), store.put(bobA)]);
 
-    await store.deleteExact(aliceA.tenantDid, aliceA.messageCid, aliceA.remoteEndpoint);
+    expect(await store.deleteExact(aliceA.tenantDid, aliceA.messageCid, aliceA.remoteEndpoint)).toEqual(identityOf(aliceA));
 
     expect(await store.getForTenant(aliceA.tenantDid)).toEqual([aliceB]);
     expect(await store.getForTenant(bobA.tenantDid)).toEqual([bobA]);
-    expect(await store.deleteForMessage(aliceA.messageCid, aliceA.remoteEndpoint)).toBe(1);
-    expect(await store.deleteForMessage(aliceA.messageCid, aliceA.remoteEndpoint)).toBe(0);
+    expect(await store.deleteForMessage(aliceA.messageCid, aliceA.remoteEndpoint)).toEqual([identityOf(bobA)]);
+    expect(await store.deleteForMessage(aliceA.messageCid, aliceA.remoteEndpoint)).toEqual([]);
     expect(await store.getAll()).toEqual([aliceB]);
   });
 
@@ -55,7 +55,7 @@ describe('SyncDeadLetterStoreLevel', () => {
     const bob = deadLetter({ messageCid: 'bob-cid', tenantDid: 'did:example:bob' });
     await Promise.all([store.put(alice), store.put(bob)]);
 
-    await store.deleteForTenant(alice.tenantDid);
+    expect(await store.deleteForTenant(alice.tenantDid)).toEqual([identityOf(alice)]);
 
     expect(await store.getForTenant(alice.tenantDid)).toEqual([]);
     expect(await store.getForTenant(bob.tenantDid)).toEqual([bob]);
@@ -76,6 +76,8 @@ describe('SyncDeadLetterStoreLevel', () => {
 
     await expect(store.get(entry.tenantDid, entry.messageCid, entry.remoteEndpoint)).rejects.toThrow();
     await expect(store.getAll()).rejects.toThrow();
+    expect(await store.clear()).toEqual([identityOf(entry)]);
+    expect(await store.getAll()).toEqual([]);
   });
 
   it('surfaces unexpected storage errors', async () => {
@@ -101,4 +103,9 @@ function deadLetter(overrides: Partial<DeadLetterEntry> = {}): DeadLetterEntry {
     tenantDid      : 'did:example:alice',
     ...overrides,
   };
+}
+
+function identityOf(entry: DeadLetterEntry): Pick<DeadLetterEntry, 'messageCid' | 'remoteEndpoint' | 'tenantDid'> {
+  const { messageCid, remoteEndpoint, tenantDid } = entry;
+  return { messageCid, remoteEndpoint, tenantDid };
 }

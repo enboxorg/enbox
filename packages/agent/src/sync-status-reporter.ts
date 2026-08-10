@@ -12,6 +12,7 @@ import type {
 
 import { buildCurrentLinkIdentityKey } from './sync-link-key.js';
 import { lexicographicalCompare } from './types/sync.js';
+import { resolveSyncConnectivityState } from './sync-connectivity-manager.js';
 
 /** Current link identities, or `undefined` when target resolution was incomplete. */
 export type SyncStatusCurrentKeySet = ReadonlySet<string> | undefined;
@@ -35,6 +36,13 @@ export interface SyncStatusReporterOperations {
 export type SyncStatusReporterParams = {
   operations: SyncStatusReporterOperations;
   quotaManager: SyncQuotaManager;
+};
+
+/** Combined projections produced from one set of durable status reads. */
+type SyncStatusReport = {
+  health: SyncHealthSummary;
+  links: ReplicationLinkSnapshot[];
+  remotes: RemoteSyncStatus[];
 };
 
 /** Per-(tenant, remote) state folded from links, quota blocks, and dead letters. */
@@ -66,68 +74,73 @@ export class SyncStatusReporter {
     this._quotaManager = quotaManager;
   }
 
-  /** Summarize current terminal failures, quota blocks, and degraded links. */
-  public async getHealth(): Promise<SyncHealthSummary> {
-    const failedMessageCount = (await this._operations.getDeadLetters()).length;
+  /** Produce every public status projection from one set of durable reads. */
+  public async getStatus(tenantDid?: string): Promise<SyncStatusReport> {
+    const [currentLinkIdentityKeys, currentQuotaLinkKeys, allLinks, allQuotaBlocks, allDeadLetters] = await Promise.all([
+      this._operations.getCurrentLinkIdentityKeys(),
+      this._operations.getCurrentQuotaLinkKeys(),
+      this._operations.getLinks(),
+      this._quotaManager.getAllBlockStates(),
+      this._operations.getDeadLetters(),
+    ]);
+    const links = allLinks.filter((link): boolean =>
+      SyncStatusReporter.matchesTenant(link.tenantDid, tenantDid)
+      && SyncStatusReporter.isCurrentLink(link, currentLinkIdentityKeys));
+    const quotaBlocks = allQuotaBlocks.filter((state): boolean =>
+      SyncStatusReporter.matchesTenant(state.tenantDid, tenantDid)
+      && SyncStatusReporter.isCurrentQuotaBlock(state, currentQuotaLinkKeys));
+    const deadLetters = allDeadLetters.filter((entry): boolean =>
+      SyncStatusReporter.matchesTenant(entry.tenantDid, tenantDid));
 
-    const currentQuotaLinkKeys = await this._operations.getCurrentQuotaLinkKeys();
-    let quotaBlockedMessageCount = 0;
-    for (const state of await this._quotaManager.getAllBlockStates()) {
-      if (SyncStatusReporter.isCurrentQuotaBlock(state, currentQuotaLinkKeys)) {
-        quotaBlockedMessageCount++;
-      }
-    }
+    const rows = new Map<string, RemoteStatusAccumulator>();
+    SyncStatusReporter.accumulateLinkStatus(rows, links);
+    SyncStatusReporter.accumulateQuotaBlockStatus(rows, quotaBlocks);
+    SyncStatusReporter.accumulateDeadLetterStatus(rows, deadLetters);
 
-    const currentLinkIdentityKeys = await this._operations.getCurrentLinkIdentityKeys();
-    let degradedLinkCount = 0;
-    for (const link of await this._operations.getLinks()) {
-      if (
-        SyncStatusReporter.isCurrentLink(link, currentLinkIdentityKeys) &&
-        SyncStatusReporter.isUnhealthyLinkStatus(link.status)
-      ) {
-        degradedLinkCount++;
-      }
-    }
-
-    return {
-      connectivity : this._operations.getConnectivityState(),
+    const degradedLinkCount = links.filter((link): boolean =>
+      SyncStatusReporter.isUnhealthyLinkStatus(link.status)).length;
+    const failedMessageCount = deadLetters.length;
+    const quotaBlockedMessageCount = quotaBlocks.length;
+    const health: SyncHealthSummary = {
+      connectivity: tenantDid === undefined
+        ? this._operations.getConnectivityState()
+        : resolveSyncConnectivityState(links.map((link): SyncConnectivityState => link.connectivity)),
       failedMessageCount,
       degradedLinkCount,
       quotaBlockedMessageCount,
-      syncHealthy  : failedMessageCount === 0 && degradedLinkCount === 0 && quotaBlockedMessageCount === 0,
+      syncHealthy: failedMessageCount === 0 && degradedLinkCount === 0 && quotaBlockedMessageCount === 0,
     };
+    const linkSnapshots = links.map((link): ReplicationLinkSnapshot =>
+      SyncStatusReporter.linkSnapshotFrom(link));
+    const remotes = [...rows.values()].map((row): RemoteSyncStatus =>
+      SyncStatusReporter.remoteStatusFromRow(row));
+
+    return {
+      health,
+      links   : linkSnapshots.sort(SyncStatusReporter.compareRemoteRows),
+      remotes : remotes.sort(SyncStatusReporter.compareRemoteRows),
+    };
+  }
+
+  /** Summarize current terminal failures, quota blocks, and degraded links. */
+  public async getHealth(): Promise<SyncHealthSummary> {
+    return (await this.getStatus()).health;
   }
 
   /** Build stable per-remote status rows, optionally scoped to one tenant. */
   public async getRemoteStatus(tenantDid?: string): Promise<RemoteSyncStatus[]> {
-    const rows = new Map<string, RemoteStatusAccumulator>();
-
-    await this.accumulateLinkStatus(rows, tenantDid);
-    await this.accumulateQuotaBlockStatus(rows, tenantDid);
-    await this.accumulateDeadLetterStatus(rows, tenantDid);
-
-    return [...rows.values()]
-      .map((row): RemoteSyncStatus => SyncStatusReporter.remoteStatusFromRow(row))
-      .sort((a, b) => lexicographicalCompare(
-        SyncStatusReporter.remoteRowKey(a.tenantDid, a.remoteEndpoint),
-        SyncStatusReporter.remoteRowKey(b.tenantDid, b.remoteEndpoint),
-      ));
+    return (await this.getStatus(tenantDid)).remotes;
   }
 
   /** Build read-only per-link snapshots of current links, optionally scoped to one tenant. */
   public async getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]> {
     const currentLinkIdentityKeys = await this._operations.getCurrentLinkIdentityKeys();
-    const snapshots: ReplicationLinkSnapshot[] = [];
-    for (const link of await this._operations.getLinks()) {
-      if (!SyncStatusReporter.matchesTenant(link.tenantDid, tenantDid)) { continue; }
-      if (!SyncStatusReporter.isCurrentLink(link, currentLinkIdentityKeys)) { continue; }
-      snapshots.push(SyncStatusReporter.linkSnapshotFrom(link));
-    }
-
-    return snapshots.sort((a, b) => lexicographicalCompare(
-      SyncStatusReporter.remoteRowKey(a.tenantDid, a.remoteEndpoint),
-      SyncStatusReporter.remoteRowKey(b.tenantDid, b.remoteEndpoint),
-    ));
+    const links = (await this._operations.getLinks()).filter((link): boolean =>
+      SyncStatusReporter.matchesTenant(link.tenantDid, tenantDid)
+      && SyncStatusReporter.isCurrentLink(link, currentLinkIdentityKeys));
+    return links
+      .map((link): ReplicationLinkSnapshot => SyncStatusReporter.linkSnapshotFrom(link))
+      .sort(SyncStatusReporter.compareRemoteRows);
   }
 
   /**
@@ -154,15 +167,11 @@ export class SyncStatusReporter {
   }
 
   /** Durable links seed connectivity, activity, and degraded state. */
-  private async accumulateLinkStatus(
+  private static accumulateLinkStatus(
     rows: Map<string, RemoteStatusAccumulator>,
-    tenantDid: string | undefined,
-  ): Promise<void> {
-    const currentLinkIdentityKeys = await this._operations.getCurrentLinkIdentityKeys();
-    for (const link of await this._operations.getLinks()) {
-      if (!SyncStatusReporter.matchesTenant(link.tenantDid, tenantDid)) { continue; }
-      if (!SyncStatusReporter.isCurrentLink(link, currentLinkIdentityKeys)) { continue; }
-
+    links: readonly SyncStatusLink[],
+  ): void {
+    for (const link of links) {
       const row = SyncStatusReporter.remoteStatusRowFor(rows, link.tenantDid, link.remoteEndpoint);
       row.connectivity = SyncStatusReporter.mergeConnectivity(row.connectivity, link.connectivity);
       if (SyncStatusReporter.isUnhealthyLinkStatus(link.status)) { row.degraded = true; }
@@ -173,15 +182,11 @@ export class SyncStatusReporter {
   }
 
   /** Quota blocks contribute their count, soonest probe, and latest detail. */
-  private async accumulateQuotaBlockStatus(
+  private static accumulateQuotaBlockStatus(
     rows: Map<string, RemoteStatusAccumulator>,
-    tenantDid: string | undefined,
-  ): Promise<void> {
-    const currentQuotaLinkKeys = await this._operations.getCurrentQuotaLinkKeys();
-    for (const state of await this._quotaManager.getAllBlockStates()) {
-      if (!SyncStatusReporter.matchesTenant(state.tenantDid, tenantDid)) { continue; }
-      if (!SyncStatusReporter.isCurrentQuotaBlock(state, currentQuotaLinkKeys)) { continue; }
-
+    quotaBlocks: readonly SyncQuotaBlockState[],
+  ): void {
+    for (const state of quotaBlocks) {
       const row = SyncStatusReporter.remoteStatusRowFor(rows, state.tenantDid, state.remoteEndpoint);
       row.quotaBlockedMessageCount++;
       row.nextProbeAt = SyncStatusReporter.earliestTimestamp(row.nextProbeAt, state.nextProbeAt);
@@ -190,15 +195,11 @@ export class SyncStatusReporter {
   }
 
   /** Dead letters contribute terminal failure counts per tenant and remote. */
-  private async accumulateDeadLetterStatus(
+  private static accumulateDeadLetterStatus(
     rows: Map<string, RemoteStatusAccumulator>,
-    tenantDid: string | undefined,
-  ): Promise<void> {
-    for (const entry of await this._operations.getDeadLetters()) {
-      if (!SyncStatusReporter.matchesTenant(entry.tenantDid, tenantDid)) {
-        continue;
-      }
-
+    deadLetters: readonly DeadLetterEntry[],
+  ): void {
+    for (const entry of deadLetters) {
       const row = SyncStatusReporter.remoteStatusRowFor(rows, entry.tenantDid, entry.remoteEndpoint);
       row.failedMessageCount++;
       row.degraded = true;
@@ -245,6 +246,16 @@ export class SyncStatusReporter {
     if (current === 'offline' || candidate === 'offline') { return 'offline'; }
     if (current === 'online' || candidate === 'online') { return 'online'; }
     return 'unknown';
+  }
+
+  private static compareRemoteRows(
+    a: { tenantDid: string; remoteEndpoint: string },
+    b: { tenantDid: string; remoteEndpoint: string },
+  ): number {
+    return lexicographicalCompare(
+      SyncStatusReporter.remoteRowKey(a.tenantDid, a.remoteEndpoint),
+      SyncStatusReporter.remoteRowKey(b.tenantDid, b.remoteEndpoint),
+    );
   }
 
   private static remoteRowKey(did: string, remote: string): string {

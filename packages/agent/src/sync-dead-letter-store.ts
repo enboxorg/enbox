@@ -1,21 +1,24 @@
 import type { DeadLetterEntry } from './types/sync.js';
 
+/** Compound-key identity of one removed dead-letter entry. */
+export type DeletedDeadLetter = Pick<DeadLetterEntry, 'messageCid' | 'remoteEndpoint' | 'tenantDid'>;
+
 /**
  * Backend-neutral persistence contract for terminal sync failures.
  * Backing-store lifecycle is owned by the enclosing sync storage backend.
  */
 export interface SyncDeadLetterStore {
-  /** Remove every dead-letter entry. */
-  clear(): Promise<void>;
+  /** Remove every dead letter and return its compound-key identity. */
+  clear(): Promise<DeletedDeadLetter[]>;
 
-  /** Remove every entry for a message CID and optional remote, returning the number removed. */
-  deleteForMessage(messageCid: string, remoteEndpoint?: string): Promise<number>;
+  /** Remove matching dead letters and return their compound-key identities. */
+  deleteForMessage(messageCid: string, remoteEndpoint?: string): Promise<DeletedDeadLetter[]>;
 
-  /** Remove one exact tenant, message, and remote entry. */
-  deleteExact(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void>;
+  /** Remove an exact dead letter and return its compound-key identity. */
+  deleteExact(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<DeletedDeadLetter | undefined>;
 
-  /** Remove every entry for one tenant. */
-  deleteForTenant(tenantDid: string): Promise<void>;
+  /** Remove one tenant's dead letters and return their compound-key identities. */
+  deleteForTenant(tenantDid: string): Promise<DeletedDeadLetter[]>;
 
   /** Read one exact tenant, message, and remote entry. */
   get(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<DeadLetterEntry | undefined>;
