@@ -99,7 +99,10 @@ describe('replication replay property', () => {
       ),
       { numRuns, seed: 1046 }
     );
-  });
+    // Runtime scales with numRuns (up to 20 via FAST_CHECK_NUM_RUNS) and each
+    // run replays a full feed into a fresh DWN — bun's 5s default timeout is
+    // not enough on a loaded machine even at the default 5 runs.
+  }, 60_000);
 
   async function createHarness(path: string): Promise<ReplayHarness> {
     const dataPath = `__TESTDATA__/replication-replay-property/${path}`;
