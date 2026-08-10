@@ -264,12 +264,9 @@ export type {
 // DWN interface enum for typing agent requests (from @enbox/agent).
 export { DwnInterface } from '@enbox/agent';
 
-// Sync-status observability for dapp "remotes" panels (from @enbox/agent).
-// Subscribe with `agent.sync.on(event => …)` and snapshot per-remote health
-// (healthy / quota-blocked / degraded / offline), including when a
-// quota-blocked remote will next be re-probed, via
-// `agent.sync.getRemoteSyncStatus()`; resume immediately with
-// `agent.sync.retryRemoteNow(tenantDid, remoteEndpoint)`.
+// Low-level sync-status types for advanced agent consumers. Dapps using a
+// ConnectionStore receive current advertised rows through `snapshot.sync.remotes`
+// and can call `store.retryRemote(remoteEndpoint)` without wiring agent events.
 export type {
   DeadLetterEntry,
   RemoteSyncState,
