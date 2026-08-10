@@ -294,11 +294,12 @@ describe('createConnectionStore()', () => {
     });
   }
 
-  function stubProtocolReadiness(): sinon.SinonStub {
+  function stubProtocolReadiness(enboxes: Enbox[] = []): sinon.SinonStub {
     const fromSession = Enbox.fromSession;
     const ensureReady = sinon.stub().resolves();
     sinon.stub(Enbox, 'fromSession').callsFake((session): Enbox => {
       const enbox = fromSession(session);
+      enboxes.push(enbox);
       enbox.protocols = { ensureReady };
       return enbox;
     });
@@ -1202,8 +1203,36 @@ describe('createConnectionStore()', () => {
       expect(snapshot.enbox).toBeInstanceOf(Enbox);
     });
 
+    it('should close an unpublished readiness facade immediately on dispose', async () => {
+      const enboxes: Enbox[] = [];
+      const ensureReady = stubProtocolReadiness(enboxes);
+      let resolveReadiness!: () => void;
+      ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
+      const fake = createFakeAuth();
+      fake.connect.rejects(new ConnectDeniedError('Denied'));
+      const session = createSession();
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+
+      // Rest on the exact terminal snapshot dispose() will apply, then start
+      // an external candidate whose readiness never settles.
+      await store.connect();
+      await store.disconnect();
+      fake.session = session;
+      fake.emitter.emit('session-start', {});
+      await waitFor(() => { expect(enboxes).toHaveLength(1); });
+      await store.dispose();
+
+      expect((enboxes[0] as any)._lifetimeSignal.aborted).toBe(true);
+      expect(store.getSnapshot().session).toBeUndefined();
+      expect(store.getSnapshot().enbox).toBeUndefined();
+
+      resolveReadiness();
+      await Promise.resolve();
+    });
+
     it('should ready a replacement session instead of failing on the superseded candidate', async () => {
-      const ensureReady = stubProtocolReadiness();
+      const enboxes: Enbox[] = [];
+      const ensureReady = stubProtocolReadiness(enboxes);
       let rejectReadiness!: (error: Error) => void;
       ensureReady.onFirstCall().returns(new Promise<void>((_resolve, reject) => { rejectReadiness = reject; }));
       const fake = createFakeAuth();
@@ -1224,11 +1253,14 @@ describe('createConnectionStore()', () => {
       expect(snapshot.phase).toBe('connected');
       expect(snapshot.session).toBe(replacementSession);
       expect(ensureReady.callCount).toBe(2);
+      expect((enboxes[0] as any)._lifetimeSignal.aborted).toBe(true);
+      expect(snapshot.enbox).toBe(enboxes[1]);
       expect(fake.disconnect.called).toBe(false);
     });
 
     it('should fail closed, stop the old monitor, and retain a retryable session when readiness fails', async () => {
-      const ensureReady = stubProtocolReadiness();
+      const enboxes: Enbox[] = [];
+      const ensureReady = stubProtocolReadiness(enboxes);
       const readinessError = new ProtocolReadinessError({
         cause     : new Error('hosted DWN unavailable'),
         operation : 'install',
@@ -1261,6 +1293,8 @@ describe('createConnectionStore()', () => {
       expect(fake.disconnect.called).toBe(false);
       expect(fake.stopMonitorSpy.calledOnce).toBe(true);
       expect(fake.startConnectionMonitor.calledOnce).toBe(true);
+      expect(enboxes).toHaveLength(2);
+      expect(enboxes.every((enbox) => (enbox as any)._lifetimeSignal.aborted)).toBe(true);
 
       fake.refresh.rejects(new ConnectDeniedError('Refresh denied'));
       const denied = await store.refresh();
@@ -1558,6 +1592,7 @@ describe('createConnectionStore()', () => {
       expect(snapshot.phase).toBe('connected');
       expect(snapshot.session).toBe(refreshedSession);
       expect(snapshot.enbox).not.toBe(enboxBeforeRefresh);
+      expect((enboxBeforeRefresh as any)._lifetimeSignal.aborted).toBe(true);
       expect(snapshot.identityName).toBe('Refreshed identity');
       expect(snapshot.walletReapprovalRequired).toBeUndefined();
       expect(snapshot.connection?.state).toBe('active');
@@ -1732,6 +1767,7 @@ describe('createConnectionStore()', () => {
       const phases: string[] = [];
       const store = createConnectionStore({ auth: asAuth(fake) });
       await store.connect({ protocols: PROTOCOLS });
+      const enbox = store.getSnapshot().enbox!;
       store.subscribe((next): void => { phases.push(next.phase); });
 
       const disconnect = store.disconnect({ clearStorage: true });
@@ -1742,6 +1778,7 @@ describe('createConnectionStore()', () => {
       expect(pending.phase).toBe('disconnecting');
       expect(pending.session).toBeUndefined();
       expect(pending.enbox).toBeUndefined();
+      expect((enbox as any)._lifetimeSignal.aborted).toBe(true);
       expect(phases).toEqual(['disconnecting']);
 
       finishDisconnect();
@@ -1876,6 +1913,7 @@ describe('createConnectionStore()', () => {
       const store = createConnectionStore({ auth: asAuth(fake) });
       await store.connect({ protocols: PROTOCOLS });
       const before = store.getSnapshot();
+      const enbox = before.enbox!;
       let notifications = 0;
       store.subscribe(() => { notifications++; });
 
@@ -1885,6 +1923,9 @@ describe('createConnectionStore()', () => {
       expect(notifications).toBe(0);
       const disposed = store.getSnapshot();
       expect(disposed.sync).toBeUndefined();
+      expect(disposed.session).toBeUndefined();
+      expect(disposed.enbox).toBeUndefined();
+      expect((enbox as any)._lifetimeSignal.aborted).toBe(true);
       // Detached: later auth events no longer mutate the snapshot.
       fake.emitter.emit('vault-locked', {});
       expect(store.getSnapshot()).toBe(disposed);
@@ -1914,8 +1955,8 @@ describe('createConnectionStore()', () => {
     });
 
     it('should not shut down a manager built around a caller-supplied agent', async () => {
-      // Mirrors Enbox.connect() ownership: a caller-supplied `agent` keeps
-      // its lifecycle with the caller, so dispose() must not lock its vault.
+      // A caller-supplied `agent` keeps its lifecycle with the caller, so
+      // dispose() must not lock its vault.
       const fake = createFakeAuth();
       sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
       const store = createConnectionStore({ agent: testHarness.agent as EnboxUserAgent });
@@ -1968,20 +2009,115 @@ describe('createConnectionStore()', () => {
       const store = createConnectionStore({ password: 'pw' });
 
       const initializePromise = store.initialize();
-      const beforeDispose = store.getSnapshot();
       await store.dispose();
       resolveCreate(asAuth(fake));
 
-      // The stale action resolves without mutating the snapshot; the freshly
-      // created manager is shut down instead of leaking storage handles.
+      // The stale action resolves to the terminal cleared snapshot; the
+      // freshly created manager is shut down instead of leaking storage handles.
       const snapshot = await initializePromise;
-      expect(snapshot).toBe(beforeDispose);
+      expect(snapshot).toBe(store.getSnapshot());
+      expect(snapshot.phase).toBe('disconnected');
       expect(fake.shutdown.calledOnce).toBe(true);
       expect(store.auth).toBeUndefined();
     });
   });
 
   describe('disconnect vs. in-flight bootstrap', () => {
+    it('should settle initialize through a disconnect started by its terminal publication', async () => {
+      const store = createConnectionStore({ auth: asAuth(createFakeAuth()) });
+      let disconnecting: Promise<ConnectionSnapshot> | undefined;
+      store.subscribe((snapshot): void => {
+        if (snapshot.phase === 'disconnected' && disconnecting === undefined) {
+          disconnecting = store.disconnect();
+        }
+      });
+
+      const initializing = store.initialize();
+      await waitFor(() => { expect(disconnecting).toBeDefined(); });
+      const disconnected = await disconnecting!;
+
+      expect(await initializing).toBe(disconnected);
+      expect(disconnected.phase).toBe('disconnected');
+    });
+
+    it('should settle a failed connect through a disconnect started by its error publication', async () => {
+      const fake = createFakeAuth();
+      fake.connect.rejects(new Error('connect failed'));
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      let disconnecting: Promise<ConnectionSnapshot> | undefined;
+      store.subscribe((snapshot): void => {
+        if (snapshot.phase === 'error' && disconnecting === undefined) {
+          disconnecting = store.disconnect();
+        }
+      });
+
+      const connecting = store.connect({ protocols: PROTOCOLS });
+      await waitFor(() => { expect(disconnecting).toBeDefined(); });
+      const disconnected = await disconnecting!;
+
+      expect(await connecting).toBe(disconnected);
+      expect(disconnected.phase).toBe('disconnected');
+    });
+
+    it('should let a reentrant disconnect own a connect before manager creation settles', async () => {
+      const fake = createFakeAuth();
+      let resolveCreate!: (auth: AuthManager) => void;
+      const create = sinon.stub(AuthManager, 'create').returns(new Promise((resolve) => { resolveCreate = resolve; }));
+      const store = createConnectionStore({ password: 'pw' });
+      let disconnecting: Promise<ConnectionSnapshot> | undefined;
+      store.subscribe((snapshot): void => {
+        if (snapshot.phase === 'connecting' && disconnecting === undefined) {
+          disconnecting = store.disconnect({ clearStorage: true });
+        }
+      });
+
+      const connecting = store.connect({ protocols: PROTOCOLS });
+
+      expect(create.calledOnce).toBe(true);
+      expect(disconnecting).toBeDefined();
+      resolveCreate(asAuth(fake));
+      const disconnected = await disconnecting!;
+
+      expect(await connecting).toBe(disconnected);
+      expect(disconnected.phase).toBe('disconnected');
+      expect(fake.connect.called).toBe(false);
+      expect(fake.disconnect.calledOnceWithExactly({ clearStorage: true })).toBe(true);
+      expect(store.auth).toBe(asAuth(fake));
+    });
+
+    it('should let a reentrant disconnect own an initialize retry before manager creation settles', async () => {
+      const fake = createFakeAuth();
+      const session = createSession({ name: 'Must not restore' });
+      fake.restoreSession.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      let resolveCreate!: (auth: AuthManager) => void;
+      const create = sinon.stub(AuthManager, 'create');
+      create.onFirstCall().rejects(new Error('create failed'));
+      create.onSecondCall().returns(new Promise((resolve) => { resolveCreate = resolve; }));
+      const store = createConnectionStore({ password: 'pw' });
+      expect((await store.initialize()).phase).toBe('error');
+
+      let disconnecting: Promise<ConnectionSnapshot> | undefined;
+      store.subscribe((snapshot): void => {
+        if (snapshot.phase === 'initializing' && disconnecting === undefined) {
+          disconnecting = store.disconnect();
+        }
+      });
+
+      const initializing = store.initialize();
+
+      expect(disconnecting).toBeDefined();
+      resolveCreate(asAuth(fake));
+      const disconnected = await disconnecting!;
+
+      expect(await initializing).toBe(disconnected);
+      expect(disconnected.phase).toBe('disconnected');
+      expect(fake.restoreSession.called).toBe(false);
+      expect(fake.disconnect.calledOnce).toBe(true);
+    });
+
     it('should keep an explicit disconnect authoritative over an initialize awaiting manager creation', async () => {
       // Review finding (high): initialize() gated on AuthManager.create(),
       // disconnect() during the gate. Previously the disconnect resolved

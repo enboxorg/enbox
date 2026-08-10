@@ -427,7 +427,7 @@ Capabilities include tenant management (list, inspect, pre-register, suspend/uns
 
 ## Hosting your own DWN
 
-By default, `Enbox.connect()` uses bootstrap DWN nodes. You can run your own for yourself or your community — anywhere you can run Bun or Docker, as long as HTTP and WebSocket are reachable.
+By default, an Enbox connection store uses bootstrap DWN nodes. You can run your own for yourself or your community — anywhere you can run Bun or Docker, as long as HTTP and WebSocket are reachable.
 
 The [Self-Hosting Guide](../../SELF-HOSTING.md) covers the full workflow, including TLS, choosing a storage backend, and — critically — [advertising the node in your DID document](../../SELF-HOSTING.md#5-advertise-your-dwn-in-your-did-document) so clients can discover it. A few quick options:
 

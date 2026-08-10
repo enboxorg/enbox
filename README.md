@@ -49,13 +49,12 @@ bun add @enbox/api
 ```
 
 ```ts
-import { Enbox, defineProtocol, recordCodecs } from '@enbox/api';
-
-const { enbox, session } = await Enbox.connect({
-  password      : userPassword,
-  createIdentity: true,
-  dwnEndpoints  : ['https://enbox-dwn.fly.dev'],
-});
+import {
+  createConnectionStore,
+  defineApplicationManifest,
+  defineProtocol,
+  recordCodecs,
+} from '@enbox/api';
 
 const BookmarkProtocol = defineProtocol({
   protocol  : 'https://example.com/bookmarks',
@@ -76,7 +75,25 @@ const BookmarkProtocol = defineProtocol({
   bookmark: recordCodecs.json<{ url: string; title: string; note?: string }>(),
 });
 
-const bookmarks = enbox.using(BookmarkProtocol);
+const application = defineApplicationManifest({
+  protocols: [BookmarkProtocol],
+} as const);
+
+const store = createConnectionStore({
+  application,
+  password     : userPassword,
+  dwnEndpoints : ['https://enbox-dwn.fly.dev'],
+});
+
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connectVault({ createIdentity: true });
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+
+const bookmarks = snapshot.enbox!.using(BookmarkProtocol);
 
 const record = await bookmarks.records.create('bookmark', {
   data : { url: 'https://example.com', title: 'Example' },
@@ -87,8 +104,14 @@ const { records } = await bookmarks.records.query('bookmark', {
   filter: { tags: { category: 'reading' } },
 });
 
-console.log(session.did, record.id, records.length);
+console.log(snapshot.identityDid, record.id, records.length);
+
+await store.disconnect();
+await store.dispose();
 ```
+
+Create one connection store for the application/data path and retain it for the
+application lifetime. Separate stores intentionally do not coordinate.
 
 For browser apps, `@enbox/browser` re-exports the main app APIs and adds
 browser-specific connect helpers and DRL polyfills.
@@ -139,7 +162,7 @@ configuration, storage backends, and registration options.
 
 | Package | Role |
 |---|---|
-| [`@enbox/api`](./packages/api) | High-level SDK: `Enbox.connect()`, typed protocols, and records |
+| [`@enbox/api`](./packages/api) | High-level SDK: connection lifecycle, typed protocols, and records |
 | [`@enbox/auth`](./packages/auth) | Headless auth, local vault connect, wallet connect, session restore |
 | [`@enbox/browser`](./packages/browser) | Browser helpers and polyfills |
 | [`@enbox/cli`](./packages/cli) | CLI helpers and relay/PIN wallet connect handler |

@@ -298,7 +298,12 @@ export default function HomePage() {
       >
         <div className="w-full" style={{ maxWidth: '720px' }}>
           <CodeBlock language="ts" filename="example.ts">
-{`import { Enbox, defineProtocol, recordCodecs } from '@enbox/api';
+{`import {
+  createConnectionStore,
+  defineApplicationManifest,
+  defineProtocol,
+  recordCodecs,
+} from '@enbox/api';
 
 // Define a typed protocol
 const NotesDefinition = {
@@ -318,8 +323,16 @@ const Notes = defineProtocol(NotesDefinition, {
 });
 
 // Connect and use the protocol
-const enbox = new Enbox({ agent, connectedDid: did });
-const notes = enbox.using(Notes);
+const application = defineApplicationManifest({ protocols: [Notes] } as const);
+const store = createConnectionStore({ application });
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connectVault({ createIdentity: true });
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+const notes = snapshot.enbox!.using(Notes);
 
 // Create
 const record = await notes.records.create('note', {
@@ -338,7 +351,11 @@ await record.update({
 const { records } = await notes.records.query('note');
 
 // Delete
-await record.delete();`}
+await record.delete();
+
+// Sign out and release app-lifetime resources
+await store.disconnect();
+await store.dispose();`}
           </CodeBlock>
         </div>
       </section>

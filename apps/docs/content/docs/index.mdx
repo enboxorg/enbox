@@ -51,17 +51,28 @@ const TaskProtocol = defineProtocol(TaskDefinition, {
 ### 2. Connect and use
 
 ```ts
-import { Enbox } from '@enbox/api';
+import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
 
-const { enbox } = await Enbox.connect({ createIdentity: true });
-const tasks = enbox.using(TaskProtocol);
+const application = defineApplicationManifest({
+  protocols: [TaskProtocol],
+} as const);
+const store = createConnectionStore({ application });
+
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connectVault({ createIdentity: true });
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+
+const tasks = snapshot.enbox!.using(TaskProtocol);
 ```
 
-`Enbox.connect()` creates the default session lifecycle for common apps. The protocol is automatically configured on the first operation. If you manage sessions yourself with `@enbox/auth` or `@enbox/agent`, pass the session directly:
-
-```ts
-const enbox = Enbox.fromSession(session);
-```
+The connection store owns session restore, connection, protocol readiness, and
+facade replacement for common apps. Read the active API from `snapshot.enbox`.
+Create one store for the application/data path and keep it for the application
+lifetime; separate stores intentionally do not coordinate.
 
 ### 3. CRUD operations
 
@@ -92,11 +103,18 @@ for (const r of records) {
 await record.delete();
 ```
 
+When the user signs out or the application shuts down, release the lifecycle:
+
+```ts
+await store.disconnect();
+await store.dispose();
+```
+
 ## Packages
 
 | Package | Description |
 |---|---|
-| [`@enbox/api`](/docs/packages/api) | High-level SDK — `Enbox.connect()`, typed protocols, records CRUD |
+| [`@enbox/api`](/docs/packages/api) | High-level SDK — connection lifecycle, typed protocols, records CRUD |
 | [`@enbox/browser`](/docs/packages/browser) | Browser entrypoint — app APIs, auth helpers, wallet connect, DWeb utilities |
 | [`@enbox/cli`](/docs/packages/cli) | CLI entrypoint — app APIs, auth helpers, relay/PIN wallet connect |
 | [`@enbox/auth`](/docs/guides/auth) | Authentication — connect, lock, disconnect, multi-identity |

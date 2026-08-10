@@ -20,12 +20,23 @@ bun add @enbox/protocols
 ## Quick Start
 
 ```ts
-import { Enbox } from '@enbox/api';
+import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
 import { ProfileProtocol } from '@enbox/protocols';
 
-const { enbox } = await Enbox.connect({ password: 'secret' });
-const profile = enbox.using(ProfileProtocol);
-await profile.configure();
+const application = defineApplicationManifest({
+  protocols: [ProfileProtocol],
+} as const);
+const store = createConnectionStore({ application, password: 'secret' });
+
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connectVault({ createIdentity: true });
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+
+const profile = snapshot.enbox!.using(ProfileProtocol);
 
 await profile.records.create('profile', {
   data: { displayName: 'Bob', bio: 'Building the decentralized web' },
@@ -33,6 +44,9 @@ await profile.records.create('profile', {
 
 const { records: profiles } = await profile.records.query('profile');
 console.log(await profiles[0].value()); // ProfileData
+
+await store.disconnect();
+await store.dispose();
 ```
 
 ## Protocol Catalog

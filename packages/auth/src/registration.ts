@@ -6,8 +6,8 @@
  * 1. Provider auth (`provider-auth-v0`) — OAuth-style with tokens
  * 2. Proof of Work (default) — PoW challenge-response
  *
- * This matches the registration logic from `Enbox.connect()` but as a
- * standalone, reusable function.
+ * This is the standalone registration routine shared by `AuthManager`
+ * connection flows.
  * @module
  */
 

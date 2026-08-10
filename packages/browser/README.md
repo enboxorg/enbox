@@ -41,17 +41,40 @@ API from `@enbox/api`, auth/session helpers from `@enbox/auth`, and
 browser-specific connect utilities.
 
 ```ts
-import { BrowserConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enbox/browser';
+import {
+  BrowserConnectHandler,
+  createConnectionStore,
+  defineApplicationManifest,
+} from '@enbox/browser';
 
-const { enbox } = await Enbox.connect({
-  connectHandler : BrowserConnectHandler({ appName: 'Notes' }),
-  protocols      : [NotesProtocol],
+const application = defineApplicationManifest({
+  protocols: [NotesProtocol],
+} as const);
+const store = createConnectionStore({
+  application,
+  connectHandler: BrowserConnectHandler({ appName: 'Notes' }),
 });
+
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connect();
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+
+const enbox = snapshot.enbox!;
+
+// ...use enbox...
+
+// On sign-out and application shutdown:
+await store.disconnect();
+await store.dispose();
 ```
 
 This is the delegated wallet flow. To create a local owner identity, omit
-`connectHandler` and pass `createIdentity: true`. Applications that need session
-restoration and refresh should use a manifest-backed connection store.
+`connectHandler` and call `store.connectVault({ createIdentity: true })`. The
+store owns session restoration, refresh, facade replacement, and teardown.
 
 ## Bundlers and Service Workers
 

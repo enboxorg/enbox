@@ -53,7 +53,8 @@ export async function createEnboxTestContext(
     closePromise ??= (async (): Promise<void> => {
       lifetime.abort(new Error('Enbox test context closed.'));
       try {
-        await enbox?.disconnect();
+        enbox?.close();
+        await harness?.agent.sync.stopSync();
       } finally {
         try {
           await harness?.closeStorage();

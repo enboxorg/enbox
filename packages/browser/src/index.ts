@@ -8,14 +8,15 @@
  * @example Single-import dapp setup
  * ```ts
  * import {
- *   Enbox, BrowserConnectHandler,
+ *   BrowserConnectHandler, createConnectionStore,
  *   defineProtocol, recordCodecs,
  * } from '@enbox/browser';
  *
- * const { enbox, session } = await Enbox.connect({
+ * const store = createConnectionStore({
  *   connectHandler: BrowserConnectHandler({ appName: 'My App' }),
- *   protocols: [MyProtocol],
  * });
+ * const snapshot = await store.connect({ protocols: [MyProtocol] });
+ * if (snapshot.enbox === undefined) throw snapshot.error ?? new Error('Connection failed.');
  * ```
  *
  * For non-browser environments (Node.js, CLI, desktop), import from
@@ -83,8 +84,6 @@ export type {
   DefineApplicationManifestOptions,
   DwnEndpointResolution,
   EnboxAnonymousOptions,
-  EnboxConnectOptions,
-  EnboxConnectResult,
   EnboxParams,
   EnboxSessionParams,
   EncodedRecordData,
