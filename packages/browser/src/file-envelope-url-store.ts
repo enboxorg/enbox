@@ -144,10 +144,11 @@ class DefaultFileEnvelopeUrlStore<Request> implements FileEnvelopeUrlStore<Reque
     const lease = entry.url.acquire();
     this._evict();
     return Object.freeze({
-      filename : entry.filename,
-      mimeType : entry.mimeType,
-      release  : lease.release,
-      url      : lease.url,
+      filename     : entry.filename,
+      mimeType     : entry.mimeType,
+      release      : lease.release,
+      releaseAfter : lease.releaseAfter,
+      url          : lease.url,
     });
   }
 

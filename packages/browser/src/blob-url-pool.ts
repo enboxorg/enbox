@@ -2,7 +2,12 @@ import type { ObjectUrlLease } from './object-url-reference.js';
 
 import { ObjectUrlReference } from './object-url-reference.js';
 
-/** A reference-counted lease for a browser object URL. */
+/**
+ * A reference-counted lease for a browser object URL.
+ *
+ * When replacing a URL already rendered by the DOM, `releaseAfter()` provides
+ * a grace period without passing the lease through the component tree.
+ */
 export type BlobUrlLease = ObjectUrlLease;
 
 /** Owns object URLs for Blob identities until their last lease is released. */
