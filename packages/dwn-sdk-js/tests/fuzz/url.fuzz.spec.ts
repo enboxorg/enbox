@@ -79,13 +79,14 @@ describe('URL utilities — fuzz', () => {
     it('should accept the output of normalizeProtocolUrl', () => {
       fc.assert(
         fc.property(fc.webUrl(), (url) => {
+          let normalized: string;
           try {
-            const normalized = normalizeProtocolUrl(url);
-            // After normalization, validation should pass
-            validateProtocolUrlNormalized(normalized);
+            normalized = normalizeProtocolUrl(url);
           } catch {
-            // If normalization itself throws, skip this case
+            return; // If normalization itself throws, skip this case
           }
+          // After normalization, validation should pass
+          expect(() => validateProtocolUrlNormalized(normalized)).not.toThrow();
         }),
         { numRuns }
       );
@@ -96,13 +97,14 @@ describe('URL utilities — fuzz', () => {
     it('should accept the output of normalizeSchemaUrl', () => {
       fc.assert(
         fc.property(fc.webUrl(), (url) => {
+          let normalized: string;
           try {
-            const normalized = normalizeSchemaUrl(url);
-            // After normalization, validation should pass
-            validateSchemaUrlNormalized(normalized);
+            normalized = normalizeSchemaUrl(url);
           } catch {
-            // If normalization itself throws, skip this case
+            return; // If normalization itself throws, skip this case
           }
+          // After normalization, validation should pass
+          expect(() => validateSchemaUrlNormalized(normalized)).not.toThrow();
         }),
         { numRuns }
       );
