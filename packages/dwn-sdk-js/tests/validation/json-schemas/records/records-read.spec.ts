@@ -27,7 +27,7 @@ describe('RecordsRead schema validation', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must NOT have additional properties');
   });
 
@@ -43,7 +43,7 @@ describe('RecordsRead schema validation', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must NOT have additional properties');
   });
 
@@ -76,7 +76,7 @@ describe('RecordsRead schema validation', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('dateSort: must be equal to one of the allowed values');
   });
 

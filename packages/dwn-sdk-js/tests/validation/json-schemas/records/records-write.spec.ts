@@ -42,7 +42,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(message)).not.toThrow();
+      Message.validateJsonSchema(message);
     }).toThrow('must have required property \'recordId\'');
   });
 
@@ -64,7 +64,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must have required property \'authorization\'');
   });
 
@@ -88,7 +88,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('unevaluated properties: RecordsWrite: unknownProperty');
   });
 
@@ -112,7 +112,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must NOT have additional properties');
   });
 
@@ -158,7 +158,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('protocolPath: must match pattern');
   });
 
@@ -236,19 +236,19 @@ describe('RecordsWrite schema definition', () => {
     const invalidMessage1 = { ...validMessage };
     invalidMessage1.contextId = 'invalid:path', // `:` is not a valid char in `contextId`
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage1)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage1);
     }).toThrow(expectedErrorMessage);
 
     const invalidMessage2 = { ...validMessage };
     invalidMessage2.contextId = '/invalid/context'; // not allowed to start with `/`
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage2)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage2);
     }).toThrow(expectedErrorMessage);
 
     const invalidMessage3 = { ...validMessage };
     invalidMessage3.contextId = 'invalid/context/'; // not allowed to end with `/`
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage3)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage3);
     }).toThrow(expectedErrorMessage);
   });
 
@@ -270,7 +270,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must have required property \'contextId\'');
   });
 
@@ -291,7 +291,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must have required property \'protocol\'');
   });
 
@@ -313,7 +313,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must have required property \'contextId\'');
   });
 
@@ -337,7 +337,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('descriptor: must have required property \'protocol\'');
   });
 
@@ -360,7 +360,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('descriptor: must have required property \'protocolPath\'');
   });
 
@@ -383,7 +383,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('descriptor: must have required property \'protocol\'');
   });
 
@@ -408,7 +408,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('descriptor: must have required property \'protocol\'');
   });
 
@@ -479,7 +479,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('published: must be equal to one of the allowed values');
   });
 
@@ -503,7 +503,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must have required property \'datePublished\'');
   });
 
@@ -527,7 +527,7 @@ describe('RecordsWrite schema definition', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must have required property \'published\'');
   });
 });

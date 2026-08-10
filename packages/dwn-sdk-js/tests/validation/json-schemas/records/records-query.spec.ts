@@ -29,7 +29,7 @@ describe('RecordsQuery schema validation', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must NOT have additional properties');
   });
 
@@ -46,7 +46,7 @@ describe('RecordsQuery schema validation', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must NOT have additional properties');
   });
 
@@ -81,7 +81,7 @@ describe('RecordsQuery schema validation', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('dateSort: must be equal to one of the allowed values');
   });
 
@@ -100,7 +100,7 @@ describe('RecordsQuery schema validation', () => {
     };
 
     expect(() => {
-      expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+      Message.validateJsonSchema(invalidMessage);
     }).toThrow('must NOT have additional properties');
   });
 
@@ -117,7 +117,7 @@ describe('RecordsQuery schema validation', () => {
       };
 
       expect(() => {
-        expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+        Message.validateJsonSchema(invalidMessage);
       }).toThrow('/descriptor/filter: must NOT have fewer than 1 properties');
     });
 
@@ -133,7 +133,7 @@ describe('RecordsQuery schema validation', () => {
       };
 
       expect(() => {
-        expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+        Message.validateJsonSchema(invalidMessage);
       }).toThrow('dateCreated: must NOT have fewer than 1 properties');
     });
 
@@ -149,7 +149,7 @@ describe('RecordsQuery schema validation', () => {
       };
 
       expect(() => {
-        expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
+        Message.validateJsonSchema(invalidMessage);
       }).toThrow('must NOT have additional properties');
     });
   });
