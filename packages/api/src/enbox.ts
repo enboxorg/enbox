@@ -113,6 +113,7 @@ export class Enbox {
    * `enbox.using(protocol)` for everything the typed surface covers.
    */
   public get dwn(): DwnApi {
+    this._lifetimeSignal.throwIfAborted();
     return this._dwn;
   }
 
@@ -128,6 +129,7 @@ export class Enbox {
 
   /** Resolve the connected DID's advertised DWN endpoints without applying product defaults. */
   public getDwnEndpointStatus(options: { refresh?: boolean } = {}): Promise<DwnEndpointResolution> {
+    this._lifetimeSignal.throwIfAborted();
     return this.agent.identity.getDwnEndpointStatus({
       didUri  : this._connectedDid,
       refresh : options.refresh,
@@ -176,6 +178,7 @@ export class Enbox {
   >(
     protocol: TypedProtocol<D, C, G>,
   ): TypedEnbox<D, C, G> {
+    this._lifetimeSignal.throwIfAborted();
     const cached = this._typedInstances.get(protocol);
 
     if (cached) {
@@ -220,10 +223,15 @@ export class Enbox {
   }
 
   /**
-   * Ends this facade's lifetime and initiates release of every session-scoped
-   * view and delivery subscription it owns. Idempotent and synchronous; it
-   * does not stop shared sync, sign out, lock the vault, or otherwise mutate
-   * the owning session.
+   * Ends this facade's lifetime, fences its typed record operations, and
+   * initiates release of every session-scoped view and delivery subscription
+   * it owns. Idempotent and synchronous; it does not stop shared sync, sign
+   * out, lock the vault, or otherwise mutate the owning session.
+   *
+   * Closing cannot revoke shared escape hatches already retained by the
+   * caller, such as `agent`, `did`, or a raw `dwn` reference obtained before
+   * close. Their lifetime remains with their owner and they must not be used
+   * as though this facade still authorizes application work.
    *
    * Applications using a connection store normally do not call this method:
    * the store closes replaced and disconnected facades automatically.

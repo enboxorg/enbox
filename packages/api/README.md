@@ -58,12 +58,16 @@ Common store and connection options:
 | `store.connect({ protocols })` | Protocol scopes for a plain store's handler-based connect flow. |
 | `connectHandler` | Browser/wallet connect handler. |
 | `registration` | DWN endpoint registration callbacks and token persistence options. |
+| `auth` | Caller-owned `AuthManager`; other manager-construction options are ignored and `dispose()` does not shut it down. |
 
 Call `store.disconnect()` when the user signs out and `store.dispose()` once at
 application shutdown. Advanced integrations that already own an auth session
 can use `Enbox.fromSession(session)` and must call `enbox.close()` before ending
 that session. If you own a raw agent and DID, use
 `new Enbox({ agent, connectedDid })` and close that facade explicitly too.
+Closing fences typed record operations and session-scoped resources. It
+cannot revoke shared `agent`, `did`, or raw `dwn` escape hatches retained before
+close; their lifecycle remains with their owner.
 
 ## Observable Connection and Sync State
 

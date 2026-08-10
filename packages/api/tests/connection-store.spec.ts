@@ -1954,17 +1954,9 @@ describe('createConnectionStore()', () => {
       expect(fake.shutdown.calledOnce).toBe(true);
     });
 
-    it('should not shut down a manager built around a caller-supplied agent', async () => {
-      // A caller-supplied `agent` keeps its lifecycle with the caller, so
-      // dispose() must not lock its vault.
-      const fake = createFakeAuth();
-      sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
-      const store = createConnectionStore({ agent: testHarness.agent as EnboxUserAgent });
-      await store.initialize();
-
-      await store.dispose();
-
-      expect(fake.shutdown.called).toBe(false);
+    it('should reject the removed caller-supplied agent option at runtime', () => {
+      expect(() => Reflect.apply(createConnectionStore, undefined, [{ agent: testHarness.agent }]))
+        .toThrow(TypeError);
     });
 
     it('should make later actions throw and be idempotent', async () => {

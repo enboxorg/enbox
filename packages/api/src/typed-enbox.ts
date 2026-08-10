@@ -3023,6 +3023,7 @@ export class TypedEnbox<
    * call only happens once.
    */
   private async _ensureReady(path: string): Promise<void> {
+    this._options.signal?.throwIfAborted();
     this.assertContextPath(path);
     if (this._configured) {
       this._assertValidPath(path);
@@ -3032,6 +3033,7 @@ export class TypedEnbox<
     this._ensureReadyPromise ??= this._autoConfigureOnce();
 
     await this._ensureReadyPromise;
+    this._options.signal?.throwIfAborted();
     this._assertValidPath(path);
   }
 

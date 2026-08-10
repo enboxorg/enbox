@@ -1,6 +1,12 @@
 import type { Enbox } from '@enbox/api';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { HandlerConnectOptions, ProtocolRequest, RefreshOptions, VaultConnectOptions } from '@enbox/auth';
+import type {
+  AuthManagerOptions,
+  HandlerConnectOptions,
+  ProtocolRequest,
+  RefreshOptions,
+  VaultConnectOptions,
+} from '@enbox/auth';
 
 import {
   createConnectionStore,
@@ -63,6 +69,7 @@ const store = createConnectionStore({
   requireHostedReadiness : true,
 });
 const plainStore = createConnectionStore();
+declare const callerAgent: NonNullable<AuthManagerOptions['agent']>;
 declare const enbox: Enbox;
 void store.connect({ password: 'pw' });
 void store.connectVault({ createIdentity: true });
@@ -75,6 +82,9 @@ void exactProtocol;
 void exactExplicitProtocol;
 void authRequests;
 void directStructuralAuthRequests;
+
+// @ts-expect-error connection stores accept a caller-owned AuthManager, not a raw agent.
+createConnectionStore({ agent: callerAgent });
 
 // @ts-expect-error plain stores require explicit refresh protocols.
 void plainStore.refresh();
