@@ -92,7 +92,7 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
       messageParams : { definition: todoProtocol },
     });
 
-    await harness.agent.sync.registerIdentity({
+    await harness.agent.sync.setIdentityOptions({
       did,
       options: { protocols: [todoProtocol.protocol] },
     });

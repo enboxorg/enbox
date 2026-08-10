@@ -165,7 +165,7 @@ describe('E2E: live sync convergence', () => {
     });
 
     // Register for sync and start live mode.
-    await harness.agent.sync.registerIdentity({
+    await harness.agent.sync.setIdentityOptions({
       did     : aliceDid,
       options : { protocols: [chatProtocol.protocol] },
     });

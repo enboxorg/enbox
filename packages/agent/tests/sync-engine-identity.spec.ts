@@ -56,16 +56,16 @@ describe('SyncEngineLevel — identity management', () => {
     await db.close();
   });
 
-  describe('registerIdentity', () => {
-    it('should register an identity with protocols: all', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:register1', options: { protocols: 'all' } });
+  describe('setIdentityOptions', () => {
+    it('should create an identity with protocols: all', async () => {
+      await syncEngine.setIdentityOptions({ did: 'did:example:register1', options: { protocols: 'all' } });
       const options = await syncEngine.getIdentityOptions('did:example:register1');
       expect(options).toBeDefined();
       expect(options!.protocols).toBe('all');
     });
 
-    it('should register an identity with specific protocols and delegateDid', async () => {
-      await syncEngine.registerIdentity({
+    it('should create an identity with specific protocols and delegateDid', async () => {
+      await syncEngine.setIdentityOptions({
         did     : 'did:example:register2',
         options : { protocols: ['https://example.com/protocol1'], delegateDid: 'did:example:delegate' },
       });
@@ -75,26 +75,31 @@ describe('SyncEngineLevel — identity management', () => {
       expect(options!.delegateDid).toBe('did:example:delegate');
     });
 
-    it('should throw when registering an already registered identity', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:dup', options: { protocols: 'all' } });
-      await expect(
-        syncEngine.registerIdentity({ did: 'did:example:dup', options: { protocols: 'all' } })
-      ).rejects.toThrow('is already registered');
+    it('should replace options for an existing identity', async () => {
+      const did = 'did:example:replace';
+      await syncEngine.setIdentityOptions({ did, options: { protocols: ['old'] } });
+      await syncEngine.setIdentityOptions({ did, options: { protocols: ['new'] } });
+
+      expect(await syncEngine.getIdentityOptions(did)).toEqual({ protocols: ['new'] });
     });
   });
 
-  describe('unregisterIdentity', () => {
-    it('should unregister a registered identity', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:unreg1', options: { protocols: 'all' } });
-      await syncEngine.unregisterIdentity('did:example:unreg1');
+  describe('removeIdentity', () => {
+    it('should remove a registered identity', async () => {
+      await syncEngine.setIdentityOptions({ did: 'did:example:unreg1', options: { protocols: 'all' } });
+      await syncEngine.removeIdentity('did:example:unreg1');
       const options = await syncEngine.getIdentityOptions('did:example:unreg1');
       expect(options).toBeUndefined();
     });
 
-    it('should throw when unregistering a non-registered identity', async () => {
-      await expect(
-        syncEngine.unregisterIdentity('did:example:never-registered')
-      ).rejects.toThrow('is not registered');
+    it('should be idempotent for an absent identity', async () => {
+      const events: unknown[] = [];
+      const unsubscribe = syncEngine.on((event): void => { events.push(event); });
+
+      await expect(syncEngine.removeIdentity('did:example:never-registered')).resolves.toBeUndefined();
+
+      unsubscribe();
+      expect(events).toEqual([]);
     });
   });
 
@@ -105,7 +110,7 @@ describe('SyncEngineLevel — identity management', () => {
     });
 
     it('should not normalize non-empty protocol arrays', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:specific', options: { protocols: ['https://proto.example'] } });
+      await syncEngine.setIdentityOptions({ did: 'did:example:specific', options: { protocols: ['https://proto.example'] } });
       const options = await syncEngine.getIdentityOptions('did:example:specific');
       expect(options).toBeDefined();
       expect(options!.protocols).toEqual(['https://proto.example']);
@@ -124,10 +129,10 @@ describe('SyncEngineLevel — identity management', () => {
     });
   });
 
-  describe('updateIdentityOptions', () => {
+  describe('setIdentityOptions validation', () => {
     it('should update options for a registered identity', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:upd1', options: { protocols: ['old'] } });
-      await syncEngine.updateIdentityOptions({
+      await syncEngine.setIdentityOptions({ did: 'did:example:upd1', options: { protocols: ['old'] } });
+      await syncEngine.setIdentityOptions({
         did     : 'did:example:upd1',
         options : { protocols: ['new1', 'new2'] },
       });
@@ -135,19 +140,10 @@ describe('SyncEngineLevel — identity management', () => {
       expect(options!.protocols).toEqual(['new1', 'new2']);
     });
 
-    it('should throw when updating a non-registered identity', async () => {
-      await expect(
-        syncEngine.updateIdentityOptions({
-          did     : 'did:example:nonexistent',
-          options : { protocols: 'all' },
-        })
-      ).rejects.toThrow('is not registered');
-    });
-
     it('should reject an empty protocols array', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:upd-empty', options: { protocols: ['old'] } });
+      await syncEngine.setIdentityOptions({ did: 'did:example:upd-empty', options: { protocols: ['old'] } });
       await expect(
-        syncEngine.updateIdentityOptions({
+        syncEngine.setIdentityOptions({
           did     : 'did:example:upd-empty',
           options : { protocols: [] } as any,
         })
@@ -155,16 +151,16 @@ describe('SyncEngineLevel — identity management', () => {
     });
 
     it('should reject when options is missing entirely (JS caller)', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:upd-no-opts', options: { protocols: ['old'] } });
+      await syncEngine.setIdentityOptions({ did: 'did:example:upd-no-opts', options: { protocols: ['old'] } });
       await expect(
-        (syncEngine as any).updateIdentityOptions({ did: 'did:example:upd-no-opts' })
+        (syncEngine as any).setIdentityOptions({ did: 'did:example:upd-no-opts' })
       ).rejects.toThrow('options.protocols is required');
     });
   });
 
   describe('explicit protocol scope', () => {
     it('should persist protocols: all and retrieve it as the string all', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:scope-all', options: { protocols: 'all' } });
+      await syncEngine.setIdentityOptions({ did: 'did:example:scope-all', options: { protocols: 'all' } });
       const options = await syncEngine.getIdentityOptions('did:example:scope-all');
       expect(options).toBeDefined();
       expect(options!.protocols).toBe('all');
@@ -173,40 +169,40 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should persist a specific protocol list and retrieve it as an array', async () => {
       const protos = ['https://proto.example.com/chat/1.0', 'https://proto.example.com/notes/1.0'];
-      await syncEngine.registerIdentity({ did: 'did:example:scope-list', options: { protocols: protos } });
+      await syncEngine.setIdentityOptions({ did: 'did:example:scope-list', options: { protocols: protos } });
       const options = await syncEngine.getIdentityOptions('did:example:scope-list');
       expect(options).toBeDefined();
       expect(Array.isArray(options!.protocols)).toBe(true);
       expect(options!.protocols).toEqual(protos);
     });
 
-    it('should reject an empty protocols array at registration time', async () => {
+    it('should reject an empty protocols array', async () => {
       await expect(
-        syncEngine.registerIdentity({ did: 'did:example:scope-empty', options: { protocols: [] } })
+        syncEngine.setIdentityOptions({ did: 'did:example:scope-empty', options: { protocols: [] } })
       ).rejects.toThrow('empty array is ambiguous');
     });
 
     it('should reject when options is missing entirely (JS caller)', async () => {
       await expect(
-        (syncEngine as any).registerIdentity({ did: 'did:example:no-opts' })
+        (syncEngine as any).setIdentityOptions({ did: 'did:example:no-opts' })
       ).rejects.toThrow('options.protocols is required');
     });
 
     it('should reject non-array non-all protocols value', async () => {
       await expect(
-        (syncEngine as any).registerIdentity({ did: 'did:example:bad', options: { protocols: 'foo' } })
+        (syncEngine as any).setIdentityOptions({ did: 'did:example:bad', options: { protocols: 'foo' } })
       ).rejects.toThrow('must be \'all\' or a non-empty string array');
     });
 
     it('should reject undefined protocols', async () => {
       await expect(
-        (syncEngine as any).registerIdentity({ did: 'did:example:undef', options: { protocols: undefined } })
+        (syncEngine as any).setIdentityOptions({ did: 'did:example:undef', options: { protocols: undefined } })
       ).rejects.toThrow('must be \'all\' or a non-empty string array');
     });
 
     it('should update from protocols: all to a specific list', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:scope-switch', options: { protocols: 'all' } });
-      await syncEngine.updateIdentityOptions({
+      await syncEngine.setIdentityOptions({ did: 'did:example:scope-switch', options: { protocols: 'all' } });
+      await syncEngine.setIdentityOptions({
         did     : 'did:example:scope-switch',
         options : { protocols: ['https://proto.example.com/notes/1.0'] },
       });
@@ -215,11 +211,11 @@ describe('SyncEngineLevel — identity management', () => {
     });
 
     it('should update from a specific list to protocols: all', async () => {
-      await syncEngine.registerIdentity({
+      await syncEngine.setIdentityOptions({
         did     : 'did:example:scope-widen',
         options : { protocols: ['https://proto.example.com/notes/1.0'] },
       });
-      await syncEngine.updateIdentityOptions({
+      await syncEngine.setIdentityOptions({
         did     : 'did:example:scope-widen',
         options : { protocols: 'all' },
       });
@@ -238,7 +234,7 @@ describe('SyncEngineLevel — identity management', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
-      await engine.registerIdentity({ did: 'did:example:all-protos', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:all-protos', options: { protocols: 'all' } });
       const targets = await (engine as any).getSyncTargets();
 
       expect(targets).toHaveLength(2);
@@ -257,7 +253,7 @@ describe('SyncEngineLevel — identity management', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
-      await engine.registerIdentity({
+      await engine.setIdentityOptions({
         did     : 'did:example:scoped',
         options : { protocols: ['https://proto1.example.com', 'https://proto2.example.com'] },
       });
@@ -307,7 +303,7 @@ describe('SyncEngineLevel — identity management', () => {
         ]),
       };
 
-      await engine.registerIdentity({
+      await engine.setIdentityOptions({
         did     : 'did:example:delegated',
         options : { protocols: 'all', delegateDid: 'did:example:delegate' },
       });
@@ -331,11 +327,11 @@ describe('SyncEngineLevel — identity management', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
-      await engine.registerIdentity({
+      await engine.setIdentityOptions({
         did     : 'did:example:alice',
         options : { protocols: 'all' },
       });
-      await engine.registerIdentity({
+      await engine.setIdentityOptions({
         did     : 'did:example:bob',
         options : { protocols: ['https://proto.example.com/chat/1.0'] },
       });
@@ -360,7 +356,7 @@ describe('SyncEngineLevel — identity management', () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
-      await engine.registerIdentity({ did: 'did:example:clear1', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:clear1', options: { protocols: 'all' } });
       expect(await engine.getIdentityOptions('did:example:clear1')).toBeDefined();
 
       await engine.clear();
@@ -455,7 +451,7 @@ describe('SyncEngineLevel — identity management', () => {
 
   describe('multi-identity hot-add / hot-remove', () => {
 
-    // --- registerIdentity hot-add triggers ---
+    // --- setIdentityOptions hot-add triggers ---
 
     it('should call addIdentityToLiveSync when registering during active live sync', async () => {
       const engine = new SyncEngineLevel({ db });
@@ -463,7 +459,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.registerIdentity({ did: 'did:example:hotadd1', options: { protocols: ['https://proto.example'] } });
+      await engine.setIdentityOptions({ did: 'did:example:hotadd1', options: { protocols: ['https://proto.example'] } });
 
       expect(hotAddStub.calledOnce).toBe(true);
       expect(hotAddStub.firstCall.args[0]).toBe('did:example:hotadd1');
@@ -476,7 +472,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.registerIdentity({ did: 'did:example:hotadd-default', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:hotadd-default', options: { protocols: 'all' } });
 
       expect(hotAddStub.calledOnce).toBe(true);
       expect(hotAddStub.firstCall.args[1]).toEqual({ protocols: 'all' });
@@ -488,7 +484,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.registerIdentity({ did: 'did:example:nohot-idle', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:nohot-idle', options: { protocols: 'all' } });
 
       expect(hotAddStub.called).toBe(false);
     });
@@ -499,7 +495,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.registerIdentity({ did: 'did:example:hot-after-removal', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:hot-after-removal', options: { protocols: 'all' } });
 
       // Hot-add should fire because the runtime mode is 'live', even with zero
       // existing subscriptions. This handles the case where the last
@@ -514,7 +510,7 @@ describe('SyncEngineLevel — identity management', () => {
       sinon.stub(engine as any, 'addIdentityToLiveSync').rejects(new Error('hot-add boom'));
 
       await expect(
-        engine.registerIdentity({ did: 'did:example:hotadd-fail', options: { protocols: 'all' } })
+        engine.setIdentityOptions({ did: 'did:example:hotadd-fail', options: { protocols: 'all' } })
       ).rejects.toThrow('hot-add boom');
 
       // The identity should still be persisted because the put happens before hot-add.
@@ -523,7 +519,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect(options!.protocols).toBe('all');
     });
 
-    it('should resolve registerIdentity and keep the identity when hot-add discovery fails', async () => {
+    it('should resolve setIdentityOptions and keep the identity when hot-add discovery fails', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._runtime = new SyncRuntime(true);
 
@@ -534,7 +530,7 @@ describe('SyncEngineLevel — identity management', () => {
       sinon.stub((engine as any).targetResolver, 'getEndpointUrls').rejects(new Error('endpoint discovery unavailable'));
       const consoleErrorStub = sinon.stub(console, 'error');
 
-      await engine.registerIdentity({ did: 'did:example:hotadd-discovery-fail', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:hotadd-discovery-fail', options: { protocols: 'all' } });
 
       const options = await engine.getIdentityOptions('did:example:hotadd-discovery-fail');
       expect(options).toBeDefined();
@@ -542,10 +538,10 @@ describe('SyncEngineLevel — identity management', () => {
       expect(consoleErrorStub.calledOnce).toBe(true);
     });
 
-    it('should serialize unregisterIdentity behind an in-flight settle re-initialization', async () => {
+    it('should serialize removeIdentity behind an in-flight settle re-initialization', async () => {
       const engine = new SyncEngineLevel({ db });
       const did = 'did:example:settle-unregister-race';
-      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
       (engine as any)._runtime = new SyncRuntime(true);
 
       const target = {
@@ -590,7 +586,7 @@ describe('SyncEngineLevel — identity management', () => {
       // The re-initialization holds the exclusive sync lock, so the
       // unregister cannot complete mid-initialization and be resurrected.
       let unregisterSettled = false;
-      const unregisterPromise = engine.unregisterIdentity(did).then((): void => { unregisterSettled = true; });
+      const unregisterPromise = engine.removeIdentity(did).then((): void => { unregisterSettled = true; });
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(unregisterSettled).toBe(false);
 
@@ -605,10 +601,10 @@ describe('SyncEngineLevel — identity management', () => {
       expect(await engine.getIdentityOptions(did)).toBeUndefined();
     });
 
-    it('should rebuild only the new scope when updateIdentityOptions races a settle re-initialization', async () => {
+    it('should rebuild only the new scope when setIdentityOptions races a settle re-initialization', async () => {
       const engine = new SyncEngineLevel({ db });
       const did = 'did:example:settle-update-race';
-      await engine.registerIdentity({ did, options: { protocols: ['https://old.example/proto'] } });
+      await engine.setIdentityOptions({ did, options: { protocols: ['https://old.example/proto'] } });
       (engine as any)._runtime = new SyncRuntime(true);
 
       const oldTarget = {
@@ -667,7 +663,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       let updateSettled = false;
       const updatePromise = engine
-        .updateIdentityOptions({ did, options: { protocols: ['https://new.example/proto'] } })
+        .setIdentityOptions({ did, options: { protocols: ['https://new.example/proto'] } })
         .then((): void => { updateSettled = true; });
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(updateSettled).toBe(false);
@@ -683,17 +679,17 @@ describe('SyncEngineLevel — identity management', () => {
       expect(controllerKeys[0]).toContain('projection-new');
     });
 
-    // --- unregisterIdentity hot-remove triggers ---
+    // --- removeIdentity hot-remove triggers ---
 
     it('should call removeIdentityFromLiveSync when unregistering during active live sync', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:hotrem1', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:hotrem1', options: { protocols: 'all' } });
 
       (engine as any)._runtime = new SyncRuntime(true);
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
 
-      await engine.unregisterIdentity('did:example:hotrem1');
+      await engine.removeIdentity('did:example:hotrem1');
 
       expect(hotRemoveStub.calledOnce).toBe(true);
       expect(hotRemoveStub.firstCall.args[0]).toBe('did:example:hotrem1');
@@ -701,13 +697,13 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not call removeIdentityFromLiveSync when live sync is not running', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:nohotrem-idle', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:nohotrem-idle', options: { protocols: 'all' } });
 
       (engine as any)._runtime = new SyncRuntime();
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
 
-      await engine.unregisterIdentity('did:example:nohotrem-idle');
+      await engine.removeIdentity('did:example:nohotrem-idle');
 
       expect(hotRemoveStub.called).toBe(false);
     });
@@ -745,13 +741,14 @@ describe('SyncEngineLevel — identity management', () => {
       runtime.dispose();
     });
 
-    it('should still throw when unregistering a non-registered identity during live sync', async () => {
+    it('should not run live removal for an absent identity', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._runtime = new SyncRuntime(true);
+      const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
 
-      await expect(
-        engine.unregisterIdentity('did:example:never-registered-live')
-      ).rejects.toThrow('is not registered');
+      await engine.removeIdentity('did:example:never-registered-live');
+
+      expect(hotRemoveStub.called).toBe(false);
     });
 
     // --- pending init-retry cancellation on identity mutations ---
@@ -761,18 +758,18 @@ describe('SyncEngineLevel — identity management', () => {
     // target (old scope, old authorization epoch); it must be cancelled
     // unconditionally, not only when links are rebuilt.
 
-    it('updateIdentityOptions should cancel a pending init retry even without an active link', async () => {
+    it('setIdentityOptions should cancel a pending init retry even without an active link', async () => {
       const clock = sinon.useFakeTimers();
       try {
         const engine = new SyncEngineLevel({ db });
-        await engine.registerIdentity({ did: 'did:example:staleretry', options: { protocols: 'all' } });
+        await engine.setIdentityOptions({ did: 'did:example:staleretry', options: { protocols: 'all' } });
 
         const initialize = sinon.stub(engine as any, 'initializeLinkTarget').resolves({ status: 'active' });
         const linkKey = 'did:example:staleretry^https://dwn.example.com^projection-1^epoch-1';
         (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry' }, linkKey, 60_000);
         expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
 
-        await engine.updateIdentityOptions({ did: 'did:example:staleretry', options: { protocols: 'all' } });
+        await engine.setIdentityOptions({ did: 'did:example:staleretry', options: { protocols: 'all' } });
 
         expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(false);
         await clock.tickAsync(120_000);
@@ -782,10 +779,10 @@ describe('SyncEngineLevel — identity management', () => {
       }
     });
 
-    it('updateIdentityOptions should initialize replacement live targets after cancelling a pending retry', async () => {
+    it('setIdentityOptions should initialize replacement live targets after cancelling a pending retry', async () => {
       const engine = new SyncEngineLevel({ db });
       const did = 'did:example:replacementretry';
-      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
       (engine as any)._runtime = new SyncRuntime(true);
 
       const initializeReplacement = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
@@ -793,25 +790,25 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any).scheduleLinkInitRetry({ did }, linkKey, 60_000);
 
       const options = { protocols: ['https://new.example'] };
-      await engine.updateIdentityOptions({ did, options });
+      await engine.setIdentityOptions({ did, options });
 
       expect((engine as any)._runtime.hasTimers((key: string) => key === `linkInitRetry:${linkKey}`)).toBe(false);
       expect(initializeReplacement.calledOnceWith(did, options)).toBe(true);
       (engine as any)._runtime.dispose();
     });
 
-    it('unregisterIdentity should cancel a pending init retry even without an active link', async () => {
+    it('removeIdentity should cancel a pending init retry even without an active link', async () => {
       const clock = sinon.useFakeTimers();
       try {
         const engine = new SyncEngineLevel({ db });
-        await engine.registerIdentity({ did: 'did:example:staleretry2', options: { protocols: 'all' } });
+        await engine.setIdentityOptions({ did: 'did:example:staleretry2', options: { protocols: 'all' } });
 
         const initialize = sinon.stub(engine as any, 'initializeLinkTarget').resolves({ status: 'active' });
         const linkKey = 'did:example:staleretry2^https://dwn.example.com^projection-1^epoch-1';
         (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry2' }, linkKey, 60_000);
         expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
 
-        await engine.unregisterIdentity('did:example:staleretry2');
+        await engine.removeIdentity('did:example:staleretry2');
 
         expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(false);
         await clock.tickAsync(120_000);
@@ -821,10 +818,10 @@ describe('SyncEngineLevel — identity management', () => {
       }
     });
 
-    it('updateIdentityOptions should drain an already-started init retry before starting replacement targets', async () => {
+    it('setIdentityOptions should drain an already-started init retry before starting replacement targets', async () => {
       const engine = new SyncEngineLevel({ db });
       const did = 'did:example:startedretry';
-      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
       (engine as any)._runtime = new SyncRuntime(true);
 
       let releaseRetry!: () => void;
@@ -853,7 +850,7 @@ describe('SyncEngineLevel — identity management', () => {
       });
 
       const options = { protocols: ['https://replacement.example'] };
-      const updatePromise = engine.updateIdentityOptions({ did, options })
+      const updatePromise = engine.setIdentityOptions({ did, options })
         .then((): void => { events.push('update-done'); });
 
       // The update must block on the in-flight retry, not complete around it
@@ -1348,13 +1345,13 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // updateIdentityOptions — live subscription refresh
+  // setIdentityOptions — live subscription refresh
   // ---------------------------------------------------------------------------
 
-  describe('updateIdentityOptions — live subscription refresh', () => {
+  describe('setIdentityOptions — live subscription refresh', () => {
     it('should hot-remove and hot-add when updating options during live sync', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update1', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:update1', options: { protocols: 'all' } });
 
       (engine as any)._runtime = new SyncRuntime(true);
       activateTestLink(engine, 'did:example:update1^https://dwn.example.com', 'did:example:update1');
@@ -1363,7 +1360,7 @@ describe('SyncEngineLevel — identity management', () => {
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       const newOptions = { protocols: ['https://new-proto.example'], delegateDid: 'did:example:delegate' };
-      await engine.updateIdentityOptions({ did: 'did:example:update1', options: newOptions });
+      await engine.setIdentityOptions({ did: 'did:example:update1', options: newOptions });
 
       expect(hotRemoveStub.calledOnce).toBe(true);
       expect(hotAddStub.calledOnce).toBe(true);
@@ -1374,14 +1371,14 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove/add when updating options while sync is not live', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update-idle', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:update-idle', options: { protocols: 'all' } });
 
       (engine as any)._runtime = new SyncRuntime();
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.updateIdentityOptions({ did: 'did:example:update-idle', options: { protocols: ['https://new.example'] } });
+      await engine.setIdentityOptions({ did: 'did:example:update-idle', options: { protocols: ['https://new.example'] } });
 
       expect(hotRemoveStub.called).toBe(false);
       expect(hotAddStub.called).toBe(false);
@@ -1389,7 +1386,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove/add when identity has no active links (not yet syncing)', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update-nolinks', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:update-nolinks', options: { protocols: 'all' } });
 
       (engine as any)._runtime = new SyncRuntime(true);
       // No active links for this DID
@@ -1397,7 +1394,7 @@ describe('SyncEngineLevel — identity management', () => {
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.updateIdentityOptions({ did: 'did:example:update-nolinks', options: { protocols: ['https://new.example'] } });
+      await engine.setIdentityOptions({ did: 'did:example:update-nolinks', options: { protocols: ['https://new.example'] } });
 
       expect(hotRemoveStub.called).toBe(false);
       expect(hotAddStub.called).toBe(false);
@@ -1405,10 +1402,10 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should persist new options even if not in live mode', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:persist-opts', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:persist-opts', options: { protocols: 'all' } });
 
       const newOptions = { protocols: ['https://persisted.example'] };
-      await engine.updateIdentityOptions({ did: 'did:example:persist-opts', options: newOptions });
+      await engine.setIdentityOptions({ did: 'did:example:persist-opts', options: newOptions });
 
       const stored = await engine.getIdentityOptions('did:example:persist-opts');
       expect(stored).toEqual(newOptions);
@@ -1426,7 +1423,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.registerIdentity({ did: 'did:example:after-last-removed', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:after-last-removed', options: { protocols: 'all' } });
 
       // Hot-add should fire because the runtime mode is 'live'.
       expect(hotAddStub.calledOnce).toBe(true);
@@ -1444,10 +1441,10 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // stopSync disposes the runtime (mode undefined) — registerIdentity after stop must not hot-add
+  // stopSync disposes the runtime (mode undefined) — setIdentityOptions after stop must not hot-add
   // ---------------------------------------------------------------------------
 
-  describe('registerIdentity after stopSync', () => {
+  describe('setIdentityOptions after stopSync', () => {
     it('should not hot-add when sync was explicitly stopped', async () => {
       const engine = new SyncEngineLevel({ db });
 
@@ -1457,7 +1454,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.registerIdentity({ did: 'did:example:after-stop', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:after-stop', options: { protocols: 'all' } });
 
       // The runtime mode dies with stopSync's disposal, so no hot-add.
       expect(hotAddStub.called).toBe(false);
@@ -1465,14 +1462,14 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove when sync was explicitly stopped', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:stop-then-unreg', options: { protocols: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:stop-then-unreg', options: { protocols: 'all' } });
 
       (engine as any)._runtime = new SyncRuntime(true);
       await engine.stopSync();
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
 
-      await engine.unregisterIdentity('did:example:stop-then-unreg');
+      await engine.removeIdentity('did:example:stop-then-unreg');
 
       expect(hotRemoveStub.called).toBe(false);
     });

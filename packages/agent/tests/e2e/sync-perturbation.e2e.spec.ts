@@ -203,7 +203,7 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
   }
 
   async function registerDevice(device: Device): Promise<void> {
-    await device.harness.agent.sync.registerIdentity({
+    await device.harness.agent.sync.setIdentityOptions({
       did     : aliceDid,
       options : { protocols: [harnessProtocolV1.protocol] },
     });

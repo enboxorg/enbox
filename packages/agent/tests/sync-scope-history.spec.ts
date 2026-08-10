@@ -108,7 +108,7 @@ describe('Sync scope closure — delegated protocol history', () => {
   it('rejects delegated sync scope when retained protocol history contains a missing dependency', async () => {
     const processRequestSpy = sinon.spy(testHarness.agent.dwn, 'processRequest');
 
-    await expect(syncEngine.registerIdentity({
+    await expect(syncEngine.setIdentityOptions({
       did     : ownerDid,
       options : {
         delegateDid,

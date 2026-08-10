@@ -1525,13 +1525,13 @@ describe('AuthManager', () => {
   });
 
   describe('switchIdentity() — sync registration', () => {
-    test('calls sync.registerIdentity with explicit local identity scope for the target identity', async () => {
+    test('calls sync.setIdentityOptions with explicit local identity scope for the target identity', async () => {
       const registerCalls: any[] = [];
       const identity = createMockIdentity();
       const agent = createMockAgent({
-        identityGet          : async () => identity,
-        syncRegisterIdentity : async (params) => { registerCalls.push(params); },
-        syncStartSync        : async () => {},
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        syncStartSync          : async () => {},
       });
       const manager = createTestManager(agent, {
         sync                  : '10s',
@@ -1551,8 +1551,8 @@ describe('AuthManager', () => {
       const identity = createMockIdentity();
       const agent = createMockAgent({
         identityGet            : async () => identity,
-        syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
-        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        syncRemoveIdentity     : async (did) => { unregisterCalls.push(did); },
         syncStartSync          : async () => {},
       });
       const manager = createTestManager(agent, { sync: '10s' });
@@ -1563,7 +1563,7 @@ describe('AuthManager', () => {
       expect(unregisterCalls).toHaveLength(0);
     });
 
-    test('unregisters sync for delegate with zero grants', async () => {
+    test('removes sync for delegate with zero grants', async () => {
       const registerCalls: any[] = [];
       const unregisterCalls: string[] = [];
       const identity = createMockIdentity({
@@ -1572,8 +1572,8 @@ describe('AuthManager', () => {
       });
       const agent = createMockAgent({
         identityGet            : async () => identity,
-        syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
-        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        syncRemoveIdentity     : async (did) => { unregisterCalls.push(did); },
         syncStartSync          : async () => {},
       });
       const manager = createTestManager(agent, {
@@ -1583,7 +1583,7 @@ describe('AuthManager', () => {
 
       await manager.switchIdentity('did:delegate');
 
-      // Zero grants — should unregister (not register) to clear stale scope.
+      // Zero grants remove stale scope.
       expect(registerCalls).toHaveLength(0);
       expect(unregisterCalls).toHaveLength(1);
       expect(unregisterCalls[0]).toBe('did:external');
@@ -1596,11 +1596,11 @@ describe('AuthManager', () => {
         metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
       });
       const agent = createMockAgent({
-        identityGet          : async () => identity,
-        syncRegisterIdentity : async (params) => { registerCalls.push(params); },
-        syncStartSync        : async () => {},
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        syncStartSync          : async () => {},
         // Return an unscoped grant (no protocol in scope).
-        processDwnRequest    : async (params: any) => {
+        processDwnRequest      : async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
               reply: {
@@ -1647,40 +1647,19 @@ describe('AuthManager', () => {
       expect(registerCalls[0].options.protocols).toBe('all');
     });
 
-    test('rethrows I/O errors from unregisterIdentity', async () => {
+    test('rethrows I/O errors from removeIdentity', async () => {
       const identity = createMockIdentity({
         did      : { uri: 'did:delegate' },
         metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
       });
       const agent = createMockAgent({
-        identityGet            : async () => identity,
-        syncUnregisterIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
-        syncStartSync          : async () => {},
+        identityGet        : async () => identity,
+        syncRemoveIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
+        syncStartSync      : async () => {},
       });
       const manager = createTestManager(agent, { sync: '10s' });
 
       await expect(manager.switchIdentity('did:delegate')).rejects.toThrow('LEVEL_IO_ERROR');
-    });
-
-    test('handles already-registered identity gracefully', async () => {
-      const updateCalls: any[] = [];
-      const identity = createMockIdentity();
-      const agent = createMockAgent({
-        identityGet               : async () => identity,
-        syncRegisterIdentity      : async () => { throw new Error('Identity already registered'); },
-        syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
-        syncStartSync             : async () => {},
-      });
-      const manager = createTestManager(agent, {
-        sync                  : '10s',
-        identitySyncProtocols : ['https://proto.example/profile'],
-      });
-
-      // Should not throw — falls back to updateIdentityOptions.
-      const session = await manager.switchIdentity('did:dht:testuser123');
-      expect(session.did).toBe('did:dht:testuser123');
-      expect(updateCalls).toHaveLength(1);
-      expect(updateCalls[0].did).toBe('did:dht:testuser123');
     });
 
     test('repairs registration but does not start sync when sync is off', async () => {
@@ -1688,9 +1667,9 @@ describe('AuthManager', () => {
       const syncStartCalls: any[] = [];
       const identity = createMockIdentity();
       const agent = createMockAgent({
-        identityGet          : async () => identity,
-        syncRegisterIdentity : async (params) => { registerCalls.push(params); },
-        syncStartSync        : async (params) => { syncStartCalls.push(params); },
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        syncStartSync          : async (params) => { syncStartCalls.push(params); },
       });
       const manager = createTestManager(agent, {
         sync                  : 'off',
@@ -1705,7 +1684,7 @@ describe('AuthManager', () => {
       expect(syncStartCalls).toHaveLength(0);
     });
 
-    test('unregisters delegate with zero grants even when sync is off', async () => {
+    test('removes a delegate with zero grants even when sync is off', async () => {
       const unregisterCalls: string[] = [];
       const registerCalls: any[] = [];
       const identity = createMockIdentity({
@@ -1714,14 +1693,14 @@ describe('AuthManager', () => {
       });
       const agent = createMockAgent({
         identityGet            : async () => identity,
-        syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
-        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        syncRemoveIdentity     : async (did) => { unregisterCalls.push(did); },
       });
       const manager = createTestManager(agent, { sync: 'off' });
 
       await manager.switchIdentity('did:delegate');
 
-      // Zero grants → should unregister stale scope even with sync off.
+      // Zero grants remove stale scope even with sync off.
       expect(registerCalls).toHaveLength(0);
       expect(unregisterCalls).toHaveLength(1);
       expect(unregisterCalls[0]).toBe('did:external');

@@ -140,10 +140,10 @@ describe('vaultConnect', () => {
     const syncCalls: any[] = [];
 
     const agent = createMockAgent({
-      firstLaunch          : async () => true,
-      identityList         : async () => [],
-      identityCreate       : async () => createMockIdentity(),
-      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+      firstLaunch            : async () => true,
+      identityList           : async () => [],
+      identityCreate         : async () => createMockIdentity(),
+      syncSetIdentityOptions : async (params) => { syncCalls.push(params); },
     });
 
     await vaultConnect(
@@ -173,29 +173,18 @@ describe('vaultConnect', () => {
     const storage = new MemoryStorage();
     const createCalls: any[] = [];
     const syncCalls: any[] = [];
-    const updateCalls: any[] = [];
     const identity = createMockIdentity({
       metadata: { name: 'Recovered', tenant: 'did:dht:testagent' },
     });
     let pullCount = 0;
-    let recoveredIdentityRegistrationCount = 0;
 
     const agent = createMockAgent({
-      firstLaunch          : async () => true,
-      initialize           : async () => 'recovery phrase words',
-      identityList         : async () => (pullCount > 0 ? [identity] : []),
-      identityCreate       : async (params) => { createCalls.push(params); return createMockIdentity(); },
-      syncSync             : async () => { pullCount++; },
-      syncRegisterIdentity : async (params) => {
-        syncCalls.push(params);
-        if (params.did === 'did:dht:testuser123') {
-          recoveredIdentityRegistrationCount++;
-          if (recoveredIdentityRegistrationCount > 1) {
-            throw new Error('already registered');
-          }
-        }
-      },
-      syncUpdateIdentityOptions: async (params) => { updateCalls.push(params); },
+      firstLaunch            : async () => true,
+      initialize             : async () => 'recovery phrase words',
+      identityList           : async () => (pullCount > 0 ? [identity] : []),
+      identityCreate         : async (params) => { createCalls.push(params); return createMockIdentity(); },
+      syncSync               : async () => { pullCount++; },
+      syncSetIdentityOptions : async (params) => { syncCalls.push(params); },
     });
 
     const session = await vaultConnect(
@@ -218,8 +207,6 @@ describe('vaultConnect', () => {
       'did:dht:testuser123',
       'did:dht:testuser123',
     ]);
-    expect(updateCalls).toHaveLength(1);
-    expect(updateCalls[0].did).toBe('did:dht:testuser123');
   });
 
   test('rejects when fresh vault remote recovery fails', async () => {
@@ -281,10 +268,10 @@ describe('vaultConnect', () => {
     const syncCalls: any[] = [];
 
     const agent = createMockAgent({
-      firstLaunch          : async () => true,
-      initialize           : async () => 'phrase',
-      identityList         : async () => [],
-      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+      firstLaunch            : async () => true,
+      initialize             : async () => 'phrase',
+      identityList           : async () => [],
+      syncSetIdentityOptions : async (params) => { syncCalls.push(params); },
     });
 
     await vaultConnect(
@@ -312,11 +299,11 @@ describe('vaultConnect', () => {
     const syncCalls: any[] = [];
 
     const agent = createMockAgent({
-      firstLaunch          : async () => true,
-      identityList         : async () => [],
-      identityCreate       : async () => createMockIdentity(),
-      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
-      syncStartSync        : async () => {},
+      firstLaunch            : async () => true,
+      identityList           : async () => [],
+      identityCreate         : async () => createMockIdentity(),
+      syncSetIdentityOptions : async (params) => { syncCalls.push(params); },
+      syncStartSync          : async () => {},
     });
 
     await vaultConnect(
@@ -579,10 +566,10 @@ describe('vaultConnect', () => {
     });
 
     const agent = createMockAgent({
-      firstLaunch          : async () => false,
-      identityList         : async () => [delegateIdentity],
-      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
-      processDwnRequest    : async () => ({
+      firstLaunch            : async () => false,
+      identityList           : async () => [delegateIdentity],
+      syncSetIdentityOptions : async (params) => { syncCalls.push(params); },
+      processDwnRequest      : async () => ({
         reply: { status: { code: 200 }, entries: [grantEntry] },
       }),
     });
@@ -612,8 +599,8 @@ describe('vaultConnect', () => {
     const agent = createMockAgent({
       firstLaunch            : async () => false,
       identityList           : async () => [delegateIdentity],
-      syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
-      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+      syncRemoveIdentity     : async (did) => { unregisterCalls.push(did); },
       processDwnRequest      : async () => ({
         reply: { status: { code: 200 }, entries: [] },
       }),
@@ -642,8 +629,8 @@ describe('vaultConnect', () => {
     const agent = createMockAgent({
       firstLaunch            : async () => false,
       identityList           : async () => [delegateIdentity],
-      syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
-      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+      syncRemoveIdentity     : async (did) => { unregisterCalls.push(did); },
       processDwnRequest      : async () => ({
         reply: { status: { code: 200 }, entries: [] },
       }),
@@ -668,8 +655,8 @@ describe('vaultConnect', () => {
     const agent = createMockAgent({
       firstLaunch            : async () => false,
       identityList           : async () => [createMockIdentity()],
-      syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
-      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+      syncRemoveIdentity     : async (did) => { unregisterCalls.push(did); },
     });
 
     await vaultConnect(
@@ -894,7 +881,7 @@ describe('vaultConnect', () => {
     );
 
     // startSync should NOT have been called because sync is already running.
-    // registerIdentity would have hot-added the identity inline.
+    // setIdentityOptions would have hot-added the identity inline.
     expect(startSyncCalls).toHaveLength(0);
   });
 

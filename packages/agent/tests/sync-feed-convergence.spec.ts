@@ -181,7 +181,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const recordId = remoteWrite.message!.recordId;
 
     await expectLocalRecordCount(recordId, 0);
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
 
     await syncEngine.sync('pull');
 
@@ -215,7 +215,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const recordId = localWrite.message!.recordId;
 
     await expectRemoteRecordCount(recordId, 0);
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
 
     await syncEngine.sync('push');
 
@@ -255,7 +255,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync(undefined, { verifyConvergence: true });
 
     expect(gate.attempts()).toBe(1);
@@ -313,7 +313,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
 
@@ -356,7 +356,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
 
     expect(gate.attempts()).toBe(1);
@@ -400,7 +400,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     const blockedDrain = await syncEngine.drainTo(remoteEndpoint);
 
     expect(blockedDrain.completed).toBe(false);
@@ -434,7 +434,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installDataAwareRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
 
     expect(gate.dataBearingAttempts()).toBe(1);
@@ -475,7 +475,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
 
@@ -513,7 +513,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
     expect((await expectQuotaBlockedStatus()).quotaBlockedMessageCount).toBe(1);
@@ -559,7 +559,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const update = await updateLocalRecord(initial.message, 'updated payload');
     const updateCid = await Message.getCid(update.message);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     const internal = syncEngine as unknown as {
       getSyncTargets(): Promise<any[]>;
       getOrCreateReplicationLink(target: any): Promise<any>;
@@ -666,7 +666,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installDataAwareRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
 
     expect(gate.dataBearingAttempts()).toBe(1);
@@ -714,7 +714,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       const blockedCid = await Message.getCid(blockedWrite.message);
       const gate = installRoutedRemoteApplyGate(blockedCid, secondaryStores.dwn);
 
-      await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+      await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
       const drain = await syncEngine.drainTo(secondaryRemoteEndpoint);
       expect(drain.completed).toBe(true);
       expect(gate.primaryAttempts()).toBe(0);
@@ -770,7 +770,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
     expect((await expectQuotaBlockedStatus()).quotaBlockedMessageCount).toBe(1);
@@ -814,7 +814,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
     expect((await expectQuotaBlockedStatus()).quotaBlockedMessageCount).toBe(1);
@@ -847,7 +847,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
   it('converges updates, deletes, prune cascades, config churn, and data bytes after a resumed feed cycle', async () => {
     await configureLocalProtocol(feedHarnessProtocolV1);
-    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
 
     const noteToUpdate = await writeLocalRecord({

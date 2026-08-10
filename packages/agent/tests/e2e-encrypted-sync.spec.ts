@@ -265,7 +265,7 @@ describe('e2e: encrypted data survives sync round-trip', () => {
 
   it('should push encrypted records to the remote DWN', async () => {
     // Register identity and push to remote.
-    await testHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+    await testHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
 
     // Verify records exist on the remote DWN.
     const remoteQueryReply = await syncPushUntilRemoteRecordCount(3);

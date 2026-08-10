@@ -123,7 +123,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
 
   it('should advance the durable pull checkpoint after a live event wakes reconciliation', async () => {
     const syncEngine = testHarness.agent.sync as SyncEngineLevel;
-    await syncEngine.registerIdentity({
+    await syncEngine.setIdentityOptions({
       did     : tenant,
       options : { protocols: 'all' },
     });

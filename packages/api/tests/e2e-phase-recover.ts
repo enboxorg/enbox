@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   log('Pulling agent records from remote DWN...');
 
   // Register the agent DID for sync (identity records are stored under the agent DID's tenant)
-  await agent.sync.registerIdentity({ did: agent.agentDid.uri, options: { protocols: 'all' } });
+  await agent.sync.setIdentityOptions({ did: agent.agentDid.uri, options: { protocols: 'all' } });
 
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
@@ -101,7 +101,7 @@ async function main(): Promise<void> {
   log('Pulling identity records from remote DWN...');
 
   try {
-    await agent.sync.registerIdentity({ did: recoveredDid, options: { protocols: 'all' } });
+    await agent.sync.setIdentityOptions({ did: recoveredDid, options: { protocols: 'all' } });
   } catch {
     // May already be registered if agent DID === identity DID; ignore
   }

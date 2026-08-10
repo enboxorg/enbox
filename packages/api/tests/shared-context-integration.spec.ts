@@ -270,7 +270,7 @@ describe('shared context public API integration', () => {
     });
     await removedChange.delete();
 
-    await ownerHarness.agent.sync.registerIdentity({
+    await ownerHarness.agent.sync.setIdentityOptions({
       did     : ownerDid,
       options : { protocols: [protocolDefinition.protocol] },
     });
