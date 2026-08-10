@@ -601,7 +601,7 @@ async function fanOutDataEncodedRecords(
     return;
   }
 
-  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(ownerDid);
+  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(ownerDid);
   await Promise.all(records.flatMap((record) => {
     const { encodedData, ...rawMessage } = record;
     const data = Encoder.base64UrlToBytes(encodedData);

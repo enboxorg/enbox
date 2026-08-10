@@ -331,14 +331,6 @@ export class AgentDwnApi {
   });
 
   /**
-   * Cache of locally-managed DIDs (agent DID + identities). Used to decide
-   * whether a target DID should be routed through the local DWN server.
-   */
-  private readonly _localManagedDidCache = new TtlCache<string, boolean>({
-    ttl: 30 * 60 * 1000
-  });
-
-  /**
    * Coalesces concurrent owner-authorized {@link reprovisionAudienceKeyDelivery}
    * calls for the same (target, protocol, rolePath, contextId, recipientDid,
    * recipient wrap target) onto one execution, so the non-atomic check-then-write
@@ -420,7 +412,6 @@ export class AgentDwnApi {
       10_000,
       AgentDwnApi._tryCreateDiscoveryFile(),
     );
-    this._localManagedDidCache.clear();
   }
 
   get localDwnStrategy(): LocalDwnStrategy {
@@ -449,90 +440,12 @@ export class AgentDwnApi {
   }
 
   /**
-   * Resolves the DWN service endpoint URLs for the given target DID, optionally
-   * prepending a local DWN server endpoint when local discovery is enabled and
-   * the target is a locally-managed DID.
-   *
-   * @param targetDid - The DID whose DWN endpoints should be resolved.
-   * @returns An array of endpoint URLs.
-   * @throws When strategy is `'only'` and no local server is available.
-   */
-  public async getDwnEndpointUrlsForTarget(targetDid: string): Promise<string[]> {
-    const shouldUseLocalDwn = await this.shouldUseLocalDwnForTarget(targetDid);
-
-    if (!shouldUseLocalDwn) {
-      return getDwnServiceEndpointUrls(targetDid, this.agent.did);
-    }
-
-    const localDwnEndpoint = await this.getLocalDwnEndpoint();
-    if (this._localDwnStrategy === 'only') {
-      if (!localDwnEndpoint) {
-        throw new Error(
-          `AgentDwnApi: Local DWN strategy is 'only' but no local DWN endpoint was discovered. ` +
-          `Ensure the local DWN server is running and discoverable via the discovery file (~/.enbox/dwn.json) or a browser pairing.`
-        );
-      }
-
-      return [localDwnEndpoint];
-    }
-
-    let dwnEndpointUrls: string[] = [];
-    try {
-      dwnEndpointUrls = await getDwnServiceEndpointUrls(targetDid, this.agent.did);
-    } catch (error) {
-      if (!localDwnEndpoint) {
-        throw error;
-      }
-    }
-
-    if (!localDwnEndpoint) {
-      return dwnEndpointUrls;
-    }
-
-    const uniqueEndpoints = new Set<string>([
-      localDwnEndpoint,
-      ...dwnEndpointUrls,
-    ]);
-
-    return [...uniqueEndpoints];
-  }
-
-  /**
    * Returns only the DWN service endpoints from the DID document (no local
    * discovery endpoint). Use this when you need to confirm that a message
    * reached the owner's actual remote DWN, not just the delegate's local server.
    */
   public async getRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
     return getDwnServiceEndpointUrls(targetDid, this.agent.did);
-  }
-
-  /** Resolve hosted endpoints for an operation that must not fall back to a local DWN. */
-  private async requireRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
-    if (this._localDwnStrategy === 'only') {
-      throw new Error(
-        `AgentDwnApi: remoteEndpointsOnly cannot be used while localDwnStrategy is 'only'.`
-      );
-    }
-    const endpoints = await this.getRemoteDwnEndpointUrls(targetDid);
-    if (endpoints.length === 0) {
-      throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${targetDid}#dwn`);
-    }
-    return endpoints;
-  }
-
-  /** Lazily retrieves the local DWN server endpoint via discovery. */
-  private async getLocalDwnEndpoint(): Promise<string | undefined> {
-    // In remote mode, the endpoint is always known.
-    if (this._localDwnEndpoint) {
-      return this._localDwnEndpoint;
-    }
-
-    this._localDwnDiscovery ??= new LocalDwnDiscovery(
-      this.agent.rpc,
-      10_000,
-      AgentDwnApi._tryCreateDiscoveryFile(),
-    );
-    return this._localDwnDiscovery.getEndpoint();
   }
 
   /**
@@ -549,46 +462,15 @@ export class AgentDwnApi {
     }
   }
 
-  /**
-   * Determines whether the given target DID should be routed through the
-   * local DWN server. Returns `true` if the DID is the agent DID or one
-   * of the locally-managed identity DIDs.
-   */
-  private async shouldUseLocalDwnForTarget(targetDid: string): Promise<boolean> {
-    if (this._localDwnStrategy === 'off') {
-      return false;
-    }
-
-    const cached = this._localManagedDidCache.get(targetDid);
-    if (cached !== undefined) {
-      return cached;
-    }
-
+  /** Freshly checks the target-scoped boundary used by `localDwnStrategy: 'only'`. */
+  private async isLocallyManagedDid(targetDid: string): Promise<boolean> {
     if (targetDid === this.agent.agentDid.uri) {
-      this._localManagedDidCache.set(targetDid, true);
       return true;
     }
-
     const identities = await this.agent.identity.list();
-    const localManagedDids = new Set<string>();
-
-    for (const identity of identities) {
-      localManagedDids.add(identity.did.uri);
-      if (identity.metadata.connectedDid) {
-        localManagedDids.add(identity.metadata.connectedDid);
-      }
-    }
-
-    for (const localDid of localManagedDids) {
-      this._localManagedDidCache.set(localDid, true);
-    }
-
-    const isLocalManaged = localManagedDids.has(targetDid);
-    if (!isLocalManaged) {
-      this._localManagedDidCache.set(targetDid, false);
-    }
-
-    return isLocalManaged;
+    return identities.some(identity =>
+      identity.did.uri === targetDid || identity.metadata.connectedDid === targetDid
+    );
   }
 
   /**
@@ -1171,26 +1053,14 @@ export class AgentDwnApi {
       );
     }
 
-    if (request.remoteEndpoint !== undefined && request.remoteEndpointsOnly === true) {
-      throw new TypeError('AgentDwnApi: remoteEndpoint and remoteEndpointsOnly are mutually exclusive.');
-    }
-    if (request.remoteEndpoint !== undefined && this._localDwnStrategy === 'only') {
+    if (this._localDwnStrategy === 'only' && await this.isLocallyManagedDid(request.target)) {
       throw new Error(
-        `AgentDwnApi: remoteEndpoint cannot be used while localDwnStrategy is 'only'.`
+        `AgentDwnApi: Remote DWN requests are unavailable while localDwnStrategy is 'only'.`
       );
     }
-    let dwnEndpointUrls: string[];
-    if (request.remoteEndpoint !== undefined) {
-      dwnEndpointUrls = [request.remoteEndpoint];
-    } else if (request.remoteEndpointsOnly) {
-      dwnEndpointUrls = await this.requireRemoteDwnEndpointUrls(request.target);
-    } else {
-      dwnEndpointUrls = await this.getDwnEndpointUrlsForTarget(request.target);
-    }
-    if (dwnEndpointUrls.length === 0) {
-      throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${request.target}#dwn`);
-    }
-
+    const dwnEndpointUrls = request.remoteEndpoint === undefined
+      ? await this.getRemoteDwnEndpointUrls(request.target)
+      : [request.remoteEndpoint];
     let messageCid: string | undefined;
     let message: DwnMessage[T];
     let data: DwnRpcData | undefined;
@@ -2584,6 +2454,7 @@ export class AgentDwnApi {
 
     const { definition } = message.descriptor;
     this._protocolDefinitionCache.delete(`${target}~${definition.protocol}`);
+    this._protocolDefinitionCache.delete(`local-rpc~${target}~${definition.protocol}`);
     this._protocolDefinitionCache.delete(`remote~${target}~${definition.protocol}`);
   }
 
@@ -2721,11 +2592,17 @@ export class AgentDwnApi {
     granteeDid?: string,
   ): Promise<ProtocolDefinition | undefined> {
     if (!this._dwn) {
-      // Remote mode: query via RPC (same as fetchRemoteProtocolDefinition,
-      // but for locally-managed DIDs). The remote protocol definition
-      // cache uses a different key prefix, so we use a dedicated call.
+      // Remote mode still has a configured local DWN server. Query it
+      // directly rather than resolving the tenant's advertised remote DWN.
       try {
-        return await this.fetchRemoteProtocolDefinition(tenantDid, protocolUri);
+        return await fetchRemoteProtocolDefinitionFn(
+          tenantDid,
+          protocolUri,
+          async (): Promise<string[]> => [this._localDwnEndpoint!],
+          this.sendDwnRpcRequest.bind(this),
+          this._protocolDefinitionCache,
+          'local-rpc',
+        );
       } catch (error: unknown) {
         // Only treat "not found" responses as missing protocols.  Transient
         // errors (network timeouts, auth failures) are rethrown so the
@@ -2773,7 +2650,7 @@ export class AgentDwnApi {
     protocolUri: string,
   ): Promise<ProtocolDefinition> {
     return fetchRemoteProtocolDefinitionFn(
-      targetDid, protocolUri, this.getDwnEndpointUrlsForTarget.bind(this),
+      targetDid, protocolUri, this.getRemoteDwnEndpointUrls.bind(this),
       this.sendDwnRpcRequest.bind(this), this._protocolDefinitionCache,
     );
   }

@@ -117,11 +117,10 @@ class DefaultProtocolReadinessApi implements ProtocolReadinessApi {
 
         operation = 'publish';
         const { reply } = await this.agent.sendDwnRequest({
-          author              : targetDid,
-          messageType         : DwnInterface.ProtocolsConfigure,
-          rawMessage          : message,
-          remoteEndpointsOnly : true,
-          target              : targetDid,
+          author      : targetDid,
+          messageType : DwnInterface.ProtocolsConfigure,
+          rawMessage  : message,
+          target      : targetDid,
         });
         if (reply.status.code !== 409) {
           requireDwnSuccess(`Publish protocol '${typed.protocol}'`, reply);
@@ -167,11 +166,10 @@ class DefaultProtocolReadinessApi implements ProtocolReadinessApi {
     protocol: string,
   ): Promise<ProtocolDefinition | undefined> {
     const { reply } = await this.agent.sendDwnRequest({
-      author              : targetDid,
-      messageParams       : { filter: { protocol } },
-      messageType         : DwnInterface.ProtocolsQuery,
-      remoteEndpointsOnly : true,
-      target              : targetDid,
+      author        : targetDid,
+      messageParams : { filter: { protocol } },
+      messageType   : DwnInterface.ProtocolsQuery,
+      target        : targetDid,
     });
     requireDwnSuccess(`Query hosted protocol '${protocol}'`, reply);
     return reply.entries?.[0]?.descriptor.definition;

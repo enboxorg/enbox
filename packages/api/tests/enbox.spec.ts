@@ -107,6 +107,20 @@ describe('Enbox API', () => {
         expect((enbox as any)._dwn.permissionsApi).toBe(testHarness.agent.permissions);
       });
 
+      it('exposes a friendly DWN endpoint status for the connected DID', async () => {
+        const connectedDid = 'did:example:missing-dwn';
+        const status = {
+          status  : 'service-missing' as const,
+          didUri  : connectedDid,
+          message : `DID '${connectedDid}' does not advertise a #dwn service.`,
+        };
+        const endpointStatus = sinon.stub(testHarness.agent.identity, 'getDwnEndpointStatus').resolves(status);
+        const enbox = new Enbox({ agent: testHarness.agent, connectedDid });
+
+        await expect(enbox.getDwnEndpointStatus({ refresh: true })).resolves.toEqual(status);
+        expect(endpointStatus.calledOnceWithExactly({ didUri: connectedDid, refresh: true })).toBe(true);
+      });
+
       it('should support a single agent with multiple Enbox instances and different DIDs', async () => {
         // Create two identities, each of which is stored in a new tenant.
         const careerIdentity = await testHarness.agent.identity.create({
@@ -1040,6 +1054,62 @@ describe('Enbox API', () => {
       expect(disconnect.calledBefore(shutdown)).toBe(true);
     });
 
+    it('surfaces an owned AuthManager sign-out failure after still attempting shutdown', async () => {
+      const disconnectError = new Error('session markers could not be cleared');
+      const session = {
+        agent       : testHarness.agent,
+        did         : testHarness.agent.agentDid.uri,
+        delegateDid : undefined,
+        identity    : { didUri: testHarness.agent.agentDid.uri, name: 'Disconnect failure' },
+        signal      : new AbortController().signal,
+      };
+      const disconnect = sinon.stub().rejects(disconnectError);
+      const shutdown = sinon.stub().resolves();
+      sinon.stub(AuthManager, 'create').resolves({
+        connect: sinon.stub().resolves(session),
+        disconnect,
+        shutdown,
+      } as any);
+      const { enbox } = await Enbox.connect({ password: 'pw' });
+
+      await expect(enbox.disconnect()).rejects.toBe(disconnectError);
+
+      expect(disconnect.calledOnce).toBe(true);
+      expect(shutdown.calledOnce).toBe(true);
+      expect(disconnect.calledBefore(shutdown)).toBe(true);
+    });
+
+    it('aggregates owned AuthManager sign-out and shutdown failures', async () => {
+      const disconnectError = new Error('sign-out failed');
+      const shutdownError = new Error('shutdown failed');
+      const session = {
+        agent       : testHarness.agent,
+        did         : testHarness.agent.agentDid.uri,
+        delegateDid : undefined,
+        identity    : { didUri: testHarness.agent.agentDid.uri, name: 'Teardown failures' },
+        signal      : new AbortController().signal,
+      };
+      const disconnect = sinon.stub().rejects(disconnectError);
+      const shutdown = sinon.stub().rejects(shutdownError);
+      sinon.stub(AuthManager, 'create').resolves({
+        connect: sinon.stub().resolves(session),
+        disconnect,
+        shutdown,
+      } as any);
+      const { enbox } = await Enbox.connect({ password: 'pw' });
+
+      let failure: unknown;
+      try {
+        await enbox.disconnect();
+      } catch (error: unknown) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors).toEqual([disconnectError, shutdownError]);
+      expect(disconnect.calledBefore(shutdown)).toBe(true);
+    });
+
     it('Enbox.connect({ storage }) still takes ownership (agent built internally)', async () => {
       // Regression for the reviewer-flagged H ("`storage` bypasses guard
       // and ownership"). Earlier behavior keyed ownership off
@@ -1085,11 +1155,10 @@ describe('Enbox API', () => {
       expect(disconnect.calledBefore(shutdown)).toBe(true);
     });
 
-    it('parallel enbox.disconnect() calls share one teardown promise (stopSync runs once)', async () => {
+    it('parallel enbox.disconnect() calls share one AuthManager teardown', async () => {
       // Regression for the reviewer-flagged C2: prior to memoization,
       // two concurrent disconnect() calls would each call
-      // agent.sync.stopSync (idempotent but redundant) and could race
-      // on `_ownedAuth` ownership transfer.
+      // AuthManager.disconnect() and could race on `_ownedAuth` ownership transfer.
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Parallel disconnect' },
         didMethod : 'jwk',
@@ -1105,18 +1174,15 @@ describe('Enbox API', () => {
       const shutdown = sinon.stub().resolves();
       const connect = sinon.stub().resolves(session);
       sinon.stub(AuthManager, 'create').resolves({ connect, disconnect, shutdown } as any);
-      const stopSpy = sinon.spy(testHarness.agent.sync, 'stopSync');
 
       const { enbox } = await Enbox.connect({ password: 'pw' });
 
       // Fire two parallel disconnects on the same tick.
       await Promise.all([enbox.disconnect(), enbox.disconnect()]);
 
-      // stopSync invoked exactly once thanks to the memoized teardown
-      // promise; AuthManager.shutdown also once.
-      expect(stopSpy.callCount).toBe(1);
+      // Both operations are invoked exactly once thanks to the memoized promise.
+      expect(disconnect.calledOnce).toBe(true);
       expect(shutdown.calledOnce).toBe(true);
-      stopSpy.restore();
     });
 
     it('empty protocols array routes to local connect (not handler)', async () => {

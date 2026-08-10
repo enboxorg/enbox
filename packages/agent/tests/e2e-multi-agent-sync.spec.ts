@@ -748,7 +748,7 @@ describe('E2E Multi-Agent Sync', () => {
         messageParams : { filter: { protocol: encryptedProtocol.protocol } },
       }));
       expect(remoteReadiness.reply.status.code).toBe(200);
-      const ownerDwnEndpoints = await primaryHarness.agent.dwn.getDwnEndpointUrlsForTarget(alice.did.uri);
+      const ownerDwnEndpoints = await primaryHarness.agent.dwn.getRemoteDwnEndpointUrls(alice.did.uri);
       expect(ownerDwnEndpoints).toContain(testDwnUrl);
 
       // Full kernel relay handshake against the live dwn-server connect

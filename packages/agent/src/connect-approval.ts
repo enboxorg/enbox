@@ -425,6 +425,10 @@ export async function createPermissionGrants(
     assertConnectGrantScope(scope);
   }
 
+  // Resolve before creating local grants so an unusable or unavailable DID
+  // document fails the approval without leaving undeliverable grant records.
+  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
+
   const permissionGrants = await Promise.all(
     scopes.map((scope) => permissionsApi.createGrant({
       delegated      : isRecordPermissionScope(scope) || isMessagesPermissionScope(scope),
@@ -442,7 +446,6 @@ export async function createPermissionGrants(
   // to a different one and needs the grant to authenticate.  We send each
   // grant to every endpoint so that sync works regardless of which DWN the
   // agent contacts first.
-  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
   logger.log(`Sending ${permissionGrants.length} permission grants to ${dwnEndpointUrls.length} DWN endpoint(s)...`);
 
   const batchSignal = AbortSignal.timeout(CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS);
@@ -522,11 +525,8 @@ export async function createPermissionGrants(
       const remainingFailureSummary = remainingFailureCount > 0
         ? `${displayedFailures}; ${remainingFailureCount} more endpoint(s) failed`
         : displayedFailures;
-      const failureSummary = failures.length === 0
-        ? 'no DWN endpoints were resolved'
-        : remainingFailureSummary;
       throw new Error(
-        `Could not send permission grant to any DWN endpoint: grant ${g + 1} (${scope}); ${failureSummary}`,
+        `Could not send permission grant to any DWN endpoint: grant ${g + 1} (${scope}); ${remainingFailureSummary}`,
       );
     }
   }
@@ -588,7 +588,7 @@ async function fanOutDataEncodedRecords(
     return;
   }
 
-  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(ownerDid);
+  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(ownerDid);
   const sendTasks = records.flatMap((record, recordIndex) => {
     const { encodedData, ...rawMessage } = record;
     const data = Convert.base64Url(encodedData).toUint8Array();
@@ -800,7 +800,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     const permissionsApi = new AgentPermissionsApi({ agent });
     let revGrantEndpoints: string[] = [];
     try {
-      revGrantEndpoints = await agent.dwn.getDwnEndpointUrlsForTarget(providerDid);
+      revGrantEndpoints = await agent.dwn.getRemoteDwnEndpointUrls(providerDid);
     } catch {
       // Endpoint resolution failure — revocation grants will be local-only until sync.
     }

@@ -45,6 +45,7 @@ export {
   RecordValidationError,
   protocolContextKey,
   recordCodecs,
+  ServiceConfigProtocol,
 } from '@enbox/api';
 
 export type {
@@ -80,6 +81,7 @@ export type {
   ContextsApi,
   DataForPath,
   DefineApplicationManifestOptions,
+  DwnEndpointResolution,
   EnboxAnonymousOptions,
   EnboxConnectOptions,
   EnboxConnectResult,

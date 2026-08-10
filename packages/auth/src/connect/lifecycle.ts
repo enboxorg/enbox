@@ -169,11 +169,15 @@ export async function ensureVaultReady(params: {
       recoveryPhrase : params.recoveryPhrase,
       dwnEndpoints   : params.dwnEndpoints,
     });
-  } else if (params.recoveryPhrase) {
+  } else if (params.recoveryPhrase !== undefined) {
     try {
       await userAgent.vault.resetPasswordWithRecoveryPhrase({
-        recoveryPhrase: params.recoveryPhrase,
+        recoveryPhrase              : params.recoveryPhrase,
         password,
+        deferDwnEndpointReplacement : true,
+        ...(params.dwnEndpoints === undefined ? {} : {
+          dwnEndpoints: params.dwnEndpoints,
+        }),
       });
     } catch (error) {
       if (error instanceof HdIdentityVaultRecoveryPhraseMismatchError) {

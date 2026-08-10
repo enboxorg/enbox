@@ -222,32 +222,26 @@ describe('vaultConnect', () => {
     expect(updateCalls[0].did).toBe('did:dht:testuser123');
   });
 
-  test('creates a fallback identity when fresh vault remote recovery fails', async () => {
+  test('rejects when fresh vault remote recovery fails', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const createCalls: any[] = [];
-    const warn = console.warn;
-    console.warn = (): void => {};
+    const agent = createMockAgent({
+      firstLaunch    : async () => true,
+      initialize     : async () => 'recovery phrase words',
+      identityList   : async () => [],
+      identityCreate : async (params) => { createCalls.push(params); return createMockIdentity(); },
+      syncSync       : async () => { throw new Error('remote unavailable'); },
+    });
 
-    try {
-      const agent = createMockAgent({
-        firstLaunch    : async () => true,
-        initialize     : async () => 'recovery phrase words',
-        identityList   : async () => [],
-        identityCreate : async (params) => { createCalls.push(params); return createMockIdentity(); },
-        syncSync       : async () => { throw new Error('remote unavailable'); },
-      });
-
-      const session = await vaultConnect(
+    await expect(
+      vaultConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         { recoveryPhrase: 'existing recovery phrase', password: 'pass', createIdentity: true },
-      );
+      )
+    ).rejects.toThrow('remote unavailable');
 
-      expect(session.did).toBe('did:dht:testuser123');
-      expect(createCalls).toHaveLength(1);
-    } finally {
-      console.warn = warn;
-    }
+    expect(createCalls).toHaveLength(0);
   });
 
   test('registers the newly created identity tenant when registration options are provided', async () => {
@@ -351,6 +345,184 @@ describe('vaultConnect', () => {
     );
 
     expect(initCalls[0].dwnEndpoints).toEqual(['https://custom-dwn.example.com']);
+  });
+
+  test.each([
+    {
+      label    : 'no manager defaults',
+      options  : { recoveryPhrase: 'recovery phrase', sync: 'off' as const },
+      expected : undefined,
+    },
+    {
+      label   : 'explicit restore endpoints',
+      options : {
+        recoveryPhrase : 'recovery phrase',
+        dwnEndpoints   : ['https://EXPLICIT.example/', 'https://explicit.example'],
+        sync           : 'off' as const,
+      },
+      expected: ['https://explicit.example'],
+    },
+  ])('uses $label as the recovery endpoint provenance', async ({ options, expected }) => {
+    const initCalls: any[] = [];
+    const agent = createMockAgent({
+      firstLaunch             : async () => true,
+      initialize              : async (params) => { initCalls.push(params); return 'phrase'; },
+      identityGetDwnEndpoints : async () => expected ?? ['https://resolved.example'],
+    });
+
+    await vaultConnect(
+      {
+        userAgent           : agent, emitter             : new AuthEventEmitter(), storage             : new MemoryStorage(),
+        defaultDwnEndpoints : ['https://manager-default.example'],
+      },
+      options,
+    );
+
+    expect(initCalls[0].dwnEndpoints).toEqual(expected);
+  });
+
+  test('pulls and resolves every local identity when live sync is disabled', async () => {
+    const resolved: any[] = [];
+    let pulls = 0;
+    const identities = [
+      createMockIdentity({ did: { uri: 'did:dht:alice' } }),
+      createMockIdentity({ did: { uri: 'did:dht:bob' } }),
+    ];
+    const agent = createMockAgent({
+      firstLaunch                  : async () => false,
+      identityList                 : async () => identities,
+      identityGetDwnEndpointStatus : async (params) => {
+        resolved.push(params);
+        return { status: 'ready', didUri: params.didUri, endpoints: [`https://${params.didUri.slice(8)}.example`] };
+      },
+      syncSync: async () => { pulls++; },
+    });
+
+    await vaultConnect(
+      { userAgent: agent, emitter: new AuthEventEmitter(), storage: new MemoryStorage() },
+      { recoveryPhrase: 'phrase', password: 'pass', sync: 'off' },
+    );
+
+    expect(resolved.filter(({ didUri }) => didUri !== 'did:dht:testagent')).toEqual([
+      { didUri: 'did:dht:alice', refresh: true },
+      { didUri: 'did:dht:bob', refresh: true },
+    ]);
+    expect(pulls).toBe(1);
+  });
+
+  test('pulls and prepares replacement tenants before publishing and waking both endpoint sets', async () => {
+    const sequence: string[] = [];
+    const identity = createMockIdentity();
+    const agent = createMockAgent({
+      firstLaunch                  : async () => false,
+      identityList                 : async () => [identity],
+      identityGetDwnEndpointStatus : async ({ didUri }) => ({
+        status: 'ready', didUri, endpoints: ['https://advertised.example'],
+      }),
+      identitySetDwnEndpoints : async () => { sequence.push('identity-migrate'); },
+      syncSync                : async () => { sequence.push('pull'); },
+      rpcGetServerInfo        : async (endpoint) => {
+        sequence.push(`prepare:${endpoint}`);
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
+      },
+      vaultResetPasswordWithRecoveryPhrase: async ({ deferDwnEndpointReplacement }) => {
+        sequence.push(deferDwnEndpointReplacement === true ? 'vault-unlock' : 'vault-migrate');
+      },
+      processDwnRequest: async () => ({
+        message : {},
+        reply   : { status: { code: 202, detail: 'Accepted' } },
+      }),
+      rpcSendDwnRequest: async ({ dwnUrl }) => {
+        sequence.push(`wake:${dwnUrl}`);
+        return { status: { code: 202, detail: 'Accepted' } };
+      },
+    });
+
+    await vaultConnect(
+      {
+        userAgent    : agent,
+        emitter      : new AuthEventEmitter(),
+        storage      : new MemoryStorage(),
+        registration : { onSuccess: () => {}, onFailure: () => {} },
+      },
+      {
+        recoveryPhrase : 'phrase',
+        password       : 'pass',
+        dwnEndpoints   : ['https://replacement.example'],
+        sync           : 'off',
+      },
+    );
+
+    expect(sequence).toEqual([
+      'vault-unlock',
+      'prepare:https://advertised.example',
+      'pull',
+      'prepare:https://advertised.example',
+      'prepare:https://replacement.example',
+      'identity-migrate',
+      'prepare:https://replacement.example',
+      'vault-migrate',
+      'wake:https://advertised.example',
+      'wake:https://replacement.example',
+      'wake:https://advertised.example',
+      'wake:https://replacement.example',
+    ]);
+  });
+
+  test('leaves recovered routing unchanged when replacement tenant preparation fails', async () => {
+    const sequence: string[] = [];
+    let registrationFailures = 0;
+    const agent = createMockAgent({
+      firstLaunch                  : async () => false,
+      identityList                 : async () => [createMockIdentity()],
+      identityGetDwnEndpointStatus : async ({ didUri }) => ({
+        status: 'ready', didUri, endpoints: ['https://advertised.example'],
+      }),
+      identitySetDwnEndpoints : async () => { sequence.push('identity-migrate'); },
+      syncSync                : async () => { sequence.push('pull'); },
+      rpcGetServerInfo        : async (endpoint) => {
+        sequence.push(`prepare:${endpoint}`);
+        if (endpoint === 'https://replacement.example') {
+          throw new Error('replacement unavailable');
+        }
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
+      },
+      vaultResetPasswordWithRecoveryPhrase: async ({ deferDwnEndpointReplacement }) => {
+        sequence.push(deferDwnEndpointReplacement === true ? 'vault-unlock' : 'vault-migrate');
+      },
+      rpcSendDwnRequest: async ({ dwnUrl }) => {
+        sequence.push(`wake:${dwnUrl}`);
+        return { status: { code: 202, detail: 'Accepted' } };
+      },
+    });
+
+    await vaultConnect(
+      {
+        userAgent    : agent,
+        emitter      : new AuthEventEmitter(),
+        storage      : new MemoryStorage(),
+        registration : {
+          onSuccess : () => {},
+          onFailure : () => { registrationFailures++; },
+        },
+      },
+      {
+        recoveryPhrase : 'phrase',
+        password       : 'pass',
+        dwnEndpoints   : ['https://replacement.example'],
+        sync           : 'off',
+      },
+    );
+
+    expect(sequence).toEqual([
+      'vault-unlock',
+      'prepare:https://advertised.example',
+      'pull',
+      'prepare:https://advertised.example',
+      'prepare:https://replacement.example',
+      'prepare:https://replacement.example',
+    ]);
+    expect(registrationFailures).toBe(2);
   });
 
   test('handles wallet-connected identity (connectedDid set)', async () => {
@@ -482,7 +654,8 @@ describe('vaultConnect', () => {
       { recoveryPhrase: 'phrase', password: 'pass' },
     );
 
-    expect(registerCalls).toHaveLength(0);
+    expect(registerCalls).toHaveLength(1);
+    expect(registerCalls[0].did).toBe('did:dht:testagent');
     expect(unregisterCalls).toEqual(['did:dht:external']);
   });
 

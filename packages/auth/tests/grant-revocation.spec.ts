@@ -88,9 +88,7 @@ function buildRevocationAgent(opts: {
     return { reply: { status: { code: 404 } } };
   };
 
-  // Mock dwn endpoint resolution (both local+remote and remote-only)
-  (agent.dwn as any).getDwnEndpointUrlsForTarget = async (): Promise<string[]> =>
-    ['https://dwn.example.com'];
+  // Mock hosted DWN endpoint resolution.
   (agent.dwn as any).getRemoteDwnEndpointUrls = async (): Promise<string[]> =>
     ['https://dwn.example.com'];
 

@@ -302,8 +302,9 @@ export interface AuthManagerOptions {
   /**
    * Controls local DWN discovery behavior for remote-target DWN sends/sync.
    * `'prefer'` (default) uses a paired local DWN first, then falls back to
-   * DID-document endpoints. `'only'` requires a local server. `'off'` disables
-   * local DWN discovery entirely.
+   * DID-document endpoints. `'only'` requires a local server for locally
+   * managed DIDs; foreign DIDs still use their advertised endpoints. `'off'`
+   * disables local DWN discovery entirely.
    *
    * Discovery is passive by default: the SDK validates only a persisted
    * local-node pairing or the native discovery file. Browser localhost port
@@ -425,11 +426,11 @@ export type LocalNodeEjectResult =
 
 /** Options for {@link AuthManager.connectVault}. */
 export interface VaultConnectOptions {
+  /** Recovery phrases are accepted only by {@link AuthManager.restoreFromPhrase}. */
+  recoveryPhrase?: never;
+
   /** Vault password (overrides manager default). */
   password?: string;
-
-  /** Initialize or recover the vault from an existing BIP-39 recovery phrase. */
-  recoveryPhrase?: string;
 
   /** Override manager default sync interval. */
   sync?: SyncOption;
@@ -463,7 +464,7 @@ export interface VaultConnectOptions {
 }
 
 /** Options for {@link AuthManager.restoreFromPhrase}. */
-export interface RestoreFromPhraseOptions extends Omit<VaultConnectOptions, 'password' | 'recoveryPhrase'> {
+export interface RestoreFromPhraseOptions extends Omit<VaultConnectOptions, 'dwnEndpoints' | 'password' | 'recoveryPhrase'> {
   /** The BIP-39 recovery phrase for the existing or remote wallet vault. */
   recoveryPhrase: string;
 
@@ -473,6 +474,9 @@ export interface RestoreFromPhraseOptions extends Omit<VaultConnectOptions, 'pas
    * If the local vault already belongs to this phrase, this becomes the new local unlock password.
    */
   password: string;
+
+  /** Deliberately replace owned DID endpoints after recovery; omitted to preserve advertised endpoints. */
+  dwnEndpoints?: string[];
 }
 
 // ─── DWeb Connect ────────────────────────────────────────────────
@@ -635,19 +639,14 @@ export type ConnectionMonitorOptions = GetConnectionStatusOptions & {
  *
  * `connect()` routes to the appropriate flow based on the options:
  *
- * - **Recovery phrase restore** (wallets / CLI): triggered first when
- *   `recoveryPhrase` is provided.
- *
  * - **Handler-based connect** (dapps): triggered when `protocols` or
- *   `connectHandler` is provided and no `recoveryPhrase` is present.
+ *   `connectHandler` is provided.
  *   Delegates to the connect handler for credential acquisition.
  *
- * - **Vault connect** (wallets / CLI): triggered when `password`,
- *   `createIdentity`, or `recoveryPhrase` is provided.
+ * - **Vault connect** (wallets / CLI): triggered otherwise.
  *
- * `connect()` first attempts to restore a previous session from storage
- * unless `recoveryPhrase` is provided. Recovery is treated as an explicit
- * user action and routes directly to the phrase restore flow.
+ * `connect()` first attempts to restore a previous session from storage.
+ * Use {@link AuthManager.restoreFromPhrase} for explicit recovery.
  */
 export type ConnectOptions = HandlerConnectOptions | VaultConnectOptions;
 

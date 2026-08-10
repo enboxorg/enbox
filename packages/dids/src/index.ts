@@ -5,6 +5,7 @@ export type * from './types/portable-did.js';
 
 export * from './did.js';
 export * from './did-error.js';
+export * from './dwn-endpoint-resolution.js';
 export * from './bearer-did.js';
 
 export * from './methods/did-dht.js';

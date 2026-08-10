@@ -27,11 +27,6 @@
  *    converge to the requested definition — attaching the per-endpoint
  *    failure reasons (rejected sends, non-2xx replies, non-converged states)
  *    to the error instead of swallowing them.
- *
- * When no remote DWN endpoints resolve for the provider, preparation is
- * local-only — grant delivery enforces the ≥1-endpoint invariant immediately
- * afterwards, so approval still cannot complete against a provider with no
- * reachable DWN.
  */
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -360,19 +355,6 @@ async function queryLocalProtocolStatus(
   return { queryResult, existingEntry, setupStatus };
 }
 
-/** Resolves the provider's reachable DWN endpoint URLs, treating a resolution failure like zero endpoints. */
-async function resolveDwnEndpointUrls(
-  selectedDid: string,
-  agent: EnboxPlatformAgent,
-): Promise<string[]> {
-  try {
-    return await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
-  } catch {
-    // Endpoint resolution failure — treated like zero endpoints below.
-    return [];
-  }
-}
-
 /**
  * Queries every candidate endpoint for the protocol and returns the replies from
  * the ones that were reachable, logging (not throwing on) unreachable endpoints.
@@ -527,18 +509,7 @@ export async function prepareProtocol(
 ): Promise<void> {
   const { queryResult, existingEntry, setupStatus } = await queryLocalProtocolStatus(selectedDid, agent, protocolDefinition);
 
-  const dwnEndpointUrls = await resolveDwnEndpointUrls(selectedDid, agent);
-
-  // Local-only mode: nothing to verify or fan out. Grant delivery enforces
-  // the ≥1-endpoint invariant immediately afterwards, so an approval against
-  // a provider with no reachable DWN still cannot complete.
-  if (dwnEndpointUrls.length === 0) {
-    if (setupStatus === 'install' || setupStatus === 'upgrade') {
-      await configureProtocolLocally(selectedDid, agent, protocolDefinition);
-    }
-    return;
-  }
-
+  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
   if (queryResult.message === undefined) {
     throw new Error('Could not query protocol: no signed query message was returned.');
   }

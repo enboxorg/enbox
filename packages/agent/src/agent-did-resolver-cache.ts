@@ -51,7 +51,7 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
       const str = await this.cache.get(did);
       const cachedResult = JSON.parse(str);
       if (!this._resolving.has(did) && Date.now() >= cachedResult.ttlMillis) {
-        await this.refreshStaleDid(did);
+        return await this.refreshStaleDid(did) ?? cachedResult.value;
       }
       return cachedResult.value;
     } catch (error: any) {
@@ -68,7 +68,7 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
    * Otherwise, the cache entry is kept until a new resolution succeeds, at which point both the
    * store and the cache are updated with the newly resolved Document.
    */
-  private async refreshStaleDid(did: string): Promise<void> {
+  private async refreshStaleDid(did: string): Promise<DidResolutionResult | undefined> {
     this._resolving.set(did, true);
 
     // if a DID is stored in the DID Store, then we don't want to evict it from the cache until we have a successful resolution
@@ -79,7 +79,7 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
       this.cache.nextTick(() => this.cache.del(did));
     } else {
       try {
-        const result = await this.agent.did.resolve(did);
+        const result = await this.agent.did.refreshResolution(did);
 
         // if the resolution was successful, update the stored DID with the new Document
         if (!result.didResolutionMetadata.error && result.didDocument) {
@@ -91,11 +91,16 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
           };
 
           await this.updateStoredDid(portableDid);
+          return result;
         }
+      } catch (error: unknown) {
+        logger.error(`Unable to refresh stale DID '${did}': ${error instanceof Error ? error.message : error}`);
       } finally {
         this._resolving.delete(did);
       }
     }
+
+    return undefined;
   }
 
   /**

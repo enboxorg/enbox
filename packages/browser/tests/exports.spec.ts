@@ -47,12 +47,13 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.defineProtocol).toBe('function');
   });
 
-  it('re-exports recordCodecs from @enbox/api', async () => {
+  it('re-exports recordCodecs and ServiceConfigProtocol from @enbox/api', async () => {
     const [browser, api] = await Promise.all([
       getBrowserExports(),
       import('@enbox/api'),
     ]);
     expect(browser.recordCodecs).toBe(api.recordCodecs);
+    expect(browser.ServiceConfigProtocol).toBe(api.ServiceConfigProtocol);
     expect(typeof (browser.recordCodecs as typeof api.recordCodecs).fileEnvelope).toBe('function');
   });
 

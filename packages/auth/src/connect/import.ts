@@ -9,7 +9,6 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { ImportFromPortableOptions } from '../types.js';
 
-import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 import { assertFlowActive, commitFlowSession, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
 
@@ -37,12 +36,12 @@ export async function importFromPortable(
   // Register with DWN endpoints (if registration options are provided).
   // For portable imports, extract endpoints from the DID document's DWN service.
   if (ctx.registration) {
-    const dwnEndpoints = ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
+    const dwnEndpoints = await userAgent.identity.getDwnEndpoints({ didUri: connectedDid, refresh: true });
     await registerWithDwnEndpoints(
       {
         userAgent    : userAgent,
         dwnEndpoints,
-        agentDid     : userAgent.agentDid.uri,
+        agentDid     : connectedDid,
         connectedDid,
         secretStore  : userAgent.secrets,
         storage      : storage,

@@ -145,7 +145,6 @@ export interface IdentityRuntime {
     password?: string;
     name?: string;
     dwnEndpoints?: string[];
-    recoveryPhrase?: string;
   }): Promise<IdentityWalletSnapshot>;
   createDid(options?: {
     password?: string;
@@ -236,20 +235,18 @@ class IdentityRuntimeController implements IdentityRuntime {
     password?: string;
     name?: string;
     dwnEndpoints?: string[];
-    recoveryPhrase?: string;
   } = {}): Promise<IdentityWalletSnapshot> {
     const auth = await this._getAuth();
     const dwnEndpoints = await this._resolvePreferredDwnEndpoints(options.dwnEndpoints);
     const session = await auth.connect({
       password       : options.password,
-      recoveryPhrase : options.recoveryPhrase,
       dwnEndpoints,
       metadata       : { name: options.name?.trim() || 'Default' },
       createIdentity : true,
     });
 
     this._lastError = undefined;
-    const recoveryPhrase = session.recoveryPhrase?.trim() || options.recoveryPhrase?.trim();
+    const recoveryPhrase = session.recoveryPhrase?.trim();
     if (recoveryPhrase) {
       this._setLatestRecoveryPhrase(recoveryPhrase);
     }
@@ -968,7 +965,7 @@ class IdentityRuntimeController implements IdentityRuntime {
     const sessionDid = auth.session?.did;
     if (sessionDid) {
       try {
-        const endpoints = await auth.agent.dwn.getDwnEndpointUrlsForTarget(sessionDid);
+        const endpoints = await auth.agent.dwn.getRemoteDwnEndpointUrls(sessionDid);
         const normalizedSessionEndpoints = normalizeEndpointList(endpoints);
         if (normalizedSessionEndpoints.length > 0) {
           return normalizedSessionEndpoints;

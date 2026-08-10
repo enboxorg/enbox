@@ -1,5 +1,6 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
+import type { DwnEndpointResolution } from '@enbox/dids';
 import type { EnboxPlatformAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
@@ -173,6 +174,14 @@ export class Enbox {
     return this._connectedDid;
   }
 
+  /** Resolve the connected DID's advertised DWN endpoints without applying product defaults. */
+  public getDwnEndpointStatus(options: { refresh?: boolean } = {}): Promise<DwnEndpointResolution> {
+    return this.agent.identity.getDwnEndpointStatus({
+      didUri  : this._connectedDid,
+      refresh : options.refresh,
+    });
+  }
+
   /**
    * The delegate DID this instance signs with when operating under delegated
    * grants, or `undefined` for owner (non-delegated) sessions.
@@ -317,32 +326,33 @@ export class Enbox {
    *
    * When this instance owns the underlying `AuthManager` (i.e. it was
    * created via `Enbox.connect()` with no caller-supplied `agent`), the
-   * disconnect proceeds in three phases:
+   * disconnect proceeds in two phases:
    *
-   *   1. **Stop sync** — `agent.sync.stopSync(timeout)` halts the DWN
-   *      sync engine. Always runs, regardless of ownership.
-   *   2. **Sign out** — `AuthManager.disconnect()` sends delegate-grant
-   *      revocations to the connected DWN endpoints, clears session
-   *      restore markers (PREVIOUSLY_CONNECTED, ACTIVE_IDENTITY,
+   *   1. **Sign out** — `AuthManager.disconnect()` stops sync, sends
+   *      delegate-grant revocations to the connected DWN endpoints, clears
+   *      session restore markers (PREVIOUSLY_CONNECTED, ACTIVE_IDENTITY,
    *      delegate keys, etc.) from the StorageAdapter, and clears the
    *      in-memory delegate decryption key cache. **Without this step
    *      a later `Enbox.connect()` would silently restore the
    *      supposedly signed-out session from the persisted markers.**
-   *   3. **Release resources** — `AuthManager.shutdown()` locks the
+   *   2. **Release resources** — `AuthManager.shutdown()` locks the
    *      vault, closes the sync engine, and closes the StorageAdapter.
    *
    * When the instance was created from a caller-owned session
    * ({@link Enbox.fromSession}), a raw agent (the public constructor),
-   * or `Enbox.connect({ agent })`, only step 1 (stop sync) runs — the
-   * caller's AuthManager / agent keep their lifecycle. The caller is
-   * responsible for calling `auth.disconnect()` and `auth.shutdown()`
-   * on their own handle when they're done.
+   * or `Enbox.connect({ agent })`, only the Enbox-side sync is stopped.
+   * The caller's AuthManager / agent keep their lifecycle, and the caller
+   * remains responsible for `auth.disconnect()` and `auth.shutdown()`.
    *
    * Idempotent: parallel calls share the same teardown promise. After
    * calling `disconnect()`, the `Enbox` instance should not be reused.
+   * For an owned `AuthManager`, shutdown is attempted even when sign-out
+   * fails, and the promise rejects with any teardown failure.
    *
    * @param timeout - Maximum milliseconds to wait for an in-progress sync
    *   cycle to finish before force-stopping. Defaults to `2000`.
+   * @throws The teardown failure, or an `AggregateError` when owned sign-out
+   *   and shutdown both fail.
    *
    * @example
    * ```ts
@@ -363,10 +373,8 @@ export class Enbox {
    * @beta
    */
   public async disconnect(timeout?: number): Promise<void> {
-    // Memoize so parallel calls share the same teardown promise. Without
-    // this, two concurrent disconnect()s would each invoke
-    // agent.sync.stopSync (idempotent, but redundant) and could race on
-    // _ownedAuth ownership transfer.
+    // Memoize so parallel calls share the same teardown promise and cannot
+    // race on _ownedAuth ownership transfer.
     if (this._disconnecting !== undefined) {
       return this._disconnecting;
     }
@@ -376,11 +384,16 @@ export class Enbox {
   }
 
   private async _doDisconnect(timeout?: number): Promise<void> {
-    await this.agent.sync.stopSync(timeout);
-
     // Clear cached TypedEnbox instances so they are not accidentally reused.
     this._typedInstances.clear();
     this._auth = undefined;
+    const owned = this._ownedAuth;
+    this._ownedAuth = undefined;
+
+    if (owned === undefined) {
+      await this.agent.sync.stopSync(timeout);
+      return;
+    }
 
     // If this Enbox owns the AuthManager (created via Enbox.connect), the
     // sign-out + resource-teardown both fall on us:
@@ -397,22 +410,25 @@ export class Enbox {
     //      close the sync engine, close the storage adapter. Runs
     //      after disconnect so revocation traffic completes first.
     //
-    // Both are idempotent and best-effort; failures are logged but do
-    // not propagate. We always attempt shutdown() even if disconnect()
-    // throws, so resources still close.
-    if (this._ownedAuth !== undefined) {
-      const owned = this._ownedAuth;
-      this._ownedAuth = undefined;
-      try {
-        await owned.disconnect({ timeout });
-      } catch (error: unknown) {
-        console.warn('[@enbox/api] Enbox.disconnect: AuthManager.disconnect() failed', error);
-      }
-      try {
-        await owned.shutdown({ timeout });
-      } catch (error: unknown) {
-        console.warn('[@enbox/api] Enbox.disconnect: AuthManager.shutdown() failed', error);
-      }
+    // We always attempt shutdown() even if disconnect() throws, then surface
+    // every teardown failure so callers never mistake a partial sign-out for
+    // success.
+    const errors: unknown[] = [];
+    try {
+      await owned.disconnect({ timeout });
+    } catch (error: unknown) {
+      errors.push(error);
+    }
+    try {
+      await owned.shutdown({ timeout });
+    } catch (error: unknown) {
+      errors.push(error);
+    }
+    if (errors.length === 1) {
+      throw errors[0];
+    }
+    if (errors.length > 1) {
+      throw new AggregateError(errors, '[@enbox/api] Enbox.disconnect() failed to sign out and shut down cleanly.');
     }
   }
 
@@ -485,8 +501,7 @@ export class Enbox {
    * - `new Enbox({ agent, connectedDid })` for raw parameters
    * - {@link Enbox.fromSession} for session-shaped objects
    *
-   * Routing happens at runtime inside `AuthManager.connect`: a recovery phrase
-   * is treated as an explicit vault-restore action; otherwise, a non-empty
+   * Routing happens at runtime inside `AuthManager.connect`: a non-empty
    * `protocols` array or a `connectHandler` selects the handler flow and
    * everything else routes to local. Local-style fields (`password`,
    * `dwnEndpoints`, etc.) are forwarded to both the manager (as defaults) and
@@ -496,6 +511,8 @@ export class Enbox {
    * drop down one layer: create the `AuthManager` yourself with
    * `AuthManager.create()`, call `auth.connect(...)` with your exact
    * options, and pass the resulting session to `Enbox.fromSession`.
+   * Phrase recovery likewise uses `auth.restoreFromPhrase(...)` followed by
+   * `Enbox.fromSession`.
    *
    * @example
    * ```ts
@@ -660,7 +677,6 @@ export class Enbox {
       protocols             : options.protocols,
       connectHandler        : options.connectHandler,
       // Local-only
-      recoveryPhrase        : options.recoveryPhrase,
       createIdentity        : options.createIdentity,
       metadata              : options.metadata,
     } satisfies Partial<HandlerConnectOptions & VaultConnectOptions>;

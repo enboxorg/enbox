@@ -76,8 +76,10 @@ export { RecordConflictError } from './record-conflict-error.js';
 export type { ExpandableRecordView, RecordView, RecordViewListener, RecordViewState } from './record-view.js';
 export type { ReplicationCurrentness } from './replication-currentness.js';
 export * from './record.js';
+export * from './service-config-protocol.js';
 export * from './typed-enbox.js';
 export {
   AudienceDecryptError,
   type AudienceDecryptFailureCause,
 } from '@enbox/agent';
+export type { DwnEndpointResolution } from '@enbox/dids';

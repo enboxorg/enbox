@@ -140,8 +140,9 @@ export async function fetchRemoteProtocolDefinition(
   getDwnEndpointUrls: GetDwnEndpointUrlsFn,
   sendDwnRpcRequest: SendDwnRpcRequestFn,
   cache: TtlCache<string, ProtocolDefinition>,
+  cacheNamespace = 'remote',
 ): Promise<ProtocolDefinition> {
-  const cacheKey = `remote~${targetDid}~${protocolUri}`;
+  const cacheKey = `${cacheNamespace}~${targetDid}~${protocolUri}`;
   const cached = cache.get(cacheKey);
   if (cached) { return cached; }
 

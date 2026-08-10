@@ -208,56 +208,6 @@ describe('AuthManager', () => {
       expect(manager.isConnecting).toBe(false);
     });
 
-    test('routes recovery phrase directly instead of restoring a stored session', async () => {
-      const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:stored');
-
-      const resetCalls: any[] = [];
-      const agent = createMockAgent({
-        firstLaunch                          : async () => false,
-        identityList                         : async () => [createMockIdentity()],
-        vaultResetPasswordWithRecoveryPhrase : async (params) => { resetCalls.push(params); },
-      });
-      const manager = createTestManager(agent, { storage });
-
-      const session = await manager.connect({
-        recoveryPhrase : 'test phrase',
-        password       : 'new-password',
-        sync           : 'off',
-      });
-
-      expect(resetCalls).toEqual([{ recoveryPhrase: 'test phrase', password: 'new-password' }]);
-      expect(session.did).toBe('did:dht:testuser123');
-    });
-
-    test('recovery phrase intent wins over stray handler fields', async () => {
-      const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:stored');
-
-      const resetCalls: any[] = [];
-      const agent = createMockAgent({
-        firstLaunch                          : async () => false,
-        identityList                         : async () => [createMockIdentity()],
-        vaultResetPasswordWithRecoveryPhrase : async (params) => { resetCalls.push(params); },
-      });
-      const manager = createTestManager(agent, { storage });
-      (manager as any)._connectHandler = {
-        requestAccess: async (): Promise<never> => {
-          throw new Error('handler should not run for recovery phrase restore');
-        },
-      };
-
-      const session = await manager.connect({
-        recoveryPhrase : 'test phrase',
-        password       : 'new-password',
-        protocols      : HANDLER_PROTOCOLS,
-      } as any);
-
-      expect(resetCalls).toEqual([{ recoveryPhrase: 'test phrase', password: 'new-password' }]);
-      expect(session.did).toBe('did:dht:testuser123');
-    });
   });
 
   describe('connectVault()', () => {
@@ -315,6 +265,52 @@ describe('AuthManager', () => {
   });
 
   describe('restoreFromPhrase()', () => {
+    test.each(['connect', 'connectVault'] as const)('rejects recoveryPhrase passed to %s before session or vault work', async (method) => {
+      const storage = new MemoryStorage();
+      let storageReads = 0;
+      let resetCalls = 0;
+      storage.get = async (): Promise<null> => {
+        storageReads++;
+        return null;
+      };
+      const agent = createMockAgent({
+        firstLaunch                          : async () => false,
+        vaultResetPasswordWithRecoveryPhrase : async () => { resetCalls++; },
+      });
+      const manager = createTestManager(agent, { storage });
+
+      await expect((manager[method] as any).call(manager, {
+        recoveryPhrase : 'test phrase',
+        password       : 'pass',
+      })).rejects.toThrow('accepted only by restoreFromPhrase');
+
+      expect(storageReads).toBe(0);
+      expect(resetCalls).toBe(0);
+    });
+
+    test.each([
+      { label: 'missing options', options: undefined, error: 'options must be an object' },
+      { label: 'blank phrase', options: { recoveryPhrase: '  ', password: 'pass' }, error: 'recoveryPhrase must be a non-empty string' },
+      { label: 'empty endpoints', options: { recoveryPhrase: 'phrase', password: 'pass', dwnEndpoints: [] }, error: 'dwnEndpoints must be a non-empty array' },
+      { label: 'invalid endpoints', options: { recoveryPhrase: 'phrase', password: 'pass', dwnEndpoints: ['ftp://dwn.example'] }, error: 'dwnEndpoints must be a non-empty array' },
+    ])('rejects $label before vault work', async ({ options, error }) => {
+      let firstLaunchCalls = 0;
+      let resetCalls = 0;
+      const agent = createMockAgent({
+        firstLaunch: async () => {
+          firstLaunchCalls++;
+          return false;
+        },
+        vaultResetPasswordWithRecoveryPhrase: async () => { resetCalls++; },
+      });
+      const manager = createTestManager(agent);
+
+      await expect(manager.restoreFromPhrase(options as any)).rejects.toThrow(error);
+
+      expect(firstLaunchCalls).toBe(0);
+      expect(resetCalls).toBe(0);
+    });
+
     test('restores a fresh vault without creating an identity by default', async () => {
       let createCallCount = 0;
       const agent = createMockAgent({
@@ -376,7 +372,11 @@ describe('AuthManager', () => {
         sync           : 'off',
       });
 
-      expect(resetCalls).toEqual([{ recoveryPhrase: 'test phrase', password: 'new-password' }]);
+      expect(resetCalls).toEqual([{
+        recoveryPhrase              : 'test phrase',
+        password                    : 'new-password',
+        deferDwnEndpointReplacement : true,
+      }]);
       expect(session.did).toBe('did:dht:testuser123');
     });
   });

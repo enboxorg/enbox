@@ -167,6 +167,20 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     }
   }
 
+  /** Resolve without reading the cache, then write a successful result through to it. */
+  public async refreshResolution(didUri: string): Promise<DidResolutionResult> {
+    const result = await super.resolve(didUri, {});
+    if (result.didResolutionMetadata.error === undefined) {
+      await this.cache.set(didUri, result);
+    }
+    return result;
+  }
+
+  /** @internal Prime the normal resolver cache after this agent publishes a known document. */
+  public cacheResolution(didUri: string, result: DidResolutionResult): Promise<void> {
+    return this.cache.set(didUri, result);
+  }
+
   public async create({
     method, tenant, options, store
   }: DidCreateParams<TKeyManager>): Promise<BearerDid> {

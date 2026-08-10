@@ -67,6 +67,9 @@ export interface MockAgentOverrides {
   identityImport?: (params: any) => Promise<MockIdentity>;
   identityDelete?: (params: any) => Promise<void>;
   identityExport?: (params: any) => Promise<any>;
+  identityGetDwnEndpoints?: (params: any) => Promise<string[]>;
+  identityGetDwnEndpointStatus?: (params: any) => Promise<any>;
+  identitySetDwnEndpoints?: (params: any) => Promise<void>;
   identityConnectedIdentity?: () => Promise<MockIdentity | undefined>;
   didExport?: (params: any) => Promise<any>;
   didDelete?: (params: any) => Promise<void>;
@@ -88,6 +91,7 @@ export interface MockAgentOverrides {
   permissionsFetchGrants?: (params: any) => Promise<any[]>;
   permissionsIsGrantRevoked?: (params: any) => Promise<boolean>;
   rpcGetServerInfo?: (url: string) => Promise<any>;
+  rpcSendDwnRequest?: (params: any) => Promise<any>;
   vaultIsInitialized?: () => Promise<boolean>;
   vaultIsLocked?: () => boolean;
   vaultUnlock?: (params: any) => Promise<void>;
@@ -97,6 +101,7 @@ export interface MockAgentOverrides {
   vaultResetPasswordWithRecoveryPhrase?: (params: any) => Promise<void>;
   vaultBackup?: () => Promise<any>;
   vaultRestore?: (params: any) => Promise<void>;
+  vaultGetDid?: () => Promise<any>;
   vaultEncryptData?: (params: { plaintext: Uint8Array }) => Promise<string>;
   vaultDecryptData?: (params: { jwe: string }) => Promise<Uint8Array>;
 }
@@ -141,6 +146,11 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       message : entry,
     }));
   });
+  const identityGetDwnEndpointStatus = overrides.identityGetDwnEndpointStatus ?? (async (params: any): Promise<any> => ({
+    status    : 'ready',
+    didUri    : params.didUri,
+    endpoints : ['https://enbox-dwn.fly.dev'],
+  }));
 
   return {
     agentDid : { uri: 'did:dht:testagent' },
@@ -168,10 +178,17 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
         const identities = await (overrides.identityList ?? (async (): Promise<MockIdentity[]> => [defaultIdentity]))();
         return identities.find((identity) => identity.did.uri === params?.didUri);
       }),
-      import            : overrides.identityImport ?? (async (): Promise<MockIdentity> => defaultIdentity),
-      delete            : overrides.identityDelete ?? (async (): Promise<void> => {}),
-      export            : overrides.identityExport ?? (async (): Promise<any> => ({})),
-      connectedIdentity : overrides.identityConnectedIdentity ?? (async (): Promise<MockIdentity | undefined> => undefined),
+      import          : overrides.identityImport ?? (async (): Promise<MockIdentity> => defaultIdentity),
+      delete          : overrides.identityDelete ?? (async (): Promise<void> => {}),
+      export          : overrides.identityExport ?? (async (): Promise<any> => ({})),
+      getDwnEndpoints : overrides.identityGetDwnEndpoints ?? (async (params: any): Promise<string[]> => {
+        const status = await identityGetDwnEndpointStatus(params);
+        if (status.status !== 'ready') { throw new Error(status.message); }
+        return status.endpoints;
+      }),
+      getDwnEndpointStatus : identityGetDwnEndpointStatus,
+      setDwnEndpoints      : overrides.identitySetDwnEndpoints ?? (async (): Promise<void> => {}),
+      connectedIdentity    : overrides.identityConnectedIdentity ?? (async (): Promise<MockIdentity | undefined> => undefined),
     },
 
     did: {
@@ -198,7 +215,8 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     dwn: {
       setCachedLocalDwnEndpoint: overrides.dwnSetCachedLocalDwnEndpoint
         ?? (async (): Promise<boolean> => false),
-      processRawMessage: overrides.dwnProcessRawMessage
+      processRequest    : processDwnRequest,
+      processRawMessage : overrides.dwnProcessRawMessage
         ?? (async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } })),
 
       isRemoteMode                : overrides.dwnIsRemoteMode ?? false,
@@ -225,9 +243,10 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
         version                  : '0.0.1',
         webSocketSupport         : true,
       })),
-      sendDidRequest     : async (): Promise<any> => ({ ok: true, status: { code: 200, message: 'OK' } }),
-      sendDwnRequest     : async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } }),
-      transportProtocols : ['http:', 'https:'],
+      sendDidRequest : async (): Promise<any> => ({ ok: true, status: { code: 200, message: 'OK' } }),
+      sendDwnRequest : overrides.rpcSendDwnRequest
+        ?? (async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } })),
+      transportProtocols: ['http:', 'https:'],
     },
 
     vault: {
@@ -240,6 +259,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
         overrides.vaultResetPasswordWithRecoveryPhrase ?? (async (): Promise<void> => {}),
       backup      : overrides.vaultBackup ?? (async (): Promise<any> => ({ data: 'backup' })),
       restore     : overrides.vaultRestore ?? (async (): Promise<void> => {}),
+      getDid      : overrides.vaultGetDid ?? (async (): Promise<any> => ({ uri: 'did:dht:testagent' })),
       encryptData : overrides.vaultEncryptData ?? mockEncryptData,
       decryptData : overrides.vaultDecryptData ?? mockDecryptData,
     },

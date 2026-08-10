@@ -10,14 +10,85 @@
  */
 
 import type { AuthSession } from '../identity-session.js';
+import type { BearerIdentity } from '@enbox/agent';
 import type { FlowContext } from './lifecycle.js';
-import type { VaultConnectOptions } from '../types.js';
+import type { RestoreFromPhraseOptions, VaultConnectOptions } from '../types.js';
+
+import { normalizeDwnEndpointUrls } from '@enbox/dids';
+import { publishServiceConfigNotice } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 import { assertFlowActive, commitFlowSession, createDefaultIdentity, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
 import { recoverIdentitiesFromRemote, registerAgentDidForSync } from './recovery.js';
+
+function normalizeDwnEndpoints(endpoints: string[]): string[] {
+  const normalized = normalizeDwnEndpointUrls(endpoints);
+  if (normalized === undefined) {
+    throw new TypeError('vaultConnect: dwnEndpoints must be a non-empty array of HTTP(S) URLs without queries or fragments.');
+  }
+  return normalized;
+}
+
+function endpointsEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length
+    && left.every((endpoint, index) => endpoint === right[index]);
+}
+
+async function migrateVaultDwnEndpoints(
+  ctx: FlowContext,
+  password: string,
+  recoveryPhrase: string | undefined,
+  advertisedEndpoints: string[] | undefined,
+  replacementEndpoints: string[] | undefined,
+): Promise<void> {
+  if (replacementEndpoints === undefined
+    || advertisedEndpoints === undefined
+    || recoveryPhrase === undefined
+    || endpointsEqual(advertisedEndpoints, replacementEndpoints)) {
+    return;
+  }
+
+  const { userAgent, storage } = ctx;
+  if (ctx.registration) {
+    const isReplacementReady = await registerWithDwnEndpoints(
+      {
+        userAgent,
+        dwnEndpoints : replacementEndpoints,
+        agentDid     : userAgent.agentDid.uri,
+        connectedDid : userAgent.agentDid.uri,
+        secretStore  : userAgent.secrets,
+        storage,
+        assertActive : ctx.assertActive,
+        runMutation  : ctx.runMutation,
+      },
+      ctx.registration,
+    );
+    assertFlowActive(ctx);
+    if (!isReplacementReady) {
+      return;
+    }
+  }
+
+  await runFlowMutation(ctx, async (): Promise<void> => {
+    await userAgent.vault.resetPasswordWithRecoveryPhrase({
+      recoveryPhrase,
+      password,
+      dwnEndpoints: replacementEndpoints,
+    });
+    userAgent.agentDid = await userAgent.vault.getDid();
+    await publishServiceConfigNotice({
+      agent            : userAgent,
+      currentEndpoints : replacementEndpoints,
+      formerEndpoints  : advertisedEndpoints,
+      ownerDid         : userAgent.agentDid.uri,
+    }).catch((error: unknown): void => {
+      console.error(`[@enbox/auth] Failed to announce vault DWN endpoint change: ${String(error)}`);
+    });
+  });
+  await runFlowMutation(ctx, () => registerAgentDidForSync(userAgent));
+}
 
 /**
  * Execute the vault connect flow.
@@ -35,10 +106,20 @@ import { recoverIdentitiesFromRemote, registerAgentDidForSync } from './recovery
  */
 export async function vaultConnect(
   ctx: FlowContext,
-  options: VaultConnectOptions = {},
+  options: VaultConnectOptions | RestoreFromPhraseOptions = {},
 ): Promise<AuthSession> {
   const { userAgent, emitter, storage } = ctx;
   assertFlowActive(ctx);
+
+  const suppliedRecoveryPhrase = 'recoveryPhrase' in options ? options.recoveryPhrase : undefined;
+  const isRecovery = suppliedRecoveryPhrase !== undefined;
+  const explicitDwnEndpoints = options.dwnEndpoints === undefined
+    ? undefined
+    : normalizeDwnEndpoints(options.dwnEndpoints);
+  const replacementDwnEndpoints = isRecovery ? explicitDwnEndpoints : undefined;
+  const dwnEndpoints = isRecovery
+    ? replacementDwnEndpoints
+    : explicitDwnEndpoints ?? ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
 
   // Resolve password through the standard chain.
   const isFirstLaunch = await userAgent.firstLaunch();
@@ -48,7 +129,6 @@ export async function vaultConnect(
 
   const sync = options.sync ?? ctx.defaultSync;
   const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
-  const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
   const shouldCreateIdentity = options.createIdentity === true;
 
   // Initialize vault on first launch and start the agent.
@@ -57,7 +137,7 @@ export async function vaultConnect(
     emitter,
     password,
     isFirstLaunch,
-    recoveryPhrase: options.recoveryPhrase,
+    recoveryPhrase: suppliedRecoveryPhrase,
     dwnEndpoints,
   }));
 
@@ -67,14 +147,23 @@ export async function vaultConnect(
     await runFlowMutation(ctx, () => applyLocalDwnDiscovery(userAgent, storage, emitter));
   }
 
+  // Seed recovery needs the vault DID's advertised node even when tenant registration is disabled.
+  const advertisedVaultEndpoints = isRecovery
+    ? await userAgent.identity.getDwnEndpoints({
+      didUri: userAgent.agentDid.uri,
+    })
+    : undefined;
+
   // Register the agent DID as a DWN tenant and for sync early — both are
   // prerequisites for seed phrase recovery and for normal push/pull of
   // identity metadata after identity creation.
   if (ctx.registration) {
+    const agentDwnEndpoints = advertisedVaultEndpoints
+      ?? await userAgent.identity.getDwnEndpoints({ didUri: userAgent.agentDid.uri });
     await registerWithDwnEndpoints(
       {
         userAgent,
-        dwnEndpoints,
+        dwnEndpoints : agentDwnEndpoints,
         agentDid     : userAgent.agentDid.uri,
         connectedDid : userAgent.agentDid.uri,
         secretStore  : userAgent.secrets,
@@ -86,34 +175,40 @@ export async function vaultConnect(
     );
     assertFlowActive(ctx);
   }
-  if (sync !== 'off') {
+  if (sync !== 'off' || isRecovery) {
     await runFlowMutation(ctx, () => registerAgentDidForSync(userAgent));
   }
 
-  // Find existing identities.
-  let identities = await userAgent.identity.list();
-  let identity = identities[0];
+  let identities: BearerIdentity[];
   let isNewIdentity = false;
 
-  // Seed phrase recovery: when a recovery phrase was provided and no identities exist locally,
-  // pull them from the remote DWN before deciding whether to create a new identity.
-  if (!identity && options.recoveryPhrase && sync !== 'off') {
-    try {
-      identities = await recoverIdentitiesFromRemote({
-        userAgent,
-        dwnEndpoints,
-        identitySyncProtocols,
-        registration : ctx.registration,
-        storage,
-        assertActive : ctx.assertActive,
-        runMutation  : ctx.runMutation,
-      });
-      identity = identities[0];
-    } catch (err) {
-      console.warn('[@enbox/auth] Seed phrase recovery failed:', err);
-    }
+  // Phrase restore performs its required one-shot pull even when live sync is disabled.
+  if (isRecovery) {
+    identities = await recoverIdentitiesFromRemote({
+      userAgent,
+      replacementDwnEndpoints,
+      identitySyncProtocols,
+      registration : ctx.registration,
+      storage,
+      assertActive : ctx.assertActive,
+      runMutation  : ctx.runMutation,
+    });
     assertFlowActive(ctx);
+  } else {
+    identities = await userAgent.identity.list();
   }
+  let identity = identities[0];
+
+  // Migrate the vault DID only after identity recovery has read the
+  // authoritative endpoints. A missing DID/service was already bootstrapped
+  // during initialization when explicit endpoints were supplied.
+  await migrateVaultDwnEndpoints(
+    ctx,
+    password,
+    suppliedRecoveryPhrase,
+    advertisedVaultEndpoints,
+    replacementDwnEndpoints,
+  );
 
   // Create a default identity if none were found or recovered and the caller asked for one.
   if (!identity && shouldCreateIdentity) {
@@ -136,11 +231,12 @@ export async function vaultConnect(
   // sync active, registerIdentity hot-adds a subscription that needs
   // the DID to be a recognised tenant on the remote DWN.
   if (isNewIdentity && ctx.registration) {
+    const identityDwnEndpoints = await userAgent.identity.getDwnEndpoints({ didUri: connectedDid });
     await registerWithDwnEndpoints(
       {
         userAgent,
-        dwnEndpoints,
-        agentDid     : userAgent.agentDid.uri,
+        dwnEndpoints : identityDwnEndpoints,
+        agentDid     : connectedDid,
         connectedDid,
         secretStore  : userAgent.secrets,
         storage      : storage,

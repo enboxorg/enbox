@@ -114,6 +114,8 @@ export interface IdentityVault<T extends Record<string, any> = { InitializeResul
    * Restores the IdentityVault instance to the state in the provided {@link IdentityVaultBackup}
    * object.
    *
+   * This restores only vault-local state; wallet identities and DWN data require higher-level recovery.
+   *
    * @throws An error if the backup is invalid or the password is incorrect.
    */
   restore(params: { backup: IdentityVaultBackup, password: string }): Promise<void>;

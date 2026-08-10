@@ -128,8 +128,8 @@ function stubAgent(options: StubAgentOptions = {}): {
     processDwnRequest,
     rpc : { sendDwnRequest },
     dwn : {
-      getDwnEndpointUrlsForTarget : sinon.stub().resolves(options.endpoints ?? []),
-      getEncryptionKeyDeriver     : sinon.stub().resolves({
+      getRemoteDwnEndpointUrls : sinon.stub().resolves(options.endpoints ?? ['https://dwn.example/']),
+      getEncryptionKeyDeriver  : sinon.stub().resolves({
         rootKeyId        : 'urn:test:owner-root',
         derivationScheme : KeyDerivationScheme.ProtocolPath,
         derivePublicKey  : async (path: string[]) => ({
@@ -342,14 +342,15 @@ describe('connect protocol preparation', () => {
         .rejects.toThrow('Could not verify the latest protocol definition on every reachable DWN endpoint');
     });
 
-    it('should configure locally without remote traffic when no endpoints resolve', async () => {
+    it('should preserve endpoint resolution failures before configuring locally', async () => {
       const { agent, processDwnRequest, sendDwnRequest } = stubAgent();
+      (agent.dwn.getRemoteDwnEndpointUrls as sinon.SinonStub)
+        .rejects(new Error('DID does not advertise a #dwn service'));
 
-      await prepareProtocol('did:example:owner', agent, encryptedProtocol);
+      await expect(prepareProtocol('did:example:owner', agent, encryptedProtocol))
+        .rejects.toThrow('DID does not advertise a #dwn service');
 
-      const configures = configureCalls(processDwnRequest);
-      expect(configures).toHaveLength(1);
-      expect((configures[0].args[0] as Record<string, unknown>).encryption).toBeUndefined();
+      expect(configureCalls(processDwnRequest)).toHaveLength(0);
       expect(sendDwnRequest.callCount).toBe(0);
     });
 
@@ -459,8 +460,8 @@ function simAgent(options: {
     processDwnRequest,
     rpc : { sendDwnRequest },
     dwn : {
-      getDwnEndpointUrlsForTarget : sinon.stub().resolves(Object.keys(options.remotes)),
-      getEncryptionKeyDeriver     : sinon.stub().rejects(new Error('no encrypted types in these fixtures')),
+      getRemoteDwnEndpointUrls : sinon.stub().resolves(Object.keys(options.remotes)),
+      getEncryptionKeyDeriver  : sinon.stub().rejects(new Error('no encrypted types in these fixtures')),
     },
   };
 

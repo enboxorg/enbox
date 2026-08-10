@@ -19,7 +19,9 @@ describe('EnboxUserAgent', () => {
   describe('agentDid', () => {
     it('throws an error if accessed before the Agent is initialized', async () => {
       // @ts-expect-error - Initializing with empty object to test error.
-      const userAgent = new EnboxUserAgent({ didApi: {}, dwnApi: {}, identityApi: {}, keyManager: {}, permissionsApi: {}, syncApi: {} });
+      const userAgent = new EnboxUserAgent({
+        didApi: {}, dwnApi: {}, identityApi: {}, keyManager: {}, permissionsApi: {}, syncApi: {}, agentVault: {},
+      });
       try {
         userAgent.agentDid;
         throw new Error('Expected an error');

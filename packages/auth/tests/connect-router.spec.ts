@@ -29,10 +29,6 @@ describe('_isVaultConnect heuristic (tested via reflection)', () => {
     expect(isVaultConnect({ createIdentity: true })).toBe(true);
   });
 
-  test('recoveryPhrase option → vault connect', () => {
-    expect(isVaultConnect({ recoveryPhrase: 'word1 word2' })).toBe(true);
-  });
-
   test('dwnEndpoints option → vault connect', () => {
     expect(isVaultConnect({ dwnEndpoints: ['https://dwn.example.com'] })).toBe(true);
   });

@@ -254,8 +254,6 @@ export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T>
   & {
     /** Send to one already-verified hosted endpoint instead of rediscovering the target DID. */
     remoteEndpoint?: string;
-    /** Resolve only endpoints advertised by the target DID. Incompatible with local-only routing. */
-    remoteEndpointsOnly?: boolean;
   };
 
 /** Retry disposition for a failed role-audience key delivery. */

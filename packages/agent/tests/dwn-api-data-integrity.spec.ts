@@ -54,7 +54,7 @@ describe('AgentDwnApi raw RecordsWrite data integrity', () => {
       return { status: { code: 202, detail: 'Accepted' } };
     });
     const dwnApi = createRemoteDwnApi(sendDwnRequest);
-    sinon.stub(dwnApi, 'getDwnEndpointUrlsForTarget').resolves(['https://remote-dwn.example']);
+    sinon.stub(dwnApi, 'getRemoteDwnEndpointUrls').resolves(['https://remote-dwn.example']);
 
     const { reply } = await dwnApi.sendRequest({
       author      : author.did,
@@ -96,7 +96,7 @@ describe('AgentDwnApi raw RecordsWrite data integrity', () => {
     });
     const sendDwnRequest = sinon.stub();
     const dwnApi = createRemoteDwnApi(sendDwnRequest);
-    sinon.stub(dwnApi, 'getDwnEndpointUrlsForTarget').resolves(['https://remote-dwn.example']);
+    sinon.stub(dwnApi, 'getRemoteDwnEndpointUrls').resolves(['https://remote-dwn.example']);
 
     const request = dwnApi.sendRequest({
       author      : author.did,

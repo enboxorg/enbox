@@ -1,8 +1,39 @@
+import type { EnboxUserAgent } from '@enbox/agent';
+
+import type { MockAgentOverrides, MockIdentity } from './helpers/mock-agent.js';
+
 import { describe, expect, test } from 'bun:test';
+
+import { DidErrorCode } from '@enbox/dids';
 
 import { MemoryStorage } from '../src/storage/storage.js';
 import { AGENT_DID_SYNC_PROTOCOLS, recoverIdentitiesFromRemote, registerAgentDidForSync } from '../src/connect/recovery.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
+
+type RecoveryOptions = Omit<Parameters<typeof recoverIdentitiesFromRemote>[0], 'userAgent' | 'storage'>;
+
+function recover(
+  agent: EnboxUserAgent,
+  options: RecoveryOptions = {},
+): ReturnType<typeof recoverIdentitiesFromRemote> {
+  return recoverIdentitiesFromRemote({ userAgent: agent, storage: new MemoryStorage(), ...options });
+}
+
+function recoveredAgent(
+  identities: MockIdentity | MockIdentity[],
+  overrides: MockAgentOverrides = {},
+): { agent: EnboxUserAgent; pulls: () => number } {
+  const recovered = Array.isArray(identities) ? identities : [identities];
+  let pullCount = 0;
+  return {
+    agent: createMockAgent({
+      ...overrides,
+      identityList : async () => (pullCount > 0 ? recovered : []),
+      syncSync     : async () => { pullCount++; },
+    }),
+    pulls: (): number => pullCount,
+  };
+}
 
 describe('AGENT_DID_SYNC_PROTOCOLS', () => {
   test('contains identity store and JWK store protocol URIs', () => {
@@ -53,28 +84,18 @@ describe('registerAgentDidForSync', () => {
 describe('recoverIdentitiesFromRemote', () => {
   test('returns recovered identities after explicitly scoped two-phase pull', async () => {
     const identity = createMockIdentity();
-    let pullCount = 0;
     const syncCalls: any[] = [];
-
-    const agent = createMockAgent({
-      identityList: async () => {
-        // Phase 1 pull recovers the identity; phase 2 pull is a no-op.
-        return pullCount > 0 ? [identity] : [];
-      },
-      syncSync             : async () => { pullCount++; },
-      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+    const { agent, pulls } = recoveredAgent(identity, {
+      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
     });
 
-    const result = await recoverIdentitiesFromRemote({
-      userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
-      identitySyncProtocols : ['https://proto.example/profile'],
-      storage               : new MemoryStorage(),
+    const result = await recover(agent, {
+      identitySyncProtocols: ['https://proto.example/profile'],
     });
 
     expect(result).toHaveLength(1);
     expect(result[0].did.uri).toBe('did:dht:testuser123');
-    expect(pullCount).toBe(2);
+    expect(pulls()).toBe(2);
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:testuser123');
     expect(syncCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
@@ -82,97 +103,196 @@ describe('recoverIdentitiesFromRemote', () => {
 
   test('without explicit identity scope recovers identity metadata only', async () => {
     const identity = createMockIdentity();
-    let pullCount = 0;
     const syncCalls: any[] = [];
-
-    const agent = createMockAgent({
-      identityList: async () => {
-        return pullCount > 0 ? [identity] : [];
-      },
-      syncSync             : async () => { pullCount++; },
-      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+    const { agent, pulls } = recoveredAgent(identity, {
+      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
     });
 
-    const result = await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      storage      : new MemoryStorage(),
-    });
+    const result = await recover(agent);
 
     expect(result).toHaveLength(1);
-    expect(pullCount).toBe(1);
+    expect(pulls()).toBe(1);
     expect(syncCalls).toHaveLength(0);
   });
 
   test('returns empty array when remote has no identities', async () => {
-    let pullCount = 0;
-    const agent = createMockAgent({
-      identityList : async () => [],
-      syncSync     : async () => { pullCount++; },
-    });
+    const { agent, pulls } = recoveredAgent([]);
 
-    const result = await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      storage      : new MemoryStorage(),
-    });
+    const result = await recover(agent);
 
     expect(result).toEqual([]);
-    expect(pullCount).toBe(1);
+    expect(pulls()).toBe(1);
   });
 
-  test('registers recovered identity DIDs as DWN tenants when registration is provided', async () => {
+  test('aborts before updating recovered identities when DID resolution fails', async () => {
     const identity = createMockIdentity();
-    let pullCount = 0;
-    let registrationSucceeded = false;
-
-    const agent = createMockAgent({
-      identityList     : async () => (pullCount > 0 ? [identity] : []),
-      syncSync         : async () => { pullCount++; },
-      rpcGetServerInfo : async () => ({
-        registrationRequirements : [],
-        maxFileSize              : 10_000_000,
+    const endpointUpdates: any[] = [];
+    const { agent } = recoveredAgent(identity, {
+      identityGetDwnEndpointStatus: async ({ didUri }) => ({
+        status: 'resolution-failed', didUri, message: 'resolver offline', resolutionError: 'internalError',
       }),
+      identitySetDwnEndpoints: async (params) => { endpointUpdates.push(params); },
     });
 
-    await recoverIdentitiesFromRemote({
-      userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
-      identitySyncProtocols : ['https://proto.example/profile'],
-      registration          : {
-        onSuccess : () => { registrationSucceeded = true; },
-        onFailure : () => {},
+    await expect(recover(agent)).rejects.toThrow('resolver offline');
+    expect(endpointUpdates).toHaveLength(0);
+  });
+
+  test('bootstraps a not-found owned DID with its recovered endpoints instead of manager defaults', async () => {
+    const identity = createMockIdentity() as any;
+    identity.did.document = {
+      id      : identity.did.uri,
+      service : [{
+        id              : `${identity.did.uri}#dwn`,
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : ['https://recovered.example'],
+      }],
+    };
+    const endpointUpdates: any[] = [];
+    const { agent } = recoveredAgent(identity, {
+      identityGetDwnEndpointStatus: async ({ didUri, refresh }) => refresh
+        ? {
+          status: 'resolution-failed', didUri, message: 'DID not found', resolutionError: DidErrorCode.NotFound,
+        }
+        : { status: 'ready', didUri, endpoints: ['https://recovered.example'] },
+      identitySetDwnEndpoints: async (params) => { endpointUpdates.push(params); },
+    });
+
+    await recover(agent);
+
+    expect(endpointUpdates).toEqual([{
+      didUri    : identity.did.uri,
+      endpoints : ['https://recovered.example'],
+    }]);
+  });
+
+  test('does not synthesize defaults when a not-found recovered DID has no valid stored endpoints', async () => {
+    const identity = createMockIdentity() as any;
+    identity.did.document = { id: identity.did.uri };
+    const endpointUpdates: any[] = [];
+    const { agent } = recoveredAgent(identity, {
+      identityGetDwnEndpointStatus: async ({ didUri }) => ({
+        status: 'resolution-failed', didUri, message: 'DID not found', resolutionError: DidErrorCode.NotFound,
+      }),
+      identitySetDwnEndpoints: async (params) => { endpointUpdates.push(params); },
+    });
+
+    await expect(recover(agent)).rejects.toThrow('does not advertise a #dwn service');
+    expect(endpointUpdates).toHaveLength(0);
+  });
+
+  test('fails closed when a not-found routing DID is externally owned', async () => {
+    const identity = createMockIdentity({
+      metadata: { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+    });
+    const endpointUpdates: any[] = [];
+    const { agent } = recoveredAgent(identity, {
+      identityGetDwnEndpointStatus: async ({ didUri }) => ({
+        status: 'resolution-failed', didUri, message: 'Owner DID not found', resolutionError: DidErrorCode.NotFound,
+      }),
+      identitySetDwnEndpoints: async (params) => { endpointUpdates.push(params); },
+    });
+
+    await expect(recover(agent, {
+      replacementDwnEndpoints: ['https://explicit.example'],
+    })).rejects.toThrow('Owner DID not found');
+    expect(endpointUpdates).toHaveLength(0);
+  });
+
+  test('registers each recovered DID at its own resolved endpoint', async () => {
+    const identities = [
+      createMockIdentity({ did: { uri: 'did:dht:alice' }, metadata: { name: 'Alice', tenant: 'did:dht:testagent' } }),
+      createMockIdentity({ did: { uri: 'did:dht:bob' }, metadata: { name: 'Bob', tenant: 'did:dht:testagent' } }),
+    ];
+    const endpoints = new Map([
+      ['did:dht:alice', 'https://alice-dwn.example'],
+      ['did:dht:bob', 'https://bob-dwn.example'],
+    ]);
+    const serverInfoCalls: string[] = [];
+    const { agent } = recoveredAgent(identities, {
+      identityGetDwnEndpointStatus: async ({ didUri }) => ({
+        status: 'ready', didUri, endpoints: [endpoints.get(didUri)],
+      }),
+      rpcGetServerInfo: async (endpoint) => {
+        serverInfoCalls.push(endpoint);
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
       },
-      storage: new MemoryStorage(),
     });
 
-    expect(registrationSucceeded).toBe(true);
+    await recover(agent, {
+      registration: { onSuccess: () => {}, onFailure: () => {} },
+    });
+
+    expect(serverInfoCalls).toEqual([
+      'https://alice-dwn.example',
+      'https://bob-dwn.example',
+    ]);
+  });
+
+  test('does not replace an externally owned connected DID', async () => {
+    const identity = createMockIdentity({
+      metadata: { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+    });
+    const endpointUpdates: any[] = [];
+    const { agent } = recoveredAgent(identity, {
+      identityGetDwnEndpointStatus: async ({ didUri }) => ({
+        status: 'ready', didUri, endpoints: ['https://owner-dwn.example'],
+      }),
+      identitySetDwnEndpoints: async params => { endpointUpdates.push(params); },
+    });
+
+    await recover(agent, {
+      replacementDwnEndpoints: ['https://replacement.example'],
+    });
+
+    expect(endpointUpdates).toHaveLength(0);
+  });
+
+  test('replaces a resolved owned DID only when explicitly requested', async () => {
+    const identity = createMockIdentity();
+    const endpointUpdates: any[] = [];
+    let pullsAtUpdate: number | undefined;
+    let getPullCount = (): number => 0;
+    const { agent, pulls } = recoveredAgent(identity, {
+      identityGetDwnEndpointStatus: async ({ didUri }) => ({
+        status: 'ready', didUri, endpoints: ['https://resolved.example'],
+      }),
+      identitySetDwnEndpoints: async params => {
+        endpointUpdates.push(params);
+        pullsAtUpdate = getPullCount();
+      },
+    });
+    getPullCount = pulls;
+
+    await recover(agent, {
+      replacementDwnEndpoints : ['https://replacement.example'],
+      identitySyncProtocols   : ['https://proto.example/profile'],
+    });
+
+    expect(endpointUpdates).toEqual([{
+      didUri    : identity.did.uri,
+      endpoints : ['https://replacement.example'],
+    }]);
+    expect(pullsAtUpdate).toBe(2);
   });
 
   test('keeps registration callbacks outside the lifecycle mutation runner', async () => {
     const identity = createMockIdentity();
-    let pullCount = 0;
     let mutationDepth = 0;
     let registrationMutationDepth: number | undefined;
-
-    const agent = createMockAgent({
-      identityList     : async () => (pullCount > 0 ? [identity] : []),
-      syncSync         : async () => { pullCount++; },
-      rpcGetServerInfo : async () => ({
+    const { agent } = recoveredAgent(identity, {
+      rpcGetServerInfo: async () => ({
         registrationRequirements : [],
         maxFileSize              : 10_000_000,
       }),
     });
 
-    await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      registration : {
+    await recover(agent, {
+      registration: {
         onSuccess : () => { registrationMutationDepth = mutationDepth; },
         onFailure : () => {},
       },
-      storage     : new MemoryStorage(),
-      runMutation : async <T>(operation: () => Promise<T>): Promise<T> => {
+      runMutation: async <T>(operation: () => Promise<T>): Promise<T> => {
         mutationDepth++;
         try {
           return await operation();
@@ -188,95 +308,73 @@ describe('recoverIdentitiesFromRemote', () => {
 
   test('continues recovery when DWN tenant registration fails', async () => {
     const identity = createMockIdentity();
-    let pullCount = 0;
     const syncCalls: any[] = [];
-
-    const agent = createMockAgent({
-      identityList         : async () => (pullCount > 0 ? [identity] : []),
-      syncSync             : async () => { pullCount++; },
+    const { agent, pulls } = recoveredAgent(identity, {
       syncRegisterIdentity : async (params) => { syncCalls.push(params); },
       rpcGetServerInfo     : async () => { throw new Error('network error'); },
     });
 
-    const result = await recoverIdentitiesFromRemote({
-      userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
+    const result = await recover(agent, {
       identitySyncProtocols : ['https://proto.example/profile'],
       registration          : {
         onSuccess : () => {},
         onFailure : () => {},
       },
-      storage: new MemoryStorage(),
     });
 
     expect(result).toHaveLength(1);
     expect(syncCalls).toHaveLength(1);
-    expect(pullCount).toBe(2);
+    expect(pulls()).toBe(2);
   });
 
   test('uses connectedDid for delegate identities', async () => {
     const delegateIdentity = createMockIdentity({
       metadata: { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
     });
-    let pullCount = 0;
     const syncCalls: any[] = [];
-
-    const agent = createMockAgent({
-      identityList         : async () => (pullCount > 0 ? [delegateIdentity] : []),
-      syncSync             : async () => { pullCount++; },
-      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+    const { agent } = recoveredAgent(delegateIdentity, {
+      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
     });
 
-    await recoverIdentitiesFromRemote({
-      userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
-      identitySyncProtocols : ['https://proto.example/profile'],
-      storage               : new MemoryStorage(),
+    await recover(agent, {
+      identitySyncProtocols: ['https://proto.example/profile'],
     });
 
     expect(syncCalls[0].did).toBe('did:dht:external');
   });
 
-  test('tolerates already-registered sync identity', async () => {
+  test('updates the requested scope for an already-registered sync identity', async () => {
     const identity = createMockIdentity();
-    let pullCount = 0;
-
-    const agent = createMockAgent({
-      identityList         : async () => (pullCount > 0 ? [identity] : []),
-      syncSync             : async () => { pullCount++; },
-      syncRegisterIdentity : async () => { throw new Error('already registered'); },
+    const updates: any[] = [];
+    const { agent, pulls } = recoveredAgent(identity, {
+      syncRegisterIdentity      : async () => { throw new Error('already registered'); },
+      syncUpdateIdentityOptions : async params => { updates.push(params); },
     });
 
-    const result = await recoverIdentitiesFromRemote({
-      userAgent             : agent,
-      dwnEndpoints          : ['https://dwn.example.com'],
-      identitySyncProtocols : ['https://proto.example/profile'],
-      storage               : new MemoryStorage(),
+    const result = await recover(agent, {
+      identitySyncProtocols: ['https://proto.example/profile'],
     });
 
     expect(result).toHaveLength(1);
-    expect(pullCount).toBe(2);
+    expect(pulls()).toBe(2);
+    expect(updates).toEqual([{
+      did     : identity.did.uri,
+      options : { protocols: ['https://proto.example/profile'] },
+    }]);
   });
 
   test('throws when recovered identity sync registration fails for another reason', async () => {
     const identity = createMockIdentity();
-    let pullCount = 0;
-
-    const agent = createMockAgent({
-      identityList         : async () => (pullCount > 0 ? [identity] : []),
-      syncSync             : async () => { pullCount++; },
-      syncRegisterIdentity : async () => { throw new Error('sync store unavailable'); },
+    const { agent, pulls } = recoveredAgent(identity, {
+      syncRegisterIdentity: async () => { throw new Error('sync store unavailable'); },
     });
 
     await expect(
-      recoverIdentitiesFromRemote({
-        userAgent             : agent,
-        dwnEndpoints          : ['https://dwn.example.com'],
-        identitySyncProtocols : ['https://proto.example/profile'],
-        storage               : new MemoryStorage(),
+      recover(agent, {
+        identitySyncProtocols: ['https://proto.example/profile'],
       })
     ).rejects.toThrow('sync store unavailable');
 
-    expect(pullCount).toBe(1);
+    expect(pulls()).toBe(1);
   });
 });
