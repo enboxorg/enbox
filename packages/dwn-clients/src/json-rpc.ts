@@ -74,17 +74,6 @@ export const createJsonRpcErrorResponse = (
   };
 };
 
-export const createJsonRpcNotification = (
-  method: string,
-  params?: any,
-): JsonRpcRequest => {
-  return {
-    jsonrpc: '2.0',
-    method,
-    params,
-  };
-};
-
 export const createJsonRpcRequest = (
   id: JsonRpcId,
   method: string,
