@@ -36,6 +36,7 @@ import type {
   SyncEventScope,
   SyncHealthSummary,
   SyncIdentityOptions,
+  SyncIdentityStatus,
   SyncLifecycleOptions,
   SyncRunOptions,
 } from './types/sync.js';
@@ -4572,6 +4573,11 @@ export class SyncEngineLevel implements SyncEngine {
     };
     try {
       await this._deadLetterStore.put(entry);
+      this.emitEvent({
+        type           : 'dead-letter:change',
+        tenantDid      : entry.tenantDid,
+        remoteEndpoint : entry.remoteEndpoint,
+      });
     } catch (error) {
       // Suppress only the expected storage-close race — any other error surfaces.
       if (!SyncEngineLevel.isDatabaseNotOpenError(error)) {
@@ -4600,7 +4606,11 @@ export class SyncEngineLevel implements SyncEngine {
   /** Clear the exact dead letter resolved by an internal tenant sync outcome. */
   private async clearDeadLetterForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void> {
     try {
-      await this._deadLetterStore.deleteExact(tenantDid, messageCid, remoteEndpoint);
+      const deleted = await this._deadLetterStore.deleteExact(tenantDid, messageCid, remoteEndpoint);
+      if (deleted === undefined) {
+        return;
+      }
+      this.emitEvent({ type: 'dead-letter:change', tenantDid, remoteEndpoint });
     } catch (error) {
       // A late live callback may race orderly storage closure.
       if (!SyncEngineLevel.isDatabaseNotOpenError(error)) {
@@ -4620,20 +4630,34 @@ export class SyncEngineLevel implements SyncEngine {
     // message CID and optional remote regardless of tenant, matching the
     // previous public contract.
     const deleted = await this._deadLetterStore.deleteForMessage(messageCid, remoteEndpoint);
-    return deleted > 0;
+    if (deleted.length > 0) {
+      for (const tenantDid of new Set(deleted.map((entry): string => entry.tenantDid))) {
+        this.emitEvent({ type: 'dead-letter:change', tenantDid, remoteEndpoint });
+      }
+    }
+    return deleted.length > 0;
   }
 
   public async clearAllDeadLetters(tenantDid?: string): Promise<void> {
-    if (!tenantDid) {
-      await this._deadLetterStore.clear();
-      return;
-    }
+    const deleted = tenantDid === undefined
+      ? await this._deadLetterStore.clear()
+      : await this._deadLetterStore.deleteForTenant(tenantDid);
 
-    await this._deadLetterStore.deleteForTenant(tenantDid);
+    for (const did of new Set(deleted.map((entry): string => entry.tenantDid))) {
+      this.emitEvent({ type: 'dead-letter:change', tenantDid: did });
+    }
   }
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
     return this._statusReporter.getHealth();
+  }
+
+  public async getIdentitySyncStatus(tenantDid: string): Promise<SyncIdentityStatus> {
+    const [registration, status] = await Promise.all([
+      this.getIdentityOptions(tenantDid),
+      this._statusReporter.getStatus(tenantDid),
+    ]);
+    return { registration, ...status };
   }
 
   public async getRemoteSyncStatus(tenantDid?: string): Promise<RemoteSyncStatus[]> {

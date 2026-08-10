@@ -103,6 +103,31 @@ describe('SyncEngineLevel — identity management', () => {
     });
   });
 
+  describe('getIdentitySyncStatus', () => {
+    it('should combine registration with one tenant-scoped status report', async () => {
+      const did = 'did:example:status';
+      await syncEngine.setIdentityOptions({ did, options: { protocols: ['https://proto.example'] } });
+      const report = {
+        health: {
+          connectivity             : 'online' as const,
+          degradedLinkCount        : 0,
+          failedMessageCount       : 0,
+          quotaBlockedMessageCount : 0,
+          syncHealthy              : true,
+        },
+        links   : [],
+        remotes : [],
+      };
+      const getStatus = sinon.stub((syncEngine as any)._statusReporter, 'getStatus').withArgs(did).resolves(report);
+
+      await expect(syncEngine.getIdentitySyncStatus(did)).resolves.toEqual({
+        registration: { protocols: ['https://proto.example'] },
+        ...report,
+      });
+      expect(getStatus.calledOnce).toBe(true);
+    });
+  });
+
   describe('getIdentityOptions', () => {
     it('should return undefined for a non-registered identity', async () => {
       const options = await syncEngine.getIdentityOptions('did:example:unknown');

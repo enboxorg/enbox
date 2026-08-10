@@ -464,6 +464,7 @@ export class SyncQuotaManager {
       );
       if (state.supersededAt !== undefined) { return; }
       SyncQuotaManager.markOutcomeQuotaBlocked(outcome, state);
+      this._operations.onQuotaBlocked(target, failure.cid, state.detail, state.nextProbeAt);
       return;
     }
 
@@ -560,6 +561,7 @@ export class SyncQuotaManager {
     const delayIndex = Math.min(state.attempts, SyncQuotaManager.BLOCK_BACKOFF_MS.length - 1);
     const nextProbeAt = new Date(Date.now() + SyncQuotaManager.BLOCK_BACKOFF_MS[delayIndex]).toISOString();
     await this._store.put({ ...state, nextProbeAt });
+    this._operations.onQuotaBlocked(target, messageCid, state.detail, nextProbeAt);
   }
 
   private async reconcileBlockAgainstFeed(
