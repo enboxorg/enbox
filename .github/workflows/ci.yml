@@ -28,6 +28,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
+      # Runner routing for the compute-only jobs (lint, build, test-lightweight,
+      # test-dwn-sdk): same-repo runs use the org's self-hosted runner; fork PRs
+      # stay on GitHub-hosted runners so untrusted code never executes on it.
+      # Jobs that publish fixed host ports for service containers (postgres,
+      # mysql, nats, minio, pkarr) or install system packages via sudo
+      # (test-browser) always stay on ubuntu-latest — on a shared self-hosted
+      # host those ports collide with whatever else is running there.
+      runner: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || 'self-hosted' }}
       src: ${{ steps.src-filter.outputs.src }}
       needs_common_crypto: ${{ steps.propagate.outputs.needs_common_crypto }}
       needs_lightweight: ${{ steps.propagate.outputs.needs_lightweight }}
@@ -273,7 +281,7 @@ jobs:
   # ---------------------------------------------------------------------------
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.changes.outputs.runner }}
     timeout-minutes: 3
     needs: changes
     if: needs.changes.outputs.src == 'true'
@@ -307,7 +315,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.changes.outputs.runner }}
     timeout-minutes: 5
     needs: changes
     if: needs.changes.outputs.src == 'true'
@@ -365,7 +373,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-lightweight:
     name: 'Test: common / crypto / connect / auth / cli'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.changes.outputs.runner }}
     timeout-minutes: 3
     needs: [build, changes]
     if: needs.changes.outputs.needs_lightweight == 'true'
@@ -434,7 +442,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-dwn-sdk:
     name: 'Test: dwn-sdk-js'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.changes.outputs.runner }}
     timeout-minutes: 3
     needs: [build, changes]
     if: needs.changes.outputs.needs_dwn_sdk == 'true'
