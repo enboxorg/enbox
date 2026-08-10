@@ -188,6 +188,10 @@ Connection sync is `syncing`, `caught-up`, or `error`; `ready` is reserved for
 views whose local data is usable. `RecordView.current` separately indicates
 whether its replica is caught up.
 
+`snapshot.sync.remotes` reports health only for the connected DID's currently
+advertised DWN endpoints. Call `store.retryRemote(endpoint)` to freshly validate
+routing before retrying that endpoint's quota-blocked messages.
+
 Owner connections are local-first. Use `store.connectVault()` for an explicit
 owner/vault flow. Hosted protocol publication is opt-in through
 `requireHostedReadiness`; an offline or endpoint-less owner can otherwise use
