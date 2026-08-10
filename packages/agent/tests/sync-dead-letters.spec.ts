@@ -64,6 +64,8 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint, tenantDid: 'did:example:alice' });
     await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint, tenantDid: 'did:example:bob' });
 
+    const events: unknown[] = [];
+    const unsubscribe = syncEngine.on((event): void => { events.push(event); });
     const internal = syncEngine as unknown as {
       trackRemoteFeedAppliedCids(messageCids: string[], target: unknown): Promise<void>;
     };
@@ -75,18 +77,29 @@ describe('SyncEngineLevel dead letter tracking', () => {
       projectionId       : 'projection',
       scope              : { kind: 'full' },
     });
+    unsubscribe();
 
     expect(await syncEngine.getDeadLetters('did:example:alice')).toHaveLength(0);
     expect(await syncEngine.getDeadLetters('did:example:bob')).toMatchObject([
       { messageCid: 'cid-shared', remoteEndpoint },
     ]);
+    expect(events).toContainEqual({
+      type: 'dead-letter:change', tenantDid: 'did:example:alice', remoteEndpoint,
+    });
   });
 
   it('should suppress only the expected database-close race during internal deletion', async () => {
     const del = sinon.stub();
+    const get = sinon.stub().resolves(JSON.stringify({
+      errorDetail    : 'failure',
+      failedAt       : new Date().toISOString(),
+      messageCid     : 'cid',
+      remoteEndpoint : 'https://dwn.example',
+      tenantDid      : 'did:example:alice',
+    }));
     const internal = new SyncEngineLevel({
       db: {
-        sublevel: (): { del: typeof del } => ({ del }),
+        sublevel: (): { del: typeof del; get: typeof get } => ({ del, get }),
       } as never,
     }) as unknown as {
       clearDeadLetterForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void>;
@@ -128,6 +141,29 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     expect(await syncEngine.getDeadLetters('did:example:alice')).toHaveLength(0);
     expect(await syncEngine.getDeadLetters('did:example:bob')).toHaveLength(1);
+  });
+
+  it('should emit wakes only for durable dead-letter changes', async () => {
+    const events: unknown[] = [];
+    const unsubscribe = syncEngine.on((event): void => { events.push(event); });
+
+    await recordDeadLetter({ messageCid: 'cid', tenantDid: 'did:example:alice' });
+    await syncEngine.clearDeadLetter('cid');
+    await syncEngine.clearDeadLetter('cid');
+    unsubscribe();
+
+    expect(events).toEqual([
+      {
+        type           : 'dead-letter:change',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example',
+      },
+      {
+        type           : 'dead-letter:change',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : undefined,
+      },
+    ]);
   });
 
   it('should report unhealthy sync while failures are recorded', async () => {

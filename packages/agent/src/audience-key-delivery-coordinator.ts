@@ -147,6 +147,9 @@ export class AudienceKeyDeliveryCoordinator {
       this.wake();
       return;
     }
+    if (event.type === 'dead-letter:change') {
+      return;
+    }
     if (!syncEventCoversProtocol(event, this.protocol)) {
       return;
     }

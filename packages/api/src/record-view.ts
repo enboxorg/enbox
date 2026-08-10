@@ -357,6 +357,10 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       return;
     }
 
+    if (event.type === 'dead-letter:change') {
+      return;
+    }
+
     if (!syncEventCoversProtocol(event, this._query.filter.protocol)
       || (this._followedContextId !== undefined && event.contextId !== this._followedContextId)) {
       return;

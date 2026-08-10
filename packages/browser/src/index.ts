@@ -279,6 +279,7 @@ export type {
   SyncEvent,
   SyncEventListener,
   SyncHealthSummary,
+  SyncIdentityStatus,
 } from '@enbox/agent';
 
 // Common DWN primitives for record queries, permission scopes, and protocol

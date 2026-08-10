@@ -612,6 +612,8 @@ export type SyncMessageDescriptor = {
 export type SyncEvent =
   /** Durable sync registration was added, changed, or removed for one identity. */
   | { type: 'identity:registration-change'; tenantDid: string; options?: SyncIdentityOptions }
+  /** The durable terminal-failure set changed for one identity. */
+  | { type: 'dead-letter:change'; tenantDid: string; remoteEndpoint?: string }
   /** The durable accepted-context catalog changed for one actor. */
   | {
     type: 'followed-context:change';
@@ -765,6 +767,18 @@ export type ReplicationLinkSnapshot = {
   /** ISO-8601 timestamp of last successful sync activity. */
   lastActivityAt?: string;
 };
+
+/** One identity's registration, replication links, and rolled-up sync health. */
+export type SyncIdentityStatus = Readonly<{
+  /** Durable sync registration, or `undefined` when the identity is not registered. */
+  registration: SyncIdentityOptions | undefined;
+  /** Health summary scoped to this identity. */
+  health: SyncHealthSummary;
+  /** Current replication links for this identity. */
+  links: readonly ReplicationLinkSnapshot[];
+  /** Per-remote health rows for this identity. */
+  remotes: readonly RemoteSyncStatus[];
+}>;
 
 /** Whether every link in a non-empty set has a current, reachable local replica. */
 export function areReplicationLinksCurrent(
@@ -966,6 +980,12 @@ export interface SyncEngine {
    * and degraded link count.
    */
   getSyncHealth(): Promise<SyncHealthSummary>;
+
+  /**
+   * Returns one identity's registration, links, remotes, and health from one
+   * combined status read. Prefer this when a caller needs more than one projection.
+   */
+  getIdentitySyncStatus(tenantDid: string): Promise<SyncIdentityStatus>;
 
   /**
    * Returns a per-`(tenantDid, remoteEndpoint)` sync status snapshot, optionally
