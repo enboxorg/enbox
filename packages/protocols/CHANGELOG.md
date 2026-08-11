@@ -1,5 +1,13 @@
 # @enbox/protocols
 
+## 0.2.106
+
+### Patch Changes
+
+- Updated dependencies [[`54cb801`](https://github.com/enboxorg/enbox/commit/54cb80166846b3395cd3543ae8a1c387ae5857d3), [`7435259`](https://github.com/enboxorg/enbox/commit/743525922b963264c909f25c6a98d688807b5fb0), [`eebdf97`](https://github.com/enboxorg/enbox/commit/eebdf9754773c1c8fb4836c8f3e106c2a1f60a62), [`137ce5f`](https://github.com/enboxorg/enbox/commit/137ce5f652af3f469329039cdd1cca4b675c7a36), [`7435259`](https://github.com/enboxorg/enbox/commit/743525922b963264c909f25c6a98d688807b5fb0), [`1eabea1`](https://github.com/enboxorg/enbox/commit/1eabea135a67906fb9730c58244f40077e312bec), [`7435259`](https://github.com/enboxorg/enbox/commit/743525922b963264c909f25c6a98d688807b5fb0), [`85dfa69`](https://github.com/enboxorg/enbox/commit/85dfa69369c3ff28c41320a7a79336b2416735b1)]:
+  - @enbox/dwn-sdk-js@0.4.24
+  - @enbox/api@0.6.79
+
 ## 0.2.105
 
 ### Patch Changes

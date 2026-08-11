@@ -1,5 +1,13 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.24
+
+### Patch Changes
+
+- [#1624](https://github.com/enboxorg/enbox/pull/1624) [`54cb801`](https://github.com/enboxorg/enbox/commit/54cb80166846b3395cd3543ae8a1c387ae5857d3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add a DWN timestamp helper for advancing past an authoritative floor and consistently classify missing record parents.
+
+- [#1619](https://github.com/enboxorg/enbox/pull/1619) [`85dfa69`](https://github.com/enboxorg/enbox/commit/85dfa69369c3ff28c41320a7a79336b2416735b1) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: make protocol/schema URL normalization idempotent so normalized URIs with collapsed trailing slashes pass normalization validation
+
 ## 0.4.23
 
 ### Patch Changes

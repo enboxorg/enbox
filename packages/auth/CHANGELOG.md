@@ -1,5 +1,40 @@
 # @enbox/auth
 
+## 0.6.86
+
+### Patch Changes
+
+- [#1626](https://github.com/enboxorg/enbox/pull/1626) [`7435259`](https://github.com/enboxorg/enbox/commit/743525922b963264c909f25c6a98d688807b5fb0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Replace separate sync identity registration and update operations with an idempotent options setter, atomic routing refreshes, cross-context registration wakes, and idempotent removal.
+
+- [#1634](https://github.com/enboxorg/enbox/pull/1634) [`1eabea1`](https://github.com/enboxorg/enbox/commit/1eabea135a67906fb9730c58244f40077e312bec) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: simplify application lifecycle, observable views, sync status, and package re-exports.
+
+  `createConnectionStore()` now requires an application manifest and exposes one
+  `ConnectionStore` type; protocol-less callers should compose `AuthManager` with
+  `Enbox.fromSession()`. The store no longer exposes its internally owned auth
+  manager. Connected snapshots are phase-discriminated and expose identity facts
+  through `snapshot.session`. Record and context views now implement the shared
+  `ObservableStore` contract with `getSnapshot()` instead of `getState()`. The
+  application-level `Enbox.getDwnEndpointStatus()` convenience and the
+  `ApplicationConnectionStore*` and listener aliases are removed.
+
+  `ConnectionStore.connect()` now transparently refreshes a surviving delegated
+  session when wallet reapproval is required, so applications no longer inspect
+  the underlying auth manager to choose between connect and refresh. Sync policy
+  is now configured when the store is created rather than per `connect()` call.
+
+  The agent consolidates sync status projection and persistence internals and
+  removes `clearDeadLetter()`, `clearAllDeadLetters()`, and the redundant
+  `getRemoteSyncStatus()` wrapper; dead letters heal automatically and remote
+  rows are available through `getIdentitySyncStatus(did).remotes`. Browser and
+  CLI entrypoints now re-export their complete environment-safe API and auth
+  surfaces.
+
+- Updated dependencies [[`54cb801`](https://github.com/enboxorg/enbox/commit/54cb80166846b3395cd3543ae8a1c387ae5857d3), [`7435259`](https://github.com/enboxorg/enbox/commit/743525922b963264c909f25c6a98d688807b5fb0), [`7435259`](https://github.com/enboxorg/enbox/commit/743525922b963264c909f25c6a98d688807b5fb0), [`1eabea1`](https://github.com/enboxorg/enbox/commit/1eabea135a67906fb9730c58244f40077e312bec), [`85dfa69`](https://github.com/enboxorg/enbox/commit/85dfa69369c3ff28c41320a7a79336b2416735b1)]:
+  - @enbox/dwn-sdk-js@0.4.24
+  - @enbox/agent@0.8.40
+  - @enbox/connect@0.1.20
+  - @enbox/dwn-clients@0.4.31
+
 ## 0.6.85
 
 ### Patch Changes
