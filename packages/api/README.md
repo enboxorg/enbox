@@ -197,11 +197,14 @@ const store = createConnectionStore({
   connectHandler,
   monitor: { autoRefresh: {} },
 });
-const initial = await store.initialize(); // restored sessions are readied before publication
-if (initial.walletReapprovalRequired && store.auth?.session?.delegateDid !== undefined) {
-  await store.refresh();
-} else if (initial.phase === 'disconnected') {
-  await store.connect();
+let snapshot = await store.initialize(); // restored sessions are readied before publication
+if (snapshot.walletReapprovalRequired && store.auth?.session?.delegateDid !== undefined) {
+  snapshot = await store.refresh();
+} else if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connect();
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
 }
 ```
 
