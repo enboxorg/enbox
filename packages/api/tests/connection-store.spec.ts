@@ -282,7 +282,7 @@ describe('createConnectionStore()', () => {
     getDwnEndpointStatus = sinon.stub(testHarness.agent.identity, 'getDwnEndpointStatus')
       .callsFake(async ({ didUri }): Promise<DwnEndpointResolution> => readyDwn(undefined, didUri));
     sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves(COVERED_REGISTRATION);
-    sinon.stub(testHarness.agent.sync, 'setIdentityOptions').resolves();
+    sinon.stub(testHarness.agent.sync, 'refreshIdentityRouting').resolves();
     getIdentitySyncStatus = sinon.stub(testHarness.agent.sync, 'getIdentitySyncStatus')
       .resolves(identitySyncStatus({ delegateDid: DELEGATE_DID, protocols: 'all' }));
   });
