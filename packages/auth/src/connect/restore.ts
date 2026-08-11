@@ -276,7 +276,7 @@ async function finalizeRestoredSession(
     // Grant query or registration repair failed — don't block restore,
     // but don't let a stale registration remain usable.
     syncRepairFailed = true;
-    try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* already gone or store error */ }
+    try { await userAgent.sync.removeIdentity(connectedDid); } catch { /* best-effort cleanup */ }
   }
 
   if (delegateDid && connectedDid) {

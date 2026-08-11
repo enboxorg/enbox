@@ -231,7 +231,7 @@ describe('Record', () => {
       });
 
       // Register sync for Alice's DID and pull the protocol configuration.
-      await (delegateHarness.agent as EnboxUserAgent).sync.registerIdentity({
+      await (delegateHarness.agent as EnboxUserAgent).sync.setIdentityOptions({
         did     : aliceDid.uri,
         options : {
           delegateDid : delegateDid.uri,

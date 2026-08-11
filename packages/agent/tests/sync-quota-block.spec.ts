@@ -219,7 +219,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await seedQuotaBlock({ cid: 'alice-cid', nextProbeAt });
     await seedQuotaBlock({ cid: 'bob-cid', nextProbeAt, tenant: OTHER_TENANT });
 
-    await syncEngine.unregisterIdentity(TENANT);
+    await syncEngine.removeIdentity(TENANT);
 
     expect(await syncEngine.getRemoteSyncStatus(TENANT)).toHaveLength(0);
     expect((await syncEngine.getRemoteSyncStatus(OTHER_TENANT))[0].quotaBlockedMessageCount).toBe(1);
@@ -229,7 +229,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await db.sublevel('registeredIdentities').put(TENANT, JSON.stringify({ protocols: 'all' }));
     await seedQuotaBlock({ cid: 'old-link-cid', nextProbeAt: new Date(Date.now() + 60_000).toISOString() });
 
-    await syncEngine.updateIdentityOptions({ did: TENANT, options: { protocols: 'all' } });
+    await syncEngine.setIdentityOptions({ did: TENANT, options: { protocols: 'all' } });
 
     expect(await syncEngine.getRemoteSyncStatus(TENANT)).toHaveLength(0);
   });

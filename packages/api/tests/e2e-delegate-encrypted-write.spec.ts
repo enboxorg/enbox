@@ -251,7 +251,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     });
 
     // 6. Register sync for the wallet's DID.
-    await (dappHarness.agent as EnboxUserAgent).sync.registerIdentity({
+    await (dappHarness.agent as EnboxUserAgent).sync.setIdentityOptions({
       did     : walletDid.uri,
       options : {
         delegateDid : delegatePortable.uri,

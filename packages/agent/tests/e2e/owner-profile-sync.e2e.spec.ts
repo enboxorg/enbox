@@ -287,11 +287,11 @@ describe('E2E: same-owner profile sync convergence', () => {
 
     await installProtocolLocalAndRemote(walletB, identity.did.uri, profileProtocol);
 
-    await walletA.agent.sync.registerIdentity({
+    await walletA.agent.sync.setIdentityOptions({
       did     : identity.did.uri,
       options : { protocols: profileSyncProtocols },
     });
-    await walletB.agent.sync.registerIdentity({
+    await walletB.agent.sync.setIdentityOptions({
       did     : identity.did.uri,
       options : { protocols: profileSyncProtocols },
     });
@@ -395,7 +395,7 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
     expect(walletB.agent.agentDid.uri).toBe(walletA.agent.agentDid.uri);
 
     for (const wallet of [walletA, walletB]) {
-      await wallet.agent.sync.registerIdentity({
+      await wallet.agent.sync.setIdentityOptions({
         did     : wallet.agent.agentDid.uri,
         options : { protocols: agentDidSyncProtocols },
       });
@@ -469,11 +469,11 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
       published       : true,
     }, heroBytes);
 
-    await walletA.agent.sync.registerIdentity({
+    await walletA.agent.sync.setIdentityOptions({
       did     : did,
       options : { protocols: profileSyncProtocols },
     });
-    await walletB.agent.sync.registerIdentity({
+    await walletB.agent.sync.setIdentityOptions({
       did     : did,
       options : { protocols: profileSyncProtocols },
     });

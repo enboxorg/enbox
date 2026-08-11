@@ -52,12 +52,19 @@ import type {
   RestoreSessionOptions,
   VaultConnectOptions,
 } from '@enbox/auth';
-import type { ReplicationLinkSnapshot, SyncConnectivityState } from '@enbox/agent';
+import type {
+  RemoteSyncStatus,
+  ReplicationLinkSnapshot,
+  SyncConnectivityState,
+} from '@enbox/agent';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { isConnectDeniedError } from '@enbox/auth';
 import { omitUndefined } from '@enbox/common';
-import { isServiceConfigNoticeDelivery, resolveSyncConnectivityState } from '@enbox/agent';
+import {
+  isServiceConfigNoticeDelivery,
+  resolveSyncConnectivityState,
+} from '@enbox/agent';
 
 import { Enbox } from './enbox.js';
 import { getApplicationProtocolRequests } from './application-manifest.js';
@@ -96,6 +103,12 @@ type SyncStatusContents = Readonly<{
 
   /** Latest activity timestamp already recorded by the sync engine, when available. */
   lastActivityAt?: string;
+
+  /** Health rows for the connected DID's currently advertised DWN endpoints. */
+  remotes: readonly Readonly<RemoteSyncStatus>[];
+
+  /** Endpoint targeted by the pending fresh-validation and retry action. */
+  retryingRemoteEndpoint?: string;
 }>;
 
 /** Immutable overall sync status for the selected identity. */
@@ -264,7 +277,7 @@ export type ConnectionStoreOptions = PlainConnectionStoreOptions | ApplicationCo
  * disposed store, which throws synchronously as a programming error.
  *
  * While an action is in flight, additional `initialize`/`connect`/
- * `connectVault`/`refresh`/`refreshDwnEndpoints` calls do not start a second
+ * `connectVault`/`refresh`/`refreshDwnEndpoints`/`retryRemote` calls do not start a second
  * auth flow; they return the in-flight action's resulting snapshot.
  * `disconnect()` is exempt so it can supersede (invalidate) an in-flight
  * connect.
@@ -330,6 +343,12 @@ export interface ConnectionStore {
    * service-config deliveries trigger the refresh automatically.
    */
   refreshDwnEndpoints(): Promise<ConnectionSnapshot>;
+
+  /**
+   * Freshly validates remote routing, then immediately retries quota-blocked
+   * messages for `remoteEndpoint` when it is still advertised by the DID.
+   */
+  retryRemote(remoteEndpoint: string): Promise<ConnectionSnapshot>;
 
   /**
    * Signs out: stops the connection monitor, runs `AuthManager.disconnect()`
@@ -453,11 +472,11 @@ function requiresWalletReapproval(error: Error): boolean {
 }
 
 type SyncStatusBinding = {
-  dwnRefresh?: Promise<void>;
+  dwnRefresh?: Promise<Error | boolean>;
   dwnRefreshRequested: boolean;
   onAbort: () => void;
+  refresh?: Promise<void>;
   refreshRequested: boolean;
-  refreshing: boolean;
   routedDwn?: DwnEndpointResolution;
   session: AuthSession;
   unsubscribe?: () => void;
@@ -574,6 +593,14 @@ class HeadlessConnectionStore implements ConnectionStore {
       return this._pendingAction;
     }
     return this._track(this._runDwnEndpointRefresh());
+  }
+
+  public retryRemote(remoteEndpoint: string): Promise<ConnectionSnapshot> {
+    this._assertNotDisposed();
+    if (this._pendingAction !== undefined) {
+      return this._pendingAction;
+    }
+    return this._track(this._runRetryRemote(remoteEndpoint));
   }
 
   public disconnect(options?: DisconnectOptions): Promise<ConnectionSnapshot> {
@@ -734,25 +761,120 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   private async _runDwnEndpointRefresh(): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
+    await Promise.resolve();
+    if (this._isStale(generation)) {
+      return this._settleSuperseded();
+    }
     this._apply({ error: undefined });
 
-    try {
-      const binding = this._syncBinding;
-      if (binding === undefined || !this._isCurrentSession(binding.session)) {
-        throw new Error('[@enbox/api] ConnectionStore.refreshDwnEndpoints requires an active session.');
-      }
+    const binding = this._syncBinding;
+    if (binding === undefined || !this._isCurrentSession(binding.session)) {
+      return this._failStatusAction(
+        generation,
+        new Error('[@enbox/api] ConnectionStore.refreshDwnEndpoints requires an active session.'),
+      );
+    }
 
-      await this._requestDwnEndpointRefresh(binding);
-      if (this._isStale(generation)) {
-        return this._settleSuperseded();
+    try {
+      const refreshed = await this._requestDwnEndpointRefresh(binding);
+      if (refreshed instanceof Error) {
+        throw refreshed;
       }
-      return this._snapshot;
+      return this._settleStatusAction(binding, generation);
     } catch (cause: unknown) {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
       }
-      return this._applyActionFailure(generation, cause);
+      if (this._syncBinding !== binding || !this._isCurrentSession(binding.session)) {
+        return this._settleStatusAction(binding, generation);
+      }
+      return this._failStatusAction(generation, cause);
     }
+  }
+
+  private async _runRetryRemote(remoteEndpoint: string): Promise<ConnectionSnapshot> {
+    const generation = ++this._actionGeneration;
+    await Promise.resolve();
+    if (this._isStale(generation)) {
+      return this._settleSuperseded();
+    }
+    this._apply({ error: undefined });
+
+    const binding = this._syncBinding;
+    if (binding === undefined || !this._isCurrentSession(binding.session)) {
+      return this._failStatusAction(
+        generation,
+        new Error('[@enbox/api] ConnectionStore.retryRemote requires an active session.'),
+      );
+    }
+
+    this._setRetryingEndpoint(binding, remoteEndpoint);
+    try {
+      const refreshed = await this._requestDwnEndpointRefresh(binding);
+      if (refreshed instanceof Error) {
+        throw refreshed;
+      }
+      if (this._isStale(generation)) {
+        return this._settleSuperseded();
+      }
+      if (this._syncBinding !== binding || !this._isCurrentSession(binding.session)) {
+        return this._settleStatusAction(binding, generation);
+      }
+
+      const remoteDwn = this._snapshot.remoteDwn;
+      if (refreshed === true
+        && remoteDwn?.status === 'ready'
+        && remoteDwn.endpoints.includes(remoteEndpoint)) {
+        await binding.session.agent.sync.retryRemoteNow(binding.session.did, remoteEndpoint);
+        if (this._syncBinding === binding && this._isCurrentSession(binding.session)) {
+          await this._requestSyncStatus(binding);
+        }
+      }
+      this._setRetryingEndpoint(binding, undefined);
+      return this._settleStatusAction(binding, generation);
+    } catch (cause: unknown) {
+      if (this._isStale(generation)) {
+        return this._settleSuperseded();
+      }
+      this._setRetryingEndpoint(binding, undefined);
+      if (this._syncBinding !== binding || !this._isCurrentSession(binding.session)) {
+        return this._settleStatusAction(binding, generation);
+      }
+      return this._failStatusAction(generation, cause);
+    }
+  }
+
+  /** Reconcile lifecycle events suppressed while a status action owned the single-flight slot. */
+  private async _settleStatusAction(
+    binding: SyncStatusBinding,
+    generation: number,
+  ): Promise<ConnectionSnapshot> {
+    try {
+      if (this._isStale(generation)) {
+        return await this._settleSuperseded();
+      }
+      if (this._syncBinding === binding && this._isCurrentSession(binding.session)) {
+        return this._snapshot;
+      }
+
+      const auth = this._auth;
+      const snapshot = auth === undefined
+        ? this._publishDisconnected()
+        : await this._commitConnected(auth, generation);
+      return this._isStale(generation)
+        ? await this._settleSuperseded()
+        : snapshot;
+    } catch (cause: unknown) {
+      return this._failStatusAction(generation, cause);
+    }
+  }
+
+  /** Publish a status-action failure, then honor a disconnect started by that publication. */
+  private async _failStatusAction(generation: number, cause: unknown): Promise<ConnectionSnapshot> {
+    const snapshot = this._applyActionFailure(generation, cause);
+    return this._isStale(generation)
+      ? this._settleSuperseded()
+      : snapshot;
   }
 
   /** Apply and seed the authoritative session, repeating if auth changes while status is read. */
@@ -1115,7 +1237,7 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   // ─── Sync status ────────────────────────────────────────────────
 
-  /** Replace the session-scoped observer and return its fresh status snapshot. */
+  /** Replace the session-scoped observer and return its initial status projection. */
   private _bindSyncStatus(session: AuthSession | undefined): SyncStatusSnapshot | undefined {
     this._unbindSyncStatus();
     if (!isActiveAuthSession(session)) {
@@ -1126,7 +1248,6 @@ class HeadlessConnectionStore implements ConnectionStore {
       dwnRefreshRequested : false,
       onAbort             : (): void => { this._handleSyncAbort(binding); },
       refreshRequested    : false,
-      refreshing          : false,
       session,
     };
     this._syncBinding = binding;
@@ -1138,11 +1259,11 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (isServiceConfigNoticeDelivery(event, session.did)) {
         void this._requestDwnEndpointRefresh(binding);
       }
-      this._requestSyncStatus(binding);
+      void this._requestSyncStatus(binding);
     });
-    this._requestSyncStatus(binding);
+    void this._requestSyncStatus(binding);
 
-    return immutableSyncStatus({ state: 'syncing', connectivity: 'unknown' });
+    return immutableSyncStatus({ state: 'syncing', connectivity: 'unknown', remotes: [] });
   }
 
   private _handleSyncAbort(binding: SyncStatusBinding): void {
@@ -1174,18 +1295,14 @@ class HeadlessConnectionStore implements ConnectionStore {
   }
 
   /** Coalesce sync wakes into one active local projection read and one trailing read. */
-  private _requestSyncStatus(binding: SyncStatusBinding): void {
+  private _requestSyncStatus(binding: SyncStatusBinding): Promise<void> {
     if (this._syncBinding !== binding) {
-      return;
+      return Promise.resolve();
     }
 
     binding.refreshRequested = true;
-    if (binding.refreshing) {
-      return;
-    }
-
-    binding.refreshing = true;
-    void this._drainSyncStatus(binding);
+    binding.refresh ??= this._drainSyncStatus(binding);
+    return binding.refresh;
   }
 
   private async _drainSyncStatus(binding: SyncStatusBinding): Promise<void> {
@@ -1199,41 +1316,57 @@ class HeadlessConnectionStore implements ConnectionStore {
         this._publishSyncStatus(binding, snapshot);
       }
     } finally {
-      binding.refreshing = false;
+      binding.refresh = undefined;
     }
   }
 
   private async _readSyncStatus(binding: SyncStatusBinding): Promise<SyncStatusSnapshot> {
     const { session } = binding;
     try {
-      const registration = await session.agent.sync.getIdentityOptions(session.did);
-      if (registration === undefined) {
-        return immutableSyncStatus({ state: 'caught-up', connectivity: 'unknown' });
-      }
-      const links = await session.agent.sync.getReplicationLinks(session.did);
-      return projectSyncStatus(links, session.agent.sync.connectivityState);
+      const status = await session.agent.sync.getIdentitySyncStatus(session.did);
+      const remotes = projectRemoteSyncRows(status.remotes, this._snapshot.remoteDwn);
+      return status.registration === undefined
+        ? immutableSyncStatus({ state: 'caught-up', connectivity: 'unknown', remotes })
+        : projectSyncStatus(status.links, session.agent.sync.connectivityState, remotes);
     } catch (cause: unknown) {
       const current = this._snapshot.sync;
       return immutableSyncStatus({
         state          : 'error',
         connectivity   : current?.connectivity ?? 'unknown',
         lastActivityAt : current?.lastActivityAt,
+        remotes        : current?.remotes ?? [],
         error          : toError(cause),
       });
     }
   }
 
   private _publishSyncStatus(binding: SyncStatusBinding, snapshot: SyncStatusSnapshot): void {
-    if (this._syncBinding !== binding || syncStatusesEqual(this._snapshot.sync, snapshot)) {
+    if (this._syncBinding !== binding) {
       return;
     }
-    this._apply({ sync: snapshot });
+    const retryingRemoteEndpoint = this._snapshot.sync?.retryingRemoteEndpoint;
+    const next = retryingRemoteEndpoint === undefined
+      ? snapshot
+      : immutableSyncStatus({ ...snapshot, retryingRemoteEndpoint });
+    if (!syncStatusesEqual(this._snapshot.sync, next)) {
+      this._apply({ sync: next });
+    }
+  }
+
+  private _setRetryingEndpoint(binding: SyncStatusBinding, retryingEndpoint: string | undefined): void {
+    if (this._syncBinding !== binding || !this._isCurrentSession(binding.session)) {
+      return;
+    }
+    const current = this._snapshot.sync;
+    if (current !== undefined && current.retryingRemoteEndpoint !== retryingEndpoint) {
+      this._apply({ sync: immutableSyncStatus({ ...current, retryingRemoteEndpoint: retryingEndpoint }) });
+    }
   }
 
   /** Coalesce service-config delivery wakes into one fresh DID resolution and one trailing read. */
-  private _requestDwnEndpointRefresh(binding: SyncStatusBinding): Promise<void> {
+  private _requestDwnEndpointRefresh(binding: SyncStatusBinding): Promise<Error | boolean> {
     if (this._syncBinding !== binding) {
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
 
     binding.dwnRefreshRequested = true;
@@ -1241,18 +1374,25 @@ class HeadlessConnectionStore implements ConnectionStore {
     return binding.dwnRefresh;
   }
 
-  private async _drainDwnEndpointRefresh(binding: SyncStatusBinding): Promise<void> {
+  private async _drainDwnEndpointRefresh(binding: SyncStatusBinding): Promise<Error | boolean> {
+    let outcome: Error | boolean = false;
     try {
       while (this._syncBinding === binding && binding.dwnRefreshRequested) {
         binding.dwnRefreshRequested = false;
+        outcome = false;
         try {
           await this._refreshDwnEndpointStatus(binding);
+          if (this._syncBinding === binding && !binding.dwnRefreshRequested) {
+            outcome = true;
+          }
         } catch (cause: unknown) {
           if (this._syncBinding === binding && !binding.dwnRefreshRequested) {
-            console.error('[@enbox/api] ConnectionStore: failed to refresh remote DWN status:', toError(cause));
+            outcome = toError(cause);
+            console.error('[@enbox/api] ConnectionStore: failed to refresh remote DWN status:', outcome);
           }
         }
       }
+      return outcome;
     } finally {
       binding.dwnRefresh = undefined;
     }
@@ -1268,26 +1408,32 @@ class HeadlessConnectionStore implements ConnectionStore {
       || binding.dwnRefreshRequested) {
       return;
     }
-
     if (!dwnEndpointStatusesEqual(this._snapshot.remoteDwn, remoteDwn)) {
-      this._apply({ remoteDwn });
+      const current = this._snapshot.sync;
+      this._apply({
+        remoteDwn,
+        sync: current === undefined
+          ? undefined
+          : immutableSyncStatus({ ...current, remotes: projectRemoteSyncRows(current.remotes, remoteDwn) }),
+      });
     }
     if (remoteDwn.status === 'resolution-failed'
       || !this._isCurrentSession(session)
       || dwnEndpointStatusesEqual(binding.routedDwn, remoteDwn)) {
+      if (this._isCurrentSession(session)) {
+        void this._requestSyncStatus(binding);
+      }
       return;
     }
 
-    try {
-      const options = await session.agent.sync.getIdentityOptions(session.did);
-      if (options !== undefined && this._isCurrentSession(session)) {
-        await session.agent.sync.updateIdentityOptions({ did: session.did, options });
-      }
-      if (this._syncBinding === binding && this._isCurrentSession(session)) {
-        binding.routedDwn = remoteDwn;
-      }
-    } catch (cause: unknown) {
-      console.error('[@enbox/api] ConnectionStore: failed to refresh remote DWN sync routing:', toError(cause));
+    if (this._isCurrentSession(session)) {
+      await session.agent.sync.refreshIdentityRouting(session.did);
+    }
+    if (this._syncBinding === binding && this._isCurrentSession(session)) {
+      binding.routedDwn = remoteDwn;
+    }
+    if (this._isCurrentSession(session)) {
+      void this._requestSyncStatus(binding);
     }
   }
 
@@ -1360,6 +1506,7 @@ class HeadlessConnectionStore implements ConnectionStore {
 function projectSyncStatus(
   links: readonly ReplicationLinkSnapshot[],
   fallbackConnectivity: SyncConnectivityState,
+  remotes: readonly Readonly<RemoteSyncStatus>[],
 ): SyncStatusSnapshot {
   const connectivity = resolveSyncConnectivityState(
     links.map((link): SyncConnectivityState => link.connectivity),
@@ -1372,6 +1519,7 @@ function projectSyncStatus(
       state : 'error',
       connectivity,
       lastActivityAt,
+      remotes,
       error : new Error('Synchronization is paused for the selected identity.'),
     });
   }
@@ -1379,6 +1527,22 @@ function projectSyncStatus(
     state,
     connectivity,
     lastActivityAt,
+    remotes,
+  });
+}
+
+function projectRemoteSyncRows(
+  rows: readonly Readonly<RemoteSyncStatus>[],
+  remoteDwn: DwnEndpointResolution | undefined,
+): readonly Readonly<RemoteSyncStatus>[] {
+  if (remoteDwn?.status !== 'ready') {
+    return [];
+  }
+
+  const byEndpoint = new Map(rows.map((row): [string, Readonly<RemoteSyncStatus>] => [row.remoteEndpoint, row]));
+  return remoteDwn.endpoints.flatMap((endpoint): Readonly<RemoteSyncStatus>[] => {
+    const row = byEndpoint.get(endpoint);
+    return row === undefined ? [] : [Object.freeze({ ...row })];
   });
 }
 
@@ -1393,14 +1557,30 @@ function latestActivityAt(links: readonly ReplicationLinkSnapshot[]): string | u
 }
 
 function immutableSyncStatus(snapshot: SyncStatusSnapshot): SyncStatusSnapshot {
-  return Object.freeze(snapshot);
+  const remotes = Object.freeze([...snapshot.remotes]);
+  return Object.freeze({ ...snapshot, remotes });
 }
 
 function syncStatusesEqual(a: SyncStatusSnapshot | undefined, b: SyncStatusSnapshot): boolean {
   return a?.state === b.state &&
     a.connectivity === b.connectivity &&
     a.lastActivityAt === b.lastActivityAt &&
-    a.error?.message === b.error?.message;
+    a.error?.message === b.error?.message &&
+    a.retryingRemoteEndpoint === b.retryingRemoteEndpoint &&
+    a.remotes.length === b.remotes.length
+    && a.remotes.every((remote, index): boolean => remoteSyncRowsEqual(remote, b.remotes[index]));
+}
+
+function remoteSyncRowsEqual(a: Readonly<RemoteSyncStatus>, b: Readonly<RemoteSyncStatus>): boolean {
+  return a.tenantDid === b.tenantDid
+    && a.remoteEndpoint === b.remoteEndpoint
+    && a.state === b.state
+    && a.connectivity === b.connectivity
+    && a.quotaBlockedMessageCount === b.quotaBlockedMessageCount
+    && a.failedMessageCount === b.failedMessageCount
+    && a.nextProbeAt === b.nextProbeAt
+    && a.lastError === b.lastError
+    && a.lastActivityAt === b.lastActivityAt;
 }
 
 /**

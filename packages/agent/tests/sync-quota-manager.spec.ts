@@ -65,7 +65,21 @@ describe('SyncQuotaManager', () => {
         lastBlockedAt  : '2026-01-01T00:00:01.000Z',
         nextProbeAt    : '2026-01-01T00:01:01.000Z',
       });
-      expect(operations.onQuotaBlocked.calledTwice).toBe(true);
+
+      await clock.tickAsync(1_000);
+      await manager.applyPushResult(target(), {
+        acknowledged : [],
+        failed       : [{ cid: 'cid-1', detail: 'still unavailable', kind: 'Deferred' }],
+        succeeded    : [],
+      });
+
+      expect(operations.onQuotaBlocked.callCount).toBe(3);
+      expect(operations.onQuotaBlocked.lastCall.args).toEqual([
+        target(),
+        'cid-1',
+        'still unavailable',
+        '2026-01-01T00:05:02.000Z',
+      ]);
     } finally {
       clock.restore();
     }
@@ -164,6 +178,22 @@ describe('SyncQuotaManager', () => {
     expect(operations.pushMessages.called).toBe(false);
     expect(operations.pushEntries.called).toBe(false);
     expect(await manager.getState(target(), 'cid-1')).toBeDefined();
+  });
+
+  it('announces a deferred probe schedule after persisting it', async () => {
+    const { manager, operations } = createHarness();
+    operations.getLocalMessage.resolves({
+      message: {
+        descriptor: { dataSize: 1, interface: 'Records', method: 'Write' },
+      } as SyncMessageEntry['message'],
+    });
+    await manager.recordBlock(target(), 'cid-1', undefined, 'over quota');
+
+    await manager.probeBlocksForTarget(target(), true);
+
+    expect(operations.onQuotaBlocked.calledOnce).toBe(true);
+    expect(operations.pushEntries.called).toBe(false);
+    expect(operations.pushMessages.called).toBe(false);
   });
 
   it('abandons a probe when the caller fence trips during the dependency lookup', async () => {

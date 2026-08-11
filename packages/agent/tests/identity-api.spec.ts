@@ -262,7 +262,7 @@ describe('AgentIdentityApi', () => {
       describe('setDwnEndpoints()', () => {
         let processRequestStub: sinon.SinonStub;
         let sendDwnRequestStub: sinon.SinonStub;
-        let syncOptionsStub: sinon.SinonStub;
+        let refreshSyncStub: sinon.SinonStub;
 
         const testPortableDid: PortableDid = {
           uri      : 'did:dht:d71hju6wjeu5j7r5sbujqkubktds1kbtei8imkj859jr4hw77hdy',
@@ -380,7 +380,7 @@ describe('AgentIdentityApi', () => {
           sendDwnRequestStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
             status: { code: 202, detail: 'Accepted' },
           });
-          syncOptionsStub = sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves(undefined);
+          refreshSyncStub = sinon.stub(testHarness.agent.sync, 'refreshIdentityRouting').resolves();
         });
 
         it('should set the DWN endpoints for a DID', async () => {
@@ -401,10 +401,6 @@ describe('AgentIdentityApi', () => {
           const publishSpy = sinon.stub(DidDht, 'publish').resolves({
             didDocumentMetadata: { published: true },
           } as any);
-          const syncOptions = { protocols: 'all' as const };
-          syncOptionsStub.resolves(syncOptions);
-          const updateSyncSpy = sinon.stub(testHarness.agent.sync, 'updateIdentityOptions').resolves();
-
           // Announcement is best-effort and must not fail the authoritative DID update.
           processRequestStub.onSecondCall().resolves({
             reply: { status: { code: 500, detail: 'Unavailable' } },
@@ -435,10 +431,7 @@ describe('AgentIdentityApi', () => {
             DwnInterface.ProtocolsConfigure,
             DwnInterface.RecordsWrite,
           ]);
-          expect(updateSyncSpy.calledOnceWithExactly({
-            did     : testPortableDid.uri,
-            options : syncOptions,
-          })).toBe(true);
+          expect(refreshSyncStub.calledOnceWithExactly(testPortableDid.uri)).toBe(true);
         });
 
         it('retries sync routing without republishing or reannouncing unchanged endpoints', async () => {
@@ -468,11 +461,8 @@ describe('AgentIdentityApi', () => {
           const publishSpy = sinon.stub(DidDht, 'publish').resolves({
             didDocumentMetadata: { published: true },
           } as any);
-          const syncOptions = { protocols: 'all' as const };
-          syncOptionsStub.resolves(syncOptions);
-          const updateSyncStub = sinon.stub(testHarness.agent.sync, 'updateIdentityOptions');
-          updateSyncStub.onFirstCall().rejects(new Error('Unable to update sync routing'));
-          updateSyncStub.onSecondCall().resolves();
+          refreshSyncStub.onFirstCall().rejects(new Error('Unable to update sync routing'));
+          refreshSyncStub.onSecondCall().resolves();
 
           await expect(testHarness.agent.identity.setDwnEndpoints({
             didUri    : testPortableDid.uri,
@@ -486,12 +476,8 @@ describe('AgentIdentityApi', () => {
           expect(publishSpy.calledOnce).toBe(true);
           expect(processRequestStub.callCount).toBe(2);
           expect(sendDwnRequestStub.callCount).toBe(4);
-          expect(syncOptionsStub.callCount).toBe(2);
-          expect(updateSyncStub.callCount).toBe(2);
-          expect(updateSyncStub.alwaysCalledWithExactly({
-            did     : testPortableDid.uri,
-            options : syncOptions,
-          })).toBe(true);
+          expect(refreshSyncStub.callCount).toBe(2);
+          expect(refreshSyncStub.alwaysCalledWithExactly(testPortableDid.uri)).toBe(true);
         });
 
         it('should throw an error if the DID is not found', async () => {

@@ -77,9 +77,8 @@ export interface MockAgentOverrides {
   dwnProcessRawMessage?: (tenant: string, message: any, options?: any) => Promise<any>;
   dwnIsRemoteMode?: boolean;
   dwnClearDelegateDecryptionKeys?: (delegateDid?: string) => void;
-  syncRegisterIdentity?: (params: any) => Promise<void>;
-  syncUnregisterIdentity?: (did: string) => Promise<void>;
-  syncUpdateIdentityOptions?: (params: any) => Promise<void>;
+  syncSetIdentityOptions?: (params: any) => Promise<void>;
+  syncRemoveIdentity?: (did: string) => Promise<void>;
   syncStartSync?: (params: any) => Promise<void>;
   syncStopSync?: (timeout: number) => Promise<void>;
   syncSync?: (direction: string) => Promise<void>;
@@ -201,9 +200,8 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     },
 
     sync: {
-      registerIdentity       : overrides.syncRegisterIdentity ?? (async (): Promise<void> => {}),
-      unregisterIdentity     : overrides.syncUnregisterIdentity ?? (async (): Promise<void> => {}),
-      updateIdentityOptions  : overrides.syncUpdateIdentityOptions ?? (async (): Promise<void> => {}),
+      setIdentityOptions     : overrides.syncSetIdentityOptions ?? (async (): Promise<void> => {}),
+      removeIdentity         : overrides.syncRemoveIdentity ?? (async (): Promise<void> => {}),
       startSync              : overrides.syncStartSync ?? (async (): Promise<void> => {}),
       stopSync               : overrides.syncStopSync ?? (async (): Promise<void> => {}),
       sync                   : overrides.syncSync ?? (async (): Promise<void> => {}),

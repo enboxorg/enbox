@@ -5,12 +5,14 @@ import type { DwnEndpointResolution } from '@enbox/dids';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { AuthState, ConnectionStatus } from '@enbox/auth';
 import type {
+  RemoteSyncStatus,
   ReplicationLinkSnapshot,
   SyncConnectivityState,
   SyncEngine,
   SyncEvent,
   SyncEventListener,
   SyncIdentityOptions,
+  SyncIdentityStatus,
 } from '@enbox/agent';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
@@ -82,6 +84,7 @@ type FakeSyncStatusEngine = {
   listenerCount(): number;
   optionUpdates: { did: string; options: SyncIdentityOptions }[];
   options?: SyncIdentityOptions;
+  remotes: RemoteSyncStatus[];
   readLinks(): Promise<ReplicationLinkSnapshot[]>;
   settledLinkReads: number;
   sync: SyncEngine;
@@ -101,30 +104,42 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
     listenerCount    : (): number => listeners.size,
     optionUpdates    : [],
     options          : { protocols: 'all' },
+    remotes          : [],
     readLinks        : async (): Promise<ReplicationLinkSnapshot[]> => state.links,
     settledLinkReads : 0,
     sync             : undefined as unknown as SyncEngine,
   };
   state.sync = {
     get connectivityState(): SyncConnectivityState { return state.connectivityState; },
-    getIdentityOptions  : async (): Promise<SyncIdentityOptions | undefined> => state.options,
-    getReplicationLinks : async (): Promise<ReplicationLinkSnapshot[]> => {
-      state.linkReads++;
-      try {
-        return await state.readLinks();
-      } finally {
-        state.settledLinkReads++;
-      }
+    getIdentityOptions    : async (): Promise<SyncIdentityOptions | undefined> => state.options,
+    getIdentitySyncStatus : async (): Promise<SyncIdentityStatus> => {
+      const links = await readLinks();
+      return identitySyncStatus(state.options, links, state.remotes);
     },
-    on: (listener: SyncEventListener): (() => void) => {
+    retryRemoteNow : async (): Promise<void> => {},
+    on             : (listener: SyncEventListener): (() => void) => {
       listeners.add(listener);
       return (): void => { listeners.delete(listener); };
     },
-    updateIdentityOptions: async ({ did, options }): Promise<void> => {
+    refreshIdentityRouting: async (did): Promise<void> => {
+      if (state.options !== undefined) {
+        state.optionUpdates.push({ did, options: state.options });
+      }
+    },
+    setIdentityOptions: async ({ did, options }): Promise<void> => {
       state.optionUpdates.push({ did, options });
       state.options = options;
     },
   } as SyncEngine;
+
+  async function readLinks(): Promise<ReplicationLinkSnapshot[]> {
+    state.linkReads++;
+    try {
+      return await state.readLinks();
+    } finally {
+      state.settledLinkReads++;
+    }
+  }
   return state;
 }
 
@@ -158,6 +173,37 @@ function serviceConfigNotice(author: string = OWNER_DID): SyncEvent {
 
 function readyDwn(endpoint = 'https://dwn.example', didUri = OWNER_DID): DwnEndpointResolution {
   return { status: 'ready', didUri, endpoints: [endpoint] };
+}
+
+function remoteStatus(overrides: Partial<RemoteSyncStatus> = {}): RemoteSyncStatus {
+  return {
+    tenantDid                : OWNER_DID,
+    remoteEndpoint           : 'https://dwn.example',
+    state                    : 'healthy',
+    connectivity             : 'online',
+    quotaBlockedMessageCount : 0,
+    failedMessageCount       : 0,
+    ...overrides,
+  };
+}
+
+function identitySyncStatus(
+  registration: SyncIdentityOptions | undefined,
+  links: ReplicationLinkSnapshot[] = [],
+  remotes: RemoteSyncStatus[] = [],
+): SyncIdentityStatus {
+  return {
+    registration,
+    health: {
+      connectivity             : 'unknown',
+      degradedLinkCount        : 0,
+      failedMessageCount       : 0,
+      quotaBlockedMessageCount : 0,
+      syncHealthy              : true,
+    },
+    links,
+    remotes,
+  };
 }
 
 /** Duck-typed AuthManager driven by a real AuthEventEmitter. */
@@ -195,6 +241,8 @@ describe('createConnectionStore()', () => {
     await testHarness.createAgentDid();
     getDwnEndpointStatus = sinon.stub(testHarness.agent.identity, 'getDwnEndpointStatus')
       .callsFake(async ({ didUri }): Promise<DwnEndpointResolution> => readyDwn(undefined, didUri));
+    sinon.stub(testHarness.agent.sync, 'getIdentitySyncStatus')
+      .resolves(identitySyncStatus({ delegateDid: DELEGATE_DID, protocols: 'all' }));
   });
 
   afterEach(() => {
@@ -349,8 +397,9 @@ describe('createConnectionStore()', () => {
       const engine = createSyncStatusEngine();
       engine.connectivityState = 'offline';
       const { store } = await connectWithSync(engine);
-      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('syncing'); });
-      expect(store.getSnapshot().sync?.connectivity).toBe('offline');
+      await waitFor(() => {
+        expect(store.getSnapshot().sync).toMatchObject({ state: 'syncing', connectivity: 'offline' });
+      });
       expect(Object.isFrozen(store.getSnapshot().sync)).toBe(true);
 
       engine.links = [
@@ -440,8 +489,7 @@ describe('createConnectionStore()', () => {
       const { store } = await connectWithSync(engine);
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('caught-up'); });
 
-      expect(store.getSnapshot().sync).toEqual({ state: 'caught-up', connectivity: 'unknown' });
-      expect(engine.linkReads).toBe(0);
+      expect(store.getSnapshot().sync).toEqual({ state: 'caught-up', connectivity: 'unknown', remotes: [] });
 
       engine.options = { protocols: 'all' };
       engine.emit({
@@ -450,11 +498,11 @@ describe('createConnectionStore()', () => {
         options   : engine.options,
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('syncing'); });
-      expect(engine.linkReads).toBe(1);
     });
 
     it('should surface local status-read failures without losing prior activity', async () => {
       const engine = createSyncStatusEngine();
+      engine.remotes = [remoteStatus()];
       engine.links = [syncLink({
         status         : 'live',
         connectivity   : 'online',
@@ -480,6 +528,7 @@ describe('createConnectionStore()', () => {
         lastActivityAt : '2026-07-29T11:00:00.000Z',
         error          : { message: 'local status unavailable' },
       });
+      expect(store.getSnapshot().sync?.remotes).toEqual([remoteStatus()]);
     });
 
     it('should ignore other identities and fence replaced and locked sessions', async () => {
@@ -556,6 +605,258 @@ describe('createConnectionStore()', () => {
   });
 
   describe('remote DWN status', () => {
+    it('should expose only current advertised remote health in DID-document order', async () => {
+      const engine = createSyncStatusEngine();
+      engine.remotes = [
+        remoteStatus({ remoteEndpoint: 'https://old.example' }),
+        remoteStatus({ remoteEndpoint: 'https://backup.example', state: 'degraded' }),
+        remoteStatus({
+          nextProbeAt    : '2026-07-29T12:00:00.000Z',
+          lastError      : 'Quota exceeded',
+          lastActivityAt : '2026-07-29T11:00:00.000Z',
+        }),
+      ];
+      getDwnEndpointStatus.resolves({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://dwn.example', 'https://backup.example'],
+      });
+
+      const { store } = await connectWithSync(engine);
+      await waitFor(() => { expect(store.getSnapshot().sync?.remotes).toHaveLength(2); });
+      const projected = store.getSnapshot().sync;
+
+      expect(projected?.remotes.map(({ remoteEndpoint }) => remoteEndpoint)).toEqual([
+        'https://dwn.example',
+        'https://backup.example',
+      ]);
+      expect(Object.isFrozen(projected?.remotes)).toBe(true);
+      expect(Object.isFrozen(projected?.remotes[0])).toBe(true);
+
+      const stable = store.getSnapshot();
+      const settledReads = engine.settledLinkReads;
+      engine.emit({ type: 'dead-letter:change', tenantDid: OWNER_DID });
+      await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
+      expect(store.getSnapshot()).toBe(stable);
+
+      engine.remotes = [remoteStatus()];
+      engine.emit({ type: 'dead-letter:change', tenantDid: OWNER_DID });
+      await waitFor(() => { expect(store.getSnapshot().sync?.remotes).toHaveLength(1); });
+    });
+
+    it('should freshly validate and retry only the exact still-advertised remote', async () => {
+      const engine = createSyncStatusEngine();
+      engine.remotes = [remoteStatus({ state: 'quota-blocked', quotaBlockedMessageCount: 1 })];
+      let resolveRetry!: () => void;
+      const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow').returns(
+        new Promise<void>((resolve) => { resolveRetry = resolve; }),
+      );
+      const { store } = await connectWithSync(engine);
+      await waitFor(() => { expect(store.getSnapshot().sync?.remotes).toHaveLength(1); });
+      let resolveStatus!: (links: ReplicationLinkSnapshot[]) => void;
+      const statusRead = new Promise<ReplicationLinkSnapshot[]>((resolve) => { resolveStatus = resolve; });
+      engine.readLinks = (): Promise<ReplicationLinkSnapshot[]> => statusRead;
+
+      const retrying = store.retryRemote('https://dwn.example');
+      await waitFor(() => { expect(retryRemoteNow.calledOnce).toBe(true); });
+      expect(store.getSnapshot().sync?.retryingRemoteEndpoint).toBe('https://dwn.example');
+      engine.remotes = [remoteStatus()];
+      resolveRetry();
+
+      let retrySettled = false;
+      void retrying.then((): void => { retrySettled = true; });
+      await Promise.resolve();
+      expect(retrySettled).toBe(false);
+      expect(store.getSnapshot().sync?.retryingRemoteEndpoint).toBe('https://dwn.example');
+      resolveStatus([]);
+      const retried = await retrying;
+
+      expect(retried.sync?.retryingRemoteEndpoint).toBeUndefined();
+      expect(retried.sync?.remotes[0]?.state).toBe('healthy');
+      expect(retryRemoteNow.firstCall.args).toEqual([OWNER_DID, 'https://dwn.example']);
+
+      getDwnEndpointStatus.resolves(readyDwn('https://replacement.example'));
+      await store.retryRemote('https://dwn.example');
+      expect(retryRemoteNow.calledOnce).toBe(true);
+      expect(store.getSnapshot().sync?.remotes).toEqual([]);
+
+      getDwnEndpointStatus.resolves(readyDwn());
+      retryRemoteNow.onSecondCall().rejects(new Error('retry failed'));
+      const failed = await store.retryRemote('https://dwn.example');
+      expect(failed.error?.message).toBe('retry failed');
+      expect(failed.sync?.retryingRemoteEndpoint).toBeUndefined();
+    });
+
+    it('should reconcile an external session end suppressed during endpoint refresh', async () => {
+      const engine = createSyncStatusEngine();
+      const lifetime = new AbortController();
+      const { auth, store } = await connectWithSync(engine, { signal: lifetime.signal });
+      getDwnEndpointStatus.resetHistory();
+
+      let resolveStatus!: (status: DwnEndpointResolution) => void;
+      getDwnEndpointStatus.returns(new Promise<DwnEndpointResolution>((resolve) => { resolveStatus = resolve; }));
+      const refreshing = store.refreshDwnEndpoints();
+      await waitFor(() => { expect(getDwnEndpointStatus.calledOnce).toBe(true); });
+
+      lifetime.abort();
+      auth.session = undefined;
+      auth.emitter.emit('session-end', { did: OWNER_DID });
+      expect(store.getSnapshot().phase).toBe('disconnecting');
+
+      resolveStatus(readyDwn());
+      const snapshot = await refreshing;
+      expect(snapshot.phase).toBe('disconnected');
+      expect(snapshot.session).toBeUndefined();
+      expect(snapshot.enbox).toBeUndefined();
+    });
+
+    it('should map replacement readiness failure suppressed during a remote retry', async () => {
+      const ensureReady = stubProtocolReadiness();
+      ensureReady.onSecondCall().rejects(new Error('replacement not ready'));
+      const engine = createSyncStatusEngine();
+      const lifetime = new AbortController();
+      let resolveRetry!: () => void;
+      const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow').returns(
+        new Promise<void>((resolve) => { resolveRetry = resolve; }),
+      );
+      const session = createSession({
+        agent       : agentWithSync(engine.sync),
+        delegateDid : DELEGATE_DID,
+        signal      : lifetime.signal,
+      });
+      const auth = createFakeAuth();
+      auth.connect.callsFake(async (): Promise<AuthSession> => {
+        auth.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(auth) });
+      await store.connect();
+
+      const retrying = store.retryRemote('https://dwn.example');
+      await waitFor(() => { expect(retryRemoteNow.calledOnce).toBe(true); });
+
+      const replacementEngine = createSyncStatusEngine();
+      const replacementSession = createSession({
+        agent : agentWithSync(replacementEngine.sync),
+        did   : 'did:dht:replacement',
+        name  : 'Replacement identity',
+      });
+      lifetime.abort();
+      auth.session = replacementSession;
+      auth.emitter.emit('session-start', {});
+      resolveRetry();
+
+      const snapshot = await retrying;
+      expect(snapshot.phase).toBe('error');
+      expect(snapshot.error?.message).toBe('replacement not ready');
+      expect(snapshot.session).toBeUndefined();
+      expect(snapshot.enbox).toBeUndefined();
+      expect(auth.session).toBe(replacementSession);
+    });
+
+    it('should not retry after the final coalesced endpoint resolution fails', async () => {
+      const engine = createSyncStatusEngine();
+      const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow');
+      const { store } = await connectWithSync(engine);
+      getDwnEndpointStatus.resetHistory();
+      sinon.stub(console, 'error');
+
+      let resolveFirst!: (status: DwnEndpointResolution) => void;
+      getDwnEndpointStatus.onFirstCall().returns(
+        new Promise<DwnEndpointResolution>((resolve) => { resolveFirst = resolve; }),
+      );
+      getDwnEndpointStatus.onSecondCall().rejects(new Error('resolver unavailable'));
+
+      let requestedTrailingRefresh = false;
+      store.subscribe((snapshot): void => {
+        if (!requestedTrailingRefresh
+          && snapshot.remoteDwn?.status === 'ready'
+          && snapshot.remoteDwn.endpoints.some((endpoint): boolean => endpoint === 'https://backup.example')) {
+          requestedTrailingRefresh = true;
+          engine.emit(serviceConfigNotice());
+        }
+      });
+      const retrying = store.retryRemote('https://dwn.example');
+      await waitFor(() => { expect(getDwnEndpointStatus.calledOnce).toBe(true); });
+      resolveFirst({
+        status    : 'ready',
+        didUri    : OWNER_DID,
+        endpoints : ['https://dwn.example', 'https://backup.example'],
+      });
+
+      const snapshot = await retrying;
+      expect(requestedTrailingRefresh).toBe(true);
+      expect(getDwnEndpointStatus.callCount).toBe(2);
+      expect(retryRemoteNow.called).toBe(false);
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.error?.message).toBe('resolver unavailable');
+      expect(snapshot.sync?.retryingRemoteEndpoint).toBeUndefined();
+    });
+
+    it('should preserve a reentrant disconnect as the authoritative action', async () => {
+      const engine = createSyncStatusEngine();
+      const { store } = await connectWithSync(engine);
+      let disconnecting: Promise<ConnectionSnapshot> | undefined;
+      store.subscribe((snapshot): void => {
+        if (snapshot.sync?.retryingRemoteEndpoint !== undefined && disconnecting === undefined) {
+          disconnecting = store.disconnect();
+        }
+      });
+
+      const retried = await store.retryRemote('https://dwn.example');
+      const disconnected = await disconnecting;
+
+      expect(retried).toBe(disconnected);
+      expect(disconnected?.phase).toBe('disconnected');
+    });
+
+    it('should preserve a reentrant disconnect when endpoint refresh clears an error', async () => {
+      const engine = createSyncStatusEngine();
+      const { auth, store } = await connectWithSync(engine);
+      auth.refresh.rejects(new Error('refresh failed'));
+      await store.refresh({ protocols: PROTOCOLS });
+      expect(store.getSnapshot().error?.message).toBe('refresh failed');
+
+      let disconnecting: Promise<ConnectionSnapshot> | undefined;
+      store.subscribe((snapshot): void => {
+        if (snapshot.error === undefined && disconnecting === undefined) {
+          disconnecting = store.disconnect();
+        }
+      });
+
+      const refreshed = await store.refreshDwnEndpoints();
+      const disconnected = await disconnecting;
+
+      expect(refreshed).toBe(disconnected);
+      expect(disconnected?.phase).toBe('disconnected');
+    });
+
+    it('should settle a superseded retry with the pending disconnect outcome', async () => {
+      const engine = createSyncStatusEngine();
+      let resolveRetry!: () => void;
+      const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow').returns(
+        new Promise<void>((resolve) => { resolveRetry = resolve; }),
+      );
+      const { auth, store } = await connectWithSync(engine);
+      let resolveDisconnect!: () => void;
+      auth.disconnect.returns(new Promise<void>((resolve) => { resolveDisconnect = resolve; }));
+
+      const retrying = store.retryRemote('https://dwn.example');
+      await waitFor(() => { expect(retryRemoteNow.calledOnce).toBe(true); });
+      const disconnecting = store.disconnect();
+      resolveRetry();
+
+      let retrySettled = false;
+      void retrying.then((): void => { retrySettled = true; });
+      await Promise.resolve();
+      expect(retrySettled).toBe(false);
+
+      resolveDisconnect();
+      const disconnected = await disconnecting;
+      expect(await retrying).toBe(disconnected);
+      expect(disconnected.phase).toBe('disconnected');
+    });
+
     it('should seed from a fresh resolution and retarget sync only for semantic changes', async () => {
       const engine = createSyncStatusEngine();
       const { store } = await connectWithSync(engine);
@@ -581,24 +882,49 @@ describe('createConnectionStore()', () => {
 
     it('should retry unchanged routing after an update failure', async () => {
       const engine = createSyncStatusEngine();
-      const updateIdentityOptions = sinon.stub(engine.sync, 'updateIdentityOptions');
-      updateIdentityOptions.onFirstCall().rejects(new Error('routing unavailable'));
-      updateIdentityOptions.onSecondCall().callsFake(async ({ did, options }): Promise<void> => {
-        engine.optionUpdates.push({ did, options });
-        engine.options = options;
+      const refreshIdentity = sinon.stub(engine.sync, 'refreshIdentityRouting');
+      refreshIdentity.onFirstCall().rejects(new Error('routing unavailable'));
+      refreshIdentity.onSecondCall().callsFake(async (did): Promise<void> => {
+        if (engine.options !== undefined) {
+          engine.optionUpdates.push({ did, options: engine.options });
+        }
       });
       sinon.stub(console, 'error');
 
       const { store } = await connectWithSync(engine);
       const initial = store.getSnapshot();
-      expect(updateIdentityOptions.callCount).toBe(1);
+      expect(refreshIdentity.callCount).toBe(1);
 
       const retried = await store.refreshDwnEndpoints();
       expect(retried).toBe(initial);
-      expect(updateIdentityOptions.callCount).toBe(2);
+      expect(refreshIdentity.callCount).toBe(2);
 
       await store.refreshDwnEndpoints();
-      expect(updateIdentityOptions.callCount).toBe(2);
+      expect(refreshIdentity.callCount).toBe(2);
+    });
+
+    it('should surface routing failures before retrying an endpoint', async () => {
+      const engine = createSyncStatusEngine();
+      const { store } = await connectWithSync(engine);
+      const refreshIdentity = sinon.stub(engine.sync, 'refreshIdentityRouting').rejects(new Error('routing unavailable'));
+      const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow');
+      sinon.stub(console, 'error');
+      getDwnEndpointStatus.resolves(readyDwn('https://new-dwn.example'));
+
+      const failedRefresh = await store.refreshDwnEndpoints();
+      expect(failedRefresh.error?.message).toBe('routing unavailable');
+
+      const failedRetry = await store.retryRemote('https://new-dwn.example');
+      expect(failedRetry.error?.message).toBe('routing unavailable');
+      expect(failedRetry.sync?.retryingRemoteEndpoint).toBeUndefined();
+      expect(retryRemoteNow.called).toBe(false);
+      expect(refreshIdentity.callCount).toBe(2);
+
+      refreshIdentity.resolves();
+      const recovered = await store.retryRemote('https://new-dwn.example');
+      expect(recovered.error).toBeUndefined();
+      expect(refreshIdentity.callCount).toBe(3);
+      expect(retryRemoteNow.calledOnceWithExactly(OWNER_DID, 'https://new-dwn.example')).toBe(true);
     });
 
     it('should expose missing and failed resolution states without dropping routing on transient failure', async () => {

@@ -438,7 +438,7 @@ describe('E2E Multi-Agent Sync', () => {
       const recordId = writeResult.message!.recordId;
 
       // Primary agent registers Alice and syncs (push to remote).
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
       // Verify record is on the remote DWN.
@@ -453,7 +453,7 @@ describe('E2E Multi-Agent Sync', () => {
       expect(remoteRecordIds).toContain(recordId);
 
       // Device agent registers Alice with protocol-scoped delegate sync.
-      await deviceHarness.agent.sync.registerIdentity({
+      await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
           protocols   : [protocolNotes.protocol],
@@ -509,11 +509,11 @@ describe('E2E Multi-Agent Sync', () => {
       expect(profileWrite.reply.status.code).toBe(202);
 
       // Push both to remote.
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
       // Device agent has grants ONLY for notes protocol.
-      await deviceHarness.agent.sync.registerIdentity({
+      await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
           protocols   : [protocolNotes.protocol],
@@ -559,7 +559,7 @@ describe('E2E Multi-Agent Sync', () => {
     });
 
     it('pushes delegated local writes without the owner signing key', async () => {
-      await deviceHarness.agent.sync.registerIdentity({
+      await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
           protocols   : [protocolNotes.protocol],
@@ -670,10 +670,10 @@ describe('E2E Multi-Agent Sync', () => {
       expect(writeResult.reply.status.code).toBe(202);
       const recordId = writeResult.message!.recordId;
 
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
-      await deviceHarness.agent.sync.registerIdentity({
+      await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
           protocols   : [encryptedProtocol.protocol],
@@ -871,10 +871,10 @@ describe('E2E Multi-Agent Sync', () => {
       expect(writeResult.reply.status.code).toBe(202);
       const recordId = writeResult.message!.recordId;
 
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
-      await deviceHarness.agent.sync.registerIdentity({
+      await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
           protocols   : [encryptedProtocol.protocol],
@@ -1085,7 +1085,7 @@ describe('E2E Multi-Agent Sync', () => {
       });
       expect(chatWrite.reply.status.code).toBe(202);
 
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
       const remoteDeliveryQuery = await deviceHarness.agent.dwn.sendRequest({
@@ -1121,7 +1121,7 @@ describe('E2E Multi-Agent Sync', () => {
       expect(remoteFeedQuery.reply.status.code).toBe(200);
       expect(remoteFeedQuery.reply.entries?.some(isThreadDeliveryFeedEntry)).toBe(true);
 
-      await deviceHarness.agent.sync.registerIdentity({
+      await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
           protocols   : [chatProtocol.protocol],
@@ -1288,8 +1288,8 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('should deliver a record in real-time from primary to device via remote DWN', async () => {
       // Register identities on both agents.
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
-      await deviceHarness.agent.sync.registerIdentity({
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
           protocols   : [protocolNotes.protocol],
@@ -1340,8 +1340,8 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('should handle multiple sequential writes in live mode', async () => {
       // Register and start live sync.
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
-      await deviceHarness.agent.sync.registerIdentity({
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
           protocols   : [protocolNotes.protocol],
@@ -1407,7 +1407,7 @@ describe('E2E Multi-Agent Sync', () => {
     });
 
     it('should drain an in-flight durable push pass before unregistering its identity', async () => {
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise<void>((resolve) => { setTimeout(resolve, 500); });
 
@@ -1446,7 +1446,7 @@ describe('E2E Multi-Agent Sync', () => {
         expect(writeResult.reply.status.code).toBe(202);
         await pushStarted.promise;
 
-        unregisterPromise = primaryHarness.agent.sync.unregisterIdentity(alice.did.uri);
+        unregisterPromise = primaryHarness.agent.sync.removeIdentity(alice.did.uri);
         const unregisterState = await Promise.race([
           unregisterPromise.then((): 'completed' => 'completed'),
           new Promise<'pending'>((resolve) => { setTimeout((): void => { resolve('pending'); }, 50); }),
@@ -1477,8 +1477,8 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('should only deliver protocol-scoped records in live mode', async () => {
       // Register primary with full sync, device with only notes protocol.
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
-      await deviceHarness.agent.sync.registerIdentity({
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
           protocols   : [protocolNotes.protocol],
@@ -1618,7 +1618,7 @@ describe('E2E Multi-Agent Sync', () => {
     });
 
     it('should deliver an anyone-create write by a foreign author in real time', async () => {
-      await primaryHarness.agent.sync.registerIdentity({
+      await primaryHarness.agent.sync.setIdentityOptions({
         did     : carol.did.uri,
         options : { protocols: [protocolInbox.protocol] },
       });
@@ -1704,7 +1704,7 @@ describe('E2E Multi-Agent Sync', () => {
       // registered later (on wallet open), relying on hot-add semantics.
       await primaryHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise(r => setTimeout(r, 300));
-      await primaryHarness.agent.sync.registerIdentity({
+      await primaryHarness.agent.sync.setIdentityOptions({
         did     : carol.did.uri,
         options : { protocols: [protocolInbox.protocol] },
       });

@@ -236,7 +236,7 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
     }
 
     // Registered once; each seedThreadFor pushes Alice's new records to the anchor.
-    await ownerHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+    await ownerHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
   });
 
   afterAll(async () => {

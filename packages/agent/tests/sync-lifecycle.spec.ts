@@ -267,7 +267,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const did = 'did:example:alice';
     const releaseTask = createDeferred();
     const taskStarted = createDeferred();
-    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
 
     const task = engine['_lifecycle'].runBackgroundTask(async (): Promise<void> => {
       taskStarted.resolve();
@@ -310,7 +310,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const did = 'did:example:alice';
     expect(engine['_lifecycle'].tryAcquireSync()).toBe(true);
 
-    const registration = engine.registerIdentity(
+    const registration = engine.setIdentityOptions(
       { did, options: { protocols: 'all' } },
       { timeout: 100 },
     );
@@ -322,7 +322,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await clock.tickAsync(0);
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
 
-    await engine.registerIdentity({ did, options: { protocols: 'all' } }, { timeout: 100 });
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } }, { timeout: 100 });
     expect(await engine.getIdentityOptions(did)).toBeDefined();
   });
 
@@ -339,7 +339,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     await lockStarted.promise;
 
-    const registration = engine.registerIdentity(
+    const registration = engine.setIdentityOptions(
       { did, options: { protocols: 'all' } },
       { timeout: 100 },
     );
@@ -352,7 +352,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await clock.tickAsync(0);
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
 
-    await engine.registerIdentity({ did, options: { protocols: 'all' } }, { timeout: 100 });
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } }, { timeout: 100 });
     expect(await engine.getIdentityOptions(did)).toBeDefined();
   });
 
@@ -367,7 +367,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await releaseValidation.promise;
     });
 
-    const registration = engine.registerIdentity(
+    const registration = engine.setIdentityOptions(
       { did, options: { protocols: 'all' } },
       { timeout: 100 },
     );
@@ -382,7 +382,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await clock.tickAsync(0);
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
 
-    await engine.registerIdentity({ did, options: { protocols: 'all' } }, { timeout: 100 });
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } }, { timeout: 100 });
     expect(await engine.getIdentityOptions(did)).toBeDefined();
   });
 
@@ -392,7 +392,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const did = 'did:example:alice';
     const releaseTask = createDeferred();
     const taskStarted = createDeferred();
-    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
 
     const taskGroup = engine['_lifecycle'].getIdentityTaskGroup(did);
     const settleStarted = createDeferred();
@@ -407,7 +407,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     await taskStarted.promise;
 
-    const unregister = engine.unregisterIdentity(did, { timeout: 100 });
+    const unregister = engine.removeIdentity(did, { timeout: 100 });
     const unregisterOutcome = unregister.catch((error: unknown): unknown => error);
     await settleStarted.promise;
     await clock.tickAsync(100);
@@ -420,7 +420,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await clock.tickAsync(0);
     expect(await engine.getIdentityOptions(did)).toBeDefined();
 
-    await engine.unregisterIdentity(did, { timeout: 100 });
+    await engine.removeIdentity(did, { timeout: 100 });
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
   });
 
@@ -428,7 +428,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
     const did = 'did:example:alice';
-    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
 
     const identityStore = engine['_identityStore'];
     const getIdentity = identityStore.get.bind(identityStore);
@@ -447,7 +447,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine as never, 'pruneSupersededDurableLinksForIdentity').resolves();
 
     let unregisterSettled = false;
-    const unregister = engine.unregisterIdentity(did, { timeout: 100 }).then((): void => {
+    const unregister = engine.removeIdentity(did, { timeout: 100 }).then((): void => {
       unregisterSettled = true;
     });
     await clock.tickAsync(99);
@@ -472,7 +472,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const updatedOptions = { protocols: 'all' as const, delegateDid: 'did:example:delegate' };
     const releaseTask = createDeferred();
     const taskStarted = createDeferred();
-    await engine.registerIdentity({ did, options: oldOptions });
+    await engine.setIdentityOptions({ did, options: oldOptions });
     sinon.stub(getScopeClosureValidator(engine), 'validateClosure').resolves();
     sinon.stub(engine as never, 'tryPruneSupersededDurableLinksForRegisteredIdentity').resolves();
 
@@ -489,7 +489,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     await taskStarted.promise;
 
-    const update = engine.updateIdentityOptions(
+    const update = engine.setIdentityOptions(
       { did, options: updatedOptions },
       { timeout: 100 },
     );
@@ -505,7 +505,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await clock.tickAsync(0);
     expect(await engine.getIdentityOptions(did)).toEqual(oldOptions);
 
-    await engine.updateIdentityOptions({ did, options: updatedOptions }, { timeout: 100 });
+    await engine.setIdentityOptions({ did, options: updatedOptions }, { timeout: 100 });
     expect(await engine.getIdentityOptions(did)).toEqual(updatedOptions);
   });
 
@@ -770,7 +770,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(engine['_linkControllers'].size).toBe(0);
   });
 
-  it('should serialize competing registrations for the same identity', async () => {
+  it('should serialize competing option sets for the same identity', async () => {
     const engine = new SyncEngineLevel({ db });
     const validationStarted = createDeferred();
     const releaseValidation = createDeferred();
@@ -793,26 +793,24 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     validateScope.onSecondCall().resolves();
 
-    const firstRegistration = engine.registerIdentity({
+    const firstSet = engine.setIdentityOptions({
       did     : 'did:example:alice',
-      options : { protocols: 'all' },
+      options : { protocols: ['old'] },
     });
     await validationStarted.promise;
 
-    const competingRegistration = engine.registerIdentity({
+    const competingSet = engine.setIdentityOptions({
       did     : 'did:example:alice',
-      options : { protocols: 'all' },
+      options : { protocols: ['new'] },
     });
-    const competingOutcome = competingRegistration.then(
-      (): Error | undefined => undefined,
-      (error: Error): Error => error,
-    );
     await Promise.resolve();
 
     firstRegistrationReleased = true;
     releaseValidation.resolve();
-    await firstRegistration;
-    expect((await competingOutcome)?.message).toContain('is already registered');
+    await firstSet;
+    await competingSet;
+
+    expect(await readIdentityOptions('did:example:alice')).toEqual({ protocols: ['new'] });
   });
 
   it('should wait for a lock-owning sync before starting an identity mutation', async () => {
@@ -829,7 +827,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
     const syncPromise = engine.sync();
     await syncStarted.promise;
-    const registrationPromise = engine.registerIdentity({
+    const registrationPromise = engine.setIdentityOptions({
       did     : 'did:example:alice',
       options : { protocols: 'all' },
     });
@@ -866,7 +864,7 @@ describe('SyncEngineLevel lifecycle', () => {
       tenantDid          : did,
     };
 
-    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
     engine['activateLink'](linkKey, link as never);
     sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
@@ -889,7 +887,7 @@ describe('SyncEngineLevel lifecycle', () => {
     );
     await repairStarted.promise;
 
-    const unregisterPromise = engine.unregisterIdentity(did);
+    const unregisterPromise = engine.removeIdentity(did);
     await removeStarted.promise;
 
     try {
@@ -981,7 +979,7 @@ describe('SyncEngineLevel lifecycle', () => {
       tenantDid          : did,
     };
 
-    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
     const controller = engine['activateLink'](linkKey, link as never);
     controller.markReplicationReady();
@@ -1005,7 +1003,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await reconcileStarted.promise;
 
     const updatedOptions = { protocols: 'all' as const, delegateDid: 'did:example:delegate' };
-    const updatePromise = engine.updateIdentityOptions({ did, options: updatedOptions });
+    const updatePromise = engine.setIdentityOptions({ did, options: updatedOptions });
     await removeStarted.promise;
 
     try {
@@ -1044,7 +1042,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     controller.markReplicationReady();
 
-    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
     sinon.stub(engine as never, 'reconcileOwnedTarget').callsFake(async (): Promise<Record<string, unknown>> => {
       pushStarted.resolve();
@@ -1063,7 +1061,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].resume(controller));
     await pushStarted.promise;
 
-    const unregisterPromise = engine.unregisterIdentity(did);
+    const unregisterPromise = engine.removeIdentity(did);
     await removeStarted.promise;
 
     try {

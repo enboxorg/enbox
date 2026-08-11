@@ -64,6 +64,8 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint, tenantDid: 'did:example:alice' });
     await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint, tenantDid: 'did:example:bob' });
 
+    const events: unknown[] = [];
+    const unsubscribe = syncEngine.on((event): void => { events.push(event); });
     const internal = syncEngine as unknown as {
       trackRemoteFeedAppliedCids(messageCids: string[], target: unknown): Promise<void>;
     };
@@ -75,18 +77,29 @@ describe('SyncEngineLevel dead letter tracking', () => {
       projectionId       : 'projection',
       scope              : { kind: 'full' },
     });
+    unsubscribe();
 
     expect(await syncEngine.getDeadLetters('did:example:alice')).toHaveLength(0);
     expect(await syncEngine.getDeadLetters('did:example:bob')).toMatchObject([
       { messageCid: 'cid-shared', remoteEndpoint },
     ]);
+    expect(events).toContainEqual({
+      type: 'dead-letter:change', tenantDid: 'did:example:alice', remoteEndpoint,
+    });
   });
 
   it('should suppress only the expected database-close race during internal deletion', async () => {
     const del = sinon.stub();
+    const get = sinon.stub().resolves(JSON.stringify({
+      errorDetail    : 'failure',
+      failedAt       : new Date().toISOString(),
+      messageCid     : 'cid',
+      remoteEndpoint : 'https://dwn.example',
+      tenantDid      : 'did:example:alice',
+    }));
     const internal = new SyncEngineLevel({
       db: {
-        sublevel: (): { del: typeof del } => ({ del }),
+        sublevel: (): { del: typeof del; get: typeof get } => ({ del, get }),
       } as never,
     }) as unknown as {
       clearDeadLetterForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void>;
@@ -128,6 +141,29 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     expect(await syncEngine.getDeadLetters('did:example:alice')).toHaveLength(0);
     expect(await syncEngine.getDeadLetters('did:example:bob')).toHaveLength(1);
+  });
+
+  it('should emit wakes only for durable dead-letter changes', async () => {
+    const events: unknown[] = [];
+    const unsubscribe = syncEngine.on((event): void => { events.push(event); });
+
+    await recordDeadLetter({ messageCid: 'cid', tenantDid: 'did:example:alice' });
+    await syncEngine.clearDeadLetter('cid');
+    await syncEngine.clearDeadLetter('cid');
+    unsubscribe();
+
+    expect(events).toEqual([
+      {
+        type           : 'dead-letter:change',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example',
+      },
+      {
+        type           : 'dead-letter:change',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : undefined,
+      },
+    ]);
   });
 
   it('should report unhealthy sync while failures are recorded', async () => {
@@ -219,7 +255,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await store.put('did:example:alice', 'cid-1', remoteEndpoint, deferredState());
     await store.put('did:example:bob', 'cid-2', remoteEndpoint, deferredState());
 
-    await syncEngine.unregisterIdentity('did:example:alice');
+    await syncEngine.removeIdentity('did:example:alice');
 
     expect(await store.get('did:example:alice', 'cid-1', remoteEndpoint)).toBeUndefined();
     expect(await store.get('did:example:bob', 'cid-2', remoteEndpoint)).toBeDefined();
@@ -245,7 +281,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await gate.started;
 
     let unregisterCompleted = false;
-    const unregister = unregisterEngine.unregisterIdentity(tenantDid).then((): void => {
+    const unregister = unregisterEngine.removeIdentity(tenantDid).then((): void => {
       unregisterCompleted = true;
     });
     await Promise.resolve();
@@ -271,7 +307,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     const store = deferredPullStoreOf(staleEngine);
     await registerTenant(tenantDid);
 
-    await unregisterEngine.unregisterIdentity(tenantDid);
+    await unregisterEngine.removeIdentity(tenantDid);
 
     const staleInternal = staleEngine as unknown as {
       tryRetireDeferredPull(
@@ -351,11 +387,11 @@ describe('SyncEngineLevel dead letter tracking', () => {
       await originalSet(did, options);
     });
 
-    const unregister = unregisterEngine.unregisterIdentity(tenantDid);
+    const unregister = unregisterEngine.removeIdentity(tenantDid);
     await sweepStarted.promise;
 
     let registerCompleted = false;
-    const register = registerEngine.registerIdentity({ did: tenantDid, options: { protocols: 'all' } })
+    const register = registerEngine.setIdentityOptions({ did: tenantDid, options: { protocols: 'all' } })
       .then((): void => { registerCompleted = true; });
 
     // Give the re-registration ample time to finish if it were NOT queued on
@@ -392,7 +428,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     const deleteLink = sinon.stub(replicationLinkStore, 'deleteLink').rejects(new Error('link delete failed'));
 
-    await expect(syncEngine.unregisterIdentity(tenantDid)).rejects.toThrow('link delete failed');
+    await expect(syncEngine.removeIdentity(tenantDid)).rejects.toThrow('link delete failed');
     // Durable-link pruning precedes the identity-marker commit point: a
     // failed prune leaves the registration intact, so the paused link cannot
     // be orphaned onto a same-scope re-registration (where supersession
@@ -400,7 +436,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     expect(await syncEngine.getIdentityOptions(tenantDid)).toBeDefined();
 
     deleteLink.restore();
-    await syncEngine.unregisterIdentity(tenantDid);
+    await syncEngine.removeIdentity(tenantDid);
 
     expect(await syncEngine.getIdentityOptions(tenantDid)).toBeUndefined();
     expect(await replicationLinkStore.getAllLinks()).toEqual([]);
@@ -415,14 +451,14 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     const deleteForTenant = sinon.stub(store, 'deleteForTenant').rejects(new Error('sweep failed'));
 
-    await expect(syncEngine.unregisterIdentity(tenantDid)).rejects.toThrow('sweep failed');
+    await expect(syncEngine.removeIdentity(tenantDid)).rejects.toThrow('sweep failed');
     // The identity marker is the commit point: a failed tenant sweep leaves
     // the registration intact, so no re-registration can inherit the aged
     // deferral — the caller simply retries the unregister.
     expect(await syncEngine.getIdentityOptions(tenantDid)).toBeDefined();
 
     deleteForTenant.restore();
-    await syncEngine.unregisterIdentity(tenantDid);
+    await syncEngine.removeIdentity(tenantDid);
 
     expect(await syncEngine.getIdentityOptions(tenantDid)).toBeUndefined();
     expect(await store.get(tenantDid, 'cid-1', remoteEndpoint)).toBeUndefined();

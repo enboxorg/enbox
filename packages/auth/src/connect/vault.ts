@@ -228,7 +228,7 @@ export async function vaultConnect(
 
   // Register the new identity DID as a tenant and for sync.
   // Tenant registration must come before sync registration — with live
-  // sync active, registerIdentity hot-adds a subscription that needs
+  // sync active, setIdentityOptions hot-adds a subscription that needs
   // the DID to be a recognised tenant on the remote DWN.
   if (isNewIdentity && ctx.registration) {
     const identityDwnEndpoints = await userAgent.identity.getDwnEndpoints({ didUri: connectedDid });

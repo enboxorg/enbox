@@ -366,8 +366,8 @@ describe('SyncEngineLevel — followed sources', () => {
       await waitFor(() => events.includes(undefined));
       expect(events).toContain(undefined);
     } finally {
-      (first as any).closeFollowedSourceWakePublisher();
-      secondInternal.closeFollowedSourceWakePublisher();
+      (first as any).closeWakePublishers();
+      secondInternal.closeWakePublishers();
     }
   });
 
@@ -437,8 +437,8 @@ describe('SyncEngineLevel — followed sources', () => {
 
       expect(events.at(-1)).toEqual({ acceptanceId: replacement.acceptanceId, id: followed.id });
     } finally {
-      (first as any).closeFollowedSourceWakePublisher();
-      (second as any).closeFollowedSourceWakePublisher();
+      (first as any).closeWakePublishers();
+      (second as any).closeWakePublishers();
     }
   });
 
@@ -929,7 +929,7 @@ describe('SyncEngineLevel — followed sources', () => {
       };
     });
 
-    await engine.updateIdentityOptions({ did: actorDid, options });
+    await engine.setIdentityOptions({ did: actorDid, options });
 
     expect(initialize.calledOnce).toBe(true);
     expect(initialize.firstCall.args[0]).toMatchObject({ delegateDid });
@@ -971,7 +971,7 @@ describe('SyncEngineLevel — followed sources', () => {
       durableLinkIdentityKey : target.authorizationEpoch,
     });
 
-    await engine.updateIdentityOptions({
+    await engine.setIdentityOptions({
       did     : actorDid,
       options : { delegateDid, protocols: [PROTOCOL] },
     });
@@ -1032,7 +1032,7 @@ describe('SyncEngineLevel — followed sources', () => {
     controller.markReplicationReady();
     (engine as any)._runtime = new SyncRuntime(true);
 
-    await engine.unregisterIdentity(actorDid);
+    await engine.removeIdentity(actorDid);
 
     expect(await engine.getIdentityOptions(actorDid)).toBeUndefined();
     expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
@@ -1063,7 +1063,7 @@ describe('SyncEngineLevel — followed sources', () => {
     link.pull.contiguousAppliedToken = checkpoint;
     await internal.replicationLinkStore.persistCheckpoint(link, 'pull');
 
-    await engine.unregisterIdentity(SOURCE_DID);
+    await engine.removeIdentity(SOURCE_DID);
 
     expect(await engine.getIdentityOptions(SOURCE_DID)).toBeUndefined();
     expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{

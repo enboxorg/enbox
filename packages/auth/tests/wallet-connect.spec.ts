@@ -657,11 +657,11 @@ describe('walletConnect', () => {
     });
 
     const agent = createMockAgent({
-      firstLaunch          : async () => false,
-      identityImport       : async () => identity,
-      didDelete            : async (params: any) => { deletedDids.push(params.didUri); },
-      identityDelete       : async (params: any) => { deletedIdentities.push(params.didUri); },
-      syncRegisterIdentity : async () => { throw new Error('sync reg failed'); },
+      firstLaunch            : async () => false,
+      identityImport         : async () => identity,
+      didDelete              : async (params: any) => { deletedDids.push(params.didUri); },
+      identityDelete         : async (params: any) => { deletedIdentities.push(params.didUri); },
+      syncSetIdentityOptions : async () => { throw new Error('sync reg failed'); },
     });
 
     // Provide a grant so connectedProtocols is non-empty and sync registration is attempted.
@@ -694,11 +694,11 @@ describe('walletConnect', () => {
     });
 
     const agent = createMockAgent({
-      firstLaunch          : async () => false,
-      identityImport       : async () => identity,
-      didDelete            : async () => { throw new Error('DID delete failed'); },
-      identityDelete       : async () => { throw new Error('identity delete failed'); },
-      syncRegisterIdentity : async () => { throw new Error('trigger cleanup'); },
+      firstLaunch            : async () => false,
+      identityImport         : async () => identity,
+      didDelete              : async () => { throw new Error('DID delete failed'); },
+      identityDelete         : async () => { throw new Error('identity delete failed'); },
+      syncSetIdentityOptions : async () => { throw new Error('trigger cleanup'); },
     });
 
     // Provide a Messages.Read grant so sync registration is attempted.
