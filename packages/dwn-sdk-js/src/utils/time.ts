@@ -78,6 +78,26 @@ export class Time {
   }
 
   /**
+   * Creates the later of wall-clock now and the first DWN timestamp after the supplied floor.
+   * @param floorTimestamp The exclusive timestamp floor.
+   * @param nowMillis An epoch-millisecond wall-clock value. Defaults to `Date.now()`.
+   */
+  public static createTimestampAfter(floorTimestamp: string, nowMillis: number = Date.now()): string {
+    const floor = Time.parseTimestamp(floorTimestamp);
+    if (floor === undefined) {
+      throw new DwnError(DwnErrorCode.TimestampInvalid, `Invalid timestamp: ${floorTimestamp}`);
+    }
+
+    const fraction = Number(floorTimestamp.slice(20, 26));
+    const nextFloorTimestamp = fraction === 999_999
+      ? Time.formatUtcTimestamp(floor.epochMilliseconds + 1, 0)
+      : `${floorTimestamp.slice(0, 20)}${Time.pad(fraction + 1, 6)}Z`;
+    const nowTimestamp = Time.formatUtcTimestamp(nowMillis, 0);
+
+    return nextFloorTimestamp > nowTimestamp ? nextFloorTimestamp : nowTimestamp;
+  }
+
+  /**
    * Validates that the provided timestamp is a DWN-compatible UTC timestamp.
    * @param timestamp the timestamp to validate
    * @throws DwnError if timestamp is invalid
@@ -106,11 +126,15 @@ export class Time {
   }
 
   private static formatUtcTimestamp(epochMilliseconds: number, microsecond: number): string {
-    if (!Number.isFinite(epochMilliseconds)) {
-      throw new RangeError('timestamp is outside the supported Date range');
+    if (!Number.isSafeInteger(epochMilliseconds)) {
+      throw new RangeError('timestamp epoch milliseconds must be a finite safe integer');
     }
 
     const date = new Date(epochMilliseconds);
+    if (Number.isNaN(date.getTime())) {
+      throw new RangeError('timestamp is outside the supported Date range');
+    }
+
     const year = date.getUTCFullYear();
     if (year < 0 || year > 9999) {
       throw new RangeError('timestamp year must be between 0000 and 9999');
