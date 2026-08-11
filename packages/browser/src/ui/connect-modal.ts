@@ -187,7 +187,10 @@ export interface ConnectModalOptions {
   /** Icon URL of the requesting application. */
   appIcon?: string;
 
-  /** Stable application identifier hint available to the wallet during approval. */
+  /**
+   * Stable application identifier hint available to the wallet during approval.
+   * Defaults to the browser's canonical origin.
+   */
   applicationId?: string;
 
   /** Wallet profile DID that a refresh must renew. */
@@ -229,17 +232,7 @@ export interface ConnectModalDeps {
   runRelay: typeof runRelayConnect;
 
   /** Runs one popup handshake (browser path); must open the popup synchronously. */
-  runPopup: (options: {
-    walletUrl: string;
-    permissionRequests: ConnectPermissionRequest[];
-    appName: string;
-    appIcon?: string;
-    applicationId?: string;
-    timeoutMs?: number;
-    delegatePortableDid?: PortableDid;
-    requestType?: ConnectRequestType;
-    expectedProviderDid?: string;
-  }) => Promise<ConnectResult | undefined>;
+  runPopup: typeof runPopupConnect;
 
   /** Resolves a wallet origin to its relay `connectServerUrl` (or undefined). */
   discoverConnectServerUrl: (walletOrigin: string) => Promise<string | undefined>;
@@ -481,14 +474,14 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
   const refreshing = options.mode === 'refresh';
 
   const lastChoice = rememberChoice ? readLastChoice(deps.storage) : undefined;
-  const sessionChoice = rememberChoice && refreshing
+  let savedRoute = rememberChoice && refreshing
     ? readSessionChoice(
       deps.storage,
       options.delegatePortableDid?.uri,
       options.expectedProviderDid,
     )
     : undefined;
-  const expectedProviderDid = options.expectedProviderDid ?? sessionChoice?.providerDid;
+  const expectedProviderDid = options.expectedProviderDid ?? savedRoute?.providerDid;
   const relayWalletPath = options.relayWalletPath ?? '/connect/app';
   const savedRouteEscapeLabel = options.walletUrl === undefined
     ? 'Choose another wallet or method'
@@ -500,15 +493,13 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     && (refreshing || walletInCatalog(wallets, lastChoice.walletUrl))
     ? lastChoice.walletUrl
     : undefined;
-  let lockedWallet = sessionChoice !== undefined || options.walletUrl !== undefined;
-  let lockedMethod = sessionChoice !== undefined;
-  let walletUrl = sessionChoice?.walletUrl
+  let walletUrl = savedRoute?.walletUrl
     ?? options.walletUrl
     ?? rememberedWalletUrl
     ?? wallets[0]?.url;
 
   // An exact refresh route wins over generic handler and global preferences.
-  let method: ConnectMethod = sessionChoice?.method ?? options.preferredMethod ?? lastChoice?.method ?? 'phone';
+  let method: ConnectMethod = savedRoute?.method ?? options.preferredMethod ?? lastChoice?.method ?? 'phone';
 
   return new Promise<ConnectResult | undefined>((resolve, reject) => {
     // ── Host + shadow root ─────────────────────────────────────
@@ -822,16 +813,15 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     };
 
     const escapeSavedRoute = (): void => {
-      if (sessionChoice === undefined) {
+      if (savedRoute === undefined) {
         return;
       }
 
       relaySession?.cancel();
       relaySession = undefined;
       clearRemint();
-      removeSessionChoice(deps.storage, sessionChoice.delegateDid, sessionChoice.providerDid);
-      lockedWallet = options.walletUrl !== undefined;
-      lockedMethod = false;
+      removeSessionChoice(deps.storage, savedRoute.delegateDid, savedRoute.providerDid);
+      savedRoute = undefined;
       if (options.walletUrl !== undefined) {
         walletUrl = options.walletUrl;
       }
@@ -846,7 +836,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       setStage(
         el('p', 'stage-caption', message),
         stageButton('Start over', () => { void startMethod(); }),
-        ...(sessionChoice !== undefined && lockedMethod
+        ...(savedRoute !== undefined
           ? [stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute)]
           : []),
         stageLinkButton('Close', settleWith(settle, () => reject(error ?? new Error(`[@enbox/browser] ${message}`)))),
@@ -854,7 +844,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     };
 
     const renderPhoneUnavailable = (): void => {
-      if (lockedMethod) {
+      if (savedRoute !== undefined) {
         setStage(
           el('p', 'stage-caption', 'Your saved wallet connection is unavailable right now.'),
           el('p', 'stage-subline', 'Try again in a moment to reconnect the same session.'),
@@ -876,19 +866,23 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
 
     const renderPopupPrompt = (): void => {
       const walletName = walletUrl !== undefined ? walletByUrl(walletUrl).name : 'your wallet';
-      const exactReconnect = refreshing && lockedMethod;
+      const exactReconnect = savedRoute !== undefined;
+      const connectDescription = isMobile
+        ? 'Your wallet opens in a new tab to approve this connection — no code needed.'
+        : 'Your wallet opens in a small window to approve this connection.';
+      const description = exactReconnect
+        ? `We’ll open the same ${walletName} profile used for this session.`
+        : connectDescription;
+      const connectButtonLabel = isMobile ? 'Open wallet' : 'Open wallet window';
+      const buttonLabel = exactReconnect
+        ? `Open ${walletName} ${popupSurface}`
+        : connectButtonLabel;
       setStage(
         el('p', 'stage-caption', exactReconnect
           ? `Reconnect with ${walletName}`
           : 'Connect with a wallet in this browser'),
-        el('p', 'stage-subline', exactReconnect
-          ? `We’ll open the same ${walletName} profile used for this session.`
-          : isMobile
-            ? 'Your wallet opens in a new tab to approve this connection — no code needed.'
-            : 'Your wallet opens in a small window to approve this connection.'),
-        stageButton(exactReconnect
-          ? `Open ${walletName} ${popupSurface}`
-          : isMobile ? 'Open wallet' : 'Open wallet window', () => { startPopup(); }),
+        el('p', 'stage-subline', description),
+        stageButton(buttonLabel, () => { startPopup(); }),
       );
     };
 
@@ -906,7 +900,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           ? `Your browser blocked the wallet ${popupSurface}.`
           : `The wallet ${popupSurface} was closed.`),
         stageButton(blocked ? 'Open it now' : `Reopen ${popupSurface}`, () => { startPopup(); }),
-        ...(lockedMethod && sessionChoice !== undefined
+        ...(savedRoute !== undefined
           ? [stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute)]
           : [stageLinkButton(isMobile ? 'Use a code instead' : 'Use your phone instead', () => { void switchMethod('phone'); })]),
       );
@@ -1110,7 +1104,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const renderFooter = (): void => {
       footer.replaceChildren();
 
-      if (!lockedWallet) {
+      if (savedRoute === undefined && options.walletUrl === undefined) {
         composeWalletRow();
         const switcher = buildWalletSwitcher();
         if (switcher.label !== undefined) {
@@ -1123,7 +1117,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       const row = document.createElement('div');
       row.className = 'footer-row';
 
-      if (method === 'phone' && !lockedMethod) {
+      if (method === 'phone' && savedRoute === undefined) {
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
         // On a phone both methods open the wallet on this device — what the
@@ -1132,7 +1126,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         // startPopup runs synchronously in this click handler.
         alt.addEventListener('click', () => { startPopup(); });
         row.appendChild(alt);
-      } else if (method === 'browser' && !lockedMethod) {
+      } else if (method === 'browser' && savedRoute === undefined) {
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
         alt.textContent = isMobile ? 'Use a code instead →' : 'Use your phone instead →';

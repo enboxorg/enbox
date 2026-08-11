@@ -205,7 +205,7 @@ export function BrowserConnectHandler(
         rememberChoice,
         appName,
         appIcon             : appIcon ?? `${window.location.origin}/favicon.ico`,
-        applicationId       : applicationId ?? window.location.origin,
+        applicationId,
         connectServerUrl,
         relayWalletPath,
         timeout,
