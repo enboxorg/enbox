@@ -79,25 +79,25 @@ const CONNECT_PERF_LOG_PREFIX = '[connect.perf]';
 /**
  * Default lifetime for app delegate grants created by a connect approval.
  *
- * This is a hard grant expiry. There is intentionally no renewal path in this
- * protocol layer yet; clients should treat expired connect grants as
- * reconnect-required.
+ * This is a hard grant expiry. Clients can renew an existing delegate through
+ * a refresh approval before or after the grants expire.
  */
-export const CONNECT_SESSION_DEFAULT_TTL_SECONDS = 24 * 60 * 60;
+export const CONNECT_SESSION_DEFAULT_TTL_SECONDS = 60 * 60;
 
 /** Maximum lifetime a wallet will stamp onto connect session grants. */
 export const CONNECT_SESSION_MAX_TTL_SECONDS = 90 * 24 * 60 * 60;
 
 const CONNECT_SESSION_METADATA_LIMITS = {
-  id        : 128,
-  appName   : 128,
-  appIcon   : 2048,
-  origin    : 512,
-  userAgent : 512,
-  platform  : 128,
-  language  : 64,
-  languages : 16,
-  timezone  : 128,
+  id            : 128,
+  applicationId : 512,
+  appName       : 128,
+  appIcon       : 2048,
+  origin        : 512,
+  userAgent     : 512,
+  platform      : 128,
+  language      : 64,
+  languages     : 16,
+  timezone      : 128,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,7 @@ const CONNECT_SESSION_METADATA_LIMITS = {
 /** Options for {@link createConnectSessionMetadata}. */
 export type CreateConnectSessionMetadataOptions = {
   id?: string;
+  applicationId?: string;
   appName?: string;
   appIcon?: string;
   clientMetadata?: ConnectClientMetadata;
@@ -121,7 +122,14 @@ export type CreateConnectSessionMetadataOptions = {
  */
 export type ConnectApprovalRequest = Pick<
   ConnectRequest,
-  'appName' | 'appIcon' | 'clientMetadata' | 'permissionRequests' | 'requestedSessionTtlSeconds' | 'delegateDid'
+  | 'appName'
+  | 'appIcon'
+  | 'applicationId'
+  | 'clientMetadata'
+  | 'permissionRequests'
+  | 'requestedSessionTtlSeconds'
+  | 'delegateDid'
+  | 'expectedProviderDid'
 >;
 
 /** Parameters for {@link executeConnectApproval}. */
@@ -137,6 +145,12 @@ export type ExecuteConnectApprovalParams = {
 
   /** Transport recorded in the grant session metadata. */
   transport: ConnectSessionTransport;
+
+  /**
+   * Provider-selected session lifetime in seconds. When present, this wins
+   * over the requester's advisory `requestedSessionTtlSeconds`.
+   */
+  approvedSessionTtlSeconds?: number;
 };
 
 /**
@@ -190,6 +204,10 @@ export function createConnectSessionMetadata(
     seconds: options.ttlSeconds ?? CONNECT_SESSION_DEFAULT_TTL_SECONDS,
   }, createdAt);
   const clientMetadata = options.clientMetadata ?? {};
+  const applicationId = boundedSessionString(
+    options.applicationId,
+    CONNECT_SESSION_METADATA_LIMITS.applicationId,
+  );
   const appName = boundedSessionString(options.appName, CONNECT_SESSION_METADATA_LIMITS.appName);
   const appIcon = boundedSessionString(options.appIcon, CONNECT_SESSION_METADATA_LIMITS.appIcon);
   const origin = boundedSessionString(clientMetadata.origin, CONNECT_SESSION_METADATA_LIMITS.origin);
@@ -203,6 +221,7 @@ export function createConnectSessionMetadata(
     id: boundedSessionString(options.id, CONNECT_SESSION_METADATA_LIMITS.id) ?? randomToken(),
     createdAt,
     expiresAt,
+    ...(applicationId ? { applicationId } : {}),
     ...(appName ? { appName } : {}),
     ...(appIcon ? { appIcon } : {}),
     ...(origin ? { origin } : {}),
@@ -215,19 +234,24 @@ export function createConnectSessionMetadata(
   };
 }
 
-function resolveRequestedSessionTtlSeconds(requestedSessionTtlSeconds: number | undefined): number {
-  if (requestedSessionTtlSeconds === undefined) {
+function resolveSessionTtlSeconds(params: {
+  approvedSessionTtlSeconds?: number;
+  requestedSessionTtlSeconds?: number;
+}): number {
+  const sessionTtlSeconds = params.approvedSessionTtlSeconds ?? params.requestedSessionTtlSeconds;
+  if (sessionTtlSeconds === undefined) {
     return CONNECT_SESSION_DEFAULT_TTL_SECONDS;
   }
 
-  const requestedWholeSeconds = Math.floor(requestedSessionTtlSeconds);
+  const wholeSeconds = Math.floor(sessionTtlSeconds);
+  const source = params.approvedSessionTtlSeconds === undefined ? 'requested' : 'approved';
 
-  if (!Number.isFinite(requestedSessionTtlSeconds) || requestedWholeSeconds <= 0) {
-    throw new Error('Connect requestedSessionTtlSeconds must resolve to at least one whole second.');
+  if (!Number.isFinite(sessionTtlSeconds) || wholeSeconds <= 0) {
+    throw new Error(`Connect ${source}SessionTtlSeconds must resolve to at least one whole second.`);
   }
 
   return Math.min(
-    requestedWholeSeconds,
+    wholeSeconds,
     CONNECT_SESSION_MAX_TTL_SECONDS,
   );
 }
@@ -655,16 +679,17 @@ export const ConnectCeremony = {
 /**
  * Executes the wallet-side connect approval ceremony:
  *
- * 1. Uses a requester-supplied delegate DID, or mints one (did:jwk with the
+ * 1. Enforces the expected wallet profile, when the requester supplied one.
+ * 2. Uses a requester-supplied delegate DID, or mints one (did:jwk with the
  *    derived X25519 private key appended) when omitted.
- * 2. Clamps the requested session TTL and builds the session metadata.
- * 3. Prepares each requested protocol on the owner's DWNs: install or
+ * 3. Applies the provider-approved session TTL and builds the session metadata.
+ * 4. Prepares each requested protocol on the owner's DWNs: install or
  *    encryption upgrade with fail-closed conflict detection and remote
  *    convergence verification.
- * 4. Creates permission grants (scope guards enforced) and delivers them to
+ * 5. Creates permission grants (scope guards enforced) and delivers them to
  *    every owner DWN endpoint.
- * 5. Creates and fans out durable grantKey records for encrypted read scopes.
- * 6. Creates per-grant contextId-scoped revocation grants and fans them out.
+ * 6. Creates and fans out durable grantKey records for encrypted read scopes.
+ * 7. Creates per-grant contextId-scoped revocation grants and fans them out.
  *
  * @param params - The approval parameters.
  * @returns The `ConnectApproval` consumed by the kernel's
@@ -673,6 +698,12 @@ export const ConnectCeremony = {
  */
 export async function executeConnectApproval(params: ExecuteConnectApprovalParams): Promise<ConnectApprovalResult> {
   const { agent, providerDid, request } = params;
+  if (request.expectedProviderDid !== undefined && request.expectedProviderDid !== providerDid) {
+    throw new Error(
+      `Connect expected wallet profile '${request.expectedProviderDid}', but '${providerDid}' was selected.`
+    );
+  }
+
   const approvalStart = nowMs();
   const numProtocols = request.permissionRequests.length;
   const numScopes = request.permissionRequests.reduce(
@@ -690,7 +721,10 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
   );
 
   try {
-    const sessionTtlSeconds = resolveRequestedSessionTtlSeconds(request.requestedSessionTtlSeconds);
+    const sessionTtlSeconds = resolveSessionTtlSeconds({
+      approvedSessionTtlSeconds  : params.approvedSessionTtlSeconds,
+      requestedSessionTtlSeconds : request.requestedSessionTtlSeconds,
+    });
     const preSuppliedDelegateDid = resolvePreSuppliedDelegateDid(request.delegateDid);
 
     let delegatePortableDid: PortableDid | undefined;
@@ -727,6 +761,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       : undefined;
 
     const connectSession = createConnectSessionMetadata({
+      applicationId  : request.applicationId,
       appName        : request.appName,
       appIcon        : request.appIcon,
       ttlSeconds     : sessionTtlSeconds,

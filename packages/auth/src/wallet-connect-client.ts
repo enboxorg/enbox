@@ -40,6 +40,9 @@ export type WalletConnectClientOptions = {
   /** Optional icon URL for the app, displayed in the wallet consent UI. */
   appIcon?: string;
 
+  /** Stable application identifier used by wallets to group sessions. */
+  applicationId?: string;
+
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
@@ -62,6 +65,9 @@ export type WalletConnectClientOptions = {
 
   /** Explicit wallet UI signal. Omitted for an initial connect. */
   requestType?: ConnectRequestType;
+
+  /** Wallet profile DID that the approval must use. */
+  expectedProviderDid?: string;
 
   /** The URL of the connect server which relays messages between the app and wallet. */
   connectServerUrl: string;
@@ -129,11 +135,13 @@ export type ProtocolPermissionOptions = {
 async function initClient({
   displayName,
   appIcon,
+  applicationId,
   clientMetadata,
   requestedSessionTtlSeconds,
   preSupplyDelegateDid,
   delegatePortableDid,
   requestType,
+  expectedProviderDid,
   connectServerUrl,
   walletUri,
   permissionRequests,
@@ -165,11 +173,13 @@ async function initClient({
   return await client.connect({
     appName             : displayName,
     appIcon,
+    applicationId,
     clientMetadata,
     permissionRequests,
     requestedSessionTtlSeconds,
     delegatePortableDid : localDelegatePortableDid,
     requestType,
+    expectedProviderDid,
   });
 }
 

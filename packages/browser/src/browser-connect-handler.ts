@@ -108,6 +108,12 @@ export interface BrowserConnectHandlerOptions {
   appIcon?: string;
 
   /**
+   * Stable application identifier used by wallets to group sessions.
+   * Defaults to the browser's canonical origin.
+   */
+  applicationId?: string;
+
+  /**
    * Preferred connect method on open: `'phone'` (QR / deep link via the
    * relay) or `'browser'` (wallet popup on this device). Overrides the
    * remembered choice.
@@ -116,8 +122,9 @@ export interface BrowserConnectHandlerOptions {
   preferredMethod?: ConnectMethod;
 
   /**
-   * Remember the successful method + wallet in localStorage and pre-shape
-   * the next connect session accordingly.
+   * Remember the successful method + wallet in localStorage. Refreshes reuse
+   * the route saved for their delegate DID; new connections use the latest
+   * successful route as a convenience.
    * @default true
    */
   rememberChoice?: boolean;
@@ -176,6 +183,7 @@ export function BrowserConnectHandler(
     timeout,
     appName,
     appIcon,
+    applicationId,
     preferredMethod,
     rememberChoice,
     connectServerUrl,
@@ -188,6 +196,7 @@ export function BrowserConnectHandler(
       permissionRequests: ConnectPermissionRequest[];
       delegatePortableDid?: PortableDid;
       requestType?: ConnectRequestType;
+      expectedProviderDid?: string;
     }): Promise<ConnectResult | undefined> {
       return runConnectModal({
         wallets,
@@ -196,12 +205,14 @@ export function BrowserConnectHandler(
         rememberChoice,
         appName,
         appIcon             : appIcon ?? `${window.location.origin}/favicon.ico`,
+        applicationId       : applicationId ?? window.location.origin,
         connectServerUrl,
         relayWalletPath,
         timeout,
         theme,
         mode                : params.requestType,
         delegatePortableDid : params.delegatePortableDid,
+        expectedProviderDid : params.expectedProviderDid,
         permissionRequests  : params.permissionRequests,
       });
     },

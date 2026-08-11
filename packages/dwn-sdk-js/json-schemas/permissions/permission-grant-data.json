@@ -35,6 +35,10 @@
           "type": "string",
           "maxLength": 128
         },
+        "applicationId": {
+          "type": "string",
+          "maxLength": 512
+        },
         "appName": {
           "type": "string",
           "maxLength": 128

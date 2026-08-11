@@ -14,6 +14,7 @@ import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, Protocols } from '
 
 import { AgentPermissionsApi, DwnInterface, DwnPermissionGrant } from '../src/index.js';
 import {
+  CONNECT_SESSION_DEFAULT_TTL_SECONDS,
   CONNECT_SESSION_MAX_TTL_SECONDS,
   type ConnectApprovalRequest,
   ConnectCeremony,
@@ -222,7 +223,8 @@ describe('connect approval ceremony', () => {
       expect(firstSession).toBeDefined();
       expect(firstSession?.id).toBeDefined();
       expect(firstSession?.expiresAt).not.toBe('2040-06-25T16:09:16.693356Z');
-      expect(Date.parse(firstSession!.expiresAt) - Date.parse(firstSession!.createdAt)).toBe(86_400_000);
+      expect(Date.parse(firstSession!.expiresAt) - Date.parse(firstSession!.createdAt))
+        .toBe(CONNECT_SESSION_DEFAULT_TTL_SECONDS * 1000);
 
       for (const grant of grants) {
         expect(grant.connectSession?.id).toBe(firstSession?.id);
@@ -442,6 +444,7 @@ describe('connect approval ceremony', () => {
     it('should bound connect session display metadata', () => {
       const session = createConnectSessionMetadata({
         id             : 's'.repeat(200),
+        applicationId  : 'd'.repeat(600),
         appName        : 'a'.repeat(200),
         appIcon        : `https://example.com/${'i'.repeat(3000)}`,
         transport      : 'postMessage',
@@ -456,6 +459,7 @@ describe('connect approval ceremony', () => {
       });
 
       expect(session.id).toHaveLength(128);
+      expect(session.applicationId).toHaveLength(512);
       expect(session.appName).toHaveLength(128);
       expect(session.appIcon).toHaveLength(2048);
       expect(session.origin).toHaveLength(512);
@@ -471,7 +475,7 @@ describe('connect approval ceremony', () => {
 
   describe('executeConnectApproval', () => {
     type ApprovalStubs = {
-      capturedSessions: Array<{ createdAt: string; expiresAt: string }>;
+      capturedSessions: Array<{ applicationId?: string; createdAt: string; expiresAt: string }>;
       capturedDelegateDids: string[];
       revocationGrantStub: sinon.SinonStub;
     };
@@ -575,7 +579,7 @@ describe('connect approval ceremony', () => {
     async function stubApprovalDependencies(
       definitions: DwnProtocolDefinition[] = [protocolDefinition],
     ): Promise<ApprovalStubs> {
-      const capturedSessions: Array<{ createdAt: string; expiresAt: string }> = [];
+      const capturedSessions: Array<{ applicationId?: string; createdAt: string; expiresAt: string }> = [];
       const capturedDelegateDids: string[] = [];
       sinon.stub(ConnectCeremony, 'createPermissionGrants').callsFake(async (
         _selectedDid,
@@ -688,6 +692,39 @@ describe('connect approval ceremony', () => {
       const session = capturedSessions[0];
       expect(Date.parse(session.expiresAt) - Date.parse(session.createdAt)).toBe(requestedSessionTtlSeconds * 1000);
       expect(revocationGrantStub.firstCall.args[0].dateExpires).toBe(session.expiresAt);
+    });
+
+    it('should default sessions to one hour and stamp the stable application ID', async () => {
+      const { capturedSessions } = await stubApprovalDependencies();
+
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
+        request     : approvalRequest({ applicationId: 'com.example.sample' }),
+      });
+
+      const session = capturedSessions[0];
+      expect(Date.parse(session.expiresAt) - Date.parse(session.createdAt))
+        .toBe(CONNECT_SESSION_DEFAULT_TTL_SECONDS * 1000);
+      expect(session.applicationId).toBe('com.example.sample');
+    });
+
+    it('should prefer the provider-approved session TTL over the requester preference', async () => {
+      const { capturedSessions } = await stubApprovalDependencies();
+      const approvedSessionTtlSeconds = 7 * 24 * 60 * 60;
+
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
+        approvedSessionTtlSeconds,
+        request     : approvalRequest({ requestedSessionTtlSeconds: 30 * 24 * 60 * 60 }),
+      });
+
+      const session = capturedSessions[0];
+      expect(Date.parse(session.expiresAt) - Date.parse(session.createdAt))
+        .toBe(approvedSessionTtlSeconds * 1000);
     });
 
     it('should clamp requested session TTL to the wallet maximum', async () => {
@@ -826,6 +863,33 @@ describe('connect approval ceremony', () => {
         expect(delegateCreateStub.callCount).toBe(0);
         delegateCreateStub.restore();
       }
+    });
+
+    it('should reject an invalid provider-approved TTL before creating a delegate DID', async () => {
+      const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+
+      await expect(executeConnectApproval({
+        agent                     : testHarness.agent,
+        providerDid               : providerIdentity.did.uri,
+        transport                 : 'relay',
+        approvedSessionTtlSeconds : 0,
+        request                   : approvalRequest(),
+      })).rejects.toThrow('Connect approvedSessionTtlSeconds must resolve to at least one whole second.');
+      expect(delegateCreateStub.callCount).toBe(0);
+    });
+
+    it('should reject a different wallet profile before creating grants or DIDs', async () => {
+      const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      const createGrantsStub = sinon.stub(ConnectCeremony, 'createPermissionGrants');
+
+      await expect(executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
+        request     : approvalRequest({ expectedProviderDid: 'did:dht:another-profile' }),
+      })).rejects.toThrow('Connect expected wallet profile');
+      expect(delegateCreateStub.callCount).toBe(0);
+      expect(createGrantsStub.callCount).toBe(0);
     });
 
     it('should emit a total perf log when the approval fails', async () => {

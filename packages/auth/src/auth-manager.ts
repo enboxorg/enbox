@@ -1536,7 +1536,8 @@ export class AuthManager {
     const result = await handler.requestAccess({
       permissionRequests,
       delegatePortableDid,
-      requestType: 'refresh',
+      requestType         : 'refresh',
+      expectedProviderDid : connectedDid,
     });
     this._assertConnectionAttemptActive(guard);
     if (result === undefined) {

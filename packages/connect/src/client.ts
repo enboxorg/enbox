@@ -71,6 +71,9 @@ export type ConnectClientConnectParams = {
   /** Optional icon URL for the app, displayed in the wallet consent UI. */
   appIcon?: string;
 
+  /** Stable application identifier used by wallets to group sessions. */
+  applicationId?: string;
+
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
@@ -93,6 +96,9 @@ export type ConnectClientConnectParams = {
    * tells the wallet to render a re-grant screen for `delegatePortableDid`.
    */
   requestType?: ConnectRequestType;
+
+  /** Wallet profile DID that a refresh must renew. */
+  expectedProviderDid?: string;
 
   /**
    * Supported DID methods for the connected identity.
@@ -163,11 +169,13 @@ export class ConnectClient {
       clientDid                  : clientDid.uri,
       appName                    : params.appName,
       appIcon                    : params.appIcon,
+      applicationId              : params.applicationId,
       clientMetadata             : params.clientMetadata,
       permissionRequests         : params.permissionRequests,
       requestedSessionTtlSeconds : params.requestedSessionTtlSeconds,
       delegateDid                : params.delegatePortableDid?.uri,
       requestType                : params.requestType,
+      expectedProviderDid        : params.expectedProviderDid,
       supportedDidMethods        : params.supportedDidMethods ?? [...DEFAULT_SUPPORTED_DID_METHODS],
       nonce,
       state,
@@ -201,7 +209,12 @@ export class ConnectClient {
     const response = await openResponse({
       jwe                 : responseCiphertext,
       recipientPrivateKey : responsePrivateKey,
-      expected            : { clientDid: clientDid.uri, nonce, state },
+      expected            : {
+        clientDid   : clientDid.uri,
+        nonce,
+        state,
+        providerDid : params.expectedProviderDid,
+      },
       pin,
     });
 

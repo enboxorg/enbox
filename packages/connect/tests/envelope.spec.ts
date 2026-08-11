@@ -105,8 +105,10 @@ describe('connect envelope', () => {
 
     it('should round-trip a refresh request through the dir profile', async () => {
       const { clientDid, request } = await createTestRequest({
-        delegateDid : 'did:example:existing-delegate',
-        requestType : 'refresh',
+        applicationId       : 'com.example.app',
+        delegateDid         : 'did:example:existing-delegate',
+        requestType         : 'refresh',
+        expectedProviderDid : 'did:example:provider',
       });
       const requestKey = CryptoUtils.randomBytes(32);
 
@@ -115,6 +117,8 @@ describe('connect envelope', () => {
 
       expect(opened.requestType).toBe('refresh');
       expect(opened.delegateDid).toBe('did:example:existing-delegate');
+      expect(opened.applicationId).toBe('com.example.app');
+      expect(opened.expectedProviderDid).toBe('did:example:provider');
     });
 
     it('should reject an unsupported request type', async () => {
@@ -396,6 +400,24 @@ describe('connect envelope', () => {
         recipientPrivateKey : responsePrivateKey,
         expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state },
       })).rejects.toThrow('does not match the client DID');
+    });
+
+    it('should reject a response from a different wallet profile', async () => {
+      const { clientDid, request, responsePrivateKey } = await createTestRequest();
+      const walletSigner = await DidJwk.create();
+      const response = buildTestResponse(request);
+      const jwe = await sealResponse({ response, signer: walletSigner, responseKey: request.responseKey });
+
+      await expect(openResponse({
+        jwe,
+        recipientPrivateKey : responsePrivateKey,
+        expected            : {
+          clientDid   : clientDid.uri,
+          nonce       : request.nonce,
+          state       : request.state,
+          providerDid : 'did:example:another-provider',
+        },
+      })).rejects.toThrow('does not match the expected wallet profile');
     });
 
     it('should reject a nonce mismatch', async () => {

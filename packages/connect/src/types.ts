@@ -99,6 +99,14 @@ export type ConnectRequest = {
   /** Optional icon URL for the requesting application, shown in the consent UI. */
   appIcon?: string;
 
+  /**
+   * Stable application identifier used by wallets to group sessions.
+   * Browser clients should use their canonical origin; native clients may
+   * use a reverse-domain identifier. This is a display hint unless the
+   * transport independently authenticates it.
+   */
+  applicationId?: string;
+
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
@@ -121,6 +129,9 @@ export type ConnectRequest = {
    * `refresh` asks the wallet to re-grant access to the existing `delegateDid`.
    */
   requestType?: ConnectRequestType;
+
+  /** Wallet profile DID that a refresh must renew. */
+  expectedProviderDid?: string;
 
   /** Supported DID methods for the connected identity. */
   supportedDidMethods: string[];

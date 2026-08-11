@@ -272,6 +272,8 @@ export interface ConnectHandler {
     delegatePortableDid?: PortableDid;
     /** Explicit wallet UI signal. Omitted for an initial connect. */
     requestType?: ConnectRequestType;
+    /** Wallet profile DID that a refresh must renew. */
+    expectedProviderDid?: string;
   }): Promise<ConnectResult | undefined>;
 }
 
@@ -604,7 +606,10 @@ export type ConnectionStatusGrant = {
 
 /** Options for the pure connection-status computation. */
 export type ComputeConnectionStatusOptions = {
-  /** Seconds before expiry at which the state becomes `expiring-soon`. Defaults to 3600. */
+  /**
+   * Seconds before expiry at which the state becomes `expiring-soon`.
+   * Defaults to the smaller of one hour or 10% of the approval lifetime.
+   */
   expiringSoonThresholdSeconds?: number;
   /** DWN timestamp used as the clock. Defaults to the current time. */
   now?: string;
@@ -657,6 +662,9 @@ export interface WalletConnectOptions {
 
   /** Optional icon URL shown in the wallet during the connect flow. */
   appIcon?: string;
+
+  /** Stable application identifier used by wallets to group sessions. */
+  applicationId?: string;
 
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;

@@ -66,6 +66,9 @@ export interface RelayConnectOptions {
   /** Optional icon URL for the app, shown in the wallet consent UI. */
   appIcon?: string;
 
+  /** Stable application identifier used by wallets to group sessions. */
+  applicationId?: string;
+
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
@@ -77,6 +80,9 @@ export interface RelayConnectOptions {
 
   /** User-facing request purpose. Absent means a normal connect. */
   requestType?: ConnectRequestType;
+
+  /** Wallet profile DID that a refresh must renew. */
+  expectedProviderDid?: string;
 
   /** Total milliseconds to poll the relay for a wallet response. */
   timeoutMs?: number;
@@ -193,10 +199,12 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
     clientDid           : clientDid.uri,
     appName             : options.appName,
     appIcon             : options.appIcon,
+    applicationId       : options.applicationId,
     clientMetadata      : options.clientMetadata,
     permissionRequests  : options.permissionRequests,
     delegateDid         : options.delegatePortableDid?.uri,
     requestType         : options.requestType,
+    expectedProviderDid : options.expectedProviderDid,
     supportedDidMethods : ['did:dht', 'did:jwk'],
     nonce,
     state,
@@ -243,6 +251,7 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
       nonce,
       state,
       pin,
+      expectedProviderDid : options.expectedProviderDid,
       delegatePortableDid : options.delegatePortableDid,
       confirmComplete     : transport.confirmComplete?.bind(transport),
     });
@@ -274,6 +283,7 @@ async function attemptPinOpen(params: {
   nonce: string;
   state: string;
   pin: string;
+  expectedProviderDid: string | undefined;
   delegatePortableDid: PortableDid | undefined;
   confirmComplete: (() => Promise<void>) | undefined;
 }): Promise<PinAttemptOutcome> {
@@ -281,8 +291,13 @@ async function attemptPinOpen(params: {
     const response = await openResponse({
       jwe                 : params.responseCiphertext,
       recipientPrivateKey : params.responsePrivateKey,
-      expected            : { clientDid: params.clientDid, nonce: params.nonce, state: params.state },
-      pin                 : params.pin,
+      expected            : {
+        clientDid   : params.clientDid,
+        nonce       : params.nonce,
+        state       : params.state,
+        providerDid : params.expectedProviderDid,
+      },
+      pin: params.pin,
     });
 
     const delegatePortableDid = resolveDelegatePortableDid({

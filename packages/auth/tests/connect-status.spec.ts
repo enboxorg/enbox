@@ -105,6 +105,40 @@ describe('delegated connection status', () => {
     expect(status.state).toBe('revoked');
   });
 
+  test('uses a proportional warning window for one-hour approvals by default', () => {
+    const oneHourGrant = createGrant({
+      dateExpires    : '2026-07-13T13:00:00.000000Z',
+      connectSession : {
+        id        : 'one-hour-session',
+        createdAt : NOW,
+        expiresAt : '2026-07-13T13:00:00.000000Z',
+      },
+    });
+
+    expect(computeConnectionStatus([oneHourGrant], { now: NOW }).state).toBe('active');
+    expect(computeConnectionStatus([oneHourGrant], {
+      now: '2026-07-13T12:54:00.000000Z',
+    }).state).toBe('expiring-soon');
+  });
+
+  test('caps the default warning window at one hour for long approvals', () => {
+    const thirtyDayGrant = createGrant({
+      dateExpires    : '2026-08-12T12:00:00.000000Z',
+      connectSession : {
+        id        : 'thirty-day-session',
+        createdAt : NOW,
+        expiresAt : '2026-08-12T12:00:00.000000Z',
+      },
+    });
+
+    expect(computeConnectionStatus([thirtyDayGrant], {
+      now: '2026-08-12T10:59:59.000000Z',
+    }).state).toBe('active');
+    expect(computeConnectionStatus([thirtyDayGrant], {
+      now: '2026-08-12T11:00:00.000000Z',
+    }).state).toBe('expiring-soon');
+  });
+
   test('validates status thresholds and timestamps', () => {
     expect(() => computeConnectionStatus([], { expiringSoonThresholdSeconds: -1 })).toThrow(RangeError);
     expect(() => computeConnectionStatus([], { now: 'not-a-timestamp' })).toThrow(RangeError);

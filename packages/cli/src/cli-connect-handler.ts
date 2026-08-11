@@ -10,7 +10,7 @@ import { openBrowser as defaultOpenBrowser, promptLine, renderTerminalQr } from 
 export const DEFAULT_CLI_WALLET_URL = 'https://enbox-wallet.pages.dev';
 
 /** Default requested session TTL for CLI connects. Wallets may clamp it. */
-export const DEFAULT_CLI_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+export const DEFAULT_CLI_SESSION_TTL_SECONDS = 60 * 60;
 
 /** Well-known path on the wallet origin naming its preferred connect relay. */
 export const WALLET_WELL_KNOWN_PATH = '/.well-known/enbox-connect';
@@ -51,11 +51,14 @@ export interface CliConnectHandlerOptions {
   /** Optional icon URL shown in the wallet approval screen. */
   appIcon?: string;
 
+  /** Stable application identifier used by wallets to group sessions. */
+  applicationId?: string;
+
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
   /**
-   * Preferred session TTL in seconds. Defaults to 30 days
+   * Preferred session TTL in seconds. Defaults to one hour
    * ({@link DEFAULT_CLI_SESSION_TTL_SECONDS}). Wallets may clamp this to
    * their policy maximum.
    */
@@ -115,6 +118,7 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
       permissionRequests: ConnectPermissionRequest[];
       delegatePortableDid?: PortableDid;
       requestType?: ConnectRequestType;
+      expectedProviderDid?: string;
     }): Promise<ConnectResult | undefined> {
       if (params.requestType === 'refresh' && params.delegatePortableDid === undefined) {
         throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
@@ -126,11 +130,13 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
       const result = await WalletConnect.initClient({
         displayName                : options.appName ?? 'Enbox CLI',
         appIcon                    : options.appIcon,
+        applicationId              : options.applicationId,
         clientMetadata             : options.clientMetadata,
         requestedSessionTtlSeconds : options.requestedSessionTtlSeconds ?? DEFAULT_CLI_SESSION_TTL_SECONDS,
         preSupplyDelegateDid       : options.preSupplyDelegateDid ?? true,
         delegatePortableDid        : params.delegatePortableDid,
         requestType                : params.requestType,
+        expectedProviderDid        : params.expectedProviderDid,
         connectServerUrl,
         walletUri,
         permissionRequests         : params.permissionRequests,

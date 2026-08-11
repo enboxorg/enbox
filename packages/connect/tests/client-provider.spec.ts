@@ -135,6 +135,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     const result = await client.connect({
       appName                    : 'Loopback App',
       appIcon                    : 'https://app.example/icon.png',
+      applicationId              : 'https://app.example',
       clientMetadata             : { origin: 'https://app.example', platform: 'test' },
       permissionRequests         : [],
       requestedSessionTtlSeconds : 3600,
@@ -144,6 +145,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     expect(observedRequest).toBeDefined();
     expect(observedRequest!.appName).toBe('Loopback App');
     expect(observedRequest!.appIcon).toBe('https://app.example/icon.png');
+    expect(observedRequest!.applicationId).toBe('https://app.example');
     expect(observedRequest!.clientMetadata).toEqual({ origin: 'https://app.example', platform: 'test' });
     expect(observedRequest!.requestedSessionTtlSeconds).toBe(3600);
     expect(observedRequest!.supportedDidMethods).toEqual(['did:dht', 'did:jwk']);
@@ -214,6 +216,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       const request = await ConnectProvider.openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
       expect(request.delegateDid).toBe(localDelegate.uri);
       expect(request.requestType).toBe('refresh');
+      expect(request.expectedProviderDid).toBe(provider.uri);
 
       const responseSigner = await DidJwk.create();
       return await ConnectProvider.sealApprovedResponse({
@@ -235,6 +238,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       permissionRequests  : [],
       delegatePortableDid : localPortableDid,
       requestType         : 'refresh',
+      expectedProviderDid : provider.uri,
     });
 
     expect(result).toBeDefined();

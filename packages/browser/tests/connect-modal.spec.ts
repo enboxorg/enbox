@@ -66,6 +66,8 @@ type FakeRelayCall = {
   requestPin: (attempt: number, previousError?: Error) => Promise<string>;
   delegatePortableDid?: PortableDid;
   requestType?: ConnectRequestType;
+  applicationId?: string;
+  expectedProviderDid?: string;
   resolve: (result: ConnectResult | undefined) => void;
   reject: (error: Error) => void;
 };
@@ -83,6 +85,8 @@ function createFakeRelay(): { calls: FakeRelayCall[]; runRelay: ConnectModalDeps
         requestPin          : options.requestPin,
         delegatePortableDid : options.delegatePortableDid,
         requestType         : options.requestType,
+        applicationId       : options.applicationId,
+        expectedProviderDid : options.expectedProviderDid,
         resolve,
         reject,
       });
@@ -144,6 +148,7 @@ describe('runConnectModal', () => {
     expect(relay.calls[0].connectServerUrl).toBe('https://relay.example.com/connect');
     expect(relay.calls[0].delegatePortableDid).toBeUndefined();
     expect(relay.calls[0].requestType).toBeUndefined();
+    expect(relay.calls[0].applicationId).toBe(window.location.origin);
 
     relay.calls[0].onWalletUriReady(HANDOFF);
     expect(shadowRoot().querySelector('.qr-box svg')).not.toBeNull();
@@ -160,10 +165,24 @@ describe('runConnectModal', () => {
     await expect(promise).rejects.toThrow(/cancelled/i);
   });
 
-  it('locks a refresh to the remembered wallet and threads the relay request', async () => {
+  it('locks a refresh to the delegate session wallet and phone route', async () => {
     const relay = createFakeRelay();
     const storage = createFakeStorage({
-      'enbox:connect:lastChoice': JSON.stringify({ method: 'phone', walletUrl: WALLETS[1].url }),
+      'enbox:connect:lastChoice'     : JSON.stringify({ method: 'browser', walletUrl: WALLETS[0].url }),
+      'enbox:connect:sessionChoices' : JSON.stringify([
+        {
+          delegateDid : 'did:jwk:another-session',
+          providerDid : RESULT.connectedDid,
+          method      : 'browser',
+          walletUrl   : WALLETS[0].url,
+        },
+        {
+          delegateDid : DELEGATE_PORTABLE_DID.uri,
+          providerDid : RESULT.connectedDid,
+          method      : 'phone',
+          walletUrl   : WALLETS[1].url,
+        },
+      ]),
     });
     const promise = runConnectModal({
       wallets             : WALLETS,
@@ -182,17 +201,26 @@ describe('runConnectModal', () => {
     expect(shadowRoot().querySelector('.wallet-row')).toBeNull();
     expect(relay.calls).toHaveLength(1);
     expect(relay.calls[0].walletUri).toBe('https://wallet-two.example.com/connect/app');
+    expect(relay.calls[0].connectServerUrl).toBe('https://relay.example.com/connect');
     expect(relay.calls[0].delegatePortableDid).toBe(DELEGATE_PORTABLE_DID);
     expect(relay.calls[0].requestType).toBe('refresh');
+    expect(relay.calls[0].expectedProviderDid).toBe(RESULT.connectedDid);
+    expect(shadowRoot().querySelector('.method-link')).toBeNull();
 
     shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
     await expect(promise).rejects.toThrow(/cancelled/i);
   });
 
-  it('threads a refresh through the remembered popup wallet after a user gesture', async () => {
+  it('threads a refresh through the delegate session popup after a user gesture', async () => {
     const relay = createFakeRelay();
     const storage = createFakeStorage({
-      'enbox:connect:lastChoice': JSON.stringify({ method: 'browser', walletUrl: WALLETS[1].url }),
+      'enbox:connect:lastChoice'     : JSON.stringify({ method: 'phone', walletUrl: WALLETS[0].url }),
+      'enbox:connect:sessionChoices' : JSON.stringify([{
+        delegateDid : DELEGATE_PORTABLE_DID.uri,
+        providerDid : RESULT.connectedDid,
+        method      : 'browser',
+        walletUrl   : WALLETS[1].url,
+      }]),
     });
     const popupCalls: Parameters<ConnectModalDeps['runPopup']>[0][] = [];
     const promise = runConnectModal({
@@ -200,6 +228,7 @@ describe('runConnectModal', () => {
       appName             : 'Test Dapp',
       mode                : 'refresh',
       delegatePortableDid : DELEGATE_PORTABLE_DID,
+      expectedProviderDid : RESULT.connectedDid,
       permissionRequests  : PERMISSIONS,
       deps                : deps({
         runRelay : relay.runRelay,
@@ -215,6 +244,9 @@ describe('runConnectModal', () => {
     await flush();
     expect(popupCalls).toHaveLength(0);
     expect(shadowRoot().querySelector('.wallet-row')).toBeNull();
+    expect(shadowRoot().querySelector('.method-link')).toBeNull();
+    expect(stageText()).toContain('Reconnect with Prism');
+    expect(stageText()).toContain('same Prism profile');
 
     shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
 
@@ -222,6 +254,7 @@ describe('runConnectModal', () => {
     expect(popupCalls[0].walletUrl).toBe(WALLETS[1].url);
     expect(popupCalls[0].delegatePortableDid).toBe(DELEGATE_PORTABLE_DID);
     expect(popupCalls[0].requestType).toBe('refresh');
+    expect(popupCalls[0].expectedProviderDid).toBe(RESULT.connectedDid);
 
     shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
     await expect(promise).rejects.toThrow(/cancelled/i);
@@ -293,6 +326,60 @@ describe('runConnectModal', () => {
       method    : 'phone',
       walletUrl : 'https://wallet-one.example.com',
     });
+    expect(JSON.parse(storage.dump()['enbox:connect:sessionChoices'])).toEqual([{
+      delegateDid : DELEGATE_PORTABLE_DID.uri,
+      providerDid : RESULT.connectedDid,
+      method      : 'phone',
+      walletUrl   : 'https://wallet-one.example.com',
+    }]);
+  });
+
+  it('restores the route for one delegate after another session uses a different wallet', async () => {
+    const relay = createFakeRelay();
+    const storage = createFakeStorage();
+    const secondResult = {
+      ...RESULT,
+      delegatePortableDid: { uri: 'did:jwk:second-delegate' } as PortableDid,
+    };
+
+    const firstConnect = runConnectModal({
+      wallets            : WALLETS,
+      walletUrl          : WALLETS[0].url,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay, storage }),
+    });
+    await flush();
+    relay.calls[0].resolve(RESULT);
+    await sleep(1_300);
+    await expect(firstConnect).resolves.toBe(RESULT);
+
+    const secondConnect = runConnectModal({
+      wallets            : WALLETS,
+      walletUrl          : WALLETS[1].url,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay, storage }),
+    });
+    await flush();
+    relay.calls[1].resolve(secondResult);
+    await sleep(1_300);
+    await expect(secondConnect).resolves.toBe(secondResult);
+
+    const refresh = runConnectModal({
+      wallets             : WALLETS,
+      mode                : 'refresh',
+      delegatePortableDid : DELEGATE_PORTABLE_DID,
+      permissionRequests  : PERMISSIONS,
+      deps                : deps({ runRelay: relay.runRelay, storage }),
+    });
+    refresh.catch((): undefined => undefined);
+    await flush();
+
+    expect(relay.calls[2].walletUri).toBe('https://wallet-one.example.com/connect/app');
+    expect(relay.calls[2].expectedProviderDid).toBe(RESULT.connectedDid);
+    expect(shadowRoot().querySelector('.wallet-row')).toBeNull();
+
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(refresh).rejects.toThrow(/cancelled/i);
   });
 
   it('shakes and retries on a mistyped pairing code', async () => {

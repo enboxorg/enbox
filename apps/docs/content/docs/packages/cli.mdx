@@ -77,7 +77,7 @@ When `connectServerUrl` is omitted, the handler resolves the relay from
 `connectServerUrlProvider`, then from the wallet origin's
 `/.well-known/enbox-connect` document
 (`{ "connectServerUrl": "https://dwn.example/connect" }`), then prompts.
-Sessions request a 30-day TTL by default; wallets may clamp it.
+Sessions request a one-hour TTL by default; wallets may clamp it.
 
 Set `openBrowser: true` for same-machine flows that should open the wallet
 approval link in the local default browser instead of printing a QR code.
