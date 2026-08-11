@@ -1388,12 +1388,12 @@ class HeadlessConnectionStore implements ConnectionStore {
       return;
     }
 
+    const generation = ++this._actionGeneration;
     const session = auth.session;
     if (session === undefined) {
       this._publishDisconnected();
       return;
     }
-    const generation = this._actionGeneration;
     void this._commitConnected(auth, generation).catch((cause: unknown): void => {
       if (this._isStale(generation)) {
         return;
@@ -1690,9 +1690,8 @@ class HeadlessConnectionStore implements ConnectionStore {
       return;
     }
 
-    const options = await session.agent.sync.getIdentityOptions(session.did);
-    if (options !== undefined && this._isCurrentSession(session)) {
-      await session.agent.sync.setIdentityOptions({ did: session.did, options });
+    if (this._isCurrentSession(session)) {
+      await session.agent.sync.refreshIdentityRouting(session.did);
     }
     if (this._syncBinding === binding && this._isCurrentSession(session)) {
       binding.routedDwn = remoteDwn;

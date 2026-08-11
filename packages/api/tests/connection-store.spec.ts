@@ -152,6 +152,11 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
       listeners.add(listener);
       return (): void => { listeners.delete(listener); };
     },
+    refreshIdentityRouting: async (did): Promise<void> => {
+      if (state.options !== undefined) {
+        state.optionUpdates.push({ did, options: state.options });
+      }
+    },
     setIdentityOptions: async ({ did, options }): Promise<void> => {
       state.optionUpdates.push({ did, options });
       state.options = options;
@@ -937,30 +942,31 @@ describe('createConnectionStore()', () => {
 
     it('should retry unchanged routing after an update failure', async () => {
       const engine = createSyncStatusEngine();
-      const setIdentityOptions = sinon.stub(engine.sync, 'setIdentityOptions');
-      setIdentityOptions.onFirstCall().rejects(new Error('routing unavailable'));
-      setIdentityOptions.onSecondCall().callsFake(async ({ did, options }): Promise<void> => {
-        engine.optionUpdates.push({ did, options });
-        engine.options = options;
+      const refreshIdentity = sinon.stub(engine.sync, 'refreshIdentityRouting');
+      refreshIdentity.onFirstCall().rejects(new Error('routing unavailable'));
+      refreshIdentity.onSecondCall().callsFake(async (did): Promise<void> => {
+        if (engine.options !== undefined) {
+          engine.optionUpdates.push({ did, options: engine.options });
+        }
       });
       sinon.stub(console, 'error');
 
       const { store } = await connectWithSync(engine);
       const initial = store.getSnapshot();
-      expect(setIdentityOptions.callCount).toBe(1);
+      expect(refreshIdentity.callCount).toBe(1);
 
       const retried = await store.refreshDwnEndpoints();
       expect(retried).toBe(initial);
-      expect(setIdentityOptions.callCount).toBe(2);
+      expect(refreshIdentity.callCount).toBe(2);
 
       await store.refreshDwnEndpoints();
-      expect(setIdentityOptions.callCount).toBe(2);
+      expect(refreshIdentity.callCount).toBe(2);
     });
 
     it('should surface routing failures before retrying an endpoint', async () => {
       const engine = createSyncStatusEngine();
       const { store } = await connectWithSync(engine);
-      const setIdentityOptions = sinon.stub(engine.sync, 'setIdentityOptions').rejects(new Error('routing unavailable'));
+      const refreshIdentity = sinon.stub(engine.sync, 'refreshIdentityRouting').rejects(new Error('routing unavailable'));
       const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow');
       sinon.stub(console, 'error');
       getDwnEndpointStatus.resolves(readyDwn('https://new-dwn.example'));
@@ -972,12 +978,12 @@ describe('createConnectionStore()', () => {
       expect(failedRetry.error?.message).toBe('routing unavailable');
       expect(failedRetry.sync?.retryingRemoteEndpoint).toBeUndefined();
       expect(retryRemoteNow.called).toBe(false);
-      expect(setIdentityOptions.callCount).toBe(2);
+      expect(refreshIdentity.callCount).toBe(2);
 
-      setIdentityOptions.resolves();
+      refreshIdentity.resolves();
       const recovered = await store.retryRemote('https://new-dwn.example');
       expect(recovered.error).toBeUndefined();
-      expect(setIdentityOptions.callCount).toBe(3);
+      expect(refreshIdentity.callCount).toBe(3);
       expect(retryRemoteNow.calledOnceWithExactly(OWNER_DID, 'https://new-dwn.example')).toBe(true);
     });
 
@@ -1819,6 +1825,34 @@ describe('createConnectionStore()', () => {
 
       resolveReadiness();
       await Promise.resolve();
+    });
+
+    it('should let the latest external session supersede a hung readiness candidate', async () => {
+      const enboxes: Enbox[] = [];
+      const ensureReady = stubProtocolReadiness(enboxes);
+      let resolveFirstReadiness!: () => void;
+      ensureReady.onFirstCall().returns(new Promise<void>((resolve) => { resolveFirstReadiness = resolve; }));
+      const fake = createFakeAuth();
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+      await store.initialize();
+      const firstSession = createSession({ did: 'did:dht:first-external' });
+      const latestSession = createSession({ did: 'did:dht:latest-external' });
+
+      fake.session = firstSession;
+      fake.emitter.emit('session-start', {});
+      await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+      fake.session = latestSession;
+      fake.emitter.emit('session-start', {});
+
+      await waitFor(() => { expect(store.getSnapshot().session).toBe(latestSession); });
+      expect(ensureReady.callCount).toBe(2);
+      expect((enboxes[1] as any)._lifetimeSignal.aborted).toBe(false);
+
+      resolveFirstReadiness();
+      await waitFor(() => { expect((enboxes[0] as any)._lifetimeSignal.aborted).toBe(true); });
+      expect(store.getSnapshot().session).toBe(latestSession);
+      expect(store.getSnapshot().enbox).toBe(enboxes[1]);
+      expect(ensureReady.callCount).toBe(2);
     });
 
     it('should ready a replacement session instead of failing on the superseded candidate', async () => {
