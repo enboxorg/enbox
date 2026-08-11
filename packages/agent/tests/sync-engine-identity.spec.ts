@@ -1,3 +1,5 @@
+import type { SyncIdentityOptions } from '../src/types/sync.js';
+
 import sinon from 'sinon';
 
 import { Level } from 'level';
@@ -81,6 +83,124 @@ describe('SyncEngineLevel — identity management', () => {
       await syncEngine.setIdentityOptions({ did, options: { protocols: ['new'] } });
 
       expect(await syncEngine.getIdentityOptions(did)).toEqual({ protocols: ['new'] });
+    });
+
+    it('should emit the committed registration before later routing work fails', async () => {
+      const did = 'did:example:committed-wake';
+      const events: unknown[] = [];
+      const unsubscribe = syncEngine.on((event): void => { events.push(event); });
+      sinon.stub(syncEngine as any, 'refreshRoleLinksForActor').rejects(new Error('routing unavailable'));
+
+      await expect(syncEngine.setIdentityOptions({ did, options: { protocols: ['https://proto.example'] } }))
+        .rejects.toThrow('routing unavailable');
+
+      unsubscribe();
+      expect(await syncEngine.getIdentityOptions(did)).toEqual({ protocols: ['https://proto.example'] });
+      expect(events).toContainEqual({
+        type      : 'identity:registration-change',
+        tenantDid : did,
+        options   : { protocols: ['https://proto.example'] },
+      });
+    });
+
+    it('should announce committed registration changes to a sibling engine', async () => {
+      const dataPath = '__TESTDATA__/sync-identity-registration-wakes';
+      const first = new SyncEngineLevel({ dataPath, db });
+      const second = new SyncEngineLevel({ dataPath, db });
+      const invalidateTargets = sinon.spy((second as any)._targetPlanner, 'invalidate');
+      const did = 'did:example:cross-context-registration';
+      const events: Array<SyncIdentityOptions | undefined> = [];
+      let resolveSet!: () => void;
+      const receivedSet = new Promise<void>((resolve): void => { resolveSet = resolve; });
+      let resolveEvents!: () => void;
+      const receivedEvents = new Promise<void>((resolve): void => { resolveEvents = resolve; });
+      second.on((event): void => {
+        if (event.type === 'identity:registration-change' && event.tenantDid === did) {
+          events.push(event.options);
+          if (events.length === 1) {
+            resolveSet();
+          }
+          if (events.length === 2) {
+            resolveEvents();
+          }
+        }
+      });
+
+      try {
+        await first.setIdentityOptions({ did, options: { protocols: ['https://proto.example'] } });
+        await receivedSet;
+        await first.removeIdentity(did);
+        await receivedEvents;
+
+        expect(events).toEqual([{ protocols: ['https://proto.example'] }, undefined]);
+        expect(invalidateTargets.callCount).toBe(2);
+      } finally {
+        (first as any).closeWakePublishers();
+        (second as any).closeWakePublishers();
+      }
+    });
+  });
+
+  describe('refreshIdentityRouting', () => {
+    it('should not resurrect an identity removed before a queued routing refresh', async () => {
+      const did = 'did:example:refresh-remove';
+      await syncEngine.setIdentityOptions({ did, options: { protocols: ['https://proto.example'] } });
+
+      let releaseRemoval!: () => void;
+      const removalGate = new Promise<void>((resolve): void => { releaseRemoval = resolve; });
+      let reachRemoval!: () => void;
+      const removalReached = new Promise<void>((resolve): void => { reachRemoval = resolve; });
+      sinon.stub(syncEngine as any, 'pauseRoleLinksForActor').callsFake(
+        async (): Promise<void> => {
+          reachRemoval();
+          await removalGate;
+        },
+      );
+
+      const remove = syncEngine.removeIdentity(did);
+      await removalReached;
+      const refresh = syncEngine.refreshIdentityRouting(did);
+      releaseRemoval();
+
+      await Promise.all([remove, refresh]);
+      expect(await syncEngine.getIdentityOptions(did)).toBeUndefined();
+    });
+
+    it('should reapply a replacement committed before a queued routing refresh', async () => {
+      const did = 'did:example:refresh-replacement';
+      await syncEngine.setIdentityOptions({ did, options: { protocols: ['https://old.example'] } });
+
+      let releaseReplacement!: () => void;
+      const replacementGate = new Promise<void>((resolve): void => { releaseReplacement = resolve; });
+      let reachReplacement!: () => void;
+      const replacementReached = new Promise<void>((resolve): void => { reachReplacement = resolve; });
+      sinon.stub(syncEngine as any, 'refreshRoleLinksForActor').callsFake(
+        async (): Promise<void> => {
+          reachReplacement();
+          await replacementGate;
+        },
+      );
+
+      const replacement = syncEngine.setIdentityOptions({
+        did,
+        options: { protocols: ['https://new.example'] },
+      });
+      await replacementReached;
+      const refresh = syncEngine.refreshIdentityRouting(did);
+      releaseReplacement();
+
+      await Promise.all([replacement, refresh]);
+      expect(await syncEngine.getIdentityOptions(did)).toEqual({ protocols: ['https://new.example'] });
+    });
+
+    it('should be a no-op for an absent identity', async () => {
+      const events: unknown[] = [];
+      const unsubscribe = syncEngine.on((event): void => { events.push(event); });
+
+      await syncEngine.refreshIdentityRouting('did:example:absent-refresh');
+
+      unsubscribe();
+      expect(events).toEqual([]);
     });
   });
 

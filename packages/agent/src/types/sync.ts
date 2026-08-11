@@ -832,6 +832,14 @@ export interface SyncEngine {
     lifecycleOptions?: SyncLifecycleOptions,
   ): Promise<void>;
   /**
+   * Reapply one registered identity's durable options to its live routing.
+   *
+   * The read and rebuild are serialized with identity replacement/removal, so
+   * an absent identity stays absent. This is a no-op when the identity is not
+   * registered and, like replacing options, is not a cost-free operation.
+   */
+  refreshIdentityRouting(did: string, lifecycleOptions?: SyncLifecycleOptions): Promise<void>;
+  /**
    * Remove an identity from the SyncEngine, stopping sync for that identity.
    *
    * When live sync is active, the identity is hot-removed: its subscriptions

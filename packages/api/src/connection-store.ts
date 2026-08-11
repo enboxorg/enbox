@@ -1426,9 +1426,8 @@ class HeadlessConnectionStore implements ConnectionStore {
       return;
     }
 
-    const options = await session.agent.sync.getIdentityOptions(session.did);
-    if (options !== undefined && this._isCurrentSession(session)) {
-      await session.agent.sync.setIdentityOptions({ did: session.did, options });
+    if (this._isCurrentSession(session)) {
+      await session.agent.sync.refreshIdentityRouting(session.did);
     }
     if (this._syncBinding === binding && this._isCurrentSession(session)) {
       binding.routedDwn = remoteDwn;
