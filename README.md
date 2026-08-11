@@ -93,7 +93,7 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const bookmarks = snapshot.enbox!.using(BookmarkProtocol);
+const bookmarks = snapshot.enbox.using(BookmarkProtocol);
 
 const record = await bookmarks.records.create('bookmark', {
   data : { url: 'https://example.com', title: 'Example' },
@@ -104,7 +104,7 @@ const { records } = await bookmarks.records.query('bookmark', {
   filter: { tags: { category: 'reading' } },
 });
 
-console.log(snapshot.identityDid, record.id, records.length);
+console.log(snapshot.session.did, record.id, records.length);
 
 await store.disconnect();
 await store.dispose();

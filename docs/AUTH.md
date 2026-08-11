@@ -18,9 +18,10 @@ the auth lifecycle.
 should let a connection store compose auth and the API facade:
 
 ```ts
-import { createConnectionStore } from '@enbox/api';
+import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
 
-const store = createConnectionStore({ password: userPassword });
+const application = defineApplicationManifest({ protocols: [AppProtocol] } as const);
+const store = createConnectionStore({ application, password: userPassword });
 let snapshot = await store.initialize();
 if (snapshot.phase === 'disconnected') {
   snapshot = await store.connectVault({ createIdentity: true });
@@ -29,7 +30,7 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const enbox = snapshot.enbox!;
+const enbox = snapshot.enbox;
 ```
 
 Call `store.disconnect()` to sign out and `store.dispose()` once at application

@@ -1,6 +1,6 @@
-import type { SyncEvent } from '../src/types/sync.js';
 import type { Dwn, GenericMessage, ProtocolDefinition, RecordsWriteMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { DwnReplicationApplyRequest, DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
+import type { RemoteSyncStatus, SyncEvent } from '../src/types/sync.js';
 
 import sinon from 'sinon';
 
@@ -119,6 +119,10 @@ describe('SyncEngineLevel durable feed convergence', () => {
   let syncEngine: SyncEngineLevel;
   let tenantDid: string;
   let testHarness: PlatformAgentTestHarness;
+
+  async function getRemoteStatuses(): Promise<readonly RemoteSyncStatus[]> {
+    return (await syncEngine.getIdentitySyncStatus(tenantDid)).remotes;
+  }
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
@@ -298,7 +302,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(gate.attempts()).toBe(2);
     expect(await readRemoteRecordText(blockedWrite.message.recordId)).toBe('record rejected while remote quota is exhausted');
     expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
-    const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
+    const [status] = await getRemoteStatuses();
     expect(status.quotaBlockedMessageCount).toBe(0);
     expect(status.state).toBe('healthy');
   });
@@ -461,7 +465,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     }));
     await expectRemoteRecordCount(blockedWrite.message.recordId, 0);
     expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
-    const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
+    const [status] = await getRemoteStatuses();
     expect(status.quotaBlockedMessageCount).toBe(0);
   });
 
@@ -499,7 +503,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(gate.attempts()).toBe(3);
     await expectRemoteRecordCount(blockedWrite.message.recordId, 0);
     expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
-    const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
+    const [status] = await getRemoteStatuses();
     expect(status.quotaBlockedMessageCount).toBe(0);
   });
 
@@ -544,7 +548,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
     await expectRemoteRecordCount(blockedWrite.message.recordId, 0);
     expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
-    const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
+    const [status] = await getRemoteStatuses();
     expect(status).toMatchObject({ quotaBlockedMessageCount: 0, state: 'healthy' });
   });
 
@@ -632,7 +636,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
         state      : expect.objectContaining({ supersededAt: expect.any(String) }),
       }),
     ]);
-    const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
+    const [status] = await getRemoteStatuses();
     expect(status).toMatchObject({ quotaBlockedMessageCount: 0, state: 'healthy' });
 
     // The resolved omission remains durable enough to explain exact inventory
@@ -693,7 +697,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     }));
     expect(await readRemoteRecordText(blockedWrite.message.recordId)).toBe(smallerData);
     expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
-    const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
+    const [status] = await getRemoteStatuses();
     expect(status.quotaBlockedMessageCount).toBe(0);
   });
 
@@ -726,7 +730,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       expect(gate.primaryAttempts()).toBe(1);
       expect(await remoteHarnessFingerprint(secondaryRemoteEndpoint)).toBe(await harnessFingerprint());
       expect(await remoteHarnessFingerprint(remoteEndpoint)).not.toBe(await harnessFingerprint());
-      const statuses = await syncEngine.getRemoteSyncStatus(tenantDid);
+      const statuses = await getRemoteStatuses();
       expect(statuses.find((status) => status.remoteEndpoint === remoteEndpoint)).toMatchObject({
         quotaBlockedMessageCount : 1,
         state                    : 'quota-blocked',
@@ -799,7 +803,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       remoteEndpoint : remoteEndpoint,
       resolution     : 'superseded',
     }));
-    const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
+    const [status] = await getRemoteStatuses();
     expect(status.quotaBlockedMessageCount).toBe(0);
     expect(await syncEngine.getDeadLetters(tenantDid)).toHaveLength(0);
   });
@@ -832,7 +836,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       remoteEndpoint : remoteEndpoint,
       errorCode      : 'Invalid',
     });
-    const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
+    const [status] = await getRemoteStatuses();
     expect(status).toMatchObject({
       failedMessageCount       : 1,
       quotaBlockedMessageCount : 0,
@@ -1083,8 +1087,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
     };
   }
 
-  async function expectQuotaBlockedStatus(): Promise<Awaited<ReturnType<SyncEngineLevel['getRemoteSyncStatus']>>[number]> {
-    const statuses = await syncEngine.getRemoteSyncStatus(tenantDid);
+  async function expectQuotaBlockedStatus(): Promise<RemoteSyncStatus> {
+    const statuses = await getRemoteStatuses();
     expect(statuses).toHaveLength(1);
     return statuses[0];
   }

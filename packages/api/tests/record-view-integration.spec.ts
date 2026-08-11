@@ -96,8 +96,8 @@ describe('RecordView local DWN integration', () => {
         filter     : { tags: { status: 'draft' } },
         pagination : { limit: 10 },
       });
-      await waitFor(() => view.getState().status === 'ready');
-      expect(view.getState().records).toHaveLength(0);
+      await waitFor(() => view.getSnapshot().status === 'ready');
+      expect(view.getSnapshot().records).toHaveLength(0);
 
       let publications = 0;
       view.subscribe((): void => { publications += 1; });
@@ -106,23 +106,23 @@ describe('RecordView local DWN integration', () => {
         data : { title: 'Created' },
         tags : { status: 'draft' },
       });
-      await waitFor(() => view.getState().records.some((record) => record.id === created.id));
-      const observed = view.getState().records[0];
+      await waitFor(() => view.getSnapshot().records.some((record) => record.id === created.id));
+      const observed = view.getSnapshot().records[0];
       expect(await observed.value()).toEqual({ title: 'Created' });
 
       await created.update({ tags: { status: 'published' } });
-      await waitFor(() => view.getState().records.length === 0);
+      await waitFor(() => view.getSnapshot().records.length === 0);
 
       const replacement = await typed.records.create('note', {
         data : { title: 'Replacement' },
         tags : { status: 'draft' },
       });
-      await waitFor(() => view.getState().records.some((record) => record.id === replacement.id));
+      await waitFor(() => view.getSnapshot().records.some((record) => record.id === replacement.id));
 
       await replacement.delete();
-      await waitFor(() => view.getState().records.length === 0);
+      await waitFor(() => view.getSnapshot().records.length === 0);
 
-      const stateAtClose = view.getState();
+      const stateAtClose = view.getSnapshot();
       const publicationsAtClose = publications;
       await view.close();
 
@@ -131,7 +131,7 @@ describe('RecordView local DWN integration', () => {
         tags : { status: 'draft' },
       });
       await new Promise((resolve) => setTimeout(resolve, 25));
-      expect(view.getState()).toBe(stateAtClose);
+      expect(view.getSnapshot()).toBe(stateAtClose);
       expect(publications).toBe(publicationsAtClose);
     } finally {
       await context.close();
@@ -210,13 +210,13 @@ describe('RecordView local DWN integration', () => {
         materialize : { children: [LABEL_PATH] as const },
         pagination  : { limit: 10 },
       });
-      await waitFor(() => view.getState().status === 'ready');
+      await waitFor(() => view.getSnapshot().status === 'ready');
       const updatedLabel = await typed.records.set(LABEL_PATH, {
         data   : 'updated',
         within : first.contextId,
       });
       expect(updatedLabel.id).toBe(firstLabel.id);
-      await waitFor(() => view.getState().records
+      await waitFor(() => view.getSnapshot().records
         .find((record) => record.record.id === first.id)?.children.label?.value === 'updated');
     } finally {
       await context.close();

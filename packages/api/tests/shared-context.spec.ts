@@ -541,7 +541,7 @@ describe('TypedEnbox contexts', () => {
     const controller = new AbortController();
     const view = await owned.members().observe({ signal: controller.signal });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().status).toBe('ready');
+      expect(view.getSnapshot().status).toBe('ready');
     }, Poller.pollRetrySleep, 1_000);
 
     expect(order.slice(0, 3)).toEqual([
@@ -549,8 +549,8 @@ describe('TypedEnbox contexts', () => {
       `subscribe:${viewerRole}`,
       `query:${protocolRole}`,
     ]);
-    const initial = view.getState();
-    expect(initial).toBe(view.getState());
+    const initial = view.getSnapshot();
+    expect(initial).toBe(view.getSnapshot());
     expect(Object.isFrozen(initial)).toBe(true);
     expect(Object.isFrozen(initial.records)).toBe(true);
     expect(initial).toMatchObject({
@@ -571,7 +571,7 @@ describe('TypedEnbox contexts', () => {
       listener();
     }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().records.find(({ did }) => did === betaDid)?.delivery.state).toBe('failed');
+      expect(view.getSnapshot().records.find(({ did }) => did === betaDid)?.delivery.state).toBe('failed');
     }, Poller.pollRetrySleep, 1_000);
 
     retryRoleDelivery.callsFake(async (): Promise<RoleDeliveryState> => {
@@ -586,7 +586,7 @@ describe('TypedEnbox contexts', () => {
       delivery : { state: 'delivered' },
     });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().records.find(({ did }) => did === betaDid)?.delivery.state).toBe('delivered');
+      expect(view.getSnapshot().records.find(({ did }) => did === betaDid)?.delivery.state).toBe('delivered');
     }, Poller.pollRetrySleep, 1_000);
 
     entries.set(protocolRole, []);
@@ -596,9 +596,9 @@ describe('TypedEnbox contexts', () => {
       event  : { message: { descriptor: {} } as never },
     });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().records.find(({ did }) => did === betaDid)?.role).toBe(viewerRole);
+      expect(view.getSnapshot().records.find(({ did }) => did === betaDid)?.role).toBe(viewerRole);
     }, Poller.pollRetrySleep, 1_000);
-    expect(view.getState()).toMatchObject({
+    expect(view.getSnapshot()).toMatchObject({
       status  : 'ready',
       records : [
         { did: alphaDid, role: viewerRole },
@@ -611,7 +611,7 @@ describe('TypedEnbox contexts', () => {
       expect(transports.get(protocolRole)?.close.calledOnce).toBe(true);
       expect(transports.get(viewerRole)?.close.calledOnce).toBe(true);
     }, Poller.pollRetrySleep, 1_000);
-    expect(view.getState().status).toBe('ready');
+    expect(view.getSnapshot().status).toBe('ready');
     expect(deliveryListeners.size).toBe(0);
   });
 
@@ -1106,21 +1106,21 @@ describe('TypedEnbox contexts', () => {
 
     releaseSubscriptions();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().contexts.every(row => row.root.status !== 'loading')).toBe(true);
+      expect(view.getSnapshot().contexts.every(row => row.root.status !== 'loading')).toBe(true);
     });
     expect(agent.processDwnRequest.getCalls()
       .filter(call => call.args[0].messageType === DwnInterface.RecordsSubscribe)
       .map(call => call.args[0].messageParams.filter.contextId)
       .sort()).toEqual(sources.map(candidate => candidate.contextId).sort());
-    expect(view.getState().contexts[0]).toMatchObject({
+    expect(view.getSnapshot().contexts[0]).toMatchObject({
       context : { access: 'member', id: 'workspace0' },
       root    : { status: 'ready', records: [{ value: { name: 'workspace0' } }] },
     });
-    expect(view.getState().contexts[4].root).toMatchObject({
+    expect(view.getSnapshot().contexts[4].root).toMatchObject({
       status : 'error',
       error  : new Error('root query failed'),
     });
-    expect(view.getState().contexts[5].root).toMatchObject({ status: 'ready', records: [] });
+    expect(view.getSnapshot().contexts[5].root).toMatchObject({ status: 'ready', records: [] });
 
     await view.close();
     expect(transports).toHaveLength(6);
@@ -1148,13 +1148,13 @@ describe('TypedEnbox contexts', () => {
     const view = await typed.contexts.observe({ access: 'member', materializeRoot: true });
     await view.ready();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().contexts[0].root.status).toBe('error');
+      expect(view.getSnapshot().contexts[0].root.status).toBe('error');
     });
     expect(subscriptions.calledOnce).toBe(true);
 
     for (const listener of [...listeners]) { listener(followedContextChange(current!)); }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().contexts[0].root.status).toBe('ready');
+      expect(view.getSnapshot().contexts[0].root.status).toBe('ready');
     });
     expect(subscriptions.calledTwice).toBe(true);
 
@@ -1203,7 +1203,7 @@ describe('TypedEnbox contexts', () => {
     const view = await typed.contexts.observe({ access: 'member', materializeRoot: true });
     await view.ready();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().contexts[0].root.records[0]?.value).toEqual({ title: 'First' });
+      expect(view.getSnapshot().contexts[0].root.records[0]?.value).toEqual({ title: 'First' });
     });
     expect(agent.processDwnRequest.getCalls().find(
       call => call.args[0].messageType === DwnInterface.RecordsSubscribe,
@@ -1225,7 +1225,7 @@ describe('TypedEnbox contexts', () => {
       event  : { message: contextEntry(contextId, { title }) },
     });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().contexts[0].root.records[0]?.value).toEqual({ title: 'Second' });
+      expect(view.getSnapshot().contexts[0].root.records[0]?.value).toEqual({ title: 'Second' });
     });
 
     deleted = true;
@@ -1235,11 +1235,11 @@ describe('TypedEnbox contexts', () => {
       event  : { message: contextEntry(contextId) },
     });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().contexts[0].root.records).toEqual([]);
+      expect(view.getSnapshot().contexts[0].root.records).toEqual([]);
     });
     expect(queries).toBe(3);
 
-    const firstContext = view.getState().contexts[0].context;
+    const firstContext = view.getSnapshot().contexts[0].context;
     deleted = false;
     title = 'Third';
     current = source({
@@ -1249,7 +1249,7 @@ describe('TypedEnbox contexts', () => {
     });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      const row = view.getState().contexts[0];
+      const row = view.getSnapshot().contexts[0];
       expect(row.context.role).toBe(viewerRole);
       expect(row.context).not.toBe(firstContext);
       expect(row.root.records[0]?.value).toEqual({ title: 'Third' });
@@ -1259,14 +1259,14 @@ describe('TypedEnbox contexts', () => {
     current = undefined;
     for (const listener of [...listeners]) { listener(followedContextChange(removed, false)); }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().contexts).toEqual([]);
+      expect(view.getSnapshot().contexts).toEqual([]);
     });
 
     title = 'Fourth';
     current = source({ acceptanceId: 'acceptance-c', id: 'restored-role-record' });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(view.getState().contexts[0].root.records[0]?.value).toEqual({ title: 'Fourth' });
+      expect(view.getSnapshot().contexts[0].root.records[0]?.value).toEqual({ title: 'Fourth' });
     });
     let closed = false;
     const closing = view.close().then((): void => { closed = true; });
@@ -1422,11 +1422,11 @@ describe('TypedEnbox contexts', () => {
       event       : { message: changed },
     });
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(view.getState().contexts).toEqual([]);
+    expect(view.getSnapshot().contexts).toEqual([]);
 
     controller.abort(new Error('catalog hidden'));
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(view.getState().status).toBe('ready');
+    expect(view.getSnapshot().status).toBe('ready');
     expect(transport.close.calledOnce).toBe(true);
   });
 
@@ -1444,7 +1444,7 @@ describe('TypedEnbox contexts', () => {
     const reason = new Error('session replaced');
     lifetime.abort(reason);
 
-    expect(view.getState()).toMatchObject({
+    expect(view.getSnapshot()).toMatchObject({
       status : 'error',
       error  : { message: 'ContextView: owning session ended.', cause: reason },
     });
@@ -1948,7 +1948,7 @@ describe('TypedEnbox contexts', () => {
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await Promise.resolve();
 
-    expect(view.getState()).toMatchObject({ status: 'error' });
+    expect(view.getSnapshot()).toMatchObject({ status: 'error' });
     expect(transport.close.calledOnce).toBe(true);
     expect(listeners.size).toBe(0);
   });
@@ -1957,11 +1957,11 @@ describe('TypedEnbox contexts', () => {
     current = source();
     const view = await typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
-    const initial = view.getState();
+    const initial = view.getSnapshot();
     expect(initial.status).toBe('ready');
     expect(initial.contexts).toHaveLength(1);
     const first = initial.contexts[0];
-    const states: Array<ReturnType<typeof view.getState>> = [];
+    const states: Array<ReturnType<typeof view.getSnapshot>> = [];
     view.subscribe(state => { states.push(state); });
     const retainedListener = sinon.stub();
     let removeRetainedListener = (): void => {};
@@ -1980,18 +1980,18 @@ describe('TypedEnbox contexts', () => {
     });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(view.getState()).toMatchObject({
+    expect(view.getSnapshot()).toMatchObject({
       status   : 'ready',
       contexts : [{ id: contextId, ownerDid: sourceDid, role: viewerRole }],
     });
-    expect(view.getState().contexts[0]).not.toBe(first);
+    expect(view.getSnapshot().contexts[0]).not.toBe(first);
     expect(retainedListener.calledOnce).toBe(true);
 
     const removed = current;
     current = undefined;
     for (const listener of [...listeners]) { listener(followedContextChange(removed, false)); }
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(view.getState()).toMatchObject({ status: 'ready', contexts: [] });
+    expect(view.getSnapshot()).toMatchObject({ status: 'ready', contexts: [] });
 
     await view.close();
     expect(listeners.size).toBe(0);
@@ -2001,7 +2001,7 @@ describe('TypedEnbox contexts', () => {
     current = source();
     const view = await typed.contexts.observe();
     await new Promise(resolve => setTimeout(resolve, 0));
-    const first = view.getState().contexts[0];
+    const first = view.getSnapshot().contexts[0];
     let finishRemovalRead!: (sources: FollowedSyncSource[]) => void;
     list.onSecondCall().returns(new Promise(resolve => { finishRemovalRead = resolve; }));
 
@@ -2015,7 +2015,7 @@ describe('TypedEnbox contexts', () => {
     finishRemovalRead([]);
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    const rebound = view.getState().contexts[0];
+    const rebound = view.getSnapshot().contexts[0];
     expect(rebound).not.toBe(first);
     await rebound.records.query('workspace/note');
     const localRequests = agent.processDwnRequest.callCount;

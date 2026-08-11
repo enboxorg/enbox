@@ -104,7 +104,7 @@ export interface CliConnectHandlerOptions {
 /**
  * Create a CLI connect handler backed by the encrypted relay/PIN flow.
  *
- * Pass the handler to `createConnectionStore({ connectHandler })`, then call
+ * Pass the handler to `createConnectionStore({ application, connectHandler })`, then call
  * the store's delegated `connect()` action.
  */
 export function CliConnectHandler(options: CliConnectHandlerOptions = {}): ConnectHandler {

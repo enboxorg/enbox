@@ -13,6 +13,7 @@ export {
   computeAuthorizationEpoch,
   computeProjectionId,
   normalizeSyncProtocols,
+  projectReplicationCurrentness,
   protocolsForSyncScope,
   singleProtocolForSyncScope,
   syncEventCoversProtocol,

@@ -55,10 +55,8 @@ export async function importFromPortable(
 
   return commitFlowSession(ctx, async (): Promise<AuthSession> => {
     // Register sync. For delegates, derive scope from grants (not 'all').
-    if (delegateDid) {
-      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
-    } else if (sync !== 'off') {
-      await registerSyncScopeForIdentity({ userAgent, connectedDid, identitySyncProtocols });
+    if (delegateDid !== undefined || sync !== 'off') {
+      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncProtocols });
     }
 
     await startSyncIfEnabled(userAgent, sync);

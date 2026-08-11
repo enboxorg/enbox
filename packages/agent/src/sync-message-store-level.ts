@@ -1,9 +1,6 @@
 /** Key representation accepted by the Level-backed sync stores. */
 export type SyncMessageStoreLevelKey = string | Buffer | Uint8Array;
 
-/** Level batch entry used when deleting selected sync-message state. */
-export type SyncMessageStoreLevelDelete = { type: 'del'; key: string };
-
 /** Preserve the existing tenant/message/remote compound key representation. */
 export function buildSyncMessageStoreLevelKey(
   tenantDid: string,

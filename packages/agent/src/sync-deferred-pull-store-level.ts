@@ -1,12 +1,19 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { SyncMessageStoreLevelKey } from './sync-message-store-level.js';
-import type { SyncDeferredPullState, SyncDeferredPullStore } from './sync-deferred-pull-store.js';
 
 import { buildSyncMessageStoreLevelKey, isSyncMessageStoreLevelNotFound, syncMessageStoreLevelTenantKeyRange } from './sync-message-store-level.js';
 
+/** Durable retry state for a remote message whose admission is temporarily deferred. */
+export type SyncDeferredPullState = {
+  attempts: number;
+  detail?: string;
+  firstDeferredAt: string;
+  lastDeferredAt: string;
+};
+
 /** Level-backed persistence for temporarily deferred pull admissions. */
-export class SyncDeferredPullStoreLevel implements SyncDeferredPullStore {
+export class SyncDeferredPullStoreLevel {
   private readonly _db: AbstractLevel<SyncMessageStoreLevelKey>;
 
   constructor(db: AbstractLevel<SyncMessageStoreLevelKey>) {

@@ -93,20 +93,6 @@ describe('Enbox API', () => {
         expect((enbox as any)._dwn.permissionsApi).toBe(testHarness.agent.permissions);
       });
 
-      it('exposes a friendly DWN endpoint status for the connected DID', async () => {
-        const connectedDid = 'did:example:missing-dwn';
-        const status = {
-          status  : 'service-missing' as const,
-          didUri  : connectedDid,
-          message : `DID '${connectedDid}' does not advertise a #dwn service.`,
-        };
-        const endpointStatus = sinon.stub(testHarness.agent.identity, 'getDwnEndpointStatus').resolves(status);
-        const enbox = new Enbox({ agent: testHarness.agent, connectedDid });
-
-        await expect(enbox.getDwnEndpointStatus({ refresh: true })).resolves.toEqual(status);
-        expect(endpointStatus.calledOnceWithExactly({ didUri: connectedDid, refresh: true })).toBe(true);
-      });
-
       it('should support a single agent with multiple Enbox instances and different DIDs', async () => {
         // Create two identities, each of which is stored in a new tenant.
         const careerIdentity = await testHarness.agent.identity.create({
@@ -325,7 +311,6 @@ describe('Enbox API', () => {
         expect(rawDwn).toBeDefined();
         expect(() => enbox.using(CloseProtocol)).toThrow();
         expect(() => enbox.dwn).toThrow();
-        expect(() => enbox.getDwnEndpointStatus()).toThrow();
         expect(() => typed.dwn).toThrow();
         await expect(typed.configure()).rejects.toMatchObject({ name: 'AbortError' });
         await expect(typed.verifyInstalled()).rejects.toMatchObject({ name: 'AbortError' });

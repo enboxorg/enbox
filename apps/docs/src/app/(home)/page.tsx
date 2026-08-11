@@ -332,7 +332,7 @@ if (snapshot.phase === 'disconnected') {
 if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
-const notes = snapshot.enbox!.using(Notes);
+const notes = snapshot.enbox.using(Notes);
 
 // Create
 const record = await notes.records.create('note', {

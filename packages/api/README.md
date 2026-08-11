@@ -15,8 +15,10 @@ bun add @enbox/api
 
 ```ts
 import { createConnectionStore } from '@enbox/api';
+import { application } from './application.js';
 
 const store = createConnectionStore({
+  application,
   password     : userPassword,
   dwnEndpoints : ['https://enbox-dwn.fly.dev'],
 });
@@ -29,7 +31,7 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const enbox = snapshot.enbox!;
+const enbox = snapshot.enbox;
 ```
 
 `createConnectionStore()` owns the common application lifecycle: it creates an
@@ -44,18 +46,17 @@ lifecycle actions or snapshots, even when they target the same `dataPath`.
 |---|---|
 | `snapshot.enbox` | The high-level API instance while connected. |
 | `snapshot.session` | Active DID, delegate DID when present, agent, and first-run recovery phrase. |
-| `snapshot.identityDid` | The active identity DID. |
-| `store.auth` | The underlying `AuthManager` for advanced identity operations. |
+| `snapshot.session.did` | The active identity DID. |
 
 Common store and connection options:
 
 | Option | Description |
 |---|---|
+| `application` | Canonical typed protocols and delegated permission policies. |
 | `password` | Local vault password. The default is insecure; production apps should pass one. |
 | `connectVault({ createIdentity: true })` | Create a default identity when no identity exists. |
 | `dwnEndpoints` | Remote DWN endpoints used when creating new DIDs. |
 | `sync` | Omit for live sync, pass an interval like `'30s'`, or pass `'off'`. |
-| `store.connect({ protocols })` | Protocol scopes for a plain store's handler-based connect flow. |
 | `connectHandler` | Browser/wallet connect handler. |
 | `registration` | DWN endpoint registration callbacks and token persistence options. |
 | `auth` | Caller-owned `AuthManager`; other manager-construction options are ignored and `dispose()` does not shut it down. |
@@ -76,8 +77,9 @@ through one framework-neutral external-store contract:
 
 ```ts
 import { createConnectionStore } from '@enbox/api';
+import { application } from './application.js';
 
-const store = createConnectionStore({ password: userPassword });
+const store = createConnectionStore({ application, password: userPassword });
 const unsubscribe = store.subscribe((snapshot) => {
   console.log(snapshot.phase, snapshot.sync?.state, snapshot.sync?.connectivity);
 });
@@ -111,7 +113,12 @@ is released and `store.dispose()` at shutdown.
 ## Typed Protocols
 
 ```ts
-import { createConnectionStore, defineProtocol, recordCodecs } from '@enbox/api';
+import {
+  createConnectionStore,
+  defineApplicationManifest,
+  defineProtocol,
+  recordCodecs,
+} from '@enbox/api';
 
 const NotesProtocol = defineProtocol({
   protocol  : 'https://example.com/notes',
@@ -131,7 +138,8 @@ const NotesProtocol = defineProtocol({
   note: recordCodecs.json<{ title: string; body: string }>(),
 });
 
-const store = createConnectionStore({ password: userPassword });
+const application = defineApplicationManifest({ protocols: [NotesProtocol] });
+const store = createConnectionStore({ application, password: userPassword });
 let snapshot = await store.initialize();
 if (snapshot.phase === 'disconnected') {
   snapshot = await store.connectVault({ createIdentity: true });
@@ -140,7 +148,7 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const notes = snapshot.enbox!.using(NotesProtocol);
+const notes = snapshot.enbox.using(NotesProtocol);
 
 const record = await notes.records.create('note', {
   data : { title: 'Hello', body: 'World' },
@@ -198,9 +206,7 @@ const store = createConnectionStore({
   monitor: { autoRefresh: {} },
 });
 let snapshot = await store.initialize(); // restored sessions are readied before publication
-if (snapshot.walletReapprovalRequired && store.auth?.session?.delegateDid !== undefined) {
-  snapshot = await store.refresh();
-} else if (snapshot.phase === 'disconnected') {
+if (snapshot.phase !== 'connected') {
   snapshot = await store.connect();
 }
 if (snapshot.phase !== 'connected') {
@@ -211,7 +217,7 @@ if (snapshot.phase !== 'connected') {
 The connection store treats the manifest as the canonical protocol source. It
 projects delegated permission requests into `connect()`, `refresh()`, and an
 opted-in monitor `autoRefresh`; callers cannot supply a competing protocol
-list. A manifest-backed store requires at least one protocol. It then gates
+list. Every store requires at least one protocol. It then gates
 each session the store establishes or restores on local protocol readiness
 before publishing `phase: 'connected'`: owners install the protocols locally,
 while delegates validate and import the wallet-approved configurations. This
@@ -224,16 +230,15 @@ keeps local-only, offline, and endpoint-less owner identities usable; an app
 can also call `enbox.protocols.ensureReady({ application })` later when hosted
 receiving becomes necessary.
 
-Transient readiness failures retain the underlying `store.auth.session` for a
-retry while keeping it out of the public snapshot. A missing or incompatible
+Transient readiness failures remain retryable while keeping the unusable
+session out of the public snapshot. A missing or incompatible
 wallet protocol configuration instead ends the unusable delegate session and
 sets `walletReapprovalRequired`, so the next `connect()` requests fresh
 approval. A delegated sync registration that is missing, belongs to another
 delegate, or omits any manifest protocol with read permission also fails closed:
 the store closes and hides the public facade, stops its monitor, and preserves
-the underlying auth session so `store.refresh()` can repair approval. Check for
-that retained delegated session before treating every disconnected snapshot as
-a new connection. On a manifest-backed store, `connect()` is delegated and a
+the underlying auth session so the next `store.connect()` repairs approval
+through refresh. On a connection store, `connect()` is delegated and a
 per-call `password` unlocks the delegate vault; use `connectVault()` for an
 owner.
 
@@ -320,7 +325,7 @@ const render = (state) => {
 };
 await view.ready();
 const unsubscribe = view.subscribe(render);
-render(view.getState()); // close the one-shot-to-live handoff
+render(view.getSnapshot()); // close the one-shot-to-live handoff
 await view.loadMore(); // retain one more 20-record step when hasMore is true
 
 // Consume later writes/deletes from one stream

@@ -37,9 +37,10 @@ export function normalizeProtocolRequests(
       ? getExplicitProtocolSource(entry)
       : entry;
     const definition = getProtocolDefinition(source, index);
-    const permissions = explicit
-      ? copyPermissionPolicy(entry.permissions, index)
-      : [...DEFAULT_PERMISSIONS];
+    const permissions = normalizePermissionPolicy(
+      explicit ? entry.permissions : undefined,
+      `normalizeProtocolRequests: protocols[${index}].permissions`,
+    );
 
     return { definition, permissions };
   });
@@ -74,19 +75,27 @@ function assertUniqueProtocolUris(protocols: readonly NormalizedProtocolRequest[
   }
 }
 
-/** Validate and copy one explicit permission policy without mutating caller-owned input. */
-function copyPermissionPolicy(value: unknown, protocolIndex: number): Permission[] {
-  const path = `protocols[${protocolIndex}].permissions`;
-  if (!Array.isArray(value)) {
-    throw new TypeError(`normalizeProtocolRequests: ${path} must be an array.`);
+/**
+ * Normalize and copy a permission policy without mutating caller-owned input.
+ *
+ * An omitted policy receives the default read, write, and delete permissions.
+ * Shared with higher-level application manifest validation so every auth
+ * request surface uses the same default, vocabulary, and duplicate rules.
+ *
+ * @internal
+ */
+export function normalizePermissionPolicy(value: unknown, location: string): Permission[] {
+  const policy = value === undefined ? DEFAULT_PERMISSIONS : value;
+  if (!Array.isArray(policy)) {
+    throw new TypeError(`${location} must be an array.`);
   }
 
   const permissions: Permission[] = [];
   const firstIndexes = new Map<Permission, number>();
-  for (const [permissionIndex, permission] of value.entries()) {
+  for (const [permissionIndex, permission] of policy.entries()) {
     if (!isPermission(permission)) {
       throw new TypeError(
-        `normalizeProtocolRequests: ${path}[${permissionIndex}] has unsupported permission ` +
+        `${location}[${permissionIndex}] has unsupported permission ` +
         `'${String(permission)}'. Supported permissions: read, write, delete.`,
       );
     }
@@ -94,7 +103,7 @@ function copyPermissionPolicy(value: unknown, protocolIndex: number): Permission
     const firstIndex = firstIndexes.get(permission);
     if (firstIndex !== undefined) {
       throw new TypeError(
-        `normalizeProtocolRequests: ${path} contains duplicate permission '${permission}' ` +
+        `${location} contains duplicate permission '${permission}' ` +
         `at indexes ${firstIndex} and ${permissionIndex}.`,
       );
     }

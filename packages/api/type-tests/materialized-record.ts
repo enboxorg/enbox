@@ -112,7 +112,7 @@ async function assertTypedMaterialization(): Promise<void> {
     materialize : { children: ['library/title', 'library/metadata'] as const },
     pagination  : { limit: 20 },
   });
-  const observedTitle: MaterializedRecord<string> | undefined = observed.getState().records[0]?.children.title;
+  const observedTitle: MaterializedRecord<string> | undefined = observed.getSnapshot().records[0]?.children.title;
   void observedTitle;
 
   // @ts-expect-error an explicit materialized view must include the runtime materialize option.

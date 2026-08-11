@@ -1,8 +1,14 @@
 import type { AbstractLevel } from 'abstract-level';
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { DirectionCheckpoint, LinkStatus, ReplicationLinkState, SyncDirection } from './types/sync.js';
-import type { SyncReplicationLinkCreateParams, SyncReplicationLinkStore } from './sync-replication-link-store.js';
+import type {
+  DirectionCheckpoint,
+  LinkStatus,
+  ReplicationLinkState,
+  SyncAuthorization,
+  SyncDirection,
+  SyncScope,
+} from './types/sync.js';
 
 import { runSerializedByKey, runWithCrossContextLock } from '@enbox/common';
 
@@ -14,8 +20,18 @@ type LevelKey = string | Buffer | Uint8Array;
 /** Separator used in compound LevelDB keys. */
 const KEY_SEP = '^';
 
+/** Parameters that identify and initialize a durable replication link. */
+export type SyncReplicationLinkCreateParams = {
+  tenantDid : string;
+  remoteEndpoint : string;
+  scope : SyncScope;
+  authorizationEpoch : string;
+  authorization : SyncAuthorization;
+  delegateDid? : string;
+};
+
 /** Level-backed persistence for durable replication links. */
-export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
+export class SyncReplicationLinkStoreLevel {
   private readonly _links: AbstractLevel<LevelKey, string, string>;
   private readonly _lockNamespace: string;
   private readonly _pendingLinkOperations = new Map<string, Promise<void>>();

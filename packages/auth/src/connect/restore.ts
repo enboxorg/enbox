@@ -263,15 +263,12 @@ async function finalizeRestoredSession(
   // an explicit identity sync scope.
   let syncRepairFailed = false;
   try {
-    if (delegateDid) {
-      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
-    } else {
-      await registerSyncScopeForIdentity({
-        userAgent,
-        connectedDid,
-        identitySyncProtocols: ctx.defaultIdentitySyncProtocols,
-      });
-    }
+    await registerSyncScopeForIdentity({
+      userAgent,
+      connectedDid,
+      delegateDid,
+      identitySyncProtocols: ctx.defaultIdentitySyncProtocols,
+    });
   } catch {
     // Grant query or registration repair failed — don't block restore,
     // but don't let a stale registration remain usable.

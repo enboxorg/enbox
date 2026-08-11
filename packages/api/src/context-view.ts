@@ -1,3 +1,5 @@
+import type { ObservableStore } from './observable-store.js';
+
 import { ObservedView } from './observed-view.js';
 import { openView } from './view-opening.js';
 
@@ -12,13 +14,8 @@ export type ContextViewState<Context> = Readonly<{
 
 type ReadyContextViewState<Context> = Extract<ContextViewState<Context>, { status: 'ready' }>;
 
-/** Listener notified after a context view publishes new state. */
-export type ContextViewListener<Context> = (state: ContextViewState<Context>) => void;
-
 /** Closeable live view of one protocol's local context catalog. */
-export interface ContextView<Context> {
-  getState: () => ContextViewState<Context>;
-  subscribe: (listener: ContextViewListener<Context>) => () => void;
+export interface ContextView<Context> extends ObservableStore<ContextViewState<Context>> {
   /** Resolve after the catalog's first local materialization. */
   ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<ReadyContextViewState<Context>>;
   close(): Promise<void>;
@@ -113,7 +110,7 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
   }
 
   private publishError(error: Error): void {
-    this.publish(immutableState({ status: 'error', contexts: this.getState().contexts, error }));
+    this.publish(immutableState({ status: 'error', contexts: this.getSnapshot().contexts, error }));
   }
 }
 

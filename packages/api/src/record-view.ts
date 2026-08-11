@@ -1,5 +1,6 @@
 import type { compileRecordQuery } from './record-query.js';
 import type { DwnApi } from './dwn-api.js';
+import type { ObservableStore } from './observable-store.js';
 import type { Record } from './record.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
@@ -10,9 +11,8 @@ import { followedContextChangeRetiresSource } from './followed-context-lifecycle
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { ObservedView } from './observed-view.js';
 import { openView } from './view-opening.js';
-import { projectReplicationCurrentness } from './replication-currentness.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
-import { syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
+import { projectReplicationCurrentness, syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
 
 type RecordViewContents<Item> = Readonly<{
   /**
@@ -51,22 +51,13 @@ export type RecordViewState<Item = Record> = RecordViewContents<Item> & Readonly
 
 type ReadyRecordViewState<Item> = Extract<RecordViewState<Item>, { status: 'ready' }>;
 
-/** Listener notified after a records view publishes new state. */
-export type RecordViewListener<Item = Record> = (state: RecordViewState<Item>) => void;
-
 /**
  * A closeable materialized view over one canonical record query.
  *
  * Subscription events are wake signals only. Consumers render immutable
  * states and never maintain collection truth from event payloads.
  */
-export interface RecordView<Item = Record> {
-  /** Return the current immutable state. Safe to pass as a bare callback. */
-  getState: () => RecordViewState<Item>;
-
-  /** Subscribe to later state publications. Safe to pass as a bare callback. */
-  subscribe: (listener: RecordViewListener<Item>) => () => void;
-
+export interface RecordView<Item = Record> extends ObservableStore<RecordViewState<Item>> {
   /** Resolve after the first local query makes records, including an empty result, usable. */
   ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<ReadyRecordViewState<Item>>;
 
@@ -250,7 +241,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     if (this.isClosed) {
       throw this.terminationReason;
     }
-    if (this.getState().status === 'loading') {
+    if (this.getSnapshot().status === 'loading') {
       try {
         await this.ready();
       } catch (error: unknown) {
@@ -260,7 +251,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
         throw error;
       }
     }
-    if (!this.getState().hasMore) {
+    if (!this.getSnapshot().hasMore) {
       return;
     }
 
@@ -560,8 +551,8 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   private publishError(error: Error): void {
     this.publish(immutableState({
       status  : 'error',
-      records : this.getState().records,
-      hasMore : this.getState().hasMore,
+      records : this.getSnapshot().records,
+      hasMore : this.getSnapshot().hasMore,
       current : false,
       error,
     }));
@@ -570,7 +561,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   /** Degrade synchronously without letting partial link evidence clear an existing error. */
   private publishProvisionalReplicationCurrentness(isPaused = false): void {
     const currentness = this.resolveUnavailableCurrentness(isPaused);
-    if (this.getState().status === 'error' && !('status' in currentness)) {
+    if (this.getSnapshot().status === 'error' && !('status' in currentness)) {
       return;
     }
 
@@ -582,8 +573,8 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     if (this._hasMaterialized) {
       this.publish(immutableState({
         status  : 'ready',
-        records : this.getState().records,
-        hasMore : this.getState().hasMore,
+        records : this.getSnapshot().records,
+        hasMore : this.getSnapshot().hasMore,
         current : false,
       }));
     }

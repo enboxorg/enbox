@@ -60,7 +60,7 @@ async function assertTypedSources(): Promise<void> {
   const read: TypedRecord<{ title: string }> | undefined = await typed.records.read('document', created.id);
   const page: RecordPage<TypedRecord<{ title: string }>> = await typed.records.query('document');
   const view = await typed.records.observe('document', { pagination: { limit: 10 } });
-  const observed: TypedRecord<{ title: string }> | undefined = view.getState().records[0];
+  const observed: TypedRecord<{ title: string }> | undefined = view.getSnapshot().records[0];
   const subscription = await typed.records.subscribe('document', (event): void => {
     if (event.type !== 'error') {
       requireCoordinates(event.record);

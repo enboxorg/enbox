@@ -113,7 +113,7 @@ export interface MockAgentOverrides {
 export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAgent {
   const defaultIdentity = createMockIdentity();
   const processDwnRequest = overrides.processDwnRequest ?? (async (params: any): Promise<any> => {
-    // RecordsQuery returns 200 with empty entries (used by _deriveProtocolsFromGrants).
+    // RecordsQuery returns 200 with empty entries (used by deriveActiveSyncScope).
     // All other DWN messages return 202 Accepted.
     if (params?.messageType === 'RecordsQuery') {
       return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };

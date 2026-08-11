@@ -12,9 +12,9 @@
  * ```ts
  * import { createConnectionStore } from '@enbox/api';
  *
- * const store = createConnectionStore();
+ * const store = createConnectionStore({ application });
  * const snapshot = await store.connectVault({ createIdentity: true });
- * if (snapshot.enbox === undefined) throw snapshot.error ?? new Error('Connection failed.');
+ * if (snapshot.phase !== 'connected') throw snapshot.error ?? new Error('Connection failed.');
  * ```
  *
  * [Link to GitHub Repo](https://github.com/enboxorg/enbox)
@@ -28,7 +28,7 @@ export * from './context-errors.js';
 export type {
   ContextInvitationPreview,
 } from './context-invitations.js';
-export type { ContextView, ContextViewListener, ContextViewState } from './context-view.js';
+export type { ContextView, ContextViewState } from './context-view.js';
 export { defineProtocol } from './define-protocol.js';
 export * from './did-api.js';
 export { DwnResponseError, RecordParentNotFoundError, RecordSquashBackstopError } from './dwn-response-error.js';
@@ -41,6 +41,7 @@ export type {
   FileEnvelopeData,
 } from './file-envelope-codec.js';
 export * from './protocol.js';
+export type { ObservableStore } from './observable-store.js';
 export { ProtocolReadinessError } from './protocol-readiness.js';
 export type { EnsureProtocolsReadyOptions, ProtocolReadinessApi } from './protocol-readiness.js';
 export type {
@@ -73,14 +74,14 @@ export {
 } from './record-codec.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
 export { RecordConflictError } from './record-conflict-error.js';
-export type { ExpandableRecordView, RecordView, RecordViewListener, RecordViewState } from './record-view.js';
-export type { ReplicationCurrentness } from './replication-currentness.js';
+export type { ExpandableRecordView, RecordView, RecordViewState } from './record-view.js';
 export * from './record.js';
 export * from './service-config-protocol.js';
 export * from './typed-enbox.js';
 export {
   AudienceDecryptError,
   type AudienceDecryptFailureCause,
+  type ReplicationCurrentness,
 } from '@enbox/agent';
 export type { DwnEndpointResolution } from '@enbox/dids';
 export { Time } from '@enbox/dwn-sdk-js';

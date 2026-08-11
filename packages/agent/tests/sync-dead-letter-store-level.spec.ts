@@ -35,27 +35,30 @@ describe('SyncDeadLetterStoreLevel', () => {
     expect(await store.get(entry.tenantDid, entry.messageCid, 'https://another.example')).toBeUndefined();
   });
 
-  it('keeps exact tenant and remote identities independent during deletion', async () => {
+  it('deletes only one exact tenant, message, and remote identity', async () => {
     const aliceA = deadLetter();
     const aliceB = deadLetter({ remoteEndpoint: 'https://b.example' });
     const bobA = deadLetter({ tenantDid: 'did:example:bob' });
     await Promise.all([store.put(aliceA), store.put(aliceB), store.put(bobA)]);
 
-    expect(await store.deleteExact(aliceA.tenantDid, aliceA.messageCid, aliceA.remoteEndpoint)).toEqual(identityOf(aliceA));
+    expect(await store.deleteExact(aliceA.tenantDid, aliceA.messageCid, aliceA.remoteEndpoint)).toBe(true);
+    expect(await store.deleteExact(aliceA.tenantDid, aliceA.messageCid, aliceA.remoteEndpoint)).toBe(false);
 
     expect(await store.getForTenant(aliceA.tenantDid)).toEqual([aliceB]);
     expect(await store.getForTenant(bobA.tenantDid)).toEqual([bobA]);
-    expect(await store.deleteForMessage(aliceA.messageCid, aliceA.remoteEndpoint)).toEqual([identityOf(bobA)]);
-    expect(await store.deleteForMessage(aliceA.messageCid, aliceA.remoteEndpoint)).toEqual([]);
-    expect(await store.getAll()).toEqual([aliceB]);
+    expect(await store.getAll()).toEqual([aliceB, bobA]);
   });
 
-  it('deletes only the requested tenant while retaining unrelated failures', async () => {
+  it('deletes one tenant by key range without parsing corrupt values', async () => {
     const alice = deadLetter();
-    const bob = deadLetter({ messageCid: 'bob-cid', tenantDid: 'did:example:bob' });
+    const bob = deadLetter({ tenantDid: 'did:example:bob' });
     await Promise.all([store.put(alice), store.put(bob)]);
+    await db.sublevel('deadLetters').put(
+      'did:example:alice|corrupt-cid|https://corrupt.example',
+      '{malformed',
+    );
 
-    expect(await store.deleteForTenant(alice.tenantDid)).toEqual([identityOf(alice)]);
+    await store.deleteForTenant(alice.tenantDid);
 
     expect(await store.getForTenant(alice.tenantDid)).toEqual([]);
     expect(await store.getForTenant(bob.tenantDid)).toEqual([bob]);
@@ -76,14 +79,7 @@ describe('SyncDeadLetterStoreLevel', () => {
 
     await expect(store.get(entry.tenantDid, entry.messageCid, entry.remoteEndpoint)).rejects.toThrow();
     await expect(store.getAll()).rejects.toThrow();
-    expect(await store.clear()).toEqual([identityOf(entry)]);
-    expect(await store.getAll()).toEqual([]);
-  });
-
-  it('does not project a malformed key with an empty remote endpoint', async () => {
-    await db.sublevel('deadLetters').put('did:example:alice|cid|', '{}');
-
-    expect(await store.clear()).toEqual([]);
+    await store.clear();
     expect(await store.getAll()).toEqual([]);
   });
 
@@ -110,9 +106,4 @@ function deadLetter(overrides: Partial<DeadLetterEntry> = {}): DeadLetterEntry {
     tenantDid      : 'did:example:alice',
     ...overrides,
   };
-}
-
-function identityOf(entry: DeadLetterEntry): Pick<DeadLetterEntry, 'messageCid' | 'remoteEndpoint' | 'tenantDid'> {
-  const { messageCid, remoteEndpoint, tenantDid } = entry;
-  return { messageCid, remoteEndpoint, tenantDid };
 }

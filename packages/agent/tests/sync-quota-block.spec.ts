@@ -1,5 +1,5 @@
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
-import type { PushResult, SyncEvent } from '../src/types/sync.js';
+import type { PushResult, RemoteSyncStatus, SyncEvent } from '../src/types/sync.js';
 
 import sinon from 'sinon';
 
@@ -38,6 +38,10 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
   function durableFeedReconciler(): SyncDurableFeedReconciler {
     return (syncEngine as any)._durableFeedReconciler;
+  }
+
+  async function getRemoteStatuses(tenantDid: string): Promise<readonly RemoteSyncStatus[]> {
+    return (await syncEngine.getIdentitySyncStatus(tenantDid)).remotes;
   }
 
   async function seedQuotaBlock({
@@ -157,7 +161,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await seedQuotaBlock({ cid: 'cid-1', detail: 'first', lastBlockedAt: new Date(1).toISOString(), nextProbeAt: later });
     await seedQuotaBlock({ cid: 'cid-2', detail: 'second', lastBlockedAt: new Date(2).toISOString(), nextProbeAt: soon });
 
-    const statuses = await syncEngine.getRemoteSyncStatus(TENANT);
+    const statuses = await getRemoteStatuses(TENANT);
 
     expect(statuses).toHaveLength(1);
     expect(statuses[0]).toMatchObject({
@@ -174,8 +178,8 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   it('scopes status by tenant', async () => {
     await seedQuotaBlock({ cid: 'cid-1', nextProbeAt: new Date(Date.now() + 60_000).toISOString() });
 
-    expect(await syncEngine.getRemoteSyncStatus(OTHER_TENANT)).toHaveLength(0);
-    expect(await syncEngine.getRemoteSyncStatus(TENANT)).toHaveLength(1);
+    expect(await getRemoteStatuses(OTHER_TENANT)).toHaveLength(0);
+    expect(await getRemoteStatuses(TENANT)).toHaveLength(1);
   });
 
   it('reports terminal-only remote failures as degraded with their error', async () => {
@@ -187,7 +191,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       tenantDid      : TENANT,
     });
 
-    const [status] = await syncEngine.getRemoteSyncStatus(TENANT);
+    const [status] = await getRemoteStatuses(TENANT);
 
     expect(status).toMatchObject({
       remoteEndpoint           : REMOTE,
@@ -203,7 +207,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await seedCurrentLink({ connectivity: 'offline', lastActivityAt });
     await seedQuotaBlock({ cid: 'cid-1', nextProbeAt: new Date(Date.now() + 60_000).toISOString() });
 
-    const [status] = await syncEngine.getRemoteSyncStatus(TENANT);
+    const [status] = await getRemoteStatuses(TENANT);
 
     expect(status).toMatchObject({
       state                    : 'quota-blocked',
@@ -221,8 +225,8 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
     await syncEngine.removeIdentity(TENANT);
 
-    expect(await syncEngine.getRemoteSyncStatus(TENANT)).toHaveLength(0);
-    expect((await syncEngine.getRemoteSyncStatus(OTHER_TENANT))[0].quotaBlockedMessageCount).toBe(1);
+    expect(await getRemoteStatuses(TENANT)).toHaveLength(0);
+    expect((await getRemoteStatuses(OTHER_TENANT))[0].quotaBlockedMessageCount).toBe(1);
   });
 
   it('replacement identity options do not inherit quota state from the old link', async () => {
@@ -231,7 +235,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
     await syncEngine.setIdentityOptions({ did: TENANT, options: { protocols: 'all' } });
 
-    expect(await syncEngine.getRemoteSyncStatus(TENANT)).toHaveLength(0);
+    expect(await getRemoteStatuses(TENANT)).toHaveLength(0);
   });
 
   it('prunes a superseded authorization epoch without clearing the replacement link', async () => {
@@ -248,7 +252,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       projectionId,
     }], (): boolean => (syncEngine as any)._targetPlanner.topologyGeneration === topologyGeneration);
 
-    const [status] = await syncEngine.getRemoteSyncStatus(TENANT);
+    const [status] = await getRemoteStatuses(TENANT);
     expect(status.quotaBlockedMessageCount).toBe(1);
     const remaining = [...await db.sublevel('quotaBlocks').values().all()]
       .map((value) => ({ messageCid: (JSON.parse(value) as { messageCid: string }).messageCid }));
@@ -278,7 +282,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     }]);
 
     const health = await syncEngine.getSyncHealth();
-    const statuses = await syncEngine.getRemoteSyncStatus(TENANT);
+    const statuses = await getRemoteStatuses(TENANT);
 
     expect(health.quotaBlockedMessageCount).toBe(1);
     expect(statuses).toHaveLength(1);
@@ -660,7 +664,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     });
     unsubscribe();
 
-    const [status] = await syncEngine.getRemoteSyncStatus(TENANT);
+    const [status] = await getRemoteStatuses(TENANT);
     expect(status).toMatchObject({ state: 'degraded', quotaBlockedMessageCount: 0, failedMessageCount: 1 });
     expect(events.some((event) => event.type === 'push:quota-cleared')).toBe(false);
   });
@@ -749,7 +753,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
         }),
       }),
     ]);
-    expect(await syncEngine.getRemoteSyncStatus(TENANT)).toHaveLength(0);
+    expect(await getRemoteStatuses(TENANT)).toHaveLength(0);
   });
 
   it('deletes an exact quota row after an Applied acknowledgement', async () => {
