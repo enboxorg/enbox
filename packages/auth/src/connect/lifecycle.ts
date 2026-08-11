@@ -394,49 +394,40 @@ export async function deriveActiveSyncScope(
   return deriveSyncScopeFromGrants(grantEntries.map(({ grant }) => grant));
 }
 
-// ─── toSyncIdentityProtocols ────────────────────────────────────
+// ─── applyIdentitySyncScope ─────────────────────────────────────
 
 /**
- * Narrow a derived sync scope (`'all' | string[]`) to the form required by
- * `SyncIdentityOptions.protocols` (`'all' | [string, ...string[]]`).
+ * Apply auth's sync registration policy for one identity scope.
  *
- * Returns `undefined` when the scope is an empty array, signalling the
- * caller should unregister the identity rather than register it.
+ * An omitted scope leaves application-owned registration unchanged, an empty
+ * derived scope removes stale delegate registration, and every usable scope is
+ * registered with the optional delegate DID.
  *
+ * @returns Whether the identity was registered for sync.
  * @internal
  */
-export function toSyncIdentityProtocols(
-  scope: 'all' | string[],
-): 'all' | [string, ...string[]] | undefined {
-  if (scope === 'all') { return 'all'; }
-  if (scope.length === 0) { return undefined; }
-  return scope as [string, ...string[]];
-}
+export async function applyIdentitySyncScope(params: {
+  userAgent: EnboxUserAgent;
+  connectedDid: string;
+  delegateDid?: string;
+  scope: 'all' | string[] | undefined;
+}): Promise<boolean> {
+  const { userAgent, connectedDid, delegateDid, scope } = params;
 
-/**
- * Derive a delegate's active sync scope from its stored grants and either
- * register/update its sync protocol list, or clear a stale registration when
- * no sync-relevant grants remain.
- *
- * @internal
- */
-async function registerDelegateSyncScope(
-  userAgent: EnboxUserAgent,
-  connectedDid: string,
-  delegateDid: string,
-): Promise<void> {
-  const scope = await deriveActiveSyncScope(userAgent, delegateDid);
-  const narrowed = toSyncIdentityProtocols(scope);
-  if (narrowed === undefined) {
-    // Zero grants — clear any stale sync registration so revoked protocols stop syncing.
+  if (scope === undefined) {
+    return false;
+  }
+  if (delegateDid !== undefined && scope !== 'all' && scope.length === 0) {
     await userAgent.sync.removeIdentity(connectedDid);
-    return;
+    return false;
   }
 
-  await userAgent.sync.setIdentityOptions({
-    did     : connectedDid,
-    options : { delegateDid, protocols: narrowed },
-  });
+  const protocols = scope as IdentitySyncProtocols;
+  const options = delegateDid === undefined
+    ? { protocols }
+    : { delegateDid, protocols };
+  await userAgent.sync.setIdentityOptions({ did: connectedDid, options });
+  return true;
 }
 
 // ─── registerSyncScopeForIdentity ───────────────────────────────
@@ -463,19 +454,15 @@ export async function registerSyncScopeForIdentity(params: {
   identitySyncProtocols?: IdentitySyncProtocols;
 }): Promise<void> {
   const { userAgent, connectedDid, delegateDid, identitySyncProtocols } = params;
+  const scope = delegateDid === undefined
+    ? identitySyncProtocols
+    : await deriveActiveSyncScope(userAgent, delegateDid);
 
-  if (delegateDid !== undefined) {
-    await registerDelegateSyncScope(userAgent, connectedDid, delegateDid);
-    return;
-  }
-
-  if (identitySyncProtocols === undefined) {
-    return;
-  }
-
-  await userAgent.sync.setIdentityOptions({
-    did     : connectedDid,
-    options : { protocols: identitySyncProtocols },
+  await applyIdentitySyncScope({
+    userAgent,
+    connectedDid,
+    delegateDid,
+    scope,
   });
 }
 
@@ -708,17 +695,11 @@ export async function processDelegateGrantsForExistingIdentity(params: {
     agent: userAgent, connectedDid, delegateDid, grants: delegateGrants,
   });
 
-  // Keep the identity's sync scope aligned with the replacement grant bundle.
-  const narrowedProtocols = toSyncIdentityProtocols(connectedProtocols);
-  if (narrowedProtocols === undefined) {
-    // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
-    await userAgent.sync.removeIdentity(connectedDid);
-    return;
-  }
-
-  await userAgent.sync.setIdentityOptions({
-    did     : connectedDid,
-    options : { delegateDid, protocols: narrowedProtocols },
+  await applyIdentitySyncScope({
+    userAgent,
+    connectedDid,
+    delegateDid,
+    scope: connectedProtocols,
   });
 }
 

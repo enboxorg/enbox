@@ -56,16 +56,14 @@ const store = createConnectionStore({
 });
 
 let snapshot = await store.initialize();
-if (snapshot.walletReapprovalRequired && store.auth?.session?.delegateDid !== undefined) {
-  snapshot = await store.refresh();
-} else if (snapshot.phase === 'disconnected') {
+if (snapshot.phase === 'disconnected') {
   snapshot = await store.connect();
 }
 if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const enbox = snapshot.enbox!;
+const enbox = snapshot.enbox;
 
 // ...use enbox...
 

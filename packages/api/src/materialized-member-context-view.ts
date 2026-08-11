@@ -91,7 +91,7 @@ export function createMaterializedMemberContextView<Context extends { key: strin
       }
       binding.view = view;
       binding.unsubscribe = view.subscribe((state): void => { publishRoot(binding, state); });
-      publishRoot(binding, view.getState());
+      publishRoot(binding, view.getSnapshot());
     } catch (error: unknown) {
       if (closed || binding.controller.signal.aborted || bindings.get(binding.context.key) !== binding) {
         return;

@@ -3,6 +3,7 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
 
 import { defineProtocol } from '../src/define-protocol.js';
+import { normalizeProtocolRequests } from '@enbox/auth';
 import { recordCodecs } from '../src/record-codec.js';
 import { defineApplicationManifest, getApplicationProtocolRequests } from '../src/application-manifest.js';
 
@@ -47,12 +48,13 @@ describe('application manifest', () => {
 
     expect(application.protocols).toHaveLength(2);
     expect(application.protocols[0].protocol).toBe(NotesProtocol);
-    expect(application.protocols[0].permissions).toBeUndefined();
+    expect(application.protocols[0].permissions).toEqual(['read', 'write', 'delete']);
+    expect(Object.isFrozen(application.protocols[0].permissions)).toBe(true);
     expect(application.protocols[1].protocol).toBe(PhotosProtocol);
     expect(application.protocols[1].permissions).toEqual(['read']);
   });
 
-  it('should project only raw definitions and fresh permission arrays for auth', () => {
+  it('should project raw definitions and fresh normalized permission arrays', () => {
     const application = defineApplicationManifest({
       protocols: [
         NotesProtocol,
@@ -61,11 +63,13 @@ describe('application manifest', () => {
     } as const);
 
     const first = getApplicationProtocolRequests(application);
-    expect(first[0]).toBe(NotesDefinition);
+    expect(first[0]).toEqual({ definition: NotesDefinition, permissions: ['read', 'write', 'delete'] });
     expect(first[1]).toEqual({ definition: PhotosDefinition, permissions: ['read'] });
+    expect(first[0]).not.toHaveProperty('codecs');
     expect(first[1]).not.toHaveProperty('codecs');
     expect(first[1]).not.toHaveProperty('roleGroups');
     expect((first[1] as { definition: object }).definition).not.toHaveProperty('codecs');
+    expect(normalizeProtocolRequests(first).map(({ permissionScopes }) => permissionScopes.length)).toEqual([5, 3]);
 
     const explicit = first[1] as { permissions: Array<'read' | 'write' | 'delete'> };
     explicit.permissions.push('write');

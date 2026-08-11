@@ -18,7 +18,7 @@
  *   connectHandler : BrowserConnectHandler({ appName: 'My App' }),
  * });
  * const snapshot = await store.connect();
- * if (snapshot.enbox === undefined) throw snapshot.error ?? new Error('Connection failed.');
+ * if (snapshot.phase !== 'connected') throw snapshot.error ?? new Error('Connection failed.');
  * ```
  *
  * For non-browser environments (Node.js, CLI, desktop), import from
@@ -31,149 +31,13 @@
 //
 // The high-level Enbox API: DWN records and protocols.
 
-export {
-  AudienceDecryptError,
-  createConnectionStore,
-  ContextNotReadyError,
-  ContextRetiredError,
-  defineApplicationManifest,
-  DwnResponseError,
-  Enbox,
-  defineProtocol,
-  getApplicationProtocolRequests,
-  ProtocolReadinessError,
-  RecordConflictError,
-  RecordParentNotFoundError,
-  RecordSquashBackstopError,
-  RecordValidationError,
-  protocolContextKey,
-  recordCodecs,
-  ServiceConfigProtocol,
-  Time,
-} from '@enbox/api';
-
-export type {
-  ApplicationConnectionStore,
-  ApplicationConnectionStoreConnectOptions,
-  ApplicationConnectionStoreOptions,
-  ApplicationConnectionStoreRefreshOptions,
-  ApplicationManifest,
-  ApplicationManifestProtocol,
-  ApplicationManifestProtocolInput,
-  AudienceDecryptFailureCause,
-  ConnectionPhase,
-  ConnectionSnapshot,
-  ConnectionSnapshotListener,
-  ConnectionStore,
-  ConnectionStoreOptions,
-  ContextView,
-  ContextViewListener,
-  ContextViewState,
-  ContextMember,
-  ContextMembersApi,
-  ContextInvitation,
-  ContextInvitationPreview,
-  ContextInvitationsApi,
-  ContextMaterializedRecord,
-  ContextRecord,
-  ContextRecordDeleteParams,
-  ContextRecordsApi,
-  ContextRecordUpdateParams,
-  ContextRoleGroup,
-  ContextRoleGroups,
-  ContextRolePath,
-  ContextsApi,
-  DataForPath,
-  DefineApplicationManifestOptions,
-  DwnEndpointResolution,
-  EnboxAnonymousOptions,
-  EnboxParams,
-  EnboxSessionParams,
-  EncodedRecordData,
-  EnsureProtocolsReadyOptions,
-  ExpandableRecordView,
-  FileEnvelopeCodec,
-  FileEnvelopeCodecOptions,
-  FileEnvelopeData,
-  FollowContextOptions,
-  JsonRecordCodecOptions,
-  MaterializedMemberContext,
-  MaterializedRecord,
-  MemberContext,
-  OwnedContext,
-  ProtocolContext,
-  ProtocolRolePaths,
-  SquashProtocolPaths,
-  RecordCodec,
-  RecordCodecContext,
-  RecordCodecValue,
-  RecordFilter,
-  RecordPage,
-  RecordPatch,
-  RecordPatchInput,
-  RecordQuery,
-  RecordSubscription,
-  RecordSubscriptionEvent,
-  RecordSubscriptionListener,
-  RecordView,
-  RecordViewListener,
-  RecordViewState,
-  RecordValidationFailure,
-  RecordValidator,
-  ReplicationCurrentness,
-  RoleDeliveryState,
-  SyncStatusSnapshot,
-  TypedMaterializedRecord,
-  TypedRecord,
-} from '@enbox/api';
+export * from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────
 //
 // Authentication lifecycle, session management, connect handlers.
 
-export {
-  AuthManager,
-  AuthSession,
-  ConnectDeniedError,
-  SESSION_EXPIRED_ERROR_CODE,
-  SESSION_REVOKED_ERROR_CODE,
-  computeConnectionStatus,
-  isConnectDeniedError,
-  isSessionExpiredError,
-  isSessionInvalidError,
-  normalizeProtocolRequests,
-  WalletConnect,
-} from '@enbox/auth/browser';
-
-export type {
-  AuthEvent,
-  AuthEventHandler,
-  AuthManagerOptions,
-  AuthState,
-  ComputeConnectionStatusOptions,
-  ConnectionMonitorOptions,
-  ConnectionState,
-  ConnectionStatus,
-  ConnectionStatusGrant,
-  ConnectHandler,
-  ConnectOptions,
-  ConnectResult,
-  DisconnectOptions,
-  GetConnectionStatusOptions,
-  HandlerConnectOptions,
-  ImportFromPortableOptions,
-  VaultConnectOptions,
-  Permission,
-  PortableIdentity,
-  ProtocolDefinitionCarrier,
-  ProtocolPermissionRequest,
-  ProtocolRequest,
-  RefreshOptions,
-  RegistrationOptions,
-  StorageAdapter,
-  SyncOption,
-  WalletConnectOptions,
-} from '@enbox/auth/browser';
+export * from '@enbox/auth/browser';
 
 // ─── Re-exports from @enbox/connect ─────────────────────────────
 //
@@ -181,7 +45,7 @@ export type {
 // transports: opening/sealing envelopes and the deny token.
 
 export { CONNECT_DENIED_TOKEN, ConnectProvider } from '@enbox/connect';
-export type { ConnectApproval, ConnectPermissionRequest, ConnectRequest, ConnectRequestType } from '@enbox/connect';
+export type { ConnectApproval, ConnectRequest } from '@enbox/connect';
 
 // ─── Browser-specific exports ───────────────────────────────────
 //
@@ -231,14 +95,6 @@ export type {
 // symbols dapps most commonly reached into sibling packages for; anything
 // more specialized is still available by importing the underlying package
 // directly.
-
-// Canonical typed record (from @enbox/api).
-export { Record } from '@enbox/api';
-
-// Custom storage adapter + DWN registration provider-auth callback shapes
-// (from @enbox/auth).
-export { BrowserStorage } from '@enbox/auth/browser';
-export type { ProviderAuthParams, ProviderAuthResult } from '@enbox/auth/browser';
 
 // Public-profile read/cache layer (from @enbox/protocols): fetch other
 // users' published profiles (displayName + avatar/hero) from their DWNs

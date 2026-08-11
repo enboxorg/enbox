@@ -4,6 +4,8 @@ import type { SyncQuotaManager } from './sync-quota-manager.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, ReplicationLinkState, SyncDirection } from './types/sync.js';
 
+import { runSerializedByKey } from '@enbox/common';
+
 import { buildLinkKey } from './sync-link-key.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 
@@ -161,25 +163,12 @@ export class SyncDurableFeedReconciler {
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
     const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
-    const previous = this._runs.get(linkKey) ?? Promise.resolve();
-    const run = previous.catch((): void => {
-      // A failed predecessor must not poison this link's queue.
-    }).then(async (): Promise<SyncDurableFeedReconcileResult> => {
+    return runSerializedByKey(this._runs, linkKey, async (): Promise<SyncDurableFeedReconcileResult> => {
       if (SyncDurableFeedReconciler.shouldAbort(shouldContinue)) {
         return { ...SyncDurableFeedReconciler.initialResult(options), aborted: true };
       }
       return this.reconcileTarget(target, link, options, shouldContinue);
     });
-    const settled = run.then((): void => {}, (): void => {});
-    this._runs.set(linkKey, settled);
-
-    try {
-      return await run;
-    } finally {
-      if (this._runs.get(linkKey) === settled) {
-        this._runs.delete(linkKey);
-      }
-    }
   }
 
   /** Pull every missing remote feed entry and persist contiguous progress. */

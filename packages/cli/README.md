@@ -39,7 +39,7 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const enbox = snapshot.enbox!;
+const enbox = snapshot.enbox;
 
 // ...use enbox...
 

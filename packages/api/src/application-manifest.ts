@@ -7,28 +7,31 @@
  * definitions and permissions across the auth/connect boundary.
  */
 
+import type { TypedProtocol } from './protocol-types.js';
 import type { Permission, ProtocolRequest } from '@enbox/auth';
 
 import { authoredProtocolDefinitionsEqual } from '@enbox/dwn-sdk-js';
 import { isTypedProtocol } from './define-protocol.js';
-import type { TypedProtocol } from './protocol-types.js';
+import { normalizePermissionPolicy } from '@enbox/auth';
 
 /** One typed protocol registered by an application. */
 export type ApplicationManifestProtocol<Protocol extends TypedProtocol = TypedProtocol> = {
   /** Typed protocol retained for application APIs and future readiness checks. */
   readonly protocol: Protocol;
 
-  /**
-   * Delegated permissions requested for this protocol. Omit to use auth's
-   * default `read`, `write`, and `delete` policy.
-   */
+  /** Normalized delegated permissions requested for this protocol. */
+  readonly permissions: readonly Permission[];
+};
+
+type ApplicationManifestProtocolRegistration<Protocol extends TypedProtocol = TypedProtocol> = {
+  readonly protocol: Protocol;
   readonly permissions?: readonly Permission[];
 };
 
 /** A direct typed-protocol shorthand or an entry with explicit permissions. */
 export type ApplicationManifestProtocolInput<Protocol extends TypedProtocol = TypedProtocol> =
   | Protocol
-  | ApplicationManifestProtocol<Protocol>;
+  | ApplicationManifestProtocolRegistration<Protocol>;
 
 /** A stable application-owned registry of typed protocols. */
 export type ApplicationManifest<
@@ -41,7 +44,7 @@ export type ApplicationManifest<
 type TypedProtocolFromInput<Input> =
   Input extends TypedProtocol
     ? Input
-    : Input extends ApplicationManifestProtocol<infer Protocol>
+    : Input extends ApplicationManifestProtocolRegistration<infer Protocol>
       ? Protocol
       : never;
 
@@ -105,13 +108,11 @@ export function defineApplicationManifest<
     }
     seen.set(protocolUri, { index, protocol });
 
-    const permissions = registration?.permissions === undefined
-      ? undefined
-      : Object.freeze(copyPermissionPolicy(registration.permissions, index));
-    const entry = permissions === undefined
-      ? { protocol }
-      : { permissions, protocol };
-    normalized.push(Object.freeze(entry));
+    const permissions = Object.freeze(normalizePermissionPolicy(
+      registration?.permissions,
+      `defineApplicationManifest: protocols[${index}].permissions`,
+    ));
+    normalized.push(Object.freeze({ permissions, protocol }));
   }
 
   return Object.freeze({
@@ -123,7 +124,7 @@ export function defineApplicationManifest<
  * Projects a typed application manifest into dependency-neutral auth protocol
  * requests for a delegated connect or refresh call.
  *
- * The returned array and explicit permission arrays are fresh mutable copies.
+ * The returned array and permission arrays are fresh mutable copies.
  * Runtime codecs are never included. Owner/vault callers should not pass these
  * requests to `connect()` because a non-empty protocol list intentionally
  * selects auth's delegated-handler route.
@@ -131,60 +132,15 @@ export function defineApplicationManifest<
 export function getApplicationProtocolRequests(
   application: ApplicationManifest,
 ): ProtocolRequest[] {
-  return application.protocols.map(({ permissions, protocol }) => {
-    if (permissions === undefined) {
-      return protocol.definition;
-    }
-
-    return {
-      definition  : protocol.definition,
-      permissions : [...permissions],
-    };
-  });
+  return application.protocols.map(({ permissions, protocol }) => ({
+    definition  : protocol.definition,
+    permissions : [...permissions],
+  }));
 }
 
 /** Whether an input uses the explicit application-manifest entry shape. */
 function isApplicationManifestProtocol(
   input: ApplicationManifestProtocolInput,
-): input is ApplicationManifestProtocol {
+): input is ApplicationManifestProtocolRegistration {
   return Object.hasOwn(input, 'protocol');
-}
-
-/** Validate and copy one explicit permission policy without mutating caller-owned input. */
-function copyPermissionPolicy(value: unknown, protocolIndex: number): Permission[] {
-  const path = `protocols[${protocolIndex}].permissions`;
-  if (!Array.isArray(value)) {
-    throw new TypeError(`defineApplicationManifest: ${path} must be an array.`);
-  }
-
-  const permissions = value.map((permission, permissionIndex): Permission => (
-    parsePermission(permission, path, permissionIndex)
-  ));
-  const duplicateIndex = permissions.findIndex((permission, index): boolean => (
-    permissions.indexOf(permission) !== index
-  ));
-  if (duplicateIndex >= 0) {
-    const permission = permissions[duplicateIndex];
-    throw new TypeError(
-      `defineApplicationManifest: ${path} contains duplicate permission '${permission}' ` +
-      `at indexes ${permissions.indexOf(permission)} and ${duplicateIndex}.`,
-    );
-  }
-
-  return permissions;
-}
-
-function parsePermission(value: unknown, path: string, index: number): Permission {
-  if (isPermission(value)) {
-    return value;
-  }
-
-  throw new TypeError(
-    `defineApplicationManifest: ${path}[${index}] has unsupported permission ` +
-    `'${String(value)}'. Supported permissions: read, write, delete.`,
-  );
-}
-
-function isPermission(value: unknown): value is Permission {
-  return value === 'read' || value === 'write' || value === 'delete';
 }

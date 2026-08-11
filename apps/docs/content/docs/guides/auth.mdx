@@ -26,9 +26,10 @@ Most applications should let a connection store own auth and its session-bound
 API facade:
 
 ```ts
-import { createConnectionStore } from '@enbox/browser';
+import { createConnectionStore, defineApplicationManifest } from '@enbox/browser';
 
-const store = createConnectionStore({ password: userPassword });
+const application = defineApplicationManifest({ protocols: [AppProtocol] } as const);
+const store = createConnectionStore({ application, password: userPassword });
 let snapshot = await store.initialize();
 if (snapshot.phase === 'disconnected') {
   snapshot = await store.connectVault({ createIdentity: true });
@@ -37,8 +38,8 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-console.log(snapshot.identityDid); // 'did:dht:...'
-const enbox = snapshot.enbox!;
+console.log(snapshot.session.did); // 'did:dht:...'
+const enbox = snapshot.enbox;
 
 // ...use enbox...
 

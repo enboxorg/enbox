@@ -27,6 +27,7 @@ describe('@enbox/auth/browser', () => {
     expect(mod.WalletConnect).toBeDefined();
     expect(mod.createDefaultStorage).toBeDefined();
     expect(mod.discoverLocalDwn).toBeDefined();
+    expect(mod.normalizePermissionPolicy).toBeDefined();
     expect(mod.normalizeProtocolRequests).toBeDefined();
   });
 

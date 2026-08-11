@@ -1,6 +1,6 @@
 import type { AbstractLevel } from 'abstract-level';
 
-import type { SyncDeferredPullState } from '../src/sync-deferred-pull-store.js';
+import type { SyncDeferredPullState } from '../src/sync-deferred-pull-store-level.js';
 
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';

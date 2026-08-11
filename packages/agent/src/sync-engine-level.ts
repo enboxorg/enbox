@@ -7,22 +7,19 @@ import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
 import { RateLimitError } from '@enbox/dwn-clients';
 import { BroadcastChannelWakePublisher, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
-import { parseDurationInMilliseconds, runWithCrossContextLock, sleep } from '@enbox/common';
+import { parseDurationInMilliseconds, runSerializedByKey, runWithCrossContextLock, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { SyncDeadLetterStore } from './sync-dead-letter-store.js';
+import type { SyncDeferredPullState } from './sync-deferred-pull-store-level.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type { SyncFreshEntry } from './sync-admit-closure.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncMessageEntry } from './sync-messages.js';
-import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
-import type { SyncStatusLink } from './sync-status-reporter.js';
 import type {
   DeadLetterEntry,
   PushFailure,
   PushResult,
-  RemoteSyncStatus,
   ReplicationLinkSnapshot,
   ReplicationLinkState,
   StartSyncParams,
@@ -49,7 +46,6 @@ import type {
   SyncDurableFeedReconcileResult as SyncReconcileResult,
 } from './sync-durable-feed-reconciler.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput, FollowedSyncSourceStore } from './followed-sync-source.js';
-import type { SyncDeferredPullState, SyncDeferredPullStore } from './sync-deferred-pull-store.js';
 import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.js';
 import type { SyncIdentityTaskRunner, SyncLifecycleDeadline } from './sync-lifecycle-coordinator.js';
 import type {
@@ -58,6 +54,7 @@ import type {
   SyncScopeProtocolHistoryPage,
   SyncScopeProtocolHistoryQuery,
 } from './sync-scope-closure-validator.js';
+import type { SyncStatusLink, SyncStatusSnapshot } from './sync-status-reporter.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 
@@ -81,7 +78,6 @@ import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-lev
 import { SyncRunCoordinator } from './sync-run-coordinator.js';
 import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
-import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildCurrentLinkIdentityKey, buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
@@ -93,6 +89,7 @@ import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, Syn
 import { isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from './sync-target-resolver.js';
+import { projectReplicationLinks, projectSyncStatus } from './sync-status-reporter.js';
 
 export type SyncEngineLevelParams = {
   agent?: EnboxPlatformAgent;
@@ -185,8 +182,8 @@ export class SyncEngineLevel implements SyncEngine {
 
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
   private readonly _connectivityManager: SyncConnectivityManager;
-  private readonly _deadLetterStore: SyncDeadLetterStore;
-  private readonly _deferredPullStore: SyncDeferredPullStore;
+  private readonly _deadLetterStore: SyncDeadLetterStoreLevel;
+  private readonly _deferredPullStore: SyncDeferredPullStoreLevel;
   private readonly _drainCoordinator: SyncDrainCoordinator;
   private readonly _echoSuppressor = new SyncEchoSuppressor();
   private readonly _endpointStore: SyncEndpointStore;
@@ -206,7 +203,6 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private _runtime = new SyncRuntime();
   private readonly _scopeClosureValidator: SyncScopeClosureValidator;
-  private readonly _statusReporter: SyncStatusReporter;
   private readonly _targetPlanner: SyncTargetPlanner;
   private _targetResolver?: SyncTargetResolver;
 
@@ -216,7 +212,7 @@ export class SyncEngineLevel implements SyncEngine {
    * pruning, and health reporting. Lazily initialized on first use to avoid
    * sublevel calls on mock databases.
    */
-  private _replicationLinkStore?: SyncReplicationLinkStore;
+  private _replicationLinkStore?: SyncReplicationLinkStoreLevel;
 
   /** Active replication-session controllers; their keyed scheduling lives in `_runtime`. */
   private readonly _linkControllers: Map<string, SyncLinkController> = new Map();
@@ -318,7 +314,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._scopeClosureValidator = this.createScopeClosureValidator();
     this._durableFeedReconciler = this.createDurableFeedReconciler();
     this._targetPlanner = this.createTargetPlanner();
-    this._statusReporter = this.createStatusReporter();
     this._linkRecoveryCoordinator = this.createLinkRecoveryCoordinator();
 
     if (dataPath !== undefined) {
@@ -505,20 +500,6 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  /** Wire SyncStatusReporter to this engine. */
-  private createStatusReporter(): SyncStatusReporter {
-    return new SyncStatusReporter({
-      quotaManager : this._quotaManager,
-      operations   : {
-        getConnectivityState       : (): SyncConnectivityState => this.connectivityState,
-        getCurrentLinkIdentityKeys : (): Promise<Set<string> | undefined> => this.getCurrentLinkIdentityKeys(),
-        getCurrentQuotaLinkKeys    : (): Promise<Set<string> | undefined> => this.getCurrentQuotaLinkKeys(),
-        getDeadLetters             : (): Promise<DeadLetterEntry[]> => this._deadLetterStore.getAll(),
-        getLinks                   : (): Promise<SyncStatusLink[]> => this.getLinksForStatusReporting(),
-      },
-    });
-  }
-
   /**
    * Overlay ephemeral replication-session state onto fresh durable link rows.
    *
@@ -581,7 +562,7 @@ export class SyncEngineLevel implements SyncEngine {
 
 
   /** Lazy accessor for the durable replication-link store. */
-  private get replicationLinkStore(): SyncReplicationLinkStore {
+  private get replicationLinkStore(): SyncReplicationLinkStoreLevel {
     this._replicationLinkStore ??= new SyncReplicationLinkStoreLevel(this._db, this._lockNamespace);
     return this._replicationLinkStore;
   }
@@ -1041,6 +1022,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this._quotaManager.clearTenant(did);
     await this.pruneSupersededDurableLinksForIdentity(did, new Set());
     await this.runDeferredPullLifecycle(did, async (): Promise<void> => {
+      await this._deadLetterStore.deleteForTenant(did);
       await this._deferredPullStore.deleteForTenant(did);
       await this._identityStore.delete(did);
     });
@@ -1067,20 +1049,15 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Re-read and announce one sibling context's committed registration state in wake order. */
   private scheduleIdentityRegistrationRefresh(tenantDid: string): void {
-    const previous = this._identityRegistrationRefreshes.get(tenantDid) ?? Promise.resolve();
-    const task = previous.catch((): void => {}).then(async (): Promise<void> => {
-      const options = await this._identityStore.get(tenantDid);
-      this.invalidateSyncTargetsCache();
-      this.emitIdentityRegistrationChange(tenantDid, options);
-    });
-    this._identityRegistrationRefreshes.set(tenantDid, task);
-    const settle = (): void => {
-      if (this._identityRegistrationRefreshes.get(tenantDid) === task) {
-        this._identityRegistrationRefreshes.delete(tenantDid);
-      }
-    };
-    void task.then(settle, (cause: unknown): void => {
-      settle();
+    void runSerializedByKey(
+      this._identityRegistrationRefreshes,
+      tenantDid,
+      async (): Promise<void> => {
+        const options = await this._identityStore.get(tenantDid);
+        this.invalidateSyncTargetsCache();
+        this.emitIdentityRegistrationChange(tenantDid, options);
+      },
+    ).catch((cause: unknown): void => {
       if (!SyncEngineLevel.isDatabaseNotOpenError(cause)) {
         console.error('SyncEngineLevel: Failed to refresh a cross-context identity registration:', cause);
       }
@@ -4684,7 +4661,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async clearDeadLetterForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void> {
     try {
       const deleted = await this._deadLetterStore.deleteExact(tenantDid, messageCid, remoteEndpoint);
-      if (deleted === undefined) {
+      if (!deleted) {
         return;
       }
       this.emitEvent({ type: 'dead-letter:change', tenantDid, remoteEndpoint });
@@ -4702,47 +4679,44 @@ export class SyncEngineLevel implements SyncEngine {
       (error as { code?: string }).code === 'LEVEL_DATABASE_NOT_OPEN';
   }
 
-  public async clearDeadLetter(messageCid: string, remoteEndpoint?: string): Promise<boolean> {
-    // The durable key includes tenant, but this API intentionally clears by
-    // message CID and optional remote regardless of tenant, matching the
-    // previous public contract.
-    const deleted = await this._deadLetterStore.deleteForMessage(messageCid, remoteEndpoint);
-    if (deleted.length > 0) {
-      for (const tenantDid of new Set(deleted.map((entry): string => entry.tenantDid))) {
-        this.emitEvent({ type: 'dead-letter:change', tenantDid, remoteEndpoint });
-      }
-    }
-    return deleted.length > 0;
-  }
-
-  public async clearAllDeadLetters(tenantDid?: string): Promise<void> {
-    const deleted = tenantDid === undefined
-      ? await this._deadLetterStore.clear()
-      : await this._deadLetterStore.deleteForTenant(tenantDid);
-
-    for (const did of new Set(deleted.map((entry): string => entry.tenantDid))) {
-      this.emitEvent({ type: 'dead-letter:change', tenantDid: did });
-    }
-  }
-
   public async getSyncHealth(): Promise<SyncHealthSummary> {
-    return this._statusReporter.getHealth();
+    return (await this.getSyncStatus()).health;
   }
 
   public async getIdentitySyncStatus(tenantDid: string): Promise<SyncIdentityStatus> {
     const [registration, status] = await Promise.all([
       this.getIdentityOptions(tenantDid),
-      this._statusReporter.getStatus(tenantDid),
+      this.getSyncStatus(tenantDid),
     ]);
     return { registration, ...status };
   }
 
-  public async getRemoteSyncStatus(tenantDid?: string): Promise<RemoteSyncStatus[]> {
-    return this._statusReporter.getRemoteStatus(tenantDid);
+  public async getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]> {
+    const [currentLinkIdentityKeys, links] = await Promise.all([
+      this.getCurrentLinkIdentityKeys(),
+      this.getLinksForStatusReporting(),
+    ]);
+    return projectReplicationLinks({ currentLinkIdentityKeys, links, tenantDid });
   }
 
-  public async getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]> {
-    return this._statusReporter.getReplicationLinks(tenantDid);
+  /** Read every durable source once, then project the requested status snapshot. */
+  private async getSyncStatus(tenantDid?: string): Promise<SyncStatusSnapshot> {
+    const [currentLinkIdentityKeys, currentQuotaLinkKeys, links, quotaBlocks, deadLetters] = await Promise.all([
+      this.getCurrentLinkIdentityKeys(),
+      this.getCurrentQuotaLinkKeys(),
+      this.getLinksForStatusReporting(),
+      this._quotaManager.getAllBlockStates(),
+      this._deadLetterStore.getAll(),
+    ]);
+    return projectSyncStatus({
+      connectivity: this.connectivityState,
+      currentLinkIdentityKeys,
+      currentQuotaLinkKeys,
+      deadLetters,
+      links,
+      quotaBlocks,
+      tenantDid,
+    });
   }
 
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {

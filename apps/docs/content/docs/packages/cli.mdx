@@ -61,8 +61,8 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-await snapshot.enbox!.using(NotesProtocol).records.create('note', {
-  data: { body: `Connected as ${snapshot.identityDid}` },
+await snapshot.enbox.using(NotesProtocol).records.create('note', {
+  data: { body: `Connected as ${snapshot.session.did}` },
 });
 
 await store.disconnect();

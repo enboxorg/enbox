@@ -613,7 +613,7 @@ export type SyncEvent =
   /** Durable sync registration was added, changed, or removed for one identity. */
   | { type: 'identity:registration-change'; tenantDid: string; options?: SyncIdentityOptions }
   /** The durable terminal-failure set changed for one identity. */
-  | { type: 'dead-letter:change'; tenantDid: string; remoteEndpoint?: string }
+  | { type: 'dead-letter:change'; tenantDid: string; remoteEndpoint: string }
   /** The durable accepted-context catalog changed for one actor. */
   | {
     type: 'followed-context:change';
@@ -709,8 +709,8 @@ export type SyncHealthSummary = {
 export type RemoteSyncState = 'healthy' | 'quota-blocked' | 'degraded' | 'offline';
 
 /**
- * Per-`(tenantDid, remoteEndpoint)` sync status snapshot. Returned by
- * {@link SyncEngine.getRemoteSyncStatus} so a frontend can render each remote's
+ * Per-`(tenantDid, remoteEndpoint)` sync status snapshot. Included in
+ * {@link SyncIdentityStatus.remotes} so a frontend can render each remote's
  * health, alert when one stops accepting writes, and trigger a resume.
  */
 export type RemoteSyncStatus = {
@@ -768,12 +768,22 @@ export type ReplicationLinkSnapshot = {
   lastActivityAt?: string;
 };
 
+/** Whether replication is still advancing, caught up, or unable to continue. */
+export type ReplicationCurrentness = 'syncing' | 'caught-up' | 'error';
+type ReplicationCurrentnessLink = Pick<ReplicationLinkSnapshot, 'connectivity' | 'isPullCurrent' | 'status'>;
+
 /** One identity's registration, replication links, and rolled-up sync health. */
 export type SyncIdentityStatus = Readonly<{
   /** Durable sync registration, or `undefined` when the identity is not registered. */
   registration: SyncIdentityOptions | undefined;
   /** Health summary scoped to this identity. */
   health: SyncHealthSummary;
+  /** Connectivity across current identity links, with the engine state as the zero-link fallback. */
+  connectivity: SyncConnectivityState;
+  /** Currentness across this identity's replication links. */
+  currentness: ReplicationCurrentness;
+  /** Latest successful activity across current identity links, when available. */
+  lastActivityAt?: string;
   /** Current replication links for this identity. */
   links: readonly ReplicationLinkSnapshot[];
   /** Per-remote health rows for this identity. */
@@ -782,10 +792,20 @@ export type SyncIdentityStatus = Readonly<{
 
 /** Whether every link in a non-empty set has a current, reachable local replica. */
 export function areReplicationLinksCurrent(
-  links: readonly Pick<ReplicationLinkSnapshot, 'connectivity' | 'isPullCurrent' | 'status'>[],
+  links: readonly ReplicationCurrentnessLink[],
 ): boolean {
   return links.length > 0 && links.every(link =>
     link.status === 'live' && link.connectivity === 'online' && link.isPullCurrent);
+}
+
+/** Project replication links into the currentness shared by observable application surfaces. */
+export function projectReplicationCurrentness(
+  links: readonly ReplicationCurrentnessLink[],
+): ReplicationCurrentness {
+  if (links.some((link): boolean => link.status === 'paused')) {
+    return 'error';
+  }
+  return areReplicationLinksCurrent(links) ? 'caught-up' : 'syncing';
 }
 
 export interface SyncEngine {
@@ -971,19 +991,6 @@ export interface SyncEngine {
   getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]>;
 
   /**
-   * Remove dead letter entries for a CID. When `remoteEndpoint` is provided,
-   * only the entry for that specific CID + remote pair is removed. Without
-   * it, all entries for the CID (across all remotes) are removed. Returns
-   * `true` if at least one entry was found and removed.
-   */
-  clearDeadLetter(messageCid: string, remoteEndpoint?: string): Promise<boolean>;
-
-  /**
-   * Clear all dead letter entries, optionally scoped to a tenant.
-   */
-  clearAllDeadLetters(tenantDid?: string): Promise<void>;
-
-  /**
    * Returns a summary of sync health: connectivity, failed message count,
    * and degraded link count.
    */
@@ -994,15 +1001,6 @@ export interface SyncEngine {
    * combined status read. Prefer this when a caller needs more than one projection.
    */
   getIdentitySyncStatus(tenantDid: string): Promise<SyncIdentityStatus>;
-
-  /**
-   * Returns a per-`(tenantDid, remoteEndpoint)` sync status snapshot, optionally
-   * filtered by tenant. Lets a frontend render each remote's health (healthy /
-   * quota-blocked / degraded / offline), show when a quota-blocked remote will
-   * next be re-probed, and surface the latest error/activity. Rows are derived from
-   * current durable link state plus live quota-block and dead-letter records.
-   */
-  getRemoteSyncStatus(tenantDid?: string): Promise<RemoteSyncStatus[]>;
 
   /**
    * Returns a read-only snapshot of every current replication link, optionally

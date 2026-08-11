@@ -7,69 +7,9 @@
  * @packageDocumentation
  */
 
-export {
-  createConnectionStore,
-  defineApplicationManifest,
-  Enbox,
-  defineProtocol,
-  getApplicationProtocolRequests,
-  ProtocolReadinessError,
-  recordCodecs,
-} from '@enbox/api';
+export * from '@enbox/api';
 
-export type {
-  ApplicationConnectionStore,
-  ApplicationConnectionStoreConnectOptions,
-  ApplicationConnectionStoreOptions,
-  ApplicationConnectionStoreRefreshOptions,
-  ApplicationManifest,
-  ApplicationManifestProtocol,
-  ApplicationManifestProtocolInput,
-  ConnectionPhase,
-  ConnectionSnapshot,
-  ConnectionSnapshotListener,
-  ConnectionStore,
-  ConnectionStoreOptions,
-  DefineApplicationManifestOptions,
-  EnboxAnonymousOptions,
-  EnboxParams,
-  EnboxSessionParams,
-  EncodedRecordData,
-  EnsureProtocolsReadyOptions,
-  RecordCodec,
-  RecordCodecValue,
-  SyncStatusSnapshot,
-} from '@enbox/api';
-
-export {
-  AuthManager,
-  AuthSession,
-  normalizeProtocolRequests,
-  WalletConnect,
-} from '@enbox/auth';
-
-export type {
-  AuthEvent,
-  AuthEventHandler,
-  AuthManagerOptions,
-  AuthState,
-  ConnectHandler,
-  ConnectOptions,
-  ConnectResult,
-  DisconnectOptions,
-  HandlerConnectOptions,
-  ImportFromPortableOptions,
-  Permission,
-  PortableIdentity,
-  ProtocolDefinitionCarrier,
-  ProtocolPermissionRequest,
-  ProtocolRequest,
-  RegistrationOptions,
-  StorageAdapter,
-  SyncOption,
-  VaultConnectOptions,
-  WalletConnectOptions,
-} from '@enbox/auth';
+export * from '@enbox/auth';
 
 export {
   CliConnectHandler,

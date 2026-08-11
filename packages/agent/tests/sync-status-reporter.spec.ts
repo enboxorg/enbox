@@ -1,22 +1,22 @@
 import type { SyncQuotaBlockState } from '../src/sync-quota-store.js';
 import type {
   DeadLetterEntry,
+  RemoteSyncStatus,
+  ReplicationLinkSnapshot,
   ReplicationLinkState,
   SyncConnectivityState,
+  SyncHealthSummary,
 } from '../src/types/sync.js';
 import type {
   SyncStatusCurrentKeySet,
   SyncStatusLink,
-  SyncStatusReporterOperations,
 } from '../src/sync-status-reporter.js';
-
-import sinon from 'sinon';
 
 import { describe, expect, it } from 'bun:test';
 
 import { buildCurrentLinkIdentityKey } from '../src/sync-link-key.js';
-import { SyncQuotaManager } from '../src/sync-quota-manager.js';
-import { SyncStatusReporter } from '../src/sync-status-reporter.js';
+import { projectReplicationCurrentness } from '../src/types/sync.js';
+import { projectReplicationLinks, projectSyncStatus } from '../src/sync-status-reporter.js';
 
 const ALICE = 'did:example:alice';
 const BOB = 'did:example:bob';
@@ -25,7 +25,7 @@ const REMOTE_B = 'https://b.example.com';
 const REMOTE_C = 'https://c.example.com';
 const REMOTE_D = 'https://d.example.com';
 
-type SyncStatusReporterState = {
+type SyncStatusProjectionState = {
   connectivity: SyncConnectivityState;
   currentLinkIdentityKeys: SyncStatusCurrentKeySet;
   currentQuotaLinkKeys: SyncStatusCurrentKeySet;
@@ -34,21 +34,25 @@ type SyncStatusReporterState = {
   quotaBlocks: SyncQuotaBlockState[];
 };
 
-describe('SyncStatusReporter', () => {
-  it('builds every tenant projection from one read of each durable source', async () => {
+type SyncStatusProjection = {
+  getHealth(): SyncHealthSummary;
+  getRemoteStatus(tenantDid?: string): RemoteSyncStatus[];
+  getReplicationLinks(tenantDid?: string): ReplicationLinkSnapshot[];
+};
+
+describe('sync status projection', () => {
+  it('builds every tenant projection from one durable-state snapshot', () => {
     const currentLink = link({ connectivity: 'offline' });
     const otherLink = link({ status: 'paused', tenantDid: BOB });
-    const operations = {
-      getConnectivityState       : sinon.stub().returns('online' as const),
-      getCurrentLinkIdentityKeys : sinon.stub().resolves(new Set([identityKey(currentLink), identityKey(otherLink)])),
-      getCurrentQuotaLinkKeys    : sinon.stub().resolves(new Set(['quota-current'])),
-      getDeadLetters             : sinon.stub().resolves([deadLetter(), deadLetter({ tenantDid: BOB })]),
-      getLinks                   : sinon.stub().resolves([currentLink, otherLink]),
-    } satisfies SyncStatusReporterOperations;
-    const quotaManager = sinon.createStubInstance(SyncQuotaManager);
-    quotaManager.getAllBlockStates.resolves([quotaBlock(), quotaBlock({ tenantDid: BOB })]);
-
-    const status = await new SyncStatusReporter({ operations, quotaManager }).getStatus(ALICE);
+    const status = projectSyncStatus({
+      connectivity            : 'online',
+      currentLinkIdentityKeys : new Set([identityKey(currentLink), identityKey(otherLink)]),
+      currentQuotaLinkKeys    : new Set(['quota-current']),
+      deadLetters             : [deadLetter(), deadLetter({ tenantDid: BOB })],
+      links                   : [currentLink, otherLink],
+      quotaBlocks             : [quotaBlock(), quotaBlock({ tenantDid: BOB })],
+      tenantDid               : ALICE,
+    });
 
     expect(status.health).toMatchObject({
       connectivity             : 'offline',
@@ -56,22 +60,42 @@ describe('SyncStatusReporter', () => {
       failedMessageCount       : 1,
       quotaBlockedMessageCount : 1,
     });
+    expect(status).toMatchObject({ connectivity: 'offline', currentness: 'syncing' });
     expect(status.links).toHaveLength(1);
     expect(status.remotes).toHaveLength(1);
-    for (const operation of [
-      operations.getCurrentLinkIdentityKeys,
-      operations.getCurrentQuotaLinkKeys,
-      operations.getDeadLetters,
-      operations.getLinks,
-    ]) {
-      expect(operation.calledOnce).toBe(true);
-    }
-    expect(operations.getConnectivityState.called).toBe(false);
-    expect(quotaManager.getAllBlockStates.calledOnce).toBe(true);
   });
 
-  it('reports an empty online snapshot as healthy', async () => {
-    await expect(createReporter().getHealth()).resolves.toEqual({
+  it('projects identity activity and currentness for application stores', () => {
+    const current = link({ lastActivityAt: timestamp(3) });
+    const status = projectSyncStatus({
+      connectivity            : 'offline',
+      currentLinkIdentityKeys : new Set([identityKey(current)]),
+      currentQuotaLinkKeys    : new Set(),
+      deadLetters             : [],
+      links                   : [current],
+      quotaBlocks             : [],
+      tenantDid               : ALICE,
+    });
+
+    expect(status).toMatchObject({ connectivity: 'online', currentness: 'caught-up', lastActivityAt: timestamp(3) });
+  });
+
+  it('projects replication currentness without status-store reads', () => {
+    const current = { status: 'live', connectivity: 'online', isPullCurrent: true } as const;
+    for (const [links, expected] of [
+      [[], 'syncing'],
+      [[current], 'caught-up'],
+      [[{ ...current, isPullCurrent: false }], 'syncing'],
+      [[{ ...current, connectivity: 'offline' }], 'syncing'],
+      [[{ ...current, status: 'initializing' }], 'syncing'],
+      [[{ ...current, status: 'paused' }], 'error'],
+    ] as const) {
+      expect(projectReplicationCurrentness(links)).toBe(expected);
+    }
+  });
+
+  it('reports an empty online snapshot as healthy', () => {
+    expect(createProjection().getHealth()).toEqual({
       connectivity             : 'online',
       degradedLinkCount        : 0,
       failedMessageCount       : 0,
@@ -80,10 +104,10 @@ describe('SyncStatusReporter', () => {
     });
   });
 
-  it('counts only current active failures, quota blocks, and degraded links', async () => {
+  it('counts only current active failures, quota blocks, and degraded links', () => {
     const pausedLink = link({ projectionId: 'current-paused', status: 'paused' });
     const liveLink = link({ projectionId: 'current-live' });
-    const reporter = createReporter({
+    const projection = createProjection({
       connectivity            : 'offline',
       currentLinkIdentityKeys : new Set([
         identityKey(pausedLink),
@@ -106,7 +130,7 @@ describe('SyncStatusReporter', () => {
       ],
     });
 
-    await expect(reporter.getHealth()).resolves.toEqual({
+    expect(projection.getHealth()).toEqual({
       connectivity             : 'offline',
       degradedLinkCount        : 1,
       failedMessageCount       : 2,
@@ -115,8 +139,8 @@ describe('SyncStatusReporter', () => {
     });
   });
 
-  it('falls back to all durable state when current-key resolution is incomplete', async () => {
-    const reporter = createReporter({
+  it('falls back to all durable state when current-key resolution is incomplete', () => {
+    const projection = createProjection({
       currentLinkIdentityKeys : undefined,
       currentQuotaLinkKeys    : undefined,
       links                   : [link({ status: 'repairing' }), link({ projectionId: 'other', status: 'paused' })],
@@ -126,19 +150,19 @@ describe('SyncStatusReporter', () => {
       ],
     });
 
-    await expect(reporter.getHealth()).resolves.toMatchObject({
+    expect(projection.getHealth()).toMatchObject({
       degradedLinkCount        : 2,
       quotaBlockedMessageCount : 1,
       syncHealthy              : false,
     });
   });
 
-  it('keeps connectivity unknown for a remote represented only by quota state', async () => {
-    const reporter = createReporter({
+  it('keeps connectivity unknown for a remote represented only by quota state', () => {
+    const projection = createProjection({
       quotaBlocks: [quotaBlock()],
     });
 
-    await expect(reporter.getRemoteStatus()).resolves.toEqual([{
+    expect(projection.getRemoteStatus()).toEqual([{
       connectivity             : 'unknown',
       failedMessageCount       : 0,
       lastError                : 'over quota',
@@ -150,12 +174,12 @@ describe('SyncStatusReporter', () => {
     }]);
   });
 
-  it('reports a remote represented only by dead letters as degraded', async () => {
-    const reporter = createReporter({
+  it('reports a remote represented only by dead letters as degraded', () => {
+    const projection = createProjection({
       deadLetters: [deadLetter({ remoteEndpoint: REMOTE_B })],
     });
 
-    await expect(reporter.getRemoteStatus()).resolves.toEqual([{
+    expect(projection.getRemoteStatus()).toEqual([{
       connectivity             : 'unknown',
       failedMessageCount       : 1,
       lastError                : 'terminal failure',
@@ -166,8 +190,8 @@ describe('SyncStatusReporter', () => {
     }]);
   });
 
-  it('folds timestamps and applies stable remote-state precedence independently per key', async () => {
-    const reporter = createReporter({
+  it('folds timestamps and applies stable remote-state precedence independently per key', () => {
+    const projection = createProjection({
       links: [
         link({ remoteEndpoint: REMOTE_D, connectivity: 'offline', lastActivityAt: timestamp(1) }),
         link({ remoteEndpoint: REMOTE_D, connectivity: 'online', lastActivityAt: timestamp(3) }),
@@ -185,7 +209,7 @@ describe('SyncStatusReporter', () => {
       ],
     });
 
-    const statuses = await reporter.getRemoteStatus();
+    const statuses = projection.getRemoteStatus();
 
     expect(statuses.map(({ remoteEndpoint, state }) => ({ remoteEndpoint, state }))).toEqual([
       { remoteEndpoint: REMOTE_A, state: 'quota-blocked' },
@@ -209,9 +233,9 @@ describe('SyncStatusReporter', () => {
     });
   });
 
-  it('filters stale link and quota identities while scoping every source by tenant', async () => {
+  it('filters stale link and quota identities while scoping every source by tenant', () => {
     const currentLink = link({ remoteEndpoint: REMOTE_A, projectionId: 'current' });
-    const reporter = createReporter({
+    const projection = createProjection({
       currentLinkIdentityKeys : new Set([identityKey(currentLink)]),
       currentQuotaLinkKeys    : new Set(['quota-current']),
       links                   : [
@@ -230,7 +254,7 @@ describe('SyncStatusReporter', () => {
       ],
     });
 
-    await expect(reporter.getRemoteStatus(ALICE)).resolves.toEqual([{
+    expect(projection.getRemoteStatus(ALICE)).toEqual([{
       connectivity             : 'online',
       failedMessageCount       : 0,
       lastError                : 'over quota',
@@ -242,12 +266,12 @@ describe('SyncStatusReporter', () => {
     }]);
   });
 
-  it('reports pull currentness separately from link status and connectivity', async () => {
-    const reporter = createReporter({
+  it('reports pull currentness separately from link status and connectivity', () => {
+    const projection = createProjection({
       links: [link({ isPullCurrent: false })],
     });
 
-    await expect(reporter.getReplicationLinks(ALICE)).resolves.toEqual([
+    expect(projection.getReplicationLinks(ALICE)).toEqual([
       expect.objectContaining({
         connectivity  : 'online',
         isPullCurrent : false,
@@ -257,8 +281,8 @@ describe('SyncStatusReporter', () => {
   });
 });
 
-function createReporter(overrides: Partial<SyncStatusReporterState> = {}): SyncStatusReporter {
-  const state: SyncStatusReporterState = {
+function createProjection(overrides: Partial<SyncStatusProjectionState> = {}): SyncStatusProjection {
+  const state: SyncStatusProjectionState = {
     connectivity            : 'online',
     currentLinkIdentityKeys : undefined,
     currentQuotaLinkKeys    : undefined,
@@ -267,16 +291,17 @@ function createReporter(overrides: Partial<SyncStatusReporterState> = {}): SyncS
     quotaBlocks             : [],
     ...overrides,
   };
-  const operations = {
-    getConnectivityState       : (): SyncConnectivityState => state.connectivity,
-    getCurrentLinkIdentityKeys : async (): Promise<SyncStatusCurrentKeySet> => state.currentLinkIdentityKeys,
-    getCurrentQuotaLinkKeys    : async (): Promise<SyncStatusCurrentKeySet> => state.currentQuotaLinkKeys,
-    getDeadLetters             : async (): Promise<DeadLetterEntry[]> => state.deadLetters,
-    getLinks                   : async (): Promise<SyncStatusLink[]> => state.links,
-  } satisfies SyncStatusReporterOperations;
-  const quotaManager = sinon.createStubInstance(SyncQuotaManager);
-  quotaManager.getAllBlockStates.callsFake(async (): Promise<SyncQuotaBlockState[]> => state.quotaBlocks);
-  return new SyncStatusReporter({ operations, quotaManager });
+  return {
+    getHealth       : (): SyncHealthSummary => projectSyncStatus(state).health,
+    getRemoteStatus : (tenantDid?: string): RemoteSyncStatus[] =>
+      projectSyncStatus({ ...state, tenantDid }).remotes,
+    getReplicationLinks: (tenantDid?: string): ReplicationLinkSnapshot[] =>
+      projectReplicationLinks({
+        currentLinkIdentityKeys : state.currentLinkIdentityKeys,
+        links                   : state.links,
+        tenantDid,
+      }),
+  };
 }
 
 function identityKey(state: ReplicationLinkState): string {
@@ -338,8 +363,8 @@ function timestamp(seconds: number): string {
   return new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString();
 }
 
-describe('SyncStatusReporter.getReplicationLinks', () => {
-  it('exposes the exact followed source for role links', async () => {
+describe('projectReplicationLinks', () => {
+  it('exposes the exact followed source for role links', () => {
     const roleLink = link({
       authorization: {
         kind         : 'role',
@@ -349,14 +374,14 @@ describe('SyncStatusReporter.getReplicationLinks', () => {
       },
     });
 
-    await expect(createReporter({
+    expect(createProjection({
       currentLinkIdentityKeys : new Set([identityKey(roleLink)]),
       links                   : [roleLink],
     }).getReplicationLinks())
-      .resolves.toMatchObject([{ followedSourceId: 'role-a' }]);
+      .toMatchObject([{ followedSourceId: 'role-a' }]);
   });
 
-  it('requires an exact current endpoint for followed-source links', async () => {
+  it('requires an exact current endpoint for followed-source links', () => {
     const roleLink = link({
       authorization: {
         kind         : 'role',
@@ -367,17 +392,17 @@ describe('SyncStatusReporter.getReplicationLinks', () => {
     });
     const currentEndpoint = { ...roleLink, remoteEndpoint: REMOTE_B };
 
-    await expect(createReporter({
+    expect(createProjection({
       currentLinkIdentityKeys : new Set([identityKey(currentEndpoint)]),
       links                   : [roleLink],
-    }).getReplicationLinks()).resolves.toEqual([]);
-    await expect(createReporter({
+    }).getReplicationLinks()).toEqual([]);
+    expect(createProjection({
       currentLinkIdentityKeys : undefined,
       links                   : [roleLink],
-    }).getReplicationLinks()).resolves.toEqual([]);
+    }).getReplicationLinks()).toEqual([]);
   });
 
-  it('projects current links with checkpoint positions and sorts by tenant and remote', async () => {
+  it('projects current links with checkpoint positions and sorts by tenant and remote', () => {
     const bobLink = link({
       tenantDid      : BOB,
       remoteEndpoint : REMOTE_B,
@@ -388,9 +413,9 @@ describe('SyncStatusReporter.getReplicationLinks', () => {
       lastActivityAt : timestamp(4),
     });
     const aliceLink = link({ projectionId: 'alice-projection' });
-    const reporter = createReporter({ links: [bobLink, aliceLink] });
+    const projection = createProjection({ links: [bobLink, aliceLink] });
 
-    const snapshots = await reporter.getReplicationLinks();
+    const snapshots = projection.getReplicationLinks();
 
     expect(snapshots).toEqual([
       {
@@ -415,16 +440,16 @@ describe('SyncStatusReporter.getReplicationLinks', () => {
     ]);
   });
 
-  it('filters by tenant and excludes superseded links', async () => {
+  it('filters by tenant and excludes superseded links', () => {
     const current = link({ projectionId: 'current' });
     const superseded = link({ projectionId: 'superseded', status: 'paused' });
     const bobLink = link({ tenantDid: BOB, projectionId: 'bob' });
-    const reporter = createReporter({
+    const projection = createProjection({
       links                   : [current, superseded, bobLink],
       currentLinkIdentityKeys : new Set([identityKey(current), identityKey(bobLink)]),
     });
 
-    const aliceSnapshots = await reporter.getReplicationLinks(ALICE);
+    const aliceSnapshots = projection.getReplicationLinks(ALICE);
 
     expect(aliceSnapshots).toHaveLength(1);
     expect(aliceSnapshots[0]).toMatchObject({ tenantDid: ALICE, status: 'live' });

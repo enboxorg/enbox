@@ -3,8 +3,8 @@ import { describe, expect, test } from 'bun:test';
 import type { DwnProtocolDefinition } from '@enbox/agent';
 import type { ProtocolRequest } from '../src/types.js';
 
-import { normalizeProtocolRequests } from '../src/permissions.js';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+import { normalizePermissionPolicy, normalizeProtocolRequests } from '../src/permissions.js';
 
 /** Minimal protocol definition for testing. */
 const TestProtocol = {
@@ -181,5 +181,17 @@ describe('normalizeProtocolRequests', () => {
     ]);
 
     expect(result).toHaveLength(2);
+  });
+});
+
+describe('normalizePermissionPolicy', () => {
+  test('returns a fresh copy of the default policy when omitted', () => {
+    const first = normalizePermissionPolicy(undefined, 'permissions');
+    const second = normalizePermissionPolicy(undefined, 'permissions');
+
+    expect(first).toEqual(['read', 'write', 'delete']);
+    expect(first).not.toBe(second);
+    first.pop();
+    expect(second).toEqual(['read', 'write', 'delete']);
   });
 });

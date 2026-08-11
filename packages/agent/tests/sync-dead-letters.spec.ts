@@ -1,10 +1,11 @@
 import type { MessagesQueryReplyEntry } from '@enbox/dwn-sdk-js';
 
+import type { SyncDeadLetterStoreLevel } from '../src/sync-dead-letter-store-level.js';
 import type { SyncIdentityOptions } from '../src/types/sync.js';
 import type { SyncIdentityStore } from '../src/sync-identity-store.js';
-import type { SyncReplicationLinkStore } from '../src/sync-replication-link-store.js';
+import type { SyncReplicationLinkStoreLevel } from '../src/sync-replication-link-store-level.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
-import type { SyncDeferredPullState, SyncDeferredPullStore } from '../src/sync-deferred-pull-store.js';
+import type { SyncDeferredPullState, SyncDeferredPullStoreLevel } from '../src/sync-deferred-pull-store-level.js';
 
 import sinon from 'sinon';
 
@@ -45,18 +46,6 @@ describe('SyncEngineLevel dead letter tracking', () => {
     expect(aliceFailures).toHaveLength(1);
     expect(aliceFailures[0].messageCid).toBe('cid-1');
     expect(aliceFailures[0].tenantDid).toBe('did:example:alice');
-  });
-
-  it('should clear a failed message for one remote without affecting other remotes', async () => {
-    await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint: 'https://a.example', tenantDid: 'did:example:alice' });
-    await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint: 'https://b.example', tenantDid: 'did:example:alice' });
-
-    const cleared = await syncEngine.clearDeadLetter('cid-shared', 'https://a.example');
-
-    expect(cleared).toBe(true);
-    expect(await syncEngine.getDeadLetters('did:example:alice')).toMatchObject([
-      { messageCid: 'cid-shared', remoteEndpoint: 'https://b.example' },
-    ]);
   });
 
   it('should clear an internally resolved failure without affecting another tenant', async () => {
@@ -131,39 +120,6 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     put.rejects(Object.assign(new Error('write failed'), { code: 'LEVEL_IO_ERROR' }));
     await expect(internal.recordDeadLetter(params)).rejects.toThrow('write failed');
-  });
-
-  it('should clear all failed messages for one tenant', async () => {
-    await recordDeadLetter({ messageCid: 'cid-1', tenantDid: 'did:example:alice' });
-    await recordDeadLetter({ messageCid: 'cid-2', tenantDid: 'did:example:bob' });
-
-    await syncEngine.clearAllDeadLetters('did:example:alice');
-
-    expect(await syncEngine.getDeadLetters('did:example:alice')).toHaveLength(0);
-    expect(await syncEngine.getDeadLetters('did:example:bob')).toHaveLength(1);
-  });
-
-  it('should emit wakes only for durable dead-letter changes', async () => {
-    const events: unknown[] = [];
-    const unsubscribe = syncEngine.on((event): void => { events.push(event); });
-
-    await recordDeadLetter({ messageCid: 'cid', tenantDid: 'did:example:alice' });
-    await syncEngine.clearDeadLetter('cid');
-    await syncEngine.clearDeadLetter('cid');
-    unsubscribe();
-
-    expect(events).toEqual([
-      {
-        type           : 'dead-letter:change',
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example',
-      },
-      {
-        type           : 'dead-letter:change',
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : undefined,
-      },
-    ]);
   });
 
   it('should report unhealthy sync while failures are recorded', async () => {
@@ -415,7 +371,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     const tenantDid = 'did:example:alice';
     await registerTenant(tenantDid);
     const replicationLinkStore = (
-      syncEngine as unknown as { replicationLinkStore: SyncReplicationLinkStore }
+      syncEngine as unknown as { replicationLinkStore: SyncReplicationLinkStoreLevel }
     ).replicationLinkStore;
     const link = await replicationLinkStore.getOrCreateLink({
       tenantDid,
@@ -442,6 +398,27 @@ describe('SyncEngineLevel dead letter tracking', () => {
     expect(await replicationLinkStore.getAllLinks()).toEqual([]);
   });
 
+  it('should keep the registration intact when dead-letter cleanup fails, then clear only that tenant on retry', async () => {
+    const tenantDid = 'did:example:alice';
+    const otherTenantDid = 'did:example:bob';
+    const store = deadLetterStoreOf(syncEngine);
+    await registerTenant(tenantDid);
+    await recordDeadLetter({ messageCid: 'alice-cid', tenantDid });
+    await recordDeadLetter({ messageCid: 'bob-cid', tenantDid: otherTenantDid });
+
+    const deleteForTenant = sinon.stub(store, 'deleteForTenant').rejects(new Error('dead-letter sweep failed'));
+
+    await expect(syncEngine.removeIdentity(tenantDid)).rejects.toThrow('dead-letter sweep failed');
+    expect(await syncEngine.getIdentityOptions(tenantDid)).toBeDefined();
+
+    deleteForTenant.restore();
+    await syncEngine.removeIdentity(tenantDid);
+
+    expect(await syncEngine.getIdentityOptions(tenantDid)).toBeUndefined();
+    expect(await syncEngine.getDeadLetters(tenantDid)).toEqual([]);
+    expect(await syncEngine.getDeadLetters(otherTenantDid)).toMatchObject([{ messageCid: 'bob-cid' }]);
+  });
+
   it('should keep the registration intact when unregister deletion fails, then succeed on retry', async () => {
     const tenantDid = 'did:example:alice';
     const remoteEndpoint = 'https://dwn.example';
@@ -464,8 +441,12 @@ describe('SyncEngineLevel dead letter tracking', () => {
     expect(await store.get(tenantDid, 'cid-1', remoteEndpoint)).toBeUndefined();
   });
 
-  function deferredPullStoreOf(engine: SyncEngineLevel): SyncDeferredPullStore {
-    return (engine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
+  function deferredPullStoreOf(engine: SyncEngineLevel): SyncDeferredPullStoreLevel {
+    return (engine as unknown as { _deferredPullStore: SyncDeferredPullStoreLevel })._deferredPullStore;
+  }
+
+  function deadLetterStoreOf(engine: SyncEngineLevel): SyncDeadLetterStoreLevel {
+    return (engine as unknown as { _deadLetterStore: SyncDeadLetterStoreLevel })._deadLetterStore;
   }
 
   function expiryOf(engine: SyncEngineLevel): (
@@ -499,7 +480,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
   }
 
   /** Gate a store's get() so the caller can hold its locked section open. */
-  function gateStoreGet(store: SyncDeferredPullStore): { started: Promise<void>; release: () => void } {
+  function gateStoreGet(store: SyncDeferredPullStoreLevel): { started: Promise<void>; release: () => void } {
     const started = deferred<void>();
     const release = deferred<void>();
     const originalGet = store.get.bind(store);

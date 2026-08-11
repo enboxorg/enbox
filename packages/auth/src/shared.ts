@@ -19,7 +19,7 @@ export {
   isSessionInvalidError,
   reconcileConnectionStatusGrants,
 } from './connect/status.js';
-export { normalizeProtocolRequests } from './permissions.js';
+export { normalizePermissionPolicy, normalizeProtocolRequests } from './permissions.js';
 export { WalletConnect } from './wallet-connect-client.js';
 export type { ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
 

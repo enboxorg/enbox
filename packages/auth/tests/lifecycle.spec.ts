@@ -8,7 +8,7 @@ import { MemoryStorage } from '../src/storage/storage.js';
 import { RecoveryPhraseMismatchError } from '../src/errors.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { deriveActiveSyncScope, deriveSyncScopeFromGrants, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants, registerSyncScopeForIdentity, toSyncIdentityProtocols } from '../src/connect/lifecycle.js';
+import { deriveActiveSyncScope, deriveSyncScopeFromGrants, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants, registerSyncScopeForIdentity } from '../src/connect/lifecycle.js';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -657,25 +657,6 @@ describe('importDelegateAndSetupSync', () => {
       // Should unregister since no sync-relevant protocols were found.
       expect(unregisterCalls).toHaveLength(1);
     });
-  });
-});
-
-describe('toSyncIdentityProtocols', () => {
-  test('passes through the `all` literal unchanged', () => {
-    expect(toSyncIdentityProtocols('all')).toBe('all');
-  });
-
-  test('returns undefined for an empty array (caller should unregister)', () => {
-    expect(toSyncIdentityProtocols([])).toBeUndefined();
-  });
-
-  test('returns the array for a single-element scope', () => {
-    expect(toSyncIdentityProtocols(['https://proto.example/a'])).toEqual(['https://proto.example/a']);
-  });
-
-  test('returns the array for multi-element scopes', () => {
-    expect(toSyncIdentityProtocols(['https://proto.example/a', 'https://proto.example/b']))
-      .toEqual(['https://proto.example/a', 'https://proto.example/b']);
   });
 });
 

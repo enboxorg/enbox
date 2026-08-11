@@ -126,7 +126,7 @@ async function waitForView<Item>(
       }
     };
     unsubscribe = view.subscribe(inspect);
-    inspect(view.getState());
+    inspect(view.getSnapshot());
   });
 }
 
@@ -301,9 +301,9 @@ describe('shared context public API integration', () => {
     const inbox = await typed.contexts.invitations.observe();
     await memberHarness.agent.sync.sync('pull');
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(inbox.getState()).toMatchObject({ status: 'ready', records: [{}, {}] });
+      expect(inbox.getSnapshot()).toMatchObject({ status: 'ready', records: [{}, {}] });
     }, Poller.pollRetrySleep, 30_000);
-    const pending = [...inbox.getState().records]
+    const pending = [...inbox.getSnapshot().records]
       .sort((left, right): number => left.contextId < right.contextId ? -1 : left.contextId > right.contextId ? 1 : 0);
     expect(pending.map(({ contextId, group, ownerDid: author, preview }) => ({
       author,
@@ -330,7 +330,7 @@ describe('shared context public API integration', () => {
     const contextA = accepted.find(({ contextId }) => contextId === contextIds[0])!.context;
     const contextB = accepted.find(({ contextId }) => contextId === contextIds[1])!.context;
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(inbox.getState()).toMatchObject({ status: 'ready', records: [] });
+      expect(inbox.getSnapshot()).toMatchObject({ status: 'ready', records: [] });
     }, Poller.pollRetrySleep, 30_000);
     await inbox.close();
     expect(contextA).toMatchObject({ access: 'member', id: contextIds[0], ownerDid });
@@ -655,7 +655,7 @@ describe('shared context public API integration', () => {
 
     const catalog = await reopened.contexts.observe();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(catalog.getState()).toMatchObject({ status: 'ready', contexts: [{}, {}] });
+      expect(catalog.getSnapshot()).toMatchObject({ status: 'ready', contexts: [{}, {}] });
     }, Poller.pollRetrySleep, 30_000);
     const observingOwner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid })
       .using(SharedNotebookProtocol);
@@ -663,7 +663,7 @@ describe('shared context public API integration', () => {
       .members()
       .observe();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(memberView.getState()).toMatchObject({
+      expect(memberView.getSnapshot()).toMatchObject({
         records: [{ delivery: { state: 'delivered' }, did: memberDid, role: 'notebook/page/member' }],
       });
     }, Poller.pollRetrySleep, 30_000);
@@ -673,7 +673,7 @@ describe('shared context public API integration', () => {
       role : 'notebook/page/viewer',
     });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(memberView.getState()).toMatchObject({
+      expect(memberView.getSnapshot()).toMatchObject({
         records: [{ delivery: { state: 'delivered' }, did: memberDid, role: 'notebook/page/viewer' }],
       });
     }, Poller.pollRetrySleep, 30_000);
@@ -681,22 +681,22 @@ describe('shared context public API integration', () => {
     await memberHarness.agent.sync.stopSync();
     await memberHarness.agent.sync.startSync({ interval: '1s' });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      const changed = catalog.getState().contexts.find(context => context.id === contextIds[0]);
+      const changed = catalog.getSnapshot().contexts.find(context => context.id === contextIds[0]);
       expect(changed).toMatchObject({ role: 'notebook/page/viewer' });
     }, Poller.pollRetrySleep, 30_000);
     await expect(restoredA.records.query('notebook/page')).rejects.toThrow('is no longer active');
-    const downgraded = catalog.getState().contexts.find(context => context.id === contextIds[0])!;
+    const downgraded = catalog.getSnapshot().contexts.find(context => context.id === contextIds[0])!;
     if (downgraded.access !== 'member') { throw new Error('expected a member context'); }
     await downgraded.refresh();
 
     await members.remove(memberDid);
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(memberView.getState()).toMatchObject({ records: [] });
+      expect(memberView.getSnapshot()).toMatchObject({ records: [] });
     }, Poller.pollRetrySleep, 30_000);
     await memberView.close();
     await ownerHarness.agent.sync.sync('push');
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(catalog.getState().contexts.every(context => context.id !== contextIds[0])).toBe(true);
+      expect(catalog.getSnapshot().contexts.every(context => context.id !== contextIds[0])).toBe(true);
     }, Poller.pollRetrySleep, 30_000);
     await catalog.close();
 

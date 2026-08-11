@@ -165,16 +165,14 @@ const store = createConnectionStore({
 });
 
 let snapshot = await store.initialize();
-if (snapshot.walletReapprovalRequired && store.auth?.session?.delegateDid !== undefined) {
-  snapshot = await store.refresh();
-} else if (snapshot.phase === 'disconnected') {
+if (snapshot.phase !== 'connected') {
   snapshot = await store.connect();
 }
 if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const notebooks = snapshot.enbox!.using(NotebookProtocol);
+const notebooks = snapshot.enbox.using(NotebookProtocol);
 ```
 
 Browser apps must also register a service worker that calls
@@ -358,7 +356,7 @@ const renderView = (next) => {
   else renderPages(next.records, next.current);
 };
 const unsubscribe = view.subscribe(renderView);
-renderView(view.getState());
+renderView(view.getSnapshot());
 await view.ready();
 await view.loadMore();
 
@@ -472,7 +470,7 @@ const renderInbox = (state) => {
   else showInvitations(state.records, state.current);
 };
 const unsubscribeInbox = inbox.subscribe(renderInbox);
-renderInbox(inbox.getState());
+renderInbox(inbox.getSnapshot());
 
 const [invitation] = (await inbox.ready()).records;
 if (invitation === undefined) throw new Error('Invitation not found.');
@@ -553,7 +551,7 @@ const renderCatalog = ({ status, contexts, error }) => {
   else renderNotebooks(contexts);
 };
 const unsubscribeCatalog = catalog.subscribe(renderCatalog);
-renderCatalog(catalog.getState());
+renderCatalog(catalog.getSnapshot());
 await catalog.ready();
 
 unsubscribeCatalog();
@@ -639,7 +637,7 @@ until foreign-context revocation is made verifier-visible.
 
 ## Advanced entry points
 
-Most applications should use a manifest-backed connection store. Lower-level
+Most applications should use a connection store. Lower-level
 entry points remain available when another layer owns lifecycle:
 
 ```ts

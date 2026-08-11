@@ -1,6 +1,5 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
-import type { DwnEndpointResolution } from '@enbox/dids';
 import type { EnboxPlatformAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
@@ -38,9 +37,9 @@ import { collectProtocolPaths, isEncryptedRoleAudiencePath } from './protocol-pa
  * ```ts
  * import { createConnectionStore } from '@enbox/api';
  *
- * const store = createConnectionStore();
+ * const store = createConnectionStore({ application });
  * const snapshot = await store.connectVault({ createIdentity: true });
- * if (snapshot.enbox === undefined) {
+ * if (snapshot.phase !== 'connected') {
  *   throw snapshot.error ?? new Error('Connection failed.');
  * }
  *
@@ -125,15 +124,6 @@ export class Enbox {
    */
   public get connectedDid(): string {
     return this._connectedDid;
-  }
-
-  /** Resolve the connected DID's advertised DWN endpoints without applying product defaults. */
-  public getDwnEndpointStatus(options: { refresh?: boolean } = {}): Promise<DwnEndpointResolution> {
-    this._lifetimeSignal.throwIfAborted();
-    return this.agent.identity.getDwnEndpointStatus({
-      didUri  : this._connectedDid,
-      refresh : options.refresh,
-    });
   }
 
   /**

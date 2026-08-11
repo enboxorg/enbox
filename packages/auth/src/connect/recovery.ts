@@ -17,6 +17,7 @@ import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter } from 
 import { DidErrorCode, getDwnEndpointStatus } from '@enbox/dids';
 import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
 
+import { applyIdentitySyncScope } from './lifecycle.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 
 type RecoveryLifecycle = {
@@ -62,9 +63,10 @@ export const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
  * metadata to the remote) and seed phrase recovery (pulling it back).
  */
 export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promise<void> {
-  await userAgent.sync.setIdentityOptions({
-    did     : userAgent.agentDid.uri,
-    options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
+  await applyIdentitySyncScope({
+    userAgent,
+    connectedDid : userAgent.agentDid.uri,
+    scope        : AGENT_DID_SYNC_PROTOCOLS,
   });
 }
 
@@ -101,22 +103,6 @@ async function registerRecoveredIdentityTenant(params: {
     // endpoint may be temporarily unreachable.
     return false;
   }
-}
-
-async function registerRecoveredIdentityForSync(params: {
-  userAgent: EnboxUserAgent;
-  did: string;
-  identitySyncProtocols?: IdentitySyncProtocols;
-}): Promise<boolean> {
-  const { userAgent, did, identitySyncProtocols } = params;
-
-  if (identitySyncProtocols === undefined) {
-    return false;
-  }
-
-  await userAgent.sync.setIdentityOptions({ did, options: { protocols: identitySyncProtocols } });
-
-  return true;
 }
 
 async function resolveRecoveredIdentityRouting(
@@ -233,7 +219,11 @@ export async function recoverIdentitiesFromRemote(params: {
     assertRecoveryActive(params);
     registeredIdentityForSync = await runRecoveryMutation(
       params,
-      () => registerRecoveredIdentityForSync({ userAgent, did: routingDid, identitySyncProtocols }),
+      () => applyIdentitySyncScope({
+        userAgent,
+        connectedDid : routingDid,
+        scope        : identitySyncProtocols,
+      }),
     ) || registeredIdentityForSync;
   }
 

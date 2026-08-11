@@ -36,7 +36,7 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const profile = snapshot.enbox!.using(ProfileProtocol);
+const profile = snapshot.enbox.using(ProfileProtocol);
 
 await profile.records.create('profile', {
   data: { displayName: 'Bob', bio: 'Building the decentralized web' },

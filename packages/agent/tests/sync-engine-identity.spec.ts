@@ -228,23 +228,41 @@ describe('SyncEngineLevel — identity management', () => {
       const did = 'did:example:status';
       await syncEngine.setIdentityOptions({ did, options: { protocols: ['https://proto.example'] } });
       const report = {
-        health: {
+        connectivity : 'online' as const,
+        currentness  : 'syncing' as const,
+        health       : {
           connectivity             : 'online' as const,
           degradedLinkCount        : 0,
           failedMessageCount       : 0,
           quotaBlockedMessageCount : 0,
           syncHealthy              : true,
         },
-        links   : [],
-        remotes : [],
+        lastActivityAt : undefined,
+        links          : [],
+        remotes        : [],
       };
-      const getStatus = sinon.stub((syncEngine as any)._statusReporter, 'getStatus').withArgs(did).resolves(report);
+      const getStatus = sinon.stub(syncEngine as any, 'getSyncStatus').withArgs(did).resolves(report);
 
       await expect(syncEngine.getIdentitySyncStatus(did)).resolves.toEqual({
         registration: { protocols: ['https://proto.example'] },
         ...report,
       });
       expect(getStatus.calledOnce).toBe(true);
+    });
+  });
+
+  describe('getReplicationLinks', () => {
+    it('should not read quota blocks or dead letters for the link-only projection', async () => {
+      sinon.stub(syncEngine as any, 'getCurrentLinkIdentityKeys').resolves(undefined);
+      sinon.stub(syncEngine as any, 'getLinksForStatusReporting').resolves([]);
+      const getQuotaBlocks = sinon.stub((syncEngine as any)._quotaManager, 'getAllBlockStates')
+        .rejects(new Error('quota state must not be read'));
+      const getDeadLetters = sinon.stub((syncEngine as any)._deadLetterStore, 'getAll')
+        .rejects(new Error('dead letters must not be read'));
+
+      await expect(syncEngine.getReplicationLinks()).resolves.toEqual([]);
+      expect(getQuotaBlocks.called).toBe(false);
+      expect(getDeadLetters.called).toBe(false);
     });
   });
 

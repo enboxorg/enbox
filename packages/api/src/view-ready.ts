@@ -1,13 +1,13 @@
+import type { ObservableStore } from './observable-store.js';
+
 export type ViewState =
   | { status: 'loading' | 'ready'; error?: never }
   | { status: 'error'; error: Error };
 
 /** Wait for one observable view to publish its first usable local state. */
-export function waitForViewReady<State extends ViewState>(options: {
+export function waitForViewReady<State extends ViewState>(options: ObservableStore<State> & {
   closeSignal: AbortSignal;
-  getState(): State;
   signal?: AbortSignal;
-  subscribe(listener: (state: State) => void): () => void;
 }): Promise<Extract<State, { status: 'ready' }>> {
   const signal = options.signal === undefined
     ? options.closeSignal
@@ -35,10 +35,10 @@ export function waitForViewReady<State extends ViewState>(options: {
         resolve(state as Extract<State, { status: 'ready' }>);
       }
     };
-    const onAbort = (): void => { inspect(options.getState()); };
+    const onAbort = (): void => { inspect(options.getSnapshot()); };
 
     signal.addEventListener('abort', onAbort, { once: true });
     unsubscribe = options.subscribe(inspect);
-    inspect(options.getState());
+    inspect(options.getSnapshot());
   });
 }

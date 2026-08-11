@@ -248,14 +248,10 @@ export async function vaultConnect(
     assertFlowActive(ctx);
   }
   return commitFlowSession(ctx, async (): Promise<AuthSession> => {
-    if (isNewIdentity && sync !== 'off') {
+    if ((identity !== undefined && sync !== 'off') || (!isNewIdentity && delegateDid !== undefined)) {
+      // Persisted delegates repair their grant-derived scope even while sync is
+      // off so revoked protocols cannot resume from stale registration later.
       await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncProtocols });
-    } else if (!isNewIdentity && delegateDid) {
-      // Persisted delegate identities need their sync scope refreshed from
-      // current grants so revoked protocols do not keep syncing after restore.
-      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
-    } else if (!isNewIdentity && identity && sync !== 'off') {
-      await registerSyncScopeForIdentity({ userAgent, connectedDid, identitySyncProtocols });
     }
 
     await startSyncIfEnabled(userAgent, sync);

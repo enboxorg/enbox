@@ -68,6 +68,7 @@ import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
+import { applyIdentitySyncScope, deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
 import {
   clearLocalDwnEjection,
   createLocalDwnRpcClient,
@@ -77,7 +78,6 @@ import {
   readLocalDwnEjectionRecordForPairing,
   requestLocalDwnPairing,
 } from './discovery.js';
-import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
 
 type ConnectionMonitorState = {
   options: ConnectionMonitorOptions;
@@ -1100,7 +1100,7 @@ export class AuthManager {
       // A teardown that lands while this read is pending invalidates the
       // guard and prevents every mutation below.
       const derivedProtocols = delegateDid
-        ? await this._deriveProtocolsFromGrants(delegateDid)
+        ? await deriveActiveSyncScope(this._userAgent, delegateDid)
         : undefined;
       this._assertConnectionAttemptActive(guard);
 
@@ -1113,7 +1113,12 @@ export class AuthManager {
         // Always repair the sync registration regardless of sync state — a
         // stale registration persists on disk and would take effect when
         // sync is later enabled. This matches restoreSession()'s behavior.
-        await this._repairSyncRegistration(connectedDid, delegateDid, derivedProtocols);
+        await applyIdentitySyncScope({
+          userAgent : this._userAgent,
+          connectedDid,
+          delegateDid,
+          scope     : delegateDid === undefined ? this._defaultIdentitySyncProtocols : derivedProtocols,
+        });
         await startSyncIfEnabled(this._userAgent, this._defaultSync);
 
         return new AuthSession({
@@ -1707,59 +1712,6 @@ export class AuthManager {
       }
       this._isConnecting = false;
     }
-  }
-
-  /**
-   * Derive the sync scope for a delegate by querying stored grants and
-   * revocations.
-   *
-   * Returns `'all'` when any active `Messages.Read` grant is unscoped
-   * (authorizing a full replica), otherwise a deduplicated array of
-   * protocol URIs derived from scoped `Messages.Read` grants. The DWN
-   * permissions protocol itself is excluded because grant records are
-   * imported locally during connect rather than replicated via sync.
-   *
-   * Delegates to {@link deriveActiveSyncScope}.
-   */
-  private async _deriveProtocolsFromGrants(delegateDid: string): Promise<'all' | string[]> {
-    return deriveActiveSyncScope(this._userAgent, delegateDid);
-  }
-
-  /**
-   * Repair the sync registration for a connected DID based on derived protocols.
-   * - `'all'` or non-empty list → register or update
-   * - Empty list (zero grants) for a delegate → unregister stale registration
-   * - Non-delegate with no explicit local sync scope → leave app-owned registration unchanged
-   */
-  private async _repairSyncRegistration(
-    connectedDid: string,
-    delegateDid: string | undefined,
-    derivedProtocols: 'all' | string[] | undefined,
-  ): Promise<void> {
-    if (delegateDid === undefined) {
-      if (this._defaultIdentitySyncProtocols !== undefined) {
-        await this._userAgent.sync.setIdentityOptions({
-          did     : connectedDid,
-          options : { protocols: this._defaultIdentitySyncProtocols },
-        });
-      }
-      return;
-    }
-
-    if (derivedProtocols === undefined) {
-      return;
-    }
-
-    const narrowed = toSyncIdentityProtocols(derivedProtocols);
-    if (narrowed === undefined) {
-      await this._userAgent.sync.removeIdentity(connectedDid);
-      return;
-    }
-
-    await this._userAgent.sync.setIdentityOptions({
-      did     : connectedDid,
-      options : { delegateDid, protocols: narrowed },
-    });
   }
 
   /** Serialize connection mutations against teardown without locking user waits. */

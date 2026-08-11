@@ -1,3 +1,4 @@
+import type { ObservableStore } from './observable-store.js';
 import type { ViewState } from './view-ready.js';
 
 import { waitForViewReady } from './view-ready.js';
@@ -9,7 +10,7 @@ import { waitForViewReady } from './view-ready.js';
  * computation ({@link materialize}); stale passes are fenced by the request
  * generation supplied to each materialization.
  */
-export abstract class ObservedView<TState extends ViewState> {
+export abstract class ObservedView<TState extends ViewState> implements ObservableStore<TState> {
   protected readonly _closeController = new AbortController();
   protected readonly _callerSignal?: AbortSignal;
   protected readonly _sessionSignal?: AbortSignal;
@@ -38,7 +39,7 @@ export abstract class ObservedView<TState extends ViewState> {
     this._sessionSignal?.addEventListener('abort', this._handleLifetimeAbort, { once: true });
   }
 
-  public readonly getState = (): TState => this._state;
+  public readonly getSnapshot = (): TState => this._state;
 
   public readonly subscribe = (listener: (state: TState) => void): (() => void) => {
     if (this._closed) {
@@ -55,7 +56,7 @@ export abstract class ObservedView<TState extends ViewState> {
   ): Promise<Extract<TState, { status: 'ready' }>> {
     return waitForViewReady({
       closeSignal : this._closeController.signal,
-      getState    : this.getState,
+      getSnapshot : this.getSnapshot,
       signal      : options.signal,
       subscribe   : this.subscribe,
     });

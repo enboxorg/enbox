@@ -134,7 +134,7 @@ void listed;
 void observed;
 void typed.contexts.observe({ access: 'member', materializeRoot: true, signal: callerSignal })
   .then((view): void => {
-    const row = view.getState().contexts[0];
+    const row = view.getSnapshot().contexts[0];
     const value: { name: string } | { projectCode: number } | undefined = row?.root.records[0]?.value;
     const rootError: Error | undefined = row?.root.status === 'error' ? row.root.error : undefined;
     const memberAccess: 'member' | undefined = row?.context.access;
@@ -221,8 +221,8 @@ void owned.then((value): void => {
     'workspace/member' | 'workspace/viewer'
   >>> = members.observe({ signal: callerSignal });
   void memberView.then((view): void => {
-    void view.getState().records;
-    const member = view.getState().records[0];
+    void view.getSnapshot().records;
+    const member = view.getSnapshot().records[0];
     // @ts-expect-error member rows do not expose role-record IDs.
     void member?.recordId;
   });
@@ -282,12 +282,12 @@ void typed.contexts.invitations.list().then((invitations): void => {
 });
 
 void typed.contexts.invitations.observe({ signal: callerSignal }).then((view): void => {
-  const status: 'loading' | 'ready' | 'error' = view.getState().status;
-  const current: boolean = view.getState().current;
+  const status: 'loading' | 'ready' | 'error' = view.getSnapshot().status;
+  const current: boolean = view.getSnapshot().current;
   void status;
   void current;
-  void view.getState().records;
-  void view.getState().hasMore;
+  void view.getSnapshot().records;
+  void view.getSnapshot().hasMore;
 });
 
 declare const plainTyped: TypedEnbox<typeof ContextDefinition, typeof ContextProtocol.codecs>;
@@ -383,11 +383,11 @@ void context.records.observe('workspace/note', {
   pagination : { limit: 20 },
   signal     : callerSignal,
 }).then((view): void => {
-  const note: ContextRecord<{ text: string }> | undefined = view.getState().records[0];
+  const note: ContextRecord<{ text: string }> | undefined = view.getSnapshot().records[0];
   void view.loadMore();
   void note;
   // @ts-expect-error observed states retain context-bound handles.
-  void view.getState().records[0]?.rawMessage;
+  void view.getSnapshot().records[0]?.rawMessage;
 });
 
 void context.records.subscribe('workspace/note', { signal: callerSignal }, async (event): Promise<void> => {
@@ -438,10 +438,10 @@ void context.records.observe('workspace', {
   materialize : { children: ['workspace/title'] as const },
   pagination  : { limit: 1 },
 }).then((view): void => {
-  const title: ContextRecord<{ text: string }> | undefined = view.getState().records[0]?.children.title?.record;
+  const title: ContextRecord<{ text: string }> | undefined = view.getSnapshot().records[0]?.children.title?.record;
   void title;
   // @ts-expect-error materialized views retain context-bound child handles.
-  void view.getState().records[0]?.children.title?.record.rawMessage;
+  void view.getSnapshot().records[0]?.children.title?.record.rawMessage;
 });
 
 void created.then(async (record): Promise<void> => {
