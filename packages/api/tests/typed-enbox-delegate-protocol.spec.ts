@@ -9,6 +9,7 @@ import { TypedEnbox, WalletReapprovalRequiredError } from '../src/typed-enbox.js
 function createDelegateTypedEnbox(queryResult: unknown): any {
   const typed: any = Object.create((TypedEnbox as any).prototype);
   typed._definition = { protocol: 'https://example.com/protocols/demo', types: {}, structure: {} };
+  typed._options = {};
   typed._dwn = {
     connectedDid : 'did:dht:owner',
     isDelegate   : true,
