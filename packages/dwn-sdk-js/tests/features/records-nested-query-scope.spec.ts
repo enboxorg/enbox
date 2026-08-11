@@ -442,5 +442,3 @@ export function testRecordsNestedQueryScope(): void {
     });
   });
 }
-
-testRecordsNestedQueryScope();
