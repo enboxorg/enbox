@@ -1260,6 +1260,34 @@ describe('createConnectionStore()', () => {
       await Promise.resolve();
     });
 
+    it('should let the latest external session supersede a hung readiness candidate', async () => {
+      const enboxes: Enbox[] = [];
+      const ensureReady = stubProtocolReadiness(enboxes);
+      let resolveFirstReadiness!: () => void;
+      ensureReady.onFirstCall().returns(new Promise<void>((resolve) => { resolveFirstReadiness = resolve; }));
+      const fake = createFakeAuth();
+      const store = createConnectionStore({ application: APPLICATION, auth: asAuth(fake) });
+      await store.initialize();
+      const firstSession = createSession({ did: 'did:dht:first-external' });
+      const latestSession = createSession({ did: 'did:dht:latest-external' });
+
+      fake.session = firstSession;
+      fake.emitter.emit('session-start', {});
+      await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+      fake.session = latestSession;
+      fake.emitter.emit('session-start', {});
+
+      await waitFor(() => { expect(store.getSnapshot().session).toBe(latestSession); });
+      expect(ensureReady.callCount).toBe(2);
+      expect((enboxes[1] as any)._lifetimeSignal.aborted).toBe(false);
+
+      resolveFirstReadiness();
+      await waitFor(() => { expect((enboxes[0] as any)._lifetimeSignal.aborted).toBe(true); });
+      expect(store.getSnapshot().session).toBe(latestSession);
+      expect(store.getSnapshot().enbox).toBe(enboxes[1]);
+      expect(ensureReady.callCount).toBe(2);
+    });
+
     it('should ready a replacement session instead of failing on the superseded candidate', async () => {
       const enboxes: Enbox[] = [];
       const ensureReady = stubProtocolReadiness(enboxes);

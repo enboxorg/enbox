@@ -1170,12 +1170,12 @@ class HeadlessConnectionStore implements ConnectionStore {
       return;
     }
 
+    const generation = ++this._actionGeneration;
     const session = auth.session;
     if (session === undefined) {
       this._publishDisconnected();
       return;
     }
-    const generation = this._actionGeneration;
     void this._commitConnected(auth, generation).catch((cause: unknown): void => {
       if (this._isStale(generation)) {
         return;
