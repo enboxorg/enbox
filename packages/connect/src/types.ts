@@ -99,13 +99,26 @@ export type ConnectRequest = {
   /** Optional icon URL for the requesting application, shown in the consent UI. */
   appIcon?: string;
 
+  /**
+   * Stable application identifier hint available to the wallet during approval.
+   * Browser clients should use their canonical origin; native clients may
+   * use a reverse-domain identifier. The official approval ceremony does not
+   * embed this in permission-grant session metadata during the compatibility
+   * rollout. It is a display hint unless the transport independently
+   * authenticates it.
+   */
+  applicationId?: string;
+
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
   /** DWN protocols and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
 
-  /** Preferred session TTL in seconds. Wallets may clamp this to their policy maximum. */
+  /**
+   * Advisory preferred session TTL in seconds. The provider-approved lifetime
+   * is authoritative and may be shorter or longer, subject to provider policy.
+   */
   requestedSessionTtlSeconds?: number;
 
   /**
@@ -121,6 +134,9 @@ export type ConnectRequest = {
    * `refresh` asks the wallet to re-grant access to the existing `delegateDid`.
    */
   requestType?: ConnectRequestType;
+
+  /** Wallet profile DID that a refresh must renew. */
+  expectedProviderDid?: string;
 
   /** Supported DID methods for the connected identity. */
   supportedDidMethods: string[];

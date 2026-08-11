@@ -57,7 +57,7 @@ The handler uses the existing encrypted relay flow:
 The relay URL resolves from `connectServerUrl`, then `connectServerUrlProvider`,
 then the wallet origin's `/.well-known/enbox-connect` document
 (`{ "connectServerUrl": "https://dwn.example/connect" }`), then an interactive
-prompt. Sessions request a 30-day TTL by default; wallets may clamp it.
+prompt. Sessions request a one-hour TTL by default; wallets may clamp it.
 
 Set `openBrowser: true` to open the generated wallet URL on the same machine
 instead of printing a QR code.

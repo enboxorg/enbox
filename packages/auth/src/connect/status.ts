@@ -14,7 +14,8 @@ export const SESSION_EXPIRED_ERROR_CODE = DwnErrorCode.GrantAuthorizationGrantEx
 /** DWN error code emitted when an invoked permission grant has been revoked. */
 export const SESSION_REVOKED_ERROR_CODE = DwnErrorCode.GrantAuthorizationGrantRevoked;
 
-const DEFAULT_EXPIRING_SOON_THRESHOLD_SECONDS = 60 * 60;
+const MAX_DEFAULT_EXPIRING_SOON_THRESHOLD_SECONDS = 60 * 60;
+const DEFAULT_EXPIRING_SOON_LIFETIME_RATIO = 0.1;
 
 type ConnectionSessionGroup = {
   id: string;
@@ -137,9 +138,9 @@ export async function fetchConnectionStatus(input: {
  */
 function resolveStatusTimestamps(
   options: ComputeConnectionStatusOptions,
-): { threshold: number; nowMs: number } {
-  const threshold = options.expiringSoonThresholdSeconds ?? DEFAULT_EXPIRING_SOON_THRESHOLD_SECONDS;
-  if (!Number.isFinite(threshold) || threshold < 0) {
+): { threshold?: number; nowMs: number } {
+  const threshold = options.expiringSoonThresholdSeconds;
+  if (threshold !== undefined && (!Number.isFinite(threshold) || threshold < 0)) {
     throw new RangeError('Connection status expiry threshold must be a non-negative finite number.');
   }
 
@@ -196,7 +197,7 @@ function findNewestSessionGroup(
 function deriveConnectionStatusFromGroup(
   newest: ConnectionSessionGroup,
   nowMs: number,
-  threshold: number,
+  threshold: number | undefined,
 ): ConnectionStatus {
   const expiresAt = newest.grants.reduce(
     (earliest, grant) => grant.dateExpires < earliest ? grant.dateExpires : earliest,
@@ -207,6 +208,15 @@ function deriveConnectionStatusFromGroup(
     throw new RangeError(`Connection status received an invalid grant expiry timestamp: ${expiresAt}`);
   }
 
+  const createdAtMs = Date.parse(newest.createdAt);
+  if (!Number.isFinite(createdAtMs)) {
+    throw new RangeError(`Connection status received an invalid session creation timestamp: ${newest.createdAt}`);
+  }
+  const effectiveThreshold = threshold ?? Math.min(
+    MAX_DEFAULT_EXPIRING_SOON_THRESHOLD_SECONDS,
+    Math.max(0, (expiresAtMs - createdAtMs) / 1000 * DEFAULT_EXPIRING_SOON_LIFETIME_RATIO),
+  );
+
   const firstGrant = newest.grants[0];
   const secondsUntilExpiry = (expiresAtMs - nowMs) / 1000;
   let state: ConnectionStatus['state'];
@@ -214,7 +224,7 @@ function deriveConnectionStatusFromGroup(
     state = 'revoked';
   } else if (secondsUntilExpiry <= 0) {
     state = 'expired';
-  } else if (secondsUntilExpiry <= threshold) {
+  } else if (secondsUntilExpiry <= effectiveThreshold) {
     state = 'expiring-soon';
   } else {
     state = 'active';

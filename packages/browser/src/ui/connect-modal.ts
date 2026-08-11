@@ -59,6 +59,12 @@ export type ConnectMethod = 'phone' | 'browser';
 /** localStorage key remembering the last successful method + wallet. */
 const LAST_CHOICE_STORAGE_KEY = 'enbox:connect:lastChoice';
 
+/** localStorage key remembering the exact wallet route for each delegate/profile pair. */
+const SESSION_CHOICES_STORAGE_KEY = 'enbox:connect:sessionChoices';
+
+/** Bounds local reconnect provenance retained by one dapp origin. */
+const MAX_SESSION_CHOICES = 20;
+
 /**
  * Safety margin subtracted from the relay pointer TTL before re-minting.
  *
@@ -168,8 +174,9 @@ export interface ConnectModalOptions {
   preferredMethod?: ConnectMethod;
 
   /**
-   * Remember the successful method + wallet in localStorage and pre-shape
-   * the next session accordingly.
+   * Remember the successful method + wallet in localStorage. Refreshes reuse
+   * the route saved for their delegate DID; new connections use the latest
+   * successful route as a convenience.
    * @default true
    */
   rememberChoice?: boolean;
@@ -179,6 +186,15 @@ export interface ConnectModalOptions {
 
   /** Icon URL of the requesting application. */
   appIcon?: string;
+
+  /**
+   * Stable application identifier hint available to the wallet during approval.
+   * Defaults to the browser's canonical origin.
+   */
+  applicationId?: string;
+
+  /** Wallet profile DID that a refresh must renew. */
+  expectedProviderDid?: string;
 
   /**
    * Relay base URL override for the phone path. When omitted, each wallet's
@@ -216,15 +232,7 @@ export interface ConnectModalDeps {
   runRelay: typeof runRelayConnect;
 
   /** Runs one popup handshake (browser path); must open the popup synchronously. */
-  runPopup: (options: {
-    walletUrl: string;
-    permissionRequests: ConnectPermissionRequest[];
-    appName: string;
-    appIcon?: string;
-    timeoutMs?: number;
-    delegatePortableDid?: PortableDid;
-    requestType?: ConnectRequestType;
-  }) => Promise<ConnectResult | undefined>;
+  runPopup: typeof runPopupConnect;
 
   /** Resolves a wallet origin to its relay `connectServerUrl` (or undefined). */
   discoverConnectServerUrl: (walletOrigin: string) => Promise<string | undefined>;
@@ -254,9 +262,11 @@ async function runPopupConnect(options: {
   permissionRequests: ConnectPermissionRequest[];
   appName: string;
   appIcon?: string;
+  applicationId?: string;
   timeoutMs?: number;
   delegatePortableDid?: PortableDid;
   requestType?: ConnectRequestType;
+  expectedProviderDid?: string;
 }): Promise<ConnectResult | undefined> {
   // The transport constructor calls `window.open` synchronously — callers
   // must invoke this inside the user-gesture call stack.
@@ -269,10 +279,12 @@ async function runPopupConnect(options: {
   return await client.connect({
     appName             : options.appName,
     appIcon             : options.appIcon,
+    applicationId       : options.applicationId,
     clientMetadata      : collectBrowserClientMetadata(),
     permissionRequests  : options.permissionRequests,
     delegatePortableDid : options.delegatePortableDid,
     requestType         : options.requestType,
+    expectedProviderDid : options.expectedProviderDid,
   });
 }
 
@@ -301,6 +313,12 @@ interface LastChoice {
   walletUrl: string;
 }
 
+/** Stable reconnect provenance for one delegated app session. */
+interface SessionChoice extends LastChoice {
+  delegateDid: string;
+  providerDid: string;
+}
+
 function readLastChoice(storage: ConnectModalDeps['storage']): LastChoice | undefined {
   try {
     const raw = storage?.getItem(LAST_CHOICE_STORAGE_KEY);
@@ -318,6 +336,78 @@ function readLastChoice(storage: ConnectModalDeps['storage']): LastChoice | unde
 function writeLastChoice(storage: ConnectModalDeps['storage'], choice: LastChoice): void {
   try {
     storage?.setItem(LAST_CHOICE_STORAGE_KEY, JSON.stringify(choice));
+  } catch { /* best effort */ }
+}
+
+function isSessionChoice(value: unknown): value is SessionChoice {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const choice = value as Partial<SessionChoice>;
+  return (choice.method === 'phone' || choice.method === 'browser')
+    && isValidRememberedWalletUrl(choice.walletUrl)
+    && typeof choice.delegateDid === 'string'
+    && choice.delegateDid.length > 0
+    && typeof choice.providerDid === 'string'
+    && choice.providerDid.length > 0;
+}
+
+function readSessionChoices(storage: ConnectModalDeps['storage']): SessionChoice[] {
+  try {
+    const raw = storage?.getItem(SESSION_CHOICES_STORAGE_KEY);
+    if (raw === null || raw === undefined) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter(isSessionChoice).slice(-MAX_SESSION_CHOICES) : [];
+  } catch {
+    return [];
+  }
+}
+
+function readSessionChoice(
+  storage: ConnectModalDeps['storage'],
+  delegateDid: string | undefined,
+  expectedProviderDid: string | undefined,
+): SessionChoice | undefined {
+  if (delegateDid === undefined) {
+    return undefined;
+  }
+  const choices = readSessionChoices(storage);
+  for (let index = choices.length - 1; index >= 0; index--) {
+    const choice = choices[index];
+    if (choice.delegateDid === delegateDid
+      && (expectedProviderDid === undefined || choice.providerDid === expectedProviderDid)) {
+      return choice;
+    }
+  }
+  return undefined;
+}
+
+function writeSessionChoice(storage: ConnectModalDeps['storage'], choice: SessionChoice): void {
+  try {
+    const choices = readSessionChoices(storage).filter(entry =>
+      entry.delegateDid !== choice.delegateDid || entry.providerDid !== choice.providerDid
+    );
+    choices.push(choice);
+    storage?.setItem(SESSION_CHOICES_STORAGE_KEY, JSON.stringify(choices.slice(-MAX_SESSION_CHOICES)));
+  } catch { /* best effort */ }
+}
+
+function removeSessionChoice(
+  storage: ConnectModalDeps['storage'],
+  delegateDid: string,
+  providerDid: string,
+): void {
+  try {
+    const choices = readSessionChoices(storage).filter(choice =>
+      choice.delegateDid !== delegateDid || choice.providerDid !== providerDid
+    );
+    if (choices.length === 0) {
+      storage?.removeItem(SESSION_CHOICES_STORAGE_KEY);
+    } else {
+      storage?.setItem(SESSION_CHOICES_STORAGE_KEY, JSON.stringify(choices));
+    }
   } catch { /* best effort */ }
 }
 
@@ -379,24 +469,37 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
   const wallets = dedupeWalletsByUrl(options.wallets ?? []);
   const rememberChoice = options.rememberChoice ?? true;
   const appName = options.appName ?? window.location.host;
-  const relayWalletPath = options.relayWalletPath ?? '/connect/app';
+  const applicationId = options.applicationId ?? window.location.origin;
   const isMobile = deps.isMobile();
   const refreshing = options.mode === 'refresh';
 
   const lastChoice = rememberChoice ? readLastChoice(deps.storage) : undefined;
+  let savedRoute = rememberChoice && refreshing
+    ? readSessionChoice(
+      deps.storage,
+      options.delegatePortableDid?.uri,
+      options.expectedProviderDid,
+    )
+    : undefined;
+  const expectedProviderDid = options.expectedProviderDid ?? savedRoute?.providerDid;
+  const relayWalletPath = options.relayWalletPath ?? '/connect/app';
+  const savedRouteEscapeLabel = options.walletUrl === undefined
+    ? 'Choose another wallet or method'
+    : 'Choose another method';
 
-  // Wallet resolution order: explicit option → remembered → catalog head.
+  // Refresh routes resolve by delegate first; general preferences remain a
+  // best-effort fallback for sessions created before route-aware storage.
   const rememberedWalletUrl = lastChoice !== undefined
     && (refreshing || walletInCatalog(wallets, lastChoice.walletUrl))
     ? lastChoice.walletUrl
     : undefined;
-  const lockedWallet = options.walletUrl !== undefined || (refreshing && rememberedWalletUrl !== undefined);
-  let walletUrl = options.walletUrl
+  let walletUrl = savedRoute?.walletUrl
+    ?? options.walletUrl
     ?? rememberedWalletUrl
     ?? wallets[0]?.url;
 
-  // Method resolution order: explicit option → remembered → phone.
-  let method: ConnectMethod = options.preferredMethod ?? lastChoice?.method ?? 'phone';
+  // An exact refresh route wins over generic handler and global preferences.
+  let method: ConnectMethod = savedRoute?.method ?? options.preferredMethod ?? lastChoice?.method ?? 'phone';
 
   return new Promise<ConnectResult | undefined>((resolve, reject) => {
     // ── Host + shadow root ─────────────────────────────────────
@@ -517,8 +620,14 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     };
 
     const succeed = (result: ConnectResult): void => {
-      if (rememberChoice) {
-        writeLastChoice(deps.storage, { method, walletUrl: walletUrl ?? '' });
+      if (rememberChoice && walletUrl !== undefined) {
+        writeLastChoice(deps.storage, { method, walletUrl });
+        writeSessionChoice(deps.storage, {
+          delegateDid : result.delegatePortableDid.uri,
+          providerDid : result.connectedDid,
+          method,
+          walletUrl,
+        });
       }
       renderConnected();
       setTimeout(settleWith(settle, () => resolve(result)), 1_200);
@@ -703,15 +812,47 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       );
     };
 
+    const escapeSavedRoute = (): void => {
+      if (savedRoute === undefined) {
+        return;
+      }
+
+      relaySession?.cancel();
+      relaySession = undefined;
+      clearRemint();
+      removeSessionChoice(deps.storage, savedRoute.delegateDid, savedRoute.providerDid);
+      savedRoute = undefined;
+      if (options.walletUrl !== undefined) {
+        walletUrl = options.walletUrl;
+      }
+      renderFooter();
+      setStage(
+        el('p', 'stage-caption', 'Choose another way to reconnect.'),
+        el('p', 'stage-subline', 'We’ll still require the same wallet profile used for this session.'),
+      );
+    };
+
     const renderError = (message: string, error?: Error): void => {
       setStage(
         el('p', 'stage-caption', message),
         stageButton('Start over', () => { void startMethod(); }),
+        ...(savedRoute !== undefined
+          ? [stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute)]
+          : []),
         stageLinkButton('Close', settleWith(settle, () => reject(error ?? new Error(`[@enbox/browser] ${message}`)))),
       );
     };
 
     const renderPhoneUnavailable = (): void => {
+      if (savedRoute !== undefined) {
+        setStage(
+          el('p', 'stage-caption', 'Your saved wallet connection is unavailable right now.'),
+          el('p', 'stage-subline', 'Try again in a moment to reconnect the same session.'),
+          stageButton('Try again', () => { void startPhone(); }),
+          stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute),
+        );
+        return;
+      }
       setStage(
         el('p', 'stage-caption', 'This wallet can’t connect by phone here.'),
         el('p', 'stage-subline', 'You can continue in this browser instead.'),
@@ -724,12 +865,24 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const popupSurface = isMobile ? 'tab' : 'window';
 
     const renderPopupPrompt = (): void => {
+      const walletName = walletUrl !== undefined ? walletByUrl(walletUrl).name : 'your wallet';
+      const exactReconnect = savedRoute !== undefined;
+      const connectDescription = isMobile
+        ? 'Your wallet opens in a new tab to approve this connection — no code needed.'
+        : 'Your wallet opens in a small window to approve this connection.';
+      const description = exactReconnect
+        ? `We’ll open the same ${walletName} profile used for this session.`
+        : connectDescription;
+      const connectButtonLabel = isMobile ? 'Open wallet' : 'Open wallet window';
+      const buttonLabel = exactReconnect
+        ? `Open ${walletName} ${popupSurface}`
+        : connectButtonLabel;
       setStage(
-        el('p', 'stage-caption', 'Connect with a wallet in this browser'),
-        el('p', 'stage-subline', isMobile
-          ? 'Your wallet opens in a new tab to approve this connection — no code needed.'
-          : 'Your wallet opens in a small window to approve this connection.'),
-        stageButton(isMobile ? 'Open wallet' : 'Open wallet window', () => { startPopup(); }),
+        el('p', 'stage-caption', exactReconnect
+          ? `Reconnect with ${walletName}`
+          : 'Connect with a wallet in this browser'),
+        el('p', 'stage-subline', description),
+        stageButton(buttonLabel, () => { startPopup(); }),
       );
     };
 
@@ -747,7 +900,9 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           ? `Your browser blocked the wallet ${popupSurface}.`
           : `The wallet ${popupSurface} was closed.`),
         stageButton(blocked ? 'Open it now' : `Reopen ${popupSurface}`, () => { startPopup(); }),
-        stageLinkButton(isMobile ? 'Use a code instead' : 'Use your phone instead', () => { void switchMethod('phone'); }),
+        ...(savedRoute !== undefined
+          ? [stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute)]
+          : [stageLinkButton(isMobile ? 'Use a code instead' : 'Use your phone instead', () => { void switchMethod('phone'); })]),
       );
     };
 
@@ -833,10 +988,12 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           walletUri           : new URL(relayWalletPath, origin).toString(),
           appName,
           appIcon             : options.appIcon,
+          applicationId,
           clientMetadata      : collectBrowserClientMetadata(),
           permissionRequests  : options.permissionRequests,
           delegatePortableDid : options.delegatePortableDid,
           requestType         : options.mode,
+          expectedProviderDid,
           timeoutMs           : options.timeout,
           cancelled           : session.cancelled,
           onWalletUriReady    : (handoff): void => {
@@ -907,9 +1064,11 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           permissionRequests  : options.permissionRequests,
           appName,
           appIcon             : options.appIcon,
+          applicationId,
           timeoutMs           : options.timeout,
           delegatePortableDid : options.delegatePortableDid,
           requestType         : options.mode,
+          expectedProviderDid,
         });
         if (settled) { return; }
         if (result === undefined) {
@@ -945,7 +1104,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const renderFooter = (): void => {
       footer.replaceChildren();
 
-      if (!lockedWallet) {
+      if (savedRoute === undefined && options.walletUrl === undefined) {
         composeWalletRow();
         const switcher = buildWalletSwitcher();
         if (switcher.label !== undefined) {
@@ -958,7 +1117,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       const row = document.createElement('div');
       row.className = 'footer-row';
 
-      if (method === 'phone') {
+      if (method === 'phone' && savedRoute === undefined) {
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
         // On a phone both methods open the wallet on this device — what the
@@ -967,7 +1126,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         // startPopup runs synchronously in this click handler.
         alt.addEventListener('click', () => { startPopup(); });
         row.appendChild(alt);
-      } else {
+      } else if (method === 'browser' && savedRoute === undefined) {
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
         alt.textContent = isMobile ? 'Use a code instead →' : 'Use your phone instead →';

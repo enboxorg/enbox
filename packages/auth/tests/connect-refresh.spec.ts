@@ -239,7 +239,10 @@ describe('delegated connection lifecycle', () => {
       expect(session.did).toBe(OWNER_DID);
       expect(session.delegateDid).toBe(DELEGATE_DID);
       expect(requestAccess.callCount).toBe(1);
-      expect(requestAccess.firstCall.args[0]).toMatchObject({ requestType: 'refresh' });
+      expect(requestAccess.firstCall.args[0]).toMatchObject({
+        requestType         : 'refresh',
+        expectedProviderDid : OWNER_DID,
+      });
       expect(requestAccess.firstCall.args[0].delegatePortableDid).toBe(exportedDelegate);
       expect(requestAccess.firstCall.args[0].permissionRequests.length).toBeGreaterThan(0);
       expect(identityImport.called).toBe(false);

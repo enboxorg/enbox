@@ -186,11 +186,13 @@ export function assertConnectRequest(payload: Record<string, unknown>): asserts 
   requireString(payload, 'clientDid', ctx);
   requireString(payload, 'appName', ctx);
   requireOptionalString(payload, 'appIcon', ctx);
+  requireOptionalString(payload, 'applicationId', ctx);
   requireOptionalObject(payload, 'clientMetadata', ctx);
   requireArray(payload, 'permissionRequests', ctx);
   requireOptionalNumber(payload, 'requestedSessionTtlSeconds', ctx);
   requireOptionalString(payload, 'delegateDid', ctx);
   requireOptionalConnectRequestType(payload, ctx);
+  requireOptionalString(payload, 'expectedProviderDid', ctx);
   if (payload.requestType === 'refresh' && payload.delegateDid === undefined) {
     fail(ctx, 'delegateDid', 'is required when `requestType` is "refresh"');
   }
@@ -393,7 +395,7 @@ export async function sealResponse({ response, signer, responseKey, pin }: {
 export async function openResponse({ jwe, recipientPrivateKey, expected, pin }: {
   jwe: string;
   recipientPrivateKey: Jwk;
-  expected: { clientDid: string; nonce: string; state: string };
+  expected: { clientDid: string; nonce: string; state: string; providerDid?: string };
   pin?: string;
 }): Promise<ConnectResponse> {
   const { plaintext, protectedHeader } = await CompactJwe.decrypt({
@@ -421,6 +423,9 @@ export async function openResponse({ jwe, recipientPrivateKey, expected, pin }: 
   }
   if (payload.state !== expected.state) {
     throw new Error('Connect: response `state` does not echo the request state.');
+  }
+  if (expected.providerDid !== undefined && payload.providerDid !== expected.providerDid) {
+    throw new Error('Connect: response `providerDid` does not match the expected wallet profile.');
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);

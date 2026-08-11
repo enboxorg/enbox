@@ -179,6 +179,7 @@ describe('WalletConnect', () => {
         permissionRequests         : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
         onWalletUriReady           : relay.onWalletUriReady,
         validatePin                : async (): Promise<string> => { pinPrompts.push(1); return pin; },
+        applicationId              : 'com.example.test',
         requestedSessionTtlSeconds : 2_592_000,
         pollIntervalMs             : 1,
       });
@@ -196,6 +197,7 @@ describe('WalletConnect', () => {
       const request = relay.openedRequests[0];
       expect(request.appName).toBe('Sample App');
       expect(request.requestedSessionTtlSeconds).toBe(2_592_000);
+      expect(request.applicationId).toBe('com.example.test');
       expect(request.delegateDid).toBeUndefined();
       expect(request.reply).toEqual({ mode: 'direct_post', callbackUrl: `${connectServerUrl}/callback` });
       expect(request.responseKey.crv).toBe('X25519');
@@ -265,19 +267,21 @@ describe('WalletConnect', () => {
       const relay = stubRelay(approveWithPreSuppliedDelegate);
 
       const result = await WalletConnect.initClient({
-        displayName        : 'Sample App',
+        displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
-        onWalletUriReady   : relay.onWalletUriReady,
-        validatePin        : async (): Promise<string> => pin,
+        permissionRequests  : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        onWalletUriReady    : relay.onWalletUriReady,
+        validatePin         : async (): Promise<string> => pin,
         delegatePortableDid,
-        requestType        : 'refresh',
-        pollIntervalMs     : 1,
+        requestType         : 'refresh',
+        expectedProviderDid : providerDid,
+        pollIntervalMs      : 1,
       });
 
       expect(relay.openedRequests[0].delegateDid).toBe('did:jwk:local-delegate');
       expect(relay.openedRequests[0].requestType).toBe('refresh');
+      expect(relay.openedRequests[0].expectedProviderDid).toBe(providerDid);
       expect(result?.delegatePortableDid.privateKeys?.map((key) => key.crv)).toEqual(['P-256', 'Ed25519', 'X25519']);
     });
 

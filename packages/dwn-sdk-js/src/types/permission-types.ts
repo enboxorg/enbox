@@ -9,8 +9,15 @@ import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-met
  * display only. Consumers must not treat them as verified app identity.
  */
 export type ConnectSessionMetadata = {
-  /** Stable session ID shared by all grants created by one connect approval. */
+  /** Approval-bundle ID shared by all grants created in one ceremony. */
   id: string;
+
+  /**
+   * Reserved for reader compatibility during a staged rollout. Grant
+   * producers must not emit this field until older closed-schema readers have
+   * been upgraded to accept it.
+   */
+  applicationId?: string;
 
   /** Human-readable app name shown during approval. Self-reported display data. */
   appName?: string;

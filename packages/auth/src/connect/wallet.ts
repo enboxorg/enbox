@@ -50,6 +50,7 @@ export async function walletConnect(
   const result = await WalletConnect.initClient({
     displayName                : options.displayName,
     appIcon                    : options.appIcon,
+    applicationId              : options.applicationId,
     clientMetadata             : options.clientMetadata,
     requestedSessionTtlSeconds : options.requestedSessionTtlSeconds,
     preSupplyDelegateDid       : options.preSupplyDelegateDid,

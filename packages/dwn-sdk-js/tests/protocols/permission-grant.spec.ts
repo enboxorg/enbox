@@ -37,23 +37,25 @@ describe('PermissionGrant', () => {
     expect(parsed.dateExpires).toBeDefined();
   });
 
-  it('should parse connect session metadata from a permission grant', async () => {
+  it('should accept and parse staged connect session metadata from a permission grant', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const bob = await TestDataGenerator.generateDidKeyPersona();
     const createdAt = Time.getCurrentTimestamp();
     const connectSession: ConnectSessionMetadata = {
-      id        : 'session-123',
-      appName   : 'Sample App',
-      appIcon   : 'https://example.com/icon.png',
-      origin    : 'https://example.com',
-      userAgent : 'ExampleBrowser/1.0',
-      platform  : 'MacIntel',
-      language  : 'en-US',
-      languages : ['en-US', 'en'],
-      timezone  : 'America/New_York',
-      transport : 'postMessage',
+      id            : 'session-123',
+      // Reader compatibility lands before official grant producers emit this field.
+      applicationId : 'https://example.com',
+      appName       : 'Sample App',
+      appIcon       : 'https://example.com/icon.png',
+      origin        : 'https://example.com',
+      userAgent     : 'ExampleBrowser/1.0',
+      platform      : 'MacIntel',
+      language      : 'en-US',
+      languages     : ['en-US', 'en'],
+      timezone      : 'America/New_York',
+      transport     : 'postMessage',
       createdAt,
-      expiresAt : Time.createOffsetTimestamp({ seconds: 86_400 }, createdAt),
+      expiresAt     : Time.createOffsetTimestamp({ seconds: 86_400 }, createdAt),
     };
 
     const permissionGrant = await PermissionsProtocol.createGrant({

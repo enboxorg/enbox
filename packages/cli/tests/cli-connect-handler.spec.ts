@@ -58,6 +58,7 @@ describe('CliConnectHandler', () => {
     const authUrls: string[] = [];
     const handler = CliConnectHandler({
       appName                    : 'Test CLI',
+      applicationId              : 'org.example.test-cli',
       walletUrl                  : 'https://wallet.example',
       connectServerUrl           : 'https://relay.example/connect',
       output,
@@ -72,6 +73,7 @@ describe('CliConnectHandler', () => {
 
     expect(connectResult).toBe(result);
     expect(capturedOptions?.displayName).toBe('Test CLI');
+    expect(capturedOptions?.applicationId).toBe('org.example.test-cli');
     expect(capturedOptions?.walletUri).toBe('https://wallet.example/connect/app');
     expect(capturedOptions?.connectServerUrl).toBe('https://relay.example/connect');
     expect(capturedOptions?.timeoutMs).toBe(10_000);
@@ -105,10 +107,12 @@ describe('CliConnectHandler', () => {
       permissionRequests,
       delegatePortableDid : existingDelegate,
       requestType         : 'refresh',
+      expectedProviderDid : 'did:dht:provider',
     });
 
     expect(capturedOptions?.delegatePortableDid).toBe(existingDelegate);
     expect(capturedOptions?.requestType).toBe('refresh');
+    expect(capturedOptions?.expectedProviderDid).toBe('did:dht:provider');
   });
 
   it('should reject refresh before starting WalletConnect when the existing delegate is missing', async () => {
@@ -672,7 +676,7 @@ describe('CliConnectHandler', () => {
     expect(output.text()).toContain('ignoring invalid connect relay URL');
   });
 
-  it('should default the requested session TTL to 30 days', async () => {
+  it('should default the requested session TTL to one hour', async () => {
     let capturedOptions: WalletConnectClientOptions | undefined;
     sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
       capturedOptions = options;
@@ -689,7 +693,7 @@ describe('CliConnectHandler', () => {
     await handler.requestAccess({ permissionRequests });
 
     expect(capturedOptions?.requestedSessionTtlSeconds).toBe(DEFAULT_CLI_SESSION_TTL_SECONDS);
-    expect(DEFAULT_CLI_SESSION_TTL_SECONDS).toBe(30 * 24 * 60 * 60);
+    expect(DEFAULT_CLI_SESSION_TTL_SECONDS).toBe(60 * 60);
   });
 });
 
