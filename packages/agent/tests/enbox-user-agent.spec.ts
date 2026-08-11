@@ -119,7 +119,8 @@ describe('EnboxUserAgent', () => {
           // Initialize the vault with a recovery phrase.
           const returnedRecoveryPhrase = await testHarness.agent.initialize({
             password       : 'dumbbell-krakatoa-ditty',
-            recoveryPhrase : predefinedRecoveryPhrase
+            recoveryPhrase : predefinedRecoveryPhrase,
+            dwnEndpoints   : testDwnUrls,
           });
 
           // Verify that the vault is initialized and is unlocked.
