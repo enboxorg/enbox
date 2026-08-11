@@ -731,8 +731,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     };
     void action.then(release, release);
 
-    // Promise executors run synchronously and convert a synchronous `start` throw into a rejection.
-    const started = new Promise<ConnectionSnapshot>((resolve): void => resolve(start()));
+    const started = Promise.resolve(start());
     void started.then(resolveAction, rejectAction);
     return action;
   }
