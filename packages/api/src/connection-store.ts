@@ -478,6 +478,20 @@ function isActiveAuthSession(session: AuthSession | undefined): session is AuthS
   return session !== undefined && !session.signal.aborted;
 }
 
+/** Whether a newly active session must replace the connection currently being published. */
+function shouldResetPublishedSession(snapshot: ConnectionSnapshot, activeSession: AuthSession): boolean {
+  return snapshot.phase === 'disconnecting'
+    || (snapshot.session !== undefined && snapshot.session !== activeSession);
+}
+
+/** Whether a candidate remains the auth manager's active, unaborted session. */
+function isAuthoritativeActiveSession(
+  authoritativeSession: AuthSession | undefined,
+  candidate: AuthSession,
+): boolean {
+  return authoritativeSession === candidate && isActiveAuthSession(candidate);
+}
+
 /** Whether readiness rejected a delegated definition that needs fresh wallet approval. */
 function requiresWalletReapproval(error: Error): boolean {
   return error instanceof ProtocolReadinessError &&
@@ -575,7 +589,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _syncBinding?: SyncStatusBinding;
 
   public constructor(options: ConnectionStoreOptions) {
-    if (Object.prototype.hasOwnProperty.call(options, 'agent')) {
+    if (Object.hasOwn(options, 'agent')) {
       throw new TypeError(
         '[@enbox/api] createConnectionStore: agent is not supported; create an AuthManager and pass it as auth.',
       );
@@ -717,11 +731,14 @@ class HeadlessConnectionStore implements ConnectionStore {
     };
     void action.then(release, release);
 
+    let started: Promise<ConnectionSnapshot>;
     try {
-      void start().then(resolveAction, rejectAction);
+      started = start();
     } catch (cause: unknown) {
       rejectAction(cause);
+      return action;
     }
+    void started.then(resolveAction, rejectAction);
     return action;
   }
 
@@ -987,8 +1004,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (!isActiveAuthSession(activeSession)) {
       return this._publishDisconnected();
     }
-    if (this._snapshot.phase === 'disconnecting'
-      || (this._snapshot.session !== undefined && this._snapshot.session !== activeSession)) {
+    if (shouldResetPublishedSession(this._snapshot, activeSession)) {
       // Auth aborts the previous lifetime before publishing its replacement.
       // Do not expose that dead session while the replacement is readied.
       this._stopDelegateMonitor();
@@ -1077,7 +1093,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
 
       const authoritativeSession = auth.session;
-      if (authoritativeSession === activeSession && isActiveAuthSession(activeSession)) {
+      if (isAuthoritativeActiveSession(authoritativeSession, activeSession)) {
         return this._snapshot;
       }
       if (!isActiveAuthSession(authoritativeSession)) {
@@ -1714,7 +1730,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       // A changed session also guarantees snapshot inequality, so this binding reaches publication.
       next.sync = this._bindSyncStatus(next.session);
     }
-    if (Object.prototype.hasOwnProperty.call(patch, 'enbox')) {
+    if (Object.hasOwn(patch, 'enbox')) {
       for (const enbox of this._unpublishedEnboxes) {
         this._unpublishedEnboxes.delete(enbox);
         if (enbox !== next.enbox) {
