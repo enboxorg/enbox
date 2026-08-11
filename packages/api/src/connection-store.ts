@@ -1068,13 +1068,12 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (this._isStale(generation)) {
         return this._snapshot;
       }
-      if (!this._isCurrentSession(activeSession)) {
-        return this._snapshot;
-      }
-      this._restartMonitor(auth, activeSession);
-      await this._seedConnectionStatus(auth, activeSession, generation);
-      if (this._isStale(generation)) {
-        return this._snapshot;
+      if (this._isCurrentSession(activeSession)) {
+        this._restartMonitor(auth, activeSession);
+        await this._seedConnectionStatus(auth, activeSession, generation);
+        if (this._isStale(generation)) {
+          return this._snapshot;
+        }
       }
 
       const authoritativeSession = auth.session;
@@ -1148,8 +1147,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       const revision = binding.revision;
       let registration: SyncIdentityOptions | undefined;
       try {
-        const status = await binding.session.agent.sync.getIdentitySyncStatus(binding.session.did);
-        registration = status.registration;
+        registration = await binding.session.agent.sync.getIdentityOptions(binding.session.did);
       } catch (cause: unknown) {
         if (this._manifestCoverageBinding !== binding
           || !this._isAuthoritativeSession(binding.session)) {

@@ -165,7 +165,9 @@ const store = createConnectionStore({
 });
 
 let snapshot = await store.initialize();
-if (snapshot.phase === 'disconnected') {
+if (snapshot.walletReapprovalRequired && store.auth?.session?.delegateDid !== undefined) {
+  snapshot = await store.refresh();
+} else if (snapshot.phase === 'disconnected') {
   snapshot = await store.connect();
 }
 if (snapshot.phase !== 'connected') {

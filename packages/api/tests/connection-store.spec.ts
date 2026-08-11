@@ -281,6 +281,8 @@ describe('createConnectionStore()', () => {
     await testHarness.createAgentDid();
     getDwnEndpointStatus = sinon.stub(testHarness.agent.identity, 'getDwnEndpointStatus')
       .callsFake(async ({ didUri }): Promise<DwnEndpointResolution> => readyDwn(undefined, didUri));
+    sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves(COVERED_REGISTRATION);
+    sinon.stub(testHarness.agent.sync, 'setIdentityOptions').resolves();
     getIdentitySyncStatus = sinon.stub(testHarness.agent.sync, 'getIdentitySyncStatus')
       .resolves(identitySyncStatus({ delegateDid: DELEGATE_DID, protocols: 'all' }));
   });
@@ -767,6 +769,81 @@ describe('createConnectionStore()', () => {
       expect(snapshot.phase).toBe('disconnected');
       expect(snapshot.session).toBeUndefined();
       expect(snapshot.enbox).toBeUndefined();
+    });
+
+    it('should follow an external replacement suppressed during the initial endpoint refresh', async () => {
+      const firstEngine = createSyncStatusEngine();
+      const firstLifetime = new AbortController();
+      const firstSession = createSession({
+        agent  : agentWithSync(firstEngine.sync),
+        signal : firstLifetime.signal,
+      });
+      const replacementEngine = createSyncStatusEngine();
+      const replacementSession = createSession({
+        agent : agentWithSync(replacementEngine.sync),
+        did   : 'did:dht:replacement',
+        name  : 'Replacement identity',
+      });
+      const auth = createFakeAuth();
+      auth.connect.callsFake(async (): Promise<AuthSession> => {
+        auth.session = firstSession;
+        return firstSession;
+      });
+      let resolveInitialStatus!: (status: DwnEndpointResolution) => void;
+      getDwnEndpointStatus.resetHistory();
+      getDwnEndpointStatus.onFirstCall().returns(
+        new Promise<DwnEndpointResolution>((resolve) => { resolveInitialStatus = resolve; }),
+      );
+      getDwnEndpointStatus.onSecondCall().callsFake(
+        async ({ didUri }): Promise<DwnEndpointResolution> => readyDwn('https://replacement.example', didUri),
+      );
+      const store = createConnectionStore({ auth: asAuth(auth) });
+
+      const connecting = store.connect({ protocols: PROTOCOLS });
+      await waitFor(() => { expect(getDwnEndpointStatus.calledOnce).toBe(true); });
+      firstLifetime.abort();
+      auth.session = replacementSession;
+      auth.emitter.emit('session-start', {});
+      resolveInitialStatus(readyDwn(undefined, firstSession.did));
+      const snapshot = await connecting;
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.session).toBe(replacementSession);
+      expect(snapshot.identityName).toBe('Replacement identity');
+      expect(snapshot.remoteDwn).toEqual(readyDwn('https://replacement.example', replacementSession.did));
+      expect(getDwnEndpointStatus.calledTwice).toBe(true);
+      expect(firstEngine.listenerCount()).toBe(0);
+      expect(replacementEngine.listenerCount()).toBe(1);
+    });
+
+    it('should follow an external session end suppressed during the initial endpoint refresh', async () => {
+      const engine = createSyncStatusEngine();
+      const lifetime = new AbortController();
+      const session = createSession({ agent: agentWithSync(engine.sync), signal: lifetime.signal });
+      const auth = createFakeAuth();
+      auth.connect.callsFake(async (): Promise<AuthSession> => {
+        auth.session = session;
+        return session;
+      });
+      let resolveInitialStatus!: (status: DwnEndpointResolution) => void;
+      getDwnEndpointStatus.resetHistory();
+      getDwnEndpointStatus.returns(
+        new Promise<DwnEndpointResolution>((resolve) => { resolveInitialStatus = resolve; }),
+      );
+      const store = createConnectionStore({ auth: asAuth(auth) });
+
+      const connecting = store.connect({ protocols: PROTOCOLS });
+      await waitFor(() => { expect(getDwnEndpointStatus.calledOnce).toBe(true); });
+      lifetime.abort();
+      auth.session = undefined;
+      auth.emitter.emit('session-end', { did: session.did });
+      resolveInitialStatus(readyDwn(undefined, session.did));
+      const snapshot = await connecting;
+
+      expect(snapshot.phase).toBe('disconnected');
+      expect(snapshot.session).toBeUndefined();
+      expect(snapshot.enbox).toBeUndefined();
+      expect(engine.listenerCount()).toBe(0);
     });
 
     it('should map replacement readiness failure suppressed during a remote retry', async () => {
@@ -1303,21 +1380,26 @@ describe('createConnectionStore()', () => {
         expect(plain.walletReapprovalRequired).toBeUndefined();
       });
 
-      it('should surface an initial status-read failure as an ordinary error', async () => {
+      it('should connect with valid coverage before surfacing an initial sync-status failure', async () => {
         const engine = createSyncStatusEngine();
         engine.options = { delegateDid: DELEGATE_DID, protocols: 'all' };
-        engine.readLinks = (): Promise<ReplicationLinkSnapshot[]> => Promise.reject(new Error('status read failed'));
+        let rejectStatus!: (error: Error) => void;
+        const statusRead = new Promise<ReplicationLinkSnapshot[]>((_resolve, reject) => { rejectStatus = reject; });
+        engine.readLinks = (): Promise<ReplicationLinkSnapshot[]> => statusRead;
         const { auth, ensureReady, session, store } = createManifestSyncStore(engine);
 
         const snapshot = await store.connect();
 
-        expect(snapshot.phase).toBe('error');
-        expect(snapshot.error?.message).toBe('status read failed');
+        expect(snapshot.phase).toBe('connected');
         expect(snapshot.walletReapprovalRequired).toBeUndefined();
         expect(auth.session).toBe(session);
         expect(auth.disconnect.called).toBe(false);
-        expect(ensureReady.called).toBe(false);
-        expect(engine.listenerCount()).toBe(0);
+        expect(ensureReady.calledOnce).toBe(true);
+        expect(engine.listenerCount()).toBe(1);
+
+        rejectStatus(new Error('status read failed'));
+        await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('error'); });
+        expect(store.getSnapshot().sync?.error?.message).toBe('status read failed');
       });
 
       it('should recover a hidden repairable session through refresh', async () => {
@@ -1508,48 +1590,46 @@ describe('createConnectionStore()', () => {
         expect(store.getSnapshot().walletReapprovalRequired).toBeUndefined();
       });
 
-      it('should trail a registration wake that lands during the initial status read', async () => {
+      it('should trail a registration wake that lands during the initial registration read', async () => {
         const engine = createSyncStatusEngine();
         engine.options = COVERED_REGISTRATION;
-        let resolveFirstRead!: (status: SyncIdentityStatus) => void;
-        const readStatus = sinon.stub(engine.sync, 'getIdentitySyncStatus');
-        readStatus.onFirstCall().returns(new Promise((resolve) => { resolveFirstRead = resolve; }));
-        readStatus.onSecondCall().callsFake(async (): Promise<SyncIdentityStatus> => (
-          identitySyncStatus(engine.options)
-        ));
+        let resolveFirstRead!: (options: SyncIdentityOptions | undefined) => void;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions');
+        readOptions.onFirstCall().returns(new Promise((resolve) => { resolveFirstRead = resolve; }));
+        readOptions.onSecondCall().callsFake(async (): Promise<SyncIdentityOptions | undefined> => engine.options);
         const { ensureReady, session, store } = createManifestSyncStore(engine);
 
         const connecting = store.connect();
-        await waitFor(() => { expect(readStatus.calledOnce).toBe(true); });
+        await waitFor(() => { expect(readOptions.calledOnce).toBe(true); });
         engine.options = UNCOVERED_REGISTRATION;
         emitRegistrationChange(engine, engine.options, session.did);
-        resolveFirstRead(identitySyncStatus(COVERED_REGISTRATION));
+        resolveFirstRead(COVERED_REGISTRATION);
         const snapshot = await connecting;
 
-        expect(readStatus.callCount).toBe(2);
+        expect(readOptions.callCount).toBe(2);
         expect(snapshot.phase).toBe('disconnected');
         expect(snapshot.walletReapprovalRequired).toBe(true);
         expect(ensureReady.called).toBe(false);
       });
 
-      it('should skip stale readiness when auth replaces a candidate during its status read', async () => {
+      it('should skip stale readiness when auth replaces a candidate during its registration read', async () => {
         const enboxes: Enbox[] = [];
         const engine = createSyncStatusEngine();
         engine.options = COVERED_REGISTRATION;
-        let resolveStatus!: (status: SyncIdentityStatus) => void;
-        const readStatus = sinon.stub(engine.sync, 'getIdentitySyncStatus').returns(
-          new Promise((resolve) => { resolveStatus = resolve; }),
+        let resolveOptions!: (options: SyncIdentityOptions | undefined) => void;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions').returns(
+          new Promise((resolve) => { resolveOptions = resolve; }),
         );
         const { auth, ensureReady, store } = createManifestSyncStore(engine, APPLICATION, enboxes);
 
         const connecting = store.connect();
-        await waitFor(() => { expect(readStatus.calledOnce).toBe(true); });
+        await waitFor(() => { expect(readOptions.calledOnce).toBe(true); });
         const replacement = createSession({
           did  : 'did:dht:replacement',
           name : 'Replacement owner',
         });
         auth.session = replacement;
-        resolveStatus(identitySyncStatus(COVERED_REGISTRATION));
+        resolveOptions(COVERED_REGISTRATION);
         const snapshot = await connecting;
 
         expect(snapshot.phase).toBe('connected');
@@ -1562,6 +1642,8 @@ describe('createConnectionStore()', () => {
       it('should revalidate a registration wake that lands during readiness', async () => {
         const engine = createSyncStatusEngine();
         engine.options = COVERED_REGISTRATION;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions')
+          .callsFake(async (): Promise<SyncIdentityOptions | undefined> => engine.options);
         const { ensureReady, session, store } = createManifestSyncStore(engine);
         let resolveReadiness!: () => void;
         ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
@@ -1576,7 +1658,7 @@ describe('createConnectionStore()', () => {
         expect(snapshot.phase).toBe('disconnected');
         expect(snapshot.walletReapprovalRequired).toBe(true);
         expect(snapshot.session).toBeUndefined();
-        expect(engine.settledLinkReads).toBe(2);
+        expect(readOptions.callCount).toBe(2);
       });
 
       it('should preserve coverage-loss precedence when readiness also fails', async () => {
@@ -1603,20 +1685,18 @@ describe('createConnectionStore()', () => {
         engine.options = COVERED_REGISTRATION;
         const created = createManifestSyncStore(engine);
         const { session } = created;
-        const readStatus = sinon.stub(engine.sync, 'getIdentitySyncStatus');
-        readStatus.onFirstCall().resolves(identitySyncStatus(COVERED_REGISTRATION));
-        readStatus.onSecondCall().callsFake(async (): Promise<SyncIdentityStatus> => {
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions');
+        readOptions.onFirstCall().resolves(COVERED_REGISTRATION);
+        readOptions.onSecondCall().callsFake(async (): Promise<SyncIdentityOptions | undefined> => {
           queueMicrotask((): void => {
             queueMicrotask((): void => {
               engine.options = UNCOVERED_REGISTRATION;
               emitRegistrationChange(engine, UNCOVERED_REGISTRATION, session.did);
             });
           });
-          return identitySyncStatus(COVERED_REGISTRATION);
+          return COVERED_REGISTRATION;
         });
-        readStatus.onThirdCall().callsFake(async (): Promise<SyncIdentityStatus> => (
-          identitySyncStatus(engine.options)
-        ));
+        readOptions.onThirdCall().callsFake(async (): Promise<SyncIdentityOptions | undefined> => engine.options);
         let resolveReadiness!: () => void;
         created.ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
 
@@ -1626,7 +1706,7 @@ describe('createConnectionStore()', () => {
         resolveReadiness();
         const snapshot = await connecting;
 
-        expect(readStatus.callCount).toBe(3);
+        expect(readOptions.callCount).toBe(3);
         expect(snapshot.phase).toBe('disconnected');
         expect(snapshot.walletReapprovalRequired).toBe(true);
       });
@@ -1636,9 +1716,9 @@ describe('createConnectionStore()', () => {
         engine.options = COVERED_REGISTRATION;
         const created = createManifestSyncStore(engine);
         const { auth, session } = created;
-        const readStatus = sinon.stub(engine.sync, 'getIdentitySyncStatus');
-        readStatus.onFirstCall().resolves(identitySyncStatus(COVERED_REGISTRATION));
-        readStatus.onSecondCall().callsFake(async (): Promise<SyncIdentityStatus> => {
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions');
+        readOptions.onFirstCall().resolves(COVERED_REGISTRATION);
+        readOptions.onSecondCall().callsFake(async (): Promise<SyncIdentityOptions | undefined> => {
           queueMicrotask((): void => {
             queueMicrotask((): void => {
               queueMicrotask((): void => {
@@ -1647,7 +1727,7 @@ describe('createConnectionStore()', () => {
               });
             });
           });
-          return identitySyncStatus(COVERED_REGISTRATION);
+          return COVERED_REGISTRATION;
         });
         const readinessError = new ProtocolReadinessError({
           cause     : new Error('local protocol store unavailable'),
@@ -1664,7 +1744,7 @@ describe('createConnectionStore()', () => {
         rejectReadiness(readinessError);
         const snapshot = await connecting;
 
-        expect(readStatus.callCount).toBe(2);
+        expect(readOptions.callCount).toBe(2);
         expect(snapshot.phase).toBe('disconnected');
         expect(snapshot.error).toBe(readinessError);
         expect(snapshot.walletReapprovalRequired).toBe(true);
@@ -1676,10 +1756,10 @@ describe('createConnectionStore()', () => {
         const enboxes: Enbox[] = [];
         const engine = createSyncStatusEngine();
         engine.options = COVERED_REGISTRATION;
-        let resolveTrailingRead!: (status: SyncIdentityStatus) => void;
-        const readStatus = sinon.stub(engine.sync, 'getIdentitySyncStatus');
-        readStatus.onFirstCall().resolves(identitySyncStatus(COVERED_REGISTRATION));
-        readStatus.onSecondCall().returns(new Promise((resolve) => { resolveTrailingRead = resolve; }));
+        let resolveTrailingRead!: (options: SyncIdentityOptions | undefined) => void;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions');
+        readOptions.onFirstCall().resolves(COVERED_REGISTRATION);
+        readOptions.onSecondCall().returns(new Promise((resolve) => { resolveTrailingRead = resolve; }));
         const { auth, ensureReady, session, store } = createManifestSyncStore(engine, APPLICATION, enboxes);
         let resolveReadiness!: () => void;
         ensureReady.onFirstCall().returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
@@ -1688,14 +1768,14 @@ describe('createConnectionStore()', () => {
         await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
         emitRegistrationChange(engine, COVERED_REGISTRATION, session.did);
         resolveReadiness();
-        await waitFor(() => { expect(readStatus.calledTwice).toBe(true); });
+        await waitFor(() => { expect(readOptions.calledTwice).toBe(true); });
 
         const replacement = createSession({
           did  : 'did:dht:trailing-replacement',
           name : 'Trailing replacement owner',
         });
         auth.session = replacement;
-        resolveTrailingRead(identitySyncStatus(COVERED_REGISTRATION));
+        resolveTrailingRead(COVERED_REGISTRATION);
         const snapshot = await connecting;
 
         expect(snapshot.phase).toBe('connected');

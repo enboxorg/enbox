@@ -198,7 +198,9 @@ const store = createConnectionStore({
   monitor: { autoRefresh: {} },
 });
 const initial = await store.initialize(); // restored sessions are readied before publication
-if (initial.phase === 'disconnected') {
+if (initial.walletReapprovalRequired && store.auth?.session?.delegateDid !== undefined) {
+  await store.refresh();
+} else if (initial.phase === 'disconnected') {
   await store.connect();
 }
 ```
@@ -226,9 +228,11 @@ sets `walletReapprovalRequired`, so the next `connect()` requests fresh
 approval. A delegated sync registration that is missing, belongs to another
 delegate, or omits any manifest protocol with read permission also fails closed:
 the store closes and hides the public facade, stops its monitor, and preserves
-the underlying auth session so `store.refresh()` can repair approval. On a
-manifest-backed store, `connect()` is delegated and a per-call `password`
-unlocks the delegate vault; use `connectVault()` for an owner.
+the underlying auth session so `store.refresh()` can repair approval. Check for
+that retained delegated session before treating every disconnected snapshot as
+a new connection. On a manifest-backed store, `connect()` is delegated and a
+per-call `password` unlocks the delegate vault; use `connectVault()` for an
+owner.
 
 Advanced integrations that own auth directly must project and ready the
 manifest explicitly, and separately close both the session facade and manager:
