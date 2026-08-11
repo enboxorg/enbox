@@ -366,8 +366,8 @@ describe('SyncEngineLevel — followed sources', () => {
       await waitFor(() => events.includes(undefined));
       expect(events).toContain(undefined);
     } finally {
-      (first as any).closeFollowedSourceWakePublisher();
-      secondInternal.closeFollowedSourceWakePublisher();
+      (first as any).closeWakePublishers();
+      secondInternal.closeWakePublishers();
     }
   });
 
@@ -437,8 +437,8 @@ describe('SyncEngineLevel — followed sources', () => {
 
       expect(events.at(-1)).toEqual({ acceptanceId: replacement.acceptanceId, id: followed.id });
     } finally {
-      (first as any).closeFollowedSourceWakePublisher();
-      (second as any).closeFollowedSourceWakePublisher();
+      (first as any).closeWakePublishers();
+      (second as any).closeWakePublishers();
     }
   });
 

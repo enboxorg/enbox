@@ -270,6 +270,17 @@ export class SyncEngineLevel implements SyncEngine {
   /** Cross-context durable-catalog wake, present for path-addressed stores. */
   private readonly _followedSourceWakePublisher?: BroadcastChannelWakePublisher;
 
+  /** Cross-context identity-registration wake, present for path-addressed stores. */
+  private readonly _identityRegistrationWakePublisher?: BroadcastChannelWakePublisher;
+
+  /** Distinguishes this engine's locally delivered registration wakes. */
+  private readonly _identityRegistrationWakeSource = CryptoUtils.randomUuid();
+
+  /** Serializes authoritative registration reads for each remotely changed identity. */
+  private readonly _identityRegistrationRefreshes = new Map<string, Promise<void>>();
+
+  private _identityRegistrationWakeSequence = 0;
+
   /** Serializes public Retry-now operations with each other before they acquire the sync lock. */
   private _retryRemoteQueue: Promise<void> = Promise.resolve();
 
@@ -317,6 +328,14 @@ export class SyncEngineLevel implements SyncEngine {
       this._followedSourceWakePublisher.subscribe(
         (): void => { this.scheduleFollowedSourceRefresh(); },
       );
+      this._identityRegistrationWakePublisher = new BroadcastChannelWakePublisher(
+        `enbox:sync-identity-registration:${this._lockNamespace}`,
+      );
+      this._identityRegistrationWakePublisher.subscribe(({ tenant, seq }): void => {
+        if (!seq.startsWith(`${this._identityRegistrationWakeSource}:`)) {
+          this.scheduleIdentityRegistrationRefresh(tenant);
+        }
+      });
     }
   }
 
@@ -800,17 +819,19 @@ export class SyncEngineLevel implements SyncEngine {
     const deadline = SyncEngineLevel.createLifecycleDeadline(options);
     await this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
       await this.stopSyncRuntime(activeDeadline);
-      this.closeFollowedSourceWakePublisher();
+      this.closeWakePublishers();
       await this.runDestructivePhase(async (): Promise<void> => {
         await this._db.close();
       }, activeDeadline);
     }, deadline);
   }
 
-  /** Stop cross-context catalog wakes before closing their shared store. */
-  private closeFollowedSourceWakePublisher(): void {
+  /** Stop cross-context wakes before closing their shared store. */
+  private closeWakePublishers(): void {
     this._followedSourceWakePublisher?.clear();
     this._followedSourceWakePublisher?.close();
+    this._identityRegistrationWakePublisher?.clear();
+    this._identityRegistrationWakePublisher?.close();
   }
 
   /**
@@ -866,6 +887,23 @@ export class SyncEngineLevel implements SyncEngine {
     return this.runExclusiveIdentityMutation(
       params.did,
       (deadline): Promise<void> => this.doSetIdentityOptions(params, deadline),
+      lifecycleOptions,
+    );
+  }
+
+  public refreshIdentityRouting(did: string, lifecycleOptions: SyncLifecycleOptions = {}): Promise<void> {
+    return this.runExclusiveIdentityMutation(
+      did,
+      async (deadline): Promise<void> => {
+        const options = await this.waitForLifecycleBarrier(
+          this.getIdentityOptions(did),
+          deadline,
+          'Identity refresh preparation did not complete',
+        );
+        if (options !== undefined) {
+          await this.doSetIdentityOptions({ did, options }, deadline);
+        }
+      },
       lifecycleOptions,
     );
   }
@@ -941,8 +979,8 @@ export class SyncEngineLevel implements SyncEngine {
     // mutation runs to completion and is never abandoned halfway through.
     await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
+    this.emitIdentityRegistrationChange(did, options, true);
     await this.refreshRoleLinksForActor(did, options.delegateDid);
-    this.emitEvent({ type: 'identity:registration-change', tenantDid: did, options: structuredClone(options) });
 
     // New identities are hot-added while replacements rebuild only prior live
     // links. Delegate/scope changes derive a new authorization epoch, so
@@ -1007,7 +1045,46 @@ export class SyncEngineLevel implements SyncEngine {
       await this._identityStore.delete(did);
     });
     this.invalidateSyncTargetsCache();
-    this.emitEvent({ type: 'identity:registration-change', tenantDid: did });
+    this.emitIdentityRegistrationChange(did, undefined, true);
+  }
+
+  /** Publish a committed registration change locally and optionally across contexts. */
+  private emitIdentityRegistrationChange(
+    tenantDid: string,
+    options: SyncIdentityOptions | undefined,
+    publishWake = false,
+  ): void {
+    this.emitEvent(options === undefined
+      ? { type: 'identity:registration-change', tenantDid }
+      : { type: 'identity:registration-change', tenantDid, options: structuredClone(options) });
+    if (publishWake) {
+      this._identityRegistrationWakePublisher?.publish({
+        tenant : tenantDid,
+        seq    : `${this._identityRegistrationWakeSource}:${++this._identityRegistrationWakeSequence}`,
+      });
+    }
+  }
+
+  /** Re-read and announce one sibling context's committed registration state in wake order. */
+  private scheduleIdentityRegistrationRefresh(tenantDid: string): void {
+    const previous = this._identityRegistrationRefreshes.get(tenantDid) ?? Promise.resolve();
+    const task = previous.catch((): void => {}).then(async (): Promise<void> => {
+      const options = await this._identityStore.get(tenantDid);
+      this.invalidateSyncTargetsCache();
+      this.emitIdentityRegistrationChange(tenantDid, options);
+    });
+    this._identityRegistrationRefreshes.set(tenantDid, task);
+    const settle = (): void => {
+      if (this._identityRegistrationRefreshes.get(tenantDid) === task) {
+        this._identityRegistrationRefreshes.delete(tenantDid);
+      }
+    };
+    void task.then(settle, (cause: unknown): void => {
+      settle();
+      if (!SyncEngineLevel.isDatabaseNotOpenError(cause)) {
+        console.error('SyncEngineLevel: Failed to refresh a cross-context identity registration:', cause);
+      }
+    });
   }
 
   public async getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
