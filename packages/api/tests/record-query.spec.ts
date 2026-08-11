@@ -67,8 +67,11 @@ function createCapturingDwn(queryResponses: RecordsQueryResponse[] = []): Captur
   return { dwn, countRequests, queryRequests };
 }
 
-function createTypedEnbox(dwn: DwnApi): TypedEnbox<typeof QueryDefinition, typeof QueryProtocol.codecs> {
-  const typed = new TypedEnbox(dwn, QueryProtocol);
+function createTypedEnbox(
+  dwn : DwnApi,
+  signal?: AbortSignal,
+): TypedEnbox<typeof QueryDefinition, typeof QueryProtocol.codecs> {
+  const typed = new TypedEnbox(dwn, QueryProtocol, { signal });
   (typed as unknown as { _configured: boolean })._configured = true;
   return typed;
 }
@@ -162,6 +165,21 @@ describe('RecordQuery', () => {
     expect(secondPage).toBeDefined();
     expect(await secondPage!.next()).toBeUndefined();
     expect(queryRequests).toHaveLength(2);
+  });
+
+  it('should fence a retained page when its typed facade ends', async () => {
+    const controller = new AbortController();
+    const { dwn, queryRequests } = createCapturingDwn([{
+      status  : { code: 200, detail: 'OK' },
+      records : [],
+      cursor  : { messageCid: 'next', value: 1 },
+    }]);
+    const page = await createTypedEnbox(dwn, controller.signal).records.query('note', { pagination: { limit: 1 } });
+
+    controller.abort();
+
+    await expect(page.next()).rejects.toMatchObject({ name: 'AbortError' });
+    expect(queryRequests).toHaveLength(1);
   });
 
   it('should reject a repeated continuation cursor across the page lineage', async () => {

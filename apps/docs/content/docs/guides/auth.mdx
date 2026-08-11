@@ -22,18 +22,33 @@ npm install @enbox/browser # for browser wallet-connect handlers
 
 ## Basic usage
 
+Most applications should let a connection store own auth and its session-bound
+API facade:
+
 ```ts
-import { AuthManager } from '@enbox/auth/browser';
+import { createConnectionStore } from '@enbox/browser';
 
-const auth = await AuthManager.create({ password: userPassword });
+const store = createConnectionStore({ password: userPassword });
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connectVault({ createIdentity: true });
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
 
-// Create a new identity
-const session = await auth.connectVault({ createIdentity: true });
+console.log(snapshot.identityDid); // 'did:dht:...'
+const enbox = snapshot.enbox!;
 
-// Check connection state
-console.log(auth.state); // 'connected'
-console.log(session.did); // 'did:dht:...'
+// ...use enbox...
+
+// On sign-out and application shutdown:
+await store.disconnect();
+await store.dispose();
 ```
+
+Use `AuthManager` directly only when an integration needs to own the auth
+lifecycle itself. The remaining examples describe that advanced layer.
 
 ## Connection flows
 
@@ -118,9 +133,20 @@ stopMonitoring();
 
 ### 5. Disconnect
 
+Direct auth consumers must close the `Enbox` facade they created from the
+session, then end and dispose the auth lifecycle:
+
 ```ts
+import { Enbox } from '@enbox/api';
+
+const enbox = Enbox.fromSession(session);
+
+// ...use enbox...
+
+enbox.close();
 await auth.disconnect();
 console.log(auth.state); // 'unlocked'
+await auth.shutdown();
 ```
 
 ### 6. Lock / Unlock

@@ -14,38 +14,60 @@ bun add @enbox/api
 ## Connect
 
 ```ts
-import { Enbox } from '@enbox/api';
+import { createConnectionStore } from '@enbox/api';
 
-const { auth, enbox, session } = await Enbox.connect({
-  password      : userPassword,
-  createIdentity: true,
-  dwnEndpoints  : ['https://enbox-dwn.fly.dev'],
+const store = createConnectionStore({
+  password     : userPassword,
+  dwnEndpoints : ['https://enbox-dwn.fly.dev'],
 });
+
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connectVault({ createIdentity: true });
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+
+const enbox = snapshot.enbox!;
 ```
 
-`Enbox.connect()` creates an `AuthManager`, connects or restores a session, and
-returns:
+`createConnectionStore()` owns the common application lifecycle: it creates an
+`AuthManager`, restores or connects a session, closes stale API facades when a
+session changes, and publishes immutable snapshots:
+
+Create exactly one store for each application/data-path pairing and keep it for
+the application lifetime. Separate stores intentionally do not coordinate
+lifecycle actions or snapshots, even when they target the same `dataPath`.
 
 | Value | Description |
 |---|---|
-| `auth` | The `AuthManager` that owns the session lifecycle. |
-| `enbox` | The high-level API instance. |
-| `session` | Active DID, delegate DID when present, agent, and first-run recovery phrase. |
+| `snapshot.enbox` | The high-level API instance while connected. |
+| `snapshot.session` | Active DID, delegate DID when present, agent, and first-run recovery phrase. |
+| `snapshot.identityDid` | The active identity DID. |
+| `store.auth` | The underlying `AuthManager` for advanced identity operations. |
 
-Common options:
+Common store and connection options:
 
 | Option | Description |
 |---|---|
 | `password` | Local vault password. The default is insecure; production apps should pass one. |
-| `createIdentity` | Create a default identity when no identity exists. |
+| `connectVault({ createIdentity: true })` | Create a default identity when no identity exists. |
 | `dwnEndpoints` | Remote DWN endpoints used when creating new DIDs. |
 | `sync` | Omit for live sync, pass an interval like `'30s'`, or pass `'off'`. |
-| `protocols` | Protocol scopes for handler-based connect flows. |
+| `store.connect({ protocols })` | Protocol scopes for a plain store's handler-based connect flow. |
 | `connectHandler` | Browser/wallet connect handler. |
 | `registration` | DWN endpoint registration callbacks and token persistence options. |
+| `auth` | Caller-owned `AuthManager`; other manager-construction options are ignored and `dispose()` does not shut it down. |
 
-If you already own an auth session, use `Enbox.fromSession(session)`. If you
-own a raw agent and DID, use `new Enbox({ agent, connectedDid })`.
+Call `store.disconnect()` when the user signs out and `store.dispose()` once at
+application shutdown. Advanced integrations that already own an auth session
+can use `Enbox.fromSession(session)` and must call `enbox.close()` before ending
+that session. If you own a raw agent and DID, use
+`new Enbox({ agent, connectedDid })` and close that facade explicitly too.
+Closing fences typed record operations and session-scoped resources. It does
+not revoke the shared `agent` or `did` surfaces, or a raw `dwn` reference
+obtained before close; their lifecycle remains with their owner.
 
 ## Observable Connection and Sync State
 
@@ -89,7 +111,7 @@ is released and `store.dispose()` at shutdown.
 ## Typed Protocols
 
 ```ts
-import { Enbox, defineProtocol, recordCodecs } from '@enbox/api';
+import { createConnectionStore, defineProtocol, recordCodecs } from '@enbox/api';
 
 const NotesProtocol = defineProtocol({
   protocol  : 'https://example.com/notes',
@@ -109,8 +131,16 @@ const NotesProtocol = defineProtocol({
   note: recordCodecs.json<{ title: string; body: string }>(),
 });
 
-const { enbox } = await Enbox.connect({ password: userPassword, createIdentity: true });
-const notes = enbox.using(NotesProtocol);
+const store = createConnectionStore({ password: userPassword });
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connectVault({ createIdentity: true });
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+
+const notes = snapshot.enbox!.using(NotesProtocol);
 
 const record = await notes.records.create('note', {
   data : { title: 'Hello', body: 'World' },
@@ -118,6 +148,9 @@ const record = await notes.records.create('note', {
 });
 
 const data = await record.value(); // { title: string; body: string }
+
+await store.disconnect();
+await store.dispose();
 ```
 
 `defineProtocol()` pairs each protocol record type with one runtime codec.
@@ -193,20 +226,29 @@ sets `walletReapprovalRequired`, so the next `connect()` requests fresh
 approval. On a manifest-backed store, `connect()` is delegated and a per-call
 `password` unlocks the delegate vault; use `connectVault()` for an owner.
 
-Without the connection store, project and ready the manifest explicitly:
+Advanced integrations that own auth directly must project and ready the
+manifest explicitly, and separately close both the session facade and manager:
 
 ```ts
+import { AuthManager } from '@enbox/auth';
+
+const auth = await AuthManager.create({ connectHandler });
 const protocols = getApplicationProtocolRequests(application);
-const { enbox } = await Enbox.connect({ connectHandler, protocols });
+const session = await auth.connect({ protocols });
+const enbox = Enbox.fromSession(session);
 
 await enbox.protocols.ensureReady({ application });
+
+enbox.close();
+await auth.disconnect();
+await auth.shutdown();
 ```
 
 The manifest retains each `TypedProtocol` for application-side use, while the
 auth projection contains only raw definitions and permission names — runtime
 codecs are never transmitted. The manifest itself is not a raw connect-options
-object. Owner/vault connections remain explicit `connectVault()` or
-`Enbox.connect({ createIdentity: true, ... })` calls.
+object. Owner/vault connections remain explicit `store.connectVault()` calls,
+or `AuthManager.connectVault()` in a caller-managed advanced lifecycle.
 
 `ensureReady()` publishes by default only for owner sessions; pass
 `publish: false` for local installation without a hosted-DWN requirement. A
@@ -358,8 +400,9 @@ Aborting it rejects an opening call or closes only that resource; `close()`
 safely joins the same cleanup.
 When the owning session ends, a view publishes one terminal `error` state
 and closes. After automatic grant refresh, `ConnectionStore` publishes a
-replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
-from the replacement `AuthManager.session` announced by `session-start`.
+replacement `enbox`; direct `Enbox.fromSession()` consumers close the old
+facade and recreate resources from the replacement `AuthManager.session`
+announced by `session-start`.
 
 Before the first query, every view is `loading`. After the first local
 materialization it is `ready`, including for an empty or offline result.
@@ -462,7 +505,8 @@ coordinates writes across browser contexts.
 
 | Export | Description |
 |---|---|
-| `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
+| `createConnectionStore()` | Owns restore, connect, refresh, disconnect, and facade cleanup for applications. |
+| `Enbox` | Session-bound app facade: `fromSession()`, `anonymous()`, `using()`, `close()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
 | `RecordPage<Item>` | One page with cursor-free `next()` and lazy async iteration. |

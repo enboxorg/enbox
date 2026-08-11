@@ -4,17 +4,17 @@
  * The SDK provides protocol-scoped access to DWN records with compile-time
  * type safety and DID management.
  *
- * Common authentication and identity setup is available through
- * `Enbox.connect()`. Advanced session management can use `@enbox/auth` or
- * `@enbox/agent` directly.
+ * Common authentication and identity setup is available through the
+ * framework-agnostic connection store. Advanced session management can use
+ * `@enbox/auth` or `@enbox/agent` directly.
  *
  * @example
  * ```ts
- * import { Enbox } from '@enbox/api';
+ * import { createConnectionStore } from '@enbox/api';
  *
- * const { enbox } = await Enbox.connect({
- *   createIdentity: true,
- * });
+ * const store = createConnectionStore();
+ * const snapshot = await store.connectVault({ createIdentity: true });
+ * if (snapshot.enbox === undefined) throw snapshot.error ?? new Error('Connection failed.');
  * ```
  *
  * [Link to GitHub Repo](https://github.com/enboxorg/enbox)

@@ -1,6 +1,12 @@
+import type { Enbox } from '@enbox/api';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { Enbox, EnboxConnectOptions } from '@enbox/api';
-import type { HandlerConnectOptions, ProtocolRequest, RefreshOptions, VaultConnectOptions } from '@enbox/auth';
+import type {
+  AuthManagerOptions,
+  HandlerConnectOptions,
+  ProtocolRequest,
+  RefreshOptions,
+  VaultConnectOptions,
+} from '@enbox/auth';
 
 import {
   createConnectionStore,
@@ -54,7 +60,6 @@ const directStructuralAuthRequests = [
   NotesProtocol,
   { protocol: PhotosProtocol, permissions: ['read', 'write'] },
 ] as const satisfies readonly ProtocolRequest[];
-const ownerOptions: EnboxConnectOptions = { createIdentity: true };
 const delegatedOptions: HandlerConnectOptions = { protocols: authRequests };
 const refreshOptions: RefreshOptions = { protocols: authRequests };
 const vaultOptions: VaultConnectOptions = { createIdentity: true };
@@ -64,6 +69,7 @@ const store = createConnectionStore({
   requireHostedReadiness : true,
 });
 const plainStore = createConnectionStore();
+declare const callerAgent: NonNullable<AuthManagerOptions['agent']>;
 declare const enbox: Enbox;
 void store.connect({ password: 'pw' });
 void store.connectVault({ createIdentity: true });
@@ -76,7 +82,9 @@ void exactProtocol;
 void exactExplicitProtocol;
 void authRequests;
 void directStructuralAuthRequests;
-void ownerOptions;
+
+// @ts-expect-error connection stores accept a caller-owned AuthManager, not a raw agent.
+createConnectionStore({ agent: callerAgent });
 
 // @ts-expect-error plain stores require explicit refresh protocols.
 void plainStore.refresh();
@@ -110,10 +118,6 @@ defineApplicationManifest({
     permissions : ['admin'],
   }],
 } as const);
-
-// @ts-expect-error a manifest is not an AuthManager connect payload; owner routing stays explicit.
-const unsafeOwnerOptions: EnboxConnectOptions = { ...application, createIdentity: true };
-void unsafeOwnerOptions;
 
 // @ts-expect-error readiness requires an application manifest.
 void enbox.protocols.ensureReady({});

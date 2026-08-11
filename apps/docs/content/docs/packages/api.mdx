@@ -184,6 +184,9 @@ The store restores sessions, requests the required grants, installs protocols
 locally, registers sync, and publishes a replacement `enbox` when a refreshed
 session replaces the old one. Use `store.subscribe()` and `getSnapshot()` with
 React `useSyncExternalStore` or the equivalent primitive in another framework.
+Create exactly one store for each application/data-path pairing and keep it for
+the application lifetime. Separate stores intentionally do not coordinate
+lifecycle actions or snapshots, even when they target the same `dataPath`.
 Connection sync is `syncing`, `caught-up`, or `error`; `ready` is reserved for
 views whose local data is usable. `RecordView.current` separately indicates
 whether its replica is caught up.
@@ -638,14 +641,22 @@ Most applications should use a manifest-backed connection store. Lower-level
 entry points remain available when another layer owns lifecycle:
 
 ```ts
-const { enbox, session, auth } = await Enbox.connect({
+import { Enbox } from '@enbox/api';
+import { AuthManager } from '@enbox/auth';
+
+const auth = await AuthManager.create({
   password,
-  createIdentity: true,
   dwnEndpoints: ['https://dwn.example'],
 });
+const session = await auth.restoreSession()
+  ?? await auth.connectVault({ createIdentity: true });
+const enbox = Enbox.fromSession(session);
 
-const fromExistingSession = Enbox.fromSession(session);
-const fromAgent = new Enbox({ agent, connectedDid });
+// ...use enbox...
+
+enbox.close();
+await auth.disconnect();
+await auth.shutdown();
 ```
 
 For published, unsigned reads without an identity:

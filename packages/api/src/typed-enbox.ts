@@ -1381,6 +1381,7 @@ export class TypedEnbox<
    * methods for everything they cover.
    */
   public get dwn(): DwnApi {
+    this._assertActive();
     return this._dwn;
   }
 
@@ -1407,6 +1408,7 @@ export class TypedEnbox<
    * ```
    */
   public async configure(): Promise<DwnResponseStatus & { protocol?: Protocol }> {
+    this._assertActive();
     if (this._dwn.isDelegate) {
       return this._autoConfigureDelegateProtocol();
     }
@@ -1818,6 +1820,7 @@ export class TypedEnbox<
    *   transport/authorization failure, not a verification outcome.
    */
   public async verifyInstalled(): Promise<VerifyInstalledResult> {
+    this._assertActive();
     const isDelegate = this._dwn.isDelegate;
 
     // Owners verify their local installation; delegates verify the
@@ -1954,7 +1957,12 @@ export class TypedEnbox<
     record : Record<Existing>,
   ): TypedRecord<DataForPath<C, Path>> {
     const dataFormats = this._definition.types[getTypeName(path)]?.dataFormats;
-    return bindRecordCodec(record, this.getCodec<Path>(path), dataFormats) as TypedRecord<DataForPath<C, Path>>;
+    return bindRecordCodec(
+      record,
+      this.getCodec<Path>(path),
+      dataFormats,
+      this._options.signal,
+    ) as TypedRecord<DataForPath<C, Path>>;
   }
 
   /** Validate materialization once, before any protocol or Records request starts. */
@@ -2102,6 +2110,7 @@ export class TypedEnbox<
           record,
           this.resolveCodec(childPath),
           childType?.dataFormats,
+          this._options.signal,
         );
         parentEntry.children.set(childName, Object.freeze({
           record : childRecord,
@@ -2673,6 +2682,7 @@ export class TypedEnbox<
       record,
       contextInvitationCodec,
       this._definition.types[CONTEXT_INVITATION_PATH].dataFormats,
+      this._options.signal,
     );
     let envelope: unknown;
     try {
@@ -3023,6 +3033,7 @@ export class TypedEnbox<
    * call only happens once.
    */
   private async _ensureReady(path: string): Promise<void> {
+    this._assertActive();
     this.assertContextPath(path);
     if (this._configured) {
       this._assertValidPath(path);
@@ -3032,7 +3043,13 @@ export class TypedEnbox<
     this._ensureReadyPromise ??= this._autoConfigureOnce();
 
     await this._ensureReadyPromise;
+    this._assertActive();
     this._assertValidPath(path);
+  }
+
+  /** Reject operations after the owning Enbox facade ends. */
+  private _assertActive(): void {
+    this._options.signal?.throwIfAborted();
   }
 
   /** Require bound-root coverage and apply the context's default selector. */
@@ -3339,6 +3356,7 @@ export class TypedEnbox<
           compiledQuery : typeof canonicalQuery,
           priorCursor : PaginationCursorLineage | undefined,
         ): Promise<RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
+          this._assertActive();
           const result = await this._dwn.records.query(compiledQuery);
           requireDwnSuccess('TypedEnbox.records.query', result);
 

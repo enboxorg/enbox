@@ -1,8 +1,8 @@
 /**
  * AuthManager — the primary entry point for `@enbox/auth`.
  *
- * Replaces `Enbox.connect()` (formerly `Web5.connect()`) with a composable,
- * multi-identity-aware auth system that works in both browser and CLI environments.
+ * Provides the composable, multi-identity-aware auth system used by Enbox
+ * connection stores and advanced direct integrations in browser and CLI environments.
  *
  * NOTE: this file is also exposed as the `@enbox/auth/auth-manager` subpath
  * export so `@enbox/api` can import the AuthManager class without pulling in
@@ -113,9 +113,10 @@ function assertRestoreFromPhraseOptions(options: unknown): asserts options is Re
 /**
  * The primary entry point for authentication and identity management.
  *
- * `AuthManager` replaces `Enbox.connect()` (formerly `Web5.connect()`) with a composable, multi-identity-aware
- * system. It manages vault lifecycle, identity CRUD, session persistence,
- * and all connection flows (local DID, wallet connect, import, restore).
+ * `AuthManager` manages vault lifecycle, identity CRUD, session persistence,
+ * and all connection flows (local DID, wallet connect, import, restore). Most
+ * applications use it through `createConnectionStore()` from `@enbox/api`;
+ * advanced integrations can own it directly.
  *
  * @example Basic usage
  * ```ts

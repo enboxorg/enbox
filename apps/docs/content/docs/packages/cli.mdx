@@ -16,7 +16,13 @@ bun add @enbox/cli
 ## Usage
 
 ```ts
-import { CliConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enbox/cli';
+import {
+  CliConnectHandler,
+  createConnectionStore,
+  defineApplicationManifest,
+  defineProtocol,
+  recordCodecs,
+} from '@enbox/cli';
 
 const NotesDefinition = {
   protocol  : 'https://example.com/protocols/notes',
@@ -36,22 +42,36 @@ const NotesProtocol = defineProtocol(NotesDefinition, {
   note: recordCodecs.json<{ body: string }>(),
 });
 
-const { enbox, session } = await Enbox.connect({
+const application = defineApplicationManifest({
+  protocols: [{ protocol: NotesProtocol, permissions: ['write'] }],
+} as const);
+const store = createConnectionStore({
+  application,
   connectHandler: CliConnectHandler({
     appName          : 'Notes CLI',
     connectServerUrl : 'https://your-dwn.example/connect',
   }),
-  protocols: [{ definition: NotesProtocol.definition, permissions: ['write'] }],
 });
 
-await enbox.using(NotesProtocol).records.create('note', {
-  data: { body: `Connected as ${session.did}` },
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connect();
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+
+await snapshot.enbox!.using(NotesProtocol).records.create('note', {
+  data: { body: `Connected as ${snapshot.identityDid}` },
 });
+
+await store.disconnect();
+await store.dispose();
 ```
 
 The handler uses the encrypted relay flow. It prints a terminal QR code and
 wallet link by default, prompts for the wallet-displayed PIN, then returns the
-delegated session through the normal `Enbox.connect()` lifecycle.
+delegated session through the connection-store lifecycle.
 
 When `connectServerUrl` is omitted, the handler resolves the relay from
 `connectServerUrlProvider`, then from the wallet origin's
@@ -67,6 +87,7 @@ approval link in the local default browser instead of printing a QR code.
 | Export | Description |
 |---|---|
 | `Enbox` | High-level app API from `@enbox/api` |
+| `createConnectionStore()` | Application connection lifecycle and observable snapshots |
 | `defineProtocol()` | Type-safe protocol definition helper |
 | `recordCodecs` | JSON, text, bytes, and Blob record codecs |
 | `AuthManager` | Auth/session lifecycle from `@enbox/auth` |

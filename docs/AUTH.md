@@ -14,28 +14,54 @@ the auth lifecycle.
     -> @enbox/agent
 ```
 
-`@enbox/auth` depends on the agent, not on the API package. A session returned
-by `AuthManager` can be passed into the API layer:
+`@enbox/auth` depends on the agent, not on the API package. Most applications
+should let a connection store compose auth and the API facade:
+
+```ts
+import { createConnectionStore } from '@enbox/api';
+
+const store = createConnectionStore({ password: userPassword });
+let snapshot = await store.initialize();
+if (snapshot.phase === 'disconnected') {
+  snapshot = await store.connectVault({ createIdentity: true });
+}
+if (snapshot.phase !== 'connected') {
+  throw snapshot.error ?? new Error('Connection was not established.');
+}
+
+const enbox = snapshot.enbox!;
+```
+
+Call `store.disconnect()` to sign out and `store.dispose()` once at application
+shutdown. The store closes session-bound `Enbox` facades automatically.
+
+Create one store for each application/data-path pairing and retain it for the
+application lifetime. Separate stores intentionally do not coordinate session
+lifecycle or snapshots, even when they share a `dataPath`.
+
+```ts
+await store.disconnect();
+await store.dispose();
+```
+
+Advanced integrations that own the auth lifecycle directly can pass an
+`AuthManager` session into the API layer. They must close the facade separately
+before ending the session:
 
 ```ts
 import { Enbox } from '@enbox/api';
 import { AuthManager } from '@enbox/auth';
 
-const auth = await AuthManager.create();
-const session = await auth.restoreSession() ?? await auth.connectVault({ createIdentity: true });
+const auth = await AuthManager.create({ password: userPassword });
+const session = await auth.restoreSession()
+  ?? await auth.connectVault({ createIdentity: true });
+const directEnbox = Enbox.fromSession(session);
 
-const enbox = Enbox.fromSession(session);
-```
+// ...use directEnbox...
 
-For the default app flow, prefer `Enbox.connect()`:
-
-```ts
-import { Enbox } from '@enbox/api';
-
-const { auth, enbox, session } = await Enbox.connect({
-  password      : userPassword,
-  createIdentity: true,
-});
+directEnbox.close();
+await auth.disconnect();
+await auth.shutdown();
 ```
 
 ## State Model
@@ -65,9 +91,10 @@ changes, vault lock/unlock, and local DWN discovery also emit typed events.
 
 ### `connect()`
 
-`connect()` is the routing entry point used by dapps and by `Enbox.connect()`.
-It first tries to restore a previous session. If restore does not produce a
-session, it chooses a flow from the supplied options:
+`connect()` is the `AuthManager` routing entry point used directly by advanced
+integrations and internally by connection stores. It first tries to restore a
+previous session. If restore does not produce a session, it chooses a flow from
+the supplied options:
 
 - `protocols` or `connectHandler`: use a handler-based connect flow.
 - `password`, `createIdentity`, or local vault options: use the vault flow.
@@ -205,6 +232,7 @@ sessions without custom token storage.
 unless one is supplied. Browser apps normally use the browser-backed default;
 tests and CLIs can pass memory or LevelDB-backed storage.
 
-Call `disconnect()` to end the active identity session while keeping the vault
-unlocked. Call `lock()` when the vault should be closed. Call `shutdown()` when
-disposing a manager permanently; a shut-down manager cannot be reused.
+When managing auth directly, close every `Enbox.fromSession()` facade before
+calling `disconnect()` to end the active identity session while keeping the
+vault unlocked. Call `lock()` when the vault should be closed. Call `shutdown()`
+when disposing a manager permanently; a shut-down manager cannot be reused.

@@ -13,6 +13,11 @@
  *
  * const session = await auth.connectVault({ createIdentity: true });
  * const enbox = Enbox.fromSession(session);
+ *
+ * // Release the session facade before ending the caller-owned auth lifecycle.
+ * enbox.close();
+ * await auth.disconnect();
+ * await auth.shutdown();
  * ```
  *
  * @module

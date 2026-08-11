@@ -8,6 +8,7 @@
  */
 
 export {
+  createConnectionStore,
   defineApplicationManifest,
   Enbox,
   defineProtocol,
@@ -17,19 +18,27 @@ export {
 } from '@enbox/api';
 
 export type {
+  ApplicationConnectionStore,
+  ApplicationConnectionStoreConnectOptions,
+  ApplicationConnectionStoreOptions,
+  ApplicationConnectionStoreRefreshOptions,
   ApplicationManifest,
   ApplicationManifestProtocol,
   ApplicationManifestProtocolInput,
+  ConnectionPhase,
+  ConnectionSnapshot,
+  ConnectionSnapshotListener,
+  ConnectionStore,
+  ConnectionStoreOptions,
   DefineApplicationManifestOptions,
   EnboxAnonymousOptions,
-  EnboxConnectOptions,
-  EnboxConnectResult,
   EnboxParams,
   EnboxSessionParams,
   EncodedRecordData,
   EnsureProtocolsReadyOptions,
   RecordCodec,
   RecordCodecValue,
+  SyncStatusSnapshot,
 } from '@enbox/api';
 
 export {

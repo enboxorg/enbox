@@ -23,8 +23,8 @@ export interface AgentSessionIdentity {
  * `agent` is typed as {@link EnboxPlatformAgent} rather than the narrow
  * `EnboxAgent` because every real session is bound to a platform-shaped
  * agent (vault, sync, secrets are required for session lifecycle). This
- * lets consumers like `@enbox/api` call `session.agent.sync.stopSync()`
- * without a runtime guard or unsafe cast.
+ * lets consumers like `@enbox/api` bind sync-backed contexts and delivery
+ * state without a runtime guard or unsafe cast.
  */
 export type AgentSessionPrimitives = {
   /** The authenticated Enbox agent managing keys, DIDs, and DWN access. */

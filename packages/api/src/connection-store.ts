@@ -143,9 +143,8 @@ export type ConnectionSnapshot = {
   /**
    * The {@link Enbox} instance bound to the active session.
    *
-   * When this snapshot comes from a {@link ConnectionStore}, call
-   * {@link ConnectionStore.disconnect} rather than `enbox.disconnect()` so the
-   * store can publish the complete sign-out lifecycle.
+   * This is a borrowed facade: do not close it directly. The store closes it
+   * automatically when the session is replaced, disconnected, or disposed.
    */
   enbox?: Enbox;
 
@@ -216,20 +215,23 @@ export type ApplicationConnectionStoreRefreshOptions = Omit<RefreshOptions, 'pro
 /**
  * Options shared by plain and manifest-backed connection stores.
  *
- * Extends `AuthManagerOptions` — everything the store does not consume itself
- * (`connectHandler`, `sync`, `storage`, `password`, …) is forwarded verbatim
- * to `AuthManager.create()` during the first action.
+ * Accepts `AuthManagerOptions` except `agent` — everything the store does not
+ * consume itself (`connectHandler`, `sync`, `storage`, `password`, …) is
+ * forwarded verbatim to `AuthManager.create()` during the first action. To
+ * use a caller-owned agent, create an `AuthManager` around it and pass that
+ * manager through `auth`.
  */
-type ConnectionStoreSharedOptions = AuthManagerOptions & {
+type ConnectionStoreSharedOptions = Omit<AuthManagerOptions, 'agent'> & {
+  /** Raw agents have ambiguous ownership; pass a caller-owned manager through {@link auth}. */
+  agent?: never;
+
   /**
    * A pre-built `AuthManager` to drive instead of creating one.
    *
    * When provided, all `AuthManagerOptions` fields are ignored and the caller
    * keeps ownership: {@link ConnectionStore.dispose} will not shut the
-   * manager down. When omitted, the store creates its manager lazily on the
-   * first action and owns it — unless `agent` is supplied, in which case the
-   * caller keeps the agent's lifecycle (matching `Enbox.connect()` ownership
-   * semantics) and `dispose()` leaves the manager running.
+   * manager down. When omitted, the store creates and owns its manager lazily
+   * on the first action.
    */
   auth?: AuthManager;
 
@@ -275,6 +277,8 @@ export type ConnectionStoreOptions = PlainConnectionStoreOptions | ApplicationCo
  * failure) lands in the returned {@link ConnectionSnapshot}, so UI bindings
  * only ever read state. The single exception is calling any action on a
  * disposed store, which throws synchronously as a programming error.
+ * Keep one store for each application data path and reuse it for the app
+ * lifetime; separate store instances intentionally do not coordinate actions.
  *
  * While an action is in flight, additional `initialize`/`connect`/
  * `connectVault`/`refresh`/`refreshDwnEndpoints`/`retryRemote` calls do not start a second
@@ -465,6 +469,20 @@ function isActiveAuthSession(session: AuthSession | undefined): session is AuthS
   return session !== undefined && !session.signal.aborted;
 }
 
+/** Whether a newly active session must replace the connection currently being published. */
+function shouldResetPublishedSession(snapshot: ConnectionSnapshot, activeSession: AuthSession): boolean {
+  return snapshot.phase === 'disconnecting'
+    || (snapshot.session !== undefined && snapshot.session !== activeSession);
+}
+
+/** Whether a candidate remains the auth manager's active, unaborted session. */
+function isAuthoritativeActiveSession(
+  authoritativeSession: AuthSession | undefined,
+  candidate: AuthSession,
+): boolean {
+  return authoritativeSession === candidate && isActiveAuthSession(candidate);
+}
+
 /** Whether readiness rejected a delegated definition that needs fresh wallet approval. */
 function requiresWalletReapproval(error: Error): boolean {
   return error instanceof ProtocolReadinessError &&
@@ -514,10 +532,10 @@ class HeadlessConnectionStore implements ConnectionStore {
   private readonly _requireHostedReadiness: boolean;
   private readonly _restore?: RestoreSessionOptions;
   private readonly _listeners = new Set<ConnectionSnapshotListener>();
+  private readonly _unpublishedEnboxes = new Set<Enbox>();
   private readonly _unsubscribers: (() => void)[] = [];
 
   private _auth?: AuthManager;
-  private _ownsAuth = false;
   private _snapshot: ConnectionSnapshot = Object.freeze<ConnectionSnapshot>({ phase: 'initializing' });
   private _stopMonitor?: () => void;
   private _pendingAction?: Promise<ConnectionSnapshot>;
@@ -528,6 +546,11 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _syncBinding?: SyncStatusBinding;
 
   public constructor(options: ConnectionStoreOptions) {
+    if (Object.hasOwn(options, 'agent')) {
+      throw new TypeError(
+        '[@enbox/api] createConnectionStore: agent is not supported; create an AuthManager and pass it as auth.',
+      );
+    }
     const { application, auth, monitor, requireHostedReadiness, restore, ...authManagerOptions } = options;
     if (application?.protocols.length === 0) {
       throw new TypeError('[@enbox/api] createConnectionStore requires at least one application protocol.');
@@ -567,7 +590,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (this._initialized || this._snapshot.phase === 'connected') {
       return Promise.resolve(this._snapshot);
     }
-    return this._track(this._runInitialize());
+    return this._track((): Promise<ConnectionSnapshot> => this._runInitialize());
   }
 
   public connect(options?: ConnectOptions): Promise<ConnectionSnapshot> {
@@ -592,7 +615,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (this._pendingAction !== undefined) {
       return this._pendingAction;
     }
-    return this._track(this._runDwnEndpointRefresh());
+    return this._track((): Promise<ConnectionSnapshot> => this._runDwnEndpointRefresh());
   }
 
   public retryRemote(remoteEndpoint: string): Promise<ConnectionSnapshot> {
@@ -600,7 +623,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (this._pendingAction !== undefined) {
       return this._pendingAction;
     }
-    return this._track(this._runRetryRemote(remoteEndpoint));
+    return this._track((): Promise<ConnectionSnapshot> => this._runRetryRemote(remoteEndpoint));
   }
 
   public disconnect(options?: DisconnectOptions): Promise<ConnectionSnapshot> {
@@ -608,7 +631,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (this._snapshot.phase === 'disconnecting' && this._pendingAction !== undefined) {
       return this._pendingAction;
     }
-    return this._track(this._runDisconnect(options));
+    return this._track((): Promise<ConnectionSnapshot> => this._runDisconnect(options));
   }
 
   public async dispose(): Promise<void> {
@@ -625,12 +648,12 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
     this._unsubscribers.length = 0;
     this._listeners.clear();
-    // Clear the stored status without publishing a teardown notification.
-    this._apply({ remoteDwn: undefined, sync: undefined });
+    // Clear retained session resources without publishing after listeners are gone.
+    this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected', vaultLocked: undefined });
 
     const auth = this._auth;
     this._auth = undefined;
-    if (auth !== undefined && this._ownsAuth) {
+    if (auth !== undefined && this._providedAuth === undefined) {
       try {
         await auth.shutdown();
       } catch (cause: unknown) {
@@ -641,16 +664,24 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   // ─── Actions ───────────────────────────────────────────────────
 
-  /** Registers `action` as the pending action until it settles. */
-  private _track(action: Promise<ConnectionSnapshot>): Promise<ConnectionSnapshot> {
+  /** Claims the action slot before `start` can synchronously notify re-entrant listeners. */
+  private _track(start: () => Promise<ConnectionSnapshot>): Promise<ConnectionSnapshot> {
+    let resolveAction!: (snapshot: ConnectionSnapshot) => void;
+    let rejectAction!: (cause: unknown) => void;
+    const action = new Promise<ConnectionSnapshot>((resolve, reject): void => {
+      resolveAction = resolve;
+      rejectAction = reject;
+    });
     this._pendingAction = action;
-    // Action promises never reject (failures land in the snapshot), so the
-    // derived cleanup promise cannot produce an unhandled rejection.
-    void action.finally((): void => {
+    const release = (): void => {
       if (this._pendingAction === action) {
         this._pendingAction = undefined;
       }
-    });
+    };
+    void action.then(release, release);
+
+    const started = Promise.resolve(start());
+    void started.then(resolveAction, rejectAction);
     return action;
   }
 
@@ -660,11 +691,14 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (this._pendingAction !== undefined) {
       return this._pendingAction;
     }
-    return this._track(this._runConnectFlow(flow));
+    return this._track((): Promise<ConnectionSnapshot> => this._runConnectFlow(flow));
   }
 
   private async _runInitialize(): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
+    if (this._auth === undefined) {
+      void this._materializeAuth();
+    }
     this._apply({ error: undefined, phase: 'initializing' });
 
     try {
@@ -676,27 +710,32 @@ class HeadlessConnectionStore implements ConnectionStore {
 
       if (session === undefined) {
         this._initialized = true;
-        return this._apply({
+        const snapshot = this._apply({
           ...CLEARED_SESSION_FIELDS,
           phase       : 'disconnected',
           vaultLocked : auth.state === 'locked',
         });
+        return this._settlePublication(generation, snapshot);
       }
       const snapshot = await this._commitConnected(auth, generation);
-      if (!this._isStale(generation)) {
-        this._initialized = true;
+      if (this._isStale(generation)) {
+        return this._settleSuperseded();
       }
+      this._initialized = true;
       return snapshot;
     } catch (cause: unknown) {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
       }
-      return this._applyActionFailure(generation, cause);
+      return this._settlePublication(generation, this._applyActionFailure(generation, cause));
     }
   }
 
   private async _runConnectFlow(flow: (auth: AuthManager) => Promise<AuthSession>): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
+    if (this._auth === undefined) {
+      void this._materializeAuth();
+    }
     this._apply({ error: undefined, phase: 'connecting' });
 
     try {
@@ -707,17 +746,18 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
 
       const snapshot = await this._commitConnected(auth, generation);
+      if (this._isStale(generation)) {
+        return this._settleSuperseded();
+      }
       // A completed, ready connect implies the store is bootstrapped — a
       // later initialize() must not re-run restore over the live session.
-      if (!this._isStale(generation)) {
-        this._initialized = true;
-      }
+      this._initialized = true;
       return snapshot;
     } catch (cause: unknown) {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
       }
-      return this._applyActionFailure(generation, cause);
+      return this._settlePublication(generation, this._applyActionFailure(generation, cause));
     }
   }
 
@@ -748,12 +788,15 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
       }
-      return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
+      return this._settlePublication(
+        generation,
+        this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' }),
+      );
     } catch (cause: unknown) {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
       }
-      return this._applyActionFailure(generation, cause);
+      return this._settlePublication(generation, this._applyActionFailure(generation, cause));
     }
   }
 
@@ -761,10 +804,6 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   private async _runDwnEndpointRefresh(): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
-    await Promise.resolve();
-    if (this._isStale(generation)) {
-      return this._settleSuperseded();
-    }
     this._apply({ error: undefined });
 
     const binding = this._syncBinding;
@@ -794,10 +833,6 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   private async _runRetryRemote(remoteEndpoint: string): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
-    await Promise.resolve();
-    if (this._isStale(generation)) {
-      return this._settleSuperseded();
-    }
     this._apply({ error: undefined });
 
     const binding = this._syncBinding;
@@ -872,9 +907,15 @@ class HeadlessConnectionStore implements ConnectionStore {
   /** Publish a status-action failure, then honor a disconnect started by that publication. */
   private async _failStatusAction(generation: number, cause: unknown): Promise<ConnectionSnapshot> {
     const snapshot = this._applyActionFailure(generation, cause);
-    return this._isStale(generation)
-      ? this._settleSuperseded()
-      : snapshot;
+    return this._settlePublication(generation, snapshot);
+  }
+
+  /** Honor a lifecycle action started re-entrantly by a terminal publication. */
+  private _settlePublication(
+    generation: number,
+    snapshot: ConnectionSnapshot,
+  ): Promise<ConnectionSnapshot> | ConnectionSnapshot {
+    return this._isStale(generation) ? this._settleSuperseded() : snapshot;
   }
 
   /** Apply and seed the authoritative session, repeating if auth changes while status is read. */
@@ -901,8 +942,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (!isActiveAuthSession(activeSession)) {
       return this._publishDisconnected();
     }
-    if (this._snapshot.phase === 'disconnecting'
-      || (this._snapshot.session !== undefined && this._snapshot.session !== activeSession)) {
+    if (shouldResetPublishedSession(this._snapshot, activeSession)) {
       // Auth aborts the previous lifetime before publishing its replacement.
       // Do not expose that dead session while the replacement is readied.
       this._stopDelegateMonitor();
@@ -911,46 +951,56 @@ class HeadlessConnectionStore implements ConnectionStore {
 
     const shouldSeedRemoteDwn = this._snapshot.session !== activeSession || this._snapshot.remoteDwn === undefined;
     const patch = this._connectedPatch(activeSession);
-    const readinessError = this._application === undefined
-      ? undefined
-      : await this._getApplicationReadinessError(patch.enbox, this._application);
-    if (this._isStale(generation)) {
-      return this._snapshot;
+    if (this._snapshot.enbox !== patch.enbox) {
+      this._unpublishedEnboxes.add(patch.enbox);
     }
+    try {
+      const readinessError = this._application === undefined
+        ? undefined
+        : await this._getApplicationReadinessError(patch.enbox, this._application);
+      if (this._isStale(generation)) {
+        return this._snapshot;
+      }
 
-    const readySession = auth.session;
-    if (!isActiveAuthSession(readySession)) {
-      return this._publishDisconnected();
-    }
-    if (readySession !== activeSession) {
+      const readySession = auth.session;
+      if (!isActiveAuthSession(readySession)) {
+        return this._publishDisconnected();
+      }
+      if (readySession !== activeSession) {
+        return undefined;
+      }
+      if (readinessError !== undefined) {
+        await this._rejectUnreadySession(auth, readinessError);
+      }
+
+      this._apply(patch);
+      const binding = this._syncBinding;
+      if (shouldSeedRemoteDwn && binding?.session === activeSession) {
+        await this._requestDwnEndpointRefresh(binding);
+      }
+      if (this._isStale(generation)) {
+        return this._snapshot;
+      }
+      this._restartMonitor(auth, activeSession);
+      await this._seedConnectionStatus(auth, activeSession, generation);
+      if (this._isStale(generation)) {
+        return this._snapshot;
+      }
+
+      const authoritativeSession = auth.session;
+      if (isAuthoritativeActiveSession(authoritativeSession, activeSession)) {
+        return this._snapshot;
+      }
+      if (!isActiveAuthSession(authoritativeSession)) {
+        return this._publishDisconnected();
+      }
       return undefined;
+    } finally {
+      this._unpublishedEnboxes.delete(patch.enbox);
+      if (this._snapshot.enbox !== patch.enbox) {
+        patch.enbox.close();
+      }
     }
-    if (readinessError !== undefined) {
-      await this._rejectUnreadySession(auth, readinessError);
-    }
-
-    this._apply(patch);
-    const binding = this._syncBinding;
-    if (shouldSeedRemoteDwn && binding?.session === activeSession) {
-      await this._requestDwnEndpointRefresh(binding);
-    }
-    if (this._isStale(generation)) {
-      return this._snapshot;
-    }
-    this._restartMonitor(auth, activeSession);
-    await this._seedConnectionStatus(auth, activeSession, generation);
-    if (this._isStale(generation)) {
-      return this._snapshot;
-    }
-
-    const authoritativeSession = auth.session;
-    if (authoritativeSession === activeSession && isActiveAuthSession(activeSession)) {
-      return this._snapshot;
-    }
-    if (!isActiveAuthSession(authoritativeSession)) {
-      return this._publishDisconnected();
-    }
-    return undefined;
   }
 
   /** Run the existing readiness lifecycle while keeping its failure behind the session fence. */
@@ -1051,17 +1101,6 @@ class HeadlessConnectionStore implements ConnectionStore {
   // ─── AuthManager wiring ────────────────────────────────────────
 
   /**
-   * Whether {@link dispose} should shut the `AuthManager` down. Mirrors the
-   * `Enbox.connect()` ownership rule: the store owns the manager only when it
-   * created it AND built the underlying agent itself — a caller-supplied
-   * `auth` or `agent` keeps its lifecycle with the caller (shutting the
-   * manager down would lock the caller's agent vault).
-   */
-  private get _wouldOwnAuth(): boolean {
-    return this._providedAuth === undefined && this._authManagerOptions.agent === undefined;
-  }
-
-  /**
    * Lazily creates (or adopts) the `AuthManager`, then re-checks staleness at
    * the await resumption BEFORE any auth flow can run.
    *
@@ -1079,7 +1118,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (this._disposed) {
         // Disposed while the manager was being created — shut the orphan down
         // (when store-owned) instead of leaking its storage handles.
-        if (this._auth === undefined && this._wouldOwnAuth) {
+        if (this._auth === undefined && this._providedAuth === undefined) {
           await materialized.shutdown().catch((): void => {});
         }
         throw new Error(DISPOSED_MESSAGE);
@@ -1117,7 +1156,6 @@ class HeadlessConnectionStore implements ConnectionStore {
   /** Installs the materialized manager as the store's manager and wires its events. */
   private _adoptAuth(auth: AuthManager): AuthManager {
     this._auth = auth;
-    this._ownsAuth = this._wouldOwnAuth;
     this._wireAuthEvents(auth);
     return auth;
   }
@@ -1142,12 +1180,12 @@ class HeadlessConnectionStore implements ConnectionStore {
       return;
     }
 
+    const generation = ++this._actionGeneration;
     const session = auth.session;
     if (session === undefined) {
       this._publishDisconnected();
       return;
     }
-    const generation = this._actionGeneration;
     void this._commitConnected(auth, generation).catch((cause: unknown): void => {
       if (this._isStale(generation)) {
         return;
@@ -1449,11 +1487,23 @@ class HeadlessConnectionStore implements ConnectionStore {
       // A changed session also guarantees snapshot inequality, so this binding reaches publication.
       next.sync = this._bindSyncStatus(next.session);
     }
+    if (Object.hasOwn(patch, 'enbox')) {
+      for (const enbox of this._unpublishedEnboxes) {
+        this._unpublishedEnboxes.delete(enbox);
+        if (enbox !== next.enbox) {
+          enbox.close();
+        }
+      }
+    }
     if (snapshotsEqual(this._snapshot, next)) {
       return this._snapshot;
     }
 
+    const previousEnbox = this._snapshot.enbox;
     this._snapshot = Object.freeze(next);
+    if (previousEnbox !== undefined && previousEnbox !== next.enbox) {
+      previousEnbox.close();
+    }
     this._notifyListeners(Array.from(this._listeners), this._snapshot);
     return this._snapshot;
   }
@@ -1591,7 +1641,7 @@ function remoteSyncRowsEqual(a: Readonly<RemoteSyncStatus>, b: Readonly<RemoteSy
  * one store for its lifetime, calls {@link ConnectionStore.initialize} once
  * on boot, and binds its UI to `subscribe`/`getSnapshot`.
  *
- * @param options - `AuthManagerOptions` plus store-specific fields
+ * @param options - `AuthManagerOptions` except `agent`, plus store-specific fields
  *   ({@link ConnectionStoreOptions.auth}, {@link ConnectionStoreOptions.monitor},
  *   {@link ConnectionStoreOptions.restore}).
  * @returns A new {@link ConnectionStore}.

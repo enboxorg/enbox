@@ -3,7 +3,8 @@
  *
  * Connects to an external wallet via the Enbox Connect relay protocol,
  * importing a delegated DID with permission grants.
- * This replaces the "Mode B/C" paths in Enbox.connect().
+ * This implements the delegated path used by `AuthManager` and Enbox
+ * connection stores.
  * @module
  */
 

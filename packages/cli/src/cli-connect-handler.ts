@@ -104,8 +104,8 @@ export interface CliConnectHandlerOptions {
 /**
  * Create a CLI connect handler backed by the encrypted relay/PIN flow.
  *
- * The handler plugs into `Enbox.connect({ connectHandler, protocols })` and
- * returns the same delegated session shape as the browser connect handler.
+ * Pass the handler to `createConnectionStore({ connectHandler })`, then call
+ * the store's delegated `connect()` action.
  */
 export function CliConnectHandler(options: CliConnectHandlerOptions = {}): ConnectHandler {
   const walletUrlState: WalletUrlState = {};
