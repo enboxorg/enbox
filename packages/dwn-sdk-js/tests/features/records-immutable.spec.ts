@@ -371,5 +371,3 @@ export function testRecordsImmutable(): void {
     });
   });
 }
-
-testRecordsImmutable();

@@ -1228,5 +1228,3 @@ export function testRecordsSquash(): void {
     });
   });
 }
-
-testRecordsSquash();

@@ -1215,6 +1215,3 @@ export function testRecordsRecordLimit(): void {
     });
   });
 }
-
-// Self-register when run directly
-testRecordsRecordLimit();
