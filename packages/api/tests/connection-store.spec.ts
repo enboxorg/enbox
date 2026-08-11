@@ -20,6 +20,7 @@ import { EnboxUserAgent } from '@enbox/agent';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { AuthEventEmitter, AuthSession, ConnectDeniedError, isConnectDeniedError } from '@enbox/auth';
 
+import type { ApplicationManifest } from '../src/application-manifest.js';
 import type { ConnectionSnapshot } from '../src/connection-store.js';
 
 import { createConnectionStore } from '../src/connection-store.js';
@@ -52,6 +53,36 @@ const APPLICATION = defineApplicationManifest({
   protocols: [{ protocol: ApplicationProtocol, permissions: ['read'] }],
 } as const);
 const APPLICATION_REQUESTS = [{ definition: ApplicationDefinition, permissions: ['read'] }];
+
+const WriteOnlyDefinition = {
+  protocol  : 'https://example.com/connection-store/write-only',
+  published : true,
+  types     : {},
+  structure : {},
+} as const satisfies ProtocolDefinition;
+
+const WriteOnlyProtocol = defineProtocol(WriteOnlyDefinition, {});
+const DEFAULT_READ_APPLICATION = defineApplicationManifest({
+  protocols: [ApplicationProtocol],
+} as const);
+const MIXED_APPLICATION = defineApplicationManifest({
+  protocols: [
+    { protocol: ApplicationProtocol, permissions: ['read'] },
+    { protocol: WriteOnlyProtocol, permissions: ['write'] },
+  ],
+} as const);
+const WRITE_ONLY_APPLICATION = defineApplicationManifest({
+  protocols: [{ protocol: WriteOnlyProtocol, permissions: ['write'] }],
+} as const);
+
+const COVERED_REGISTRATION: SyncIdentityOptions = {
+  delegateDid : DELEGATE_DID,
+  protocols   : [ApplicationDefinition.protocol],
+};
+const UNCOVERED_REGISTRATION: SyncIdentityOptions = {
+  delegateDid : DELEGATE_DID,
+  protocols   : ['https://example.com/other'],
+};
 
 const ACTIVE_STATUS: ConnectionStatus = {
   state              : 'active',
@@ -143,6 +174,14 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
   return state;
 }
 
+function emitRegistrationChange(
+  engine: FakeSyncStatusEngine,
+  options: SyncIdentityOptions | undefined,
+  tenantDid: string = OWNER_DID,
+): void {
+  engine.emit({ type: 'identity:registration-change', tenantDid, options });
+}
+
 function syncLink(overrides: Partial<ReplicationLinkSnapshot> = {}): ReplicationLinkSnapshot {
   return {
     tenantDid      : OWNER_DID,
@@ -227,6 +266,7 @@ type FakeAuthManager = {
 describe('createConnectionStore()', () => {
   let testHarness: PlatformAgentTestHarness;
   let getDwnEndpointStatus: sinon.SinonStub;
+  let getIdentitySyncStatus: sinon.SinonStub;
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
@@ -241,7 +281,9 @@ describe('createConnectionStore()', () => {
     await testHarness.createAgentDid();
     getDwnEndpointStatus = sinon.stub(testHarness.agent.identity, 'getDwnEndpointStatus')
       .callsFake(async ({ didUri }): Promise<DwnEndpointResolution> => readyDwn(undefined, didUri));
-    sinon.stub(testHarness.agent.sync, 'getIdentitySyncStatus')
+    sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves(COVERED_REGISTRATION);
+    sinon.stub(testHarness.agent.sync, 'refreshIdentityRouting').resolves();
+    getIdentitySyncStatus = sinon.stub(testHarness.agent.sync, 'getIdentitySyncStatus')
       .resolves(identitySyncStatus({ delegateDid: DELEGATE_DID, protocols: 'all' }));
   });
 
@@ -316,6 +358,28 @@ describe('createConnectionStore()', () => {
       get: (target, property, receiver): unknown =>
         property === 'sync' ? sync : Reflect.get(target, property, receiver),
     });
+  }
+
+  function createManifestSyncStore(
+    engine: FakeSyncStatusEngine,
+    application: ApplicationManifest = APPLICATION,
+    enboxes: Enbox[] = [],
+    signal?: AbortSignal,
+  ): {
+      auth: FakeAuthManager;
+      ensureReady: sinon.SinonStub;
+      session: AuthSession;
+      store: ReturnType<typeof createConnectionStore>;
+    } {
+    const ensureReady = stubProtocolReadiness(enboxes);
+    const session = createSession({ agent: agentWithSync(engine.sync), delegateDid: DELEGATE_DID, signal });
+    const auth = createFakeAuth();
+    auth.connect.callsFake(async (): Promise<AuthSession> => {
+      auth.session = session;
+      return session;
+    });
+    const store = createConnectionStore({ application, auth: asAuth(auth) });
+    return { auth, ensureReady, session, store };
   }
 
   async function connectWithSync(
@@ -493,11 +557,7 @@ describe('createConnectionStore()', () => {
       expect(store.getSnapshot().sync).toEqual({ state: 'caught-up', connectivity: 'unknown', remotes: [] });
 
       engine.options = { protocols: 'all' };
-      engine.emit({
-        type      : 'identity:registration-change',
-        tenantDid : OWNER_DID,
-        options   : engine.options,
-      });
+      emitRegistrationChange(engine, engine.options);
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('syncing'); });
     });
 
@@ -711,10 +771,86 @@ describe('createConnectionStore()', () => {
       expect(snapshot.enbox).toBeUndefined();
     });
 
+    it('should follow an external replacement suppressed during the initial endpoint refresh', async () => {
+      const firstEngine = createSyncStatusEngine();
+      const firstLifetime = new AbortController();
+      const firstSession = createSession({
+        agent  : agentWithSync(firstEngine.sync),
+        signal : firstLifetime.signal,
+      });
+      const replacementEngine = createSyncStatusEngine();
+      const replacementSession = createSession({
+        agent : agentWithSync(replacementEngine.sync),
+        did   : 'did:dht:replacement',
+        name  : 'Replacement identity',
+      });
+      const auth = createFakeAuth();
+      auth.connect.callsFake(async (): Promise<AuthSession> => {
+        auth.session = firstSession;
+        return firstSession;
+      });
+      let resolveInitialStatus!: (status: DwnEndpointResolution) => void;
+      getDwnEndpointStatus.resetHistory();
+      getDwnEndpointStatus.onFirstCall().returns(
+        new Promise<DwnEndpointResolution>((resolve) => { resolveInitialStatus = resolve; }),
+      );
+      getDwnEndpointStatus.onSecondCall().callsFake(
+        async ({ didUri }): Promise<DwnEndpointResolution> => readyDwn('https://replacement.example', didUri),
+      );
+      const store = createConnectionStore({ auth: asAuth(auth) });
+
+      const connecting = store.connect({ protocols: PROTOCOLS });
+      await waitFor(() => { expect(getDwnEndpointStatus.calledOnce).toBe(true); });
+      firstLifetime.abort();
+      auth.session = replacementSession;
+      auth.emitter.emit('session-start', {});
+      resolveInitialStatus(readyDwn(undefined, firstSession.did));
+      const snapshot = await connecting;
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.session).toBe(replacementSession);
+      expect(snapshot.identityName).toBe('Replacement identity');
+      expect(snapshot.remoteDwn).toEqual(readyDwn('https://replacement.example', replacementSession.did));
+      expect(getDwnEndpointStatus.calledTwice).toBe(true);
+      expect(firstEngine.listenerCount()).toBe(0);
+      expect(replacementEngine.listenerCount()).toBe(1);
+    });
+
+    it('should follow an external session end suppressed during the initial endpoint refresh', async () => {
+      const engine = createSyncStatusEngine();
+      const lifetime = new AbortController();
+      const session = createSession({ agent: agentWithSync(engine.sync), signal: lifetime.signal });
+      const auth = createFakeAuth();
+      auth.connect.callsFake(async (): Promise<AuthSession> => {
+        auth.session = session;
+        return session;
+      });
+      let resolveInitialStatus!: (status: DwnEndpointResolution) => void;
+      getDwnEndpointStatus.resetHistory();
+      getDwnEndpointStatus.returns(
+        new Promise<DwnEndpointResolution>((resolve) => { resolveInitialStatus = resolve; }),
+      );
+      const store = createConnectionStore({ auth: asAuth(auth) });
+
+      const connecting = store.connect({ protocols: PROTOCOLS });
+      await waitFor(() => { expect(getDwnEndpointStatus.calledOnce).toBe(true); });
+      lifetime.abort();
+      auth.session = undefined;
+      auth.emitter.emit('session-end', { did: session.did });
+      resolveInitialStatus(readyDwn(undefined, session.did));
+      const snapshot = await connecting;
+
+      expect(snapshot.phase).toBe('disconnected');
+      expect(snapshot.session).toBeUndefined();
+      expect(snapshot.enbox).toBeUndefined();
+      expect(engine.listenerCount()).toBe(0);
+    });
+
     it('should map replacement readiness failure suppressed during a remote retry', async () => {
       const ensureReady = stubProtocolReadiness();
       ensureReady.onSecondCall().rejects(new Error('replacement not ready'));
       const engine = createSyncStatusEngine();
+      engine.options = { delegateDid: DELEGATE_DID, protocols: 'all' };
       const lifetime = new AbortController();
       let resolveRetry!: () => void;
       const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow').returns(
@@ -1158,6 +1294,517 @@ describe('createConnectionStore()', () => {
 
       expect(fake.refresh.firstCall.args[0]).toEqual({ protocols: APPLICATION_REQUESTS });
       expect(ensureReady.callCount).toBe(2);
+    });
+
+    describe('delegated manifest sync coverage', () => {
+      it.each([
+        [
+          'require a registration for a manifest protocol whose permissions are omitted',
+          DEFAULT_READ_APPLICATION,
+          undefined,
+          false,
+        ],
+        [
+          'reject an otherwise complete registration owned by a different delegate',
+          APPLICATION,
+          { delegateDid: 'did:jwk:another-delegate', protocols: 'all' },
+          false,
+        ],
+        [
+          'require explicit read scope when a write-only protocol is covered instead',
+          MIXED_APPLICATION,
+          { delegateDid: DELEGATE_DID, protocols: [WriteOnlyDefinition.protocol] },
+          false,
+        ],
+        [
+          'not require sync coverage for a mixed manifest\'s write-only protocol',
+          MIXED_APPLICATION,
+          COVERED_REGISTRATION,
+          true,
+        ],
+        [
+          'treat a manifest with only write permissions as vacuously covered',
+          WRITE_ONLY_APPLICATION,
+          undefined,
+          true,
+        ],
+      ] as const)('should %s', async (_name, application, registration, shouldConnect) => {
+        const engine = createSyncStatusEngine();
+        engine.options = registration;
+        const { auth, ensureReady, session, store } = createManifestSyncStore(engine, application);
+
+        const snapshot = await store.connect();
+
+        expect(snapshot.phase).toBe(shouldConnect ? 'connected' : 'disconnected');
+        expect(snapshot.walletReapprovalRequired).toBe(shouldConnect ? undefined : true);
+        expect(ensureReady.calledOnce).toBe(shouldConnect);
+        if (!shouldConnect) {
+          expect(snapshot.session).toBeUndefined();
+          expect(snapshot.enbox).toBeUndefined();
+          expect(snapshot.error?.name).toBe('ManifestSyncRegistrationCoverageError');
+          expect(auth.session).toBe(session);
+          expect(auth.disconnect.called).toBe(false);
+          expect(auth.startConnectionMonitor.called).toBe(false);
+          expect(engine.listenerCount()).toBe(0);
+        }
+      });
+
+      it('should bypass the coverage gate for owner sessions and plain delegated stores', async () => {
+        getIdentitySyncStatus.rejects(new Error('sync status unavailable'));
+        const ensureReady = stubProtocolReadiness();
+        const ownerAuth = createFakeAuth();
+        const ownerSession = createSession();
+        ownerAuth.connectVault.callsFake(async (): Promise<AuthSession> => {
+          ownerAuth.session = ownerSession;
+          return ownerSession;
+        });
+        const ownerStore = createConnectionStore({ application: APPLICATION, auth: asAuth(ownerAuth) });
+
+        const owner = await ownerStore.connectVault();
+
+        expect(owner.phase).toBe('connected');
+        expect(owner.walletReapprovalRequired).toBeUndefined();
+        expect(ensureReady.calledOnce).toBe(true);
+
+        const plainAuth = createFakeAuth();
+        const plainSession = createSession({ delegateDid: DELEGATE_DID });
+        plainAuth.connect.callsFake(async (): Promise<AuthSession> => {
+          plainAuth.session = plainSession;
+          return plainSession;
+        });
+        const plainStore = createConnectionStore({ auth: asAuth(plainAuth) });
+
+        const plain = await plainStore.connect({ protocols: PROTOCOLS });
+
+        expect(plain.phase).toBe('connected');
+        expect(plain.walletReapprovalRequired).toBeUndefined();
+      });
+
+      it('should connect with valid coverage before surfacing an initial sync-status failure', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = { delegateDid: DELEGATE_DID, protocols: 'all' };
+        let rejectStatus!: (error: Error) => void;
+        const statusRead = new Promise<ReplicationLinkSnapshot[]>((_resolve, reject) => { rejectStatus = reject; });
+        engine.readLinks = (): Promise<ReplicationLinkSnapshot[]> => statusRead;
+        const { auth, ensureReady, session, store } = createManifestSyncStore(engine);
+
+        const snapshot = await store.connect();
+
+        expect(snapshot.phase).toBe('connected');
+        expect(snapshot.walletReapprovalRequired).toBeUndefined();
+        expect(auth.session).toBe(session);
+        expect(auth.disconnect.called).toBe(false);
+        expect(ensureReady.calledOnce).toBe(true);
+        expect(engine.listenerCount()).toBe(1);
+
+        rejectStatus(new Error('status read failed'));
+        await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('error'); });
+        expect(store.getSnapshot().sync?.error?.message).toBe('status read failed');
+      });
+
+      it('should recover a hidden repairable session through refresh', async () => {
+        const enboxes: Enbox[] = [];
+        const engine = createSyncStatusEngine();
+        engine.options = undefined;
+        const { auth, session, store } = createManifestSyncStore(engine, APPLICATION, enboxes);
+        const rejected = await store.connect();
+        expect(rejected.walletReapprovalRequired).toBe(true);
+        expect(auth.session).toBe(session);
+
+        const refreshedSession = createSession({
+          agent       : agentWithSync(engine.sync),
+          delegateDid : DELEGATE_DID,
+          name        : 'Reapproved identity',
+        });
+        auth.refresh.callsFake(async (): Promise<AuthSession> => {
+          engine.options = COVERED_REGISTRATION;
+          auth.session = refreshedSession;
+          return refreshedSession;
+        });
+
+        const refreshed = await store.refresh();
+
+        expect(refreshed.phase).toBe('connected');
+        expect(refreshed.session).toBe(refreshedSession);
+        expect(refreshed.walletReapprovalRequired).toBeUndefined();
+        expect(refreshed.error).toBeUndefined();
+        expect(auth.disconnect.called).toBe(false);
+        expect(enboxes).toHaveLength(2);
+        expect((enboxes[0] as any)._lifetimeSignal.aborted).toBe(true);
+      });
+
+      it('should clear a repaired coverage reason when independent readiness fails', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = undefined;
+        const { auth, ensureReady, store } = createManifestSyncStore(engine);
+        await store.connect();
+        const refreshedSession = createSession({
+          agent       : agentWithSync(engine.sync),
+          delegateDid : DELEGATE_DID,
+          name        : 'Covered replacement',
+        });
+        auth.refresh.callsFake(async (): Promise<AuthSession> => {
+          engine.options = COVERED_REGISTRATION;
+          auth.session = refreshedSession;
+          return refreshedSession;
+        });
+        const readinessError = new ProtocolReadinessError({
+          cause     : new Error('local protocol store unavailable'),
+          operation : 'install',
+          protocol  : ApplicationDefinition.protocol,
+          targetDid : OWNER_DID,
+        });
+        ensureReady.rejects(readinessError);
+
+        const failed = await store.refresh();
+
+        expect(failed.phase).toBe('error');
+        expect(failed.error).toBe(readinessError);
+        expect(failed.walletReapprovalRequired).toBeUndefined();
+        expect(failed.session).toBeUndefined();
+        expect(failed.enbox).toBeUndefined();
+        expect(auth.session).toBe(refreshedSession);
+        expect(auth.disconnect.called).toBe(false);
+      });
+
+      it.each([
+        [
+          'is denied',
+          (): Error => new ConnectDeniedError('Refresh denied'),
+          'disconnected',
+          true,
+        ],
+        [
+          'fails before replacement',
+          (): Error => new Error('wallet transport unavailable'),
+          'error',
+          false,
+        ],
+      ] as const)(
+        'should preserve the coverage reason when refresh %s',
+        async (_name, createError, phase, denied) => {
+          const engine = createSyncStatusEngine();
+          engine.options = undefined;
+          const { auth, session, store } = createManifestSyncStore(engine);
+          await store.connect();
+          const error = createError();
+          auth.refresh.rejects(error);
+
+          const snapshot = await store.refresh();
+
+          expect(snapshot.phase).toBe(phase);
+          expect(snapshot.error?.message).toBe(error.message);
+          expect(snapshot.walletReapprovalRequired).toBe(true);
+          expect(isConnectDeniedError(snapshot.error)).toBe(denied);
+          expect(auth.session).toBe(session);
+          expect(auth.disconnect.called).toBe(false);
+        }
+      );
+
+      it('should synchronously hide and close a published facade when live coverage is lost', async () => {
+        const enboxes: Enbox[] = [];
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        const { auth, session, store } = createManifestSyncStore(engine, APPLICATION, enboxes);
+        const connected = await store.connect();
+        const publishedEnbox = connected.enbox!;
+
+        engine.options = UNCOVERED_REGISTRATION;
+        emitRegistrationChange(engine, engine.options, session.did);
+
+        const hidden = store.getSnapshot();
+        expect(hidden.phase).toBe('disconnected');
+        expect(hidden.session).toBeUndefined();
+        expect(hidden.enbox).toBeUndefined();
+        expect(hidden.walletReapprovalRequired).toBe(true);
+        expect(hidden.error?.name).toBe('ManifestSyncRegistrationCoverageError');
+        expect(auth.session).toBe(session);
+        expect(auth.disconnect.called).toBe(false);
+        expect(auth.stopMonitorSpy.calledOnce).toBe(true);
+        expect((publishedEnbox as any)._lifetimeSignal.aborted).toBe(true);
+        expect(engine.listenerCount()).toBe(0);
+      });
+
+      it('should not restart the monitor after live coverage drops during initial remote refresh', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        const { auth, session, store } = createManifestSyncStore(engine);
+        let resolveRemoteDwn!: (status: DwnEndpointResolution) => void;
+        getDwnEndpointStatus.resetHistory();
+        getDwnEndpointStatus.returns(new Promise((resolve) => { resolveRemoteDwn = resolve; }));
+
+        const connecting = store.connect();
+        await waitFor(() => {
+          expect(store.getSnapshot().phase).toBe('connected');
+          expect(getDwnEndpointStatus.calledOnce).toBe(true);
+        });
+        engine.options = UNCOVERED_REGISTRATION;
+        emitRegistrationChange(engine, engine.options, session.did);
+        expect(store.getSnapshot().walletReapprovalRequired).toBe(true);
+        expect(auth.startConnectionMonitor.called).toBe(false);
+
+        resolveRemoteDwn(readyDwn());
+        const snapshot = await connecting;
+
+        expect(snapshot.phase).toBe('disconnected');
+        expect(snapshot.walletReapprovalRequired).toBe(true);
+        expect(auth.startConnectionMonitor.called).toBe(false);
+      });
+
+      it('should not let a queued active connection status repopulate a coverage-hidden snapshot', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        const { auth, session, store } = createManifestSyncStore(engine);
+        let resolveStatus!: (status: ConnectionStatus) => void;
+        auth.getConnectionStatus.returns(new Promise((resolve) => { resolveStatus = resolve; }));
+
+        const connecting = store.connect();
+        await waitFor(() => { expect(auth.getConnectionStatus.calledOnce).toBe(true); });
+        engine.options = UNCOVERED_REGISTRATION;
+        emitRegistrationChange(engine, engine.options, session.did);
+        resolveStatus(ACTIVE_STATUS);
+        const snapshot = await connecting;
+
+        expect(snapshot.phase).toBe('disconnected');
+        expect(snapshot.connection).toBeUndefined();
+        expect(snapshot.walletReapprovalRequired).toBe(true);
+
+        auth.emitter.emit('connection-expiring', { status: ACTIVE_STATUS });
+        expect(store.getSnapshot().connection).toBeUndefined();
+        expect(store.getSnapshot().walletReapprovalRequired).toBe(true);
+      });
+
+      it('should keep a sufficiently covered live session when a status refresh fails', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        const { session, store } = createManifestSyncStore(engine);
+        await store.connect();
+        await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThanOrEqual(2); });
+        engine.readLinks = (): Promise<ReplicationLinkSnapshot[]> => Promise.reject(new Error('transient read'));
+
+        emitRegistrationChange(engine, engine.options, session.did);
+        await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('error'); });
+
+        expect(store.getSnapshot().phase).toBe('connected');
+        expect(store.getSnapshot().session).toBe(session);
+        expect(store.getSnapshot().walletReapprovalRequired).toBeUndefined();
+      });
+
+      it('should trail a registration wake that lands during the initial registration read', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        let resolveFirstRead!: (options: SyncIdentityOptions | undefined) => void;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions');
+        readOptions.onFirstCall().returns(new Promise((resolve) => { resolveFirstRead = resolve; }));
+        readOptions.onSecondCall().callsFake(async (): Promise<SyncIdentityOptions | undefined> => engine.options);
+        const { ensureReady, session, store } = createManifestSyncStore(engine);
+
+        const connecting = store.connect();
+        await waitFor(() => { expect(readOptions.calledOnce).toBe(true); });
+        engine.options = UNCOVERED_REGISTRATION;
+        emitRegistrationChange(engine, engine.options, session.did);
+        resolveFirstRead(COVERED_REGISTRATION);
+        const snapshot = await connecting;
+
+        expect(readOptions.callCount).toBe(2);
+        expect(snapshot.phase).toBe('disconnected');
+        expect(snapshot.walletReapprovalRequired).toBe(true);
+        expect(ensureReady.called).toBe(false);
+      });
+
+      it('should skip stale readiness when auth replaces a candidate during its registration read', async () => {
+        const enboxes: Enbox[] = [];
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        let resolveOptions!: (options: SyncIdentityOptions | undefined) => void;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions').returns(
+          new Promise((resolve) => { resolveOptions = resolve; }),
+        );
+        const { auth, ensureReady, store } = createManifestSyncStore(engine, APPLICATION, enboxes);
+
+        const connecting = store.connect();
+        await waitFor(() => { expect(readOptions.calledOnce).toBe(true); });
+        const replacement = createSession({
+          did  : 'did:dht:replacement',
+          name : 'Replacement owner',
+        });
+        auth.session = replacement;
+        resolveOptions(COVERED_REGISTRATION);
+        const snapshot = await connecting;
+
+        expect(snapshot.phase).toBe('connected');
+        expect(snapshot.session).toBe(replacement);
+        expect(ensureReady.calledOnce).toBe(true);
+        expect(enboxes).toHaveLength(2);
+        expect((enboxes[0] as any)._lifetimeSignal.aborted).toBe(true);
+      });
+
+      it('should revalidate a registration wake that lands during readiness', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions')
+          .callsFake(async (): Promise<SyncIdentityOptions | undefined> => engine.options);
+        const { ensureReady, session, store } = createManifestSyncStore(engine);
+        let resolveReadiness!: () => void;
+        ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
+
+        const connecting = store.connect();
+        await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+        engine.options = UNCOVERED_REGISTRATION;
+        emitRegistrationChange(engine, engine.options, session.did);
+        resolveReadiness();
+        const snapshot = await connecting;
+
+        expect(snapshot.phase).toBe('disconnected');
+        expect(snapshot.walletReapprovalRequired).toBe(true);
+        expect(snapshot.session).toBeUndefined();
+        expect(readOptions.callCount).toBe(2);
+      });
+
+      it('should preserve coverage-loss precedence when readiness also fails', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        const { ensureReady, session, store } = createManifestSyncStore(engine);
+        let rejectReadiness!: (error: Error) => void;
+        ensureReady.returns(new Promise<void>((_resolve, reject) => { rejectReadiness = reject; }));
+
+        const connecting = store.connect();
+        await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+        engine.options = UNCOVERED_REGISTRATION;
+        emitRegistrationChange(engine, engine.options, session.did);
+        rejectReadiness(new Error('independent readiness failure'));
+        const snapshot = await connecting;
+
+        expect(snapshot.phase).toBe('disconnected');
+        expect(snapshot.walletReapprovalRequired).toBe(true);
+        expect(snapshot.error?.name).toBe('ManifestSyncRegistrationCoverageError');
+      });
+
+      it('should re-read a registration wake queued between trailing validation and its caller', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        const created = createManifestSyncStore(engine);
+        const { session } = created;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions');
+        readOptions.onFirstCall().resolves(COVERED_REGISTRATION);
+        readOptions.onSecondCall().callsFake(async (): Promise<SyncIdentityOptions | undefined> => {
+          queueMicrotask((): void => {
+            queueMicrotask((): void => {
+              engine.options = UNCOVERED_REGISTRATION;
+              emitRegistrationChange(engine, UNCOVERED_REGISTRATION, session.did);
+            });
+          });
+          return COVERED_REGISTRATION;
+        });
+        readOptions.onThirdCall().callsFake(async (): Promise<SyncIdentityOptions | undefined> => engine.options);
+        let resolveReadiness!: () => void;
+        created.ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
+
+        const connecting = created.store.connect();
+        await waitFor(() => { expect(created.ensureReady.calledOnce).toBe(true); });
+        emitRegistrationChange(engine, COVERED_REGISTRATION, session.did);
+        resolveReadiness();
+        const snapshot = await connecting;
+
+        expect(readOptions.callCount).toBe(3);
+        expect(snapshot.phase).toBe('disconnected');
+        expect(snapshot.walletReapprovalRequired).toBe(true);
+      });
+
+      it('should retain a registration loss queued while readiness rejection resumes', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        const created = createManifestSyncStore(engine);
+        const { auth, session } = created;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions');
+        readOptions.onFirstCall().resolves(COVERED_REGISTRATION);
+        readOptions.onSecondCall().callsFake(async (): Promise<SyncIdentityOptions | undefined> => {
+          queueMicrotask((): void => {
+            queueMicrotask((): void => {
+              queueMicrotask((): void => {
+                engine.options = UNCOVERED_REGISTRATION;
+                emitRegistrationChange(engine, UNCOVERED_REGISTRATION, session.did);
+              });
+            });
+          });
+          return COVERED_REGISTRATION;
+        });
+        const readinessError = new ProtocolReadinessError({
+          cause     : new Error('local protocol store unavailable'),
+          operation : 'install',
+          protocol  : ApplicationDefinition.protocol,
+          targetDid : OWNER_DID,
+        });
+        let rejectReadiness!: (error: Error) => void;
+        created.ensureReady.returns(new Promise<void>((_resolve, reject) => { rejectReadiness = reject; }));
+
+        const connecting = created.store.connect();
+        await waitFor(() => { expect(created.ensureReady.calledOnce).toBe(true); });
+        emitRegistrationChange(engine, COVERED_REGISTRATION, session.did);
+        rejectReadiness(readinessError);
+        const snapshot = await connecting;
+
+        expect(readOptions.callCount).toBe(2);
+        expect(snapshot.phase).toBe('disconnected');
+        expect(snapshot.error).toBe(readinessError);
+        expect(snapshot.walletReapprovalRequired).toBe(true);
+        expect(auth.session).toBe(session);
+        expect(auth.disconnect.called).toBe(false);
+      });
+
+      it('should follow a replacement that lands during the trailing coverage read', async () => {
+        const enboxes: Enbox[] = [];
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        let resolveTrailingRead!: (options: SyncIdentityOptions | undefined) => void;
+        const readOptions = sinon.stub(engine.sync, 'getIdentityOptions');
+        readOptions.onFirstCall().resolves(COVERED_REGISTRATION);
+        readOptions.onSecondCall().returns(new Promise((resolve) => { resolveTrailingRead = resolve; }));
+        const { auth, ensureReady, session, store } = createManifestSyncStore(engine, APPLICATION, enboxes);
+        let resolveReadiness!: () => void;
+        ensureReady.onFirstCall().returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
+
+        const connecting = store.connect();
+        await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+        emitRegistrationChange(engine, COVERED_REGISTRATION, session.did);
+        resolveReadiness();
+        await waitFor(() => { expect(readOptions.calledTwice).toBe(true); });
+
+        const replacement = createSession({
+          did  : 'did:dht:trailing-replacement',
+          name : 'Trailing replacement owner',
+        });
+        auth.session = replacement;
+        resolveTrailingRead(COVERED_REGISTRATION);
+        const snapshot = await connecting;
+
+        expect(snapshot.phase).toBe('connected');
+        expect(snapshot.session).toBe(replacement);
+        expect(ensureReady.callCount).toBe(2);
+        expect(enboxes).toHaveLength(2);
+        expect((enboxes[0] as any)._lifetimeSignal.aborted).toBe(true);
+      });
+
+      it('should release a provisional listener when a candidate aborts during hung readiness', async () => {
+        const engine = createSyncStatusEngine();
+        engine.options = COVERED_REGISTRATION;
+        const lifetime = new AbortController();
+        const { ensureReady, store } = createManifestSyncStore(engine, APPLICATION, [], lifetime.signal);
+        let resolveReadiness!: () => void;
+        ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
+
+        const connecting = store.connect();
+        await waitFor(() => { expect(ensureReady.calledOnce).toBe(true); });
+        expect(engine.listenerCount()).toBe(1);
+
+        lifetime.abort();
+
+        expect(engine.listenerCount()).toBe(0);
+        resolveReadiness();
+        const snapshot = await connecting;
+        expect(snapshot.phase).toBe('disconnected');
+        expect(snapshot.session).toBeUndefined();
+      });
     });
 
     it('should keep hosted readiness opt-in for an owner without a DWN service', async () => {
