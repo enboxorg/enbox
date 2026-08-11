@@ -87,6 +87,16 @@ describe('@enbox/browser exports', () => {
     expect(browser.protocolContextKey).toBe(api.protocolContextKey);
   });
 
+  it('re-exports Time from @enbox/api', async () => {
+    const [browser, api, dwnSdk] = await Promise.all([
+      getBrowserExports(),
+      import('@enbox/api'),
+      import('@enbox/dwn-sdk-js'),
+    ]);
+    expect(browser.Time).toBe(dwnSdk.Time);
+    expect(api.Time).toBe(dwnSdk.Time);
+  });
+
   it('re-exports AuthManager from @enbox/auth', async () => {
     const mod = await getBrowserExports();
     expect(mod.AuthManager).toBeDefined();
@@ -108,6 +118,12 @@ describe('@enbox/browser exports', () => {
     const mod = await getBrowserExports();
     expect(mod.BrowserConnectHandler).toBeDefined();
     expect(typeof mod.BrowserConnectHandler).toBe('function');
+  });
+
+  it('exports browser object URL resources', async () => {
+    const mod = await getBrowserExports();
+    expect(typeof mod.createBlobUrlPool).toBe('function');
+    expect(typeof mod.createFileEnvelopeUrlStore).toBe('function');
   });
 
   it('exports the ordered default wallet catalog', async () => {

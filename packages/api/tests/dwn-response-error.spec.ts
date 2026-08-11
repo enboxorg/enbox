@@ -38,17 +38,19 @@ describe('requireDwnSuccess', () => {
     expect(error.status).toEqual(status);
   });
 
-  it('should classify an exact same-protocol parent miss', () => {
-    const status = {
-      code      : 400,
-      detail    : 'parent record was not found',
-      errorCode : DwnErrorCode.ProtocolAuthorizationParentRecordNotFound,
-    };
+  it('should classify both same-protocol parent misses', () => {
+    const parentMissingCodes = [
+      DwnErrorCode.ProtocolAuthorizationParentRecordNotFound,
+      DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain,
+    ];
 
-    const error = captureFailure(status);
+    for (const errorCode of parentMissingCodes) {
+      const status = { code: 400, detail: 'parent record was not found', errorCode };
+      const error = captureFailure(status);
 
-    expect(error).toBeInstanceOf(RecordParentNotFoundError);
-    expect(error.status).toEqual(status);
+      expect(error).toBeInstanceOf(RecordParentNotFoundError);
+      expect(error.status).toEqual(status);
+    }
   });
 
   it('should keep crossed, uncoded, and cross-protocol responses generic', () => {

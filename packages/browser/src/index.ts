@@ -49,6 +49,7 @@ export {
   protocolContextKey,
   recordCodecs,
   ServiceConfigProtocol,
+  Time,
 } from '@enbox/api';
 
 export type {
@@ -214,6 +215,14 @@ export { MAX_PIN_ATTEMPTS, RelayConnectCancelledError, runRelayConnect } from '.
 export type { RelayConnectOptions } from './relay-connect-runner.js';
 export { encodeQr, qrToSvg } from './ui/qr.js';
 export type { QrCode, QrSvgOptions } from './ui/qr.js';
+export { createBlobUrlPool } from './blob-url-pool.js';
+export type { BlobUrlLease, BlobUrlPool } from './blob-url-pool.js';
+export { createFileEnvelopeUrlStore } from './file-envelope-url-store.js';
+export type {
+  FileEnvelopeUrlLease,
+  FileEnvelopeUrlStore,
+  FileEnvelopeUrlStoreOptions,
+} from './file-envelope-url-store.js';
 
 // ─── Convenience re-exports for dapps ───────────────────────────
 //

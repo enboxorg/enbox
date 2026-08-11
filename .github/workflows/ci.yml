@@ -28,13 +28,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
-      # Runner routing for the compute-only jobs (lint, build, test-lightweight,
-      # test-dwn-sdk): same-repo runs use the org's self-hosted runner; fork PRs
-      # stay on GitHub-hosted runners so untrusted code never executes on it.
-      # Jobs that publish fixed host ports for service containers (postgres,
-      # mysql, nats, minio, pkarr) or install system packages via sudo
-      # (test-browser) always stay on ubuntu-latest — on a shared self-hosted
-      # host those ports collide with whatever else is running there.
+      # Runner routing: same-repo runs send the compute-only jobs (lint,
+      # build, test-lightweight, test-dwn-sdk) to the org's self-hosted
+      # ephemeral DinD fleet, where they are measurably faster than hosted
+      # runners. Fork PRs resolve to GitHub-hosted so untrusted code never
+      # executes on the fleet. Deliberately on ubuntu-latest: the
+      # service-backed test jobs (agent shards, api-clients, e2e,
+      # sql-store, dwn-server — DB/fsync-heavy, 2-4x slower under the
+      # fleet's shared-core concurrency and tight against their
+      # timeout-minutes), test-browser (9-way matrix; hosted parallelism,
+      # Playwright apt setup assumes the hosted image), and the
+      # changes/ci-passed orchestration jobs (docs-only PRs and the branch
+      # protection gate must not depend on self-hosted availability).
       runner: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || 'self-hosted' }}
       src: ${{ steps.src-filter.outputs.src }}
       needs_common_crypto: ${{ steps.propagate.outputs.needs_common_crypto }}
@@ -889,6 +894,9 @@ jobs:
     if: needs.changes.outputs.needs_dwn_sql_store == 'true'
 
     services:
+      # tmpfs data dirs: CI needs no durability, and RAM-backed stores make
+      # first-boot initialization and the fsync-heavy tests much faster on
+      # any runner.
       postgres:
         image: postgres:13.3
         env:
@@ -899,6 +907,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
@@ -912,11 +921,16 @@ jobs:
           MYSQL_ALLOW_EMPTY_PASSWORD: true
         ports:
           - 3306:3306
+        # mysql 8's first boot runs a temp init server then restarts (~35s+
+        # total); 3x10s of health retries races that and loses on slower or
+        # busier runners. start-period defers the retry budget past init.
         options: >-
+          --tmpfs /var/lib/mysql:rw
           --health-cmd="mysqladmin ping"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=3
+          --health-retries=10
+          --health-start-period=30s
 
     steps:
       - name: Checkout repository
