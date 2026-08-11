@@ -1,5 +1,19 @@
 # @enbox/browser
 
+## 0.3.72
+
+### Patch Changes
+
+- [#1637](https://github.com/enboxorg/enbox/pull/1637) [`1af0250`](https://github.com/enboxorg/enbox/commit/1af0250c6632002121d43cc3a8d37ce20db1bc84) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: add request-time app identity hints, compatible session metadata, one-hour grant defaults, provider-selected lifetimes, and recoverable profile-locked reconnect routes
+
+- Updated dependencies [[`1af0250`](https://github.com/enboxorg/enbox/commit/1af0250c6632002121d43cc3a8d37ce20db1bc84)]:
+  - @enbox/dwn-sdk-js@0.4.25
+  - @enbox/connect@0.1.21
+  - @enbox/agent@0.8.41
+  - @enbox/auth@0.6.87
+  - @enbox/api@0.6.80
+  - @enbox/protocols@0.2.107
+
 ## 0.3.71
 
 ### Patch Changes
