@@ -444,7 +444,6 @@ describe('connect approval ceremony', () => {
     it('should bound connect session display metadata', () => {
       const session = createConnectSessionMetadata({
         id             : 's'.repeat(200),
-        applicationId  : 'd'.repeat(600),
         appName        : 'a'.repeat(200),
         appIcon        : `https://example.com/${'i'.repeat(3000)}`,
         transport      : 'postMessage',
@@ -459,7 +458,6 @@ describe('connect approval ceremony', () => {
       });
 
       expect(session.id).toHaveLength(128);
-      expect(session.applicationId).toHaveLength(512);
       expect(session.appName).toHaveLength(128);
       expect(session.appIcon).toHaveLength(2048);
       expect(session.origin).toHaveLength(512);
@@ -475,7 +473,7 @@ describe('connect approval ceremony', () => {
 
   describe('executeConnectApproval', () => {
     type ApprovalStubs = {
-      capturedSessions: Array<{ applicationId?: string; createdAt: string; expiresAt: string }>;
+      capturedSessions: Array<{ createdAt: string; expiresAt: string }>;
       capturedDelegateDids: string[];
       revocationGrantStub: sinon.SinonStub;
     };
@@ -579,7 +577,7 @@ describe('connect approval ceremony', () => {
     async function stubApprovalDependencies(
       definitions: DwnProtocolDefinition[] = [protocolDefinition],
     ): Promise<ApprovalStubs> {
-      const capturedSessions: Array<{ applicationId?: string; createdAt: string; expiresAt: string }> = [];
+      const capturedSessions: Array<{ createdAt: string; expiresAt: string }> = [];
       const capturedDelegateDids: string[] = [];
       sinon.stub(ConnectCeremony, 'createPermissionGrants').callsFake(async (
         _selectedDid,
@@ -694,7 +692,7 @@ describe('connect approval ceremony', () => {
       expect(revocationGrantStub.firstCall.args[0].dateExpires).toBe(session.expiresAt);
     });
 
-    it('should default sessions to one hour and stamp the stable application ID', async () => {
+    it('should keep request application IDs out of grants for legacy reader compatibility', async () => {
       const { capturedSessions } = await stubApprovalDependencies();
 
       await executeConnectApproval({
@@ -707,7 +705,7 @@ describe('connect approval ceremony', () => {
       const session = capturedSessions[0];
       expect(Date.parse(session.expiresAt) - Date.parse(session.createdAt))
         .toBe(CONNECT_SESSION_DEFAULT_TTL_SECONDS * 1000);
-      expect(session.applicationId).toBe('com.example.sample');
+      expect(Object.prototype.hasOwnProperty.call(session, 'applicationId')).toBe(false);
     });
 
     it('should prefer the provider-approved session TTL over the requester preference', async () => {

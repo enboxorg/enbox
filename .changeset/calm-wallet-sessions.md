@@ -7,4 +7,4 @@
 "@enbox/cli": patch
 ---
 
-feat: add app-scoped session metadata, one-hour grant defaults, provider-selected lifetimes, and profile-locked reconnect routes
+feat: add request-time app identity hints, compatible session metadata, one-hour grant defaults, provider-selected lifetimes, and recoverable profile-locked reconnect routes

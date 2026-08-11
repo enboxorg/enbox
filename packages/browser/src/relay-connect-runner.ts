@@ -66,7 +66,7 @@ export interface RelayConnectOptions {
   /** Optional icon URL for the app, shown in the wallet consent UI. */
   appIcon?: string;
 
-  /** Stable application identifier used by wallets to group sessions. */
+  /** Stable application identifier hint available to the wallet during approval. */
   applicationId?: string;
 
   /** Optional client/environment metadata for wallet session display. */

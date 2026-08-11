@@ -108,7 +108,7 @@ export interface BrowserConnectHandlerOptions {
   appIcon?: string;
 
   /**
-   * Stable application identifier used by wallets to group sessions.
+   * Stable application identifier hint available to the wallet during approval.
    * Defaults to the browser's canonical origin.
    */
   applicationId?: string;

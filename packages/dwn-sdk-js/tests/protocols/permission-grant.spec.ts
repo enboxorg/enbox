@@ -37,12 +37,13 @@ describe('PermissionGrant', () => {
     expect(parsed.dateExpires).toBeDefined();
   });
 
-  it('should parse connect session metadata from a permission grant', async () => {
+  it('should accept and parse staged connect session metadata from a permission grant', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const bob = await TestDataGenerator.generateDidKeyPersona();
     const createdAt = Time.getCurrentTimestamp();
     const connectSession: ConnectSessionMetadata = {
       id            : 'session-123',
+      // Reader compatibility lands before official grant producers emit this field.
       applicationId : 'https://example.com',
       appName       : 'Sample App',
       appIcon       : 'https://example.com/icon.png',

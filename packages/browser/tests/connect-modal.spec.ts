@@ -211,6 +211,68 @@ describe('runConnectModal', () => {
     await expect(promise).rejects.toThrow(/cancelled/i);
   });
 
+  it('lets a failed saved route choose another wallet while keeping the profile pinned', async () => {
+    const relay = createFakeRelay();
+    const otherChoice = {
+      delegateDid : 'did:jwk:another-session',
+      providerDid : 'did:dht:another-provider',
+      method      : 'browser',
+      walletUrl   : WALLETS[0].url,
+    };
+    const storage = createFakeStorage({
+      'enbox:connect:sessionChoices': JSON.stringify([
+        otherChoice,
+        {
+          delegateDid : DELEGATE_PORTABLE_DID.uri,
+          providerDid : RESULT.connectedDid,
+          method      : 'phone',
+          walletUrl   : WALLETS[1].url,
+        },
+      ]),
+    });
+    const promise = runConnectModal({
+      wallets             : WALLETS,
+      appName             : 'Test Dapp',
+      mode                : 'refresh',
+      delegatePortableDid : DELEGATE_PORTABLE_DID,
+      permissionRequests  : PERMISSIONS,
+      deps                : deps({
+        runRelay                 : relay.runRelay,
+        storage,
+        discoverConnectServerUrl : async (origin): Promise<string | undefined> =>
+          origin === new URL(WALLETS[1].url).origin
+            ? undefined
+            : 'https://relay.example.com/connect',
+      }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+    expect(relay.calls).toHaveLength(0);
+    expect(stageText()).toContain('saved wallet connection is unavailable');
+    expect(shadowRoot().querySelector('.wallet-row')).toBeNull();
+
+    const escapeButton = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.stage .footer-link'))
+      .find(button => button.textContent === 'Choose another wallet or method');
+    escapeButton?.click();
+
+    expect(stageText()).toContain('Choose another way to reconnect');
+    expect(stageText()).toContain('same wallet profile');
+    expect(shadowRoot().querySelector('.wallet-row')).not.toBeNull();
+    expect(shadowRoot().querySelector('.method-link')).not.toBeNull();
+    expect(JSON.parse(storage.dump()['enbox:connect:sessionChoices'])).toEqual([otherChoice]);
+
+    rowTiles().find(tile => tile.textContent?.includes('Enbox'))?.click();
+    await flush();
+
+    expect(relay.calls).toHaveLength(1);
+    expect(relay.calls[0].walletUri).toBe('https://wallet-one.example.com/connect/app');
+    expect(relay.calls[0].expectedProviderDid).toBe(RESULT.connectedDid);
+
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(promise).rejects.toThrow(/cancelled/i);
+  });
+
   it('threads a refresh through the delegate session popup after a user gesture', async () => {
     const relay = createFakeRelay();
     const storage = createFakeStorage({

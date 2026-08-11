@@ -9,7 +9,7 @@ import { openBrowser as defaultOpenBrowser, promptLine, renderTerminalQr } from 
 
 export const DEFAULT_CLI_WALLET_URL = 'https://enbox-wallet.pages.dev';
 
-/** Default requested session TTL for CLI connects. Wallets may clamp it. */
+/** Default advisory session TTL requested by CLI connects. */
 export const DEFAULT_CLI_SESSION_TTL_SECONDS = 60 * 60;
 
 /** Well-known path on the wallet origin naming its preferred connect relay. */
@@ -51,16 +51,16 @@ export interface CliConnectHandlerOptions {
   /** Optional icon URL shown in the wallet approval screen. */
   appIcon?: string;
 
-  /** Stable application identifier used by wallets to group sessions. */
+  /** Stable application identifier hint available to the wallet during approval. */
   applicationId?: string;
 
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
   /**
-   * Preferred session TTL in seconds. Defaults to one hour
-   * ({@link DEFAULT_CLI_SESSION_TTL_SECONDS}). Wallets may clamp this to
-   * their policy maximum.
+   * Advisory preferred session TTL in seconds. Defaults to one hour
+   * ({@link DEFAULT_CLI_SESSION_TTL_SECONDS}). The provider-approved lifetime
+   * is authoritative and may be shorter or longer, subject to provider policy.
    */
   requestedSessionTtlSeconds?: number;
 

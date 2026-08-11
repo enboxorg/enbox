@@ -9,8 +9,8 @@ import type {
   WalletUriHandoff,
 } from '../src/types.js';
 
-import { ConnectProvider } from '../src/provider.js';
 import { DidJwk } from '@enbox/dids';
+import { assertExpectedProviderDid, ConnectProvider } from '../src/provider.js';
 import { ConnectClient, randomToken } from '../src/client.js';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { describe, expect, it } from 'bun:test';
@@ -367,6 +367,40 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
   });
 
   describe('ConnectProvider approval guards', () => {
+    it('should enforce the expected wallet profile at preflight and seal time', async () => {
+      const expectedProvider = await DidJwk.create();
+      const selectedProvider = await DidJwk.create();
+      const delegate = await DidJwk.create();
+      const responsePrivateKey = await X25519.generateKey();
+      const request: ConnectRequest = {
+        clientDid           : expectedProvider.uri,
+        appName             : 'Profile Guard App',
+        permissionRequests  : [],
+        supportedDidMethods : ['did:jwk'],
+        nonce               : 'nonce',
+        state               : 'state',
+        responseKey         : { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x },
+        reply               : { mode: 'direct_post', callbackUrl: 'https://relay.example/connect/callback' },
+        expectedProviderDid : expectedProvider.uri,
+      };
+
+      expect(() => assertExpectedProviderDid(request, expectedProvider.uri)).not.toThrow();
+      expect(() => assertExpectedProviderDid(request, selectedProvider.uri))
+        .toThrow('Connect expected wallet profile');
+
+      await expect(ConnectProvider.sealApprovedResponse({
+        request,
+        providerDid : selectedProvider.uri,
+        approval    : {
+          delegateDid         : delegate.uri,
+          delegatePortableDid : await delegate.export(),
+          delegateGrants      : [],
+          sessionRevocations  : [],
+        },
+        signer: delegate,
+      })).rejects.toThrow('Connect expected wallet profile');
+    });
+
     it('should reject approval output that contradicts a request-supplied delegate', async () => {
       const provider = await DidJwk.create();
       const localDelegate = await DidJwk.create();

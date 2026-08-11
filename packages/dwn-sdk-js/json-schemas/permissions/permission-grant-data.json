@@ -36,6 +36,7 @@
           "maxLength": 128
         },
         "applicationId": {
+          "$comment": "Reader compatibility for a staged rollout; official grant producers do not emit this field yet.",
           "type": "string",
           "maxLength": 512
         },

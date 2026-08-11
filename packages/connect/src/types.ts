@@ -100,10 +100,12 @@ export type ConnectRequest = {
   appIcon?: string;
 
   /**
-   * Stable application identifier used by wallets to group sessions.
+   * Stable application identifier hint available to the wallet during approval.
    * Browser clients should use their canonical origin; native clients may
-   * use a reverse-domain identifier. This is a display hint unless the
-   * transport independently authenticates it.
+   * use a reverse-domain identifier. The official approval ceremony does not
+   * embed this in permission-grant session metadata during the compatibility
+   * rollout. It is a display hint unless the transport independently
+   * authenticates it.
    */
   applicationId?: string;
 
@@ -113,7 +115,10 @@ export type ConnectRequest = {
   /** DWN protocols and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
 
-  /** Preferred session TTL in seconds. Wallets may clamp this to their policy maximum. */
+  /**
+   * Advisory preferred session TTL in seconds. The provider-approved lifetime
+   * is authoritative and may be shorter or longer, subject to provider policy.
+   */
   requestedSessionTtlSeconds?: number;
 
   /**

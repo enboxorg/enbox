@@ -21,6 +21,28 @@ import { openRequest, sealResponse } from './envelope.js';
 export const CONNECT_RESPONSE_TTL_SECONDS = 600;
 
 /**
+ * Verifies that an approval uses the wallet profile requested by the client.
+ *
+ * Provider implementations must call this before performing approval side
+ * effects. {@link ConnectProvider.sealApprovedResponse} repeats the check as
+ * a final defense, but sealing happens too late to prevent grants created for
+ * the wrong profile.
+ *
+ * @param request - The opened connect request being approved.
+ * @param providerDid - The wallet profile selected for approval.
+ */
+export function assertExpectedProviderDid(
+  request: Pick<ConnectRequest, 'expectedProviderDid'>,
+  providerDid: string,
+): void {
+  if (request.expectedProviderDid !== undefined && request.expectedProviderDid !== providerDid) {
+    throw new Error(
+      `Connect expected wallet profile '${request.expectedProviderDid}', but '${providerDid}' was selected.`
+    );
+  }
+}
+
+/**
  * Wallet-side envelope operations for the connect handshake.
  */
 export class ConnectProvider {
@@ -66,6 +88,8 @@ export class ConnectProvider {
     signer: BearerDid;
     pin?: string;
   }): Promise<string> {
+    assertExpectedProviderDid(request, providerDid);
+
     if (request.delegateDid !== undefined && approval.delegateDid !== request.delegateDid) {
       throw new Error('Connect: approval delegate DID does not match the request-supplied `delegateDid`.');
     }

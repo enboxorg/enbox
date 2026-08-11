@@ -40,13 +40,16 @@ export type WalletConnectClientOptions = {
   /** Optional icon URL for the app, displayed in the wallet consent UI. */
   appIcon?: string;
 
-  /** Stable application identifier used by wallets to group sessions. */
+  /** Stable application identifier hint available to the wallet during approval. */
   applicationId?: string;
 
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
-  /** Preferred session TTL in seconds. Wallets may clamp this to their policy maximum. */
+  /**
+   * Advisory preferred session TTL in seconds. The provider-approved lifetime
+   * is authoritative and may be shorter or longer, subject to provider policy.
+   */
   requestedSessionTtlSeconds?: number;
 
   /**

@@ -187,7 +187,7 @@ export interface ConnectModalOptions {
   /** Icon URL of the requesting application. */
   appIcon?: string;
 
-  /** Stable application identifier used by wallets to group sessions. */
+  /** Stable application identifier hint available to the wallet during approval. */
   applicationId?: string;
 
   /** Wallet profile DID that a refresh must renew. */
@@ -401,6 +401,23 @@ function writeSessionChoice(storage: ConnectModalDeps['storage'], choice: Sessio
   } catch { /* best effort */ }
 }
 
+function removeSessionChoice(
+  storage: ConnectModalDeps['storage'],
+  delegateDid: string,
+  providerDid: string,
+): void {
+  try {
+    const choices = readSessionChoices(storage).filter(choice =>
+      choice.delegateDid !== delegateDid || choice.providerDid !== providerDid
+    );
+    if (choices.length === 0) {
+      storage?.removeItem(SESSION_CHOICES_STORAGE_KEY);
+    } else {
+      storage?.setItem(SESSION_CHOICES_STORAGE_KEY, JSON.stringify(choices));
+    }
+  } catch { /* best effort */ }
+}
+
 /** One cancellable relay session. */
 interface RelaySession {
   cancelled: Promise<never>;
@@ -473,6 +490,9 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     : undefined;
   const expectedProviderDid = options.expectedProviderDid ?? sessionChoice?.providerDid;
   const relayWalletPath = options.relayWalletPath ?? '/connect/app';
+  const savedRouteEscapeLabel = options.walletUrl === undefined
+    ? 'Choose another wallet or method'
+    : 'Choose another method';
 
   // Refresh routes resolve by delegate first; general preferences remain a
   // best-effort fallback for sessions created before route-aware storage.
@@ -480,8 +500,8 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     && (refreshing || walletInCatalog(wallets, lastChoice.walletUrl))
     ? lastChoice.walletUrl
     : undefined;
-  const lockedWallet = sessionChoice !== undefined || options.walletUrl !== undefined;
-  const lockedMethod = sessionChoice !== undefined;
+  let lockedWallet = sessionChoice !== undefined || options.walletUrl !== undefined;
+  let lockedMethod = sessionChoice !== undefined;
   let walletUrl = sessionChoice?.walletUrl
     ?? options.walletUrl
     ?? rememberedWalletUrl
@@ -801,10 +821,34 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       );
     };
 
+    const escapeSavedRoute = (): void => {
+      if (sessionChoice === undefined) {
+        return;
+      }
+
+      relaySession?.cancel();
+      relaySession = undefined;
+      clearRemint();
+      removeSessionChoice(deps.storage, sessionChoice.delegateDid, sessionChoice.providerDid);
+      lockedWallet = options.walletUrl !== undefined;
+      lockedMethod = false;
+      if (options.walletUrl !== undefined) {
+        walletUrl = options.walletUrl;
+      }
+      renderFooter();
+      setStage(
+        el('p', 'stage-caption', 'Choose another way to reconnect.'),
+        el('p', 'stage-subline', 'We’ll still require the same wallet profile used for this session.'),
+      );
+    };
+
     const renderError = (message: string, error?: Error): void => {
       setStage(
         el('p', 'stage-caption', message),
         stageButton('Start over', () => { void startMethod(); }),
+        ...(sessionChoice !== undefined && lockedMethod
+          ? [stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute)]
+          : []),
         stageLinkButton('Close', settleWith(settle, () => reject(error ?? new Error(`[@enbox/browser] ${message}`)))),
       );
     };
@@ -815,6 +859,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           el('p', 'stage-caption', 'Your saved wallet connection is unavailable right now.'),
           el('p', 'stage-subline', 'Try again in a moment to reconnect the same session.'),
           stageButton('Try again', () => { void startPhone(); }),
+          stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute),
         );
         return;
       }
@@ -861,9 +906,9 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           ? `Your browser blocked the wallet ${popupSurface}.`
           : `The wallet ${popupSurface} was closed.`),
         stageButton(blocked ? 'Open it now' : `Reopen ${popupSurface}`, () => { startPopup(); }),
-        ...(!lockedMethod
-          ? [stageLinkButton(isMobile ? 'Use a code instead' : 'Use your phone instead', () => { void switchMethod('phone'); })]
-          : []),
+        ...(lockedMethod && sessionChoice !== undefined
+          ? [stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute)]
+          : [stageLinkButton(isMobile ? 'Use a code instead' : 'Use your phone instead', () => { void switchMethod('phone'); })]),
       );
     };
 
