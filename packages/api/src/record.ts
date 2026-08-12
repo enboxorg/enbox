@@ -335,7 +335,8 @@ export class Record<T = unknown> implements RecordModel {
       return this._agent.decryptRecordData({
         ...this._dataAccess,
         dataStream,
-        recordsWrite: this.rawMessage as DwnMessage[DwnInterface.RecordsWrite],
+        protocolRole : this.protocolRole,
+        recordsWrite : this.rawMessage as DwnMessage[DwnInterface.RecordsWrite],
       });
     }, this.dataFormat);
   }

@@ -249,8 +249,9 @@ describe('Record — coverage gaps (stubbed)', () => {
   describe('readRecordData() — envelope-driven decryption', () => {
     it('should keep the low-level read raw and decrypt only when data is consumed', async () => {
       const options = createRecordOptions({
-        encryption : { algorithm: 'A256GCM', initializationVector: 'iv', keyEncryption: [] },
-        storedData : undefined,
+        encryption   : { algorithm: 'A256GCM', initializationVector: 'iv', keyEncryption: [] },
+        protocolRole : 'post/editor',
+        storedData   : undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -277,6 +278,7 @@ describe('Record — coverage gaps (stubbed)', () => {
       const call = agentStub.processDwnRequest.firstCall;
       expect(call.args[0].encryption).toBeUndefined();
       expect(agentStub.decryptRecordData.calledOnce).toBe(true);
+      expect(agentStub.decryptRecordData.firstCall.args[0].protocolRole).toBe('post/editor');
       expect(agentStub.decryptRecordData.firstCall.args[0].recordsWrite.encryption).toEqual(options.encryption);
     });
   });

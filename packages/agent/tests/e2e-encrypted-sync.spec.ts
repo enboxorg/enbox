@@ -2,6 +2,8 @@ import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { DataEncodedRecordsWriteMessage, GenericMessage, ProtocolDefinition, RecordsWriteMessage, SourceRoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
 
+import sinon from 'sinon';
+
 import { DidJwk } from '@enbox/dids';
 import { DwnInterface } from '../src/types/dwn.js';
 import { Ed25519 } from '@enbox/crypto';
@@ -41,13 +43,14 @@ async function decryptReadEntry(
   author: string,
   target: string,
   entry: { data: ReadableStream<Uint8Array>; recordsWrite: RecordsWriteMessage },
-  options?: { delegatedGrant?: DataEncodedRecordsWriteMessage; granteeDid?: string },
+  options?: { delegatedGrant?: DataEncodedRecordsWriteMessage; granteeDid?: string; protocolRole?: string },
 ): Promise<Uint8Array> {
   const decrypted = await harness.agent.dwn.decryptRecordData({
     author,
     dataStream     : entry.data,
     delegatedGrant : options?.delegatedGrant,
     granteeDid     : options?.granteeDid,
+    protocolRole   : options?.protocolRole,
     recordsWrite   : entry.recordsWrite,
     target,
   });
@@ -1013,6 +1016,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       },
     });
     expect(delegateReadReply.status.code).toBe(200);
+    const processSpy = sinon.spy(bobDelegateHarness.agent, 'processDwnRequest');
+    const sendSpy = sinon.spy(bobDelegateHarness.agent, 'sendDwnRequest');
     const delegateDecryptedBytes = await decryptReadEntry(
       bobDelegateHarness,
       separateBob.did.uri,
@@ -1021,6 +1026,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       {
         delegatedGrant : bobDelegateReadGrant.message,
         granteeDid     : delegateDid,
+        protocolRole   : 'thread/participant',
       },
     );
     expect(new TextDecoder().decode(delegateDecryptedBytes)).toBe(chatText);
@@ -1045,9 +1051,24 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       {
         delegatedGrant : bobDelegateReadGrant.message,
         granteeDid     : delegateDid,
+        protocolRole   : 'thread/participant',
       },
     );
     expect(new TextDecoder().decode(secondDelegateDecryptedBytes)).toBe(chatText);
+
+    const isForeignGrantKeyQuery = (request: any): boolean => {
+      const filter = request.messageParams?.filter;
+      return request.target === alice.did.uri &&
+        request.messageType === DwnInterface.RecordsQuery &&
+        filter?.protocol === EncryptionProtocol.uri;
+    };
+    const foreignGrantKeyQueries = [
+      ...processSpy.getCalls(),
+      ...sendSpy.getCalls(),
+    ].filter((call) => isForeignGrantKeyQuery(call.args[0]));
+    expect(foreignGrantKeyQueries).toHaveLength(0);
+    processSpy.restore();
+    sendSpy.restore();
   }, 60_000);
 
 });

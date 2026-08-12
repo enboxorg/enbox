@@ -47,6 +47,7 @@ import {
   getRoleContextPrefix,
   grantKeyScopeCoversDeliveredScope,
   HdKey,
+  isCrossProtocolRef,
   isGrantKeyEligibleRecordsScope,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
@@ -88,6 +89,7 @@ type ResolveKeyDecrypterParams = {
   granteeDid?: string;
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
+  protocolRole?: string;
   failureAccumulator?: AudienceDecryptFailureAccumulator;
 };
 
@@ -127,6 +129,7 @@ type HydrateAudienceKeyParams = {
   delegatedGrant?: DataEncodedRecordsWriteMessage;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
   failureAccumulator?: AudienceDecryptFailureAccumulator;
+  preferDelivery?: boolean;
 };
 
 /** The actor a `$encryption/delivery` query is authored as (optionally via a delegated grant). */
@@ -1267,12 +1270,46 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
     delegatedGrant,
     delegateDecryptionKeyCache,
     granteeDid,
+    protocolRole,
     recordsWrite,
     targetDid,
   } = params;
   const failureAccumulator = params.failureAccumulator ?? new AudienceDecryptFailureAccumulator();
 
   if (granteeDid !== undefined) {
+    // An exact invoked role selects its audience route; its delivery or source seal supplies the key.
+    const invokedRolePath = targetDid !== undefined &&
+      targetDid !== authorDid &&
+      protocolRole !== undefined
+      ? getLocalRoleAudiencePath(recordsWrite, protocolRole)
+      : undefined;
+    if (invokedRolePath !== undefined) {
+      // The delegate's owner key opens the role-holder delivery, not the foreign tenant's record.
+      const audienceDecrypter = await resolveRoleAudienceDecrypter({
+        agent,
+        sourceDid      : targetDid,
+        recipientDid   : authorDid,
+        granteeDid,
+        delegatedGrant,
+        recordsWrite,
+        rolePath       : invokedRolePath,
+        preferDelivery : true,
+        delegateDecryptionKeyCache,
+        audienceDecryptionKeyCache,
+        failureAccumulator,
+      });
+      if (audienceDecrypter !== undefined) {
+        return audienceDecrypter;
+      }
+
+      throw failureAccumulator.toError({
+        fallbackDetail : `no audience key for invoked role '${invokedRolePath}' opens encrypted record '${recordsWrite.recordId}'.`,
+        protocol       : recordsWrite.descriptor.protocol,
+        recipientDid   : authorDid,
+        recordId       : recordsWrite.recordId,
+      });
+    }
+
     const protocol = recordsWrite.descriptor.protocol;
     const protocolPath = recordsWrite.descriptor.protocolPath;
     if (protocol && targetDid !== undefined) {
@@ -1338,6 +1375,23 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
   return getKeyDecrypter(agent, authorDid);
 }
 
+/** Returns a local invoked role only when the encryption envelope contains its exact audience route. */
+function getLocalRoleAudiencePath(recordsWrite: RecordsWriteMessage, protocolRole: string): string | undefined {
+  const protocol = recordsWrite.descriptor.protocol;
+  if (protocol === undefined || isCrossProtocolRef(protocolRole)) {
+    return undefined;
+  }
+
+  return recordsWrite.encryption?.keyEncryption.some(
+    (entry): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+      'rolePath' in entry &&
+      entry.protocol === protocol &&
+      entry.rolePath === protocolRole,
+  ) === true
+    ? protocolRole
+    : undefined;
+}
+
 /** Whether the record's encryption envelope wraps its data key to any role-audience key. */
 function recordHasRoleAudienceKeyEncryption(recordsWrite: RecordsWriteMessage): boolean {
   return recordsWrite.encryption?.keyEncryption.some(
@@ -1365,6 +1419,7 @@ export async function decryptRecordData(
     delegatedGrant,
     delegateDecryptionKeyCache,
     granteeDid,
+    protocolRole,
     recordsWrite,
     target,
   } = params;
@@ -1383,6 +1438,7 @@ export async function decryptRecordData(
       delegateDecryptionKeyCache,
       failureAccumulator,
       granteeDid,
+      protocolRole,
       recordsWrite,
       targetDid : target,
     });
@@ -1406,6 +1462,8 @@ async function resolveRoleAudienceDecrypter(params: {
   sourceDid: string | undefined;
   recipientDid: string;
   recordsWrite: RecordsWriteMessage;
+  rolePath?: string;
+  preferDelivery?: boolean;
   granteeDid?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
@@ -1420,7 +1478,12 @@ async function resolveRoleAudienceDecrypter(params: {
     derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
     protocol: string;
     rolePath: string;
-  } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME && 'rolePath' in entry);
+  } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+    'rolePath' in entry &&
+    (params.rolePath === undefined || (
+      entry.protocol === params.recordsWrite.descriptor.protocol &&
+      entry.rolePath === params.rolePath
+    )));
 
   for (const entry of roleAudienceEntries) {
     const contextId = getRoleAudienceContextId(entry.rolePath, params.recordsWrite.contextId);
@@ -1440,7 +1503,6 @@ async function resolveRoleAudienceDecrypter(params: {
     if (cachedKey !== undefined) {
       return buildAudienceContentDecrypter(cachedKey);
     }
-
     // Each role-audience entry is one decryption route; its observations are scoped so the
     // final error can aggregate per-route outcomes conservatively.
     params.failureAccumulator?.beginRoute(entry.rolePath);
@@ -1456,6 +1518,7 @@ async function resolveRoleAudienceDecrypter(params: {
       contextId,
       rolePath                   : entry.rolePath,
       keyId                      : entry.keyId,
+      preferDelivery             : params.preferDelivery,
     });
     params.failureAccumulator?.endRoute();
     if (hydratedKey !== undefined) {
@@ -1531,11 +1594,27 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
     return undefined;
   }
 
+  if (params.preferDelivery === true) {
+    const deliveredKey = await hydrateAudienceKeyFromDeliveryMessages(params, audienceRecord);
+    if (deliveredKey !== undefined) {
+      return deliveredKey;
+    }
+  }
+
   const sealedKey = await hydrateAudienceKeyFromSeal(params, audienceRecord);
   if (sealedKey !== undefined) {
     return sealedKey;
   }
 
+  return params.preferDelivery === true
+    ? undefined
+    : hydrateAudienceKeyFromDeliveryMessages(params, audienceRecord);
+}
+
+async function hydrateAudienceKeyFromDeliveryMessages(
+  params: HydrateAudienceKeyParams,
+  audienceRecord: AudienceRecordCandidate,
+): Promise<AudienceDecryptionKeyEntry | undefined> {
   const deliveryReadActor = getAudienceDeliveryReadActor(params);
   let deliveryLookup: { messages: EncodedRecordsWriteMessage[]; remote: RemoteReadOutcome; replyStatusCode: number };
   try {

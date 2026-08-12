@@ -247,6 +247,8 @@ export type DecryptRecordDataParams = {
   granteeDid?: string;
   /** Delegated grant that authorized the operation which returned the record. */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
+  /** Protocol role carried by the request. Used only as an audience-route hint; does not grant access. */
+  protocolRole?: string;
 };
 
 export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T>

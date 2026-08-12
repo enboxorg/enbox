@@ -844,7 +844,7 @@ describe('dwn-encryption', () => {
   });
 
   describe('resolveAudienceDecryptionKey', () => {
-    it('should query participant deliveries through the delegated read actor for member delegates', async () => {
+    it('should prioritize the invoked role delivery for member delegates', async () => {
       const protocol = 'https://example.com/member-delegate-delivery';
       const rolePath = 'chat/member';
       const contextId = 'chat-root';
@@ -924,6 +924,7 @@ describe('dwn-encryption', () => {
           protocolPath : rolePath,
         },
       } as unknown as RecordsWriteMessage;
+      let deliveryAvailable = true;
       const processDwnRequest = sinon.stub().callsFake(async (request: any): Promise<any> => {
         const filter = request.messageParams.filter;
         if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
@@ -939,7 +940,7 @@ describe('dwn-encryption', () => {
           return {
             reply: {
               status  : { code: 200, detail: 'OK' },
-              entries : filter.recipient === recipientDid ? [deliveryMessage] : [],
+              entries : deliveryAvailable && filter.recipient === recipientDid ? [deliveryMessage] : [],
             },
           };
         }
@@ -1003,7 +1004,9 @@ describe('dwn-encryption', () => {
         }]),
         set: sinon.stub(),
       };
-      sinon.stub(Records, 'decrypt').resolves(DataStream.fromBytes(Encoder.objectToBytes(deliveryPayload)));
+      sinon.stub(Records, 'decrypt').callsFake(async (): Promise<ReadableStream<Uint8Array>> =>
+        DataStream.fromBytes(Encoder.objectToBytes(deliveryPayload))
+      );
 
       const result = await resolveAudienceDecryptionKey({
         agent : mockAgent as any,
@@ -1027,6 +1030,77 @@ describe('dwn-encryption', () => {
       expect(deliveryRecipients.map((request) => request.author)).toEqual([recipientDid]);
       expect(deliveryRecipients.map((request) => request.granteeDid)).toEqual([granteeDid]);
       expect(deliveryRecipients[0].messageParams.delegatedGrant).toBe(delegatedGrant);
+
+      processDwnRequest.resetHistory();
+      mockAgent.sendDwnRequest.resetHistory();
+      const sharedRecordsWrite = {
+        recordId   : 'shared-record',
+        contextId,
+        descriptor : { protocol, protocolPath: 'chat/message' },
+        encryption : {
+          keyEncryption: [
+            {
+              derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+              keyId            : 'admin-key',
+              protocol,
+              rolePath         : 'chat/admin',
+            },
+            {
+              derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+              keyId            : audienceKeyId,
+              protocol,
+              rolePath,
+            },
+          ],
+        },
+      } as unknown as RecordsWriteMessage;
+      const decrypter = await resolveKeyDecrypter({
+        agent        : mockAgent as any,
+        authorDid    : recipientDid,
+        delegatedGrant,
+        delegateDecryptionKeyCache,
+        granteeDid,
+        protocolRole : rolePath,
+        recordsWrite : sharedRecordsWrite,
+        targetDid    : sourceDid,
+      });
+      const dependencyRequests = [
+        ...processDwnRequest.getCalls(),
+        ...mockAgent.sendDwnRequest.getCalls(),
+      ].map((call) => call.args[0]);
+
+      expect(decrypter.derivationScheme).toBe(ROLE_AUDIENCE_DERIVATION_SCHEME);
+      expect(dependencyRequests.filter((request) => request.messageParams?.filter?.tags?.rolePath === 'chat/admin')).toHaveLength(0);
+      expect(dependencyRequests.filter((request) =>
+        request.target === sourceDid &&
+        request.messageParams?.filter?.protocol === EncryptionProtocol.uri
+      )).toHaveLength(0);
+
+      deliveryAvailable = false;
+      processDwnRequest.resetHistory();
+      mockAgent.sendDwnRequest.resetHistory();
+      await expect(resolveKeyDecrypter({
+        agent        : mockAgent as any,
+        authorDid    : recipientDid,
+        delegatedGrant,
+        delegateDecryptionKeyCache,
+        granteeDid,
+        protocolRole : rolePath,
+        recordsWrite : sharedRecordsWrite,
+        targetDid    : sourceDid,
+      })).rejects.toThrow(`no audience key for invoked role '${rolePath}'`);
+
+      const failedRequests = [
+        ...processDwnRequest.getCalls(),
+        ...mockAgent.sendDwnRequest.getCalls(),
+      ].map((call) => call.args[0]);
+      expect(failedRequests.filter((request) =>
+        request.target === sourceDid &&
+        request.messageParams?.filter?.protocol === EncryptionProtocol.uri
+      )).toHaveLength(2);
+      expect(failedRequests.filter((request) =>
+        request.messageParams?.filter?.tags?.rolePath === 'chat/admin'
+      )).toHaveLength(0);
     });
   });
 
