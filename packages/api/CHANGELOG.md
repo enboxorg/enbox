@@ -1,5 +1,15 @@
 # @enbox/api
 
+## 0.6.81
+
+### Patch Changes
+
+- [#1642](https://github.com/enboxorg/enbox/pull/1642) [`8f4715d`](https://github.com/enboxorg/enbox/commit/8f4715d461862ea11ab560b75338ebdcd87b79bf) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix delegated role decryption to use the invoked audience route before probing unrelated grant keys
+
+- Updated dependencies [[`8f4715d`](https://github.com/enboxorg/enbox/commit/8f4715d461862ea11ab560b75338ebdcd87b79bf)]:
+  - @enbox/agent@0.8.42
+  - @enbox/auth@0.6.88
+
 ## 0.6.80
 
 ### Patch Changes
