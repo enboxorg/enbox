@@ -1,6 +1,7 @@
 import type { ServerMigrationFactory } from './001-initial-server-schema.js';
 
 import { migration001InitialServerSchema } from './001-initial-server-schema.js';
+import { migration002WidenCacheValues } from './002-widen-cache-values.js';
 
 /**
  * All DWN server migrations in sequential order.
@@ -15,4 +16,5 @@ export type { ServerMigrationFactory };
 
 export const allServerMigrations: ReadonlyArray<readonly [name: string, factory: ServerMigrationFactory]> = [
   ['001-initial-server-schema', migration001InitialServerSchema],
+  ['002-widen-cache-values', migration002WidenCacheValues],
 ];

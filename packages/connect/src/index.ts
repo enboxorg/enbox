@@ -13,6 +13,9 @@ export {
   sealResponse,
 } from './envelope.js';
 export * from './jwt.js';
+export * from './pairing-client.js';
+export * from './pairing-provider.js';
+export type { ConnectApprovalV3, ConnectRequestV3 } from './pairing-session.js';
 export * from './provider.js';
 export * from './relay-transport.js';
 export * from './types.js';

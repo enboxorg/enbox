@@ -1,12 +1,35 @@
+import type { ConnectPermissionRequest } from '@enbox/connect';
+import type { DataEncodedRecordsWriteMessage } from '@enbox/dwn-sdk-js';
+
 import { randomUUID } from 'node:crypto';
 
 import { config } from '../../src/config.js';
 import { ConnectServer } from '../../src/connect/connect-server.js';
+import { DidJwk } from '@enbox/dids';
 import { DwnServer } from '../../src/dwn-server.js';
 import { Poller } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { useFakeTimers } from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { ConnectPairingClient, ConnectPairingProvider } from '@enbox/connect';
+
+const pairingPublicKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const pairingCommitment = 'dHsifoINpJTsDquTwQTeVZPHPTCykyEs2rVUJ8acBzw';
+const pairingPermissions: ConnectPermissionRequest[] = [{
+  protocolDefinition: {
+    protocol  : 'https://example.com/notes',
+    published : true,
+    types     : {},
+    structure : {},
+  },
+  permissionScopes: [{
+    interface : 'Records',
+    method    : 'Read',
+    protocol  : 'https://example.com/notes',
+  }],
+}];
+const pairingGrants = [{ recordId: 'grant-1' }] as unknown as DataEncodedRecordsWriteMessage[];
+const pairingRevocations = [{ grantId: 'grant-1', revocationGrantId: 'revocation-1' }];
 
 describe('Connect scenarios', () => {
   let connectBaseUrl: string;
@@ -133,6 +156,92 @@ describe('Connect scenarios', () => {
       expect(getConnectResponseResult2.status).toBe(204);
     });
   });
+
+  it('completes a Connect v3 pairing through the HTTP relay', async () => {
+    const createResult = await fetch(`${connectBaseUrl}/connect/v3/pairings`, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ client_key_commitment: pairingCommitment, version: '3' }),
+    });
+    expect(createResult.status).toBe(201);
+    expect(createResult.headers.get('cache-control')).toBe('no-store');
+    const publicPairing = await createResult.json() as {
+      client_capability: string;
+      pair_uri: string;
+      pairing_id: string;
+    };
+    expect(publicPairing.pair_uri).not.toContain(publicPairing.client_capability);
+    const spoofedOrigin = await fetch(`${connectBaseUrl}/connect/v3/pairings/${publicPairing.pairing_id}/claim`, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+      body    : JSON.stringify({
+        version               : '3',
+        wallet_capability     : pairingPublicKey,
+        wallet_key_commitment : pairingCommitment,
+        wallet_origin         : 'https://wallet.example',
+      }),
+    });
+    expect(spoofedOrigin.status).toBe(400);
+    expect(spoofedOrigin.headers.get('cache-control')).toBe('no-store');
+
+    const advertisedRelayOrigin = new URL(dwnServerConfig.baseUrl).origin;
+    const relayFetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
+      const advertisedUrl = new URL(input);
+      return await fetch(new URL(`${advertisedUrl.pathname}${advertisedUrl.search}`, connectBaseUrl), init);
+    };
+    let provider!: Promise<Awaited<ReturnType<typeof ConnectPairingProvider.handle>>>;
+    let clientCode = '';
+    let walletCode = '';
+    let observedApplicationId: string | undefined;
+    let approvalCalls = 0;
+    const client = new ConnectPairingClient({
+      relayOrigin    : advertisedRelayOrigin,
+      pairingUiUrl   : 'https://connect.example/pair',
+      onPairingReady : ({ pairingUri }): void => {
+        provider = ConnectPairingProvider.handle({
+          pairingUri,
+          walletOrigin : 'https://wallet.example',
+          decide       : (request, verificationCode) => {
+            walletCode = verificationCode;
+            observedApplicationId = request.applicationId;
+            return { providerDid: 'did:dht:profile' };
+          },
+          approve: async (request) => {
+            approvalCalls++;
+            return {
+              delegateDid        : request.delegateDid,
+              delegateGrants     : pairingGrants,
+              sessionRevocations : pairingRevocations,
+            };
+          },
+          transportOptions: { fetchFn: relayFetch },
+        });
+      },
+      confirmVerificationCode: ({ verificationCode }): boolean => {
+        clientCode = verificationCode;
+        return true;
+      },
+      transportOptions: { fetchFn: relayFetch },
+    });
+
+    const delegatePortableDid = await (await DidJwk.create()).export();
+    expect(await client.connect({
+      appName             : 'Notes',
+      applicationId       : 'dev.enbox.notes',
+      delegatePortableDid,
+      expectedProviderDid : 'did:dht:profile',
+      permissionRequests  : pairingPermissions,
+    })).toEqual({
+      connectedDid       : 'did:dht:profile',
+      delegatePortableDid,
+      delegateGrants     : pairingGrants,
+      sessionRevocations : pairingRevocations,
+    });
+    expect(await provider).toBe('approved');
+    expect(clientCode).toBe(walletCode);
+    expect(observedApplicationId).toBe('dev.enbox.notes');
+    expect(approvalCalls).toBe(1);
+  }, 15_000);
 
   it('serves the token route as 204→200→204 across the response lifecycle (never 404)', async () => {
     // The requesting app long-polls GET /connect/token/{state}.jwt. Across the

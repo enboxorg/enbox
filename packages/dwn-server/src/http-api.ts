@@ -17,6 +17,11 @@ import type { RegistrationManager } from './registration/registration-manager.js
 import type { RegistrationStore } from './registration/registration-store.js';
 import type { RequestContext } from './lib/json-rpc-router.js';
 import type { SocketConnection } from './connection/socket-connection.js';
+import type {
+  ConnectPairingResult,
+  ConnectPairingRole,
+  ConnectPairingStage,
+} from './connect/connect-pairing-server.js';
 
 import log from 'loglevel';
 
@@ -42,6 +47,7 @@ import { LocalNodePairingManager as InMemoryLocalNodePairingManager } from './lo
 import { jsonRpcRouter } from './json-rpc-api.js';
 import { validateAdminAuth } from './admin/admin-auth.js';
 import { assertLocalNodeBindHostname, isLocalNodeHostHeaderAllowed } from './local-node-profile.js';
+import { CONNECT_PAIRING_VERSION, ConnectPairingServer } from './connect/connect-pairing-server.js';
 import { requestCounter, responseHistogram } from './metrics.js';
 
 /** Property names that must never be used as keys when building objects from user input. */
@@ -96,6 +102,7 @@ export class HttpApi {
   #sessionManager: AdminSessionManager | undefined;
   #adminUiPath: string | undefined;
   #localNodePairingManager: LocalNodePairingManager;
+  connectPairingServer: ConnectPairingServer;
   connectServer: ConnectServer;
   registrationManager: RegistrationManager;
   dwn: Dwn;
@@ -168,6 +175,10 @@ export class HttpApi {
     // database instance). Falls back to creating a dialect from the URL.
     const ttlDialect = options?.ttlCacheDialect ?? getDialectFromUrl(new URL(config.ttlCacheUrl));
     httpApi.connectServer = await ConnectServer.create({
+      baseUrl    : config.baseUrl,
+      sqlDialect : ttlDialect,
+    });
+    httpApi.connectPairingServer = await ConnectPairingServer.create({
       baseUrl    : config.baseUrl,
       sqlDialect : ttlDialect,
     });
@@ -334,6 +345,9 @@ export class HttpApi {
     }
     if (this.connectServer) {
       this.connectServer.close();
+    }
+    if (this.connectPairingServer) {
+      this.connectPairingServer.close();
     }
     if (this.#server) {
       this.#server.stop(true); // close all connections immediately
@@ -711,11 +725,13 @@ export class HttpApi {
       return;
     }
 
+    const isPairingRoute = path.startsWith('/connect/v3/pairings');
     response.headers.set('access-control-allow-origin', allowedOrigin);
-    response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
-    response.headers.set('access-control-allow-headers', this.#config.localNodeProfileEnabled
-      ? 'authorization, content-type, dwn-request'
-      : '*');
+    response.headers.set('access-control-allow-methods', isPairingRoute ? 'GET, POST, PUT, OPTIONS' : 'GET, POST, OPTIONS');
+    response.headers.set(
+      'access-control-allow-headers',
+      isPairingRoute || this.#config.localNodeProfileEnabled ? 'authorization, content-type, dwn-request' : '*',
+    );
     response.headers.set('access-control-expose-headers', 'dwn-response');
     // Cache preflight responses for 24 hours to reduce OPTIONS round-trips
     // for browser-based DWN clients communicating with a local server.
@@ -757,7 +773,8 @@ export class HttpApi {
     return method === 'OPTIONS'
       || (method === 'GET' && path === '/info')
       || (method === 'POST' && path === '/local/pair')
-      || (method === 'GET' && path.startsWith('/local/pair/'));
+      || (method === 'GET' && path.startsWith('/local/pair/'))
+      || path.startsWith('/connect/v3/pairings');
   }
 
   #authorizeLocalNodeRequest(
@@ -1176,6 +1193,11 @@ export class HttpApi {
   async #matchConnectRoutes(
     req: Request, path: string, method: string
   ): Promise<Response | null> {
+    const pairingResult = await this.#matchConnectPairingRoutes(req, path, method);
+    if (pairingResult !== null) {
+      return pairingResult;
+    }
+
     // POST /connect/par
     const parResult = await this.#handleConnectPar(req, path, method);
     if (parResult !== null) {
@@ -1238,6 +1260,211 @@ export class HttpApi {
     }
 
     return null;
+  }
+
+  async #matchConnectPairingRoutes(req: Request, path: string, method: string): Promise<Response | null> {
+    if (this.#config.localNodeProfileEnabled && path.startsWith('/connect/v3/pairings')) {
+      return HttpApi.#connectPairingError(404, 'not_found');
+    }
+
+    if (path === '/connect/v3/pairings' && method === 'POST') {
+      const body = await HttpApi.#readConnectPairingBody(req, ['client_key_commitment', 'version']);
+      if (body === undefined || body.version !== CONNECT_PAIRING_VERSION ||
+          !HttpApi.#isBase64Url32(body.client_key_commitment)) {
+        return HttpApi.#connectPairingError(400, 'invalid_request');
+      }
+
+      return this.#connectPairingResponse(
+        await this.connectPairingServer.create(body.client_key_commitment),
+        201,
+      );
+    }
+
+    const match = /^\/connect\/v3\/pairings\/([0-9a-f-]+)(?:\/(claim|reveals\/(?:client|wallet)|client|wallet))?$/.exec(path);
+    if (match === null || !HttpApi.#isPairingId(match[1]) || match[2] === undefined) {
+      return null;
+    }
+
+    const pairingId = match[1];
+    const resource = match[2];
+    if (resource === 'claim') {
+      return this.#handleConnectPairingClaim(req, method, pairingId);
+    }
+    if (resource.startsWith('reveals/')) {
+      return this.#handleConnectPairingReveal(req, method, pairingId, resource.slice('reveals/'.length) as ConnectPairingRole);
+    }
+    return this.#handleConnectPairingFrame(req, method, pairingId, resource as ConnectPairingRole);
+  }
+
+  async #handleConnectPairingClaim(req: Request, method: string, pairingId: string): Promise<Response> {
+    if (method === 'POST') {
+      const body = await HttpApi.#readConnectPairingBody(
+        req,
+        ['version', 'wallet_capability', 'wallet_key_commitment', 'wallet_origin'],
+      );
+      if (body === undefined || body.version !== CONNECT_PAIRING_VERSION ||
+          !HttpApi.#isBase64Url32(body.wallet_capability) ||
+          !HttpApi.#isBase64Url32(body.wallet_key_commitment) || typeof body.wallet_origin !== 'string' ||
+          (req.headers.get('origin') !== null && req.headers.get('origin') !== body.wallet_origin)) {
+        return HttpApi.#connectPairingError(400, 'invalid_request');
+      }
+
+      try {
+        return this.#connectPairingResponse(await this.connectPairingServer.claim(
+          pairingId,
+          body.wallet_key_commitment,
+          body.wallet_origin,
+          body.wallet_capability,
+        ), 201);
+      } catch (error) {
+        if (error instanceof TypeError) {
+          return HttpApi.#connectPairingError(400, 'invalid_request');
+        }
+        throw error;
+      }
+    }
+
+    if (method === 'GET') {
+      const capability = HttpApi.#getBearerToken(req.headers.get('authorization')) ?? '';
+      return this.#connectPairingResponse(await this.connectPairingServer.pollClaim(pairingId, capability), 200);
+    }
+    return HttpApi.#connectPairingEmptyResponse(405);
+  }
+
+  async #handleConnectPairingReveal(
+    req: Request,
+    method: string,
+    pairingId: string,
+    role: ConnectPairingRole,
+  ): Promise<Response> {
+    const capability = HttpApi.#getBearerToken(req.headers.get('authorization')) ?? '';
+    if (method === 'PUT') {
+      const body = await HttpApi.#readConnectPairingBody(req, ['nonce', 'public_key', 'version']);
+      if (body === undefined || body.version !== CONNECT_PAIRING_VERSION ||
+          !HttpApi.#isBase64Url32(body.nonce) || !HttpApi.#isBase64Url32(body.public_key)) {
+        return HttpApi.#connectPairingError(400, 'invalid_request');
+      }
+      return this.#connectPairingResponse(await this.connectPairingServer.putReveal(
+        pairingId,
+        role,
+        capability,
+        { nonce: body.nonce, public_key: body.public_key },
+      ), 204);
+    }
+
+    if (method === 'GET') {
+      return this.#connectPairingResponse(await this.connectPairingServer.getReveal(pairingId, role, capability), 200);
+    }
+    return HttpApi.#connectPairingEmptyResponse(405);
+  }
+
+  async #handleConnectPairingFrame(
+    req: Request,
+    method: string,
+    pairingId: string,
+    direction: ConnectPairingRole,
+  ): Promise<Response> {
+    const capability = HttpApi.#getBearerToken(req.headers.get('authorization')) ?? '';
+    if (method === 'PUT') {
+      const body = await HttpApi.#readConnectPairingBody(req, ['frame', 'stage', 'version']);
+      if (body === undefined || body.version !== CONNECT_PAIRING_VERSION || typeof body.frame !== 'string' ||
+          !HttpApi.#isPairingStage(body.stage)) {
+        return HttpApi.#connectPairingError(400, 'invalid_request');
+      }
+
+      try {
+        return this.#connectPairingResponse(await this.connectPairingServer.putFrame(pairingId, direction, capability, {
+          frame : body.frame,
+          stage : body.stage,
+        }), 204);
+      } catch (error) {
+        if (error instanceof TypeError) {
+          return HttpApi.#connectPairingError(400, 'invalid_request');
+        }
+        throw error;
+      }
+    }
+
+    if (method === 'GET') {
+      const url = new URL(req.url);
+      const stages = url.searchParams.getAll('stage');
+      const stage = stages[0];
+      if (stages.length !== 1 || Array.from(url.searchParams.keys()).length !== 1 || !HttpApi.#isPairingStage(stage)) {
+        return HttpApi.#connectPairingError(400, 'invalid_request');
+      }
+      return this.#connectPairingResponse(await this.connectPairingServer.getFrame(
+        pairingId,
+        direction,
+        capability,
+        stage,
+      ), 200);
+    }
+    return HttpApi.#connectPairingEmptyResponse(405);
+  }
+
+  #connectPairingResponse<T extends object>(result: ConnectPairingResult<T>, successStatus: number): Response {
+    if (result.status === 'ok') {
+      const { status: _status, ...body } = result;
+      return successStatus === 204
+        ? HttpApi.#connectPairingEmptyResponse(successStatus)
+        : Response.json(body, { status: successStatus, headers: { 'cache-control': 'no-store' } });
+    }
+
+    const statusCodes: Record<Exclude<typeof result.status, 'ok'>, number> = {
+      'already-claimed'     : 409,
+      'commitment-mismatch' : 400,
+      'conflict'            : 409,
+      'invalid-state'       : 409,
+      'not-found'           : 404,
+      'pending'             : 204,
+      'unauthorized'        : 401,
+    };
+    const status = statusCodes[result.status];
+    return status === 204 ? HttpApi.#connectPairingEmptyResponse(status) : HttpApi.#connectPairingError(status, result.status);
+  }
+
+  static async #readConnectPairingBody(
+    req: Request,
+    expectedKeys: string[] | string[][],
+  ): Promise<Record<string, unknown> | undefined> {
+    const value = await req.json().catch((): undefined => undefined);
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return undefined;
+    }
+
+    const candidates = typeof expectedKeys[0] === 'string' ? [expectedKeys as string[]] : expectedKeys as string[][];
+    const keys = Object.keys(value);
+    if (!candidates.some((candidate: string[]): boolean =>
+      keys.length === candidate.length && candidate.every((key: string): boolean => keys.includes(key)))) {
+      return undefined;
+    }
+    return value as Record<string, unknown>;
+  }
+
+  static #isBase64Url32(value: unknown): value is string {
+    return typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value) &&
+      Buffer.from(value, 'base64url').toString('base64url') === value;
+  }
+
+  static #isPairingId(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+  }
+
+  static #isPairingStage(value: unknown): value is ConnectPairingStage {
+    return value === 'request' || value === 'decision' || value === 'confirmation' ||
+      value === 'response';
+  }
+
+  static #connectPairingError(status: number, error: string): Response {
+    const headers: Record<string, string> = { 'cache-control': 'no-store' };
+    if (status === 401) {
+      headers['www-authenticate'] = 'Bearer';
+    }
+    return Response.json({ error }, { headers, status });
+  }
+
+  static #connectPairingEmptyResponse(status: number): Response {
+    return new Response(null, { status, headers: { 'cache-control': 'no-store' } });
   }
 
   async #handleConnectPar(req: Request, path: string, method: string): Promise<Response | null> {

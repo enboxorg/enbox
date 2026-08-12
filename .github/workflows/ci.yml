@@ -992,7 +992,7 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # DWN Server: self-contained tests (SQLite in-memory, no external services)
+  # DWN Server: SQLite coverage plus MySQL migration compatibility
   # ---------------------------------------------------------------------------
   test-dwn-server:
     name: 'Test: dwn-server'
@@ -1000,6 +1000,22 @@ jobs:
     timeout-minutes: 5
     needs: [build, changes]
     if: needs.changes.outputs.needs_dwn_server == 'true'
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: dwn
+          MYSQL_DATABASE: dwn
+        ports:
+          - 3306:3306
+        options: >-
+          --tmpfs /var/lib/mysql:rw
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=30s
 
     steps:
       - name: Checkout repository
@@ -1041,6 +1057,12 @@ jobs:
       - name: Run tests with coverage
         run: bun run --filter @enbox/dwn-server test:node:coverage
         env:
+          ENBOX_TEST_MYSQL: '1'
+          MYSQL_DATABASE: dwn
+          MYSQL_HOST: localhost
+          MYSQL_PASSWORD: dwn
+          MYSQL_PORT: '3306'
+          MYSQL_USER: root
           NATS_URL: nats://localhost:4222
 
       - name: Stage coverage

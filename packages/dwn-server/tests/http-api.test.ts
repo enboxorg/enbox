@@ -38,6 +38,8 @@ import {
   getFileAsReadStream,
 } from './utils.js';
 
+const pairingCommitment = 'dHsifoINpJTsDquTwQTeVZPHPTCykyEs2rVUJ8acBzw';
+
 describe('http api', function () {
   let httpApi: HttpApi;
   let alice: Persona;
@@ -1290,6 +1292,15 @@ describe('http api', function () {
       expect(response.headers.get('access-control-max-age')).toBe('86400');
     });
 
+    it('should allow authenticated PUT requests on Connect v3 pairing routes', async () => {
+      const response = await fetch(`${baseUrl}/connect/v3/pairings`, { method: 'OPTIONS' });
+      expect(response.status).toBe(204);
+
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(response.headers.get('access-control-allow-methods')).toBe('GET, POST, PUT, OPTIONS');
+      expect(response.headers.get('access-control-allow-headers')).toBe('authorization, content-type, dwn-request');
+    });
+
     it('should NOT include CORS headers on /admin routes', async () => {
       // Admin routes are excluded from CORS to limit cross-origin access.
       const response = await fetch(`${baseUrl}/admin/api/info`);
@@ -1429,6 +1440,25 @@ describe('http api', function () {
         });
       });
     }
+
+    it('should disable remote Connect pairing endpoints without consuming a local session token', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      });
+
+      try {
+        const response = await fetch(`${url}/connect/v3/pairings`, {
+          method  : 'POST',
+          headers : { 'Content-Type': 'application/json' },
+          body    : JSON.stringify({ client_key_commitment: pairingCommitment, version: '3' }),
+        });
+        expect(response.status).toBe(404);
+        expect(response.headers.get('cache-control')).toBe('no-store');
+      } finally {
+        await api.close();
+      }
+    });
 
     it('should create and poll pairing requests and return approved tokens once', async () => {
       const localNodePairingManager = new LocalNodePairingManager();

@@ -68,6 +68,41 @@ export class SqlTtlCache {
   }
 
   /**
+   * Inserts a cache entry only when the key is unused.
+   *
+   * The primary-key constraint is the serialization point, so concurrent
+   * callers have exactly one winner on every supported SQL dialect.
+   */
+  public async insertIfAbsent(key: string, value: object, ttl: number): Promise<boolean> {
+    const now = Date.now();
+    const expiry = now + (ttl * 1000);
+    const objectString = JSON.stringify(value);
+
+    await this.db
+      .deleteFrom(SqlTtlCache.cacheTableName)
+      .where('key', '=', key)
+      .where('expiry', '<=', now)
+      .execute();
+
+    try {
+      await this.db
+        .insertInto(SqlTtlCache.cacheTableName)
+        .values({ key, value: objectString, expiry })
+        .execute();
+      return true;
+    } catch (error) {
+      // Do not mistake an operational database failure for a uniqueness
+      // conflict. A conflicting row must still be readable before this can
+      // be reported as a lost race.
+      if (await this.get(key) !== undefined) {
+        return false;
+      }
+
+      throw error;
+    }
+  }
+
+  /**
    * Retrieves a cache entry if it is not expired and cleans up expired entries.
    */
   public async get(key: string): Promise<object | undefined> {
