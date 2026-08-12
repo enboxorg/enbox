@@ -54,12 +54,12 @@ export class SyncLinkController {
     return this._active && this.executor.isReady;
   }
 
-  /** Whether every durable pull wake accepted so far is covered by a completed pass. */
+  /** Whether every accepted remote pull event or wake is covered by settled work. */
   public get isPullCurrent(): boolean {
     return this._active && this._isPullCurrent;
   }
 
-  /** Record that the remote feed may have advanced. */
+  /** Record that accepted remote pull work is not yet settled. */
   public markPullPending(): boolean {
     if (!this._active || !this._isPullCurrent) {
       return false;
@@ -71,7 +71,7 @@ export class SyncLinkController {
 
   /**
    * Mark the pull side current only for the expected replication generation
-   * and only when no trailing durable pull wake remains queued.
+   * and only when no trailing pull wake or live delivery remains.
    */
   public markPullCurrent(expectedReplicationGeneration: number): boolean {
     if (

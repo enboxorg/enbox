@@ -34,9 +34,9 @@ the code, not an entry missing from this table.
 | Coalesced notice that one durable wake pass is owed | **work mark** — `SyncLinkExecutor.request`, `hasPending` | event cursor, `requestPass`, `_requestedPasses` |
 | Distinct caller-specific operation serialized by the active replication session | **executor call** — `SyncLinkExecutor.enqueue`, `SyncLinkRecoveryCoordinator.execute` | work mark, shared operation |
 | Whether ordinary executor work may run for the current replication generation; wakes are retained while ineligible and calls fail fast | **executor eligibility** — `isReady`, `markReady`, `SyncLinkRecoveryCoordinator.resume`, surfaced as `isReplicationReady` / `markReplicationReady` | readiness promise, replication readiness barrier, parked administrative call |
-| Cursorless remote subscription whose complete events are normally admitted directly | **live pull subscription** — `openLivePullSubscription`, `LivePullWakeContext` | a second live-pull processor or checkpoint owner |
+| Cursorless remote subscription whose complete events are normally admitted directly | **live pull subscription** — `openLivePullSubscription`, `LivePullContext` | a second live-pull processor or checkpoint owner |
 | A remote subscription event received before baseline, during recovery, or without complete admission metadata | **durable pull wake** — `executor.request('pull')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | the normal complete-event path |
-| Whether the active replication session has established its pull baseline and every accepted durable pull wake is covered by a completed pass | **pull currentness** — `isPullCurrent`, `markPullPending`, `markPullCurrent`, `pull:currentness-change` | transport connectivity, feed convergence, link status, or checkpoint progress |
+| Whether the active replication session has established its pull baseline and all accepted remote pull work is settled | **pull currentness** — `isPullCurrent`, `markPullPending`, `markPullCurrent`, `pull:currentness-change` | transport connectivity, feed convergence, link status, or checkpoint progress |
 | A local subscription event or transport-reconnected notification that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `executor.request('push')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | per-event push job, delivery acknowledgement, or checkpoint evidence |
 | Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | transport acknowledgement or an unprocessed subscription cursor |
 | Namespace in which progress-token positions can be compared | **token domain** — exact `(streamId, epoch)` pair | stream alone, epoch alone, or a globally ordered position |
@@ -156,6 +156,9 @@ would make one signal stand in for proof it does not carry.
   admission policy, or when equal paired-subscription snapshots establish the
   initial baseline. A lifecycle signal, EOSE, or unprocessed event is never
   checkpoint evidence.
+- Filtered token positions are sparse, so an omitted matching event cannot be
+  inferred from a numeric gap. The periodic fingerprint settle check remains
+  the durable backstop (every five minutes by default).
 - Reset or re-establish the baseline when the token domain changes. Never carry
   a position across domains.
 - Validate a persisted direction checkpoint before its first query. Reset an

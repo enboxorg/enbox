@@ -10,6 +10,7 @@ import sinon from 'sinon';
 import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
+import { SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from '@enbox/dwn-sdk-js';
 
@@ -120,7 +121,7 @@ describe('SyncEngineLevel', () => {
       unsubscribe();
     });
 
-    it('falls back to a durable pull when a socket event lacks admission metadata', async () => {
+    it('uses durable pull for events missing metadata and refuses uncovered ACKs', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
@@ -171,6 +172,30 @@ describe('SyncEngineLevel', () => {
       expect(admitRemoteFeedPage.notCalled).toBe(true);
       expect(transitions).toEqual([false, true]);
       expect(resume.calledOnceWithExactly(controller)).toBe(true);
+
+      const repairing = sinon.stub(internal._linkRecoveryCoordinator, 'transitionToRepairing').resolves();
+      const missedCursor = { ...eventCursor, position: '100' };
+      const handledError = await internal.handleLivePullMessage({
+        controller,
+        did        : link.tenantDid,
+        dwnUrl     : link.remoteEndpoint,
+        eventScope : {},
+        isStale    : (): boolean => false,
+        link,
+        linkKey    : 'link-key',
+      }, {
+        cursor : missedCursor,
+        event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+        type   : 'event',
+      }).then(
+        (): undefined => undefined,
+        (error: unknown): unknown => error,
+      );
+
+      expect(handledError).toBeInstanceOf(SubscriptionHandlerTerminalError);
+      expect((handledError as Error).message).toContain('durable pull did not settle socket event');
+      expect(repairing.calledOnceWithExactly(controller)).toBe(true);
+      expect(link.pull.contiguousAppliedToken).toEqual(eventCursor);
 
       unsubscribe();
       await controller.dispose();

@@ -628,7 +628,7 @@ export type SyncEvent =
   }
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
-  /** Whether accepted remote-feed wakes are covered by a completed durable pull pass. */
+  /** Whether all accepted remote pull work is settled. */
   | SyncEventBase & { type: 'pull:currentness-change'; from: boolean; to: boolean }
   /** A pull checkpoint was durably committed. */
   | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
@@ -755,7 +755,7 @@ export type ReplicationLinkSnapshot = {
   status: LinkStatus;
   /** Per-link connectivity state. */
   connectivity: SyncConnectivityState;
-  /** Whether every accepted remote-feed wake is covered by a completed pull pass. */
+  /** Whether all accepted remote pull work is settled. */
   isPullCurrent: boolean;
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;

@@ -459,8 +459,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     });
     (engine as any)._replicationLinkStore = { persistCheckpoint };
 
-    let settled = false;
-    const handled = fixture.handlers[0]({
+    const event = {
       type              : 'event',
       cursor,
       encodedData       : 'AQ',
@@ -468,7 +467,9 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       isLatestBaseState : true,
       messageCid,
       seq               : '10',
-    }).then((): void => { settled = true; });
+    };
+    let settled = false;
+    const handled = fixture.handlers[0](event).then((): void => { settled = true; });
     await persistStarted.promise;
 
     expect(settled).toBe(false);
@@ -490,6 +491,110 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     expect(controller.isPullCurrent).toBe(true);
     expect(controller.link.pull.contiguousAppliedToken).toEqual(cursor);
     expect(persistCheckpoint.calledOnceWithExactly(controller.link, 'pull')).toBe(true);
+
+    admitRemoteFeedPage.resetHistory();
+    persistCheckpoint.resetHistory();
+    const transitions: boolean[] = [];
+    const unsubscribe = engine.on((syncEvent): void => {
+      if (syncEvent.type === 'pull:currentness-change') {
+        transitions.push(syncEvent.to);
+      }
+    });
+    await fixture.handlers[0](event);
+
+    expect(admitRemoteFeedPage.notCalled).toBe(true);
+    expect(persistCheckpoint.notCalled).toBe(true);
+    expect(fixture.resume.notCalled).toBe(true);
+    expect(fixture.repairing.notCalled).toBe(true);
+    expect(controller.isPullCurrent).toBe(true);
+    expect(transitions).toEqual([]);
+    unsubscribe();
+    await controller.dispose();
+  });
+
+  it('should end a live subscription when an event is deferred', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    fixture.repairing.callsFake(async (activeController: SyncLinkController): Promise<void> => {
+      activeController.resetReplicationGeneration();
+    });
+    expect(await openSubscription(fixture)).toBe(true);
+    controller.markReplicationReady();
+    controller.markPullCurrent(controller.replicationGeneration);
+
+    const message = {
+      descriptor: {
+        interface        : 'Protocols',
+        method           : 'Configure',
+        messageTimestamp : '2026-08-12T00:00:00.000000Z',
+      },
+    };
+    const messageCid = await Message.getCid(message as any);
+    const cursor: ProgressToken = {
+      epoch    : 'event-epoch',
+      messageCid,
+      position : '10',
+      streamId : 'event-stream',
+    };
+    sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
+      admittedCids : [],
+      detail       : 'waiting for replication support',
+      kind         : 'deferred',
+      messageCid,
+    });
+    const persistCheckpoint = sinon.stub().resolves();
+    (engine as any)._replicationLinkStore = { persistCheckpoint };
+    const warn = sinon.stub(console, 'warn');
+
+    const handledError = await fixture.handlers[0]({
+      type              : 'event',
+      cursor,
+      event             : { message },
+      isLatestBaseState : true,
+      messageCid,
+    }).then(
+      (): undefined => undefined,
+      (error: unknown): unknown => error,
+    );
+
+    expect(handledError).toBeInstanceOf(SubscriptionHandlerTerminalError);
+    expect((handledError as Error).message).toContain('waiting for replication support');
+    expect(warn.calledOnce).toBe(true);
+    expect(warn.firstCall.args[0]).toContain('live pull delivery');
+    expect(warn.firstCall.args[0]).toContain('deferred');
+    expect(persistCheckpoint.notCalled).toBe(true);
+    expect(controller.link.pull.contiguousAppliedToken).toBeUndefined();
+    expect(fixture.repairing.calledOnceWithExactly(controller)).toBe(true);
+    expect(controller.isPullCurrent).toBe(false);
+    await controller.dispose();
+  });
+
+  it('should end a live subscription when durable fallback stops before its event', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller } = fixture;
+    expect(await openSubscription(fixture)).toBe(true);
+    controller.markReplicationReady();
+    controller.link.pull.contiguousAppliedToken = tokenIn('event-stream', 'event-epoch', '9');
+    fixture.resume.callsFake(async (): Promise<void> => {
+      controller.executor.consumePending('pull');
+    });
+
+    const cursor = tokenIn('event-stream', 'event-epoch', '10');
+    const handledError = await fixture.handlers[0]({
+      type              : 'event',
+      cursor,
+      event             : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+      isLatestBaseState : true,
+    }).then(
+      (): undefined => undefined,
+      (error: unknown): unknown => error,
+    );
+
+    expect(handledError).toBeInstanceOf(SubscriptionHandlerTerminalError);
+    expect((handledError as Error).message).toContain('durable pull did not settle socket event');
+    expect(controller.link.pull.contiguousAppliedToken).toEqual(tokenIn('event-stream', 'event-epoch', '9'));
+    expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
+    expect(fixture.repairing.calledOnceWithExactly(controller)).toBe(true);
     await controller.dispose();
   });
 
@@ -696,6 +801,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       isLatestBaseState : true,
       message,
       messageCid,
+      seq               : cursor.position,
     });
     expect(fixture.resume.notCalled).toBe(true);
     expect(controller.link.pull.contiguousAppliedToken).toEqual(cursor);

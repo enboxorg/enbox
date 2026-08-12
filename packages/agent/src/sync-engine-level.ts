@@ -99,7 +99,7 @@ export type SyncEngineLevelParams = {
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
 
-type LivePullWakeContext = {
+type LivePullContext = {
   controller: SyncLinkController;
   did: string;
   dwnUrl: string;
@@ -3020,7 +3020,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Opens a MessagesSubscribe WebSocket subscription to a remote DWN.
-   * Incoming events only wake durable pull reconciliation.
+   * Complete events use live admission; recovery states wake durable reconciliation.
    */
   private async openLivePullSubscription(
     target: LinkSyncTarget,
@@ -3079,7 +3079,7 @@ export class SyncEngineLevel implements SyncEngine {
     // replication generation so callbacks from a subscription superseded by a
     // repair reset cannot request durable work after recovery.
     const isStale = (): boolean => runtime.disposed || !controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration);
-    const pullContext: LivePullWakeContext = {
+    const pullContext: LivePullContext = {
       did,
       dwnUrl,
       eventScope,
@@ -3177,7 +3177,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Admit socket events directly; retain durable feed passes for baseline and recovery. */
   private async handleLivePullMessage(
-    context: LivePullWakeContext,
+    context: LivePullContext,
     message: DwnSubscriptionMessage,
   ): Promise<void> {
     if (context.isStale()) {
@@ -3207,27 +3207,21 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     if (message.isLatestBaseState === undefined) {
-      try {
-        await this.requestDurableLivePullFallback(context, message.cursor);
-      } catch (error: unknown) {
-        await this.failLivePullAdmission(context, error);
-        throw new SubscriptionHandlerTerminalError(
-          `SyncEngineLevel: live pull delivery could not be admitted: ${syncErrorMessage(error)}`,
-        );
-      }
+      await this.settleLivePullEventFromDurableFeed(context, message.cursor);
       return;
     }
 
     const generation = context.controller.replicationGeneration;
     if (!context.controller.beginLivePullDelivery(generation)) {
       if (!context.isStale()) {
-        this.markPullPending(context.controller);
-        context.controller.executor.request('pull');
-        await this._linkRecoveryCoordinator.resume(context.controller);
+        // Handler completion releases the socket ACK, so wait until the
+        // durable checkpoint actually covers this event.
+        await this.settleLivePullEventFromDurableFeed(context, message.cursor);
       }
       return;
     }
-    this.markPullPending(context.controller);
+    // Repair resets executor readiness, which resolves the running call as
+    // stale. Retain its error so the transport still receives a terminal failure.
     let admissionFailure: { error: unknown } | undefined;
     try {
       const result = await this._linkRecoveryCoordinator.execute(
@@ -3263,7 +3257,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Fence a failed socket delivery before the ordered executor releases its successors. */
-  private async failLivePullAdmission(context: LivePullWakeContext, error: unknown): Promise<void> {
+  private async failLivePullAdmission(context: LivePullContext, error: unknown): Promise<void> {
     if (context.isStale()) { return; }
     try {
       const target = syncTargetFromLink(context.link);
@@ -3283,29 +3277,36 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  /** Fall back to a durable page when an older socket event lacks admission metadata. */
-  private async requestDurableLivePullFallback(
-    context: LivePullWakeContext,
+  /** Settle one socket event through the durable feed before allowing its ACK. */
+  private async settleLivePullEventFromDurableFeed(
+    context: LivePullContext,
     eventCursor: ProgressToken,
   ): Promise<void> {
-    this.markPullPending(context.controller);
-    context.controller.executor.request('pull');
-    if (context.controller.isReplicationReady && !context.isStale()) {
-      await this._linkRecoveryCoordinator.resume(context.controller);
-    }
+    try {
+      this.markPullPending(context.controller);
+      context.controller.executor.request('pull');
+      if (context.controller.isReplicationReady && !context.isStale()) {
+        await this._linkRecoveryCoordinator.resume(context.controller);
+      }
 
-    const committed = context.link.pull.contiguousAppliedToken;
-    if (
-      committed === undefined ||
-      !SyncCheckpoint.validateTokenDomain(context.link.pull, eventCursor) ||
-      SyncCheckpoint.comparePosition(committed, eventCursor) < 0
-    ) {
-      throw new Error(`SyncEngineLevel: durable pull did not settle socket event for ${context.did} -> ${context.dwnUrl}`);
+      const committed = context.link.pull.contiguousAppliedToken;
+      if (
+        committed === undefined ||
+        !SyncCheckpoint.validateTokenDomain(context.link.pull, eventCursor) ||
+        SyncCheckpoint.comparePosition(committed, eventCursor) < 0
+      ) {
+        throw new Error(`SyncEngineLevel: durable pull did not settle socket event for ${context.did} -> ${context.dwnUrl}`);
+      }
+    } catch (error: unknown) {
+      await this.failLivePullAdmission(context, error);
+      throw new SubscriptionHandlerTerminalError(
+        `SyncEngineLevel: live pull delivery could not be admitted: ${syncErrorMessage(error)}`,
+      );
     }
   }
 
   /** A reconnect closes both disconnected-interval gaps from persisted checkpoints. */
-  private async requestDurableReconnectPasses(context: LivePullWakeContext): Promise<void> {
+  private async requestDurableReconnectPasses(context: LivePullContext): Promise<void> {
     const { controller } = context;
     controller.executor.request('pull');
     if (controller.link.authorization.kind !== 'role') {
@@ -3320,7 +3321,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Apply one authenticated socket event through the same closure policy as a durable page. */
   private async admitLivePullEvent(
-    context: LivePullWakeContext,
+    context: LivePullContext,
     message: SubscriptionEvent,
     expectedReplicationGeneration: number,
   ): Promise<void> {
@@ -3350,6 +3351,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (isLatestBaseState === undefined) {
       throw new Error(`SyncEngineLevel: live pull event is missing base-state metadata for ${context.did} -> ${context.dwnUrl}`);
     }
+    this.markPullPending(context.controller);
     const target = syncTargetFromLink(context.link);
     const entry: MessagesQueryReplyEntry = {
       messageCid,
@@ -3367,13 +3369,19 @@ export class SyncEngineLevel implements SyncEngine {
     );
     if (outcome.kind === 'aborted') { return; }
     if (outcome.kind === 'deferred') {
+      // A deferred root blocks contiguous ACK progress. End this binding so
+      // durable repair can replay it without wedging the socket flow window.
+      console.warn(
+        `SyncEngineLevel: live pull delivery ${messageCid} deferred for ${context.did} -> ${context.dwnUrl}; ` +
+        `ending the subscription binding for durable recovery${outcome.detail === undefined ? '' : `: ${outcome.detail}`}`,
+      );
       throw new Error(outcome.detail ?? `live pull message ${messageCid} is waiting for replication support`);
     }
     await this.commitLivePullCursor(context, message.cursor);
   }
 
   /** Persist one socket cursor only after its message reached a settled outcome. */
-  private async commitLivePullCursor(context: LivePullWakeContext, cursor: ProgressToken): Promise<void> {
+  private async commitLivePullCursor(context: LivePullContext, cursor: ProgressToken): Promise<void> {
     if (context.isStale()) { return; }
     if (!isValidProgressToken(cursor) || !SyncCheckpoint.validateTokenDomain(context.link.pull, cursor)) {
       throw new Error(`SyncEngineLevel: live pull token domain mismatch for ${context.did} -> ${context.dwnUrl}`);
@@ -3394,7 +3402,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async handleLivePullError(context: LivePullWakeContext, errorCode: string): Promise<void> {
+  private async handleLivePullError(context: LivePullContext, errorCode: string): Promise<void> {
     const roleAuthorization = context.link.authorization.kind === 'role'
       ? context.link.authorization
       : undefined;
@@ -3426,7 +3434,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private setLivePullConnectivity(
-    context: LivePullWakeContext,
+    context: LivePullContext,
     connectivity: SyncConnectivityState,
   ): void {
     if (context.isStale()) {
@@ -3464,14 +3472,14 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  /** Record that a durable pull pass is required. */
+  /** Record that accepted pull work is not yet settled. */
   private markPullPending(controller: SyncLinkController): void {
     if (controller.markPullPending()) {
       this.emitPullCurrentnessChange(controller, true, false);
     }
   }
 
-  /** Publish currentness only when this generation has no trailing pull wake. */
+  /** Publish currentness only when this generation has no unsettled pull work. */
   private markPullCurrent(controller: SyncLinkController, replicationGeneration: number): void {
     if (controller.markPullCurrent(replicationGeneration)) {
       this.emitPullCurrentnessChange(controller, false, true);
