@@ -1,5 +1,11 @@
 # @enbox/agent
 
+## 0.8.43
+
+### Patch Changes
+
+- [#1644](https://github.com/enboxorg/enbox/pull/1644) [`b9b6e84`](https://github.com/enboxorg/enbox/commit/b9b6e84c9614adc81d63896491b2bc927e34547d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: admit complete live subscription events directly and reserve durable feed queries for baseline and recovery
+
 ## 0.8.42
 
 ### Patch Changes
