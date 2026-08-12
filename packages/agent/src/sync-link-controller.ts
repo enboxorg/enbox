@@ -33,6 +33,7 @@ export class SyncLinkController {
   private _localSubscription?: SyncLinkSubscription;
   private _isPullCurrent = false;
   private _isDeactivating = false;
+  private _pendingLivePullDeliveries = 0;
   private _pullSnapshot?: SyncFeedSnapshot;
   private _replicationGeneration = 0;
   private _pushSnapshot?: SyncFeedSnapshot;
@@ -77,6 +78,7 @@ export class SyncLinkController {
       this._isDeactivating ||
       !this.isReplicationGenerationCurrent(expectedReplicationGeneration) ||
       this.executor.hasPending('pull') ||
+      this._pendingLivePullDeliveries > 0 ||
       this._isPullCurrent
     ) {
       return false;
@@ -84,6 +86,29 @@ export class SyncLinkController {
 
     this._isPullCurrent = true;
     return true;
+  }
+
+  /** Retain one socket delivery until its ordered admission and checkpoint commit settle. */
+  public beginLivePullDelivery(expectedReplicationGeneration: number): boolean {
+    if (
+      this._isDeactivating ||
+      !this.isReplicationGenerationCurrent(expectedReplicationGeneration) ||
+      (!this._isPullCurrent && this._pendingLivePullDeliveries === 0)
+    ) {
+      return false;
+    }
+
+    this._pendingLivePullDeliveries++;
+    return true;
+  }
+
+  /** Release one socket delivery only from the replication generation that retained it. */
+  public endLivePullDelivery(expectedReplicationGeneration: number): void {
+    if (!this.isReplicationGenerationCurrent(expectedReplicationGeneration)) {
+      return;
+    }
+
+    this._pendingLivePullDeliveries = Math.max(0, this._pendingLivePullDeliveries - 1);
   }
 
   /**
@@ -147,6 +172,7 @@ export class SyncLinkController {
   public resetReplicationGeneration(): void {
     this._replicationGeneration++;
     this._isPullCurrent = false;
+    this._pendingLivePullDeliveries = 0;
     this._pullSnapshot = undefined;
     this._pushSnapshot = undefined;
     this.executor.reset();

@@ -59,8 +59,8 @@ describe('SyncEngineLevel', () => {
     });
   });
 
-  describe('durable subscription wakes', () => {
-    it('holds a pull wake until the paired replication baseline is ready', async () => {
+  describe('live subscription delivery', () => {
+    it('retains a durable pull wake until the paired replication baseline is ready', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const dwnUrl = 'https://dwn.example';
@@ -120,7 +120,7 @@ describe('SyncEngineLevel', () => {
       unsubscribe();
     });
 
-    it('degrades pull currentness when an ordinary remote event requests a durable pass', async () => {
+    it('falls back to a durable pull when a socket event lacks admission metadata', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
@@ -138,7 +138,13 @@ describe('SyncEngineLevel', () => {
       const controller = internal.activateLink('link-key', link);
       controller.markReplicationReady();
       controller.markPullCurrent(controller.replicationGeneration);
-      const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').resolves();
+      const eventCursor = { epoch: 'event-epoch', position: '99', streamId: 'event-stream' };
+      const admitRemoteFeedPage = sinon.stub(internal, 'admitRemoteFeedPage');
+      const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').callsFake(async (): Promise<void> => {
+        controller.executor.consumePending('pull');
+        link.pull.contiguousAppliedToken = eventCursor;
+        internal.markPullCurrent(controller, controller.replicationGeneration);
+      });
       const transitions: boolean[] = [];
       const unsubscribe = syncEngine.on((event): void => {
         if (event.type === 'pull:currentness-change') {
@@ -155,15 +161,15 @@ describe('SyncEngineLevel', () => {
         link,
         linkKey    : 'link-key',
       }, {
-        cursor : { epoch: 'event-epoch', position: '99', streamId: 'event-stream' },
+        cursor : eventCursor,
         event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
         type   : 'event',
       });
-      await internal._lifecycle.waitForBackgroundTasks();
-
-      expect(controller.isPullCurrent).toBe(false);
-      expect(controller.executor.hasPending('pull')).toBe(true);
-      expect(transitions).toEqual([false]);
+      expect(controller.isPullCurrent).toBe(true);
+      expect(controller.executor.hasPending('pull')).toBe(false);
+      expect(link.pull.contiguousAppliedToken).toEqual(eventCursor);
+      expect(admitRemoteFeedPage.notCalled).toBe(true);
+      expect(transitions).toEqual([false, true]);
       expect(resume.calledOnceWithExactly(controller)).toBe(true);
 
       unsubscribe();

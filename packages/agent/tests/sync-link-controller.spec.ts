@@ -117,6 +117,26 @@ describe('SyncLinkController', () => {
     expect(controller.markPullCurrent(replicationGeneration)).toBe(false);
   });
 
+  it('should admit one ordered socket batch only from a current pull boundary', () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    const replicationGeneration = controller.replicationGeneration;
+
+    expect(controller.beginLivePullDelivery(replicationGeneration)).toBe(false);
+    expect(controller.markPullCurrent(replicationGeneration)).toBe(true);
+    expect(controller.beginLivePullDelivery(replicationGeneration)).toBe(true);
+    expect(controller.markPullPending()).toBe(true);
+    expect(controller.beginLivePullDelivery(replicationGeneration)).toBe(true);
+    expect(controller.markPullCurrent(replicationGeneration)).toBe(false);
+
+    controller.endLivePullDelivery(replicationGeneration);
+    expect(controller.markPullCurrent(replicationGeneration)).toBe(false);
+    controller.endLivePullDelivery(replicationGeneration);
+    expect(controller.markPullCurrent(replicationGeneration)).toBe(true);
+
+    controller.resetReplicationGeneration();
+    expect(controller.beginLivePullDelivery(replicationGeneration)).toBe(false);
+  });
+
   it('should reject duplicate or post-deactivation subscription ownership', async () => {
     const controller = new SyncLinkController('link-key', createLink());
     const closeOwned = sinon.stub().resolves();

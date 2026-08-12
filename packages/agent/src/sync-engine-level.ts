@@ -1,13 +1,13 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsDeleteMessage, RecordsQueryReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, RecordsDeleteMessage, RecordsQueryReply, RecordsWriteMessage, SubscriptionEvent } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
-import { RateLimitError } from '@enbox/dwn-clients';
 import { BroadcastChannelWakePublisher, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 import { parseDurationInMilliseconds, runSerializedByKey, runWithCrossContextLock, sleep } from '@enbox/common';
+import { RateLimitError, SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
@@ -3125,9 +3125,8 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error(`SyncEngineLevel: Failed to construct MessagesSubscribe for ${dwnUrl}`);
     }
 
-    // Re-establish at the live head instead of replaying subscription events.
-    // The `reconnected` lifecycle signal requests durable pull and push passes,
-    // which recover the disconnected interval from persisted checkpoints.
+    // Re-establish at the live head. The `reconnected` lifecycle signal runs
+    // durable recovery from the persisted checkpoint for the disconnected gap.
     const resubscribeFactory: ResubscribeFactory = async () => {
       const { message: resumeMsg } = await this.agent.dwn.processRequest(await createSubscribeRequest());
       if (!resumeMsg) {
@@ -3176,7 +3175,7 @@ export class SyncEngineLevel implements SyncEngine {
     return true;
   }
 
-  /** Treat remote subscription messages as lifecycle signals or durable-feed wakes. */
+  /** Admit socket events directly; retain durable feed passes for baseline and recovery. */
   private async handleLivePullMessage(
     context: LivePullWakeContext,
     message: DwnSubscriptionMessage,
@@ -3199,25 +3198,113 @@ export class SyncEngineLevel implements SyncEngine {
       await this.handleLivePullError(context, message.error.code);
       return;
     }
-    if (message.type !== 'event') {
+    if (message.type !== 'event') { return; }
+
+    if (!context.controller.isReplicationReady || context.link.connectivity !== 'online') {
+      this.markPullPending(context.controller);
+      context.controller.executor.request('pull');
       return;
     }
 
+    if (message.isLatestBaseState === undefined) {
+      try {
+        await this.requestDurableLivePullFallback(context, message.cursor);
+      } catch (error: unknown) {
+        await this.failLivePullAdmission(context, error);
+        throw new SubscriptionHandlerTerminalError(
+          `SyncEngineLevel: live pull delivery could not be admitted: ${syncErrorMessage(error)}`,
+        );
+      }
+      return;
+    }
+
+    const generation = context.controller.replicationGeneration;
+    if (!context.controller.beginLivePullDelivery(generation)) {
+      if (!context.isStale()) {
+        this.markPullPending(context.controller);
+        context.controller.executor.request('pull');
+        await this._linkRecoveryCoordinator.resume(context.controller);
+      }
+      return;
+    }
     this.markPullPending(context.controller);
-    context.controller.executor.request('pull');
-    if (!context.controller.isReplicationReady || context.isStale()) {
-      return;
+    let admissionFailure: { error: unknown } | undefined;
+    try {
+      const result = await this._linkRecoveryCoordinator.execute(
+        context.controller,
+        async (): Promise<true> => {
+          try {
+            await this.admitLivePullEvent(context, message, generation);
+          } catch (error: unknown) {
+            // Fence every queued successor before this failed call releases
+            // the executor; otherwise a later event could skip this cursor.
+            admissionFailure = { error };
+            await this.failLivePullAdmission(context, error);
+            throw error;
+          }
+          return true;
+        },
+      );
+      if (admissionFailure !== undefined) {
+        throw admissionFailure.error;
+      }
+      if (result === undefined && !context.isStale()) {
+        throw new SubscriptionHandlerTerminalError('SyncEngineLevel: live pull delivery lost its active link generation.');
+      }
+    } catch (error: unknown) {
+      throw new SubscriptionHandlerTerminalError(
+        `SyncEngineLevel: live pull delivery could not be admitted: ${syncErrorMessage(error)}`,
+      );
+    } finally {
+      context.controller.endLivePullDelivery(generation);
     }
 
-    // A subscription event is only a wake hint. Hand the durable pass to
-    // lifecycle supervision and return so transport acknowledgement is not
-    // coupled to a potentially multi-page catch-up. stopSync() still waits
-    // for the supervised pass before closing storage.
-    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(context.did);
-    void runIdentityTask(() => this._linkRecoveryCoordinator.resume(context.controller));
+    this.markPullCurrent(context.controller, generation);
   }
 
-  /** A reconnect closes both disconnected-interval gaps without a full convergence probe. */
+  /** Fence a failed socket delivery before the ordered executor releases its successors. */
+  private async failLivePullAdmission(context: LivePullWakeContext, error: unknown): Promise<void> {
+    if (context.isStale()) { return; }
+    try {
+      const target = syncTargetFromLink(context.link);
+      if (
+        target.authorization.kind === 'role' &&
+        SyncEngineLevel.isRoleLinkPauseError(error)
+      ) {
+        await this.pauseRoleLinkForError(target, context.link, error);
+      } else {
+        await this._linkRecoveryCoordinator.transitionToRepairing(context.controller);
+      }
+    } catch (repairError: unknown) {
+      console.error(
+        `SyncEngineLevel: Failed to enter repair after live pull admission failed for ${context.did}`,
+        repairError,
+      );
+    }
+  }
+
+  /** Fall back to a durable page when an older socket event lacks admission metadata. */
+  private async requestDurableLivePullFallback(
+    context: LivePullWakeContext,
+    eventCursor: ProgressToken,
+  ): Promise<void> {
+    this.markPullPending(context.controller);
+    context.controller.executor.request('pull');
+    if (context.controller.isReplicationReady && !context.isStale()) {
+      await this._linkRecoveryCoordinator.resume(context.controller);
+    }
+
+    const committed = context.link.pull.contiguousAppliedToken;
+    if (
+      committed === undefined ||
+      !SyncCheckpoint.validateTokenDomain(context.link.pull, eventCursor) ||
+      SyncCheckpoint.comparePosition(committed, eventCursor) < 0
+    ) {
+      throw new Error(`SyncEngineLevel: durable pull did not settle socket event for ${context.did} -> ${context.dwnUrl}`);
+    }
+  }
+
+  /** A reconnect closes both disconnected-interval gaps from persisted checkpoints. */
   private async requestDurableReconnectPasses(context: LivePullWakeContext): Promise<void> {
     const { controller } = context;
     controller.executor.request('pull');
@@ -3229,6 +3316,82 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     await this._linkRecoveryCoordinator.resume(controller);
+  }
+
+  /** Apply one authenticated socket event through the same closure policy as a durable page. */
+  private async admitLivePullEvent(
+    context: LivePullWakeContext,
+    message: SubscriptionEvent,
+    expectedReplicationGeneration: number,
+  ): Promise<void> {
+    if (context.isStale() || !context.controller.isReplicationGenerationCurrent(expectedReplicationGeneration)) {
+      return;
+    }
+    if (!isValidProgressToken(message.cursor) || !SyncCheckpoint.validateTokenDomain(context.link.pull, message.cursor)) {
+      throw new Error(`SyncEngineLevel: live pull token domain mismatch for ${context.did} -> ${context.dwnUrl}`);
+    }
+
+    const messageCid = await Message.getCid(message.event.message);
+    if (
+      (message.messageCid !== undefined && message.messageCid !== messageCid) ||
+      (message.cursor.messageCid !== undefined && message.cursor.messageCid !== messageCid)
+    ) {
+      throw new Error(`SyncEngineLevel: live pull message CID mismatch for ${context.did} -> ${context.dwnUrl}`);
+    }
+    const currentCursor = context.link.pull.contiguousAppliedToken;
+    if (
+      currentCursor !== undefined &&
+      SyncCheckpoint.comparePosition(message.cursor, currentCursor) <= 0
+    ) {
+      return;
+    }
+
+    const isLatestBaseState = message.isLatestBaseState;
+    if (isLatestBaseState === undefined) {
+      throw new Error(`SyncEngineLevel: live pull event is missing base-state metadata for ${context.did} -> ${context.dwnUrl}`);
+    }
+    const target = syncTargetFromLink(context.link);
+    const entry: MessagesQueryReplyEntry = {
+      messageCid,
+      isLatestBaseState,
+      message : message.event.message,
+      seq     : message.seq ?? message.cursor.position,
+      ...(message.protocol === undefined ? {} : { protocol: message.protocol }),
+      ...(message.encodedData === undefined ? {} : { encodedData: message.encodedData }),
+      ...(message.event.initialWrite === undefined ? {} : { initialWrite: message.event.initialWrite }),
+    };
+    const outcome = await this.admitRemoteFeedPage(
+      target,
+      [entry],
+      (): boolean => !context.isStale() && context.controller.isReplicationGenerationCurrent(expectedReplicationGeneration),
+    );
+    if (outcome.kind === 'aborted') { return; }
+    if (outcome.kind === 'deferred') {
+      throw new Error(outcome.detail ?? `live pull message ${messageCid} is waiting for replication support`);
+    }
+    await this.commitLivePullCursor(context, message.cursor);
+  }
+
+  /** Persist one socket cursor only after its message reached a settled outcome. */
+  private async commitLivePullCursor(context: LivePullWakeContext, cursor: ProgressToken): Promise<void> {
+    if (context.isStale()) { return; }
+    if (!isValidProgressToken(cursor) || !SyncCheckpoint.validateTokenDomain(context.link.pull, cursor)) {
+      throw new Error(`SyncEngineLevel: live pull token domain mismatch for ${context.did} -> ${context.dwnUrl}`);
+    }
+    const previous = context.link.pull.contiguousAppliedToken;
+    if (previous !== undefined && SyncCheckpoint.comparePosition(cursor, previous) <= 0) {
+      return;
+    }
+    SyncCheckpoint.commitContiguousToken(context.link.pull, cursor);
+    try {
+      await this.replicationLinkStore.persistCheckpoint(context.link, 'pull');
+    } catch (error: unknown) {
+      SyncCheckpoint.reset(context.link.pull, previous);
+      throw error;
+    }
+    if (!context.isStale()) {
+      this.emitCheckpointAdvance(context.link, 'pull');
+    }
   }
 
   private async handleLivePullError(context: LivePullWakeContext, errorCode: string): Promise<void> {

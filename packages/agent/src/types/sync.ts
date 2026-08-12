@@ -282,19 +282,20 @@ export async function computeAuthorizationEpoch(input:
  * replication link. All tokens belong to the same `(streamId, epoch)`.
  *
  * This is the **durable** replication checkpoint persisted to the
- * `replicationLinkStore`. Subscription callbacks only announce that a feed
- * may have advanced. Durable reconciliation resumes from
- * `contiguousAppliedToken`, settles each page, and then commits its cursor.
- * Idempotent DWN admission makes reconciliation after a crash safe.
+ * `replicationLinkStore`. A fully admitted socket event may advance it on the
+ * live path; durable reconciliation resumes from the same token for baseline,
+ * reconnect, and recovery. Idempotent DWN admission makes replay after a crash
+ * safe.
  */
 export type DirectionCheckpoint = {
   /**
    * The highest feed token through which all earlier work for this link has
    * been durably settled. This is the resume point after crash or reconnect.
    *
-   * A completed durable-feed page advances it during reconciliation; an
-   * equal paired-subscription snapshot may establish the initial baseline.
-   * A subscription notification alone is never checkpoint evidence.
+   * A completed durable-feed page, or an authenticated socket event admitted
+   * through the same closure policy, advances it. An equal paired-subscription
+   * snapshot may establish the initial baseline. A lifecycle notification or
+   * unprocessed event alone is never checkpoint evidence.
    * Positions may be sparse for filtered feeds.
    */
   contiguousAppliedToken?: ProgressToken;

@@ -3,6 +3,7 @@ import type { SyncLinkController } from '../src/sync-link-controller.js';
 import sinon from 'sinon';
 
 import { Level } from 'level';
+import { Message } from '@enbox/dwn-sdk-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
@@ -16,9 +17,6 @@ type LiveMockAgent = {
   getLocalHandler: () => CapturedSubscriptionHandler;
   getRemoteHandler: () => CapturedSubscriptionHandler;
 };
-
-// Deliberately exceeds the server's 32-event flow-control window.
-const PULL_WAKE_BURST_SIZE = 64;
 
 function createLiveMockAgent(): LiveMockAgent {
   let localHandler: CapturedSubscriptionHandler;
@@ -149,17 +147,23 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     expect(engine.connectivityState).not.toBe('online');
   });
 
-  it('should release a pull wake burst before its supervised pass settles and wait on stopSync()', async () => {
+  it('should keep direct socket admission supervised until its checkpoint persists', async () => {
     const { agent, getRemoteHandler } = createLiveMockAgent();
     const engine = new SyncEngineLevel({ db, agent });
     const link = makeLink();
+    const persistStarted = createDeferred();
+    const releasePersist = createDeferred();
+    const persistCheckpoint = sinon.stub().callsFake(async (): Promise<void> => {
+      persistStarted.resolve();
+      await releasePersist.promise;
+    });
 
     sinon.stub(engine, 'sync').resolves();
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
     Object.assign(engine, {
       _replicationLinkStore: {
         getOrCreateLink    : sinon.stub().resolves(link),
-        persistCheckpoint  : sinon.stub().resolves(),
+        persistCheckpoint,
         persistCheckpoints : sinon.stub().resolves(),
         setStatus          : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
           linkState.status = status;
@@ -168,33 +172,26 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     });
 
     await engine.startSync({ interval: '30s' });
-
-    const passStarted = createDeferred();
-    const releasePass = createDeferred();
-    sinon.stub(engine['_linkRecoveryCoordinator'], 'resume').callsFake(async (): Promise<void> => {
-      passStarted.resolve();
-      await releasePass.promise;
-    });
+    sinon.stub(engine as never, 'admitRemoteFeedPage').resolves({ admittedCids: [], kind: 'processed' });
 
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();
-    const wake = {
-      type  : 'event',
-      event : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+    const message = {
+      descriptor: {
+        interface        : 'Protocols',
+        method           : 'Configure',
+        messageTimestamp : '2026-08-12T00:00:00.000000Z',
+      },
     };
-    const handlerPromises = Array.from(
-      { length: PULL_WAKE_BURST_SIZE },
-      (): Promise<void> => handler!(wake),
-    );
-    await passStarted.promise;
-
-    // Transport acknowledgement is chained to the handler promise, so the
-    // entire burst must settle without joining the potentially multi-page
-    // pass or exhausting the server's flow-control window.
-    await Promise.all(handlerPromises);
-
-    const [controller] = engine['_linkControllers'].values();
-    expect(controller?.executor.hasPending('pull')).toBe(true);
+    const messageCid = await Message.getCid(message as any);
+    const handlerPromise = handler!({
+      type              : 'event',
+      cursor            : { streamId: 's1', epoch: 'e1', position: '1', messageCid },
+      event             : { message },
+      isLatestBaseState : true,
+      messageCid,
+    });
+    await persistStarted.promise;
 
     let stopCompleted = false;
     const stopPromise = engine.stopSync().then((): void => { stopCompleted = true; });
@@ -203,10 +200,12 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     expect(stopCompleted).toBe(false);
     expect(db.status).toBe('open');
 
-    releasePass.resolve();
+    releasePersist.resolve();
+    await handlerPromise;
     await stopPromise;
 
     expect(stopCompleted).toBe(true);
+    expect(persistCheckpoint.calledOnce).toBe(true);
   });
 
   it('should not enqueue push work when a late local callback fires after stopSync()', async () => {

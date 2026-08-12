@@ -14,7 +14,7 @@ the code, not an entry missing from this table.
 | Concept | Canonical name | Retired aliases |
 |---|---|---|
 | The periodic pass that reconciles durable feeds *and* re-initializes orphaned links | **settle check** — `runSettleCheck`, `SETTLE_CHECK_TIMER` | `runLiveIntegrityCheck`, `SYNC_INTERVAL_TIMER` |
-| Browser online and visibility recovery, which probes the transport; verified reconnection reopens cursorless wake subscriptions and requests durable passes from persisted checkpoints | **wake health check** — `checkHealth`, `checkAllConnections` | agent-level convergence or integrity check |
+| Browser online and visibility recovery, which probes the transport; verified reconnection reopens cursorless live subscriptions and requests durable passes from persisted checkpoints | **wake health check** — `checkHealth`, `checkAllConnections` | agent-level convergence or integrity check |
 | Reconciling one target's durable feeds | **`reconcileTarget`** | `syncTargetWithDurableFeeds` |
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
@@ -34,11 +34,11 @@ the code, not an entry missing from this table.
 | Coalesced notice that one durable wake pass is owed | **work mark** — `SyncLinkExecutor.request`, `hasPending` | event cursor, `requestPass`, `_requestedPasses` |
 | Distinct caller-specific operation serialized by the active replication session | **executor call** — `SyncLinkExecutor.enqueue`, `SyncLinkRecoveryCoordinator.execute` | work mark, shared operation |
 | Whether ordinary executor work may run for the current replication generation; wakes are retained while ineligible and calls fail fast | **executor eligibility** — `isReady`, `markReady`, `SyncLinkRecoveryCoordinator.resume`, surfaced as `isReplicationReady` / `markReplicationReady` | readiness promise, replication readiness barrier, parked administrative call |
-| Cursorless remote subscription whose events request durable pull passes | **live pull subscription** — `openLivePullSubscription`, `LivePullWakeContext` | live-pull admission pipeline, `SyncLivePullProcessor` |
-| A remote subscription event that says the durable remote feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.pull.contiguousAppliedToken` | **durable pull wake** — `executor.request('pull')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | per-event admission, delivery acknowledgement, event-cursor checkpoint, or EOSE checkpoint |
+| Cursorless remote subscription whose complete events are normally admitted directly | **live pull subscription** — `openLivePullSubscription`, `LivePullWakeContext` | a second live-pull processor or checkpoint owner |
+| A remote subscription event received before baseline, during recovery, or without complete admission metadata | **durable pull wake** — `executor.request('pull')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | the normal complete-event path |
 | Whether the active replication session has established its pull baseline and every accepted durable pull wake is covered by a completed pass | **pull currentness** — `isPullCurrent`, `markPullPending`, `markPullCurrent`, `pull:currentness-change` | transport connectivity, feed convergence, link status, or checkpoint progress |
 | A local subscription event or transport-reconnected notification that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `executor.request('push')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | per-event push job, delivery acknowledgement, or checkpoint evidence |
-| Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | delivery acknowledgement, arbitrary subscription cursor |
+| Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | transport acknowledgement or an unprocessed subscription cursor |
 | Namespace in which progress-token positions can be compared | **token domain** — exact `(streamId, epoch)` pair | stream alone, epoch alone, or a globally ordered position |
 | Folding a push result into quota state | **push result outcome** — `applyPushResult`, `SyncQuotaPushResultOutcome` | `transitionPushResult`, push transition |
 | Temporarily unadmittable remote root that must hold the pull page | **deferred pull** — `SyncDeferredPullState`, `SyncDeferredPullStoreLevel` | dead letter, retryable push failure |
@@ -152,8 +152,10 @@ would make one signal stand in for proof it does not carry.
 - Compare token positions only when both `streamId` and `epoch` match. A token
   from another domain is neither newer nor older.
 - Advance a direction checkpoint only after a durable-feed page has settled,
-  or establish its initial baseline from equal paired-subscription snapshots.
-  A subscription event cursor or EOSE cursor is never checkpoint evidence.
+  after a complete authenticated socket event has passed the same closure
+  admission policy, or when equal paired-subscription snapshots establish the
+  initial baseline. A lifecycle signal, EOSE, or unprocessed event is never
+  checkpoint evidence.
 - Reset or re-establish the baseline when the token domain changes. Never carry
   a position across domains.
 - Validate a persisted direction checkpoint before its first query. Reset an
@@ -163,9 +165,9 @@ would make one signal stand in for proof it does not carry.
 
 Trusting a cached or claimed state instead of verifying the property where it
 is used is this subsystem's recurring bug shape — a stale `isConnected`
-preferred over proving liveness, a subscription event cursor treated as
-durable progress, a fingerprint match treated as feed identity beyond
-its domain coverage. The check is almost always cheap and local: an on-demand
+preferred over proving liveness, an unprocessed event cursor treated as durable
+progress, a fingerprint match treated as feed identity beyond its domain
+coverage. The check is almost always cheap and local: an on-demand
 transport health probe, replay from the persisted direction checkpoint, or a
 fail-closed decision when a domain set is known-incomplete. When a property
 matters, verify it where it is consumed; never assume it from provenance.
