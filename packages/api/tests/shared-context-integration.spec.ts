@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { PlatformAgentTestHarness as AgentHarness } from '@enbox/agent/test';
 import { AuthManager, MemoryStorage } from '@enbox/auth';
-import { DwnConstant, Jws, Poller } from '@enbox/dwn-sdk-js';
+import { DwnConstant, EncryptionProtocol, Jws, Poller } from '@enbox/dwn-sdk-js';
 import { DwnInterface, EnboxUserAgent, executeConnectApproval } from '@enbox/agent';
 
 import { publishProtocol } from './utils/test-dwn-operations.js';
@@ -443,6 +443,15 @@ describe('shared context public API integration', () => {
     });
     expect(await localRoleDescendantChanges.records.find(record => record.id === roleDescendantChange.id)?.value())
       .toEqual({ body: 'created below the author role' });
+    const dependencyRequests = [
+      ...localRequests.getCalls(),
+      ...offline.getCalls(),
+    ].map(call => call.args[0]);
+    expect(dependencyRequests.filter((request): boolean =>
+      request.messageType === DwnInterface.RecordsQuery &&
+      request.target === ownerDid &&
+      request.messageParams?.filter?.protocol === EncryptionProtocol.uri
+    )).toHaveLength(0);
     offline.restore();
     localRequests.restore();
     await memberHarness.agent.sync.startSync();
