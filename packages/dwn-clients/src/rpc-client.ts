@@ -7,6 +7,7 @@ import { createJsonRpcRequest } from './json-rpc.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { normalizeDwnRpcAuthEndpoint } from './rpc-auth.js';
+import { SocketUnavailableError } from './dwn-rpc-error.js';
 import { WebSocketDwnRpcClient } from './web-socket-clients.js';
 
 /**
@@ -160,9 +161,9 @@ export class EnboxRpcClient implements EnboxRpc {
     // will throw if url is invalid
     const url = new URL(request.dwnUrl);
 
-    const subscriptionRoute = this.resolveSubscriptionRoute(request, url);
-    if (subscriptionRoute !== undefined) {
-      return subscriptionRoute;
+    const socketRoute = this.resolveSocketRoute(request, url);
+    if (socketRoute !== undefined) {
+      return socketRoute;
     }
 
     return this.sendDwnRequestOverScheme(request, url);
@@ -181,14 +182,9 @@ export class EnboxRpcClient implements EnboxRpc {
     return transportClient.sendDwnRequest(request);
   }
 
-  /**
-   * Routes subscriptions declared against an `http(s)` DWN endpoint through
-   * the corresponding `ws(s)` transport. Ordinary requests remain on the
-   * transport selected by their URL scheme: server info advertises WebSocket
-   * subscription support, not parity for every `dwn.processMessage` shape.
-   */
-  private resolveSubscriptionRoute(request: DwnRpcRequest, url: URL): Promise<DwnRpcResponse> | undefined {
-    if (request.subscription === undefined || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
+  /** Routes subscriptions and bounded control requests through an existing connected socket. */
+  private resolveSocketRoute(request: DwnRpcRequest, url: URL): Promise<DwnRpcResponse> | undefined {
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       return undefined;
     }
 
@@ -199,12 +195,47 @@ export class EnboxRpcClient implements EnboxRpc {
       return undefined;
     }
 
-    return socketClient.sendDwnRequest({ ...request, dwnUrl: socketUrl.toString() });
+    if (request.subscription !== undefined) {
+      return socketClient.sendDwnRequest({ ...request, dwnUrl: socketUrl.toString() });
+    }
+
+    if (!(socketClient instanceof WebSocketEnboxRpcClient)) {
+      return undefined;
+    }
+    if (this.getTransportClient(url, request.dwnUrl) !== this.authenticatedTransportClients.get(url.protocol) ||
+      socketClient !== this.authenticatedTransportClients.get(socketUrl.protocol)) {
+      return undefined;
+    }
+
+    const socketRequest: DwnRpcRequest = { ...request, dwnUrl: socketUrl.toString() };
+    return socketClient.sendDwnRequestIfConnected(socketRequest)
+      .then((outcome) => outcome === undefined
+        ? this.sendDwnRequestOverScheme(request, url)
+        : outcome.reply)
+      .catch((error: unknown) => {
+        if (error instanceof SocketUnavailableError) {
+          return this.sendDwnRequestOverScheme(request, url);
+        }
+        throw error;
+      });
   }
 
   applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
     const url = new URL(request.dwnUrl);
 
+    const socketRoute = this.resolveReplicatedApplySocketRoute(request, url);
+    if (socketRoute !== undefined) {
+      return socketRoute;
+    }
+
+    return this.applyReplicatedMessageOverScheme(request, url);
+  }
+
+  /** Dispatches replicated apply to the transport that owns its URL scheme. */
+  private applyReplicatedMessageOverScheme(
+    request: DwnReplicationApplyRequest,
+    url: URL,
+  ): Promise<ReplicationApplyResult> {
     const transportClient = this.getTransportClient(url, request.dwnUrl);
     if (!transportClient) {
       const error = new Error(`no ${url.protocol} transport client available`);
@@ -214,6 +245,38 @@ export class EnboxRpcClient implements EnboxRpc {
     }
 
     return transportClient.applyReplicatedMessage(request);
+  }
+
+  /** Prefers an existing connected socket for an eligible, replayable replicated apply. */
+  private resolveReplicatedApplySocketRoute(
+    request: DwnReplicationApplyRequest,
+    url: URL,
+  ): Promise<ReplicationApplyResult> | undefined {
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') ||
+      request.signal !== undefined || request.timeoutMs !== undefined) {
+      return undefined;
+    }
+
+    const socketUrl = new URL(request.dwnUrl);
+    socketUrl.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
+    const socketClient = this.getTransportClient(socketUrl, request.dwnUrl);
+    if (!(socketClient instanceof WebSocketEnboxRpcClient)) {
+      return undefined;
+    }
+    if (this.getTransportClient(url, request.dwnUrl) !== this.authenticatedTransportClients.get(url.protocol) ||
+      socketClient !== this.authenticatedTransportClients.get(socketUrl.protocol)) {
+      return undefined;
+    }
+
+    const socketRequest: DwnReplicationApplyRequest = { ...request, dwnUrl: socketUrl.toString() };
+    return socketClient.applyReplicatedMessageIfConnected(socketRequest)
+      .then((result) => result ?? this.applyReplicatedMessageOverScheme(request, url))
+      .catch((error: unknown) => {
+        if (error instanceof SocketUnavailableError) {
+          return this.applyReplicatedMessageOverScheme(request, url);
+        }
+        throw error;
+      });
   }
 
   async getServerInfo(dwnUrl: string): Promise<ServerInfo> {
