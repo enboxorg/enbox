@@ -3371,9 +3371,10 @@ export class SyncEngineLevel implements SyncEngine {
     if (outcome.kind === 'deferred') {
       // A deferred root blocks contiguous ACK progress. End this binding so
       // durable repair can replay it without wedging the socket flow window.
+      const detail = outcome.detail === undefined ? '' : `: ${outcome.detail}`;
       console.warn(
         `SyncEngineLevel: live pull delivery ${messageCid} deferred for ${context.did} -> ${context.dwnUrl}; ` +
-        `ending the subscription binding for durable recovery${outcome.detail === undefined ? '' : `: ${outcome.detail}`}`,
+        `ending the subscription binding for durable recovery${detail}`,
       );
       throw new Error(outcome.detail ?? `live pull message ${messageCid} is waiting for replication support`);
     }
