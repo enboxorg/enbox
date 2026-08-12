@@ -10,6 +10,7 @@ import sinon from 'sinon';
 import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
+import { SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from '@enbox/dwn-sdk-js';
 
@@ -59,8 +60,8 @@ describe('SyncEngineLevel', () => {
     });
   });
 
-  describe('durable subscription wakes', () => {
-    it('holds a pull wake until the paired replication baseline is ready', async () => {
+  describe('live subscription delivery', () => {
+    it('retains a durable pull wake until the paired replication baseline is ready', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const dwnUrl = 'https://dwn.example';
@@ -120,7 +121,7 @@ describe('SyncEngineLevel', () => {
       unsubscribe();
     });
 
-    it('degrades pull currentness when an ordinary remote event requests a durable pass', async () => {
+    it('uses durable pull for events missing metadata and refuses uncovered ACKs', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
@@ -138,7 +139,13 @@ describe('SyncEngineLevel', () => {
       const controller = internal.activateLink('link-key', link);
       controller.markReplicationReady();
       controller.markPullCurrent(controller.replicationGeneration);
-      const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').resolves();
+      const eventCursor = { epoch: 'event-epoch', position: '99', streamId: 'event-stream' };
+      const admitRemoteFeedPage = sinon.stub(internal, 'admitRemoteFeedPage');
+      const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').callsFake(async (): Promise<void> => {
+        controller.executor.consumePending('pull');
+        link.pull.contiguousAppliedToken = eventCursor;
+        internal.markPullCurrent(controller, controller.replicationGeneration);
+      });
       const transitions: boolean[] = [];
       const unsubscribe = syncEngine.on((event): void => {
         if (event.type === 'pull:currentness-change') {
@@ -155,16 +162,40 @@ describe('SyncEngineLevel', () => {
         link,
         linkKey    : 'link-key',
       }, {
-        cursor : { epoch: 'event-epoch', position: '99', streamId: 'event-stream' },
+        cursor : eventCursor,
         event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
         type   : 'event',
       });
-      await internal._lifecycle.waitForBackgroundTasks();
-
-      expect(controller.isPullCurrent).toBe(false);
-      expect(controller.executor.hasPending('pull')).toBe(true);
-      expect(transitions).toEqual([false]);
+      expect(controller.isPullCurrent).toBe(true);
+      expect(controller.executor.hasPending('pull')).toBe(false);
+      expect(link.pull.contiguousAppliedToken).toEqual(eventCursor);
+      expect(admitRemoteFeedPage.notCalled).toBe(true);
+      expect(transitions).toEqual([false, true]);
       expect(resume.calledOnceWithExactly(controller)).toBe(true);
+
+      const repairing = sinon.stub(internal._linkRecoveryCoordinator, 'transitionToRepairing').resolves();
+      const missedCursor = { ...eventCursor, position: '100' };
+      const handledError = await internal.handleLivePullMessage({
+        controller,
+        did        : link.tenantDid,
+        dwnUrl     : link.remoteEndpoint,
+        eventScope : {},
+        isStale    : (): boolean => false,
+        link,
+        linkKey    : 'link-key',
+      }, {
+        cursor : missedCursor,
+        event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+        type   : 'event',
+      }).then(
+        (): undefined => undefined,
+        (error: unknown): unknown => error,
+      );
+
+      expect(handledError).toBeInstanceOf(SubscriptionHandlerTerminalError);
+      expect((handledError as Error).message).toContain('durable pull did not settle socket event');
+      expect(repairing.calledOnceWithExactly(controller)).toBe(true);
+      expect(link.pull.contiguousAppliedToken).toEqual(eventCursor);
 
       unsubscribe();
       await controller.dispose();

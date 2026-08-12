@@ -11,7 +11,7 @@ import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createJsonRpcErrorResponse, createJsonRpcRequest, JsonRpcErrorCodes } from '../src/json-rpc.js';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, Message, MessagesRead, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { DwnRpcError, SocketUnavailableError } from '../src/dwn-rpc-error.js';
+import { DwnRpcError, SocketUnavailableError, SubscriptionHandlerTerminalError } from '../src/dwn-rpc-error.js';
 
 /**
  * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
@@ -1136,6 +1136,66 @@ describe('WebSocketDwnRpcClient', () => {
         expect(sentAcks[1].params.cursor).toEqual(tokenTwo);
         expect(received).toHaveLength(1);
         expect(subscriptions.size).toBe(1);
+      });
+
+      it('should leave a terminally failed event and its successors unacknowledged', async () => {
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+
+        let subHandler: any;
+        const sentAcks: any[] = [];
+        const close = sinon.stub().resolves();
+        const socket = {
+          subscribe: async (_request: any, handler: any): Promise<any> => {
+            subHandler = handler;
+            return {
+              response: {
+                jsonrpc : '2.0',
+                id      : 'id',
+                result  : {
+                  reply: {
+                    status       : { code: 200, detail: 'OK' },
+                    subscription : { id: 'terminal-reject-sub', close: async (): Promise<void> => {} },
+                  },
+                },
+              },
+              close,
+            };
+          },
+          send: (request: any): void => {
+            if (request.method === 'rpc.ack') {
+              sentAcks.push(request);
+            }
+          },
+        };
+        const subscriptions = new Map();
+        const connection = { socket, subscriptions, url: socketDwnUrl };
+        const handler: DwnSubscriptionHandler = async (msg) => {
+          if ('cursor' in msg && (msg as any).cursor?.messageCid === 'cid-1') {
+            throw new SubscriptionHandlerTerminalError('durable admission failed');
+          }
+        };
+
+        await WebSocketDwnRpcClient['subscriptionRequest'](connection as any, alice.did, message, handler);
+
+        const tokenOne = { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' };
+        const tokenTwo = { streamId: 's1', epoch: 'e1', position: '2', messageCid: 'cid-2' };
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-1',
+          result  : { subscription: { type: 'event', cursor: tokenOne, event: { message } } },
+        });
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-2',
+          result  : { subscription: { type: 'event', cursor: tokenTwo, event: { message } } },
+        });
+
+        await waitForCondition(() => subscriptions.size === 0);
+        expect(sentAcks).toHaveLength(0);
+        expect(close.calledOnce).toBe(true);
       });
 
       it('should send rpc.ack when cursor events arrive', async () => {

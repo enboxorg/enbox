@@ -36,6 +36,7 @@ async function waitFor(
 describe('sync live handler path — real subscriptions via LocalDwnRpcShim', () => {
   let testHarness: PlatformAgentTestHarness;
   let tenant: string;
+  let remoteMessageQueries = 0;
 
   const testProtocol: ProtocolDefinition = {
     published : true,
@@ -69,10 +70,23 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
 
     // Wire the local DWN RPC shim so pull subscriptions route to the in-process DWN.
     const localRpc = createLocalDwnRpc(testHarness.dwn);
-    (testHarness.agent as any).rpc = localRpc;
+    const sendDwnRequest = localRpc.sendDwnRequest.bind(localRpc);
+    (testHarness.agent as any).rpc = {
+      ...localRpc,
+      sendDwnRequest: async (request: any): Promise<any> => {
+        if (
+          request.message?.descriptor?.interface === 'Messages' &&
+          request.message?.descriptor?.method === 'Query'
+        ) {
+          remoteMessageQueries++;
+        }
+        return sendDwnRequest(request);
+      },
+    };
   });
 
   beforeEach(async () => {
+    remoteMessageQueries = 0;
     await testHarness.clearDwnStores();
   });
 
@@ -121,16 +135,16 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     expect(reply.fingerprint).toBeDefined();
   });
 
-  it('should advance the durable pull checkpoint after a live event wakes reconciliation', async () => {
+  it('should admit live socket events without querying the durable feed again', async () => {
     const syncEngine = testHarness.agent.sync as SyncEngineLevel;
     await syncEngine.setIdentityOptions({
       did     : tenant,
       options : { protocols: 'all' },
     });
 
-    // Start live sync FIRST — this opens real cursorless wake subscriptions
-    // via the shim. Durable queries, not subscription replay, own catch-up.
+    // Start live sync first so the initial durable baseline has settled.
     await syncEngine.startSync({ interval: '30s' });
+    remoteMessageQueries = 0;
 
     const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
@@ -140,9 +154,9 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     });
     expect(protoReply.status.code).toBe(202);
 
-    // Write a record AFTER sync starts — this triggers a live event
-    // through the EventLog subscription and wakes a durable pull pass.
-    const { reply: writeReply } = await testHarness.agent.dwn.processRequest({
+    // Write a record after sync starts. Its complete subscription event should
+    // enter the normal socket admission path without a redundant feed query.
+    const { messageCid: writeMessageCid, reply: writeReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
       messageType   : DwnInterface.RecordsWrite,
@@ -156,8 +170,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     });
     expect(writeReply.status.code).toBe(202);
 
-    // Poll until the durable pull query advances its checkpoint. The
-    // subscription event itself carries no progress authority.
+    // Poll until the admitted event's persisted cursor becomes visible.
     const links = (): any[] => [...(syncEngine as any)._linkControllers.values()]
       .map((controller: any): any => controller.link);
     const getLink = (): any => links().find((link: any) =>
@@ -167,17 +180,16 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
 
     await waitFor(() => {
       const link = getLink();
-      return link?.pull?.contiguousAppliedToken?.messageCid !== undefined && link.status === 'live';
+      return link?.pull?.contiguousAppliedToken?.messageCid === writeMessageCid && link.status === 'live';
     }, 5000);
 
     const activeLink = getLink();
     expect(activeLink).toBeDefined();
     expect(activeLink.status).toBe('live');
-    // The checkpoint came from MessagesQuery after durable admission, not from
-    // the subscription event cursor.
     expect(activeLink.pull.contiguousAppliedToken).toBeDefined();
     expect(activeLink.pull.contiguousAppliedToken.position).toBeDefined();
-    expect(activeLink.pull.contiguousAppliedToken.messageCid).toBeDefined();
+    expect(activeLink.pull.contiguousAppliedToken.messageCid).toBe(writeMessageCid);
+    expect(remoteMessageQueries).toBe(0);
 
     await syncEngine.stopSync();
   });

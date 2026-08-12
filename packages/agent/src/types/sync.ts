@@ -282,19 +282,20 @@ export async function computeAuthorizationEpoch(input:
  * replication link. All tokens belong to the same `(streamId, epoch)`.
  *
  * This is the **durable** replication checkpoint persisted to the
- * `replicationLinkStore`. Subscription callbacks only announce that a feed
- * may have advanced. Durable reconciliation resumes from
- * `contiguousAppliedToken`, settles each page, and then commits its cursor.
- * Idempotent DWN admission makes reconciliation after a crash safe.
+ * `replicationLinkStore`. A fully admitted socket event may advance it on the
+ * live path; durable reconciliation resumes from the same token for baseline,
+ * reconnect, and recovery. Idempotent DWN admission makes replay after a crash
+ * safe.
  */
 export type DirectionCheckpoint = {
   /**
    * The highest feed token through which all earlier work for this link has
    * been durably settled. This is the resume point after crash or reconnect.
    *
-   * A completed durable-feed page advances it during reconciliation; an
-   * equal paired-subscription snapshot may establish the initial baseline.
-   * A subscription notification alone is never checkpoint evidence.
+   * A completed durable-feed page, or an authenticated socket event admitted
+   * through the same closure policy, advances it. An equal paired-subscription
+   * snapshot may establish the initial baseline. A lifecycle notification or
+   * unprocessed event alone is never checkpoint evidence.
    * Positions may be sparse for filtered feeds.
    */
   contiguousAppliedToken?: ProgressToken;
@@ -627,7 +628,7 @@ export type SyncEvent =
   }
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
-  /** Whether accepted remote-feed wakes are covered by a completed durable pull pass. */
+  /** Whether all accepted remote pull work is settled. */
   | SyncEventBase & { type: 'pull:currentness-change'; from: boolean; to: boolean }
   /** A pull checkpoint was durably committed. */
   | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
@@ -754,7 +755,7 @@ export type ReplicationLinkSnapshot = {
   status: LinkStatus;
   /** Per-link connectivity state. */
   connectivity: SyncConnectivityState;
-  /** Whether every accepted remote-feed wake is covered by a completed pull pass. */
+  /** Whether all accepted remote pull work is settled. */
   isPullCurrent: boolean;
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;

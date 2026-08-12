@@ -33,6 +33,7 @@ export class SyncLinkController {
   private _localSubscription?: SyncLinkSubscription;
   private _isPullCurrent = false;
   private _isDeactivating = false;
+  private _pendingLivePullDeliveries = 0;
   private _pullSnapshot?: SyncFeedSnapshot;
   private _replicationGeneration = 0;
   private _pushSnapshot?: SyncFeedSnapshot;
@@ -53,12 +54,12 @@ export class SyncLinkController {
     return this._active && this.executor.isReady;
   }
 
-  /** Whether every durable pull wake accepted so far is covered by a completed pass. */
+  /** Whether every accepted remote pull event or wake is covered by settled work. */
   public get isPullCurrent(): boolean {
     return this._active && this._isPullCurrent;
   }
 
-  /** Record that the remote feed may have advanced. */
+  /** Record that accepted remote pull work is not yet settled. */
   public markPullPending(): boolean {
     if (!this._active || !this._isPullCurrent) {
       return false;
@@ -70,13 +71,14 @@ export class SyncLinkController {
 
   /**
    * Mark the pull side current only for the expected replication generation
-   * and only when no trailing durable pull wake remains queued.
+   * and only when no trailing pull wake or live delivery remains.
    */
   public markPullCurrent(expectedReplicationGeneration: number): boolean {
     if (
       this._isDeactivating ||
       !this.isReplicationGenerationCurrent(expectedReplicationGeneration) ||
       this.executor.hasPending('pull') ||
+      this._pendingLivePullDeliveries > 0 ||
       this._isPullCurrent
     ) {
       return false;
@@ -84,6 +86,29 @@ export class SyncLinkController {
 
     this._isPullCurrent = true;
     return true;
+  }
+
+  /** Retain one socket delivery until its ordered admission and checkpoint commit settle. */
+  public beginLivePullDelivery(expectedReplicationGeneration: number): boolean {
+    if (
+      this._isDeactivating ||
+      !this.isReplicationGenerationCurrent(expectedReplicationGeneration) ||
+      (!this._isPullCurrent && this._pendingLivePullDeliveries === 0)
+    ) {
+      return false;
+    }
+
+    this._pendingLivePullDeliveries++;
+    return true;
+  }
+
+  /** Release one socket delivery only from the replication generation that retained it. */
+  public endLivePullDelivery(expectedReplicationGeneration: number): void {
+    if (!this.isReplicationGenerationCurrent(expectedReplicationGeneration)) {
+      return;
+    }
+
+    this._pendingLivePullDeliveries = Math.max(0, this._pendingLivePullDeliveries - 1);
   }
 
   /**
@@ -147,6 +172,7 @@ export class SyncLinkController {
   public resetReplicationGeneration(): void {
     this._replicationGeneration++;
     this._isPullCurrent = false;
+    this._pendingLivePullDeliveries = 0;
     this._pullSnapshot = undefined;
     this._pushSnapshot = undefined;
     this.executor.reset();

@@ -5,6 +5,8 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 
 import { Level } from 'level';
+import { Message } from '@enbox/dwn-sdk-js';
+import { SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
@@ -101,15 +103,26 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     expect(await openSubscription(fixture)).toBe(true);
     controller.markReplicationReady();
     const freshHandler = fixture.handlers[1];
+    const cursor = tokenIn('durable-stream', 'durable-epoch', '1');
+    fixture.resume.callsFake(async (): Promise<void> => {
+      controller.executor.consumePending('pull');
+      controller.link.pull.contiguousAppliedToken = cursor;
+      (fixture.engine as any).markPullCurrent(controller, controller.replicationGeneration);
+    });
+    const event = {
+      type  : 'event',
+      cursor,
+      event : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+    };
 
-    await staleHandler({ type: 'event' });
+    await staleHandler(event);
     expect(fixture.repairing.notCalled).toBe(true);
     expect(fixture.resume.notCalled).toBe(true);
 
     // The replacement subscription's callbacks flow normally.
-    await freshHandler({ type: 'event' });
+    await freshHandler(event);
     expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
-    expect(controller.link.pull.contiguousAppliedToken).toBeUndefined();
+    expect(controller.link.pull.contiguousAppliedToken).toEqual(cursor);
 
     await controller.dispose();
   });
@@ -413,6 +426,243 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await fixture.controller.dispose();
   });
 
+  it('should admit a current socket event and persist its cursor before completing the handler', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    expect(await openSubscription(fixture)).toBe(true);
+    controller.markReplicationReady();
+    controller.markPullCurrent(controller.replicationGeneration);
+
+    const message = {
+      descriptor: {
+        interface        : 'Protocols',
+        method           : 'Configure',
+        messageTimestamp : '2026-08-12T00:00:00.000000Z',
+      },
+    };
+    const messageCid = await Message.getCid(message as any);
+    const cursor: ProgressToken = {
+      epoch    : 'event-epoch',
+      messageCid,
+      position : '10',
+      streamId : 'event-stream',
+    };
+    const admitRemoteFeedPage = sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
+      admittedCids : [messageCid],
+      kind         : 'processed',
+    });
+    const persistStarted = deferred();
+    const releasePersist = deferred();
+    const persistCheckpoint = sinon.stub().callsFake(async (): Promise<void> => {
+      persistStarted.resolve();
+      await releasePersist.promise;
+    });
+    (engine as any)._replicationLinkStore = { persistCheckpoint };
+
+    const event = {
+      type              : 'event',
+      cursor,
+      encodedData       : 'AQ',
+      event             : { message },
+      isLatestBaseState : true,
+      messageCid,
+      seq               : '10',
+    };
+    let settled = false;
+    const handled = fixture.handlers[0](event).then((): void => { settled = true; });
+    await persistStarted.promise;
+
+    expect(settled).toBe(false);
+    expect(controller.isPullCurrent).toBe(false);
+    expect(admitRemoteFeedPage.calledOnce).toBe(true);
+    expect(admitRemoteFeedPage.firstCall.args[1]).toEqual([{
+      encodedData       : 'AQ',
+      isLatestBaseState : true,
+      message,
+      messageCid,
+      seq               : '10',
+    }]);
+    expect(fixture.resume.notCalled).toBe(true);
+
+    releasePersist.resolve();
+    await handled;
+
+    expect(settled).toBe(true);
+    expect(controller.isPullCurrent).toBe(true);
+    expect(controller.link.pull.contiguousAppliedToken).toEqual(cursor);
+    expect(persistCheckpoint.calledOnceWithExactly(controller.link, 'pull')).toBe(true);
+
+    admitRemoteFeedPage.resetHistory();
+    persistCheckpoint.resetHistory();
+    const transitions: boolean[] = [];
+    const unsubscribe = engine.on((syncEvent): void => {
+      if (syncEvent.type === 'pull:currentness-change') {
+        transitions.push(syncEvent.to);
+      }
+    });
+    await fixture.handlers[0](event);
+
+    expect(admitRemoteFeedPage.notCalled).toBe(true);
+    expect(persistCheckpoint.notCalled).toBe(true);
+    expect(fixture.resume.notCalled).toBe(true);
+    expect(fixture.repairing.notCalled).toBe(true);
+    expect(controller.isPullCurrent).toBe(true);
+    expect(transitions).toEqual([]);
+    unsubscribe();
+    await controller.dispose();
+  });
+
+  it('should end a live subscription when an event is deferred', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    fixture.repairing.callsFake(async (activeController: SyncLinkController): Promise<void> => {
+      activeController.resetReplicationGeneration();
+    });
+    expect(await openSubscription(fixture)).toBe(true);
+    controller.markReplicationReady();
+    controller.markPullCurrent(controller.replicationGeneration);
+
+    const message = {
+      descriptor: {
+        interface        : 'Protocols',
+        method           : 'Configure',
+        messageTimestamp : '2026-08-12T00:00:00.000000Z',
+      },
+    };
+    const messageCid = await Message.getCid(message as any);
+    const cursor: ProgressToken = {
+      epoch    : 'event-epoch',
+      messageCid,
+      position : '10',
+      streamId : 'event-stream',
+    };
+    sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
+      admittedCids : [],
+      detail       : 'waiting for replication support',
+      kind         : 'deferred',
+      messageCid,
+    });
+    const persistCheckpoint = sinon.stub().resolves();
+    (engine as any)._replicationLinkStore = { persistCheckpoint };
+    const warn = sinon.stub(console, 'warn');
+
+    const handledError = await fixture.handlers[0]({
+      type              : 'event',
+      cursor,
+      event             : { message },
+      isLatestBaseState : true,
+      messageCid,
+    }).then(
+      (): undefined => undefined,
+      (error: unknown): unknown => error,
+    );
+
+    expect(handledError).toBeInstanceOf(SubscriptionHandlerTerminalError);
+    expect((handledError as Error).message).toContain('waiting for replication support');
+    expect(warn.calledOnce).toBe(true);
+    expect(warn.firstCall.args[0]).toContain('live pull delivery');
+    expect(warn.firstCall.args[0]).toContain('deferred');
+    expect(persistCheckpoint.notCalled).toBe(true);
+    expect(controller.link.pull.contiguousAppliedToken).toBeUndefined();
+    expect(fixture.repairing.calledOnceWithExactly(controller)).toBe(true);
+    expect(controller.isPullCurrent).toBe(false);
+    await controller.dispose();
+  });
+
+  it('should end a live subscription when durable fallback stops before its event', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller } = fixture;
+    expect(await openSubscription(fixture)).toBe(true);
+    controller.markReplicationReady();
+    controller.link.pull.contiguousAppliedToken = tokenIn('event-stream', 'event-epoch', '9');
+    fixture.resume.callsFake(async (): Promise<void> => {
+      controller.executor.consumePending('pull');
+    });
+
+    const cursor = tokenIn('event-stream', 'event-epoch', '10');
+    const handledError = await fixture.handlers[0]({
+      type              : 'event',
+      cursor,
+      event             : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+      isLatestBaseState : true,
+    }).then(
+      (): undefined => undefined,
+      (error: unknown): unknown => error,
+    );
+
+    expect(handledError).toBeInstanceOf(SubscriptionHandlerTerminalError);
+    expect((handledError as Error).message).toContain('durable pull did not settle socket event');
+    expect(controller.link.pull.contiguousAppliedToken).toEqual(tokenIn('event-stream', 'event-epoch', '9'));
+    expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
+    expect(fixture.repairing.calledOnceWithExactly(controller)).toBe(true);
+    await controller.dispose();
+  });
+
+  it('should leave a failed socket event and its queued successor uncommitted', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    fixture.repairing.callsFake(async (activeController: SyncLinkController): Promise<void> => {
+      activeController.resetReplicationGeneration();
+    });
+    expect(await openSubscription(fixture)).toBe(true);
+    controller.markReplicationReady();
+    controller.markPullCurrent(controller.replicationGeneration);
+
+    const message = {
+      descriptor: {
+        interface        : 'Protocols',
+        method           : 'Configure',
+        messageTimestamp : '2026-08-12T00:00:00.000000Z',
+      },
+    };
+    const messageCid = await Message.getCid(message as any);
+    const cursor: ProgressToken = {
+      epoch    : 'event-epoch',
+      messageCid,
+      position : '10',
+      streamId : 'event-stream',
+    };
+    sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({ admittedCids: [], kind: 'processed' });
+    const persistStarted = deferred();
+    const rejectPersist = deferred();
+    (engine as any)._replicationLinkStore = {
+      persistCheckpoint: sinon.stub().callsFake(async (): Promise<void> => {
+        persistStarted.resolve();
+        await rejectPersist.promise;
+        throw new Error('storage unavailable');
+      }),
+    };
+
+    const handled = fixture.handlers[0]({
+      type              : 'event',
+      cursor,
+      event             : { message },
+      isLatestBaseState : true,
+      messageCid,
+    });
+    const handledError = handled.then(
+      (): undefined => undefined,
+      (error: unknown): unknown => error,
+    );
+    await persistStarted.promise;
+    const successor = fixture.handlers[0]({
+      type              : 'event',
+      cursor            : { ...cursor, position: '11' },
+      event             : { message },
+      isLatestBaseState : true,
+      messageCid,
+    });
+    rejectPersist.resolve();
+
+    expect(await handledError).toBeInstanceOf(SubscriptionHandlerTerminalError);
+    await successor;
+    expect(controller.link.pull.contiguousAppliedToken).toBeUndefined();
+    expect((engine as any).admitRemoteFeedPage.calledOnce).toBe(true);
+    expect(fixture.repairing.calledOnceWithExactly(controller)).toBe(true);
+    expect(controller.isPullCurrent).toBe(false);
+    await controller.dispose();
+  });
+
   it('should refresh delegated role authorization for each foreign-context subscription request', async () => {
     const fixture = createEngineFixture(db);
     const grantA = { recordId: 'grant-a' };
@@ -472,6 +722,90 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     expect(getPermissionForRequest.alwaysCalledWithMatch({ forceRefresh: true })).toBe(true);
     expect(fixture.sendDwnRequest.firstCall.args[0].targetDid).toBe(DID);
     await fixture.controller.dispose();
+  });
+
+  it('should admit a current role event without querying the durable feed', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    const roleAuthorization = {
+      kind         : 'role' as const,
+      actorDid     : 'did:example:member',
+      protocolRole : 'notebook/page/editor',
+      roleRecordId : 'role-a',
+    };
+    controller.link.authorization = roleAuthorization;
+    controller.link.delegateDid = 'did:example:delegate';
+    controller.link.scope = {
+      kind          : 'context',
+      protocol      : 'https://example.com/notebooks',
+      contextId     : 'notebook-a/page-a',
+      protocolPaths : ['notebook/page/delta'],
+    };
+    controller.markReplicationReady();
+    controller.markPullCurrent(controller.replicationGeneration);
+
+    const message = {
+      recordId   : 'delta-a',
+      contextId  : 'notebook-a/page-a/delta-a',
+      descriptor : {
+        interface        : 'Records',
+        method           : 'Write',
+        messageTimestamp : '2026-08-12T00:00:00.000000Z',
+        protocol         : controller.link.scope.protocol,
+        protocolPath     : 'notebook/page/delta',
+      },
+    };
+    const initialWrite = { ...message, recordId: 'delta-initial' };
+    const messageCid = await Message.getCid(message as any);
+    const cursor: ProgressToken = {
+      epoch    : 'event-epoch',
+      messageCid,
+      position : '10',
+      streamId : 'event-stream',
+    };
+    const admitRemoteFeedPage = sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
+      admittedCids : [messageCid],
+      kind         : 'processed',
+    });
+    const persistCheckpoint = sinon.stub().resolves();
+    (engine as any)._replicationLinkStore = { persistCheckpoint };
+
+    await (engine as any).handleLivePullMessage({
+      controller,
+      did        : DID,
+      dwnUrl     : REMOTE,
+      eventScope : {},
+      isStale    : (): boolean => false,
+      link       : controller.link,
+      linkKey    : LINK_KEY,
+    }, {
+      type              : 'event',
+      cursor,
+      encodedData       : 'AQ',
+      event             : { initialWrite, message },
+      isLatestBaseState : true,
+      messageCid,
+    });
+
+    expect(admitRemoteFeedPage.calledOnce).toBe(true);
+    expect(admitRemoteFeedPage.firstCall.args[0]).toMatchObject({
+      authorization : roleAuthorization,
+      delegateDid   : controller.link.delegateDid,
+      did           : DID,
+      dwnUrl        : REMOTE,
+      scope         : controller.link.scope,
+    });
+    expect(admitRemoteFeedPage.firstCall.args[1][0]).toMatchObject({
+      encodedData       : 'AQ',
+      initialWrite,
+      isLatestBaseState : true,
+      message,
+      messageCid,
+      seq               : cursor.position,
+    });
+    expect(fixture.resume.notCalled).toBe(true);
+    expect(controller.link.pull.contiguousAppliedToken).toEqual(cursor);
+    await controller.dispose();
   });
 
   it('should reject and close a role subscription resolved through a replacement role record', async () => {
