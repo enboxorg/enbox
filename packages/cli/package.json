@@ -1,6 +1,6 @@
 {
   "name": "@enbox/cli",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "description": "CLI helpers and connect handlers for Enbox",
   "type": "module",
   "main": "./dist/esm/index.js",

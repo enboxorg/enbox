@@ -1,5 +1,15 @@
 # @enbox/browser
 
+## 0.3.75
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @enbox/agent@0.8.44
+  - @enbox/api@0.6.83
+  - @enbox/auth@0.6.90
+  - @enbox/protocols@0.2.110
+
 ## 0.3.74
 
 ### Patch Changes
