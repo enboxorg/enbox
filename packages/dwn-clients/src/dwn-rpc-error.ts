@@ -26,8 +26,8 @@ export class SubscriptionHandlerTerminalError extends Error {
  * transmitted because the socket was unavailable or connection establishment
  * failed. A caller may safely retry according to its own policy.
  *
- * This is a delivery-certainty boundary only. It does not request HTTP
- * fallback, and the RPC client never changes transports automatically.
+ * This is a delivery-certainty boundary only. Socket-preferred routing may
+ * safely fall back to HTTP on this error; explicit WebSocket requests do not.
  */
 export class SocketUnavailableError extends Error {
   constructor(message: string) {

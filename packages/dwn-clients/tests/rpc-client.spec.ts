@@ -6,9 +6,10 @@ import sinon from 'sinon';
 import { CryptoUtils } from '@enbox/crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
-  createJsonRpcErrorResponse, createJsonRpcSuccessResponse,
-  DwnServerInfoCacheMemory, HttpDwnRpcClient,
-  JsonRpcErrorCodes, normalizeDwnRpcAuthEndpoint,
+  createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSuccessResponse,
+  DwnServerInfoCacheMemory, HttpDwnRpcClient, JsonRpcErrorCodes, JsonRpcSocket,
+  normalizeDwnRpcAuthEndpoint, RateLimitError, SocketUnavailableError, utf8ByteLength,
+  WS_JSON_RPC_ENVELOPE_BYTES,
 } from '../src/index.js';
 import { DidRpcMethod, EnboxRpcClient, HttpEnboxRpcClient, WebSocketEnboxRpcClient } from '../src/rpc-client.js';
 import { Jws, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
@@ -16,7 +17,7 @@ import { Jws, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
 
 describe('RPC Clients', () => {
-  describe('EnboxRpcClient transport routing', () => {
+  describe('EnboxRpcClient socket-preferred routing', () => {
     const httpEndpoint = 'http://socket-route.example:3000/';
     const socketKey = 'ws://socket-route.example:3000';
 
@@ -26,9 +27,12 @@ describe('RPC Clients', () => {
       }).connections;
     }
 
-    function seedHealthySocket(): sinon.SinonStub {
-      const request = sinon.stub().resolves({
-        result: { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+    function seedConnectedSocket(): sinon.SinonStub {
+      const request = sinon.stub().callsFake(async (rpcRequest: { method: string }): Promise<unknown> => {
+        if (rpcRequest.method === 'dwn.applyReplicatedMessage') {
+          return { result: { result: { kind: 'Applied' } } };
+        }
+        return { result: { reply: { status: { code: 200, detail: 'OK' }, entries: [] } } };
       });
       poolOf().set(socketKey, {
         socket        : { isConnected: true, request, send: sinon.stub() },
@@ -38,24 +42,39 @@ describe('RPC Clients', () => {
       return request;
     }
 
-    function recordingHttpClient(): { client: EnboxRpc; sent: unknown[] } {
+    function recordingHttpClient(): { applied: unknown[]; client: EnboxRpc; sent: unknown[] } {
+      const applied: unknown[] = [];
       const sent: unknown[] = [];
+      sinon.stub(HttpDwnRpcClient.prototype, 'sendDwnRequest').callsFake(async (request: unknown): Promise<unknown> => {
+        sent.push(request);
+        return { status: { code: 200, detail: 'OK' } };
+      });
+      sinon.stub(HttpDwnRpcClient.prototype, 'applyReplicatedMessage').callsFake(
+        async (request: unknown): Promise<{ kind: 'Applied' }> => {
+          applied.push(request);
+          return { kind: 'Applied' };
+        }
+      );
       const client = {
-        get transportProtocols(): string[] { return ['http:', 'https:']; },
-        close          : async (): Promise<void> => {},
-        sendDidRequest : async (): Promise<never> => { throw new Error('unused'); },
-        sendDwnRequest : async (request: unknown): Promise<unknown> => {
-          sent.push(request);
-          return { status: { code: 200, detail: 'OK' } };
-        },
+        get transportProtocols(): string[] { return []; },
+        close                  : async (): Promise<void> => {},
+        sendDidRequest         : async (): Promise<never> => { throw new Error('unused'); },
+        sendDwnRequest         : async (): Promise<never> => { throw new Error('unused'); },
         applyReplicatedMessage : async (): Promise<never> => { throw new Error('unused'); },
         getServerInfo          : async (): Promise<never> => { throw new Error('unused'); },
       } as unknown as EnboxRpc;
-      return { client, sent };
+      return { applied, client, sent };
     }
 
     function queryMessage(): Record<string, unknown> {
       return { descriptor: { interface: 'Messages', method: 'Query', filters: [] } };
+    }
+
+    function replicatedWriteMessage(dataSize: number): Record<string, unknown> {
+      return {
+        recordId   : 'bafyreireplicated',
+        descriptor : { interface: 'Records', method: 'Write', dataSize },
+      };
     }
 
     afterEach(() => {
@@ -63,10 +82,10 @@ describe('RPC Clients', () => {
       sinon.restore();
     });
 
-    it('keeps an ordinary HTTP request on HTTP when a healthy pooled socket exists', async () => {
+    it('routes a control-plane request over an already-connected pooled socket', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
-      const socketRequest = seedHealthySocket();
+      const socketRequest = seedConnectedSocket();
 
       const reply = await rpcClient.sendDwnRequest({
         dwnUrl    : httpEndpoint,
@@ -74,25 +93,28 @@ describe('RPC Clients', () => {
         message   : queryMessage() as never,
       });
 
-      expect(socketRequest.called).toBe(false);
-      expect(sent).toHaveLength(1);
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(socketRequest.firstCall.args[0].method).toBe('dwn.processMessage');
+      expect(sent).toHaveLength(0);
       expect((reply as { status: { code: number } }).status.code).toBe(200);
     });
 
-    it('routes an ordinary HTTP request by its URL scheme when no socket exists', async () => {
+    it('falls back to HTTP when no pooled socket exists', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
+      const toJSON = sinon.stub().returns(queryMessage());
 
       await rpcClient.sendDwnRequest({
         dwnUrl    : httpEndpoint,
         targetDid : 'did:example:alice',
-        message   : queryMessage() as never,
+        message   : { ...queryMessage(), toJSON } as never,
       });
 
+      expect(toJSON.called).toBe(false);
       expect(sent).toHaveLength(1);
     });
 
-    it('keeps an ordinary HTTP request on HTTP when the pooled socket is not connected', async () => {
+    it('falls back to HTTP when the pooled socket is not connected', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
       poolOf().set(socketKey, {
@@ -110,10 +132,10 @@ describe('RPC Clients', () => {
       expect(sent).toHaveLength(1);
     });
 
-    it('keeps data-bearing requests on HTTP despite a healthy socket', async () => {
+    it('keeps data-bearing requests on HTTP despite a connected socket', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
-      const socketRequest = seedHealthySocket();
+      const socketRequest = seedConnectedSocket();
 
       await rpcClient.sendDwnRequest({
         dwnUrl    : httpEndpoint,
@@ -126,10 +148,10 @@ describe('RPC Clients', () => {
       expect(sent).toHaveLength(1);
     });
 
-    it('keeps Read messages on HTTP despite a healthy socket', async () => {
+    it('keeps Read messages on HTTP despite a connected socket', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
-      const socketRequest = seedHealthySocket();
+      const socketRequest = seedConnectedSocket();
 
       await rpcClient.sendDwnRequest({
         dwnUrl    : httpEndpoint,
@@ -141,10 +163,10 @@ describe('RPC Clients', () => {
       expect(sent).toHaveLength(1);
     });
 
-    it('keeps oversized frames on HTTP despite a healthy socket', async () => {
+    it('keeps oversized frames on HTTP despite a connected socket', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
-      const socketRequest = seedHealthySocket();
+      const socketRequest = seedConnectedSocket();
 
       await rpcClient.sendDwnRequest({
         dwnUrl    : httpEndpoint,
@@ -190,8 +212,8 @@ describe('RPC Clients', () => {
       expect((reply as { status: { code: number } }).status.code).toBe(200);
     });
 
-    it('keeps an ordinary HTTP request on HTTP when a caller supplies a ws override', async () => {
-      const { client: httpStub, sent } = recordingHttpClient();
+    it('keeps ordinary and replicated HTTP requests native when a caller supplies a ws override', async () => {
+      const { applied, client: httpStub, sent } = recordingHttpClient();
       const wsOverrideSent: unknown[] = [];
       const wsOverride = {
         get transportProtocols(): string[] { return ['ws:', 'wss:']; },
@@ -205,17 +227,51 @@ describe('RPC Clients', () => {
         getServerInfo          : async (): Promise<never> => { throw new Error('unused'); },
       } as unknown as EnboxRpc;
       const rpcClient = new EnboxRpcClient([httpStub, wsOverride]);
-      const socketRequest = seedHealthySocket();
+      const socketRequest = seedConnectedSocket();
 
       await rpcClient.sendDwnRequest({
         dwnUrl    : httpEndpoint,
         targetDid : 'did:example:alice',
         message   : queryMessage() as never,
       });
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(0) as never,
+      });
 
       expect(socketRequest.called).toBe(false);
       expect(wsOverrideSent).toHaveLength(0);
       expect(sent).toHaveLength(1);
+      expect(applied).toHaveLength(1);
+    });
+
+    it('keeps ordinary and replicated HTTP requests on a caller-supplied HTTP transport', async () => {
+      const customHttp = {
+        get transportProtocols(): string[] { return ['http:', 'https:']; },
+        close                  : async (): Promise<void> => {},
+        sendDidRequest         : async (): Promise<never> => { throw new Error('unused'); },
+        sendDwnRequest         : sinon.stub().resolves({ status: { code: 200, detail: 'OK' } }),
+        applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
+        getServerInfo          : async (): Promise<never> => { throw new Error('unused'); },
+      } as unknown as EnboxRpc;
+      const rpcClient = new EnboxRpcClient([customHttp]);
+      const socketRequest = seedConnectedSocket();
+
+      await rpcClient.sendDwnRequest({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : queryMessage() as never,
+      });
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(0) as never,
+      });
+
+      expect(socketRequest.called).toBe(false);
+      expect((customHttp.sendDwnRequest as sinon.SinonStub).calledOnce).toBe(true);
+      expect((customHttp.applyReplicatedMessage as sinon.SinonStub).calledOnce).toBe(true);
     });
 
     it('routes an http(s) subscription to a caller-supplied ws override', async () => {
@@ -251,7 +307,7 @@ describe('RPC Clients', () => {
     it('keeps every RecordsWrite on HTTP, including data-less and inline-data writes', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
-      const socketRequest = seedHealthySocket();
+      const socketRequest = seedConnectedSocket();
 
       // A metadata-only update: no request data, but dataSize > 0 — the
       // server refuses it over non-HTTP transports.
@@ -275,7 +331,7 @@ describe('RPC Clients', () => {
     it('keeps requests carrying HTTP-only caller semantics on HTTP', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
-      const socketRequest = seedHealthySocket();
+      const socketRequest = seedConnectedSocket();
 
       await rpcClient.sendDwnRequest({
         dwnUrl    : httpEndpoint,
@@ -296,10 +352,10 @@ describe('RPC Clients', () => {
       expect(sent).toHaveLength(2);
     });
 
-    it('keeps serializable message instances on their declared HTTP transport', async () => {
+    it('classifies serializable message instances by their wire representation', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
-      const socketRequest = seedHealthySocket();
+      const socketRequest = seedConnectedSocket();
 
       const readInstance = {
         toJSON: (): Record<string, unknown> => ({ descriptor: { interface: 'Records', method: 'Read' } }),
@@ -321,31 +377,241 @@ describe('RPC Clients', () => {
         message   : queryInstance as never,
       });
 
-      expect(socketRequest.called).toBe(false);
-      expect(sent).toHaveLength(2);
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(socketRequest.firstCall.args[0].params.message).toEqual(queryMessage());
+      expect(sent).toHaveLength(1);
     });
 
-    it('does not reroute ordinary HTTP requests based on their frame size', async () => {
+    it('measures the complete request against the socket frame budget', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
-      const socketRequest = seedHealthySocket();
+      const socketRequest = seedConnectedSocket();
       const targetDid = 'did:example:alice';
 
-      await rpcClient.sendDwnRequest({
-        dwnUrl  : httpEndpoint,
-        targetDid,
-        message : queryMessage() as never,
-      });
+      const frameSize = (padding: string): number => utf8ByteLength(JSON.stringify(createJsonRpcRequest(
+        '00000000-0000-0000-0000-000000000000',
+        'dwn.processMessage',
+        { target: targetDid, message: { descriptor: { interface: 'Messages', method: 'Query', padding } } },
+      )));
+      const exactPadding = 'x'.repeat(WS_JSON_RPC_ENVELOPE_BYTES - frameSize(''));
+      expect(frameSize(exactPadding)).toBe(WS_JSON_RPC_ENVELOPE_BYTES);
 
       await rpcClient.sendDwnRequest({
         dwnUrl  : httpEndpoint,
         targetDid,
-        message : {
-          descriptor: { interface: 'Messages', method: 'Query', padding: 'x'.repeat(128 * 1024) },
+        message : { descriptor: { interface: 'Messages', method: 'Query', padding: exactPadding } } as never,
+      });
+      expect(socketRequest.calledOnce).toBe(true);
+
+      await rpcClient.sendDwnRequest({
+        dwnUrl  : httpEndpoint,
+        targetDid,
+        message : { descriptor: { interface: 'Messages', method: 'Query', padding: `${exactPadding}x` } } as never,
+      });
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(sent).toHaveLength(1);
+    });
+
+    it('falls back to HTTP only when the socket proves the request was not sent', async () => {
+      const { client: httpStub, sent } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const request = seedConnectedSocket();
+      request.rejects(new SocketUnavailableError('socket closed before send'));
+
+      await rpcClient.sendDwnRequest({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : queryMessage() as never,
+      });
+      expect(sent).toHaveLength(1);
+
+      const uncertain = new Error('request timed out');
+      request.rejects(uncertain);
+      const error = await rpcClient.sendDwnRequest({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : queryMessage() as never,
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBe(uncertain);
+      expect(sent).toHaveLength(1);
+    });
+
+    it('applies a replayable message over the existing pooled socket', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+      const data = new Blob([new Uint8Array([1, 2, 3])]);
+
+      const result = await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(data.size) as never,
+        data,
+      });
+
+      expect(result).toEqual({ kind: 'Applied' });
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(socketRequest.firstCall.args[0].method).toBe('dwn.applyReplicatedMessage');
+      expect(socketRequest.firstCall.args[0].params.encodedData).toBe('AQID');
+      expect(applied).toHaveLength(0);
+    });
+
+    it('does not normalize a replication message when no socket is available', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const toJSON = sinon.stub().returns(replicatedWriteMessage(0));
+
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : { toJSON } as never,
+      });
+
+      expect(toJSON.called).toBe(false);
+      expect(applied).toHaveLength(1);
+    });
+
+    it('keeps a serializable data-bearing apply without data on HTTP', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+      const message = { toJSON: (): Record<string, unknown> => replicatedWriteMessage(3) };
+
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : message as never,
+      });
+
+      expect(socketRequest.called).toBe(false);
+      expect(applied).toHaveLength(1);
+    });
+
+    it('keeps replicated apply on HTTP without a connected socket', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(0) as never,
+      });
+      expect(applied).toHaveLength(1);
+
+      poolOf().set(socketKey, {
+        socket        : { isConnected: false, request: sinon.stub() },
+        subscriptions : new Map(),
+        url           : `${socketKey}/`,
+      });
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(0) as never,
+      });
+      expect(applied).toHaveLength(2);
+    });
+
+    it('keeps one-shot streams and oversized replicated applies on HTTP', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      });
+
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(3) as never,
+        data      : stream,
+      });
+      expect(stream.locked).toBe(false);
+
+      const oversized = new Blob([new Uint8Array(WS_JSON_RPC_ENVELOPE_BYTES)]);
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(oversized.size) as never,
+        data      : oversized,
+      });
+
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : {
+          descriptor : { interface: 'Protocols', method: 'Configure' },
+          padding    : 'x'.repeat(WS_JSON_RPC_ENVELOPE_BYTES),
         } as never,
       });
+
       expect(socketRequest.called).toBe(false);
-      expect(sent).toHaveLength(2);
+      expect(applied).toHaveLength(3);
+    });
+
+    it('keeps replicated applies with HTTP-only caller semantics on HTTP', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(0) as never,
+        signal    : AbortSignal.timeout(10_000),
+      });
+      await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(0) as never,
+        timeoutMs : 5_000,
+      });
+
+      expect(socketRequest.called).toBe(false);
+      expect(applied).toHaveLength(2);
+    });
+
+    it('does not fall back replicated apply after uncertain socket delivery', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const request = seedConnectedSocket();
+      request.rejects(new SocketUnavailableError('socket closed before send'));
+
+      const params = {
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(0) as never,
+      };
+      await rpcClient.applyReplicatedMessage(params);
+      expect(applied).toHaveLength(1);
+
+      const uncertain = new Error('request timed out');
+      request.rejects(uncertain);
+      const error = await rpcClient.applyReplicatedMessage(params).catch((caught: unknown) => caught);
+      expect(error).toBe(uncertain);
+      expect(applied).toHaveLength(1);
+    });
+
+    it('preserves replicated-apply rate limits over the socket', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const request = seedConnectedSocket();
+      request.resolves({
+        error: { code: JsonRpcErrorCodes.TooManyRequests, message: 'slow down', data: { retryAfterSec: 7 } },
+      });
+
+      const error = await rpcClient.applyReplicatedMessage({
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(0) as never,
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterSec).toBe(7);
+      expect(applied).toHaveLength(0);
     });
 
     it('routes a request with an explicit ws URL to the socket transport', async () => {
@@ -398,10 +664,11 @@ describe('RPC Clients', () => {
       expect(sent).toHaveLength(0);
     });
 
-    it('serves a live sequence with subscriptions on the socket and ordinary traffic on HTTP', async () => {
+    it('uses one pooled socket for live, control, and replayable replication traffic', async () => {
       const rpcClient = new EnboxRpcClient();
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const socketSend = sinon.spy(WebSocketEnboxRpcClient.prototype, 'sendDwnRequest');
+      const socketRequest = sinon.spy(JsonRpcSocket.prototype, 'request');
 
       try {
         // 1. A subscription over the http URL establishes the pooled socket.
@@ -414,9 +681,9 @@ describe('RPC Clients', () => {
         });
         expect(subscribeReply.status.code).toBe(200);
         expect(socketSend.callCount).toBe(1);
+        socketRequest.resetHistory();
 
-        // 2. Ordinary traffic remains on HTTP after the subscription has
-        // established a healthy pooled socket.
+        // 2. Bounded control traffic reuses the connected pooled socket.
         const protocolDefinition = {
           protocol  : 'http://socket-routing-test.example/protocol',
           published : true,
@@ -461,6 +728,28 @@ describe('RPC Clients', () => {
         });
         expect(writeReply.status.code).toBe(202);
         expect(socketSend.callCount).toBe(1);
+
+        // 4. Replication of a replayable record also reuses the socket.
+        const replicatedData = new TextEncoder().encode('socket replicated apply');
+        const replicatedWrite = await RecordsWrite.create({
+          signer       : Jws.createSigner(alice),
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'application/octet-stream',
+          data         : replicatedData,
+        });
+        const applyResult = await rpcClient.applyReplicatedMessage({
+          dwnUrl    : testDwnUrl,
+          targetDid : alice.did,
+          message   : replicatedWrite,
+          data      : new Blob([replicatedData]),
+        });
+        expect(applyResult.kind).toBe('Applied');
+        expect(socketRequest.getCalls().map((call) => call.args[0].method)).toEqual([
+          'dwn.processMessage',
+          'dwn.processMessage',
+          'dwn.applyReplicatedMessage',
+        ]);
 
         await subscribeReply.subscription?.close();
       } finally {

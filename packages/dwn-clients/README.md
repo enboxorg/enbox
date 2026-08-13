@@ -10,7 +10,7 @@ Client libraries and shared types for communicating with [DWN Servers](../dwn-se
 |---|---|
 | `HttpDwnRpcClient` | HTTP client for DWN JSON-RPC endpoints |
 | `WebSocketDwnRpcClient` | WebSocket client for DWN JSON-RPC with subscriptions |
-| `EnboxRpcClient` | Transport multiplexer — routes to HTTP or WebSocket based on URL scheme |
+| `EnboxRpcClient` | Transport multiplexer — uses a connected pooled WebSocket for bounded control and small byte-backed replication traffic |
 | `HttpEnboxRpcClient` | HTTP client with DID RPC support |
 | `WebSocketEnboxRpcClient` | WebSocket client with DID RPC support |
 | `DwnRegistrar` | HTTP client for DWN tenant registration (proof-of-work challenge flow) |

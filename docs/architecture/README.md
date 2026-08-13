@@ -31,6 +31,8 @@ Sync is centered on DWN records and protocol scopes:
 - Wallets and apps register the protocols they are allowed to sync.
 - Live sync uses server-delivered replication messages where available.
 - Durable sync fills gaps through pull/push paths after reconnects.
+- Bounded control requests and small byte-backed replication pushes reuse an
+  existing connected WebSocket; streaming and larger pushes use HTTP.
 - Large record data is stored through the DWN data store and must remain
   readable through both live and durable replication paths.
 
