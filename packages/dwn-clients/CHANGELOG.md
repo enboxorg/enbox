@@ -1,5 +1,11 @@
 # @enbox/dwn-clients
 
+## 0.4.33
+
+### Patch Changes
+
+- [#1646](https://github.com/enboxorg/enbox/pull/1646) [`5d1c013`](https://github.com/enboxorg/enbox/commit/5d1c0138151b886f52e113070038336da2856490) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Prefer an existing connected WebSocket for bounded control requests and small byte-backed replication applies. Ineligible work and requests with no connected socket remain on HTTP.
+
 ## 0.4.32
 
 ### Patch Changes
