@@ -19,7 +19,7 @@ import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
-import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Attempt to restore a previous session.
@@ -48,10 +48,11 @@ export async function restoreSession(
   const previouslyConnected = await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
   const retryContextJson = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
   assertFlowActive(ctx);
-  const retryEntries = isAbsent(retryContextJson)
-    ? undefined
-    : parseRevocationRetryEntries(retryContextJson);
-  if (previouslyConnected !== 'true' && retryEntries === undefined) {
+  const hasRetryContext = retryContextJson !== null;
+  if (retryContextJson !== null) {
+    parseRevocationRetryEntries(retryContextJson);
+  }
+  if (previouslyConnected !== 'true' && !hasRetryContext) {
     return undefined;
   }
 
@@ -75,7 +76,7 @@ export async function restoreSession(
 
   // --- Retry maintenance and interrupted-disconnect recovery ---
   const interruptedDisconnect = await runRetryMaintenanceIfNeeded(
-    ctx, userAgent, storage, retryEntries,
+    ctx, userAgent, storage, hasRetryContext,
   );
 
   // A retry journal bound to the persisted active delegate means disconnect
@@ -86,28 +87,30 @@ export async function restoreSession(
   }
 
   // --- Normal session restore ---
-  // Re-read after maintenance so a marker change cannot turn the initial
-  // snapshot into authorization to restore a session that was torn down.
-  const currentPreviouslyConnected = await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+  // Capture the complete marker binding after maintenance. The final commit
+  // revalidates it under the cross-context lifecycle lock.
+  const restoreMarkers = await readSessionMarkerSnapshot(storage);
   assertFlowActive(ctx);
-  if (currentPreviouslyConnected !== 'true') {
+  if (restoreMarkers.previouslyConnected !== 'true') {
     return undefined;
   }
 
   // Determine which identity to reconnect.
-  const activeIdentityDid = await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY);
-  const storedDelegateDid = await storage.get(STORAGE_KEYS.DELEGATE_DID);
-  const identity = await resolveIdentityForRestore(userAgent, storedDelegateDid, activeIdentityDid);
+  const identity = await resolveIdentityForRestore(
+    userAgent, restoreMarkers.delegateDid, restoreMarkers.activeIdentity,
+  );
 
   if (!identity) {
-    return handleMissingRestoreIdentity(ctx, activeIdentityDid);
+    return handleMissingRestoreIdentity(ctx, restoreMarkers);
   }
 
   const { connectedDid, delegateDid } = resolveIdentityDids(
-    identity, storedDelegateDid ?? undefined,
+    identity, restoreMarkers.delegateDid ?? undefined,
   );
 
-  return commitFlowSession(ctx, () => finalizeRestoredSession(ctx, identity, connectedDid, delegateDid));
+  return commitFlowSession(ctx, () => finalizeRestoredSession(
+    ctx, identity, connectedDid, delegateDid, restoreMarkers,
+  ));
 }
 
 // ─── restoreSession helpers ─────────────────────────────────────
@@ -135,13 +138,16 @@ async function resolveRestorePassword(
     assertFlowActive(ctx);
   }
 
-  // Check for stale session marker.
-  const isFirstLaunch = await userAgent.firstLaunch();
-  assertFlowActive(ctx);
-  if (isFirstLaunch) {
-    await runFlowMutation(ctx, async (): Promise<void> => {
+  // Check for and clear a stale session marker as one persisted-state transition.
+  const isFirstLaunch = await runFlowMutation(ctx, () => runAuthSessionLifecycle(async (): Promise<boolean> => {
+    const firstLaunch = await userAgent.firstLaunch();
+    if (firstLaunch) {
       await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-    });
+    }
+
+    return firstLaunch;
+  }));
+  if (isFirstLaunch) {
     return undefined;
   }
 
@@ -160,34 +166,44 @@ async function runRetryMaintenanceIfNeeded(
   ctx: FlowContext,
   userAgent: EnboxUserAgent,
   storage: StorageAdapter,
-  entries: RetryEntry[] | undefined,
+  hasRetryContext: boolean,
 ): Promise<boolean> {
-  if (entries === undefined) {
+  if (!hasRetryContext) {
     return false;
   }
 
-  const sessionCleanup = entries.length === 0
-    ? undefined
-    : await findSessionCleanupMatch(storage, entries);
-  const interruptedDisconnect = sessionCleanup !== undefined;
+  const interruptedDisconnect = await runFlowMutation(ctx, () => runAuthSessionLifecycle(
+    async (): Promise<boolean> => {
+      const currentEntries = await readRevocationRetryEntries(storage);
+      const markers = await readSessionMarkerSnapshot(storage);
+      const interruptedEntry = findInterruptedDisconnect(markers, currentEntries);
 
-  try {
-    await runFlowMutation(ctx, async (): Promise<void> => {
-      await startSyncIfEnabled(userAgent, ctx.defaultSync);
-      try {
-        await retryRevocationEntries(userAgent, storage, entries, sessionCleanup);
-      } finally {
-        await userAgent.sync.stopSync(2000);
+      // A staged journal is the durable disconnect intent. Disable restore
+      // before network work so every later failure or process exit is safe.
+      if (interruptedEntry !== undefined) {
+        await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
       }
-    });
-  } catch (error: unknown) {
-    // Retry maintenance for an unrelated delegate is best-effort. A matching
-    // journal is the durable disconnect intent, so every recovery failure must
-    // block restoration until that teardown can finish.
-    if (interruptedDisconnect) {
-      throw error;
+
+      let settledEntries: SettledRetryEntry[] = [];
+      try {
+        await startSyncIfEnabled(userAgent, ctx.defaultSync);
+        settledEntries = await retryRevocationEntries(userAgent, storage, currentEntries);
+      } catch {
+        // The complete journal remains durable for the next attempt.
+      } finally {
+        await userAgent.sync.stopSync(2000).catch(() => {});
+      }
+
+      if (interruptedEntry !== undefined) {
+        await clearSessionMarkers(userAgent, storage);
+      }
+      await retireSettledDelegateIdentities(userAgent, storage, settledEntries);
+
+      // Retry maintenance for another delegate is best-effort and must not
+      // block restoration of the current session.
+      return interruptedEntry !== undefined;
     }
-  }
+  ));
   assertFlowActive(ctx);
   return interruptedDisconnect;
 }
@@ -233,7 +249,7 @@ async function resolveIdentityForRestore(
  */
 async function handleMissingRestoreIdentity(
   ctx: FlowContext,
-  activeIdentityDid: string | null,
+  restoreMarkers: SessionMarkerSnapshot,
 ): Promise<AuthSession | undefined> {
   const { userAgent, emitter, storage } = ctx;
 
@@ -241,11 +257,15 @@ async function handleMissingRestoreIdentity(
   // with `createIdentity: false`. Restore a session using the agent DID.
   // If the active identity stored was the agent DID, this is an
   // intentional agent-only session rather than stale data.
-  const isAgentOnlySession = activeIdentityDid === userAgent.agentDid.uri;
+  const isAgentOnlySession = restoreMarkers.activeIdentity === userAgent.agentDid.uri;
 
   if (!isAgentOnlySession) {
-    // Truly stale session data — clean up and bail.
-    await runFlowMutation(ctx, async (): Promise<void> => {
+    // Truly stale session data — clean up only if the binding is still the
+    // snapshot this restore attempt resolved.
+    return commitFlowSession(ctx, async (): Promise<undefined> => {
+      if (!await isRestoreSnapshotCurrent(storage, restoreMarkers)) {
+        return undefined;
+      }
       await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
       await storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
       await storage.remove(STORAGE_KEYS.DELEGATE_DID);
@@ -254,21 +274,26 @@ async function handleMissingRestoreIdentity(
       await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
       await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
       try { await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
+      // Do NOT remove REVOCATION_RETRY_CONTEXT here — it has its own
+      // lifecycle managed by the retry maintenance path. Stale session
+      // cleanup must not silently drop pending revocations.
+      return undefined;
     });
-    // Do NOT remove REVOCATION_RETRY_CONTEXT here — it has its own
-    // lifecycle managed by the retry maintenance path. Stale session
-    // cleanup must not silently drop pending revocations.
-    return undefined;
   }
 
-  return commitFlowSession(ctx, () => finalizeSession({
-    userAgent,
-    emitter,
-    storage,
-    connectedDid      : userAgent.agentDid.uri,
-    emitIdentityAdded : false,
-    signal            : ctx.sessionSignal,
-  }));
+  return commitFlowSession(ctx, async (): Promise<AuthSession | undefined> => {
+    if (!await isRestoreSnapshotCurrent(storage, restoreMarkers)) {
+      return undefined;
+    }
+    return finalizeSession({
+      userAgent,
+      emitter,
+      storage,
+      connectedDid      : userAgent.agentDid.uri,
+      emitIdentityAdded : false,
+      signal            : ctx.sessionSignal,
+    });
+  });
 }
 
 /**
@@ -281,8 +306,13 @@ async function finalizeRestoredSession(
   identity: BearerIdentity,
   connectedDid: string,
   delegateDid: string | undefined,
-): Promise<AuthSession> {
+  restoreMarkers: SessionMarkerSnapshot,
+): Promise<AuthSession | undefined> {
   const { userAgent, emitter, storage } = ctx;
+
+  if (!await isRestoreSnapshotCurrent(storage, restoreMarkers, connectedDid, delegateDid)) {
+    return undefined;
+  }
 
   // Ensure the sync registration is scoped explicitly. Delegate sessions derive
   // scope from grants; local sessions are updated only when the caller provides
@@ -344,6 +374,8 @@ export type RetryEntry = {
   revocations: RevocationEntry[];
 };
 
+type SettledRetryEntry = { entry: RetryEntry; identity: BearerIdentity };
+
 const MAX_REVOCATION_RETRY_ENTRIES = 4_096;
 
 type SessionMarkerSnapshot = {
@@ -351,11 +383,6 @@ type SessionMarkerSnapshot = {
   connectedDid: string | null;
   delegateDid: string | null;
   previouslyConnected: string | null;
-};
-
-type SessionCleanupMatch = {
-  entry: RetryEntry;
-  phase: 'active' | 'residual';
 };
 
 /**
@@ -366,7 +393,7 @@ export async function readRevocationRetryEntries(
   storage: StorageAdapter,
 ): Promise<RetryEntry[]> {
   const json = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
-  if (isAbsent(json)) {
+  if (json === null) {
     return [];
   }
 
@@ -397,10 +424,6 @@ function parseRevocationRetryEntries(json: string): RetryEntry[] {
   }
 }
 
-function isAbsent(value: string | null | undefined): value is null | undefined {
-  return value === null || value === undefined;
-}
-
 async function readSessionMarkerSnapshot(storage: StorageAdapter): Promise<SessionMarkerSnapshot> {
   const [previouslyConnected, activeIdentity, delegateDid, connectedDid] = await Promise.all([
     storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED),
@@ -411,50 +434,50 @@ async function readSessionMarkerSnapshot(storage: StorageAdapter): Promise<Sessi
   return { activeIdentity, connectedDid, delegateDid, previouslyConnected };
 }
 
-async function findSessionCleanupMatch(
-  storage: StorageAdapter,
+function findInterruptedDisconnect(
+  markers: SessionMarkerSnapshot,
   entries: RetryEntry[],
-): Promise<SessionCleanupMatch | undefined> {
-  const markers = await readSessionMarkerSnapshot(storage);
-  const candidates = entries.flatMap((entry): SessionCleanupMatch[] => {
-    const delegateMatches = markers.delegateDid === entry.delegateDid;
-    const connectedMatches = markers.connectedDid === entry.connectedDid;
-    const activeIdentityMatches = markers.activeIdentity === null ||
-      markers.activeIdentity === entry.connectedDid;
+): RetryEntry | undefined {
+  if (markers.previouslyConnected !== 'true' || markers.delegateDid === null) {
+    return undefined;
+  }
 
-    if (markers.previouslyConnected === 'true') {
-      if (delegateMatches && connectedMatches && activeIdentityMatches) {
-        return [{ entry, phase: 'active' }];
-      }
-      if (delegateMatches ||
-          (markers.delegateDid === null &&
-           (connectedMatches || markers.activeIdentity === entry.connectedDid))) {
-        throw new Error('AuthManager: Session marker binding is inconsistent.');
-      }
-      return [];
-    }
-    if (markers.previouslyConnected === null) {
-      const residualDelegateMatches = delegateMatches ||
-        (markers.delegateDid === null && connectedMatches);
-      const residualConnectedMatches = connectedMatches ||
-        (markers.connectedDid === null && delegateMatches);
-      if (residualDelegateMatches && residualConnectedMatches && activeIdentityMatches) {
-        return [{ entry, phase: 'residual' }];
-      }
-      if (delegateMatches || (markers.delegateDid === null && connectedMatches)) {
-        throw new Error('AuthManager: Session marker binding is inconsistent.');
-      }
-    }
-    return [];
-  });
-  if (candidates.length > 1) {
+  const entry = entries.find(candidate => candidate.delegateDid === markers.delegateDid);
+  if (entry === undefined) {
+    return undefined;
+  }
+  if ((markers.connectedDid !== null && markers.connectedDid !== entry.connectedDid) ||
+      (markers.activeIdentity !== null && markers.activeIdentity !== entry.connectedDid)) {
     throw new Error('AuthManager: Session marker binding is inconsistent.');
   }
-  return candidates[0];
+  return entry;
+}
+
+async function isRestoreSnapshotCurrent(
+  storage: StorageAdapter,
+  expected: SessionMarkerSnapshot,
+  connectedDid?: string,
+  delegateDid?: string,
+): Promise<boolean> {
+  const current = await readSessionMarkerSnapshot(storage);
+  if (current.previouslyConnected !== 'true' ||
+      current.activeIdentity !== expected.activeIdentity ||
+      current.delegateDid !== expected.delegateDid ||
+      current.connectedDid !== expected.connectedDid) {
+    return false;
+  }
+  if (connectedDid === undefined || delegateDid === undefined) {
+    return true;
+  }
+
+  const entries = await readRevocationRetryEntries(storage);
+  return !entries.some(entry =>
+    entry.delegateDid === delegateDid && entry.connectedDid === connectedDid
+  );
 }
 
 /** Parse the complete grant-revocation set persisted for an active session. */
-export function parseSessionRevocations(json: string): RevocationEntry[] {
+function parseSessionRevocations(json: string): RevocationEntry[] {
   try {
     const parsed: unknown = JSON.parse(json);
     if (!Array.isArray(parsed) || parsed.length > MAX_REVOCATION_RETRY_ENTRIES ||
@@ -468,19 +491,22 @@ export function parseSessionRevocations(json: string): RevocationEntry[] {
 }
 
 /** Durably merge an active session's complete revocation set before any attempt. */
-export async function stageRevocationRetryEntry(
+async function stageRevocationRetryEntry(
   storage: StorageAdapter,
+  entries: RetryEntry[],
   entry: RetryEntry,
-): Promise<void> {
+): Promise<RetryEntry[]> {
   if (!isRetryEntry(entry)) {
     throw new Error('AuthManager: Session revocation binding is invalid.');
   }
-  const entries = await readRevocationRetryEntries(storage);
   const existing = entries.find(candidate => candidate.delegateDid === entry.delegateDid);
   if (existing !== undefined && existing.connectedDid !== entry.connectedDid) {
     throw new Error('AuthManager: Revocation retry binding is inconsistent.');
   }
   const revocations = mergeRevocations(existing?.revocations ?? [], entry.revocations);
+  if (existing !== undefined && revocations.length === existing.revocations.length) {
+    return entries;
+  }
   const staged = entries.filter(candidate => candidate.delegateDid !== entry.delegateDid);
   if (revocations.length > 0) {
     staged.push({ ...entry, revocations });
@@ -488,6 +514,64 @@ export async function stageRevocationRetryEntry(
   if (staged.length > 0) {
     await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(staged));
   }
+  return staged;
+}
+
+/**
+ * Disable restoration and clear a persisted session. Delegated sessions first
+ * stage their complete revocation set and retry every durable entry. The caller
+ * must hold the auth-session lifecycle lock for the complete operation.
+ *
+ * @internal
+ */
+export async function disconnectPersistedSessionWithinLifecycle(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+  delegateDid: string | undefined,
+  connectedDid: string | undefined,
+): Promise<boolean> {
+  if (delegateDid === undefined || connectedDid === undefined) {
+    await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+    await clearSessionMarkers(userAgent, storage);
+    return false;
+  }
+
+  const encodedRevocations = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
+  const sessionRevocations = encodedRevocations === null
+    ? []
+    : parseSessionRevocations(encodedRevocations);
+  let entries = await readRevocationRetryEntries(storage);
+
+  if (sessionRevocations.length > 0) {
+    entries = await stageRevocationRetryEntry(storage, entries, {
+      delegateDid,
+      connectedDid,
+      revocations: sessionRevocations,
+    });
+  }
+
+  // This is the lifecycle commit point. The complete journal is durable first;
+  // once restore is disabled, remote work may safely be replayed after a crash.
+  await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+  let settledEntries: SettledRetryEntry[] = [];
+  let hasPendingRevocations = entries.some(entry => entry.delegateDid === delegateDid);
+  if (entries.length > 0) {
+    try {
+      settledEntries = await retryRevocationEntries(userAgent, storage, entries);
+    } catch {
+      // The complete pre-attempt journal remains durable. Treat this session
+      // as pending and let a later restore retry the idempotent operation.
+    }
+  }
+
+  try {
+    const remainingEntries = await readRevocationRetryEntries(storage);
+    hasPendingRevocations = remainingEntries.some(entry => entry.delegateDid === delegateDid);
+  } catch { /* retain the conservative pre-attempt result */ }
+
+  await clearSessionMarkers(userAgent, storage);
+  await retireSettledDelegateIdentities(userAgent, storage, settledEntries);
+  return hasPendingRevocations;
 }
 
 function isRetryEntry(value: unknown): value is RetryEntry {
@@ -533,10 +617,6 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 2_048;
 }
 
-/**
- * Revoke a single grant and send the revocation to remote DWN endpoints.
- * Returns `true` if at least one remote endpoint confirmed (202/409).
- */
 /**
  * Ensure the revocation grant exists on the owner's remote DWN before
  * attempting to use it. Reads the grant locally by recordId and sends
@@ -649,10 +729,10 @@ async function revokeAndSendSingle(
 async function sendRevocationToEndpoints(
   userAgent: EnboxUserAgent,
   connectedDid: string,
-  revocationMessage: any,
+  revocationMessage: DwnDataEncodedRecordsWriteMessage,
   dwnEndpointUrls: string[],
 ): Promise<boolean> {
-  if (!revocationMessage || dwnEndpointUrls.length === 0) { return false; }
+  if (dwnEndpointUrls.length === 0) { return false; }
 
   const { encodedData, ...rawMessage } = revocationMessage;
   const data = encodedData
@@ -690,35 +770,19 @@ async function persistRetryEntries(storage: StorageAdapter, entries: RetryEntry[
   }
 }
 
-async function clearInterruptedSessionMarkers(
+async function clearSessionMarkers(
   userAgent: EnboxUserAgent,
   storage: StorageAdapter,
-  expected: SessionCleanupMatch,
 ): Promise<void> {
-  const current = await findSessionCleanupMatch(storage, [expected.entry]);
-  if (current?.phase !== expected.phase) {
-    throw new Error('AuthManager: Session markers changed during revocation cleanup.');
-  }
-
-  // Keep the delegate/owner binding in place until every other session value
-  // is gone. If one of these removals fails, PREVIOUSLY_CONNECTED and both DID
-  // markers still identify the durable journal on the next recovery attempt.
-  await Promise.all([
+  await Promise.allSettled([
     storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY),
+    storage.remove(STORAGE_KEYS.DELEGATE_DID),
+    storage.remove(STORAGE_KEYS.CONNECTED_DID),
     storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS),
     storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS),
     storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS),
-    userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
+    userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS),
   ]);
-
-  if (current.phase === 'active') {
-    await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-  }
-  // The owner can have several pending delegate entries. Remove its shared DID
-  // first and retain the unique delegate DID as the final durable selector for
-  // a restart between these writes.
-  await storage.remove(STORAGE_KEYS.CONNECTED_DID);
-  await storage.remove(STORAGE_KEYS.DELEGATE_DID);
   userAgent.dwn.clearDelegateDecryptionKeys();
 }
 
@@ -734,27 +798,25 @@ export async function retryOrphanedRevocations(
   userAgent: EnboxUserAgent,
   storage: StorageAdapter,
 ): Promise<void> {
-  const entries = await readRevocationRetryEntries(storage);
-  if (entries.length === 0) {
-    await clearRetryState(storage);
-    return;
-  }
-  const sessionCleanup = await findSessionCleanupMatch(storage, entries);
-  await retryRevocationEntries(userAgent, storage, entries, sessionCleanup);
+  await runAuthSessionLifecycle(async (): Promise<void> => {
+    const entries = await readRevocationRetryEntries(storage);
+    const settledEntries = await retryRevocationEntries(userAgent, storage, entries);
+    await retireSettledDelegateIdentities(userAgent, storage, settledEntries);
+  });
 }
 
 async function retryRevocationEntries(
   userAgent: EnboxUserAgent,
   storage: StorageAdapter,
   initialEntries: RetryEntry[],
-  sessionCleanup: SessionCleanupMatch | undefined,
-): Promise<void> {
+): Promise<SettledRetryEntry[]> {
   let entries = initialEntries;
-  const settledEntries: { entry: RetryEntry; identity: BearerIdentity }[] = [];
+  let journalChanged = false;
+  const settledEntries: SettledRetryEntry[] = [];
 
   if (entries.length === 0) {
     await clearRetryState(storage);
-    return;
+    return [];
   }
 
   for (const entry of entries) {
@@ -772,32 +834,32 @@ async function retryRevocationEntries(
     if (succeeded === undefined) {
       continue; // Can't resolve endpoints for this entry — try next.
     }
+    if (succeeded.length === 0) {
+      continue;
+    }
 
     // Update the in-memory collection so the next iteration sees
     // the correct state (avoid stale-snapshot overwrites).
+    journalChanged = true;
     entries = applyRetrySuccesses(entries, entry, succeeded);
     if (!entries.some(candidate => candidate.delegateDid === entry.delegateDid)) {
       settledEntries.push({ entry, identity: delegateIdentity });
     }
   }
 
-  const cleanupEntrySettled = sessionCleanup !== undefined &&
-    !entries.some(entry => entry.delegateDid === sessionCleanup.entry.delegateDid);
+  // The complete pre-attempt journal stays durable through all network work.
+  // Confirmed 202/409 responses are applied in one locked write at the end.
+  if (journalChanged) {
+    await persistRetryEntries(storage, entries);
+  }
+  return settledEntries;
+}
 
-  if (sessionCleanup !== undefined && !cleanupEntrySettled) {
-    // Pending remote work must be narrowed durably before its session markers
-    // disappear. The retained entry keeps the delegate signing key live.
-    await persistRetryEntries(storage, entries);
-  }
-  if (sessionCleanup !== undefined) {
-    // When the matching entry settled completely, its pre-attempt journal is
-    // intentionally still durable here. A crash or marker-write failure can
-    // therefore replay the remote operation safely before local retirement.
-    await clearInterruptedSessionMarkers(userAgent, storage, sessionCleanup);
-  }
-  if (sessionCleanup === undefined || cleanupEntrySettled) {
-    await persistRetryEntries(storage, entries);
-  }
+async function retireSettledDelegateIdentities(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+  settledEntries: SettledRetryEntry[],
+): Promise<void> {
   for (const settled of settledEntries) {
     await retireSettledDelegateIdentity(userAgent, storage, settled.entry, settled.identity);
   }

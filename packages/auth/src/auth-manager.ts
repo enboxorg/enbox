@@ -64,7 +64,7 @@ import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
-import { applyIdentitySyncScope, deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
+import { applyIdentitySyncScope, deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, startSyncIfEnabled } from './connect/lifecycle.js';
 import {
   clearLocalDwnEjection,
   createLocalDwnRpcClient,
@@ -75,11 +75,8 @@ import {
   requestLocalDwnPairing,
 } from './discovery.js';
 import {
-  parseSessionRevocations,
-  readRevocationRetryEntries,
+  disconnectPersistedSessionWithinLifecycle,
   restoreSession,
-  retryOrphanedRevocations,
-  stageRevocationRetryEntry,
 } from './connect/restore.js';
 
 type ConnectionMonitorState = {
@@ -691,107 +688,85 @@ export class AuthManager {
       // Best-effort — sync may never have been started.
     }
 
-    // Journal the complete revocation set before any remote attempt or local
-    // teardown. A retry is safe after every failure boundary because remote
-    // 202/409 responses are the only outcomes that narrow this journal.
     const delegateDid = this._session?.delegateDid;
     const connectedDid = this._session?.did;
     let hasPendingRevocations = false;
-    if (delegateDid !== undefined && connectedDid !== undefined) {
-      const encodedRevocations = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
-      const sessionRevocations = encodedRevocations === null
-        ? []
-        : parseSessionRevocations(encodedRevocations);
-      const existingEntries = await readRevocationRetryEntries(this._storage);
-      if (sessionRevocations.length > 0) {
-        await stageRevocationRetryEntry(this._storage, {
-          delegateDid,
-          connectedDid,
-          revocations: sessionRevocations,
-        });
-      }
-      if (sessionRevocations.length > 0 || existingEntries.length > 0) {
-        await retryOrphanedRevocations(this._userAgent, this._storage);
-      }
-      if (!clearStorage) {
-        const remainingEntries = await readRevocationRetryEntries(this._storage);
-        hasPendingRevocations = remainingEntries.some(entry => entry.delegateDid === delegateDid);
-      }
-    }
-
-    if (clearStorage) {
-      // Nuclear wipe: clear all persisted auth data.
-      await this._storage.clear();
-
-      // Wipe all secrets from the vault-backed SecretStore.
-      await Promise.all([
-        this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
-        this._userAgent.secrets.delete(STORAGE_KEYS.REGISTRATION_TOKENS).catch(() => {}),
-      ]);
-
-      // Also clear non-prefixed localStorage and IndexedDB (browser).
-      if (globalThis.localStorage !== undefined) {
-        globalThis.localStorage.clear();
-      }
-      if (globalThis.indexedDB !== undefined) {
+    await runAuthSessionLifecycle(async (): Promise<void> => {
+      if (clearStorage) {
+        // Revocation remains best-effort for an explicit nuclear wipe. Invalid
+        // or unwritable retry state must never prevent the requested wipe.
         try {
-          const databases = await globalThis.indexedDB.databases();
-          for (const db of databases) {
-            if (db.name) {
-              globalThis.indexedDB.deleteDatabase(db.name);
-            }
-          }
-        } catch {
-          // indexedDB.databases() not available in all browsers.
+          await disconnectPersistedSessionWithinLifecycle(
+            this._userAgent, this._storage, delegateDid, connectedDid,
+          );
+        } catch { /* continue with the wipe */ }
+
+        await this._storage.clear();
+        await Promise.all([
+          this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
+          this._userAgent.secrets.delete(STORAGE_KEYS.REGISTRATION_TOKENS).catch(() => {}),
+        ]);
+
+        if (globalThis.localStorage !== undefined) {
+          globalThis.localStorage.clear();
         }
+        if (globalThis.indexedDB !== undefined) {
+          try {
+            const databases = await globalThis.indexedDB.databases();
+            for (const db of databases) {
+              if (db.name) {
+                globalThis.indexedDB.deleteDatabase(db.name);
+              }
+            }
+          } catch {
+            // indexedDB.databases() not available in all browsers.
+          }
+        }
+        if (delegateDid !== undefined) {
+          await this._retireDelegateIdentity(delegateDid);
+        }
+        return;
       }
-    } else {
-      // The retry journal is already durable and narrowed before these
-      // session markers are removed.
-      await Promise.all([
-        this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED),
-        this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY),
-        this._storage.remove(STORAGE_KEYS.DELEGATE_DID),
-        this._storage.remove(STORAGE_KEYS.CONNECTED_DID),
-        this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS),
-        this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS),
-        this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS),
-        this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
-      ]);
-    }
+
+      // Persist the complete retry journal before clearing the restore marker.
+      // Every later step is either retryable or local best-effort cleanup.
+      hasPendingRevocations = await disconnectPersistedSessionWithinLifecycle(
+        this._userAgent, this._storage, delegateDid, connectedDid,
+      );
+
+      // Retain a delegate identity only while its signing key is required by
+      // a durable retry entry.
+      if (delegateDid !== undefined && !hasPendingRevocations) {
+        await this._retireDelegateIdentity(delegateDid);
+      }
+    });
 
     this._session = undefined;
-
-    // Clear in-memory delegated material only after durable teardown commits.
     this._userAgent.dwn.clearDelegateDecryptionKeys();
-
-    // A cleanly revoked delegate is dead — connect sessions have no renewal
-    // path and its grants are revoked — so remove the identity locally.
-    // Otherwise a later restore can select the stale delegate and every
-    // call under its revoked grants fails with 401. Keep the identity while
-    // revocations are queued for retry: the retry path signs as the delegate.
-    if (delegateDid !== undefined && (clearStorage || !hasPendingRevocations)) {
-      try {
-        const delegateIdentity = await this._userAgent.identity.get({ didUri: delegateDid });
-        if (delegateIdentity) {
-          try {
-            await this._userAgent.did.delete({
-              didUri    : delegateIdentity.did.uri,
-              tenant    : delegateIdentity.metadata.tenant,
-              deleteKey : true,
-            });
-          } catch { /* best effort */ }
-          await this._userAgent.identity.delete({ didUri: delegateIdentity.did.uri });
-        }
-      } catch {
-        // Best-effort — a leftover identity is recoverable by reconnecting.
-      }
-    }
 
     this._setState('unlocked');
 
     if (did) {
       this._emitter.emit('session-end', { did });
+    }
+  }
+
+  private async _retireDelegateIdentity(delegateDid: string): Promise<void> {
+    try {
+      const delegateIdentity = await this._userAgent.identity.get({ didUri: delegateDid });
+      if (delegateIdentity === undefined) {
+        return;
+      }
+      try {
+        await this._userAgent.did.delete({
+          didUri    : delegateIdentity.did.uri,
+          tenant    : delegateIdentity.metadata.tenant,
+          deleteKey : true,
+        });
+      } catch { /* best effort */ }
+      await this._userAgent.identity.delete({ didUri: delegateIdentity.did.uri });
+    } catch {
+      // Best-effort — a leftover identity is harmless and recoverable.
     }
   }
 
@@ -1517,7 +1492,7 @@ export class AuthManager {
       assertActive                 : (): void => this._assertConnectionAttemptActive(guard),
       runMutation                  : <T>(operation: () => Promise<T>): Promise<T> =>
         this._runConnectionMutation(guard, operation),
-      commitSession: (operation: () => Promise<AuthSession>): Promise<AuthSession> =>
+      commitSession: <T extends AuthSession | undefined>(operation: () => Promise<T>): Promise<T> =>
         this._commitConnectionResult(guard, operation),
     };
   }
@@ -1599,27 +1574,29 @@ export class AuthManager {
     const { publishSessionStart = true } = options;
     const releaseCommit = await this._acquireLifecycleCommit();
     try {
-      this._assertConnectionAttemptActive(guard);
-      const session = await operation();
-      if (session !== undefined) {
-        const previousSession = this._session;
-        const previousDelegateDid = previousSession?.delegateDid;
-        if (previousDelegateDid !== undefined && previousDelegateDid !== session.delegateDid) {
-          this._userAgent.dwn.clearDelegateDecryptionKeys(previousDelegateDid);
-        }
-        const isReplacementSession = previousSession !== session;
-        if (isReplacementSession) {
-          this._abortSessionLifetime();
-        }
+      return await runAuthSessionLifecycle(async (): Promise<T> => {
+        this._assertConnectionAttemptActive(guard);
+        const session = await operation();
+        if (session !== undefined) {
+          const previousSession = this._session;
+          const previousDelegateDid = previousSession?.delegateDid;
+          if (previousDelegateDid !== undefined && previousDelegateDid !== session.delegateDid) {
+            this._userAgent.dwn.clearDelegateDecryptionKeys(previousDelegateDid);
+          }
+          const isReplacementSession = previousSession !== session;
+          if (isReplacementSession) {
+            this._abortSessionLifetime();
+          }
 
-        this._session = session;
-        this._sessionLifetime = guard.sessionLifetime;
-        this._setState('connected');
-        if (publishSessionStart && isReplacementSession) {
-          this._emitter.emit('session-start', {});
+          this._session = session;
+          this._sessionLifetime = guard.sessionLifetime;
+          this._setState('connected');
+          if (publishSessionStart && isReplacementSession) {
+            this._emitter.emit('session-start', {});
+          }
         }
-      }
-      return session;
+        return session;
+      });
     } finally {
       releaseCommit();
     }

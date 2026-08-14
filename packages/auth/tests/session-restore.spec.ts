@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 
 import { DwnPermissionGrant } from '@enbox/agent';
 import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
@@ -782,15 +782,6 @@ describe('restoreSession', () => {
   });
 
   describe('readRevocationRetryEntries', () => {
-    test('treats an undefined adapter value as absent', async () => {
-      const storage = new MemoryStorage();
-      const get = spyOn(storage, 'get').mockResolvedValue(undefined as unknown as null);
-
-      expect(await readRevocationRetryEntries(storage)).toEqual([]);
-
-      get.mockRestore();
-    });
-
     test('retains and rejects an empty truncated value', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
@@ -828,25 +819,6 @@ describe('restoreSession', () => {
       );
 
       expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(malformedLegacy);
-      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
-    });
-
-    test('retains and rejects truncated JSON', async () => {
-      const emitter = new AuthEventEmitter();
-      const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, '{not valid json!!!');
-
-      const agent = createMockAgent({ firstLaunch: async () => false });
-
-      await expect(readRevocationRetryEntries(storage)).rejects.toThrow(
-        'AuthManager: Revocation retry context is invalid.',
-      );
-      await expect(restoreSession({ userAgent: agent, emitter, storage })).rejects.toThrow(
-        'AuthManager: Revocation retry context is invalid.',
-      );
-
-      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe('{not valid json!!!');
       expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
     });
 

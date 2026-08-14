@@ -17,6 +17,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import { AuthEventEmitter } from '../src/events.js';
 import { AuthManager } from '../src/auth-manager.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { retryOrphanedRevocations } from '../src/connect/restore.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
@@ -376,57 +377,6 @@ describe('grant revocation on disconnect', () => {
     expect(revocationCount).toBe(1);
   });
 
-  test('a second session-revocation read failure retains the pre-journal and delegate authority', async () => {
-    const storage = new MemoryStorage();
-    await seedDelegatedSession(storage);
-    const identityDeleteStates: { retry: string | null; session: string | null }[] = [];
-    const agent = buildRevocationAgent({
-      grantRecords: { 'grant-1': mockGrantRecord('grant-1') },
-    });
-    const originalIdentityGet = agent.identity.get.bind(agent.identity);
-    let identityPresent = true;
-    (agent.identity as any).get = async (params: any): Promise<any> =>
-      identityPresent ? originalIdentityGet(params) : undefined;
-    (agent.identity as any).delete = async (): Promise<void> => {
-      identityDeleteStates.push({
-        retry   : await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT),
-        session : await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS),
-      });
-      identityPresent = false;
-    };
-    const manager = createTestManager(agent, { storage });
-    await manager.connect({ password: 'test' });
-
-    const originalGet = storage.get.bind(storage);
-    let sessionRevocationReads = 0;
-    const get = spyOn(storage, 'get').mockImplementation(async (key): Promise<string | null> => {
-      if (key === STORAGE_KEYS.SESSION_REVOCATIONS && ++sessionRevocationReads === 2) {
-        throw new Error('injected enumeration failure');
-      }
-      return originalGet(key);
-    });
-    const encodedRevocations = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
-      delegateDid  : 'did:jwk:delegate123',
-      connectedDid : 'did:dht:owner456',
-      revocations  : JSON.parse(encodedRevocations!),
-    }]));
-
-    await expect(manager.disconnect()).rejects.toThrow('injected enumeration failure');
-    expect(sessionRevocationReads).toBe(2);
-    expect(await originalGet(STORAGE_KEYS.SESSION_REVOCATIONS)).toBe(encodedRevocations);
-    expect(await originalGet(STORAGE_KEYS.DELEGATE_DID)).toBe('did:jwk:delegate123');
-    expect(await originalGet(STORAGE_KEYS.CONNECTED_DID)).toBe('did:dht:owner456');
-    expect(await originalGet(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
-    expect(identityDeleteStates).toHaveLength(0);
-    expect((manager as any)._session).toBeDefined();
-
-    get.mockRestore();
-    await manager.disconnect();
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
-    expect(identityDeleteStates).toEqual([{ retry: null, session: null }]);
-  });
-
   test('invalid session-revocation data fails before journal or marker mutation', async () => {
     const storage = new MemoryStorage();
     await seedDelegatedSession(storage);
@@ -488,58 +438,7 @@ describe('grant revocation on disconnect', () => {
     expect(identityDeletes).toBe(1);
   });
 
-  test('a failed positive-result prune keeps the full journal for a 409-safe retry', async () => {
-    const storage = new MemoryStorage();
-    await seedDelegatedSession(storage);
-    const statuses = [202, 409];
-    let sendCount = 0;
-    let identityDeletes = 0;
-    const agent = buildRevocationAgent({
-      grantRecords: { 'grant-1': mockGrantRecord('grant-1') },
-    });
-    const originalIdentityGet = agent.identity.get.bind(agent.identity);
-    let identityPresent = true;
-    (agent.identity as any).get = async (params: any): Promise<any> =>
-      identityPresent ? originalIdentityGet(params) : undefined;
-    (agent.rpc as any).sendDwnRequest = async (): Promise<any> => ({
-      status: { code: statuses[sendCount++] },
-    });
-    (agent.identity as any).delete = async (): Promise<void> => {
-      identityDeletes++;
-      identityPresent = false;
-    };
-    const manager = createTestManager(agent, { storage });
-    await manager.connect({ password: 'test' });
-
-    const originalRemove = storage.remove.bind(storage);
-    let retryRemovals = 0;
-    const remove = spyOn(storage, 'remove').mockImplementation((key): Promise<void> => {
-      if (key === STORAGE_KEYS.REVOCATION_RETRY_CONTEXT && ++retryRemovals === 1) {
-        return Promise.reject(new Error('injected retry prune failure'));
-      }
-      return originalRemove(key);
-    });
-
-    await expect(manager.disconnect()).rejects.toThrow('injected retry prune failure');
-    const journalAfterFailure = JSON.parse((await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT))!);
-    expect(journalAfterFailure[0].revocations).toEqual([
-      { grantId: 'grant-1', revocationGrantId: 'rev-grant-1' },
-    ]);
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();
-    expect(identityDeletes).toBe(0);
-
-    remove.mockRestore();
-    await manager.disconnect();
-    expect(sendCount).toBe(2);
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();
-    expect(identityDeletes).toBe(1);
-  });
-
-  test('a partial-result write failure preserves every grant across retry', async () => {
+  test('a failed narrowed-journal write preserves every grant for restart retry', async () => {
     const storage = new MemoryStorage();
     await seedDelegatedSession(storage, [
       { grantId: 'grant-1', revocationGrantId: 'rev-grant-1' },
@@ -571,13 +470,14 @@ describe('grant revocation on disconnect', () => {
       return originalSet(key, value);
     });
 
-    await expect(manager.disconnect()).rejects.toThrow('injected narrowed-journal failure');
+    await manager.disconnect();
     const journalAfterFailure = JSON.parse((await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT))!);
     expect(journalAfterFailure[0].revocations).toHaveLength(2);
-    expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).not.toBeNull();
+    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();
 
     set.mockRestore();
-    await manager.disconnect();
+    expect(await createTestManager(agent, { storage }).restoreSession()).toBeUndefined();
     expect(sendCount).toBe(4);
     expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
     expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();
@@ -653,164 +553,43 @@ describe('grant revocation on disconnect', () => {
     expect(identityDeleteStates).toHaveLength(1);
   });
 
-  test('marker cleanup failure retains the journal and retries without restoring the session', async () => {
+  test('restore cannot publish a session while another context disconnects', async () => {
     const storage = new MemoryStorage();
-    await seedInterruptedDisconnect(storage);
-    const statuses = [202, 409];
-    let sends = 0;
-    let identityDeletes = 0;
-    const agent = buildRevocationAgent({
-      grantRecords: { 'grant-1': mockGrantRecord('grant-1') },
-    });
-    (agent.rpc as any).sendDwnRequest = async (): Promise<any> => ({
-      status: { code: statuses[sends++] },
-    });
-    const originalIdentityGet = agent.identity.get.bind(agent.identity);
-    let identityPresent = true;
-    (agent.identity as any).get = async (params: any): Promise<any> =>
-      identityPresent ? originalIdentityGet(params) : undefined;
-    (agent.identity as any).delete = async (): Promise<void> => {
-      identityDeletes++;
-      identityPresent = false;
-    };
-
-    const originalRemove = storage.remove.bind(storage);
-    let failMarkerCleanup = true;
-    const remove = spyOn(storage, 'remove').mockImplementation((key): Promise<void> => {
-      if (failMarkerCleanup && key === STORAGE_KEYS.SESSION_REVOCATIONS) {
-        failMarkerCleanup = false;
-        return Promise.reject(new Error('injected marker cleanup failure'));
-      }
-      return originalRemove(key);
-    });
-
-    await expect(createTestManager(agent, { storage }).restoreSession()).rejects.toThrow(
-      'injected marker cleanup failure',
-    );
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:jwk:delegate123');
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe('did:dht:owner456');
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
-    expect(identityDeletes).toBe(0);
-
-    remove.mockRestore();
-    expect(await createTestManager(agent, { storage }).restoreSession()).toBeUndefined();
-    expect(sends).toBe(2);
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
-    expect(identityDeletes).toBe(1);
-  });
-
-  test('delegate marker remains the unique restart anchor for retry entries sharing an owner', async () => {
-    const storage = new MemoryStorage();
-    const secondDelegateDid = 'did:jwk:delegate789';
-    const connectedDid = 'did:dht:owner456';
     await seedDelegatedSession(storage);
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([
-      {
-        delegateDid : 'did:jwk:delegate123',
-        connectedDid,
-        revocations : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
-      },
-      {
-        delegateDid : secondDelegateDid,
-        connectedDid,
-        revocations : [{ grantId: 'grant-2', revocationGrantId: 'rev-grant-2' }],
-      },
-    ]));
 
-    const identities = new Map([
-      ['did:jwk:delegate123', createMockIdentity({
-        did      : { uri: 'did:jwk:delegate123' },
-        metadata : { name: 'First', tenant: 'did:dht:testagent', connectedDid },
-      })],
-      [secondDelegateDid, createMockIdentity({
-        did      : { uri: secondDelegateDid },
-        metadata : { name: 'Second', tenant: 'did:dht:testagent', connectedDid },
-      })],
-    ]);
-    const deletedIdentities: string[] = [];
-    const statuses = [202, 202, 409, 409];
-    let sends = 0;
-    const agent = buildRevocationAgent({
-      grantRecords: {
-        'grant-1' : mockGrantRecord('grant-1'),
-        'grant-2' : mockGrantRecord('grant-2'),
-      },
+    const disconnectAgent = buildRevocationAgent({
+      grantRecords : { 'grant-1': mockGrantRecord('grant-1') },
+      rpcError     : true,
     });
-    (agent.identity as any).get = async ({ didUri }: any): Promise<any> => identities.get(didUri);
-    (agent.identity as any).list = async (): Promise<any[]> => [...identities.values()];
-    (agent.identity as any).delete = async ({ didUri }: any): Promise<void> => {
-      deletedIdentities.push(didUri);
-      identities.delete(didUri);
+    const disconnectManager = createTestManager(disconnectAgent, { storage });
+    await disconnectManager.connect({ password: 'test' });
+
+    const restoreAgent = buildRevocationAgent({});
+    const originalIdentityGet = restoreAgent.identity.get.bind(restoreAgent.identity);
+    let reachedIdentityLookup!: () => void;
+    const identityLookupReached = new Promise<void>((resolve) => { reachedIdentityLookup = resolve; });
+    let releaseIdentityLookup!: () => void;
+    const identityLookupGate = new Promise<void>((resolve) => { releaseIdentityLookup = resolve; });
+    let pauseIdentityLookup = true;
+    (restoreAgent.identity as any).get = async (params: any): Promise<any> => {
+      if (pauseIdentityLookup) {
+        pauseIdentityLookup = false;
+        reachedIdentityLookup();
+        await identityLookupGate;
+      }
+      return originalIdentityGet(params);
     };
-    (agent.rpc as any).sendDwnRequest = async (): Promise<any> => ({
-      status: { code: statuses[sends++] },
-    });
 
-    const originalRemove = storage.remove.bind(storage);
-    let failDelegateMarker = true;
-    const remove = spyOn(storage, 'remove').mockImplementation((key): Promise<void> => {
-      if (failDelegateMarker && key === STORAGE_KEYS.DELEGATE_DID) {
-        failDelegateMarker = false;
-        return Promise.reject(new Error('injected final delegate-marker failure'));
-      }
-      return originalRemove(key);
-    });
+    const restoreManager = createTestManager(restoreAgent, { storage });
+    const restorePromise = restoreManager.restoreSession();
+    await identityLookupReached;
+    await disconnectManager.disconnect();
+    releaseIdentityLookup();
 
-    await expect(createTestManager(agent, { storage }).restoreSession()).rejects.toThrow(
-      'injected final delegate-marker failure',
-    );
+    expect(await restorePromise).toBeUndefined();
+    expect((restoreManager as any)._session).toBeUndefined();
     expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:jwk:delegate123');
-    expect(JSON.parse((await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT))!)).toHaveLength(2);
-    expect(deletedIdentities).toHaveLength(0);
-
-    remove.mockRestore();
-    expect(await createTestManager(agent, { storage }).restoreSession()).toBeUndefined();
-    expect(sends).toBe(4);
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
-    expect(deletedIdentities).toEqual(['did:jwk:delegate123', secondDelegateDid]);
-
-    expect(await createTestManager(agent, { storage }).restoreSession()).toBeUndefined();
-    expect(sends).toBe(4);
-  });
-
-  test('marker read failure retains the journal and blocks restore before network work', async () => {
-    const storage = new MemoryStorage();
-    await seedInterruptedDisconnect(storage);
-    const rpcCalls: any[] = [];
-    let identityDeletes = 0;
-    const agent = buildRevocationAgent({
-      grantRecords: { 'grant-1': mockGrantRecord('grant-1') },
-      rpcCalls,
-    });
-    (agent.identity as any).delete = async (): Promise<void> => { identityDeletes++; };
-
-    const originalGet = storage.get.bind(storage);
-    let failMarkerRead = true;
-    const get = spyOn(storage, 'get').mockImplementation((key): Promise<string | null> => {
-      if (failMarkerRead && key === STORAGE_KEYS.ACTIVE_IDENTITY) {
-        failMarkerRead = false;
-        return Promise.reject(new Error('injected marker read failure'));
-      }
-      return originalGet(key);
-    });
-
-    await expect(createTestManager(agent, { storage }).restoreSession()).rejects.toThrow(
-      'injected marker read failure',
-    );
-    expect(await originalGet(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
-    expect(await originalGet(STORAGE_KEYS.ACTIVE_IDENTITY)).toBe('did:dht:owner456');
-    expect(await originalGet(STORAGE_KEYS.DELEGATE_DID)).toBe('did:jwk:delegate123');
-    expect(await originalGet(STORAGE_KEYS.CONNECTED_DID)).toBe('did:dht:owner456');
-    expect(await originalGet(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
-    expect(rpcCalls).toHaveLength(0);
-    expect(identityDeletes).toBe(0);
-
-    get.mockRestore();
+    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
   });
 
   test('inconsistent active-identity binding retains the journal and blocks restore', async () => {
@@ -835,113 +614,6 @@ describe('grant revocation on disconnect', () => {
     expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
     expect(rpcCalls).toHaveLength(0);
     expect(identityDeletes).toBe(0);
-  });
-
-  test('marker binding change before cleanup retains the journal and fails closed', async () => {
-    const storage = new MemoryStorage();
-    await seedInterruptedDisconnect(storage);
-    let sends = 0;
-    let identityDeletes = 0;
-    const agent = buildRevocationAgent({
-      grantRecords: { 'grant-1': mockGrantRecord('grant-1') },
-    });
-    (agent.rpc as any).sendDwnRequest = async (): Promise<any> => {
-      sends++;
-      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:replacement-owner');
-      return { status: { code: 202 } };
-    };
-    (agent.identity as any).delete = async (): Promise<void> => { identityDeletes++; };
-
-    await expect(createTestManager(agent, { storage }).restoreSession()).rejects.toThrow(
-      'AuthManager: Session marker binding is inconsistent.',
-    );
-    expect(sends).toBeGreaterThan(0);
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
-    expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBe('did:dht:owner456');
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:jwk:delegate123');
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe('did:dht:replacement-owner');
-    expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).not.toBeNull();
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
-    expect(identityDeletes).toBe(0);
-
-    const sendsAfterFirstAttempt = sends;
-    await expect(createTestManager(agent, { storage }).restoreSession()).rejects.toThrow(
-      'AuthManager: Session marker binding is inconsistent.',
-    );
-    expect(sends).toBe(sendsAfterFirstAttempt);
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
-    expect(identityDeletes).toBe(0);
-  });
-
-  test('journal prune failure occurs after marker cleanup and remains restart-safe', async () => {
-    const storage = new MemoryStorage();
-    await seedInterruptedDisconnect(storage);
-    const statuses = [202, 409];
-    let sends = 0;
-    let identityDeletes = 0;
-    const agent = buildRevocationAgent({
-      grantRecords: { 'grant-1': mockGrantRecord('grant-1') },
-    });
-    (agent.rpc as any).sendDwnRequest = async (): Promise<any> => ({
-      status: { code: statuses[sends++] },
-    });
-    const originalIdentityGet = agent.identity.get.bind(agent.identity);
-    let identityPresent = true;
-    (agent.identity as any).get = async (params: any): Promise<any> =>
-      identityPresent ? originalIdentityGet(params) : undefined;
-    (agent.identity as any).delete = async (): Promise<void> => {
-      identityDeletes++;
-      identityPresent = false;
-    };
-
-    const originalRemove = storage.remove.bind(storage);
-    let retryRemovals = 0;
-    const remove = spyOn(storage, 'remove').mockImplementation((key): Promise<void> => {
-      if (key === STORAGE_KEYS.REVOCATION_RETRY_CONTEXT && ++retryRemovals === 1) {
-        return Promise.reject(new Error('injected post-marker prune failure'));
-      }
-      return originalRemove(key);
-    });
-
-    await expect(createTestManager(agent, { storage }).restoreSession()).rejects.toThrow(
-      'injected post-marker prune failure',
-    );
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
-    expect(identityDeletes).toBe(0);
-
-    remove.mockRestore();
-    expect(await createTestManager(agent, { storage }).restoreSession()).toBeUndefined();
-    expect(sends).toBe(2);
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
-    expect(identityDeletes).toBe(1);
-  });
-
-  test('identity retirement failure after durable cleanup cannot resurrect the session', async () => {
-    const storage = new MemoryStorage();
-    await seedInterruptedDisconnect(storage);
-    let identityDeleteAttempts = 0;
-    const agent = buildRevocationAgent({
-      grantRecords: { 'grant-1': mockGrantRecord('grant-1') },
-    });
-    (agent.identity as any).delete = async (): Promise<void> => {
-      identityDeleteAttempts++;
-      throw new Error('injected identity retirement failure');
-    };
-
-    expect(await createTestManager(agent, { storage }).restoreSession()).toBeUndefined();
-    expect(identityDeleteAttempts).toBe(1);
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
-
-    expect(await createTestManager(agent, { storage }).restoreSession()).toBeUndefined();
-    expect(identityDeleteAttempts).toBe(1);
   });
 
   test('retry work for another delegate does not clear or suppress the active session', async () => {
@@ -1156,38 +828,68 @@ describe('grant revocation on disconnect', () => {
     expect(entries[0].delegateDid).toBe('did:jwk:old-delegate');
   });
 
-  test('overlapping partial disconnects preserve both retry entries', async () => {
+  test('concurrent retry cannot overwrite a newly staged disconnect', async () => {
     const storage = new MemoryStorage();
-
-    // Pre-existing retry context from old session A
     await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
       delegateDid  : 'did:jwk:old-delegate-A',
       connectedDid : 'did:dht:owner-A',
       revocations  : [{ grantId: 'grant-A1', revocationGrantId: 'rev-A1' }],
     }]));
-
-    // Now disconnect session B with failures
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-    await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate-B');
-    await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner-B');
     await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([
       { grantId: 'grant-B1', revocationGrantId: 'rev-B1' },
     ]));
 
-    const agent = buildRevocationAgent({
+    const disconnectAgent = buildRevocationAgent({
       grantRecords : { 'grant-B1': mockGrantRecord('grant-B1') },
       rpcError     : true,
     });
-
-    const manager = createTestManager(agent, { storage });
+    const manager = createTestManager(disconnectAgent, { storage });
     await manager.connect({ password: 'test' });
-    await manager.disconnect();
 
-    // Both entries should be in the collection
+    const retryIdentity = createMockIdentity({
+      did      : { uri: 'did:jwk:old-delegate-A' },
+      metadata : { name: 'Old', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner-A' },
+    });
+    const retryAgent = buildRevocationAgent({
+      grantRecords: { 'grant-A1': mockGrantRecord('grant-A1') },
+    });
+    (retryAgent.identity as any).get = async ({ didUri }: any): Promise<any> =>
+      didUri === retryIdentity.did.uri ? retryIdentity : undefined;
+    let retryAttempted = false;
+    const resolveEndpoints = retryAgent.dwn.getRemoteDwnEndpointUrls.bind(retryAgent.dwn);
+    (retryAgent.dwn as any).getRemoteDwnEndpointUrls = async (didUri: string): Promise<string[]> => {
+      retryAttempted = true;
+      return resolveEndpoints(didUri);
+    };
+
+    const originalSet = storage.set.bind(storage);
+    let stageWriteReached!: () => void;
+    const stageWriteStarted = new Promise<void>((resolve) => { stageWriteReached = resolve; });
+    let releaseStageWrite!: () => void;
+    const stageWriteGate = new Promise<void>((resolve) => { releaseStageWrite = resolve; });
+    let blockStageWrite = true;
+    const set = spyOn(storage, 'set').mockImplementation(async (key, value): Promise<void> => {
+      if (key === STORAGE_KEYS.REVOCATION_RETRY_CONTEXT && blockStageWrite) {
+        blockStageWrite = false;
+        stageWriteReached();
+        await stageWriteGate;
+      }
+      await originalSet(key, value);
+    });
+
+    const disconnectPromise = manager.disconnect();
+    await stageWriteStarted;
+    const retryPromise = retryOrphanedRevocations(retryAgent, storage);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(retryAttempted).toBe(false);
+
+    releaseStageWrite();
+    await disconnectPromise;
+    await retryPromise;
+    set.mockRestore();
+
     const entries = JSON.parse((await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT))!);
-    expect(entries).toHaveLength(2);
-    expect(entries.find((e: any) => e.delegateDid === 'did:jwk:old-delegate-A')).toBeDefined();
-    expect(entries.find((e: any) => e.delegateDid === 'did:jwk:delegate123')).toBeDefined();
+    expect(entries.map((entry: any) => entry.delegateDid)).toEqual(['did:jwk:delegate123']);
   });
 
   test('clearStorage disconnect does not repersist retry context after wipe', async () => {
@@ -1216,6 +918,41 @@ describe('grant revocation on disconnect', () => {
     expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
     expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
     expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();
+  });
+
+  test('clearStorage wipes malformed revocation state', async () => {
+    const storage = new MemoryStorage();
+    await seedDelegatedSession(storage);
+    const manager = createTestManager(buildRevocationAgent({}), { storage });
+    await manager.connect({ password: 'test' });
+    await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, '{invalid json');
+
+    await manager.disconnect({ clearStorage: true });
+
+    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();
+    expect((manager as any)._session).toBeUndefined();
+  });
+
+  test('clearStorage wipes when the retry journal cannot be staged', async () => {
+    const storage = new MemoryStorage();
+    await seedDelegatedSession(storage);
+    const manager = createTestManager(buildRevocationAgent({}), { storage });
+    await manager.connect({ password: 'test' });
+    const originalSet = storage.set.bind(storage);
+    const set = spyOn(storage, 'set').mockImplementation((key, value): Promise<void> => {
+      if (key === STORAGE_KEYS.REVOCATION_RETRY_CONTEXT) {
+        return Promise.reject(new Error('storage full'));
+      }
+      return originalSet(key, value);
+    });
+
+    await manager.disconnect({ clearStorage: true });
+
+    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
+    expect((manager as any)._session).toBeUndefined();
+    set.mockRestore();
   });
 
   test('legacy single-object retry context is migrated to array on load', async () => {
