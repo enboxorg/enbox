@@ -1,8 +1,13 @@
 import type { AgentSession } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { CreateEnboxTestContextOptions, EnboxTestContext } from '@enbox/api/testing';
+import type {
+  CreateEnboxTestContextOptions,
+  CreateHostedDelegatedEnboxTestContextOptions,
+  EnboxTestContext,
+  HostedDelegatedEnboxTestContext,
+} from '@enbox/api/testing';
 
-import { createEnboxTestContext } from '@enbox/api/testing';
+import { createEnboxTestContext, createHostedDelegatedEnboxTestContext } from '@enbox/api/testing';
 import { defineApplicationManifest, defineProtocol, recordCodecs } from '@enbox/api';
 
 const NotesDefinition = {
@@ -35,5 +40,27 @@ async function exerciseTestingContext(): Promise<void> {
 
 void exerciseTestingContext;
 
+const hostedOptions: CreateHostedDelegatedEnboxTestContextOptions = {
+  application,
+  dwnEndpoints: ['https://dwn.example.com'],
+};
+
+async function exerciseHostedTestingContext(): Promise<void> {
+  const context: HostedDelegatedEnboxTestContext =
+    await createHostedDelegatedEnboxTestContext(hostedOptions);
+  const session: AgentSession = context.session;
+  const ownerDid: string = context.ownerDid;
+  const delegateDid: string = context.delegateDid;
+  await context.close();
+  void delegateDid;
+  void ownerDid;
+  void session;
+}
+
+void exerciseHostedTestingContext;
+
 // @ts-expect-error test contexts require a normalized application manifest.
 void createEnboxTestContext({ application: { protocols: [NotesDefinition] } });
+
+// @ts-expect-error hosted contexts require at least the endpoint array property.
+void createHostedDelegatedEnboxTestContext({ application });

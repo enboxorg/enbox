@@ -2010,7 +2010,7 @@ export class AgentDwnApi {
     try {
       const definition = params.source === 'local'
         ? await this.getProtocolDefinition(params.targetDid, params.protocol, params.granteeDid)
-        : await this.fetchRemoteProtocolDefinition(params.targetDid, params.protocol);
+        : await this.fetchRemoteProtocolDefinition(params.targetDid, params.protocol, params.granteeDid);
       if (definition === undefined) {
         throw new Error('protocol definition was not found');
       }
@@ -2453,9 +2453,14 @@ export class AgentDwnApi {
     }
 
     const { definition } = message.descriptor;
-    this._protocolDefinitionCache.delete(`${target}~${definition.protocol}`);
-    this._protocolDefinitionCache.delete(`local-rpc~${target}~${definition.protocol}`);
-    this._protocolDefinitionCache.delete(`remote~${target}~${definition.protocol}`);
+    const directCacheKey = `${target}~${definition.protocol}`;
+    const scopedCacheKeySuffix = `~${target}~${definition.protocol}`;
+
+    for (const [cacheKey] of this._protocolDefinitionCache) {
+      if (cacheKey === directCacheKey || cacheKey.endsWith(scopedCacheKeySuffix)) {
+        this._protocolDefinitionCache.delete(cacheKey);
+      }
+    }
   }
 
   private static async computeDataCidAndSize(dataStream: ReadableStream<Uint8Array>): Promise<{
@@ -2595,6 +2600,9 @@ export class AgentDwnApi {
       // Remote mode still has a configured local DWN server. Query it
       // directly rather than resolving the tenant's advertised remote DWN.
       try {
+        const authorization = await this.getRemoteProtocolQueryAuthorization(
+          tenantDid, protocolUri, granteeDid,
+        );
         return await fetchRemoteProtocolDefinitionFn(
           tenantDid,
           protocolUri,
@@ -2602,6 +2610,7 @@ export class AgentDwnApi {
           this.sendDwnRpcRequest.bind(this),
           this._protocolDefinitionCache,
           'local-rpc',
+          authorization,
         );
       } catch (error: unknown) {
         // Only treat "not found" responses as missing protocols.  Transient
@@ -2643,16 +2652,51 @@ export class AgentDwnApi {
 
   /**
    * Fetches a protocol definition from a remote DWN.
-   * Uses an unsigned ProtocolsQuery (public protocols can be queried anonymously).
+   * Public protocols use an unsigned query; delegates use their covering
+   * Protocols.Query grant when one is available.
    */
   private async fetchRemoteProtocolDefinition(
     targetDid: string,
     protocolUri: string,
+    granteeDid?: string,
   ): Promise<ProtocolDefinition> {
+    const authorization = await this.getRemoteProtocolQueryAuthorization(
+      targetDid, protocolUri, granteeDid,
+    );
     return fetchRemoteProtocolDefinitionFn(
       targetDid, protocolUri, this.getRemoteDwnEndpointUrls.bind(this),
       this.sendDwnRpcRequest.bind(this), this._protocolDefinitionCache,
+      'remote', authorization,
     );
+  }
+
+  /** Resolve delegate authorization for an unpublished remote protocol query. */
+  private async getRemoteProtocolQueryAuthorization(
+    connectedDid: string,
+    protocol: string,
+    granteeDid?: string,
+  ): Promise<{ permissionGrantId: string; signer: DwnSigner } | undefined> {
+    if (granteeDid === undefined) {
+      return undefined;
+    }
+
+    try {
+      const { grant } = await this.agent.permissions.getPermissionForRequest({
+        connectedDid,
+        delegateDid : granteeDid,
+        messageType : DwnInterface.ProtocolsQuery,
+        protocol,
+      });
+      return {
+        permissionGrantId : grant.id,
+        signer            : await this.getSigner(granteeDid),
+      };
+    } catch (error: unknown) {
+      if (error instanceof PermissionGrantNotFoundError) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   private async getDwnMessage<T extends DwnInterface>({ author, messageCid }: {
