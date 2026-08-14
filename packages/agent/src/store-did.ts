@@ -1,3 +1,4 @@
+import type { DataStoreSetParams } from './store-data.js';
 import type { PortableDid } from '@enbox/dids';
 
 import { isPortableDid } from '@enbox/dids';
@@ -19,6 +20,19 @@ export class DwnDidStore extends DwnDataStore<PortableDid> {
     protocolPath : 'portableDid',
     schema       : this._recordProtocolDefinition.types.portableDid.schema,
   };
+
+  /**
+   * Refuses private key material because this store does not encrypt DID records.
+   */
+  public async set(params: DataStoreSetParams<PortableDid>): Promise<void> {
+    if (params.data.privateKeys !== undefined) {
+      throw new Error(
+        'DwnDidStore: PortableDid records must not contain privateKeys. Import private keys through the agent key manager instead.'
+      );
+    }
+
+    await super.set(params);
+  }
 
   protected getStoredObjectId(storedDid: PortableDid): string {
     return storedDid.uri;

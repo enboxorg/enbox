@@ -235,6 +235,17 @@ describe('DidStore', () => {
       });
 
       describe('set()', () => {
+        dwnIt('rejects DIDs containing private key material', async () => {
+          const bearerDid = await DidJwk.create();
+          const portableDid = await bearerDid.export();
+
+          await expect(didStore.set({
+            id    : portableDid.uri,
+            data  : portableDid,
+            agent : testHarness.agent
+          })).rejects.toThrow('DwnDidStore: PortableDid records must not contain privateKeys');
+        });
+
         it('stores a DID', async () => {
           // Generate a new DID.
           const bearerDid = await DidJwk.create();
