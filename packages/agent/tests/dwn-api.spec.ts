@@ -366,6 +366,8 @@ describe('AgentDwnApi', () => {
       const protocol = 'https://example.com/protocol-cache';
       const cacheKeys = [
         `${tenant}~${protocol}`,
+        `local~owner~${tenant}~${protocol}`,
+        `local~delegate~did:key:delegate~no-grant~${tenant}~${protocol}`,
         `local~delegate~did:key:delegate~grant-local~${tenant}~${protocol}`,
         `local-rpc~${tenant}~${protocol}`,
         `remote~${tenant}~${protocol}`,
@@ -488,6 +490,8 @@ describe('AgentDwnApi', () => {
       const protocol = 'https://example.com/protocol-cache';
       const cacheKeys = [
         `${tenant}~${protocol}`,
+        `local~owner~${tenant}~${protocol}`,
+        `local~delegate~did:key:delegate~no-grant~${tenant}~${protocol}`,
         `local~delegate~did:key:delegate~grant-local~${tenant}~${protocol}`,
         `local-rpc~${tenant}~${protocol}`,
         `remote~${tenant}~${protocol}`,

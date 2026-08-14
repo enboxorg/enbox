@@ -302,6 +302,34 @@ try {
 Each context owns a unique identity and storage directory, so contexts can run
 concurrently. Always call `close()` to end its session and release resources.
 
+Tests that need the production delegated and hosted-routing paths can use the
+hosted helper instead:
+
+```ts
+import { createHostedDelegatedEnboxTestContext } from '@enbox/api/testing';
+
+const context = await createHostedDelegatedEnboxTestContext({
+  application,
+  dwnEndpoints: [process.env.TEST_DWN_URL!],
+});
+try {
+  const notes = context.enbox.using(NotesProtocol);
+  await notes.records.create('note', {
+    data : { title: 'Test', body: 'Stored on the hosted DWN' },
+    from : context.ownerDid,
+  });
+} finally {
+  await context.close();
+}
+```
+
+This helper requires the normal `did:dht` test gateway and at least one
+caller-managed DWN endpoint that accepts the generated owner tenant. It does
+not start or emulate either service. `close()` stops the local agents and
+removes their temporary files; protocol configurations, grants, revocations,
+and records already sent to the hosted DWN remain there. Use a disposable or
+resettable test endpoint when test isolation requires remote cleanup.
+
 ## Records
 
 ```ts

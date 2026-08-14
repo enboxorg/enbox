@@ -28,26 +28,24 @@
  * for every write.
  */
 
-import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { BearerDid, PortableDid } from '@enbox/dids';
-import type { ConnectHandler, ConnectRequestType, ConnectResult } from '@enbox/auth';
+import type { ConnectHandler, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/auth';
 import type { DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxPlatformAgent } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DidJwk } from '@enbox/dids';
-import { Ed25519 } from '@enbox/crypto';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
 import {
   AuthManager, MemoryStorage, processConnectedGrants, WalletConnect,
 } from '@enbox/auth';
 import {
-  createGrantKeyRecordsForGrants, createPermissionGrants, DwnInterface, EnboxUserAgent, getEncryptionKeyInfo,
+  createPermissionGrants, DwnInterface, EnboxUserAgent, ensureDelegateX25519PrivateKey, executeConnectApproval,
 } from '@enbox/agent';
-import { DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Jws, WRAPPED_GRANT_KEY_FORMAT } from '@enbox/dwn-sdk-js';
+import { Encoder, EncryptionProtocol, Jws, WRAPPED_GRANT_KEY_FORMAT } from '@enbox/dwn-sdk-js';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
@@ -459,137 +457,61 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 /**
  * In-process ConnectHandler that acts as the wallet during tests.
  *
- * Performs the same operations as a real wallet's `submitConnectResponse`:
- * installs the protocol with encryption, creates a delegate DID with
- * Ed25519 + X25519 keys, creates permission grants, derives single-party
- * scoped decryption keys, and returns a fully-formed ConnectResult.
+ * Delegates to the canonical wallet-side approval ceremony so this fixture
+ * cannot drift from production protocol preparation, grant creation, key
+ * delivery, or session revocation behavior.
  */
 class InProcessWalletHandler implements ConnectHandler {
-  private walletDwn: DwnApi;
-
   constructor(
     private walletAgent: EnboxPlatformAgent,
     private ownerDid: string,
     private options: { preSupplyDelegateDid?: boolean } = {},
-  ) {
-    this.walletDwn = new DwnApi({
-      agent: walletAgent, connectedDid: ownerDid,
-    });
-  }
+  ) {}
 
   async requestAccess(params: {
-    permissionRequests: any[];
+    permissionRequests: ConnectPermissionRequest[];
     delegatePortableDid?: PortableDid;
     requestType?: ConnectRequestType;
+    expectedProviderDid?: string;
   }): Promise<ConnectResult | undefined> {
-    const delegatePortableDid = params.requestType === 'refresh'
+    const requestedDelegatePortableDid = params.requestType === 'refresh'
       ? params.delegatePortableDid
       : this.options.preSupplyDelegateDid === true
         ? await createClientDelegatePortableDid()
-        : await createWalletMintedDelegatePortableDid(this.walletAgent);
-    if (delegatePortableDid === undefined) {
+        : undefined;
+    if (params.requestType === 'refresh' && requestedDelegatePortableDid === undefined) {
       throw new Error('refresh requests must supply the existing delegate DID.');
     }
-    const reusesDelegate = params.requestType === 'refresh' || this.options.preSupplyDelegateDid === true;
-    const delegateRootPrivateKey = delegatePortableDid.privateKeys!.find((key) => key.crv === 'X25519') as PrivateKeyJwk | undefined;
-    if (!reusesDelegate && delegateRootPrivateKey === undefined) {
-      throw new Error('test delegate DID must include an X25519 private key.');
+
+    const approval = await executeConnectApproval({
+      agent       : this.walletAgent,
+      providerDid : this.ownerDid,
+      request     : {
+        appName             : 'Enbox API integration test',
+        delegateDid         : requestedDelegatePortableDid?.uri,
+        expectedProviderDid : params.expectedProviderDid,
+        permissionRequests  : params.permissionRequests,
+      },
+      transport: 'relay',
+    });
+    const delegatePortableDid = approval.delegatePortableDid ?? requestedDelegatePortableDid;
+    if (delegatePortableDid === undefined) {
+      throw new Error('Wallet approval returned no delegate key material.');
     }
-
-    const allGrants: any[] = [];
-    const allGrantKeyRecords: DwnDataEncodedRecordsWriteMessage[] = [];
-
-    for (const permissionRequest of params.permissionRequests) {
-      const { protocolDefinition, permissionScopes } = permissionRequest;
-
-      // Install the protocol with encryption on the wallet agent (local + remote).
-      const { status: configStatus, protocol: walletProtocol } =
-        await this.walletDwn.protocols.configure({
-          definition: protocolDefinition,
-        });
-      if (configStatus.code !== 202) {
-        throw new Error(
-          `Failed to install protocol: ${configStatus.code} ${configStatus.detail}`
-        );
-      }
-
-      // Send to the wallet's remote DWN (same as a real wallet does).
-      await publishProtocol(this.walletAgent, walletProtocol!, this.ownerDid, this.ownerDid);
-
-      // Create permission grants.
-      const grants = await createPermissionGrants(
-        this.ownerDid, delegatePortableDid.uri, this.walletAgent, permissionScopes,
-      );
-      allGrants.push(...grants);
-
-      if (permissionRequestHasEncryptedReadScopes(permissionRequest)) {
-        const delegateRootPublicKey = reusesDelegate
-          ? (await getEncryptionKeyInfo(this.walletAgent, delegatePortableDid.uri)).publicKeyJwk
-          : undefined;
-        const grantKeyRecords = await createGrantKeyRecordsForGrants({
-          agent      : this.walletAgent,
-          ownerDid   : this.ownerDid,
-          granteeDid : delegatePortableDid.uri,
-          ...(delegateRootPublicKey === undefined
-            ? { granteeRootPrivateKey: delegateRootPrivateKey! }
-            : { granteeRootPublicKey: delegateRootPublicKey }),
-          grantMessages       : grants,
-          protocolDefinitions : [protocolDefinition],
-        });
-        allGrantKeyRecords.push(...grantKeyRecords);
-      }
-    }
-
-    await fanOutDataEncodedRecords(this.walletAgent, this.ownerDid, allGrantKeyRecords);
 
     return {
       delegatePortableDid,
-      delegateGrants : allGrants,
-      connectedDid   : this.ownerDid,
+      delegateGrants     : approval.delegateGrants,
+      connectedDid       : this.ownerDid,
+      sessionRevocations : approval.sessionRevocations,
     };
   }
 }
 
-async function createWalletMintedDelegatePortableDid(
-  walletAgent: EnboxPlatformAgent,
-): Promise<PortableDid> {
-  const delegateBearerDid = await walletAgent.did.create({
-    store  : false,
-    method : 'jwk',
-  });
-  return addX25519PrivateKey(await delegateBearerDid.export());
-}
-
 async function createClientDelegatePortableDid(): Promise<PortableDid> {
   const delegateBearerDid = await DidJwk.create();
-  return addX25519PrivateKey(await delegateBearerDid.export());
-}
-
-async function addX25519PrivateKey(delegatePortableDid: PortableDid): Promise<PortableDid> {
-  const privateKeys = [...(delegatePortableDid.privateKeys ?? [])];
-  const delegateEdPrivateKey = privateKeys.find((key) => key.crv === 'Ed25519');
-  if (delegateEdPrivateKey === undefined) {
-    throw new Error('test delegate DID must include an Ed25519 private key.');
-  }
-
-  if (!privateKeys.some((key) => key.crv === 'X25519')) {
-    privateKeys.push(await Ed25519.convertPrivateKeyToX25519({
-      privateKey: delegateEdPrivateKey as PrivateKeyJwk,
-    }) as PrivateKeyJwk);
-  }
-
-  return {
-    ...delegatePortableDid,
-    privateKeys,
-  };
-}
-
-function permissionRequestHasEncryptedReadScopes(permissionRequest: any): boolean {
-  return Object.values(permissionRequest.protocolDefinition.types ?? {})
-    .some((type: any) => type?.encryptionRequired === true) &&
-    permissionRequest.permissionScopes.some(
-      (scope: any) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
-    );
+  const { portableDid } = await ensureDelegateX25519PrivateKey(await delegateBearerDid.export());
+  return portableDid;
 }
 
 async function fanOutDataEncodedRecords(

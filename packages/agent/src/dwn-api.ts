@@ -75,7 +75,7 @@ import type {
 } from './types/dwn.js';
 
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
-import { PermissionGrantNotFoundError } from './permissions-api.js';
+import { resolveDelegatePermissionGrantId } from './delegate-permission-grant.js';
 import { scanActiveAudienceKeyDeliveryIntents } from './audience-key-delivery-reconciliation.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import {
@@ -302,7 +302,8 @@ export class AgentDwnApi {
 
   /**
    * Protocol definition cache — TTL 30 minutes. Protocols rarely change.
-   * Keyed by `${tenantDid}~${protocolUri}`.
+   * Keys include the lookup source, authorization scope, target DID, and
+   * protocol URI so public, owner, and delegated results cannot cross sessions.
    */
   private readonly _protocolDefinitionCache = new TtlCache<string, ProtocolDefinition>({
     ttl: 30 * 60 * 1000
@@ -2600,7 +2601,7 @@ export class AgentDwnApi {
       // Remote mode still has a configured local DWN server. Query it
       // directly rather than resolving the tenant's advertised remote DWN.
       try {
-        const authorization = await this.getRemoteProtocolQueryAuthorization(
+        const authorization = await this.getProtocolQueryAuthorization(
           tenantDid, protocolUri, granteeDid,
         );
         return await fetchRemoteProtocolDefinitionFn(
@@ -2625,23 +2626,11 @@ export class AgentDwnApi {
     }
     // When operating as a delegate, resolve the ProtocolsQuery grant so
     // the local DWN authorises the query for unpublished protocols.
-    let permissionGrantId: string | undefined;
-    if (granteeDid) {
-      try {
-        const { grant } = await this.agent.permissions.getPermissionForRequest({
-          connectedDid : tenantDid,
-          delegateDid  : granteeDid,
-          protocol     : protocolUri,
-          messageType  : DwnInterface.ProtocolsQuery,
-        });
-        permissionGrantId = grant.id;
-      } catch (error: unknown) {
-        if (!(error instanceof PermissionGrantNotFoundError)) {
-          throw error;
-        }
-        // No grant found — try without (works for published protocols).
-      }
-    }
+    const permissionGrantId = await resolveDelegatePermissionGrantId({
+      did            : tenantDid,
+      delegateDid    : granteeDid,
+      permissionsApi : this.agent.permissions,
+    }, DwnInterface.ProtocolsQuery, protocolUri);
 
     return getProtocolDefinitionFn(
       tenantDid, protocolUri, this._dwn,
@@ -2660,7 +2649,7 @@ export class AgentDwnApi {
     protocolUri: string,
     granteeDid?: string,
   ): Promise<ProtocolDefinition> {
-    const authorization = await this.getRemoteProtocolQueryAuthorization(
+    const authorization = await this.getProtocolQueryAuthorization(
       targetDid, protocolUri, granteeDid,
     );
     return fetchRemoteProtocolDefinitionFn(
@@ -2670,33 +2659,25 @@ export class AgentDwnApi {
     );
   }
 
-  /** Resolve delegate authorization for an unpublished remote protocol query. */
-  private async getRemoteProtocolQueryAuthorization(
+  /** Resolve delegate authorization for an unpublished protocol query. */
+  private async getProtocolQueryAuthorization(
     connectedDid: string,
     protocol: string,
     granteeDid?: string,
   ): Promise<{ permissionGrantId: string; signer: DwnSigner } | undefined> {
-    if (granteeDid === undefined) {
+    const permissionGrantId = await resolveDelegatePermissionGrantId({
+      did            : connectedDid,
+      delegateDid    : granteeDid,
+      permissionsApi : this.agent.permissions,
+    }, DwnInterface.ProtocolsQuery, protocol);
+    if (permissionGrantId === undefined || granteeDid === undefined) {
       return undefined;
     }
 
-    try {
-      const { grant } = await this.agent.permissions.getPermissionForRequest({
-        connectedDid,
-        delegateDid : granteeDid,
-        messageType : DwnInterface.ProtocolsQuery,
-        protocol,
-      });
-      return {
-        permissionGrantId : grant.id,
-        signer            : await this.getSigner(granteeDid),
-      };
-    } catch (error: unknown) {
-      if (error instanceof PermissionGrantNotFoundError) {
-        return undefined;
-      }
-      throw error;
-    }
+    return {
+      permissionGrantId,
+      signer: await this.getSigner(granteeDid),
+    };
   }
 
   private async getDwnMessage<T extends DwnInterface>({ author, messageCid }: {

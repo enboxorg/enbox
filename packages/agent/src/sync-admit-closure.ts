@@ -20,6 +20,7 @@ import type { SyncScope } from './types/sync.js';
 import { classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
 import { orderMessagesForAdmission } from './sync-admission-order.js';
+import { resolveDelegatePermissionGrantId } from './delegate-permission-grant.js';
 
 import {
   capRecordsWriteDataStream,
@@ -38,7 +39,6 @@ import {
   matchesEncryptionControlDependency,
   missingDependencyDetail,
   newestProtocolConfig,
-  resolveDelegatePermissionGrantId,
 } from './sync-fetch-helpers.js';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 

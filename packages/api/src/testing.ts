@@ -65,7 +65,10 @@ export type HostedDelegatedEnboxTestContext = {
   /** Delegated session whose signal is aborted when the context closes. */
   session: AgentSession;
 
-  /** Stop sync, close both agents, and remove local temporary data. */
+  /**
+   * Stop sync, close both agents, and remove local temporary data.
+   * Hosted protocol, grant, revocation, and record state is not deleted.
+   */
   close(): Promise<void>;
 };
 
@@ -133,7 +136,9 @@ export async function createEnboxTestContext(
  * This helper drives the same approval and delegated-connect paths used by a
  * real application. It is intentionally Node-only and requires externally
  * managed DWN endpoints; it does not replace hosted transport with an
- * in-process shortcut.
+ * in-process shortcut. Closing the context removes local state only; callers
+ * should use disposable or resettable DWN endpoints when remote cleanup is
+ * required between tests.
  */
 export async function createHostedDelegatedEnboxTestContext(
   { application, dwnEndpoints }: CreateHostedDelegatedEnboxTestContextOptions,
