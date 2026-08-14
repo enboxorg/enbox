@@ -9,7 +9,7 @@ import { MemoryStorage } from '../src/storage/storage.js';
 import { persistLocalDwnPairingRecord } from '../src/discovery.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { retryOrphanedRevocations, restoreSession as runRestoreSession } from '../src/connect/restore.js';
+import { readRevocationRetryEntries, retryOrphanedRevocations, restoreSession as runRestoreSession } from '../src/connect/restore.js';
 
 function restoreSession(
   context: Parameters<typeof createFlowContext>[0],
@@ -40,6 +40,23 @@ describe('restoreSession', () => {
 
     // Stale flag should be cleaned up
     expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+  });
+
+  test('retains revocation retry evidence when the vault is missing', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const retryContext = JSON.stringify([{
+      delegateDid  : 'did:jwk:missing-delegate',
+      connectedDid : 'did:dht:owner',
+      revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
+    }]);
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, retryContext);
+    const agent = createMockAgent({ firstLaunch: async () => true });
+
+    expect(await restoreSession({ userAgent: agent, emitter, storage })).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(retryContext);
   });
 
   test('returns undefined when no identity found and not an agent-only session', async () => {
@@ -760,8 +777,8 @@ describe('restoreSession', () => {
     });
   });
 
-  describe('loadRetryEntries', () => {
-    test('clears storage and returns empty when data is truly malformed', async () => {
+  describe('readRevocationRetryEntries', () => {
+    test('retains and rejects data that is truly malformed', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -770,15 +787,16 @@ describe('restoreSession', () => {
 
       const agent = createMockAgent({ firstLaunch: async () => false });
 
-      // restoreSession triggers retryOrphanedRevocations which calls loadRetryEntries.
+      await expect(readRevocationRetryEntries(storage)).rejects.toThrow(
+        'AuthManager: Revocation retry context is invalid.',
+      );
       const session = await restoreSession({ userAgent: agent, emitter, storage });
       expect(session).toBeDefined();
 
-      // Malformed retry context should be cleared.
-      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(JSON.stringify('garbage'));
     });
 
-    test('clears storage and returns empty on JSON parse error', async () => {
+    test('retains and rejects a JSON parse error', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -787,11 +805,13 @@ describe('restoreSession', () => {
 
       const agent = createMockAgent({ firstLaunch: async () => false });
 
+      await expect(readRevocationRetryEntries(storage)).rejects.toThrow(
+        'AuthManager: Revocation retry context is invalid.',
+      );
       const session = await restoreSession({ userAgent: agent, emitter, storage });
       expect(session).toBeDefined();
 
-      // Parse-error retry context should be cleared.
-      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe('{not valid json!!!');
     });
   });
 
@@ -801,7 +821,11 @@ describe('restoreSession', () => {
       // An empty array is valid JSON but results in zero entries.
       await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, '[]');
 
-      const agent = createMockAgent();
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner1' },
+      });
+      const agent = createMockAgent({ identityList: async () => [identity] });
 
       await retryOrphanedRevocations(agent, storage);
 
@@ -821,7 +845,11 @@ describe('restoreSession', () => {
 
       const grantRecord = buildMockGrantRecord('grant-1');
 
-      const agent = createMockAgent();
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner1' },
+      });
+      const agent = createMockAgent({ identityList: async () => [identity] });
       // Override dwn.processRequest to return grant data for RecordsRead.
       (agent.dwn as any).processRequest = async (req: any): Promise<any> => {
         if (req.messageParams?.filter?.recordId) {
@@ -891,13 +919,47 @@ describe('restoreSession', () => {
       }]);
       await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, retryContext);
 
-      const agent = createMockAgent();
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner1' },
+      });
+      const agent = createMockAgent({ identityList: async () => [identity] });
       (agent.dwn as any).getRemoteDwnEndpointUrls = async (): Promise<string[]> => {
         throw new Error('resolution failed');
       };
 
       await retryOrphanedRevocations(agent, storage);
 
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(retryContext);
+    });
+
+    test('retains retry state when the delegate identity is bound to a different owner', async () => {
+      const storage = new MemoryStorage();
+      const retryContext = JSON.stringify([{
+        delegateDid  : 'did:jwk:delegate1',
+        connectedDid : 'did:dht:owner1',
+        revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
+      }]);
+      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, retryContext);
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:different-owner' },
+      });
+      let endpointResolutions = 0;
+      let identityDeletes = 0;
+      const agent = createMockAgent({
+        identityList   : async () => [identity],
+        identityDelete : async () => { identityDeletes++; },
+      });
+      (agent.dwn as any).getRemoteDwnEndpointUrls = async (): Promise<string[]> => {
+        endpointResolutions++;
+        return ['https://dwn.example.com'];
+      };
+
+      await retryOrphanedRevocations(agent, storage);
+
+      expect(endpointResolutions).toBe(0);
+      expect(identityDeletes).toBe(0);
       expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(retryContext);
     });
   });

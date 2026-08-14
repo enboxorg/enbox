@@ -123,7 +123,6 @@ async function resolveRestorePassword(
   if (isFirstLaunch) {
     await runFlowMutation(ctx, async (): Promise<void> => {
       await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-      await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
     });
     return undefined;
   }
@@ -302,49 +301,129 @@ async function finalizeRestoredSession(
 
 // ─── Revocation retry helpers ───────────────────────────────────
 
-type RevocationEntry = { grantId: string; revocationGrantId: string };
+export type RevocationEntry = { grantId: string; revocationGrantId: string };
 
-type RetryEntry = {
+export type RetryEntry = {
   delegateDid: string;
   connectedDid: string;
   revocations: RevocationEntry[];
 };
 
+const MAX_REVOCATION_RETRY_ENTRIES = 4_096;
+
 /**
- * Load all retry entries from `REVOCATION_RETRY_CONTEXT`.
- * Returns an empty array if the data is missing or malformed.
+ * Load and validate all durable retry entries. Invalid state is retained and
+ * rejected so callers never mistake an unreadable journal for completed work.
  */
-async function loadRetryEntries(
+export async function readRevocationRetryEntries(
   storage: StorageAdapter,
 ): Promise<RetryEntry[]> {
   const json = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
-  if (!json) { return []; }
-
-  try {
-    const parsed = JSON.parse(json);
-
-    // Handle legacy single-object format: wrap in array.
-    const legacyEntries = (parsed?.delegateDid && parsed?.connectedDid && Array.isArray(parsed?.revocations))
-      ? [parsed]
-      : [];
-    const entries = Array.isArray(parsed)
-      ? parsed
-      : legacyEntries;
-
-    if (entries.length === 0 && !Array.isArray(parsed)) {
-      // Truly malformed (not a valid legacy object either).
-      await clearRetryState(storage);
-      return [];
-    }
-
-    // Filter out malformed entries.
-    return entries.filter(
-      (e: any): e is RetryEntry => e?.delegateDid && e?.connectedDid && Array.isArray(e?.revocations),
-    );
-  } catch {
-    await clearRetryState(storage);
+  if (!json) {
     return [];
   }
+
+  try {
+    const parsed: unknown = JSON.parse(json);
+
+    // Handle legacy single-object format: wrap in array.
+    const entries: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    if (entries.length > MAX_REVOCATION_RETRY_ENTRIES || !entries.every(isRetryEntry)) {
+      throw new Error('invalid retry entries');
+    }
+    const delegateDids = new Set<string>();
+    let revocationCount = 0;
+    for (const entry of entries) {
+      revocationCount += entry.revocations.length;
+      if (delegateDids.has(entry.delegateDid) || revocationCount > MAX_REVOCATION_RETRY_ENTRIES) {
+        throw new Error('duplicate delegate retry entry');
+      }
+      delegateDids.add(entry.delegateDid);
+    }
+    return entries;
+  } catch (error: unknown) {
+    throw new Error('AuthManager: Revocation retry context is invalid.', { cause: error });
+  }
+}
+
+/** Parse the complete grant-revocation set persisted for an active session. */
+export function parseSessionRevocations(json: string): RevocationEntry[] {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!Array.isArray(parsed) || parsed.length > MAX_REVOCATION_RETRY_ENTRIES ||
+        !parsed.every(isRevocationEntry) || !hasUniqueRevocations(parsed)) {
+      throw new Error('invalid session revocations');
+    }
+    return parsed;
+  } catch (error: unknown) {
+    throw new Error('AuthManager: Session revocation state is invalid.', { cause: error });
+  }
+}
+
+/** Durably merge an active session's complete revocation set before any attempt. */
+export async function stageRevocationRetryEntry(
+  storage: StorageAdapter,
+  entry: RetryEntry,
+): Promise<void> {
+  if (!isRetryEntry(entry)) {
+    throw new Error('AuthManager: Session revocation binding is invalid.');
+  }
+  const entries = await readRevocationRetryEntries(storage);
+  const existing = entries.find(candidate => candidate.delegateDid === entry.delegateDid);
+  if (existing !== undefined && existing.connectedDid !== entry.connectedDid) {
+    throw new Error('AuthManager: Revocation retry binding is inconsistent.');
+  }
+  const revocations = mergeRevocations(existing?.revocations ?? [], entry.revocations);
+  const staged = entries.filter(candidate => candidate.delegateDid !== entry.delegateDid);
+  if (revocations.length > 0) {
+    staged.push({ ...entry, revocations });
+  }
+  if (staged.length > 0) {
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(staged));
+  }
+}
+
+function isRetryEntry(value: unknown): value is RetryEntry {
+  return isRecord(value) && isNonEmptyString(value.delegateDid) && isNonEmptyString(value.connectedDid) &&
+    Array.isArray(value.revocations) && value.revocations.length > 0 &&
+    value.revocations.length <= MAX_REVOCATION_RETRY_ENTRIES && value.revocations.every(isRevocationEntry) &&
+    hasUniqueRevocations(value.revocations);
+}
+
+function isRevocationEntry(value: unknown): value is RevocationEntry {
+  return isRecord(value) && isNonEmptyString(value.grantId) && isNonEmptyString(value.revocationGrantId);
+}
+
+function hasUniqueRevocations(entries: RevocationEntry[]): boolean {
+  return new Set(entries.map(entry => entry.grantId)).size === entries.length &&
+    new Set(entries.map(entry => entry.revocationGrantId)).size === entries.length;
+}
+
+function mergeRevocations(left: RevocationEntry[], right: RevocationEntry[]): RevocationEntry[] {
+  const merged = [...left];
+  for (const revocation of right) {
+    const sameGrant = merged.find(entry => entry.grantId === revocation.grantId);
+    const sameRevocationGrant = merged.find(entry => entry.revocationGrantId === revocation.revocationGrantId);
+    if ((sameGrant !== undefined && sameGrant.revocationGrantId !== revocation.revocationGrantId) ||
+        (sameRevocationGrant !== undefined && sameRevocationGrant.grantId !== revocation.grantId)) {
+      throw new Error('AuthManager: Revocation retry mapping is inconsistent.');
+    }
+    if (sameGrant === undefined) {
+      merged.push(revocation);
+    }
+  }
+  if (merged.length > MAX_REVOCATION_RETRY_ENTRIES) {
+    throw new Error('AuthManager: Revocation retry context is too large.');
+  }
+  return merged;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 2_048;
 }
 
 /**
@@ -508,13 +587,24 @@ export async function retryOrphanedRevocations(
   userAgent: EnboxUserAgent,
   storage: StorageAdapter,
 ): Promise<void> {
-  let entries = await loadRetryEntries(storage);
+  let entries = await readRevocationRetryEntries(storage);
+  const settledEntries: { entry: RetryEntry; identity: BearerIdentity }[] = [];
   if (entries.length === 0) {
     await clearRetryState(storage);
     return;
   }
 
   for (const entry of entries) {
+    let delegateIdentity: BearerIdentity | undefined;
+    try {
+      delegateIdentity = await userAgent.identity.get({ didUri: entry.delegateDid });
+    } catch {
+      continue;
+    }
+    if (delegateIdentity?.did.uri !== entry.delegateDid ||
+        delegateIdentity.metadata.connectedDid !== entry.connectedDid) {
+      continue;
+    }
     const succeeded = await retryEntryRevocations(userAgent, entry);
     if (succeeded === undefined) {
       continue; // Can't resolve endpoints for this entry — try next.
@@ -523,6 +613,9 @@ export async function retryOrphanedRevocations(
     // Update the in-memory collection so the next iteration sees
     // the correct state (avoid stale-snapshot overwrites).
     entries = applyRetrySuccesses(entries, entry, succeeded);
+    if (!entries.some(candidate => candidate.delegateDid === entry.delegateDid)) {
+      settledEntries.push({ entry, identity: delegateIdentity });
+    }
   }
 
   // Write the final state once after processing all entries.
@@ -530,6 +623,36 @@ export async function retryOrphanedRevocations(
     await clearRetryState(storage);
   } else {
     await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(entries));
+  }
+  for (const settled of settledEntries) {
+    await retireSettledDelegateIdentity(userAgent, storage, settled.entry, settled.identity);
+  }
+}
+
+async function retireSettledDelegateIdentity(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+  entry: RetryEntry,
+  identity: BearerIdentity,
+): Promise<void> {
+  try {
+    const [previouslyConnected, activeDelegateDid] = await Promise.all([
+      storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED),
+      storage.get(STORAGE_KEYS.DELEGATE_DID),
+    ]);
+    if (previouslyConnected === 'true' && activeDelegateDid === entry.delegateDid) {
+      return;
+    }
+    try {
+      await userAgent.did.delete({
+        didUri    : identity.did.uri,
+        tenant    : identity.metadata.tenant,
+        deleteKey : true,
+      });
+    } catch { /* best effort */ }
+    await userAgent.identity.delete({ didUri: identity.did.uri });
+  } catch {
+    // Best-effort local retirement cannot restore remotely settled authority.
   }
 }
 

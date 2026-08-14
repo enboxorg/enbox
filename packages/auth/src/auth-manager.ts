@@ -14,8 +14,7 @@
  * @module
  */
 
-import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, HdIdentityVault, PortableIdentity } from '@enbox/agent';
+import type { AgentSessionIdentity, BearerIdentity, HdIdentityVault, PortableIdentity } from '@enbox/agent';
 
 import type { FlowContext } from './connect/lifecycle.js';
 import type { PasswordProvider } from './password-provider.js';
@@ -52,9 +51,7 @@ import type {
   LocalDwnProbeResult,
 } from './discovery.js';
 
-import { Convert } from '@enbox/common';
-import { DataStream } from '@enbox/dwn-sdk-js';
-import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
+import { EnboxUserAgent } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
@@ -63,7 +60,6 @@ import { createDefaultStorage } from './storage/storage.js';
 import { fetchConnectionStatus } from './connect/status.js';
 import { importFromPortable } from './connect/import.js';
 import { normalizeProtocolRequests } from './permissions.js';
-import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
@@ -78,6 +74,13 @@ import {
   readLocalDwnEjectionRecordForPairing,
   requestLocalDwnPairing,
 } from './discovery.js';
+import {
+  parseSessionRevocations,
+  readRevocationRetryEntries,
+  restoreSession,
+  retryOrphanedRevocations,
+  stageRevocationRetryEntry,
+} from './connect/restore.js';
 
 type ConnectionMonitorState = {
   options: ConnectionMonitorOptions;
@@ -688,149 +691,33 @@ export class AuthManager {
       // Best-effort — sync may never have been started.
     }
 
-    // Revoke delegated session grants. Each revocation grant is
-    // contextId-scoped to the specific session grant it can revoke.
+    // Journal the complete revocation set before any remote attempt or local
+    // teardown. A retry is safe after every failure boundary because remote
+    // 202/409 responses are the only outcomes that narrow this journal.
     const delegateDid = this._session?.delegateDid;
     const connectedDid = this._session?.did;
-    let failedRevocations: { grantId: string; revocationGrantId: string }[] = [];
-
-    if (delegateDid && connectedDid) {
-      try {
-        const revocationsJson = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
-        if (revocationsJson) {
-          const revocations: { grantId: string; revocationGrantId: string }[] = JSON.parse(revocationsJson);
-
-          // Resolve the owner's DWN endpoints for remote delivery.
-          // Resolve REMOTE owner DWN endpoints (from DID document, not local
-          // discovery). Only remote endpoints count for revocation success.
-          let remoteDwnUrls: string[] = [];
-          try {
-            remoteDwnUrls = await this._userAgent.dwn.getRemoteDwnEndpointUrls(connectedDid);
-          } catch {
-            // Endpoint resolution failure — revocations will be local-only.
-          }
-
-          const succeeded: string[] = [];
-          for (const { grantId, revocationGrantId } of revocations) {
-            try {
-              // Read the specific grant by recordId. Use the delegate DID
-              // as author since the delegate agent may not have the owner's
-              // signing key. The delegate is the grant's recipient, so the
-              // permissions protocol authorizes the read.
-              const { reply: readReply } = await this._userAgent.dwn.processRequest({
-                author        : delegateDid,
-                target        : connectedDid,
-                messageType   : DwnInterface.RecordsRead,
-                messageParams : { filter: { recordId: grantId } },
-              });
-              if (readReply.status.code !== 200 || !readReply.entry?.recordsWrite) { continue; }
-              // Reconstruct DwnDataEncodedRecordsWriteMessage: RecordsRead returns
-              // data as a stream, but PermissionGrant.parse needs encodedData.
-              const grantDataBytes = readReply.entry.data
-                ? await DataStream.toBytes(readReply.entry.data)
-                : new Uint8Array(0);
-              const grantMsgWithData: DwnDataEncodedRecordsWriteMessage = {
-                ...readReply.entry.recordsWrite,
-                encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
-              };
-              const grant = DwnPermissionGrant.parse(grantMsgWithData);
-
-              // Self-healing: ensure the revocation grant is on the remote
-              // DWN. The best-effort fanout at connect time may have failed.
-              if (remoteDwnUrls.length > 0) {
-                try {
-                  const { reply: revGrantReply } = await this._userAgent.dwn.processRequest({
-                    author        : delegateDid,
-                    target        : connectedDid,
-                    messageType   : DwnInterface.RecordsRead,
-                    messageParams : { filter: { recordId: revocationGrantId } },
-                  });
-                  if (revGrantReply.status.code === 200 && revGrantReply.entry?.recordsWrite) {
-                    // Strip `encodedData` from the wire payload — the
-                    // bytes are sent via `data` (Blob) on the next line.
-                    // `RecordsWriteMessage` doesn't declare `encodedData`,
-                    // but the wire-format reply may include it; widen the
-                    // local type to acknowledge that without `any`.
-                    // NOSONAR S4325 false positive: the cast is required to
-                    // typecheck the destructuring of the undeclared
-                    // optional `encodedData` property; removing it fails
-                    // TS2339. Sonar reads the intersection-with-optional-
-                    // field as a no-op widening, which it isn't here.
-                    type RecordsWriteWireMessage = RecordsWriteMessage & { encodedData?: string };
-                    const { encodedData: _encoded, ...revGrantRaw } =
-                      revGrantReply.entry.recordsWrite as RecordsWriteWireMessage; // NOSONAR
-                    const revGrantData = revGrantReply.entry.data
-                      ? new Blob([await DataStream.toBytes(revGrantReply.entry.data) as BlobPart])
-                      : undefined;
-                    for (const dwnUrl of remoteDwnUrls) {
-                      try {
-                        await this._userAgent.rpc.sendDwnRequest({
-                          dwnUrl,
-                          targetDid : connectedDid,
-                          message   : revGrantRaw,
-                          data      : revGrantData,
-                        });
-                      } catch { /* per-endpoint failure */ }
-                    }
-                  }
-                } catch { /* best-effort */ }
-              }
-
-              // Create the revocation locally.
-              const { message: revocationMessage } = await this._userAgent.permissions.createRevocation({
-                author            : connectedDid,
-                store             : true,
-                grant,
-                granteeDid        : delegateDid,
-                permissionGrantId : revocationGrantId,
-              });
-
-              // Send the revocation to the owner's remote DWN endpoints.
-              // A revocation is only considered successful if at least one
-              // remote endpoint confirms it (202/409). Without remote
-              // delivery, the owner-side authority source won't see it.
-              let remoteDelivered = false;
-              if (revocationMessage && remoteDwnUrls.length > 0) {
-                const { encodedData, ...rawMessage } = revocationMessage;
-                const data = encodedData
-                  ? new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart])
-                  : undefined;
-                for (const dwnUrl of remoteDwnUrls) {
-                  try {
-                    const sendReply = await this._userAgent.rpc.sendDwnRequest({
-                      dwnUrl,
-                      targetDid : connectedDid,
-                      message   : rawMessage,
-                      data,
-                    });
-                    if (sendReply?.status?.code === 202 || sendReply?.status?.code === 409) {
-                      remoteDelivered = true;
-                    }
-                  } catch {
-                    // Per-endpoint failure — try the next one.
-                  }
-                }
-              }
-
-              if (remoteDelivered) {
-                succeeded.push(grantId);
-              }
-            } catch {
-              // Individual revocation failure.
-            }
-          }
-
-          failedRevocations = revocations.filter((r) => !succeeded.includes(r.grantId));
-        }
-      } catch (error: any) {
-        console.warn(`AuthManager: Grant revocation on disconnect failed: ${error.message}`);
+    let hasPendingRevocations = false;
+    if (delegateDid !== undefined && connectedDid !== undefined) {
+      const encodedRevocations = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
+      const sessionRevocations = encodedRevocations === null
+        ? []
+        : parseSessionRevocations(encodedRevocations);
+      const existingEntries = await readRevocationRetryEntries(this._storage);
+      if (sessionRevocations.length > 0) {
+        await stageRevocationRetryEntry(this._storage, {
+          delegateDid,
+          connectedDid,
+          revocations: sessionRevocations,
+        });
+      }
+      if (sessionRevocations.length > 0 || existingEntries.length > 0) {
+        await retryOrphanedRevocations(this._userAgent, this._storage);
+      }
+      if (!clearStorage) {
+        const remainingEntries = await readRevocationRetryEntries(this._storage);
+        hasPendingRevocations = remainingEntries.some(entry => entry.delegateDid === delegateDid);
       }
     }
-
-    this._session = undefined;
-
-    // Always clear the in-memory delegate decryption key cache on disconnect.
-    this._userAgent.dwn.clearDelegateDecryptionKeys();
 
     if (clearStorage) {
       // Nuclear wipe: clear all persisted auth data.
@@ -859,8 +746,8 @@ export class AuthManager {
         }
       }
     } else {
-      // Clean disconnect: ALWAYS clear all session markers regardless
-      // of revocation outcome. Retry context is independent (step below).
+      // The retry journal is already durable and narrowed before these
+      // session markers are removed.
       await Promise.all([
         this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED),
         this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY),
@@ -873,62 +760,17 @@ export class AuthManager {
       ]);
     }
 
-    // Update retry context — but NOT after a nuclear wipe.
-    // On failure: merge into existing collection.
-    // On success: prune any stale retry entry for this delegate.
-    if (!clearStorage && delegateDid && failedRevocations.length > 0 && connectedDid) {
-      let entries: { delegateDid: string; connectedDid: string; revocations: { grantId: string; revocationGrantId: string }[] }[] = [];
-      try {
-        const existing = await this._storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
-        if (existing) {
-          const parsed = JSON.parse(existing);
-          if (Array.isArray(parsed)) {
-            entries = parsed;
-          } else if (parsed?.delegateDid && parsed?.connectedDid && Array.isArray(parsed?.revocations)) {
-            // Legacy single-object format — migrate to array.
-            entries = [parsed];
-          }
-        }
-      } catch { /* ignore corrupt data — start fresh */ }
+    this._session = undefined;
 
-      // Replace or append this session's entry (keyed by delegateDid).
-      const idx = entries.findIndex((e) => e.delegateDid === delegateDid);
-      const newEntry = { delegateDid, connectedDid, revocations: failedRevocations };
-      if (idx >= 0) {
-        entries[idx] = newEntry;
-      } else {
-        entries.push(newEntry);
-      }
-
-      await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(entries));
-      console.warn(
-        `AuthManager: ${failedRevocations.length} grant revocation(s) failed. ` +
-        `Retry context persisted in REVOCATION_RETRY_CONTEXT.`
-      );
-    } else if (!clearStorage && delegateDid && failedRevocations.length === 0) {
-      // All revocations succeeded — prune any stale retry entry for this
-      // delegate from a previous partial disconnect.
-      try {
-        const existing = await this._storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
-        if (existing) {
-          const parsed = JSON.parse(existing);
-          const arr = Array.isArray(parsed) ? parsed : [];
-          const pruned = arr.filter((e: any) => e.delegateDid !== delegateDid);
-          if (pruned.length === 0) {
-            await this._storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
-          } else if (pruned.length < arr.length) {
-            await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(pruned));
-          }
-        }
-      } catch { /* best effort */ }
-    }
+    // Clear in-memory delegated material only after durable teardown commits.
+    this._userAgent.dwn.clearDelegateDecryptionKeys();
 
     // A cleanly revoked delegate is dead — connect sessions have no renewal
     // path and its grants are revoked — so remove the identity locally.
     // Otherwise a later restore can select the stale delegate and every
     // call under its revoked grants fails with 401. Keep the identity while
     // revocations are queued for retry: the retry path signs as the delegate.
-    if (delegateDid && failedRevocations.length === 0) {
+    if (delegateDid !== undefined && (clearStorage || !hasPendingRevocations)) {
       try {
         const delegateIdentity = await this._userAgent.identity.get({ didUri: delegateDid });
         if (delegateIdentity) {
