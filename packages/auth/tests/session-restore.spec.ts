@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 
 import { DwnPermissionGrant } from '@enbox/agent';
 import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
@@ -120,6 +120,8 @@ describe('restoreSession', () => {
     expect(session!.did).toBe('did:dht:external');
     expect(session!.delegateDid).toBe('did:dht:testuser123');
     expect(session!.signal).toBe(context.sessionSignal);
+    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:dht:testuser123');
+    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe('did:dht:external');
   });
 
   test('restores session from active identity DID', async () => {
@@ -241,6 +243,8 @@ describe('restoreSession', () => {
     const session = await restoreSession({ userAgent: agent, emitter, storage });
     expect(session).toBeDefined();
     expect(session!.delegateDid).toBe('did:dht:storeddelegate');
+    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:dht:storeddelegate');
+    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe(identity.did.uri);
   });
 
   test('starts sync with the bare-interval settle-check cadence when set', async () => {
@@ -778,29 +782,59 @@ describe('restoreSession', () => {
   });
 
   describe('readRevocationRetryEntries', () => {
-    test('retains and rejects data that is truly malformed', async () => {
+    test('treats an undefined adapter value as absent', async () => {
+      const storage = new MemoryStorage();
+      const get = spyOn(storage, 'get').mockResolvedValue(undefined as unknown as null);
+
+      expect(await readRevocationRetryEntries(storage)).toEqual([]);
+
+      get.mockRestore();
+    });
+
+    test('retains and rejects an empty truncated value', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      // Malformed: a plain string (not an array and not a valid legacy object).
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify('garbage'));
+      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, '');
+      const agent = createMockAgent({ firstLaunch: async () => false });
+
+      await expect(readRevocationRetryEntries(storage)).rejects.toThrow(
+        'AuthManager: Revocation retry context is invalid.',
+      );
+      await expect(restoreSession({ userAgent: agent, emitter, storage })).rejects.toThrow(
+        'AuthManager: Revocation retry context is invalid.',
+      );
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe('');
+      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
+    });
+
+    test('retains and rejects a malformed legacy object', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      const malformedLegacy = JSON.stringify({
+        delegateDid : 'did:jwk:delegate1',
+        revocations : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
+      });
+      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, malformedLegacy);
 
       const agent = createMockAgent({ firstLaunch: async () => false });
 
       await expect(readRevocationRetryEntries(storage)).rejects.toThrow(
         'AuthManager: Revocation retry context is invalid.',
       );
-      const session = await restoreSession({ userAgent: agent, emitter, storage });
-      expect(session).toBeDefined();
+      await expect(restoreSession({ userAgent: agent, emitter, storage })).rejects.toThrow(
+        'AuthManager: Revocation retry context is invalid.',
+      );
 
-      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(JSON.stringify('garbage'));
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(malformedLegacy);
+      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
     });
 
-    test('retains and rejects a JSON parse error', async () => {
+    test('retains and rejects truncated JSON', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      // Invalid JSON.
       await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, '{not valid json!!!');
 
       const agent = createMockAgent({ firstLaunch: async () => false });
@@ -808,10 +842,26 @@ describe('restoreSession', () => {
       await expect(readRevocationRetryEntries(storage)).rejects.toThrow(
         'AuthManager: Revocation retry context is invalid.',
       );
-      const session = await restoreSession({ userAgent: agent, emitter, storage });
-      expect(session).toBeDefined();
+      await expect(restoreSession({ userAgent: agent, emitter, storage })).rejects.toThrow(
+        'AuthManager: Revocation retry context is invalid.',
+      );
 
       expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe('{not valid json!!!');
+      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
+    });
+
+    test('accepts the legacy single-entry object shape', async () => {
+      const storage = new MemoryStorage();
+      const legacyEntry = {
+        delegateDid  : 'did:jwk:delegate1',
+        connectedDid : 'did:dht:owner1',
+        revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
+      };
+      const encoded = JSON.stringify(legacyEntry);
+      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, encoded);
+
+      expect(await readRevocationRetryEntries(storage)).toEqual([legacyEntry]);
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(encoded);
     });
   });
 

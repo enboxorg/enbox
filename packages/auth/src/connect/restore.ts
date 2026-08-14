@@ -27,10 +27,12 @@ import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeSession,
  * Returns `undefined` if no previous session exists.
  * Returns an `AuthSession` if the session was successfully restored.
  *
- * Two independent concerns are handled here:
+ * Two concerns are handled here:
  * 1. Revocation retry maintenance (from a previous partial disconnect)
  * 2. Normal session restore
- * They do NOT depend on each other. Both can run in the same call.
+ * Retry work for another delegate is independent and can run in the same
+ * call. Retry evidence bound to the persisted session instead proves that
+ * disconnect had begun, so recovery completes teardown and suppresses restore.
  */
 export async function restoreSession(
   ctx: FlowContext,
@@ -39,14 +41,17 @@ export async function restoreSession(
   const { userAgent, emitter, storage } = ctx;
   assertFlowActive(ctx);
 
-  // Two independent concerns:
+  // Two persisted concerns:
   // 1. PREVIOUSLY_CONNECTED — normal session restore
   // 2. REVOCATION_RETRY_CONTEXT — orphaned revocations from partial disconnect
   // If neither is set, nothing to do.
   const previouslyConnected = await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
   const retryContextJson = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
   assertFlowActive(ctx);
-  if (previouslyConnected !== 'true' && !retryContextJson) {
+  const retryEntries = isAbsent(retryContextJson)
+    ? undefined
+    : parseRevocationRetryEntries(retryContextJson);
+  if (previouslyConnected !== 'true' && retryEntries === undefined) {
     return undefined;
   }
 
@@ -68,11 +73,24 @@ export async function restoreSession(
     await runFlowMutation(ctx, () => applyLocalDwnDiscovery(userAgent, storage, emitter));
   }
 
-  // --- Retry maintenance (independent from session restore) ---
-  await runRetryMaintenanceIfNeeded(ctx, userAgent, storage, retryContextJson);
+  // --- Retry maintenance and interrupted-disconnect recovery ---
+  const interruptedDisconnect = await runRetryMaintenanceIfNeeded(
+    ctx, userAgent, storage, retryEntries,
+  );
+
+  // A retry journal bound to the persisted active delegate means disconnect
+  // had already begun before the prior process stopped. Recovery may finish
+  // that teardown, but must never resurrect the session being disconnected.
+  if (interruptedDisconnect) {
+    return undefined;
+  }
 
   // --- Normal session restore ---
-  if (previouslyConnected !== 'true') {
+  // Re-read after maintenance so a marker change cannot turn the initial
+  // snapshot into authorization to restore a session that was torn down.
+  const currentPreviouslyConnected = await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+  assertFlowActive(ctx);
+  if (currentPreviouslyConnected !== 'true') {
     return undefined;
   }
 
@@ -133,36 +151,45 @@ async function resolveRestorePassword(
 }
 
 /**
- * Best-effort retry of orphaned grant revocations left over from a partial
- * disconnect. Starts sync temporarily for remote delivery, runs the retry,
- * then stops sync. Failures here must NOT break a legitimate restore path —
- * the retry context simply remains in storage for the next attempt.
+ * Retry orphaned grant revocations left over from a partial disconnect.
+ * Unrelated remote-maintenance failures remain best-effort. Present malformed
+ * evidence, marker-read failures, and failures for the session being torn down
+ * fail closed so that restore cannot resurrect an interrupted disconnect.
  */
 async function runRetryMaintenanceIfNeeded(
   ctx: FlowContext,
   userAgent: EnboxUserAgent,
   storage: StorageAdapter,
-  retryContextJson: string | null,
-): Promise<void> {
-  if (!retryContextJson) {
-    return;
+  entries: RetryEntry[] | undefined,
+): Promise<boolean> {
+  if (entries === undefined) {
+    return false;
   }
+
+  const sessionCleanup = entries.length === 0
+    ? undefined
+    : await findSessionCleanupMatch(storage, entries);
+  const interruptedDisconnect = sessionCleanup !== undefined;
 
   try {
     await runFlowMutation(ctx, async (): Promise<void> => {
       await startSyncIfEnabled(userAgent, ctx.defaultSync);
       try {
-        await retryOrphanedRevocations(userAgent, storage);
+        await retryRevocationEntries(userAgent, storage, entries, sessionCleanup);
       } finally {
         await userAgent.sync.stopSync(2000);
       }
     });
-  } catch {
-    // Retry maintenance is best-effort. If sync startup or retry
-    // fails, the retry context remains in storage for next attempt.
-    // Do NOT let this block normal session restore below.
+  } catch (error: unknown) {
+    // Retry maintenance for an unrelated delegate is best-effort. A matching
+    // journal is the durable disconnect intent, so every recovery failure must
+    // block restoration until that teardown can finish.
+    if (interruptedDisconnect) {
+      throw error;
+    }
   }
   assertFlowActive(ctx);
+  return interruptedDisconnect;
 }
 
 /**
@@ -285,6 +312,13 @@ async function finalizeRestoredSession(
     await startSyncIfEnabled(userAgent, ctx.defaultSync);
   }
 
+  const extraStorageKeys = delegateDid === undefined
+    ? undefined
+    : {
+      [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
+      [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
+    };
+
   // Session restore does not emit `identity-added` (identity was already added in the original flow).
   return finalizeSession({
     userAgent,
@@ -296,6 +330,7 @@ async function finalizeRestoredSession(
     identityName         : identity.metadata.name,
     identityConnectedDid : identity.metadata.connectedDid,
     emitIdentityAdded    : false,
+    extraStorageKeys,
   });
 }
 
@@ -311,6 +346,18 @@ export type RetryEntry = {
 
 const MAX_REVOCATION_RETRY_ENTRIES = 4_096;
 
+type SessionMarkerSnapshot = {
+  activeIdentity: string | null;
+  connectedDid: string | null;
+  delegateDid: string | null;
+  previouslyConnected: string | null;
+};
+
+type SessionCleanupMatch = {
+  entry: RetryEntry;
+  phase: 'active' | 'residual';
+};
+
 /**
  * Load and validate all durable retry entries. Invalid state is retained and
  * rejected so callers never mistake an unreadable journal for completed work.
@@ -319,10 +366,14 @@ export async function readRevocationRetryEntries(
   storage: StorageAdapter,
 ): Promise<RetryEntry[]> {
   const json = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
-  if (!json) {
+  if (isAbsent(json)) {
     return [];
   }
 
+  return parseRevocationRetryEntries(json);
+}
+
+function parseRevocationRetryEntries(json: string): RetryEntry[] {
   try {
     const parsed: unknown = JSON.parse(json);
 
@@ -344,6 +395,62 @@ export async function readRevocationRetryEntries(
   } catch (error: unknown) {
     throw new Error('AuthManager: Revocation retry context is invalid.', { cause: error });
   }
+}
+
+function isAbsent(value: string | null | undefined): value is null | undefined {
+  return value === null || value === undefined;
+}
+
+async function readSessionMarkerSnapshot(storage: StorageAdapter): Promise<SessionMarkerSnapshot> {
+  const [previouslyConnected, activeIdentity, delegateDid, connectedDid] = await Promise.all([
+    storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED),
+    storage.get(STORAGE_KEYS.ACTIVE_IDENTITY),
+    storage.get(STORAGE_KEYS.DELEGATE_DID),
+    storage.get(STORAGE_KEYS.CONNECTED_DID),
+  ]);
+  return { activeIdentity, connectedDid, delegateDid, previouslyConnected };
+}
+
+async function findSessionCleanupMatch(
+  storage: StorageAdapter,
+  entries: RetryEntry[],
+): Promise<SessionCleanupMatch | undefined> {
+  const markers = await readSessionMarkerSnapshot(storage);
+  const candidates = entries.flatMap((entry): SessionCleanupMatch[] => {
+    const delegateMatches = markers.delegateDid === entry.delegateDid;
+    const connectedMatches = markers.connectedDid === entry.connectedDid;
+    const activeIdentityMatches = markers.activeIdentity === null ||
+      markers.activeIdentity === entry.connectedDid;
+
+    if (markers.previouslyConnected === 'true') {
+      if (delegateMatches && connectedMatches && activeIdentityMatches) {
+        return [{ entry, phase: 'active' }];
+      }
+      if (delegateMatches ||
+          (markers.delegateDid === null &&
+           (connectedMatches || markers.activeIdentity === entry.connectedDid))) {
+        throw new Error('AuthManager: Session marker binding is inconsistent.');
+      }
+      return [];
+    }
+    if (markers.previouslyConnected === null) {
+      const residualDelegateMatches = delegateMatches ||
+        (markers.delegateDid === null && connectedMatches);
+      const residualConnectedMatches = connectedMatches ||
+        (markers.connectedDid === null && delegateMatches);
+      if (residualDelegateMatches && residualConnectedMatches && activeIdentityMatches) {
+        return [{ entry, phase: 'residual' }];
+      }
+      if (delegateMatches || (markers.delegateDid === null && connectedMatches)) {
+        throw new Error('AuthManager: Session marker binding is inconsistent.');
+      }
+    }
+    return [];
+  });
+  if (candidates.length > 1) {
+    throw new Error('AuthManager: Session marker binding is inconsistent.');
+  }
+  return candidates[0];
 }
 
 /** Parse the complete grant-revocation set persisted for an active session. */
@@ -575,6 +682,46 @@ async function clearRetryState(storage: StorageAdapter): Promise<void> {
   await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
 }
 
+async function persistRetryEntries(storage: StorageAdapter, entries: RetryEntry[]): Promise<void> {
+  if (entries.length === 0) {
+    await clearRetryState(storage);
+  } else {
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(entries));
+  }
+}
+
+async function clearInterruptedSessionMarkers(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+  expected: SessionCleanupMatch,
+): Promise<void> {
+  const current = await findSessionCleanupMatch(storage, [expected.entry]);
+  if (current?.phase !== expected.phase) {
+    throw new Error('AuthManager: Session markers changed during revocation cleanup.');
+  }
+
+  // Keep the delegate/owner binding in place until every other session value
+  // is gone. If one of these removals fails, PREVIOUSLY_CONNECTED and both DID
+  // markers still identify the durable journal on the next recovery attempt.
+  await Promise.all([
+    storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY),
+    storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS),
+    storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS),
+    storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS),
+    userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
+  ]);
+
+  if (current.phase === 'active') {
+    await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+  }
+  // The owner can have several pending delegate entries. Remove its shared DID
+  // first and retain the unique delegate DID as the final durable selector for
+  // a restart between these writes.
+  await storage.remove(STORAGE_KEYS.CONNECTED_DID);
+  await storage.remove(STORAGE_KEYS.DELEGATE_DID);
+  userAgent.dwn.clearDelegateDecryptionKeys();
+}
+
 /**
  * Retry grant revocations that were not confirmed by the owner's remote
  * DWN during a previous disconnect. Called from `restoreSession()` AFTER
@@ -587,8 +734,24 @@ export async function retryOrphanedRevocations(
   userAgent: EnboxUserAgent,
   storage: StorageAdapter,
 ): Promise<void> {
-  let entries = await readRevocationRetryEntries(storage);
+  const entries = await readRevocationRetryEntries(storage);
+  if (entries.length === 0) {
+    await clearRetryState(storage);
+    return;
+  }
+  const sessionCleanup = await findSessionCleanupMatch(storage, entries);
+  await retryRevocationEntries(userAgent, storage, entries, sessionCleanup);
+}
+
+async function retryRevocationEntries(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+  initialEntries: RetryEntry[],
+  sessionCleanup: SessionCleanupMatch | undefined,
+): Promise<void> {
+  let entries = initialEntries;
   const settledEntries: { entry: RetryEntry; identity: BearerIdentity }[] = [];
+
   if (entries.length === 0) {
     await clearRetryState(storage);
     return;
@@ -618,11 +781,22 @@ export async function retryOrphanedRevocations(
     }
   }
 
-  // Write the final state once after processing all entries.
-  if (entries.length === 0) {
-    await clearRetryState(storage);
-  } else {
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(entries));
+  const cleanupEntrySettled = sessionCleanup !== undefined &&
+    !entries.some(entry => entry.delegateDid === sessionCleanup.entry.delegateDid);
+
+  if (sessionCleanup !== undefined && !cleanupEntrySettled) {
+    // Pending remote work must be narrowed durably before its session markers
+    // disappear. The retained entry keeps the delegate signing key live.
+    await persistRetryEntries(storage, entries);
+  }
+  if (sessionCleanup !== undefined) {
+    // When the matching entry settled completely, its pre-attempt journal is
+    // intentionally still durable here. A crash or marker-write failure can
+    // therefore replay the remote operation safely before local retirement.
+    await clearInterruptedSessionMarkers(userAgent, storage, sessionCleanup);
+  }
+  if (sessionCleanup === undefined || cleanupEntrySettled) {
+    await persistRetryEntries(storage, entries);
   }
   for (const settled of settledEntries) {
     await retireSettledDelegateIdentity(userAgent, storage, settled.entry, settled.identity);
