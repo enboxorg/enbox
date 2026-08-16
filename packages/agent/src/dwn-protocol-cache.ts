@@ -58,6 +58,12 @@ type SendDwnRpcRequestFn = <T extends DwnInterface>(params: {
   verifyResponse: boolean;
 }) => Promise<DwnMessageReply[T]>;
 
+/** Optional delegated authorization for querying an unpublished protocol. */
+export type RemoteProtocolQueryAuthorization = {
+  permissionGrantId: string;
+  signer: DwnSigner;
+};
+
 /** Minimal DWN interface needed for local `processMessage` calls. */
 interface DwnNode {
   processMessage(tenant: string, message: unknown, options?: unknown): Promise<any>;
@@ -86,7 +92,10 @@ export async function getProtocolDefinition(
   granteeDid?: string,
   permissionGrantId?: string,
 ): Promise<ProtocolDefinition | undefined> {
-  const cacheKey = `${tenantDid}~${protocolUri}`;
+  const authorizationScope = granteeDid === undefined
+    ? 'owner'
+    : `delegate~${granteeDid}~${permissionGrantId ?? 'no-grant'}`;
+  const cacheKey = `local~${authorizationScope}~${tenantDid}~${protocolUri}`;
 
   const cached = cache.get(cacheKey);
   if (cached) {
@@ -122,9 +131,10 @@ export async function getProtocolDefinition(
 /**
  * Fetches a protocol definition from a **remote** DWN.
  *
- * Uses an unsigned `ProtocolsQuery` since public protocols can be queried
- * anonymously. The returned configuration must carry a valid signature made
- * directly by the target DID before its definition can enter the cache.
+ * Public protocols use an anonymous `ProtocolsQuery`. Unpublished protocols
+ * require the caller to provide a delegate signer and covering query grant.
+ * The returned configuration must carry a valid signature made directly by
+ * the target DID before its definition can enter the cache.
  *
  * @param targetDid - The remote DWN owner
  * @param protocolUri - The protocol URI to look up
@@ -141,8 +151,12 @@ export async function fetchRemoteProtocolDefinition(
   sendDwnRpcRequest: SendDwnRpcRequestFn,
   cache: TtlCache<string, ProtocolDefinition>,
   cacheNamespace = 'remote',
+  authorization?: RemoteProtocolQueryAuthorization,
 ): Promise<ProtocolDefinition> {
-  const cacheKey = `${cacheNamespace}~${targetDid}~${protocolUri}`;
+  const authorizationScope = authorization === undefined
+    ? cacheNamespace
+    : `${cacheNamespace}~${authorization.signer.keyId}~${authorization.permissionGrantId}`;
+  const cacheKey = `${authorizationScope}~${targetDid}~${protocolUri}`;
   const cached = cache.get(cacheKey);
   if (cached) { return cached; }
 
@@ -150,6 +164,10 @@ export async function fetchRemoteProtocolDefinition(
     DwnInterfaceEnum.ProtocolsQuery
   ].create({
     filter: { protocol: protocolUri },
+    ...(authorization === undefined ? {} : {
+      permissionGrantId : authorization.permissionGrantId,
+      signer            : authorization.signer,
+    }),
   });
 
   const dwnEndpointUrls = await getDwnEndpointUrls(targetDid);

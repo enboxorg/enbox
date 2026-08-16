@@ -1,8 +1,5 @@
-import type { DwnInterface } from './types/dwn.js';
-import type { PermissionsApi } from './types/permissions.js';
 import type { DependencyRef, GenericMessage, ProtocolsConfigureMessage } from '@enbox/dwn-sdk-js';
 
-import { PermissionGrantNotFoundError } from './permissions-api.js';
 import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
 /**
@@ -10,38 +7,6 @@ import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
  * dependency-closure fetch paths. These were previously duplicated verbatim in both
  * modules; keep them here so the two paths cannot drift.
  */
-
-/**
- * Resolves the delegate permission grant ID authorizing a sync fetch request, or
- * `undefined` for owner requests (no delegate configured) and when no matching grant
- * exists. Only the expected "no matching grant" case is swallowed; any other error
- * (store/network failure, revocation-check failure, parse error) surfaces so a real
- * resolution failure is not silently treated as "no grant".
- */
-export async function resolveDelegatePermissionGrantId(
-  deps: { did: string; delegateDid?: string; permissionsApi?: PermissionsApi },
-  messageType: DwnInterface,
-  protocol: string,
-): Promise<string | undefined> {
-  if (deps.delegateDid === undefined || deps.permissionsApi === undefined) {
-    return undefined;
-  }
-
-  try {
-    const { grant } = await deps.permissionsApi.getPermissionForRequest({
-      connectedDid : deps.did,
-      delegateDid  : deps.delegateDid,
-      protocol,
-      messageType,
-    });
-    return grant.id;
-  } catch (error: unknown) {
-    if (error instanceof PermissionGrantNotFoundError) {
-      return undefined;
-    }
-    throw error;
-  }
-}
 
 /** Stable cache/identity key for a dependency reference. */
 export function dependencyKey(ref: DependencyRef): string {

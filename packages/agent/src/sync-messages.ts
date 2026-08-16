@@ -33,6 +33,7 @@ import {
 
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
+import { resolveDelegatePermissionGrantId } from './delegate-permission-grant.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import {
   dependencyKey,
@@ -41,7 +42,6 @@ import {
   matchesEncryptionControlDependency,
   missingDependencyDetail,
   newestProtocolConfig,
-  resolveDelegatePermissionGrantId,
 } from './sync-fetch-helpers.js';
 import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
 import { getRoleKey, orderMessagesForAdmission } from './sync-admission-order.js';

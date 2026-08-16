@@ -366,8 +366,13 @@ describe('AgentDwnApi', () => {
       const protocol = 'https://example.com/protocol-cache';
       const cacheKeys = [
         `${tenant}~${protocol}`,
+        `local~owner~${tenant}~${protocol}`,
+        `local~delegate~did:key:delegate~no-grant~${tenant}~${protocol}`,
+        `local~delegate~did:key:delegate~grant-local~${tenant}~${protocol}`,
         `local-rpc~${tenant}~${protocol}`,
         `remote~${tenant}~${protocol}`,
+        `local-rpc~did:key:delegate#key~grant-local~${tenant}~${protocol}`,
+        `remote~did:key:delegate#key~grant-remote~${tenant}~${protocol}`,
       ];
       const protocolCache = (dwnApi as any)._protocolDefinitionCache;
       for (const cacheKey of cacheKeys) {
@@ -485,8 +490,13 @@ describe('AgentDwnApi', () => {
       const protocol = 'https://example.com/protocol-cache';
       const cacheKeys = [
         `${tenant}~${protocol}`,
+        `local~owner~${tenant}~${protocol}`,
+        `local~delegate~did:key:delegate~no-grant~${tenant}~${protocol}`,
+        `local~delegate~did:key:delegate~grant-local~${tenant}~${protocol}`,
         `local-rpc~${tenant}~${protocol}`,
         `remote~${tenant}~${protocol}`,
+        `local-rpc~did:key:delegate#key~grant-local~${tenant}~${protocol}`,
+        `remote~did:key:delegate#key~grant-remote~${tenant}~${protocol}`,
       ];
       const protocolCache = (dwnApi as any)._protocolDefinitionCache;
       const protocolMessage = {

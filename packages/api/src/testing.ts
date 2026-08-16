@@ -5,15 +5,18 @@
  */
 
 import type { ApplicationManifest } from './application-manifest.js';
+import type { ConnectHandler } from '@enbox/auth';
 
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
 
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
-import { AgentSession, EnboxUserAgent } from '@enbox/agent';
+import { AgentSession, EnboxUserAgent, executeConnectApproval } from '@enbox/agent';
+import { AuthManager, MemoryStorage } from '@enbox/auth';
 
 import { Enbox } from './enbox.js';
+import { getApplicationProtocolRequests } from './application-manifest.js';
 
 /** Options accepted by {@link createEnboxTestContext}. */
 export type CreateEnboxTestContextOptions = {
@@ -30,6 +33,42 @@ export type EnboxTestContext = {
   session: AgentSession;
 
   /** Release subscriptions, sync work, storage, and the temporary directory. */
+  close(): Promise<void>;
+};
+
+/** Options accepted by {@link createHostedDelegatedEnboxTestContext}. */
+export type CreateHostedDelegatedEnboxTestContextOptions = {
+  /** Typed application protocols installed and granted by the owner wallet. */
+  application: ApplicationManifest;
+
+  /**
+   * Hosted DWN endpoints advertised by the temporary owner identity.
+   *
+   * The helper deliberately does not start or emulate a server. Tests must
+   * provide at least one reachable endpoint so remote routing, response
+   * verification, grants, encryption, and decryption use production paths.
+   */
+  dwnEndpoints: readonly string[];
+};
+
+/** One isolated delegated session backed by a real hosted DWN. */
+export type HostedDelegatedEnboxTestContext = {
+  /** Public API bound to the owner DID and authorized by the delegate. */
+  enbox: Enbox;
+
+  /** The wallet identity whose hosted DWN owns the test corpus. */
+  ownerDid: string;
+
+  /** The imported delegate DID that signs the dapp's requests. */
+  delegateDid: string;
+
+  /** Delegated session whose signal is aborted when the context closes. */
+  session: AgentSession;
+
+  /**
+   * Stop sync, close both agents, and remove local temporary data.
+   * Hosted protocol, grant, revocation, and record state is not deleted.
+   */
   close(): Promise<void>;
 };
 
@@ -85,6 +124,127 @@ export async function createEnboxTestContext(
     await enbox.protocols.ensureReady({ application, publish: false });
 
     return { close, enbox, session };
+  } catch (error: unknown) {
+    await close().catch((): void => {});
+    throw error;
+  }
+}
+
+/**
+ * Create a wallet-owned, delegate-operated Enbox context using hosted DWNs.
+ *
+ * This helper drives the same approval and delegated-connect paths used by a
+ * real application. It is intentionally Node-only and requires externally
+ * managed DWN endpoints; it does not replace hosted transport with an
+ * in-process shortcut. Closing the context removes local state only; callers
+ * should use disposable or resettable DWN endpoints when remote cleanup is
+ * required between tests.
+ */
+export async function createHostedDelegatedEnboxTestContext(
+  { application, dwnEndpoints }: CreateHostedDelegatedEnboxTestContextOptions,
+): Promise<HostedDelegatedEnboxTestContext> {
+  if (dwnEndpoints.length === 0) {
+    throw new TypeError('createHostedDelegatedEnboxTestContext requires at least one DWN endpoint.');
+  }
+  if (dwnEndpoints.some((endpoint) => typeof endpoint !== 'string' || endpoint.length === 0)) {
+    throw new TypeError('createHostedDelegatedEnboxTestContext requires non-empty DWN endpoint strings.');
+  }
+
+  const testDataLocation = await mkdtemp(join(tmpdir(), 'enbox-api-hosted-'));
+  const walletDataLocation = join(testDataLocation, 'wallet');
+  const dappDataLocation = join(testDataLocation, 'dapp');
+  let auth: AuthManager | undefined;
+  let enbox: Enbox | undefined;
+  let walletAgent: EnboxUserAgent | undefined;
+  let walletHarness: PlatformAgentTestHarness | undefined;
+  let closePromise: Promise<void> | undefined;
+
+  const close = (): Promise<void> => {
+    closePromise ??= (async (): Promise<void> => {
+      enbox?.close();
+      try {
+        await auth?.shutdown();
+      } finally {
+        try {
+          await walletAgent?.shutdown();
+        } finally {
+          await rm(testDataLocation, { force: true, recursive: true });
+        }
+      }
+    })();
+    return closePromise;
+  };
+
+  try {
+    walletHarness = await PlatformAgentTestHarness.setup({
+      agentClass       : EnboxUserAgent,
+      agentStores      : 'memory',
+      testDataLocation : walletDataLocation,
+    });
+    if (!(walletHarness.agent instanceof EnboxUserAgent)) {
+      throw new TypeError('Hosted delegated test context requires an EnboxUserAgent wallet.');
+    }
+    const activeWalletAgent = walletHarness.agent;
+    walletAgent = activeWalletAgent;
+    await walletHarness.createAgentDid();
+    const owner = await walletHarness.createIdentity({
+      name        : 'Enbox Hosted Test Owner',
+      testDwnUrls : [...dwnEndpoints],
+    });
+    const ownerDid = owner.did.uri;
+
+    const connectHandler: ConnectHandler = {
+      requestAccess: async ({
+        delegatePortableDid, expectedProviderDid, permissionRequests,
+      }) => {
+        const approval = await executeConnectApproval({
+          agent       : activeWalletAgent,
+          providerDid : ownerDid,
+          request     : {
+            appName     : 'Enbox Hosted Test',
+            delegateDid : delegatePortableDid?.uri,
+            expectedProviderDid,
+            permissionRequests,
+          },
+          transport: 'relay',
+        });
+        const portableDid = approval.delegatePortableDid ?? delegatePortableDid;
+        if (portableDid === undefined) {
+          throw new Error('Hosted delegated approval returned no delegate key material.');
+        }
+        return {
+          connectedDid        : ownerDid,
+          delegateGrants      : approval.delegateGrants,
+          delegatePortableDid : portableDid,
+          sessionRevocations  : approval.sessionRevocations,
+        };
+      },
+    };
+
+    auth = await AuthManager.create({
+      connectHandler,
+      dataPath         : dappDataLocation,
+      localDwnStrategy : 'off',
+      password         : 'enbox-hosted-test-only',
+      storage          : new MemoryStorage(),
+      sync             : 'live',
+    });
+    const session = await auth.connect({
+      protocols: getApplicationProtocolRequests(application),
+    });
+    if (session.delegateDid === undefined) {
+      throw new Error('Hosted delegated connect returned an owner session instead of a delegate session.');
+    }
+
+    enbox = Enbox.fromSession(session);
+
+    return {
+      close,
+      delegateDid: session.delegateDid,
+      enbox,
+      ownerDid,
+      session,
+    };
   } catch (error: unknown) {
     await close().catch((): void => {});
     throw error;
