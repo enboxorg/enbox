@@ -1,5 +1,14 @@
 # @enbox/auth
 
+## 0.6.91
+
+### Patch Changes
+
+- [#1651](https://github.com/enboxorg/enbox/pull/1651) [`b7182d7`](https://github.com/enboxorg/enbox/commit/b7182d7b120ea616a9e55802a90760aee7ba3301) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: make delegated-session revocation cleanup durable and fail closed
+
+- Updated dependencies [[`e87c522`](https://github.com/enboxorg/enbox/commit/e87c522e786c13bb86fc5ef539d205dfcc848223), [`8936a7c`](https://github.com/enboxorg/enbox/commit/8936a7cb1312706689e7480757a948dba417a988)]:
+  - @enbox/agent@0.8.45
+
 ## 0.6.90
 
 ### Patch Changes
