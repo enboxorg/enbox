@@ -883,7 +883,9 @@ export const STORAGE_KEYS = {
    * `{ delegateDid, connectedDid, revocations }` entries, one per
    * session. Keyed by `delegateDid` (unique per session).
    *
-   * Completely independent from active session state.
+   * Self-contained for remote retry. During restore, an exact match with the
+   * persisted delegate and connected DID also proves an interrupted disconnect
+   * whose local session teardown must be completed before restoration.
    */
   REVOCATION_RETRY_CONTEXT: 'enbox:auth:revocationRetryContext',
 } as const;

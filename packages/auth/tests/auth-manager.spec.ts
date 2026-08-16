@@ -866,7 +866,6 @@ describe('AuthManager', () => {
       const order: string[] = [];
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([{ grantId: 'g1', revocationGrantId: 'r1' }]));
 
       const delegateIdentity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate123' },
@@ -874,6 +873,7 @@ describe('AuthManager', () => {
       });
       const agent = createMockAgent({
         firstLaunch  : async () => false,
+        identityGet  : async () => delegateIdentity,
         identityList : async () => [delegateIdentity],
         syncStopSync : async () => { order.push('stopSync'); },
       });
@@ -882,9 +882,13 @@ describe('AuthManager', () => {
         order.push(`dwn:${params.messageType}`);
         return { reply: { status: { code: 202, detail: 'Accepted' } } };
       };
+      (agent as any).dwn.getRemoteDwnEndpointUrls = async (): Promise<string[]> => ['https://dwn.example.com'];
 
       const manager = createTestManager(agent, { storage });
       const session = await manager.connect({ password: 'test' });
+      await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([{ grantId: 'g1', revocationGrantId: 'r1' }]));
+      expect(session.delegateDid).toBe('did:jwk:delegate123');
+      expect(session.did).toBe('did:dht:owner456');
       expect(session.signal.aborted).toBe(false);
       order.length = 0; // observe only the disconnect sequence
 

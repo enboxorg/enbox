@@ -22,13 +22,20 @@ import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
 import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
-import { Convert } from '@enbox/common';
+import { Convert, runWithCrossContextLock } from '@enbox/common';
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
 
 import { AuthSession } from '../identity-session.js';
 import { RecoveryPhraseMismatchError } from '../errors.js';
 import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
+
+const AUTH_SESSION_LIFECYCLE_LOCK = 'enbox:auth:session-lifecycle';
+
+/** Serialize persisted auth-session transitions across browser contexts or callers in one process. */
+export async function runAuthSessionLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+  return runWithCrossContextLock(AUTH_SESSION_LIFECYCLE_LOCK, operation);
+}
 
 // ─── FlowContext ─────────────────────────────────────────────────
 
@@ -59,7 +66,7 @@ export interface FlowContext {
   /** Serializes a local mutation against session teardown. */
   runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
   /** Serializes terminal finalization and installs the returned session. */
-  commitSession: (operation: () => Promise<AuthSession>) => Promise<AuthSession>;
+  commitSession: <T extends AuthSession | undefined>(operation: () => Promise<T>) => Promise<T>;
 }
 
 /** Assert that a manager-owned flow is still active. */
@@ -73,10 +80,10 @@ export async function runFlowMutation<T>(ctx: FlowContext, operation: () => Prom
 }
 
 /** Commit a finalized session through the manager lifecycle mutex. */
-export async function commitFlowSession(
+export async function commitFlowSession<T extends AuthSession | undefined>(
   ctx: FlowContext,
-  operation: () => Promise<AuthSession>,
-): Promise<AuthSession> {
+  operation: () => Promise<T>,
+): Promise<T> {
   return ctx.commitSession(operation);
 }
 
