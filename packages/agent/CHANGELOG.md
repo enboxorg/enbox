@@ -1,5 +1,13 @@
 # @enbox/agent
 
+## 0.8.45
+
+### Patch Changes
+
+- [#1650](https://github.com/enboxorg/enbox/pull/1650) [`e87c522`](https://github.com/enboxorg/enbox/commit/e87c522e786c13bb86fc5ef539d205dfcc848223) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add a hosted delegated test context that exercises wallet approval, delegated grants, remote DWN routing, and encrypted records through production Enbox APIs. Delegates can now use their `Protocols.Query` grant when resolving unpublished protocol definitions from a remote DWN; cached definitions are isolated by authorization and invalidated across every authorization scope after accepted configuration changes.
+
+- [#1648](https://github.com/enboxorg/enbox/pull/1648) [`8936a7c`](https://github.com/enboxorg/enbox/commit/8936a7cb1312706689e7480757a948dba417a988) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: reject private key material in unencrypted DWN DID records
+
 ## 0.8.44
 
 ### Patch Changes

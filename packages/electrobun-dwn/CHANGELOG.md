@@ -1,5 +1,15 @@
 # @enbox/electrobun-dwn
 
+## 0.0.102
+
+### Patch Changes
+
+- Updated dependencies [[`e87c522`](https://github.com/enboxorg/enbox/commit/e87c522e786c13bb86fc5ef539d205dfcc848223), [`8936a7c`](https://github.com/enboxorg/enbox/commit/8936a7cb1312706689e7480757a948dba417a988), [`b7182d7`](https://github.com/enboxorg/enbox/commit/b7182d7b120ea616a9e55802a90760aee7ba3301)]:
+  - @enbox/api@0.6.84
+  - @enbox/agent@0.8.45
+  - @enbox/auth@0.6.91
+  - @enbox/protocols@0.2.111
+
 ## 0.0.101
 
 ### Patch Changes
