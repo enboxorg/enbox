@@ -1,0 +1,37 @@
+# Hot-reload override for the DWN server container. Use together with the
+# base compose file:
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.watch.yaml up -d --build
+#
+# Instead of running the image's prebuilt dist/, this mounts the monorepo
+# source into the container and runs `bun --watch src/main.ts`, mirroring what
+# scripts/dev.sh does natively: edits to packages/dwn-server reload live with
+# no build step.
+#
+# Notes:
+#   - The first start runs `bun install` + a Turbo build of dwn-server's
+#     workspace dependencies inside the container (one-time cost; cached in
+#     the named node_modules volume and the host's Turbo cache afterwards).
+#   - The server itself is NOT built — Bun executes its TypeScript directly.
+
+services:
+
+  dwn-server:
+    volumes: !override
+      # The full monorepo, so workspace imports (@enbox/dwn-sdk-js, …)
+      # resolve exactly as they do in a native checkout.
+      - ../..:/app
+      # Linux-native dependencies installed inside the container, kept out of
+      # the host working tree.
+      - dwn-watch-node-modules:/app/node_modules
+    entrypoint: !override ["bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        cd /app/packages/dwn-server
+        bun install --frozen-lockfile --ignore-scripts
+        bunx turbo run build --filter=@enbox/dwn-server
+        exec bun --watch src/main.ts
+
+volumes:
+  dwn-watch-node-modules:
