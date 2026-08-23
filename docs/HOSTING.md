@@ -45,8 +45,11 @@ POSTGRES_PASSWORD=change-me-in-production
 | `DID_DHT_GATEWAY_PORT` | `7527` | Host port for the did:dht gateway (Pkarr relay) |
 | `DWN_NATS_PORT` | `4222` | Host port for NATS |
 | `MAX_RECORD_DATA_SIZE` | `100mb` | Maximum record data size accepted by the server |
-| `DWN_ADMIN_TOKEN` | -- | Bearer token enabling the admin API (disabled when empty) |
+| `DWN_ADMIN_TOKEN` | `dev-admin-token` in the local compose (override or blank to disable) | Bearer token enabling the admin API/UI and protecting `/metrics` |
+| `DWN_REGISTRATION_PROOF_OF_WORK_ENABLED` | `true` in the local compose | Require proof-of-work for tenant registration |
 | `DWN_SERVER_LOG_LEVEL` | `DEBUG` | Log level (`trace`/`debug`/`info`/`warn`/`error`) |
+
+> The local stack mounts a placeholder terms-of-service file (`packages/dwn-server/terms-of-service.dev.txt`) so the registration flow works end-to-end. For a real deployment, supply your own ToS and review all registration settings — see [Registration requirements](../packages/dwn-server/README.md#registration-requirements).
 
 For everything else — storage backends, admin API, tenant registration, provider auth, plugins — see the configuration tables in the [`@enbox/dwn-server` README](../packages/dwn-server/README.md), and pass additional entries through the compose file's `environment:` block.
 

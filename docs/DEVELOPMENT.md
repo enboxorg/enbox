@@ -75,6 +75,44 @@ This requires Bun on the host but has zero image-build overhead and the tightest
 - Its gateway check probes `http://localhost:7527` first, so if this compose stack is up, `dev.sh` reuses its Pkarr relay instead of starting another.
 - Conversely, `dev.sh` always runs its own server with LevelDB storage — it does not use the compose Postgres. Use workflow 2 or 3 above when you specifically want to develop against SQL storage.
 
+## Using your local node
+
+The compose stack runs a **gated** node: because storage is SQL, the tenant gate is active, but proof-of-work registration is enabled by default so any client can self-register. `GET /info` always advertises the current requirements (`proof-of-work-sha256-v0`, `terms-of-service`).
+
+### 1. Register a tenant DID
+
+Enbox clients do this automatically via `DwnRegistrar` from `@enbox/dwn-clients` (it fetches the terms-of-service, fetches and solves the proof-of-work challenge, and registers the DID):
+
+```typescript
+import { DwnRegistrar } from '@enbox/dwn-clients';
+import { DidJwk } from '@enbox/dids';
+
+const did = (await DidJwk.create()).did;
+await DwnRegistrar.registerTenant('http://localhost:3000', did);
+```
+
+To register manually, replicate what `DwnRegistrar` does:
+
+1. `GET /registration/terms-of-service` → hash the body with SHA-256 (hex).
+2. `GET /registration/proof-of-work` → `{ challengeNonce, maximumAllowedHashValue }`.
+3. Find a **64-char hex** `responseNonce` such that `sha256(challengeNonce ‖ responseNonce ‖ JSON.stringify(registrationData))` ≤ `maximumAllowedHashValue` (as a bigint), where `registrationData` is `{ did, termsOfServiceHash }`.
+4. `POST /registration` with `{ registrationData, proofOfWork: { challengeNonce, responseNonce } }`.
+
+Alternatively, pre-register DIDs through the admin API (below) without solving proof-of-work.
+
+### 2. Admin UI & API
+
+The compose file defaults `DWN_ADMIN_TOKEN` to `dev-admin-token` so the bundled admin UI works immediately:
+
+- **UI**: http://localhost:3000/admin/
+- **API**: `curl -H 'Authorization: Bearer dev-admin-token' http://localhost:3000/admin/api/tenants`
+
+Use it to inspect/pre-register/suspend tenants, adjust quotas and rate limits, browse audit logs, and register passkeys. Override the token via `.env`; blank it out (`DWN_ADMIN_TOKEN=`) to disable the admin surface entirely.
+
+### 3. Send DWN requests
+
+Once your DID is registered, talk JSON-RPC to `POST /` (or WebSocket), or use `HttpDwnRpcClient` from `@enbox/dwn-clients`. Higher-level stacks (`@enbox/api`, `@enbox/agent`) accept the endpoint directly — e.g. set `TEST_DWN_URL=http://localhost:3000`.
+
 ## Common tasks
 
 ```bash
