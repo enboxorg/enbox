@@ -1,0 +1,11 @@
+# Minimal configuration for the local development Pkarr relay (did:dht
+# gateway), mounted into the pkarr-relay container at /config.toml.
+# See https://github.com/pubky/pkarr/blob/main/relay/src/config.example.toml
+# for all options.
+
+[http]
+# Internal container port; docker-compose.yaml maps ${DID_DHT_GATEWAY_PORT:-7527} to it.
+port = 15411
+
+# Omitting the [rate_limiter] section disables rate limiting entirely,
+# which is what we want for local development.

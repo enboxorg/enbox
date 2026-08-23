@@ -31,17 +31,22 @@ services:
   pkarr-relay:
     image: synonymsoft/pkarr-relay
     container_name: dwn-server-pkarr
-    command: ["pkarr-relay", "--testnet"]
+    volumes:
+      - ./pkarr-relay.config.toml:/config.toml:ro
     ports:
       # did:dht gateway. scripts/dev.sh probes localhost:7527 first, so it
       # reuses this container instead of starting its own when present.
-      - "${DID_DHT_GATEWAY_PORT:-7527}:15411"
+      # Pinned to IPv4 loopback: the relay resets connections proxied through
+      # the IPv6 wildcard binding, which breaks clients that try ::1 first.
+      - "127.0.0.1:${DID_DHT_GATEWAY_PORT:-7527}:15411"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:15411/ || exit 0"]
+      # The relay needs ~10-15s to bootstrap its DHT node before serving HTTP,
+      # and listens on IPv4 only — probe 127.0.0.1, not localhost (::1).
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:15411/"]
       interval: 3s
       timeout: 2s
-      retries: 10
-      start_period: 5s
+      retries: 30
+      start_period: 15s
 
   nats:
     image: nats:2.10-alpine
@@ -70,7 +75,7 @@ services:
       - DWN_REGISTRATION_STORE_URL=
       - DID_DHT_GATEWAY_URI=http://pkarr-relay:15411
       - DID_DHT_ALLOW_PRIVATE_GATEWAY=1
-      - DWN_EVENT_BUS_PLUGIN_PATH=dist/esm/src/plugins/event-bus-nats.js
+      - DWN_EVENT_BUS_PLUGIN_PATH=/app/packages/dwn-server/dist/esm/src/plugins/event-bus-nats.js
       - NATS_URL=nats://nats:4222
       - MAX_RECORD_DATA_SIZE=${MAX_RECORD_DATA_SIZE:-100mb}
       - DWN_ADMIN_TOKEN=${DWN_ADMIN_TOKEN:-}
