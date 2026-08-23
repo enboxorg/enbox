@@ -68,17 +68,25 @@ services:
       dockerfile: packages/dwn-server/Dockerfile
     ports:
       - ${DWN_SERVER_PORT:-3000}:3000
+    volumes:
+      # Placeholder ToS so the registration flow (which includes a
+      # terms-of-service acceptance step) works out of the box.
+      - ./terms-of-service.dev.txt:/app/terms-of-service.txt:ro
     environment:
       - DWN_BASE_URL=${DWN_BASE_URL:-http://localhost:${DWN_SERVER_PORT:-3000}}
       - DWN_STORAGE=postgres://${POSTGRES_USER:-dwn_user}:${POSTGRES_PASSWORD:-dwn_password}@postgres:5432/${POSTGRES_DB:-dwn}
       - DWN_TTL_CACHE_URL=postgres://${POSTGRES_USER:-dwn_user}:${POSTGRES_PASSWORD:-dwn_password}@postgres:5432/${POSTGRES_DB:-dwn}
       - DWN_REGISTRATION_STORE_URL=
+      - DWN_REGISTRATION_PROOF_OF_WORK_ENABLED=${DWN_REGISTRATION_PROOF_OF_WORK_ENABLED:-true}
+      - DWN_TERMS_OF_SERVICE_FILE_PATH=/app/terms-of-service.txt
       - DID_DHT_GATEWAY_URI=http://pkarr-relay:15411
       - DID_DHT_ALLOW_PRIVATE_GATEWAY=1
       - DWN_EVENT_BUS_PLUGIN_PATH=/app/packages/dwn-server/dist/esm/src/plugins/event-bus-nats.js
       - NATS_URL=nats://nats:4222
       - MAX_RECORD_DATA_SIZE=${MAX_RECORD_DATA_SIZE:-100mb}
-      - DWN_ADMIN_TOKEN=${DWN_ADMIN_TOKEN:-}
+      # Local-dev convenience default so the admin UI works out of the box.
+      # Override (or blank out) for anything reachable beyond localhost.
+      - DWN_ADMIN_TOKEN=${DWN_ADMIN_TOKEN:-dev-admin-token}
       - DWN_SERVER_LOG_LEVEL=${DWN_SERVER_LOG_LEVEL:-DEBUG}
     depends_on:
       postgres:

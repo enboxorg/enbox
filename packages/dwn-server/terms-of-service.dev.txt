@@ -1,0 +1,10 @@
+Local Development Terms of Service
+
+This is a placeholder terms-of-service document for local development only.
+Replace it with your real terms before operating a public node.
+
+By registering as a tenant of this development node you acknowledge that:
+
+1. All data stored on this node is ephemeral or may be reset at any time.
+2. The node operators accept no liability for data loss or availability.
+3. The node must not be used for unlawful content or activity.
