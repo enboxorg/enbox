@@ -1,6 +1,63 @@
-version: '3'
+# Fully configured local development DWN stack: PostgreSQL, a did:dht
+# gateway (Pkarr relay), NATS, and the DWN server (built from source into an
+# image). Defaults are baked in so `docker compose up -d --build` works with
+# no extra files; drop a `.env` beside this file (or export vars) to override
+# any of them. See docs/DEVELOPMENT.md for the hot-reload workflow and the
+# README of @enbox/dwn-server for the full list of configuration options.
 
 services:
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: dwn-server-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dwn}
+      POSTGRES_USER: ${POSTGRES_USER:-dwn_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dwn_password}
+      POSTGRES_INITDB_ARGS: '--lc-collate=C --lc-ctype=C'
+    ports:
+      # Defaults to 5433 to avoid colliding with enbox-test-postgres-sdk
+      # from docker-compose.test.yaml, which binds host port 5432.
+      - "${DWN_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dwn_user} -d ${POSTGRES_DB:-dwn}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  pkarr-relay:
+    image: synonymsoft/pkarr-relay
+    container_name: dwn-server-pkarr
+    volumes:
+      - ./pkarr-relay.config.toml:/config.toml:ro
+    ports:
+      # did:dht gateway. scripts/dev.sh probes localhost:7527 first, so it
+      # reuses this container instead of starting its own when present.
+      # Pinned to IPv4 loopback: the relay resets connections proxied through
+      # the IPv6 wildcard binding, which breaks clients that try ::1 first.
+      - "127.0.0.1:${DID_DHT_GATEWAY_PORT:-7527}:15411"
+    healthcheck:
+      # The relay needs ~10-15s to bootstrap its DHT node before serving HTTP,
+      # and listens on IPv4 only — probe 127.0.0.1, not localhost (::1).
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:15411/"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 15s
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: dwn-server-nats
+    ports:
+      - "${DWN_NATS_PORT:-4222}:4222"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   dwn-server:
     container_name: dwn-server
@@ -12,8 +69,32 @@ services:
     ports:
       - ${DWN_SERVER_PORT:-3000}:3000
     volumes:
-      # The default level://data store lives under the server's working directory.
-      - ./dwn-server:/app/packages/dwn-server/data
+      # Placeholder ToS so the registration flow (which includes a
+      # terms-of-service acceptance step) works out of the box.
+      - ./terms-of-service.dev.txt:/app/terms-of-service.txt:ro
     environment:
+      - DWN_BASE_URL=${DWN_BASE_URL:-http://localhost:${DWN_SERVER_PORT:-3000}}
+      - DWN_STORAGE=postgres://${POSTGRES_USER:-dwn_user}:${POSTGRES_PASSWORD:-dwn_password}@postgres:5432/${POSTGRES_DB:-dwn}
+      - DWN_TTL_CACHE_URL=postgres://${POSTGRES_USER:-dwn_user}:${POSTGRES_PASSWORD:-dwn_password}@postgres:5432/${POSTGRES_DB:-dwn}
       - DWN_REGISTRATION_STORE_URL=
-      - DWN_STORAGE=
+      - DWN_REGISTRATION_PROOF_OF_WORK_ENABLED=${DWN_REGISTRATION_PROOF_OF_WORK_ENABLED:-true}
+      - DWN_TERMS_OF_SERVICE_FILE_PATH=/app/terms-of-service.txt
+      - DID_DHT_GATEWAY_URI=http://pkarr-relay:15411
+      - DID_DHT_ALLOW_PRIVATE_GATEWAY=1
+      - DWN_EVENT_BUS_PLUGIN_PATH=/app/packages/dwn-server/dist/esm/src/plugins/event-bus-nats.js
+      - NATS_URL=nats://nats:4222
+      - MAX_RECORD_DATA_SIZE=${MAX_RECORD_DATA_SIZE:-100mb}
+      # Local-dev convenience default so the admin UI works out of the box.
+      # Override (or blank out) for anything reachable beyond localhost.
+      - DWN_ADMIN_TOKEN=${DWN_ADMIN_TOKEN:-dev-admin-token}
+      - DWN_SERVER_LOG_LEVEL=${DWN_SERVER_LOG_LEVEL:-DEBUG}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pkarr-relay:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
