@@ -75,15 +75,17 @@ async function establishSubscription(connection: RaceHarnessConnection, factoryG
  */
 function poolOf(client: typeof WebSocketDwnRpcClient): {
   connections: Map<string, unknown>;
+  defaultConnectionPool: unknown;
   reconnectingSockets: Set<unknown>;
-  ensureWakeListeners(): void;
-  removeWakeListeners(): void;
+  ensurePoolWakeListeners(pool: unknown): void;
+  removePoolWakeListeners(pool: unknown): void;
 } {
   return client as unknown as {
     connections: Map<string, unknown>;
+    defaultConnectionPool: unknown;
     reconnectingSockets: Set<unknown>;
-    ensureWakeListeners(): void;
-    removeWakeListeners(): void;
+    ensurePoolWakeListeners(pool: unknown): void;
+    removePoolWakeListeners(pool: unknown): void;
   };
 }
 
@@ -132,7 +134,7 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
     const checked: string[] = [];
     const pool = poolOf(WebSocketDwnRpcClient);
     pool.connections.set('wss://wake.example/', stubConnection((): void => { checked.push('wake'); }));
-    pool.ensureWakeListeners();
+    pool.ensurePoolWakeListeners(pool.defaultConnectionPool);
 
     globalThis.dispatchEvent(new Event('online'));
     await Promise.resolve();
@@ -144,7 +146,7 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
     const checked: string[] = [];
     const pool = poolOf(WebSocketDwnRpcClient);
     pool.connections.set('wss://stale.example/', stubConnection((): void => { checked.push('stale'); }));
-    pool.ensureWakeListeners();
+    pool.ensurePoolWakeListeners(pool.defaultConnectionPool);
 
     await WebSocketDwnRpcClient.closeAllConnections();
     pool.connections.set('wss://stale.example/', stubConnection((): void => { checked.push('stale'); }));

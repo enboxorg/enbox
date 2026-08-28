@@ -1,3 +1,4 @@
+import type { EnboxRpcNetworkTransport } from './network-transport.js';
 import type { JsonRpcResponse } from './json-rpc.js';
 import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
@@ -61,6 +62,8 @@ export interface EnboxRpc extends DwnRpc, DidRpc, DwnServerInfoRpc {
 
 export type EnboxRpcClientOptions = {
   auth?: DwnRpcAuthOptions;
+  /** Complete network primitive pair used by every built-in transport. */
+  transport?: EnboxRpcNetworkTransport;
 };
 
 /**
@@ -84,10 +87,10 @@ export class EnboxRpcClient implements EnboxRpc {
 
     // include http and socket clients as default.
     // can be overwritten for 'http:', 'https:', 'ws: or ':wss' if instantiated with other clients.
-    const httpClient = new HttpEnboxRpcClient(undefined, undefined, auth);
+    const httpClient = new HttpEnboxRpcClient(undefined, undefined, auth, options.transport);
     const defaultClients: EnboxRpc[] = [
       httpClient,
-      new WebSocketEnboxRpcClient(httpClient, auth),
+      new WebSocketEnboxRpcClient(httpClient, auth, options.transport),
     ];
 
     for (const client of defaultClients) {
@@ -327,7 +330,7 @@ export class HttpEnboxRpcClient extends HttpDwnRpcClient implements EnboxRpc {
     let jsonRpcResponse: JsonRpcResponse;
 
     try {
-      const response = await fetch(httpRequest, { signal: AbortSignal.timeout(30_000) });
+      const response = await this.fetch(httpRequest, { signal: AbortSignal.timeout(30_000) });
 
       if (response.ok) {
         jsonRpcResponse = await response.json();
@@ -349,9 +352,9 @@ export class HttpEnboxRpcClient extends HttpDwnRpcClient implements EnboxRpc {
 }
 
 export class WebSocketEnboxRpcClient extends WebSocketDwnRpcClient implements EnboxRpc {
-  /** Closes the process-wide WebSocket connection pool. */
+  /** Closes this client's WebSocket pool (process-wide only for default clients). */
   public async close(): Promise<void> {
-    await WebSocketDwnRpcClient.closeAllConnections();
+    await this.closeConnections();
   }
 
   async sendDidRequest(_request: DidRpcRequest): Promise<DidRpcResponse> {

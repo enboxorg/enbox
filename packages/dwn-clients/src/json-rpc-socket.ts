@@ -1,3 +1,4 @@
+import type { EnboxRpcNetworkTransport } from './network-transport.js';
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
 import { CryptoUtils } from '@enbox/crypto';
@@ -149,6 +150,7 @@ export class JsonRpcSocket {
     private readonly responseTimeout: number,
     url: string,
     options: JsonRpcSocketOptions,
+    private readonly createWebSocketFactory?: EnboxRpcNetworkTransport['createWebSocket'],
   ) {
     this.url = url;
     this.options = options;
@@ -165,19 +167,23 @@ export class JsonRpcSocket {
     return this.closedByUser;
   }
 
-  public static async connect(url: string, options: JsonRpcSocketOptions = {}): Promise<JsonRpcSocket> {
+  public static async connect(
+    url: string,
+    options: JsonRpcSocketOptions = {},
+    createWebSocket?: EnboxRpcNetworkTransport['createWebSocket'],
+  ): Promise<JsonRpcSocket> {
     const { connectTimeout = CONNECT_TIMEOUT, responseTimeout = RESPONSE_TIMEOUT } = options;
 
     let socket: WebSocket;
     try {
-      socket = await JsonRpcSocket.createWebSocket(url, connectTimeout);
+      socket = await JsonRpcSocket.createWebSocket(url, connectTimeout, createWebSocket);
     } catch (error) {
       // Notify the onerror handler if one was provided, even for connection-time errors.
       options.onerror?.(error);
       throw error;
     }
 
-    const jsonRpcSocket = new JsonRpcSocket(socket, responseTimeout, url, options);
+    const jsonRpcSocket = new JsonRpcSocket(socket, responseTimeout, url, options, createWebSocket);
     jsonRpcSocket.wireSocket(socket);
     jsonRpcSocket.startHeartbeat();
 
@@ -351,34 +357,68 @@ export class JsonRpcSocket {
   /**
    * Creates and connects a raw WebSocket, resolving when `open` fires.
    */
-  private static createWebSocket(url: string, connectTimeout: number): Promise<WebSocket> {
+  private static createWebSocket(
+    url: string,
+    connectTimeout: number,
+    createWebSocket?: EnboxRpcNetworkTransport['createWebSocket'],
+  ): Promise<WebSocket> {
     return new Promise<WebSocket>((resolve, reject) => {
-      const ws = new WebSocket(url);
+      let settled = false;
+      let ws: WebSocket | undefined;
 
       const onOpen = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         cleanup();
-        resolve(ws);
+        resolve(ws!);
       };
 
       const onError = (error: any): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         cleanup();
         reject(error);
       };
 
       const timer = setTimeout(() => {
+        settled = true;
         cleanup();
-        ws.close();
+        ws?.close();
         reject(new Error('connect timed out'));
       }, connectTimeout);
 
       const cleanup = (): void => {
         clearTimeout(timer);
-        ws.removeEventListener('open', onOpen);
-        ws.removeEventListener('error', onError);
+        ws?.removeEventListener('open', onOpen);
+        ws?.removeEventListener('error', onError);
       };
 
-      ws.addEventListener('open', onOpen);
-      ws.addEventListener('error', onError);
+      const socketFactory = createWebSocket ?? (async (socketUrl: string): Promise<WebSocket> => {
+        return new globalThis.WebSocket(socketUrl);
+      });
+      Promise.resolve()
+        .then((): Promise<WebSocket> => socketFactory(url))
+        .then((createdSocket): void => {
+          if (settled) {
+            try { createdSocket.close(); } catch { /* best effort */ }
+            return;
+          }
+
+          ws = createdSocket;
+          ws.addEventListener('open', onOpen);
+          ws.addEventListener('error', onError);
+
+          if (ws.readyState === 1) {
+            onOpen();
+          } else if (ws.readyState >= 2) {
+            onError(new Error('WebSocket closed before connecting'));
+          }
+        })
+        .catch(onError);
     });
   }
 
@@ -667,7 +707,7 @@ export class JsonRpcSocket {
       }
 
       try {
-        const newSocket = await JsonRpcSocket.createWebSocket(this.url, connectTimeout);
+        const newSocket = await JsonRpcSocket.createWebSocket(this.url, connectTimeout, this.createWebSocketFactory);
 
         // close() may have raced the connection establishment. A user-closed
         // socket must stay closed: discard the fresh WebSocket without

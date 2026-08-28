@@ -1,3 +1,4 @@
+import type { EnboxRpcNetworkTransport } from './network-transport.js';
 import type { JsonRpcResponse } from './json-rpc.js';
 import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
@@ -10,6 +11,7 @@ import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
 import { normalizeReadableStream } from './readable-stream.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
+import { resolveEnboxRpcNetworkTransport } from './network-transport.js';
 import { sleep } from '@enbox/common';
 import {
   createHttpDwnRpcRequestBody,
@@ -192,10 +194,17 @@ export class HttpDwnRpcClient implements DwnRpc {
   private readonly serverInfoRequests = new Map<string, Promise<ServerInfo>>();
   private readonly _retryOptions: Required<HttpRetryOptions>;
   private readonly _authOptions: DwnRpcAuthOptions;
+  private readonly _networkTransport: EnboxRpcNetworkTransport;
 
-  constructor(serverInfoCache?: DwnServerInfoCache, retryOptions?: HttpRetryOptions, authOptions: DwnRpcAuthOptions = {}) {
+  constructor(
+    serverInfoCache?: DwnServerInfoCache,
+    retryOptions?: HttpRetryOptions,
+    authOptions: DwnRpcAuthOptions = {},
+    networkTransport?: EnboxRpcNetworkTransport,
+  ) {
     this.serverInfoCache = serverInfoCache ?? new DwnServerInfoCacheMemory();
     this._authOptions = authOptions;
+    this._networkTransport = resolveEnboxRpcNetworkTransport(networkTransport);
     this._retryOptions = {
       maxRetries  : retryOptions?.maxRetries ?? DEFAULT_MAX_RETRIES,
       baseDelayMs : retryOptions?.baseDelayMs ?? DEFAULT_BASE_DELAY_MS,
@@ -204,6 +213,11 @@ export class HttpDwnRpcClient implements DwnRpc {
   }
 
   get transportProtocols(): string[] { return ['http:', 'https:']; }
+
+  /** Sends one request through the configured fetch primitive. */
+  protected fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    return this._networkTransport.fetch(input, init);
+  }
 
   async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
@@ -492,7 +506,7 @@ export class HttpDwnRpcClient implements DwnRpc {
         // Apply a per-attempt timeout to prevent hung connections / SSRF.
         // If the caller already supplied a signal, combine it with the timeout
         // via AbortSignal.any(); otherwise create a fresh timeout signal.
-        const response = await fetch(url, createAttemptInit(init, requestTimeoutMs));
+        const response = await this.fetch(url, createAttemptInit(init, requestTimeoutMs));
         if (shouldReturnResponse(response, attempt, maxRetriesForRequest)) {
           return response;
         }

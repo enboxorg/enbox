@@ -1,3 +1,4 @@
+import type { EnboxRpcNetworkTransport } from './network-transport.js';
 import type {
   DwnReplicationApplyRequest,
   DwnRpc,
@@ -22,6 +23,7 @@ import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { JsonRpcSocket } from './json-rpc-socket.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
+import { resolveEnboxRpcNetworkTransport } from './network-transport.js';
 import { withLocalNodeTokenQuery } from './rpc-auth.js';
 import {
   base64UrlEncodedLength,
@@ -89,6 +91,22 @@ interface SocketConnection {
   url: string;
 }
 
+interface SocketConnectionPool {
+  connections: Map<string, SocketConnection>;
+  pendingConnections: Map<string, Promise<SocketConnection>>;
+  reconnectingSockets: Set<JsonRpcSocket>;
+  onWake?: () => void;
+  onVisibilityWake?: () => void;
+}
+
+function createSocketConnectionPool(): SocketConnectionPool {
+  return {
+    connections         : new Map(),
+    pendingConnections  : new Map(),
+    reconnectingSockets : new Set(),
+  };
+}
+
 function connectionCacheKey(url: URL): string {
   return stripTrailingSlash(url.toString());
 }
@@ -130,7 +148,7 @@ function shouldReplaceLastCursor(current: ProgressToken | undefined, candidate: 
 
 export class WebSocketDwnRpcClient implements DwnRpc {
   public get transportProtocols(): string[] { return ['ws:', 'wss:']; }
-  // a map of normalized DWN WebSocket endpoint URLs to WebSocket connections
+  // Process-wide pool fields retained for default-client compatibility.
   private static readonly connections = new Map<string, SocketConnection>();
   private static readonly pendingConnections = new Map<string, Promise<SocketConnection>>();
 
@@ -142,10 +160,16 @@ export class WebSocketDwnRpcClient implements DwnRpc {
    * move back to the pool on reconnection and leave the registry.
    */
   private static readonly reconnectingSockets = new Set<JsonRpcSocket>();
+  private static readonly defaultConnectionPool: SocketConnectionPool = {
+    connections         : WebSocketDwnRpcClient.connections,
+    pendingConnections  : WebSocketDwnRpcClient.pendingConnections,
+    reconnectingSockets : WebSocketDwnRpcClient.reconnectingSockets,
+  };
 
-  /** Browser wake listeners (online / tab visible), registered once per process. */
-  private static onWake: (() => void) | undefined;
-  private static onVisibilityWake: (() => void) | undefined;
+  private readonly authOptions: DwnRpcAuthOptions;
+  private readonly connectionPool: SocketConnectionPool;
+  private readonly networkTransport: EnboxRpcNetworkTransport;
+  private readonly serverInfoRpc: DwnServerInfoRpc;
 
   /**
    * Force an immediate liveness verdict on every pooled connection and every
@@ -157,12 +181,17 @@ export class WebSocketDwnRpcClient implements DwnRpc {
    * that browsers throttle in backgrounded tabs.
    */
   public static checkAllConnections(): void {
-    for (const connection of WebSocketDwnRpcClient.connections.values()) {
+    WebSocketDwnRpcClient.checkConnections(WebSocketDwnRpcClient.defaultConnectionPool);
+  }
+
+  /** Checks every connection owned by one pool. */
+  private static checkConnections(pool: SocketConnectionPool): void {
+    for (const connection of pool.connections.values()) {
       void connection.socket.checkHealth();
     }
-    for (const socket of WebSocketDwnRpcClient.reconnectingSockets) {
+    for (const socket of pool.reconnectingSockets) {
       if (socket.isClosedByUser) {
-        WebSocketDwnRpcClient.reconnectingSockets.delete(socket);
+        pool.reconnectingSockets.delete(socket);
         continue;
       }
       void socket.checkHealth();
@@ -174,16 +203,17 @@ export class WebSocketDwnRpcClient implements DwnRpc {
    * online, tab foregrounded) trigger an immediate pooled-connection health
    * check. No-op outside browser-like environments and after the first call.
    */
-  private static ensureWakeListeners(): void {
-    if (WebSocketDwnRpcClient.onWake !== undefined) {
+  /** Registers recovery listeners for one connection pool. */
+  private static ensurePoolWakeListeners(pool: SocketConnectionPool): void {
+    if (pool.onWake !== undefined) {
       return;
     }
     if (typeof globalThis.addEventListener !== 'function') {
       return;
     }
 
-    const onWake = (): void => { WebSocketDwnRpcClient.checkAllConnections(); };
-    WebSocketDwnRpcClient.onWake = onWake;
+    const onWake = (): void => { WebSocketDwnRpcClient.checkConnections(pool); };
+    pool.onWake = onWake;
     globalThis.addEventListener('online', onWake);
 
     const visibilityDocument = typeof document === 'undefined' ? undefined : document;
@@ -193,27 +223,35 @@ export class WebSocketDwnRpcClient implements DwnRpc {
           onWake();
         }
       };
-      WebSocketDwnRpcClient.onVisibilityWake = onVisibilityWake;
+      pool.onVisibilityWake = onVisibilityWake;
       visibilityDocument.addEventListener('visibilitychange', onVisibilityWake);
     }
   }
 
-  /** Removes the browser wake listeners registered by {@link ensureWakeListeners}. */
-  private static removeWakeListeners(): void {
-    if (WebSocketDwnRpcClient.onWake !== undefined && typeof globalThis.removeEventListener === 'function') {
-      globalThis.removeEventListener('online', WebSocketDwnRpcClient.onWake);
+  /** Removes recovery listeners for one connection pool. */
+  private static removePoolWakeListeners(pool: SocketConnectionPool): void {
+    if (pool.onWake !== undefined && typeof globalThis.removeEventListener === 'function') {
+      globalThis.removeEventListener('online', pool.onWake);
     }
-    if (WebSocketDwnRpcClient.onVisibilityWake !== undefined && typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', WebSocketDwnRpcClient.onVisibilityWake);
+    if (pool.onVisibilityWake !== undefined && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', pool.onVisibilityWake);
     }
-    WebSocketDwnRpcClient.onWake = undefined;
-    WebSocketDwnRpcClient.onVisibilityWake = undefined;
+    pool.onWake = undefined;
+    pool.onVisibilityWake = undefined;
   }
 
   public constructor(
-    private readonly serverInfoRpc: DwnServerInfoRpc = new HttpDwnRpcClient(),
-    private readonly authOptions: DwnRpcAuthOptions = {},
-  ) {}
+    serverInfoRpc?: DwnServerInfoRpc,
+    authOptions: DwnRpcAuthOptions = {},
+    networkTransport?: EnboxRpcNetworkTransport,
+  ) {
+    this.authOptions = authOptions;
+    this.networkTransport = resolveEnboxRpcNetworkTransport(networkTransport);
+    this.serverInfoRpc = serverInfoRpc ?? new HttpDwnRpcClient(undefined, undefined, authOptions, networkTransport);
+    this.connectionPool = networkTransport === undefined
+      ? WebSocketDwnRpcClient.defaultConnectionPool
+      : createSocketConnectionPool();
+  }
 
   /**
    * Closes every pooled WebSocket connection and clears the pool.
@@ -224,9 +262,19 @@ export class WebSocketDwnRpcClient implements DwnRpc {
    * The pool is process-wide, so this is intended for application shutdown.
    */
   public static async closeAllConnections(): Promise<void> {
-    WebSocketDwnRpcClient.removeWakeListeners();
-    const pending = [...WebSocketDwnRpcClient.pendingConnections.values()];
-    WebSocketDwnRpcClient.pendingConnections.clear();
+    await WebSocketDwnRpcClient.closeConnectionPool(WebSocketDwnRpcClient.defaultConnectionPool);
+  }
+
+  /** Closes only the pool used by this client instance. */
+  public async closeConnections(): Promise<void> {
+    await WebSocketDwnRpcClient.closeConnectionPool(this.connectionPool);
+  }
+
+  /** Closes one connection pool and its recovery listeners. */
+  private static async closeConnectionPool(pool: SocketConnectionPool): Promise<void> {
+    WebSocketDwnRpcClient.removePoolWakeListeners(pool);
+    const pending = [...pool.pendingConnections.values()];
+    pool.pendingConnections.clear();
     for (const pendingConnection of pending) {
       try {
         await pendingConnection;
@@ -235,8 +283,8 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       }
     }
 
-    const connections = [...WebSocketDwnRpcClient.connections.values()];
-    WebSocketDwnRpcClient.connections.clear();
+    const connections = [...pool.connections.values()];
+    pool.connections.clear();
     for (const connection of connections) {
       for (const tracked of connection.subscriptions.values()) {
         try {
@@ -255,8 +303,8 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     // Sockets mid-reconnect are outside the pool; without this they would
     // keep reconnecting after shutdown and re-register into a cleared pool.
-    const reconnecting = [...WebSocketDwnRpcClient.reconnectingSockets];
-    WebSocketDwnRpcClient.reconnectingSockets.clear();
+    const reconnecting = [...pool.reconnectingSockets];
+    pool.reconnectingSockets.clear();
     for (const socket of reconnecting) {
       try {
         socket.close();
@@ -408,7 +456,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   /** Returns an existing connected pool entry without establishing a socket. */
   private getConnectedConnection(dwnUrl: string): SocketConnection | undefined {
     const url = withLocalNodeTokenQuery(dwnUrl, this.authOptions);
-    const connection = WebSocketDwnRpcClient.connections.get(connectionCacheKey(url));
+    const connection = this.connectionPool.connections.get(connectionCacheKey(url));
     return connection?.socket.isConnected === true ? connection : undefined;
   }
 
@@ -424,15 +472,20 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     displayUrl.password = '';
     displayUrl.search = '';
     displayUrl.hash = '';
-    const existing = WebSocketDwnRpcClient.connections.get(key);
+    const pool = this.connectionPool;
+    const existing = pool.connections.get(key);
     if (existing !== undefined) {
       return existing;
     }
 
-    let pending = WebSocketDwnRpcClient.pendingConnections.get(key);
+    let pending = pool.pendingConnections.get(key);
     if (pending === undefined) {
-      WebSocketDwnRpcClient.ensureWakeListeners();
-      pending = WebSocketDwnRpcClient.createConnection(url)
+      WebSocketDwnRpcClient.ensurePoolWakeListeners(pool);
+      pending = WebSocketDwnRpcClient.createConnection(
+        url,
+        pool,
+        (socketUrl: string): Promise<WebSocket> => this.networkTransport.createWebSocket(socketUrl),
+      )
         .then((connection) => {
           // Ownership: an evicted socket may have reconnected and re-taken
           // the endpoint while this replacement was being established. Its
@@ -440,7 +493,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
           // is reused and the redundant replacement discarded — no extra
           // resubscription, no duplicate reconnected notification. Only a
           // dead pooled entry is displaced, adopting its subscriptions.
-          const current = WebSocketDwnRpcClient.connections.get(key);
+          const current = pool.connections.get(key);
           if (current !== undefined && current.socket !== connection.socket) {
             if (current.socket.isConnected) {
               try {
@@ -453,7 +506,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
               current.socket.close();
             } catch { /* best effort */ }
           }
-          WebSocketDwnRpcClient.connections.set(key, connection);
+          pool.connections.set(key, connection);
           return connection;
         })
         .catch((error: unknown) => {
@@ -463,9 +516,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
           throw new SocketUnavailableError(`Error connecting to ${displayUrl.toString()}: ${redactConnectionError(error, url, displayUrl)}`);
         })
         .finally(() => {
-          WebSocketDwnRpcClient.pendingConnections.delete(key);
+          pool.pendingConnections.delete(key);
         });
-      WebSocketDwnRpcClient.pendingConnections.set(key, pending);
+      pool.pendingConnections.set(key, pending);
     }
 
     return pending;
@@ -474,7 +527,11 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   /**
    * Creates a new `SocketConnection` with lifecycle wiring for reconnection.
    */
-  private static async createConnection(url: URL): Promise<SocketConnection> {
+  private static async createConnection(
+    url: URL,
+    pool: SocketConnectionPool,
+    createWebSocket: EnboxRpcNetworkTransport['createWebSocket'],
+  ): Promise<SocketConnection> {
     const key = connectionCacheKey(url);
     const subscriptions = new Map<string, TrackedSubscription>();
 
@@ -485,12 +542,12 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // pool entry: a stale close from a superseded socket must not evict
         // its replacement. Register the socket as reconnecting so wake-driven
         // health checks can still reach it and fast-forward its backoff.
-        const current = WebSocketDwnRpcClient.connections.get(key);
+        const current = pool.connections.get(key);
         if (current?.socket === socket) {
-          WebSocketDwnRpcClient.connections.delete(key);
+          pool.connections.delete(key);
         }
         if (!socket.isClosedByUser) {
-          WebSocketDwnRpcClient.reconnectingSockets.add(socket);
+          pool.reconnectingSockets.add(socket);
         }
 
         // Notify all subscription handlers of disconnection. Invocation is
@@ -507,7 +564,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       },
 
       onreconnected: (): void => {
-        WebSocketDwnRpcClient.reconnectingSockets.delete(socket);
+        pool.reconnectingSockets.delete(socket);
 
         // A user-closed socket must never re-enter the pool: shutdown may
         // have raced an in-flight reconnection, and re-registering here would
@@ -522,7 +579,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // socket closes itself instead of overwriting it, so exactly one
         // socket per endpoint survives the race. Its tracked subscriptions
         // move onto the winner first so they keep receiving updates.
-        const current = WebSocketDwnRpcClient.connections.get(key);
+        const current = pool.connections.get(key);
         if (current !== undefined && current.socket !== socket) {
           WebSocketDwnRpcClient.adoptSubscriptions(subscriptions, current);
           try {
@@ -533,12 +590,12 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
         // Re-register this connection in the map (it was deleted on close).
         const conn = { socket, subscriptions, url: url.toString() };
-        WebSocketDwnRpcClient.connections.set(key, conn);
+        pool.connections.set(key, conn);
 
         // Resubscribe all tracked subscriptions with their last known cursor.
-        WebSocketDwnRpcClient.resubscribeAll(conn);
+        WebSocketDwnRpcClient.resubscribeAll(conn, pool);
       },
-    });
+    }, createWebSocket);
 
     return { socket, subscriptions, url: url.toString() };
   }
@@ -881,7 +938,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   /**
    * Resubscribes all tracked subscriptions on a reconnected socket.
    */
-  private static async resubscribeAll(connection: SocketConnection): Promise<void> {
+  private static async resubscribeAll(
+    connection: SocketConnection,
+    pool: SocketConnectionPool = WebSocketDwnRpcClient.defaultConnectionPool,
+  ): Promise<void> {
     // Snapshot the current subscriptions — resubscription will re-populate the map.
     const entries = [...connection.subscriptions.entries()];
     connection.subscriptions.clear();
@@ -892,7 +952,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       } catch (error: unknown) {
         // The connection may have lost endpoint ownership mid-resubscription —
         // hand the subscription to the current owner so it survives the race.
-        const owner = WebSocketDwnRpcClient.connections.get(connectionCacheKey(new URL(connection.url)));
+        const owner = pool.connections.get(connectionCacheKey(new URL(connection.url)));
         if (owner !== undefined && owner !== connection) {
           try {
             await WebSocketDwnRpcClient.resubscribeTracked(owner, tracked);
