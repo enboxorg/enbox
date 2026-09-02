@@ -1,16 +1,24 @@
+/** Structured, machine-readable data attached to a {@link DidError}. */
+export type DidErrorInfo = Record<string, string | number | boolean>;
+
 /**
  * A custom error class for DID-related errors.
  */
 export class DidError extends Error {
+  /** Additional details that can be surfaced in DID resolution metadata. */
+  public readonly info?: DidErrorInfo;
+
   /**
    * Constructs an instance of DidError, a custom error class for handling DID-related errors.
    *
    * @param code - A {@link DidErrorCode} representing the specific type of error encountered.
    * @param message - A human-readable description of the error.
+   * @param options - Optional machine-readable details about the error.
    */
-  constructor(public code: DidErrorCode, message: string) {
+  constructor(public code: DidErrorCode, message: string, options?: { info?: DidErrorInfo }) {
     super(`${code}: ${message}`);
     this.name = 'DidError';
+    this.info = options?.info;
 
     // Ensures that instanceof works properly, the correct prototype chain when using inheritance,
     // and that V8 stack traces (like Chrome, Edge, and Node.js) are more readable and relevant.
@@ -22,6 +30,12 @@ export class DidError extends Error {
       Error.captureStackTrace(this, DidError);
     }
   }
+}
+
+/** Machine-readable causes that can accompany a DID resolution error. */
+export enum DidResolutionErrorCause {
+  /** A network request could not be started or completed. */
+  NetworkUnavailable = 'networkUnavailable',
 }
 
 /**
