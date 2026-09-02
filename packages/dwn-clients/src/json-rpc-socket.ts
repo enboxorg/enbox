@@ -522,9 +522,7 @@ export class JsonRpcSocket {
         this._heartbeatPingId = undefined;
         this._awaitingPong = false;
 
-        if (!this.closedByUser && this._isConnected) {
-          this.closeDeadConnection();
-        }
+        this.closeDeadConnection();
       }, timeout);
     }, interval);
   }
@@ -570,13 +568,9 @@ export class JsonRpcSocket {
       const probeId = `hb-probe-${CryptoUtils.randomUuid()}`;
       const probeTimeout = this.options.healthProbeTimeout ?? DEFAULT_HEALTH_PROBE_TIMEOUT;
 
-      const forceClose = (): void => {
-        this.closeDeadConnection();
-      };
-
       const timeout = setTimeout((): void => {
         this.messageHandlers.delete(probeId);
-        forceClose();
+        this.closeDeadConnection();
         resolve(false);
       }, probeTimeout);
 
@@ -601,7 +595,7 @@ export class JsonRpcSocket {
       } catch {
         clearTimeout(timeout);
         this.messageHandlers.delete(probeId);
-        forceClose();
+        this.closeDeadConnection();
         resolve(false);
       }
     });
@@ -650,7 +644,7 @@ export class JsonRpcSocket {
     });
   }
 
-  /** Parks reconnection while the browser explicitly reports that it is offline. */
+  /** Parks reconnection while explicitly offline and reports whether it waited. */
   private async waitWhileExplicitlyOffline(): Promise<boolean> {
     let waited = false;
     while (!this.closedByUser && isExplicitlyOffline()) {
@@ -692,12 +686,11 @@ export class JsonRpcSocket {
       }
       this.options.onreconnecting?.(nextAttempt);
 
-      // Exponential backoff with jitter: delay = min(baseDelay * 2^(attempt-1), maxDelay) * (0.5 + random*0.5)
-      const expDelay = Math.min(baseDelay * Math.pow(2, nextAttempt - 1), maxDelay);
-      const halfExpDelay = Math.floor(expDelay / 2);
-      const jitteredDelay = halfExpDelay + (crypto.getRandomValues(new Uint32Array(1))[0] % (halfExpDelay || 1));
-
       if (!resumedFromOffline) {
+        // Exponential backoff with jitter: delay = min(baseDelay * 2^(attempt-1), maxDelay) * (0.5 + random*0.5)
+        const expDelay = Math.min(baseDelay * Math.pow(2, nextAttempt - 1), maxDelay);
+        const halfExpDelay = Math.floor(expDelay / 2);
+        const jitteredDelay = halfExpDelay + (crypto.getRandomValues(new Uint32Array(1))[0] % (halfExpDelay || 1));
         await this.waitForBackoff(jitteredDelay);
       }
 

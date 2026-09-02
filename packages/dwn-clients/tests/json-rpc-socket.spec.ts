@@ -755,10 +755,12 @@ describe('JsonRpcSocket', () => {
       expect(warn).not.toHaveBeenCalled();
     });
 
-    it('should close once when liveness verdicts race', async () => {
+    it('should make the dead-connection transition idempotent', async () => {
       const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: false });
       const close = spyOn(client['socket'], 'close').mockImplementation((): void => {});
 
+      // Liveness callbacks run serially; the second call models another
+      // detector reaching the same verdict after the first one won.
       client['closeDeadConnection']();
       client['closeDeadConnection']();
 
@@ -928,6 +930,46 @@ describe('JsonRpcSocket', () => {
       } finally {
         navigatorOnline.restore();
         client.close();
+      }
+    }, 10_000);
+
+    it('should park when the browser becomes explicitly offline during reconnect backoff', async () => {
+      const navigatorOnline = overrideNavigatorOnline(true);
+      let client: JsonRpcSocket | undefined;
+
+      try {
+        client = await JsonRpcSocket.connect(socketDwnUrl, {
+          autoReconnect      : true,
+          baseReconnectDelay : 100,
+          maxReconnectDelay  : 100,
+        });
+        const createWebSocket = spyOn(JsonRpcSocket as any, 'createWebSocket');
+
+        client['socket'].close();
+        while (client['_reconnectWake'] === undefined) {
+          await sleepWhileWaitingForEvents(10);
+        }
+        const backoffWake = client['_reconnectWake'];
+
+        // The socket closed before the browser reported offline. Once the
+        // already-armed backoff ends, construction must still be withheld.
+        navigatorOnline.set(false);
+        await sleepWhileWaitingForEvents(200);
+
+        expect(createWebSocket).not.toHaveBeenCalled();
+        expect(client['_reconnectWake']).toBeDefined();
+        expect(client['_reconnectWake']).not.toBe(backoffWake);
+
+        navigatorOnline.set(true);
+        await client.checkHealth();
+        while (!client.isConnected) {
+          await sleepWhileWaitingForEvents(10);
+        }
+
+        expect(createWebSocket).toHaveBeenCalledTimes(1);
+      } finally {
+        navigatorOnline.restore();
+        client?.close();
       }
     }, 10_000);
 
