@@ -199,14 +199,14 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
       options: { baseReconnectDelay?: number; maxReconnectDelay?: number };
       socket: WebSocket;
       reconnecting: boolean;
-      _backoffWake?: () => void;
+      _reconnectWake?: () => void;
     };
     socketInternals.options.baseReconnectDelay = 600_000;
     socketInternals.options.maxReconnectDelay = 600_000;
 
     // Simulate an unexpected drop: evicted from the pool, parked in backoff.
     socketInternals.socket.close();
-    await waitFor((): boolean => socketInternals.reconnecting && socketInternals._backoffWake !== undefined, 'reconnect parked in backoff');
+    await waitFor((): boolean => socketInternals.reconnecting && socketInternals._reconnectWake !== undefined, 'reconnect parked in backoff');
     expect(pool.connections.size).toBe(0);
     expect(pool.reconnectingSockets.has(connection.socket)).toBe(true);
 

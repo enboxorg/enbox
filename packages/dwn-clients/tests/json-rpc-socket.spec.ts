@@ -3,6 +3,7 @@ import type { Persona } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { JsonRpcSocket } from '../src/json-rpc-socket.js';
+import { SocketUnavailableError } from '../src/dwn-rpc-error.js';
 import { TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import {
@@ -15,6 +16,26 @@ const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
 /** helper method to sleep while waiting for events to process/arrive */
 async function sleepWhileWaitingForEvents(override?: number):Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, override || 10));
+}
+
+/** Overrides the browser connectivity hint for one test and restores it afterward. */
+function overrideNavigatorOnline(initialValue: boolean): { restore(): void; set(value: boolean): void } {
+  const original = Object.getOwnPropertyDescriptor(globalThis.navigator, 'onLine');
+  const set = (value: boolean): void => {
+    Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, value });
+  };
+  set(initialValue);
+
+  return {
+    restore: (): void => {
+      if (original === undefined) {
+        Reflect.deleteProperty(globalThis.navigator, 'onLine');
+      } else {
+        Object.defineProperty(globalThis.navigator, 'onLine', original);
+      }
+    },
+    set,
+  };
 }
 
 describe('JsonRpcSocket', () => {
@@ -38,6 +59,22 @@ describe('JsonRpcSocket', () => {
     const client = await JsonRpcSocket.connect(socketDwnUrl);
     expect(client).toBeInstanceOf(JsonRpcSocket);
     client.close();
+  });
+
+  it('should reject without constructing a WebSocket when the browser is explicitly offline', async () => {
+    const navigatorOnline = overrideNavigatorOnline(false);
+    const createWebSocket = spyOn(JsonRpcSocket as any, 'createWebSocket');
+    const onerror = mock((): void => {});
+
+    try {
+      const rejection = await JsonRpcSocket.connect(socketDwnUrl, { onerror }).catch((error: unknown) => error);
+
+      expect(rejection).toBeInstanceOf(SocketUnavailableError);
+      expect(createWebSocket).not.toHaveBeenCalled();
+      expect(onerror).not.toHaveBeenCalled();
+    } finally {
+      navigatorOnline.restore();
+    }
   });
 
   it('generates a request id if one is not provided', async () => {
@@ -669,6 +706,7 @@ describe('JsonRpcSocket', () => {
     });
 
     it('should close connection on heartbeat timeout', async () => {
+      const warn = spyOn(console, 'warn').mockImplementation((): void => {});
       const client = await JsonRpcSocket.connect(socketDwnUrl, {
         heartbeatInterval : 50,
         heartbeatTimeout  : 50,
@@ -687,6 +725,7 @@ describe('JsonRpcSocket', () => {
 
       // The connection should have been closed by the heartbeat timeout.
       expect(client.isConnected).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
     });
 
     it('should resolve checkHealth true on a live connection', async () => {
@@ -700,6 +739,7 @@ describe('JsonRpcSocket', () => {
     });
 
     it('should force-close a dead connection and resolve checkHealth false', async () => {
+      const warn = spyOn(console, 'warn').mockImplementation((): void => {});
       const client = await JsonRpcSocket.connect(socketDwnUrl, {
         autoReconnect      : false,
         healthProbeTimeout : 50,
@@ -712,6 +752,24 @@ describe('JsonRpcSocket', () => {
 
       expect(healthy).toBe(false);
       expect(client.isConnected).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('should make the dead-connection transition idempotent', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: false });
+      const close = spyOn(client['socket'], 'close').mockImplementation((): void => {});
+
+      // Liveness callbacks run serially; the second call models another
+      // detector reaching the same verdict after the first one won.
+      client['closeDeadConnection']();
+      client['closeDeadConnection']();
+
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(client.isConnected).toBe(false);
+      expect(client['_heartbeatInterval']).toBeUndefined();
+
+      close.mockRestore();
+      client.close();
     });
 
     it('should clear a stale heartbeat deadline when the health probe pongs', async () => {
@@ -823,7 +881,7 @@ describe('JsonRpcSocket', () => {
       await sleepWhileWaitingForEvents(100);
       expect(client.isConnected).toBe(false);
       expect(client['reconnecting']).toBe(true);
-      expect(client['_backoffWake']).toBeDefined();
+      expect(client['_reconnectWake']).toBeDefined();
 
       // A wake signal fast-forwards the backoff — reconnection happens now.
       const healthy = await client.checkHealth();
@@ -834,6 +892,114 @@ describe('JsonRpcSocket', () => {
 
       client.close();
     }, 10_000);
+
+    it('should park reconnect attempts while explicitly offline and wake once online', async () => {
+      const onreconnecting = mock((_attempt: number): void => {});
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        baseReconnectDelay : 10,
+        maxReconnectDelay  : 10,
+        onreconnecting,
+      });
+      const navigatorOnline = overrideNavigatorOnline(false);
+      const createWebSocket = spyOn(JsonRpcSocket as any, 'createWebSocket');
+
+      try {
+        client['socket'].close();
+        while (client['_reconnectWake'] === undefined) {
+          await sleepWhileWaitingForEvents(10);
+        }
+        await sleepWhileWaitingForEvents(100);
+
+        expect(createWebSocket).not.toHaveBeenCalled();
+        expect(onreconnecting).not.toHaveBeenCalled();
+
+        // Repeated wake checks while still offline must not start a connection.
+        await Promise.all([client.checkHealth(), client.checkHealth()]);
+        await sleepWhileWaitingForEvents(20);
+        expect(createWebSocket).not.toHaveBeenCalled();
+
+        navigatorOnline.set(true);
+        await client.checkHealth();
+        while (!client.isConnected) {
+          await sleepWhileWaitingForEvents(10);
+        }
+
+        expect(createWebSocket).toHaveBeenCalledTimes(1);
+        expect(onreconnecting).toHaveBeenCalledTimes(1);
+      } finally {
+        navigatorOnline.restore();
+        client.close();
+      }
+    }, 10_000);
+
+    it('should park when the browser becomes explicitly offline during reconnect backoff', async () => {
+      const navigatorOnline = overrideNavigatorOnline(true);
+      let client: JsonRpcSocket | undefined;
+
+      try {
+        client = await JsonRpcSocket.connect(socketDwnUrl, {
+          autoReconnect      : true,
+          baseReconnectDelay : 100,
+          maxReconnectDelay  : 100,
+        });
+        const createWebSocket = spyOn(JsonRpcSocket as any, 'createWebSocket');
+
+        client['socket'].close();
+        while (client['_reconnectWake'] === undefined) {
+          await sleepWhileWaitingForEvents(10);
+        }
+        const backoffWake = client['_reconnectWake'];
+
+        // The socket closed before the browser reported offline. Once the
+        // already-armed backoff ends, construction must still be withheld.
+        navigatorOnline.set(false);
+        await sleepWhileWaitingForEvents(200);
+
+        expect(createWebSocket).not.toHaveBeenCalled();
+        expect(client['_reconnectWake']).toBeDefined();
+        expect(client['_reconnectWake']).not.toBe(backoffWake);
+
+        navigatorOnline.set(true);
+        await client.checkHealth();
+        while (!client.isConnected) {
+          await sleepWhileWaitingForEvents(10);
+        }
+
+        expect(createWebSocket).toHaveBeenCalledTimes(1);
+      } finally {
+        navigatorOnline.restore();
+        client?.close();
+      }
+    }, 10_000);
+
+    it('should not reconnect after close while parked offline', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        baseReconnectDelay : 10,
+        maxReconnectDelay  : 10,
+      });
+      const navigatorOnline = overrideNavigatorOnline(false);
+      const createWebSocket = spyOn(JsonRpcSocket as any, 'createWebSocket');
+
+      try {
+        client['socket'].close();
+        while (client['_reconnectWake'] === undefined) {
+          await sleepWhileWaitingForEvents(10);
+        }
+
+        client.close();
+        navigatorOnline.set(true);
+        await client.checkHealth();
+        await sleepWhileWaitingForEvents(50);
+
+        expect(createWebSocket).not.toHaveBeenCalled();
+        expect(client['reconnecting']).toBe(false);
+        expect(client.isConnected).toBe(false);
+      } finally {
+        navigatorOnline.restore();
+      }
+    });
 
     it('should stay closed when close() races an in-flight reconnect attempt', async () => {
       const onreconnected = mock((): void => {});

@@ -39,6 +39,11 @@ const DEFAULT_HEARTBEAT_TIMEOUT = 10_000;
 /** Default deadline for an on-demand health probe pong. */
 const DEFAULT_HEALTH_PROBE_TIMEOUT = 5_000;
 
+/** Browser connectivity is only authoritative when it explicitly reports offline. */
+function isExplicitlyOffline(): boolean {
+  return globalThis.navigator?.onLine === false;
+}
+
 export interface JsonRpcSocketOptions {
   /** socket connection timeout in milliseconds */
   connectTimeout?: number;
@@ -141,8 +146,8 @@ export class JsonRpcSocket {
   /** In-flight on-demand health probe, deduplicating concurrent checks. */
   private _healthProbe: Promise<boolean> | undefined;
 
-  /** Resolver that fast-forwards the pending reconnect backoff wait. */
-  private _backoffWake: (() => void) | undefined;
+  /** Resolver that wakes the pending reconnect delay or explicit-offline wait. */
+  private _reconnectWake: (() => void) | undefined;
 
   private constructor(
     private socket: WebSocket,
@@ -168,6 +173,10 @@ export class JsonRpcSocket {
   public static async connect(url: string, options: JsonRpcSocketOptions = {}): Promise<JsonRpcSocket> {
     const { connectTimeout = CONNECT_TIMEOUT, responseTimeout = RESPONSE_TIMEOUT } = options;
 
+    if (isExplicitlyOffline()) {
+      throw new SocketUnavailableError('JsonRpcSocket: connection refused — browser is explicitly offline');
+    }
+
     let socket: WebSocket;
     try {
       socket = await JsonRpcSocket.createWebSocket(url, connectTimeout);
@@ -191,7 +200,7 @@ export class JsonRpcSocket {
     this.closedByUser = true;
     this._isConnected = false;
     this.stopHeartbeat();
-    this._backoffWake?.();
+    this._reconnectWake?.();
     this.socket.close();
   }
 
@@ -217,7 +226,7 @@ export class JsonRpcSocket {
 
     if (!this._isConnected) {
       if (this.reconnecting) {
-        this._backoffWake?.();
+        this._reconnectWake?.();
       } else if (this.options.autoReconnect ?? true) {
         this.attemptReconnect();
       }
@@ -513,11 +522,7 @@ export class JsonRpcSocket {
         this._heartbeatPingId = undefined;
         this._awaitingPong = false;
 
-        if (!this.closedByUser && this._isConnected) {
-          console.warn('JsonRpcSocket: heartbeat timeout — closing dead connection');
-          this._isConnected = false;
-          try { this.socket.close(); } catch { /* best effort */ }
-        }
+        this.closeDeadConnection();
       }, timeout);
     }, interval);
   }
@@ -563,17 +568,9 @@ export class JsonRpcSocket {
       const probeId = `hb-probe-${CryptoUtils.randomUuid()}`;
       const probeTimeout = this.options.healthProbeTimeout ?? DEFAULT_HEALTH_PROBE_TIMEOUT;
 
-      const forceClose = (): void => {
-        if (!this.closedByUser && this._isConnected) {
-          console.warn('JsonRpcSocket: health probe failed — closing dead connection');
-          this._isConnected = false;
-          try { this.socket.close(); } catch { /* best effort */ }
-        }
-      };
-
       const timeout = setTimeout((): void => {
         this.messageHandlers.delete(probeId);
-        forceClose();
+        this.closeDeadConnection();
         resolve(false);
       }, probeTimeout);
 
@@ -598,7 +595,7 @@ export class JsonRpcSocket {
       } catch {
         clearTimeout(timeout);
         this.messageHandlers.delete(probeId);
-        forceClose();
+        this.closeDeadConnection();
         resolve(false);
       }
     });
@@ -608,6 +605,17 @@ export class JsonRpcSocket {
   // Internal: reconnection
   // ---------------------------------------------------------------------------
 
+  /** Idempotently closes a connection after a completed liveness verdict. */
+  private closeDeadConnection(): void {
+    if (this.closedByUser || !this._isConnected) {
+      return;
+    }
+
+    this._isConnected = false;
+    this.stopHeartbeat();
+    try { this.socket.close(); } catch { /* best effort */ }
+  }
+
   /**
    * Waits for the given backoff delay, resolving early when
    * {@link checkHealth} fast-forwards a wake signal into the loop.
@@ -615,15 +623,35 @@ export class JsonRpcSocket {
   private waitForBackoff(delayMs: number): Promise<void> {
     return new Promise<void>((resolve) => {
       const timer = setTimeout((): void => {
-        this._backoffWake = undefined;
+        this._reconnectWake = undefined;
         resolve();
       }, delayMs);
-      this._backoffWake = (): void => {
+      this._reconnectWake = (): void => {
         clearTimeout(timer);
-        this._backoffWake = undefined;
+        this._reconnectWake = undefined;
         resolve();
       };
     });
+  }
+
+  /** Waits without polling until a wake signal says to re-check browser connectivity. */
+  private waitForReconnectWake(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this._reconnectWake = (): void => {
+        this._reconnectWake = undefined;
+        resolve();
+      };
+    });
+  }
+
+  /** Parks reconnection while explicitly offline and reports whether it waited. */
+  private async waitWhileExplicitlyOffline(): Promise<boolean> {
+    let waited = false;
+    while (!this.closedByUser && isExplicitlyOffline()) {
+      waited = true;
+      await this.waitForReconnectWake();
+    }
+    return waited;
   }
 
   /**
@@ -645,26 +673,35 @@ export class JsonRpcSocket {
         return;
       }
 
-      attempt++;
-
-      if (attempt > maxAttempts) {
+      const nextAttempt = attempt + 1;
+      if (nextAttempt > maxAttempts) {
         this.reconnecting = false;
         return;
       }
 
-      this.options.onreconnecting?.(attempt);
+      const resumedFromOffline = await this.waitWhileExplicitlyOffline();
+      if (this.closedByUser) {
+        this.reconnecting = false;
+        return;
+      }
+      this.options.onreconnecting?.(nextAttempt);
 
-      // Exponential backoff with jitter: delay = min(baseDelay * 2^(attempt-1), maxDelay) * (0.5 + random*0.5)
-      const expDelay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
-      const halfExpDelay = Math.floor(expDelay / 2);
-      const jitteredDelay = halfExpDelay + (crypto.getRandomValues(new Uint32Array(1))[0] % (halfExpDelay || 1));
+      if (!resumedFromOffline) {
+        // Exponential backoff with jitter: delay = min(baseDelay * 2^(attempt-1), maxDelay) * (0.5 + random*0.5)
+        const expDelay = Math.min(baseDelay * Math.pow(2, nextAttempt - 1), maxDelay);
+        const halfExpDelay = Math.floor(expDelay / 2);
+        const jitteredDelay = halfExpDelay + (crypto.getRandomValues(new Uint32Array(1))[0] % (halfExpDelay || 1));
+        await this.waitForBackoff(jitteredDelay);
+      }
 
-      await this.waitForBackoff(jitteredDelay);
+      await this.waitWhileExplicitlyOffline();
 
       if (this.closedByUser) {
         this.reconnecting = false;
         return;
       }
+
+      attempt = nextAttempt;
 
       try {
         const newSocket = await JsonRpcSocket.createWebSocket(this.url, connectTimeout);
