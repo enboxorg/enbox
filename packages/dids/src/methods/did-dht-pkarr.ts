@@ -4,8 +4,8 @@ import type { Signer } from '@enbox/crypto';
 import type { Bep44Message } from './did-dht-types.js';
 
 import { Ed25519 } from '@enbox/crypto';
-import { Convert, fetchPublicUrl, PublicUrlValidationError } from '@enbox/common';
-import { DidError, DidErrorCode } from '../did-error.js';
+import { Convert, fetchPublicUrl, isExplicitlyOffline, PublicUrlValidationError } from '@enbox/common';
+import { DidError, DidErrorCode, DidResolutionErrorCause } from '../did-error.js';
 import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
 
 const textEncoder = new TextEncoder();
@@ -93,6 +93,14 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGateway
   // private host past the initial gateway check.
   let response: Response;
   try {
+    if (isExplicitlyOffline()) {
+      throw new DidError(
+        DidErrorCode.InternalError,
+        `Cannot fetch Pkarr record while the browser is offline: ${identifier}`,
+        { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+      );
+    }
+
     response = await pkarrFetch(url, { method: 'GET', signal: AbortSignal.timeout(30_000) }, allowPrivateGatewayUri);
 
     if (!response.ok) {

@@ -492,6 +492,7 @@ export class DidDht extends DidMethod {
       return {
         ...EMPTY_DID_RESOLUTION_RESULT,
         didResolutionMetadata: {
+          ...error.info,
           error: error.code,
           ...error.message && { errorMessage: error.message }
         }

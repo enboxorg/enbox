@@ -4,15 +4,17 @@ import type { Signer } from '@enbox/crypto';
 import type { Answer, Packet } from '@dnsquery/dns-packet';
 
 import { Convert } from '@enbox/common';
-import { DidErrorCode } from '../../src/did-error.js';
+import { DidResolverCacheMemory } from '../../src/resolver/resolver-cache-memory.js';
 import { Ed25519 } from '@enbox/crypto';
 import { encodeBep44SigningPayload } from '../../src/methods/did-dht-pkarr.js';
 import officialTestVector1 from '../fixtures/test-vectors/did-dht/vector-1.json' with { type: 'json' };
 import officialTestVector2 from '../fixtures/test-vectors/did-dht/vector-2.json' with { type: 'json' };
 import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json' with { type: 'json' };
 import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' with { type: 'json' };
+import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils } from '../../src/methods/did-dht.js';
+import { DidErrorCode, DidResolutionErrorCause } from '../../src/did-error.js';
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
 const fetchNotFoundResponse = (): { status: number; statusText: string; ok: boolean } => ({
@@ -82,6 +84,26 @@ function concatBytes(...parts: Uint8Array[]): Uint8Array {
   }
 
   return result;
+}
+
+/** Overrides the browser connectivity hint for one test and restores it afterward. */
+function overrideNavigatorOnline(initialValue: boolean): { restore(): void; set(value: boolean): void } {
+  const original = Object.getOwnPropertyDescriptor(globalThis.navigator, 'onLine');
+  const set = (value: boolean): void => {
+    Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, value });
+  };
+  set(initialValue);
+
+  return {
+    restore: (): void => {
+      if (original === undefined) {
+        Reflect.deleteProperty(globalThis.navigator, 'onLine');
+      } else {
+        Object.defineProperty(globalThis.navigator, 'onLine', original);
+      }
+    },
+    set,
+  };
 }
 
 describe('DidDht', () => {
@@ -870,6 +892,51 @@ describe('DidDht', () => {
       const didResolutionResult = await DidDht.resolve(did);
 
       expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'notFound');
+    });
+
+    it('does not fetch while explicitly offline and allows a fresh fetch after coming online', async () => {
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
+      const navigatorOnline = overrideNavigatorOnline(false);
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const resolver = new UniversalResolver({ cache: new DidResolverCacheMemory(), didResolvers: [DidDht] });
+
+      try {
+        const offlineResult = await resolver.resolve(did);
+
+        expect(fetchStub).not.toHaveBeenCalled();
+        expect(offlineResult.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
+        expect(offlineResult.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
+
+        navigatorOnline.set(true);
+        const onlineResult = await resolver.resolve(did);
+
+        expect(fetchStub).toHaveBeenCalledTimes(1);
+        expect(onlineResult.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
+        expect(onlineResult.didResolutionMetadata.errorCause).toBeUndefined();
+      } finally {
+        navigatorOnline.restore();
+      }
+    });
+
+    it('fetches normally when the runtime has no navigator', async () => {
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
+      const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+
+      try {
+        Object.defineProperty(globalThis, 'navigator', { configurable: true, value: undefined });
+
+        const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+        const result = await DidDht.resolve(did);
+
+        expect(fetchStub).toHaveBeenCalledTimes(1);
+        expect(result.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
+      } finally {
+        if (originalNavigator === undefined) {
+          Reflect.deleteProperty(globalThis, 'navigator');
+        } else {
+          Object.defineProperty(globalThis, 'navigator', originalNavigator);
+        }
+      }
     });
 
     it('does not fetch from a private gateway URI by default', async () => {

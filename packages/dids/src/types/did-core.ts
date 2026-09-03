@@ -1,3 +1,4 @@
+import type { DidResolutionErrorCause } from '../did-error.js';
 import type { Jwk } from '@enbox/crypto';
 
 /**
@@ -338,6 +339,9 @@ export type DidResolutionMetadata = {
    * @see {@link https://www.w3.org/TR/did-spec-registries/#error | DID Specification Registries, § Error}
    */
   error?: string;
+
+  /** A machine-readable cause that further classifies the resolution error. */
+  errorCause?: DidResolutionErrorCause;
 
   // Additional output metadata generated during DID Resolution.
   [key: string]: any;

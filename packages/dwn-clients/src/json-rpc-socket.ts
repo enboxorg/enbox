@@ -1,6 +1,7 @@
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { isExplicitlyOffline } from '@enbox/common';
 import { SocketUnavailableError } from './dwn-rpc-error.js';
 import { createJsonRpcSubscriptionRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 
@@ -38,11 +39,6 @@ const DEFAULT_HEARTBEAT_TIMEOUT = 10_000;
 
 /** Default deadline for an on-demand health probe pong. */
 const DEFAULT_HEALTH_PROBE_TIMEOUT = 5_000;
-
-/** Browser connectivity is only authoritative when it explicitly reports offline. */
-function isExplicitlyOffline(): boolean {
-  return globalThis.navigator?.onLine === false;
-}
 
 export interface JsonRpcSocketOptions {
   /** socket connection timeout in milliseconds */
