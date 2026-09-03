@@ -6,7 +6,7 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { BearerDid, DidJwk } from '@enbox/dids';
+import { BearerDid, DidJwk, DidResolutionErrorCause } from '@enbox/dids';
 
 describe('AgentDidResolverCache', () => {
   let resolverCache: AgentDidResolverCache;
@@ -113,6 +113,34 @@ describe('AgentDidResolverCache', () => {
     expect(getStub.callCount).toBe(1);
     expect(refreshSpy.callCount).toBe(1);
     expect(updateSpy.callCount).toBe(1);
+  });
+
+  it('should keep a trusted managed DID when its refresh is unavailable', async () => {
+    const did = testHarness.agent.agentDid;
+    const cachedResult = {
+      didDocument           : did.document,
+      didDocumentMetadata   : did.metadata,
+      didResolutionMetadata : {},
+    };
+    sinon.stub(resolverCache['cache'], 'get').resolves(JSON.stringify({
+      ttlMillis : Date.now() - 1000,
+      value     : cachedResult,
+    }));
+    sinon.stub(testHarness.agent.did, 'get').resolves(did);
+    sinon.stub(testHarness.agent.did, 'refreshResolution').resolves({
+      didDocument           : null,
+      didDocumentMetadata   : {},
+      didResolutionMetadata : {
+        error      : 'internalError',
+        errorCause : DidResolutionErrorCause.NetworkUnavailable,
+      },
+    });
+    const updateSpy = sinon.stub(testHarness.agent.did, 'update').resolves();
+
+    const result = await resolverCache.get(did.uri);
+
+    expect(result).toEqual(cachedResult);
+    expect(updateSpy.callCount).toBe(0);
   });
 
   it('should log an error if an update is attempted and fails', async () => {

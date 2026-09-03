@@ -4,7 +4,8 @@ import type { PortableDid } from '@enbox/dids';
 import type { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
-import { DidJwk, isPortableDid } from '@enbox/dids';
+import { DwnErrorCode } from '@enbox/dwn-sdk-js';
+import { DidJwk, DidResolutionErrorCause, isPortableDid } from '@enbox/dids';
 
 import type { AgentDataStore } from '../src/store-data.js';
 
@@ -13,7 +14,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import { getDataStoreTenant } from '../src/utils-internal.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
-import { DwnDataStore, InMemoryDataStore } from '../src/store-data.js';
+import { DwnDataStore, DwnDataStoreReadError, InMemoryDataStore } from '../src/store-data.js';
 
 class DwnTestStore extends DwnDataStore<PortableDid> {
   protected name = 'DwnTestStore';
@@ -251,9 +252,38 @@ describe('AgentDataStore', () => {
             });
             throw new Error('Expected an error to be thrown');
 
-          } catch (error: any) {
-            expect(error.message).toContain('Failed to read data from DWN for');
+          } catch (error: unknown) {
+            expect(error).toBeInstanceOf(DwnDataStoreReadError);
+            expect((error as DwnDataStoreReadError).message).toContain('Failed to read data from DWN for');
+            expect((error as DwnDataStoreReadError).status.code).toBe(404);
           }
+        });
+
+        // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('preserves structured status when a DWN read is rejected', async () => {
+          await testStore.set({
+            id    : 'test-1',
+            data  : { document: { id: 'test-1' }, metadata: {}, uri: 'test-1' },
+            agent : testHarness.agent,
+          });
+
+          const status = {
+            code      : 401,
+            detail    : 'signature verification failed',
+            errorCode : DwnErrorCode.GeneralJwsVerifierGetPublicKeyNotFound,
+            info      : { errorCause: DidResolutionErrorCause.NetworkUnavailable },
+          };
+          spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({ reply: { status } } as never);
+
+          let failure: unknown;
+          try {
+            await testStore.get({ id: 'test-1', agent: testHarness.agent });
+          } catch (error) {
+            failure = error;
+          }
+
+          expect(failure).toBeInstanceOf(DwnDataStoreReadError);
+          expect((failure as DwnDataStoreReadError).status).toEqual(status);
         });
       });
 

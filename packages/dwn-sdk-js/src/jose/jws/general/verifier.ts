@@ -1,4 +1,5 @@
 import type { Cache } from '../../../types/cache.js';
+import type { DwnErrorInfo } from '../../../core/dwn-error.js';
 import type { GeneralJws } from '../../../types/jws-types.js';
 import type { PublicKeyJwk } from '../../../types/jose-types.js';
 import type { DidResolutionResult, DidResolver, DidVerificationMethod } from '@enbox/dids';
@@ -7,7 +8,7 @@ import { Encoder } from '../../../utils/encoder.js';
 import { Jws } from '../../../utils/jws.js';
 import { MemoryCache } from '../../../utils/memory-cache.js';
 import { validateJsonSchema } from '../../../schema-validator.js';
-import { DwnError, DwnErrorCode } from '../../../core/dwn-error.js';
+import { DwnError, DwnErrorCode, GeneralJwsVerifierPublicKeyFailure } from '../../../core/dwn-error.js';
 
 type VerificationResult = {
   /** DIDs of all signers */
@@ -91,7 +92,7 @@ export class GeneralJwsVerifier {
    * Gets the public key given a fully qualified key ID (`kid`) by resolving the DID to its DID Document.
    *
    * Throws `GeneralJwsVerifierGetPublicKeyNotFound` when the public key cannot be located.
-   * The error message distinguishes between two failure modes so callers can tell them apart:
+   * The error's structured `info` distinguishes between two failure modes:
    *   1. DID resolution failed (network error, DID not published, method not supported, etc.).
    *      The resolution metadata error code and message are included.
    *   2. DID resolved successfully but the requested `kid` does not match any verification
@@ -120,6 +121,7 @@ export class GeneralJwsVerifier {
       throw new DwnError(
         DwnErrorCode.GeneralJwsVerifierGetPublicKeyNotFound,
         GeneralJwsVerifier.buildPublicKeyNotFoundMessage(kid, did, didDocument, didResolutionMetadata, verificationMethods),
+        { info: GeneralJwsVerifier.buildPublicKeyNotFoundInfo(didDocument, didResolutionMetadata) },
       );
     }
 
@@ -128,6 +130,25 @@ export class GeneralJwsVerifier {
     const { publicKeyJwk: publicJwk } = verificationMethod;
 
     return publicJwk as PublicKeyJwk;
+  }
+
+  /** Builds the machine-readable counterpart to the public-key lookup diagnostic. */
+  private static buildPublicKeyNotFoundInfo(
+    didDocument: DidResolutionResult['didDocument'],
+    didResolutionMetadata: DidResolutionResult['didResolutionMetadata'] | undefined,
+  ): DwnErrorInfo {
+    const resolutionError = didResolutionMetadata?.error;
+    const errorCause = didResolutionMetadata?.errorCause;
+    const didResolutionFailed = resolutionError !== undefined || didDocument === undefined || didDocument === null;
+    const publicKeyFailure = didResolutionFailed
+      ? GeneralJwsVerifierPublicKeyFailure.DidResolution
+      : GeneralJwsVerifierPublicKeyFailure.VerificationMethodNotFound;
+
+    return {
+      publicKeyFailure,
+      ...(didResolutionFailed && resolutionError !== undefined && { didResolutionError: resolutionError }),
+      ...(didResolutionFailed && errorCause !== undefined && { errorCause }),
+    };
   }
 
   /**

@@ -2565,8 +2565,9 @@ export class AgentDwnApi {
             return await keyManager.sign({ data, keyUri: keyUri! });
           }
         };
-      } catch (error: any) {
-        throw new Error(`AgentDwnApi: Unable to get signer for author '${author}': ${error.message}`);
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`AgentDwnApi: Unable to get signer for author '${author}': ${detail}`, { cause: error });
       }
     }
   }

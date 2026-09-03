@@ -1,5 +1,5 @@
 import type { Jwk } from '@enbox/crypto';
-import type { ProtocolDefinition, RecordsQueryReplyEntry, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, RecordsQueryReplyEntry, RecordsReadReplyEntry, Status } from '@enbox/dwn-sdk-js';
 
 import { Convert, parseDurationInMilliseconds, Stream, TtlCache } from '@enbox/common';
 
@@ -39,6 +39,17 @@ export interface AgentDataStore<TStoreObject> {
   list(params: DataStoreTenantParams): Promise<TStoreObject[]>;
 
   set(params: DataStoreSetParams<TStoreObject>): Promise<void>;
+}
+
+/** A DWN-backed store read that completed with a non-success status. */
+export class DwnDataStoreReadError extends Error {
+  public readonly status: Readonly<Status>;
+
+  public constructor(storeName: string, recordId: string, status: Status) {
+    super(`${storeName}: Failed to read data from DWN for: ${recordId} (${status.code}): ${status.detail}`);
+    this.name = 'DwnDataStoreReadError';
+    this.status = { ...status };
+  }
 }
 
 export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implements AgentDataStore<TStoreObject> {
@@ -321,8 +332,12 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
       messageParams : { filter: { recordId } },
     });
 
+    if (readReply.status.code !== 200) {
+      throw new DwnDataStoreReadError(this.name, recordId, readReply.status);
+    }
+
     if (!readReply.entry?.data || !readReply.entry.recordsWrite) {
-      throw new Error(`${this.name}: Failed to read data from DWN for: ${recordId}`);
+      throw new Error(`${this.name}: DWN read succeeded without data for: ${recordId}`);
     }
 
     const applicationData = await agent.dwn.decryptRecordData({
