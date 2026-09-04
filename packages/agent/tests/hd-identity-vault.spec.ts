@@ -349,6 +349,29 @@ describe('HdIdentityVault', () => {
           expect(returnedRecoveryPhrase).toBe(predefinedRecoveryPhrase);
         });
 
+        it('updates and pins a newly published vault DID resolution', async () => {
+          const cacheResolution = sinon.stub().resolves();
+          const pinResolution = sinon.stub().resolves();
+          identityVault.didResolver = {
+            cacheResolution,
+            pinResolution,
+            resolve: sinon.stub(),
+          };
+          sinon.stub(DidDht, 'publish').resolves({ didDocumentMetadata: {} } as any);
+
+          await identityVault.initialize({ password: 'test' });
+
+          const did = await identityVault.getDid();
+          const expectedResolution = {
+            didDocument           : did.document,
+            didDocumentMetadata   : did.metadata,
+            didResolutionMetadata : {},
+          };
+          expect(cacheResolution.calledOnceWith(did.uri, expectedResolution)).toBe(true);
+          expect(pinResolution.calledOnceWith(did.uri, expectedResolution)).toBe(true);
+          expect(cacheResolution.calledBefore(pinResolution)).toBe(true);
+        });
+
         it('preserves resolved endpoints until recovery completes', async () => {
           const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
           identityVault.didResolver = {

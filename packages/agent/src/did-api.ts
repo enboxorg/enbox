@@ -181,6 +181,11 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     return this.cache.set(didUri, result);
   }
 
+  /** @internal Protect the vault-owned agent DID from automatic cache eviction. */
+  public pinResolution(didUri: string, fallback: DidResolutionResult): Promise<void> {
+    return this.cache.pin?.(didUri, fallback) ?? this.cache.set(didUri, fallback);
+  }
+
   public async create({
     method, tenant, options, store
   }: DidCreateParams<TKeyManager>): Promise<BearerDid> {
