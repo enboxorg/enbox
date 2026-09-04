@@ -49,6 +49,17 @@ type EvictionCandidate = {
   size: number;
 };
 
+type CacheSnapshot = {
+  accessTimes: Map<string, number>;
+  entries: { didUri: string; serialized: string }[];
+};
+
+type PrunePlan = {
+  candidates: EvictionCandidate[];
+  deleteKeys: Set<string>;
+  initializeAccess: Set<string>;
+};
+
 const ACCESS_KEY_PREFIX = '\u0000access:';
 
 /** Persistent DID cache with separate freshness, idle-retention, and byte-budget policies. */
@@ -190,6 +201,15 @@ export class DidResolverCacheLevel implements DidResolverCache {
   }
 
   private async prune(): Promise<void> {
+    const snapshot = await this.readCacheSnapshot();
+    const currentTime = Date.now();
+    const plan = this.createPrunePlan(snapshot, currentTime);
+
+    this.evictToBudget(plan);
+    await this.applyPrunePlan(plan, currentTime);
+  }
+
+  private async readCacheSnapshot(): Promise<CacheSnapshot> {
     const accessTimes = new Map<string, number>();
     const entries: { didUri: string; serialized: string }[] = [];
 
@@ -203,71 +223,66 @@ export class DidResolverCacheLevel implements DidResolverCache {
       }
     }
 
-    const currentTime = Date.now();
-    const deleteKeys = new Set<string>();
+    return { accessTimes, entries };
+  }
+
+  private createPrunePlan({ accessTimes, entries }: CacheSnapshot, currentTime: number): PrunePlan {
+    const plan: PrunePlan = {
+      candidates       : [],
+      deleteKeys       : new Set<string>(),
+      initializeAccess : new Set<string>(),
+    };
     const entryDids = new Set(entries.map(({ didUri }) => didUri));
-    const initializeAccess = new Set<string>();
-    const candidates: EvictionCandidate[] = [];
-    let retainedBytes = 0;
 
     for (const didUri of accessTimes.keys()) {
       if (!entryDids.has(didUri)) {
-        deleteKeys.add(this.accessKey(didUri));
+        plan.deleteKeys.add(this.accessKey(didUri));
       }
     }
 
     for (const { didUri, serialized } of entries) {
-      let entry: CachedDidResolutionResult;
-      try {
-        entry = JSON.parse(serialized);
-      } catch {
-        deleteKeys.add(didUri);
-        deleteKeys.add(this.accessKey(didUri));
+      const entry = this.parseEntry(serialized);
+      if (entry === undefined) {
+        this.markForDeletion(plan, didUri);
         continue;
       }
 
-      const persistedLastUsedAt = accessTimes.get(didUri);
-      const hasValidAccessTime = persistedLastUsedAt !== undefined && Number.isFinite(persistedLastUsedAt);
-      const lastUsedAt = hasValidAccessTime ? persistedLastUsedAt : currentTime;
-      if (!hasValidAccessTime) {
-        initializeAccess.add(didUri);
-      }
-
-      if (entry.pinned) {
+      const persistedLastUsedAt = this.validAccessTime(accessTimes.get(didUri));
+      const lastUsedAt = persistedLastUsedAt ?? currentTime;
+      if (!entry.pinned && currentTime - lastUsedAt >= this._maxIdle) {
+        this.markForDeletion(plan, didUri);
         continue;
       }
 
-      if (currentTime - lastUsedAt >= this._maxIdle) {
-        deleteKeys.add(didUri);
-        deleteKeys.add(this.accessKey(didUri));
-        continue;
+      if (persistedLastUsedAt === undefined) {
+        plan.initializeAccess.add(didUri);
       }
 
-      const size = this.entrySize(didUri, serialized);
-      retainedBytes += size;
-      candidates.push({ didUri, lastUsedAt, size });
-    }
-
-    if (retainedBytes > this._maxBytes) {
-      candidates.sort((left, right): number => left.lastUsedAt - right.lastUsedAt || left.didUri.localeCompare(right.didUri));
-      for (const candidate of candidates) {
-        deleteKeys.add(candidate.didUri);
-        deleteKeys.add(this.accessKey(candidate.didUri));
-        retainedBytes -= candidate.size;
-        if (retainedBytes <= this._maxBytes) {
-          break;
-        }
+      if (!entry.pinned) {
+        plan.candidates.push({ didUri, lastUsedAt, size: this.entrySize(didUri, serialized) });
       }
     }
 
-    if (deleteKeys.size > 0) {
-      for (const key of deleteKeys) {
-        if (key.startsWith(ACCESS_KEY_PREFIX)) {
-          initializeAccess.delete(key.slice(ACCESS_KEY_PREFIX.length));
-        }
-      }
+    return plan;
+  }
+
+  private evictToBudget(plan: PrunePlan): void {
+    let retainedBytes = plan.candidates.reduce((total, { size }): number => total + size, 0);
+    if (retainedBytes <= this._maxBytes) {
+      return;
     }
 
+    plan.candidates.sort((left, right): number => left.lastUsedAt - right.lastUsedAt || left.didUri.localeCompare(right.didUri));
+    for (const candidate of plan.candidates) {
+      this.markForDeletion(plan, candidate.didUri);
+      retainedBytes -= candidate.size;
+      if (retainedBytes <= this._maxBytes) {
+        return;
+      }
+    }
+  }
+
+  private async applyPrunePlan({ deleteKeys, initializeAccess }: PrunePlan, currentTime: number): Promise<void> {
     const operations = [
       ...[...deleteKeys].map((key) => ({ type: 'del' as const, key })),
       ...[...initializeAccess].map((didUri) => ({
@@ -279,6 +294,24 @@ export class DidResolverCacheLevel implements DidResolverCache {
     if (operations.length > 0) {
       await this.cache.batch(operations);
     }
+  }
+
+  private markForDeletion(plan: PrunePlan, didUri: string): void {
+    plan.deleteKeys.add(didUri);
+    plan.deleteKeys.add(this.accessKey(didUri));
+    plan.initializeAccess.delete(didUri);
+  }
+
+  private parseEntry(serialized: string): CachedDidResolutionResult | undefined {
+    try {
+      return JSON.parse(serialized);
+    } catch {
+      return;
+    }
+  }
+
+  private validAccessTime(value: number | undefined): number | undefined {
+    return value !== undefined && Number.isFinite(value) ? value : undefined;
   }
 
   private async readEntry(didUri: string): Promise<CachedDidResolutionResult | undefined> {
