@@ -28,6 +28,7 @@ export * from './anonymous-dwn-api.js';
 export * from './bearer-identity.js';
 export * from './crypto-api.js';
 export * from './did-api.js';
+export * from './did-resolution-error.js';
 export * from './dwn-api.js';
 export * from './dwn-discovery-file.js';
 export * from './dwn-discovery-payload.js';

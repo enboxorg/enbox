@@ -23,6 +23,12 @@ export class DwnError extends Error {
   }
 }
 
+/** Machine-readable failure stage for a General JWS public-key lookup. */
+export enum GeneralJwsVerifierPublicKeyFailure {
+  DidResolution = 'didResolution',
+  VerificationMethodNotFound = 'verificationMethodNotFound',
+}
+
 /**
  * DWN SDK error codes.
  */

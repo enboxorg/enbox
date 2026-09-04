@@ -48,7 +48,7 @@ export type { DerivedPrivateJwk } from './utils/hd-key.js';
 export { Dwn } from './dwn.js';
 export type { MessageOptions } from './dwn.js';
 export { DwnConstant } from './core/dwn-constant.js';
-export { DwnError, DwnErrorCode } from './core/dwn-error.js';
+export { DwnError, DwnErrorCode, GeneralJwsVerifierPublicKeyFailure } from './core/dwn-error.js';
 export type { DwnErrorInfo } from './core/dwn-error.js';
 export { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
 export { Encoder } from './utils/encoder.js';

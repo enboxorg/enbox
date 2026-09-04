@@ -131,6 +131,23 @@ describe('AgentDwnApi', () => {
     });
   });
 
+  describe('getSigner()', () => {
+    it('preserves the cause of a signer construction failure', async () => {
+      const cause = new Error('key store read failed');
+      const mockAgent: any = {
+        agentDid : { uri: 'did:example:agent' },
+        did      : { get: sinon.stub().rejects(cause) },
+      };
+      const dwnApi = new AgentDwnApi({ agent: mockAgent, dwn: ({} as unknown) as Dwn });
+
+      const failure = await dwnApi['getSigner']('did:example:delegate').catch((error: unknown): unknown => error);
+
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain('Unable to get signer for author \'did:example:delegate\'');
+      expect((failure as Error).cause).toBe(cause);
+    });
+  });
+
   describe('audience-key delivery state', () => {
     it('reports when storage is not configured', async () => {
       const dwnApi = new AgentDwnApi({ dwn: ({} as unknown) as Dwn });

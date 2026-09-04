@@ -1,5 +1,5 @@
 import sinon from 'sinon';
-import { UniversalResolver } from '@enbox/dids';
+import { DidResolutionErrorCause, UniversalResolver } from '@enbox/dids';
 
 import type { JwkParamsOkpPublic } from '@enbox/crypto';
 
@@ -11,7 +11,7 @@ import { Jws } from '../../../src/utils/jws.js';
 import { PrivateKeySigner } from '../../../src/index.js';
 import { signatureAlgorithms } from '../../../src/jose/algorithms/signing/signature-algorithms.js';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnError, DwnErrorCode } from '../../../src/core/dwn-error.js';
+import { DwnError, DwnErrorCode, GeneralJwsVerifierPublicKeyFailure } from '../../../src/core/dwn-error.js';
 
 
 const { Ed25519, secp256k1 } = signatureAlgorithms;
@@ -309,6 +309,42 @@ describe('General JWS Sign/Verify', () => {
       expect(caught!.message).toContain(kid);
       expect(caught!.message).toContain('notFound');
       expect(caught!.message).toContain('BEP44 record not found');
+      expect(caught!.info).toEqual({
+        didResolutionError : 'notFound',
+        publicKeyFailure   : GeneralJwsVerifierPublicKeyFailure.DidResolution,
+      });
+    });
+
+    it('should preserve a transient DID resolution cause', async () => {
+      const kid = 'did:dht:offline#0';
+      const { jws } = await buildJwsForKid(kid);
+
+      const resolverStub = sinon.createStubInstance(UniversalResolver, {
+        // @ts-ignore
+        resolve: sinon.stub().resolves({
+          didResolutionMetadata: {
+            error      : 'internalError',
+            errorCause : DidResolutionErrorCause.NetworkUnavailable,
+          },
+          didDocument         : null,
+          didDocumentMetadata : {},
+        }),
+      });
+
+      let caught: DwnError | undefined;
+      try {
+        await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
+      } catch (error) {
+        caught = error as DwnError;
+      }
+
+      expect(caught).toBeInstanceOf(DwnError);
+      expect(caught!.code).toBe(DwnErrorCode.GeneralJwsVerifierGetPublicKeyNotFound);
+      expect(caught!.info).toEqual({
+        didResolutionError : 'internalError',
+        errorCause         : DidResolutionErrorCause.NetworkUnavailable,
+        publicKeyFailure   : GeneralJwsVerifierPublicKeyFailure.DidResolution,
+      });
     });
 
     it('should explain when the DID Document is missing without an explicit resolution error', async () => {
@@ -336,6 +372,7 @@ describe('General JWS Sign/Verify', () => {
       expect(caught!.message).toContain('DID Document not found');
       expect(caught!.message).toContain('did:dht:silent');
       expect(caught!.message).toContain(kid);
+      expect(caught!.info).toEqual({ publicKeyFailure: GeneralJwsVerifierPublicKeyFailure.DidResolution });
     });
 
     it('should list the available verification method ids when the kid does not match any', async () => {
@@ -373,6 +410,7 @@ describe('General JWS Sign/Verify', () => {
       expect(caught!.message).toContain('available verification methods');
       expect(caught!.message).toContain('did:jank:alice#sig');
       expect(caught!.message).toContain('did:jank:alice#enc');
+      expect(caught!.info).toEqual({ publicKeyFailure: GeneralJwsVerifierPublicKeyFailure.VerificationMethodNotFound });
     });
 
     it('should report when the DID Document has no verification methods', async () => {
@@ -400,6 +438,7 @@ describe('General JWS Sign/Verify', () => {
       expect(caught!.message).toContain('has no verification methods');
       expect(caught!.message).toContain('did:jank:empty');
       expect(caught!.message).toContain(kid);
+      expect(caught!.info).toEqual({ publicKeyFailure: GeneralJwsVerifierPublicKeyFailure.VerificationMethodNotFound });
     });
   });
 
