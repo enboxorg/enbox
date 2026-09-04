@@ -37,9 +37,22 @@ export interface DidResolver {
 }
 
 /**
- * Interface for cache implementations used by to store resolved DID documents.
+ * Interface for caches that store successful DID resolution results.
+ *
+ * Implementations may retain a result after it becomes too old for {@link get} to return directly.
+ * {@link getRetained} lets the resolver use that last successful result when a refresh fails because
+ * its network dependency is temporarily unavailable.
  */
-export interface DidResolverCache extends KeyValueStore<string, DidResolutionResult | void> {}
+export interface DidResolverCache extends KeyValueStore<string, DidResolutionResult | void> {
+  /** Return a retained result regardless of freshness, if the cache supports stale fallback. */
+  getRetained?(didUri: string): Promise<DidResolutionResult | void>;
+
+  /**
+   * Protect a trusted result from automatic idle and capacity eviction. If the DID is already
+   * cached, its current result and freshness are preserved.
+   */
+  pin?(didUri: string, fallback: DidResolutionResult): Promise<void>;
+}
 
 /**
  * Represents the interface for dereferencing a DID URL to a specific resource within a DID

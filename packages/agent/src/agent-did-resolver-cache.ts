@@ -8,8 +8,8 @@ import { logger } from '@enbox/common';
 
 
 /**
- * AgentDidResolverCache keeps a stale copy of the Agent's managed Identity DIDs and only evicts and refreshes upon a successful resolution.
- * This allows for quick and offline access to the internal DIDs used by the agent.
+ * Extends the persistent DID cache with refresh behavior for DIDs managed by the agent.
+ * Managed DIDs keep their last successful resolution when a refresh fails.
  */
 export class AgentDidResolverCache extends DidResolverCacheLevel implements DidResolverCache {
 
@@ -24,66 +24,72 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
   /** A map of DIDs that are currently in-flight. This helps avoid going into an infinite loop */
   private readonly _resolving: Map<string, boolean> = new Map();
 
-  constructor({ agent, db, location, ttl }: DidResolverCacheLevelParams & { agent?: EnboxPlatformAgent }) {
-    super ({ db, location, ttl });
+  public constructor({ agent, ...cacheOptions }: DidResolverCacheLevelParams & { agent?: EnboxPlatformAgent }) {
+    super(cacheOptions);
     this._agent = agent;
   }
 
-  get agent(): EnboxPlatformAgent {
+  public get agent(): EnboxPlatformAgent {
     if (!this._agent) {
       throw new Error('Agent not initialized');
     }
     return this._agent;
   }
 
-  set agent(agent: EnboxPlatformAgent) {
+  public set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
   }
 
   /**
    * Get the DID resolution result from the cache for the given DID.
    *
-   * If the DID is managed by the agent, or is the agent's own DID, it will not evict it from the cache until a new resolution is successful.
-   * This is done to achieve quick and offline access to the agent's own managed DIDs.
+   * Stale managed DIDs are refreshed here so their stored document can be updated. Other stale
+   * DIDs return a cache miss; the universal resolver then performs the normal refresh and may use
+   * the retained result if that refresh cannot reach the network.
    */
-  async get(did: string): Promise<DidResolutionResult | void> {
-    try {
-      const str = await this.cache.get(did);
-      const cachedResult = JSON.parse(str);
-      if (!this._resolving.has(did) && Date.now() >= cachedResult.ttlMillis) {
-        return await this.refreshStaleDid(did) ?? cachedResult.value;
-      }
-      return cachedResult.value;
-    } catch (error: any) {
-      if (error.notFound) {
-        return;
-      }
-      throw error;
+  public async get(didUri: string): Promise<DidResolutionResult | void> {
+    const retained = await this.readRetainedEntry(didUri);
+    if (retained === undefined) {
+      return;
     }
+
+    const { entry, lastUsedAt } = retained;
+    if (Date.now() < entry.ttlMillis) {
+      await this.touch(didUri, lastUsedAt);
+      return entry.value;
+    }
+
+    return await this.refreshStaleDid(didUri, entry.value, lastUsedAt);
   }
 
   /**
-   * Re-resolves a DID that is managed by the agent (or is the agent's own DID) after its cache
-   * entry has gone stale. If the DID is not found in the DID Store, its cache entry is evicted.
-   * Otherwise, the cache entry is kept until a new resolution succeeds, at which point both the
-   * store and the cache are updated with the newly resolved Document.
+   * Re-resolves a managed DID after its cache entry becomes stale. A non-managed DID is left for
+   * the universal resolver's normal refresh path. The vault-owned agent DID is recognized directly
+   * because it is intentionally not duplicated in the managed DID store.
    */
-  private async refreshStaleDid(did: string): Promise<DidResolutionResult | undefined> {
+  private async refreshStaleDid(
+    did: string,
+    cachedResult: DidResolutionResult,
+    lastUsedAt: number,
+  ): Promise<DidResolutionResult | undefined> {
+    const agentDid = this.agent.agentDid;
+    const isAgentDid = did === agentDid.uri;
+    const storedDid = isAgentDid ? undefined : await this.agent.did.get({ didUri: did, tenant: agentDid.uri });
+
+    if (!isAgentDid && storedDid === undefined) {
+      return;
+    }
+
+    if (this._resolving.has(did)) {
+      await this.touch(did, lastUsedAt);
+      return cachedResult;
+    }
+
     this._resolving.set(did, true);
-
-    // if a DID is stored in the DID Store, then we don't want to evict it from the cache until we have a successful resolution
-    // upon a successful resolution, we will update both the storage and the cache with the newly resolved Document.
-    const storedDid = await this.agent.did.get({ didUri: did, tenant: this.agent.agentDid.uri });
-    if ('undefined' === typeof storedDid) {
-      this._resolving.delete(did);
-      this.cache.nextTick(() => this.cache.del(did));
-    } else {
-      try {
-        const result = await this.agent.did.refreshResolution(did);
-
-        // if the resolution was successful, update the stored DID with the new Document
-        if (!result.didResolutionMetadata.error && result.didDocument) {
-
+    try {
+      const result = await this.agent.did.refreshResolution(did);
+      if (!result.didResolutionMetadata.error && result.didDocument) {
+        if (storedDid !== undefined) {
           const portableDid = {
             ...storedDid,
             document : result.didDocument,
@@ -91,16 +97,17 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
           };
 
           await this.updateStoredDid(portableDid);
-          return result;
         }
-      } catch (error: unknown) {
-        logger.error(`Unable to refresh stale DID '${did}': ${error instanceof Error ? error.message : error}`);
-      } finally {
-        this._resolving.delete(did);
+        return result;
       }
+    } catch (error: unknown) {
+      logger.error(`Unable to refresh stale DID '${did}': ${error instanceof Error ? error.message : error}`);
+    } finally {
+      this._resolving.delete(did);
     }
 
-    return undefined;
+    await this.touch(did, lastUsedAt);
+    return cachedResult;
   }
 
   /**

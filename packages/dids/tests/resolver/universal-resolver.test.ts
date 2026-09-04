@@ -6,8 +6,10 @@ import type { DidResolutionResult, DidResource } from '../../src/types/did-core.
 
 import { DidJwk } from '../../src/methods/did-jwk.js';
 import DidJwkResolveTestVector from '../fixtures/web5-spec-vectors/did_jwk/resolve.json' with { type: 'json' };
+import { DidResolverCacheMemory } from '../../src/resolver/resolver-cache-memory.js';
 import { isDidVerificationMethod } from '../../src/utils.js';
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
+import { DidErrorCode, DidResolutionErrorCause } from '../../src/did-error.js';
 
 describe('UniversalResolver', () => {
   describe('open()', () => {
@@ -122,6 +124,82 @@ describe('UniversalResolver', () => {
       // expect that the cache.set was called once
       expect(cacheSetSpy).toHaveBeenCalledTimes(1);
       expect(didMethodResolver).toHaveBeenCalledTimes(1);
+    });
+
+    describe('retained resolutions', () => {
+      const did = 'did:jwk:retained-resolution';
+      const retainedResult: DidResolutionResult = {
+        didResolutionMetadata : {},
+        didDocument           : { id: `${did}#retained` },
+        didDocumentMetadata   : {},
+      };
+
+      it('uses the last successful result when a refresh cannot reach the network', async () => {
+        const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
+        const cache = new DidResolverCacheMemory({ ttl: '1ms' });
+        await cache.set(did, retainedResult);
+
+        try {
+          nowSpy.mockReturnValue(1_001);
+          const methodResolver = spyOn(DidJwk, 'resolve').mockResolvedValue({
+            didResolutionMetadata: {
+              error      : DidErrorCode.InternalError,
+              errorCause : DidResolutionErrorCause.NetworkUnavailable,
+            },
+            didDocument         : null,
+            didDocumentMetadata : {},
+          });
+          const resolver = new UniversalResolver({ didResolvers: [DidJwk], cache });
+
+          expect(await resolver.resolve(did)).toEqual(retainedResult);
+          expect(methodResolver).toHaveBeenCalledTimes(1);
+        } finally {
+          nowSpy.mockRestore();
+        }
+      });
+
+      it('does not hide a definitive resolution failure with a retained result', async () => {
+        const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
+        const cache = new DidResolverCacheMemory({ ttl: '1ms' });
+        await cache.set(did, retainedResult);
+
+        try {
+          nowSpy.mockReturnValue(1_001);
+          const notFoundResult: DidResolutionResult = {
+            didResolutionMetadata : { error: DidErrorCode.NotFound },
+            didDocument           : null,
+            didDocumentMetadata   : {},
+          };
+          spyOn(DidJwk, 'resolve').mockResolvedValue(notFoundResult);
+          const resolver = new UniversalResolver({ didResolvers: [DidJwk], cache });
+
+          expect(await resolver.resolve(did)).toEqual(notFoundResult);
+        } finally {
+          nowSpy.mockRestore();
+        }
+      });
+
+      it('replaces a retained result after a successful refresh', async () => {
+        const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
+        const cache = new DidResolverCacheMemory({ ttl: '1ms' });
+        await cache.set(did, retainedResult);
+
+        try {
+          nowSpy.mockReturnValue(1_001);
+          const refreshedResult: DidResolutionResult = {
+            didResolutionMetadata : {},
+            didDocument           : { id: `${did}#refreshed` },
+            didDocumentMetadata   : {},
+          };
+          spyOn(DidJwk, 'resolve').mockResolvedValue(refreshedResult);
+          const resolver = new UniversalResolver({ didResolvers: [DidJwk], cache });
+
+          expect(await resolver.resolve(did)).toEqual(refreshedResult);
+          expect(await cache.get(did)).toEqual(refreshedResult);
+        } finally {
+          nowSpy.mockRestore();
+        }
+      });
     });
 
     it('pass DID JWK resolve test vectors', async () => {

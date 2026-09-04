@@ -1,3 +1,4 @@
+import type { DidResolutionResult } from '../../src/types/did-core.js';
 import type { DidResolverCache } from '../../src/types/did-resolution.js';
 
 import { DidJwk } from '../../src/methods/did-jwk.js';
@@ -22,6 +23,7 @@ describe('DidResolverCacheMemory', () => {
     });
 
     it('uses a 15 minute TTL, by default', async () => {
+      const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
       cache = new DidResolverCacheMemory();
 
       const testDid = 'did:example:alice';
@@ -35,17 +37,23 @@ describe('DidResolverCacheMemory', () => {
       // Write an entry into the cache.
       await cache.set(testDid, testDidResolutionResult);
 
-      // @ts-expect-error - Accessing private variable for testing purposes.
-      expect(cache.cache.getRemainingTTL(testDid)).toBeGreaterThanOrEqual(1000 * 60 * 15 - 25);
-      // @ts-expect-error - Accessing private variable for testing purposes.
-      expect(cache.cache.getRemainingTTL(testDid)).toBeLessThan(1000 * 60 * 15 + 25);
+      try {
+        nowSpy.mockReturnValue(1_000 + 15 * 60_000 - 1);
+        expect(await cache.get(testDid)).toEqual(testDidResolutionResult);
+
+        nowSpy.mockReturnValue(1_000 + 15 * 60_000);
+        expect(await cache.get(testDid)).toBeUndefined();
+        expect(await cache.getRetained(testDid)).toEqual(testDidResolutionResult);
+      } finally {
+        nowSpy.mockRestore();
+      }
     });
 
     it('uses a custom TTL, when specified', async () => {
       // Drive the cache clock directly so expiry is proven by controlled time advancement
       // rather than racing wall-clock scheduling (a real 5 ms TTL loses under CI load).
-      const baseTime = performance.now();
-      const nowSpy = spyOn(performance, 'now').mockReturnValue(baseTime);
+      const baseTime = Date.now();
+      const nowSpy = spyOn(Date, 'now').mockReturnValue(baseTime);
 
       try {
         // Instantiate DID resolution cache with custom TTL of 1 minute.
@@ -68,9 +76,10 @@ describe('DidResolverCacheMemory', () => {
         expect(valueInCache).toEqual(testDidResolutionResult);
 
         // Confirm a cache miss once the TTL has elapsed.
-        nowSpy.mockReturnValue(baseTime + 60_000 + 1);
+        nowSpy.mockReturnValue(baseTime + 60_000);
         valueInCache = await cache.get(testDid);
         expect(valueInCache).toBeUndefined();
+        expect(await cache.getRetained(testDid)).toEqual(testDidResolutionResult);
       } finally {
         nowSpy.mockRestore();
       }
@@ -177,6 +186,113 @@ describe('DidResolverCacheMemory', () => {
       } catch (error: any) {
         expect(error.message).toContain('Key cannot be null or undefined');
       }
+    });
+  });
+
+  describe('retention', () => {
+    const resolution = (didUri: string): DidResolutionResult => ({
+      didResolutionMetadata : {},
+      didDocument           : { id: didUri },
+      didDocumentMetadata   : {},
+    });
+
+    it('evicts an unpinned result after it remains unused for maxIdle', async () => {
+      const clock = spyOn(performance, 'now').mockReturnValue(1_000);
+      cache = new DidResolverCacheMemory({ maxIdle: '1m' });
+      const did = 'did:example:idle';
+      await cache.set(did, resolution(did));
+
+      try {
+        clock.mockReturnValue(61_000);
+        expect(await cache.getRetained(did)).toBeUndefined();
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it('renews idle retention when a result is pulled', async () => {
+      const clock = spyOn(performance, 'now').mockReturnValue(1_000);
+      cache = new DidResolverCacheMemory({ maxIdle: '1m' });
+      const did = 'did:example:active';
+      const result = resolution(did);
+      await cache.set(did, result);
+
+      try {
+        clock.mockReturnValue(31_000);
+        expect(await cache.getRetained(did)).toEqual(result);
+
+        clock.mockReturnValue(71_000);
+        expect(await cache.getRetained(did)).toEqual(result);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it('evicts the least-recently-used result when the byte budget is exceeded', async () => {
+      const dateClock = spyOn(Date, 'now').mockReturnValue(1_000);
+      const idleClock = spyOn(performance, 'now').mockReturnValue(1_000);
+      const didA = 'did:example:aaaa';
+      const didB = 'did:example:bbbb';
+      const didC = 'did:example:cccc';
+      const bytesPerEntry = new TextEncoder().encode(
+        didA + JSON.stringify({ ttlMillis: 1_000 + 15 * 60_000, value: resolution(didA) })
+      ).byteLength;
+      cache = new DidResolverCacheMemory({ maxBytes: bytesPerEntry * 2 });
+
+      try {
+        await cache.set(didA, resolution(didA));
+        idleClock.mockReturnValue(2_000);
+        await cache.set(didB, resolution(didB));
+        idleClock.mockReturnValue(3_000);
+        await cache.getRetained(didA);
+        idleClock.mockReturnValue(4_000);
+        await cache.set(didC, resolution(didC));
+
+        expect(await cache.getRetained(didA)).toEqual(resolution(didA));
+        expect(await cache.getRetained(didB)).toBeUndefined();
+        expect(await cache.getRetained(didC)).toEqual(resolution(didC));
+      } finally {
+        dateClock.mockRestore();
+        idleClock.mockRestore();
+      }
+    });
+
+    it('updates a pinned result without making it eligible for eviction', async () => {
+      const dateClock = spyOn(Date, 'now').mockReturnValue(1_000);
+      const idleClock = spyOn(performance, 'now').mockReturnValue(1_000);
+      cache = new DidResolverCacheMemory({ maxBytes: 1, maxIdle: '1m' });
+      const pinnedDid = 'did:example:pinned';
+      const pinnedResult = resolution(pinnedDid);
+      const refreshedResult = {
+        ...pinnedResult,
+        didDocumentMetadata: { versionId: '2' },
+      };
+      await cache.pin(pinnedDid, pinnedResult);
+      await cache.set(pinnedDid, refreshedResult);
+
+      try {
+        dateClock.mockReturnValue(120_000);
+        idleClock.mockReturnValue(120_000);
+        await cache.set('did:example:evict-me', resolution('did:example:evict-me'));
+
+        expect(await cache.getRetained(pinnedDid)).toEqual(refreshedResult);
+        expect(await cache.getRetained('did:example:evict-me')).toBeUndefined();
+      } finally {
+        dateClock.mockRestore();
+        idleClock.mockRestore();
+      }
+    });
+
+    it('pins an existing result without replacing it with the fallback', async () => {
+      cache = new DidResolverCacheMemory();
+      const did = 'did:example:already-cached';
+      const existing = resolution(did);
+      const fallback = resolution('did:example:older-local-copy');
+      await cache.set(did, existing);
+
+      await cache.pin(did, fallback);
+
+      expect(await cache.getRetained(did)).toEqual(existing);
     });
   });
 

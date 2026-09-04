@@ -315,6 +315,11 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
 
     // Set the Agent's DID.
     this.agentDid = await this.vault.getDid();
+    await this.did.pinResolution(this.agentDid.uri, {
+      didDocument           : this.agentDid.document,
+      didDocumentMetadata   : this.agentDid.metadata,
+      didResolutionMetadata : {},
+    });
   }
 
   /**

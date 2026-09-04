@@ -69,6 +69,7 @@ type HdIdentityVaultResetPasswordInternalParams =
 type HdIdentityVaultDidResolver = Pick<DidResolver, 'resolve'> & {
   refreshResolution?: (didUri: string) => Promise<DidResolutionResult>;
   cacheResolution?: (didUri: string, result: DidResolutionResult) => Promise<void>;
+  pinResolution?: (didUri: string, fallback: DidResolutionResult) => Promise<void>;
 };
 
 type HdIdentityVaultDerivedMaterial = {
@@ -1024,11 +1025,13 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     if (result.didDocumentMetadata.published === false) {
       throw new Error(`HdIdentityVault: Failed to publish vault DID '${portableDid.uri}'.`);
     }
-    await this._didResolver.cacheResolution?.(portableDid.uri, {
+    const resolution = {
       didDocument           : publicDocument,
       didDocumentMetadata   : result.didDocumentMetadata,
       didResolutionMetadata : {},
-    });
+    };
+    await this._didResolver.cacheResolution?.(portableDid.uri, resolution);
+    await this._didResolver.pinResolution?.(portableDid.uri, resolution);
 
     return {
       ...portableDid,

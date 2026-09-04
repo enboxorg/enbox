@@ -1,6 +1,7 @@
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
+import type { DidResolutionResult } from '../../src/types/did-core.js';
 import type { DidResolver, DidResolverCache } from '../../src/types/did-resolution.js';
 
 import { DidJwk } from '../../src/methods/did-jwk.js';
@@ -67,6 +68,7 @@ describe('DidResolverCacheLevel', () => {
         // Confirm a cache miss.
         valueInCache = await cache.get(testDid);
         expect(valueInCache).toBeUndefined();
+        expect(await cache.getRetained(testDid)).toEqual(testDidResolutionResult);
       } finally {
         Date.now = realNow;
       }
@@ -99,6 +101,7 @@ describe('DidResolverCacheLevel', () => {
         // Confirm a cache miss.
         valueInCache = await cache.get(testDid);
         expect(valueInCache).toBeUndefined();
+        expect(await cache.getRetained(testDid)).toEqual(testDidResolutionResult);
       } finally {
         Date.now = realNow;
       }
@@ -187,6 +190,167 @@ describe('DidResolverCacheLevel', () => {
         throw new Error('An error should have been thrown');
       } catch (error: any) {
         expect(error.message).toContain('Key cannot be null or undefined');
+      }
+    });
+  });
+
+  describe('retention', () => {
+    const resolution = (didUri: string): DidResolutionResult => ({
+      didResolutionMetadata : {},
+      didDocument           : { id: didUri },
+      didDocumentMetadata   : {},
+    });
+
+    it('evicts an unpinned result after it remains unused for maxIdle', async () => {
+      const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
+      cache = new DidResolverCacheLevel({
+        location      : '__TESTDATA__/DID_RESOLVERCACHE_IDLE',
+        maxIdle       : '1m',
+        touchInterval : '1ms',
+      });
+      await cache.clear();
+      const did = 'did:example:idle';
+      await cache.set(did, resolution(did));
+
+      try {
+        nowSpy.mockReturnValue(61_000);
+        expect(await cache.getRetained(did)).toBeUndefined();
+      } finally {
+        nowSpy.mockRestore();
+      }
+    });
+
+    it('persists renewed idle retention across cache reopen', async () => {
+      const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
+      const location = '__TESTDATA__/DID_RESOLVERCACHE_TOUCH';
+      const options = { location, maxIdle: '1m', touchInterval: '1ms' };
+      const did = 'did:example:active';
+      const result = resolution(did);
+      cache = new DidResolverCacheLevel(options);
+      await cache.clear();
+      await cache.set(did, result);
+
+      try {
+        nowSpy.mockReturnValue(31_000);
+        expect(await cache.getRetained(did)).toEqual(result);
+        await cache.close();
+
+        nowSpy.mockReturnValue(80_000);
+        cache = new DidResolverCacheLevel(options);
+        await cache.open();
+        expect(await cache.getRetained(did)).toEqual(result);
+      } finally {
+        nowSpy.mockRestore();
+      }
+    });
+
+    it('evicts the least-recently-used result when the byte budget is exceeded', async () => {
+      const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
+      const didA = 'did:example:aaaa';
+      const didB = 'did:example:bbbb';
+      const didC = 'did:example:cccc';
+      const bytesPerEntry = new TextEncoder().encode(
+        didA + JSON.stringify({ ttlMillis: 1_000 + 15 * 60_000, value: resolution(didA) })
+      ).byteLength;
+      cache = new DidResolverCacheLevel({
+        location      : '__TESTDATA__/DID_RESOLVERCACHE_LRU',
+        maxBytes      : bytesPerEntry * 2,
+        touchInterval : '1ms',
+      });
+      await cache.clear();
+
+      try {
+        await cache.set(didA, resolution(didA));
+        nowSpy.mockReturnValue(2_000);
+        await cache.set(didB, resolution(didB));
+        nowSpy.mockReturnValue(3_000);
+        await cache.getRetained(didA);
+        nowSpy.mockReturnValue(4_000);
+        await cache.set(didC, resolution(didC));
+
+        expect(await cache.getRetained(didA)).toEqual(resolution(didA));
+        expect(await cache.getRetained(didB)).toBeUndefined();
+        expect(await cache.getRetained(didC)).toEqual(resolution(didC));
+      } finally {
+        nowSpy.mockRestore();
+      }
+    });
+
+    it('updates a pinned result without making it eligible for eviction', async () => {
+      const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
+      const location = '__TESTDATA__/DID_RESOLVERCACHE_PINNED';
+      const options = { location, maxBytes: 1, maxIdle: '1m' };
+      const pinnedDid = 'did:example:pinned';
+      const pinnedResult = resolution(pinnedDid);
+      const refreshedResult = {
+        ...pinnedResult,
+        didDocumentMetadata: { versionId: '2' },
+      };
+      cache = new DidResolverCacheLevel(options);
+      await cache.clear();
+      await cache.pin(pinnedDid, pinnedResult);
+      await cache.set(pinnedDid, refreshedResult);
+      await cache.close();
+
+      try {
+        nowSpy.mockReturnValue(120_000);
+        cache = new DidResolverCacheLevel(options);
+        await cache.open();
+        await cache.set('did:example:evict-me', resolution('did:example:evict-me'));
+
+        expect(await cache.getRetained(pinnedDid)).toEqual(refreshedResult);
+        expect(await cache.getRetained('did:example:evict-me')).toBeUndefined();
+      } finally {
+        nowSpy.mockRestore();
+      }
+    });
+
+    it('pins an existing result without replacing it with the fallback', async () => {
+      cache = new DidResolverCacheLevel({ location: '__TESTDATA__/DID_RESOLVERCACHE_PIN_EXISTING' });
+      await cache.clear();
+      const did = 'did:example:already-cached';
+      const existing = resolution(did);
+      const fallback = resolution('did:example:older-local-copy');
+      await cache.set(did, existing);
+
+      await cache.pin(did, fallback);
+
+      expect(await cache.getRetained(did)).toEqual(existing);
+    });
+
+    it('keeps legacy entries readable and records their next use', async () => {
+      const baseTime = 100_000_000;
+      const nowSpy = spyOn(Date, 'now').mockReturnValue(baseTime);
+      const location = '__TESTDATA__/DID_RESOLVERCACHE_LEGACY';
+      const options = { location, maxIdle: '1d', touchInterval: '1ms' };
+      const did = 'did:example:legacy';
+      const result = resolution(did);
+      cache = new DidResolverCacheLevel(options);
+      await cache.clear();
+      await cache['cache'].put(did, JSON.stringify({
+        ttlMillis : baseTime - 365 * 24 * 60 * 60_000,
+        value     : result,
+      }));
+      await cache.close();
+
+      try {
+        cache = new DidResolverCacheLevel(options);
+        await cache.open();
+        expect(await cache.getRetained(did)).toEqual(result);
+        await cache.close();
+
+        nowSpy.mockReturnValue(baseTime + 23 * 60 * 60_000);
+        cache = new DidResolverCacheLevel(options);
+        await cache.open();
+        expect(await cache.getRetained(did)).toEqual(result);
+        await cache.close();
+
+        nowSpy.mockReturnValue(baseTime + 25 * 60 * 60_000);
+        cache = new DidResolverCacheLevel(options);
+        await cache.open();
+        expect(await cache.getRetained(did)).toEqual(result);
+      } finally {
+        nowSpy.mockRestore();
       }
     });
   });

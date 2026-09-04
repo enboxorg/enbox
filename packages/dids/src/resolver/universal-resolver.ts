@@ -3,9 +3,9 @@ import type { DidDereferencingOptions, DidDereferencingResult, DidResolutionOpti
 import type { DidResolver, DidResolverCache, DidUrlDereferencer } from '../types/did-resolution.js';
 
 import { Did } from '../did.js';
-import { DidErrorCode } from '../did-error.js';
 import { DidResolverCacheNoop } from './resolver-cache-noop.js';
 import { EMPTY_DID_RESOLUTION_RESULT } from '../types/did-resolution.js';
+import { DidErrorCode, DidResolutionErrorCause } from '../did-error.js';
 
 /**
  * Parameters for configuring the `UniversalResolver` class, which is responsible for resolving
@@ -188,6 +188,14 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
           // would all lose an otherwise-successful network resolution.
         }
       }
+
+      if (result.didResolutionMetadata.errorCause === DidResolutionErrorCause.NetworkUnavailable) {
+        const retainedResolutionResult = await this.cache.getRetained?.(parsedDid.uri);
+        if (retainedResolutionResult !== undefined) {
+          return retainedResolutionResult;
+        }
+      }
+
       return result;
     })();
 

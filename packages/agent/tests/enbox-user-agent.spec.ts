@@ -3,7 +3,7 @@ import type { PortableIdentity } from '../src/types/identity.js';
 
 import { Convert } from '@enbox/common';
 import { DidDht } from '@enbox/dids';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { DidInterface } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -125,6 +125,26 @@ describe('EnboxUserAgent', () => {
 
           // Verify that the vault is initialized and is unlocked.
           expect(returnedRecoveryPhrase).toBe(predefinedRecoveryPhrase);
+        });
+      });
+
+      describe('start()', () => {
+        it('pins the vault-owned agent DID in the resolution cache', async () => {
+          await testHarness.agent.initialize({ password: 'test' });
+          const pinResolutionSpy = spyOn(testHarness.agent.did, 'pinResolution');
+
+          try {
+            await testHarness.agent.start({ password: 'test' });
+            const agentDid = testHarness.agent.agentDid;
+
+            expect(pinResolutionSpy).toHaveBeenCalledWith(agentDid.uri, {
+              didDocument           : agentDid.document,
+              didDocumentMetadata   : agentDid.metadata,
+              didResolutionMetadata : {},
+            });
+          } finally {
+            pinResolutionSpy.mockRestore();
+          }
         });
       });
 

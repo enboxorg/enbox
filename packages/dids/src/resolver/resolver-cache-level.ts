@@ -1,173 +1,311 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import { Level } from 'level';
-import { parseDurationInMilliseconds } from '@enbox/common';
 
 import type { DidResolutionResult } from '../types/did-core.js';
 import type { DidResolverCache } from '../types/did-resolution.js';
 
-/**
- * Configuration parameters for creating a LevelDB-based cache for DID resolution results.
- *
- * Allows customization of the underlying database instance, storage location, and cache
- * time-to-live (TTL) settings.
- */
+import {
+  assertMaxBytes,
+  byteLength,
+  type CachedDidResolutionResult,
+  DEFAULT_DID_CACHE_MAX_BYTES,
+  DEFAULT_DID_CACHE_MAX_IDLE,
+  DEFAULT_DID_CACHE_TOUCH_INTERVAL,
+  DEFAULT_DID_CACHE_TTL,
+  isFresh,
+  parsePositiveDuration,
+} from './resolver-cache-utils.js';
+
+/** Configuration for the persistent DID resolution cache. */
 export type DidResolverCacheLevelParams = {
-  /**
-   * Optional. An instance of `AbstractLevel` to use as the database. If not provided, a new
-   * LevelDB instance will be created at the specified `location`.
-   */
+  /** Optional preconfigured Level-compatible database. */
   db?: AbstractLevel<string | Buffer | Uint8Array, string, string>;
 
-  /**
-   * Optional. The file system path or IndexedDB name where the LevelDB store will be created.
-   * Defaults to 'DATA/DID_RESOLVERCACHE' if not specified.
-   */
+  /** Filesystem path or IndexedDB name. Defaults to `DATA/DID_RESOLVERCACHE`. */
   location?: string;
 
-  /**
-   * Optional. The time-to-live for cache entries, expressed as a string (e.g., '1h', '15m').
-   * Determines how long a cache entry should remain valid before being considered expired. Defaults
-   * to '15m' if not specified.
-   */
+  /** Maximum time an unpinned result may remain unused. Defaults to 90 days. */
+  maxIdle?: string;
+
+  /** Maximum retained bytes for unpinned results. Defaults to 32 MiB. */
+  maxBytes?: number;
+
+  /** Minimum interval between persisted last-used updates. Defaults to one hour. */
+  touchInterval?: string;
+
+  /** Freshness interval before the resolver should attempt a refresh. Defaults to 15 minutes. */
   ttl?: string;
 };
 
-/**
- * Encapsulates a DID resolution result along with its expiration information for caching purposes.
- *
- * This type is used internally by the `DidResolverCacheLevel` to store DID resolution results
- * with an associated time-to-live (TTL) value. The TTL is represented in milliseconds and
- * determines when the cached entry is considered expired and eligible for removal.
- */
-type CachedDidResolutionResult = {
-  /**
-   * The expiration time of the cache entry in milliseconds since the Unix epoch.
-   *
-   * This value is used to calculate whether the cached entry is still valid or has expired.
-   */
-  ttlMillis: number;
-
-  /**
-   * The DID resolution result being cached.
-   *
-   * This object contains the resolved DID document and associated metadata.
-   */
-  value: DidResolutionResult;
+type RetainedCacheEntry = {
+  entry: CachedDidResolutionResult;
+  lastUsedAt: number;
 };
 
-/**
- * A Level-based cache implementation for storing and retrieving DID resolution results.
- *
- * This cache uses LevelDB for storage, allowing data persistence across process restarts or
- * browser refreshes. It's suitable for both Node.js and browser environments.
- *
- * @remarks
- * The LevelDB cache keeps data in memory for fast access and also writes to the filesystem in
- * Node.js or indexedDB in browsers. Time-to-live (TTL) for cache entries is configurable.
- *
- * @example
- * ```
- * const cache = new DidResolverCacheLevel({ ttl: '15m' });
- * ```
- */
+type EvictionCandidate = {
+  didUri: string;
+  lastUsedAt: number;
+  size: number;
+};
+
+const ACCESS_KEY_PREFIX = '\u0000access:';
+
+/** Persistent DID cache with separate freshness, idle-retention, and byte-budget policies. */
 export class DidResolverCacheLevel implements DidResolverCache {
   /** The underlying LevelDB store used for caching. */
   protected cache;
 
-  /** The time-to-live for cache entries in milliseconds. */
+  /** The freshness interval in milliseconds. */
   protected ttl: number;
 
-  constructor({
+  private readonly _maxBytes: number;
+  private readonly _maxIdle: number;
+  private readonly _touchInterval: number;
+
+  public constructor({
     db,
     location = 'DATA/DID_RESOLVERCACHE',
-    ttl = '15m'
+    maxBytes = DEFAULT_DID_CACHE_MAX_BYTES,
+    maxIdle = DEFAULT_DID_CACHE_MAX_IDLE,
+    touchInterval = DEFAULT_DID_CACHE_TOUCH_INTERVAL,
+    ttl = DEFAULT_DID_CACHE_TTL,
   }: DidResolverCacheLevelParams = {}) {
+    assertMaxBytes(maxBytes);
+
     this.cache = db ?? new Level<string, string>(location);
-    this.ttl = parseDurationInMilliseconds(ttl);
+    this.ttl = parsePositiveDuration(ttl, 'ttl');
+    this._maxBytes = maxBytes;
+    this._maxIdle = parsePositiveDuration(maxIdle, 'maxIdle');
+    this._touchInterval = Math.min(parsePositiveDuration(touchInterval, 'touchInterval'), this._maxIdle / 2);
   }
 
-  /**
-   * Opens the underlying LevelDB store.
-   * Calling `open()` on an already-open store is a safe no-op.
-   *
-   * @returns A promise that resolves when the store is ready for use.
-   */
-  open(): Promise<void> {
-    return this.cache.open();
+  /** Open the underlying store and enforce its persisted retention limits. */
+  public async open(): Promise<void> {
+    await this.cache.open();
+    await this.prune();
   }
 
-  /**
-   * Retrieves a DID resolution result from the cache.
-   *
-   * If the cached item has exceeded its TTL, it's scheduled for deletion and undefined is returned.
-   *
-   * @param did - The DID string used as the key for retrieving the cached result.
-   * @returns The cached DID resolution result or undefined if not found or expired.
-   */
-  async get(did: string): Promise<DidResolutionResult | void> {
-    try {
-      const str = await this.cache.get(did);
-      const cachedDidResolutionResult: CachedDidResolutionResult = JSON.parse(str);
+  /** Return a fresh cached result and renew its idle retention. */
+  public async get(didUri: string): Promise<DidResolutionResult | void> {
+    const retained = await this.readRetainedEntry(didUri);
+    if (retained === undefined || !isFresh(retained.entry)) {
+      return;
+    }
 
-      if (Date.now() >= cachedDidResolutionResult.ttlMillis) {
-        // defer deletion to be called in the next tick of the js event loop
-        this.cache.nextTick(() => this.cache.del(did));
+    await this.touch(didUri, retained.lastUsedAt);
+    return retained.entry.value;
+  }
 
-        return;
+  /** Return the last successful retained result, even when it is no longer fresh. */
+  public async getRetained(didUri: string): Promise<DidResolutionResult | void> {
+    const retained = await this.readRetainedEntry(didUri);
+    if (retained === undefined) {
+      return;
+    }
+
+    await this.touch(didUri, retained.lastUsedAt);
+    return retained.entry.value;
+  }
+
+  /** Store a fresh result, preserving an existing pin. */
+  public async set(didUri: string, value: DidResolutionResult): Promise<void> {
+    const existing = await this.readEntry(didUri);
+    const currentTime = Date.now();
+    const entry: CachedDidResolutionResult = {
+      ...existing?.pinned && { pinned: true },
+      ttlMillis: currentTime + this.ttl,
+      value,
+    };
+
+    await this.cache.batch([
+      { type: 'put', key: didUri, value: JSON.stringify(entry) },
+      { type: 'put', key: this.accessKey(didUri), value: currentTime.toString() },
+    ]);
+    await this.prune();
+  }
+
+  /** Protect a trusted result from automatic idle and capacity eviction. */
+  public async pin(didUri: string, fallback: DidResolutionResult): Promise<void> {
+    const existing = await this.readEntry(didUri);
+    const currentTime = Date.now();
+    const entry: CachedDidResolutionResult = existing === undefined
+      ? { pinned: true, ttlMillis: currentTime + this.ttl, value: fallback }
+      : { ...existing, pinned: true };
+
+    await this.cache.batch([
+      { type: 'put', key: didUri, value: JSON.stringify(entry) },
+      { type: 'put', key: this.accessKey(didUri), value: currentTime.toString() },
+    ]);
+  }
+
+  /** Delete a retained result regardless of whether it is pinned. */
+  public async delete(didUri: string): Promise<void> {
+    await this.cache.batch([
+      { type: 'del', key: didUri },
+      { type: 'del', key: this.accessKey(didUri) },
+    ]);
+  }
+
+  /** Clear all retained results, including pinned entries. */
+  public clear(): Promise<void> {
+    return this.cache.clear();
+  }
+
+  /** Close the underlying LevelDB or IndexedDB store. */
+  public close(): Promise<void> {
+    return this.cache.close();
+  }
+
+  /** Read an entry and apply its idle-retention policy without changing its last-used time. */
+  protected async readRetainedEntry(didUri: string): Promise<RetainedCacheEntry | undefined> {
+    const entry = await this.readEntry(didUri);
+    if (entry === undefined) {
+      return;
+    }
+
+    const lastUsedAt = await this.readLastUsedAt(didUri);
+    if (!entry.pinned && Date.now() - lastUsedAt >= this._maxIdle) {
+      await this.delete(didUri);
+      return;
+    }
+
+    return { entry, lastUsedAt };
+  }
+
+  /** Persist a coarse last-used update without rewriting the resolution result. */
+  protected async touch(didUri: string, lastUsedAt: number): Promise<void> {
+    const currentTime = Date.now();
+    if (currentTime - lastUsedAt >= this._touchInterval) {
+      await this.cache.put(this.accessKey(didUri), currentTime.toString());
+    }
+  }
+
+  private accessKey(didUri: string): string {
+    return `${ACCESS_KEY_PREFIX}${didUri}`;
+  }
+
+  private entrySize(didUri: string, serialized: string): number {
+    return byteLength(didUri) + byteLength(serialized);
+  }
+
+  private async prune(): Promise<void> {
+    const accessTimes = new Map<string, number>();
+    const entries: { didUri: string; serialized: string }[] = [];
+
+    for await (const [key, value] of this.cache.iterator()) {
+      if (key.startsWith(ACCESS_KEY_PREFIX)) {
+        const didUri = key.slice(ACCESS_KEY_PREFIX.length);
+        const lastUsedAt = Number(value);
+        accessTimes.set(didUri, lastUsedAt);
       } else {
-        return cachedDidResolutionResult.value;
+        entries.push({ didUri: key, serialized: value });
+      }
+    }
+
+    const currentTime = Date.now();
+    const deleteKeys = new Set<string>();
+    const entryDids = new Set(entries.map(({ didUri }) => didUri));
+    const initializeAccess = new Set<string>();
+    const candidates: EvictionCandidate[] = [];
+    let retainedBytes = 0;
+
+    for (const didUri of accessTimes.keys()) {
+      if (!entryDids.has(didUri)) {
+        deleteKeys.add(this.accessKey(didUri));
+      }
+    }
+
+    for (const { didUri, serialized } of entries) {
+      let entry: CachedDidResolutionResult;
+      try {
+        entry = JSON.parse(serialized);
+      } catch {
+        deleteKeys.add(didUri);
+        deleteKeys.add(this.accessKey(didUri));
+        continue;
       }
 
+      const persistedLastUsedAt = accessTimes.get(didUri);
+      const hasValidAccessTime = persistedLastUsedAt !== undefined && Number.isFinite(persistedLastUsedAt);
+      const lastUsedAt = hasValidAccessTime ? persistedLastUsedAt : currentTime;
+      if (!hasValidAccessTime) {
+        initializeAccess.add(didUri);
+      }
+
+      if (entry.pinned) {
+        continue;
+      }
+
+      if (currentTime - lastUsedAt >= this._maxIdle) {
+        deleteKeys.add(didUri);
+        deleteKeys.add(this.accessKey(didUri));
+        continue;
+      }
+
+      const size = this.entrySize(didUri, serialized);
+      retainedBytes += size;
+      candidates.push({ didUri, lastUsedAt, size });
+    }
+
+    if (retainedBytes > this._maxBytes) {
+      candidates.sort((left, right): number => left.lastUsedAt - right.lastUsedAt || left.didUri.localeCompare(right.didUri));
+      for (const candidate of candidates) {
+        deleteKeys.add(candidate.didUri);
+        deleteKeys.add(this.accessKey(candidate.didUri));
+        retainedBytes -= candidate.size;
+        if (retainedBytes <= this._maxBytes) {
+          break;
+        }
+      }
+    }
+
+    if (deleteKeys.size > 0) {
+      for (const key of deleteKeys) {
+        if (key.startsWith(ACCESS_KEY_PREFIX)) {
+          initializeAccess.delete(key.slice(ACCESS_KEY_PREFIX.length));
+        }
+      }
+    }
+
+    const operations = [
+      ...[...deleteKeys].map((key) => ({ type: 'del' as const, key })),
+      ...[...initializeAccess].map((didUri) => ({
+        type  : 'put' as const,
+        key   : this.accessKey(didUri),
+        value : currentTime.toString(),
+      })),
+    ];
+    if (operations.length > 0) {
+      await this.cache.batch(operations);
+    }
+  }
+
+  private async readEntry(didUri: string): Promise<CachedDidResolutionResult | undefined> {
+    try {
+      return JSON.parse(await this.cache.get(didUri));
     } catch (error: any) {
-      // Don't throw when a key wasn't found.
       if (error.notFound) {
         return;
       }
-
       throw error;
     }
   }
 
-  /**
-   * Stores a DID resolution result in the cache with a TTL.
-   *
-   * @param did - The DID string used as the key for storing the result.
-   * @param value - The DID resolution result to be cached.
-   * @returns A promise that resolves when the operation is complete.
-   */
-  set(did: string, value: DidResolutionResult): Promise<void> {
-    const cachedDidResolutionResult: CachedDidResolutionResult = { ttlMillis: Date.now() + this.ttl, value };
-    const str = JSON.stringify(cachedDidResolutionResult);
+  private async readLastUsedAt(didUri: string): Promise<number> {
+    try {
+      const lastUsedAt = Number(await this.cache.get(this.accessKey(didUri)));
+      if (Number.isFinite(lastUsedAt)) {
+        return lastUsedAt;
+      }
+    } catch (error: any) {
+      if (!error.notFound) {
+        throw error;
+      }
+    }
 
-    return this.cache.put(did, str);
-  }
-
-  /**
-   * Deletes a DID resolution result from the cache.
-   *
-   * @param did - The DID string used as the key for deletion.
-   * @returns A promise that resolves when the operation is complete.
-   */
-  delete(did: string): Promise<void> {
-    return this.cache.del(did);
-  }
-
-  /**
-   * Clears all entries from the cache.
-   *
-   * @returns A promise that resolves when the operation is complete.
-   */
-  clear(): Promise<void> {
-    return this.cache.clear();
-  }
-
-  /**
-   * Closes the underlying LevelDB store.
-   *
-   * @returns A promise that resolves when the store is closed.
-   */
-  close(): Promise<void> {
-    return this.cache.close();
+    const currentTime = Date.now();
+    await this.cache.put(this.accessKey(didUri), currentTime.toString());
+    return currentTime;
   }
 }
