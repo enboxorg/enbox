@@ -1453,6 +1453,32 @@ export function testRecordsReadHandler(): void {
               expect(readReply.entry!.recordsWrite!.recordId).toBe(publishedWrite.message.recordId);
             });
 
+            it('should skip a full page of hidden records shadowing a published match', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              const schema = 'aSchema';
+
+              const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: true });
+              const publishedReply = await dwn.processMessage(alice.did, publishedWrite.message, { dataStream: publishedWrite.dataStream });
+              expect(publishedReply.status.code).toBe(202);
+
+              // more hidden records than one candidate page holds, forcing pagination past them
+              for (let index = 0; index < 26; index += 1) {
+                await Time.minimalSleep();
+                const privateWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: false });
+                const privateReply = await dwn.processMessage(alice.did, privateWrite.message, { dataStream: privateWrite.dataStream });
+                expect(privateReply.status.code).toBe(202);
+              }
+
+              const read = await RecordsRead.create({
+                filter   : { schema },
+                dateSort : DateSort.CreatedDescending,
+              });
+              const readReply = await dwn.processMessage(alice.did, read.message);
+              expect(readReply.status.code).toBe(200);
+              expect(readReply.entry!.recordsWrite!.recordId).toBe(publishedWrite.message.recordId);
+            });
+
             it('should skip an unauthorized record shadowing a recipient-authorized match', async () => {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
