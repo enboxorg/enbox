@@ -1,5 +1,32 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.26
+
+### Patch Changes
+
+- [#1661](https://github.com/enboxorg/enbox/pull/1661) [`24f00aa`](https://github.com/enboxorg/enbox/commit/24f00aad3b6f43e4c1b7aaa39a73f8cd3d721841) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Preserve transient DID resolution causes through DWN verification and agent signer errors.
+
+- [#1666](https://github.com/enboxorg/enbox/pull/1666) [`994f448`](https://github.com/enboxorg/enbox/commit/994f4484e605ad8e626652b4d69b7d240eda032f) Thanks [@enmand](https://github.com/enmand)! - fix: select broad RecordsRead top-1 from the readable, occupied population
+
+  A broad `RecordsRead` now walks the ordered candidates in pages of 25 and
+  returns the first record the requester may read that is also a current
+  `$recordLimit` occupant, instead of checking only the raw top-1 match. A
+  hidden record can therefore no longer shadow a readable match with a false
+  404/401. Exact-`recordId` reads keep their 401/404 shape, and authorized
+  tombstones still return their 404-with-delete reply. Broad reads with no
+  readable match now return a bare 404 rather than 401, matching
+  `RecordsQuery` visibility semantics.
+
+  Only classified authorization denials are skipped on a broad read.
+  Malformed retained state, unresolvable protocols, and store or
+  validation-state failures propagate fail-closed instead of becoming
+  invisibility.
+
+- Updated dependencies [[`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396), [`d34582d`](https://github.com/enboxorg/enbox/commit/d34582da959f2da5b1dc92eab210deddfb77e03b)]:
+  - @enbox/common@0.1.7
+  - @enbox/dids@0.1.11
+  - @enbox/crypto@0.1.10
+
 ## 0.4.25
 
 ### Patch Changes

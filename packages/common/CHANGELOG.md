@@ -1,5 +1,11 @@
 # @enbox/common
 
+## 0.1.7
+
+### Patch Changes
+
+- [#1659](https://github.com/enboxorg/enbox/pull/1659) [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Skip DID-DHT Pkarr reads while a browser explicitly reports that it is offline, return a machine-readable transient resolution cause without caching the failure, and share the negative connectivity hint with WebSocket transport.
+
 ## 0.1.6
 
 ### Patch Changes
