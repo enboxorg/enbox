@@ -1,5 +1,18 @@
 # @enbox/dwn-clients
 
+## 0.4.34
+
+### Patch Changes
+
+- [#1657](https://github.com/enboxorg/enbox/pull/1657) [`e17d307`](https://github.com/enboxorg/enbox/commit/e17d307d268cbcc3a773490b618b56589298314a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Park WebSocket connection attempts while browsers explicitly report that they are offline, and treat heartbeat and health-probe misses as normal connection lifecycle transitions.
+
+- [#1659](https://github.com/enboxorg/enbox/pull/1659) [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Skip DID-DHT Pkarr reads while a browser explicitly reports that it is offline, return a machine-readable transient resolution cause without caching the failure, and share the negative connectivity hint with WebSocket transport.
+
+- Updated dependencies [[`24f00aa`](https://github.com/enboxorg/enbox/commit/24f00aad3b6f43e4c1b7aaa39a73f8cd3d721841), [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396), [`994f448`](https://github.com/enboxorg/enbox/commit/994f4484e605ad8e626652b4d69b7d240eda032f)]:
+  - @enbox/dwn-sdk-js@0.4.26
+  - @enbox/common@0.1.7
+  - @enbox/crypto@0.1.10
+
 ## 0.4.33
 
 ### Patch Changes

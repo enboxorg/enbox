@@ -1,5 +1,17 @@
 # @enbox/dids
 
+## 0.1.11
+
+### Patch Changes
+
+- [#1659](https://github.com/enboxorg/enbox/pull/1659) [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Skip DID-DHT Pkarr reads while a browser explicitly reports that it is offline, return a machine-readable transient resolution cause without caching the failure, and share the negative connectivity hint with WebSocket transport.
+
+- [#1663](https://github.com/enboxorg/enbox/pull/1663) [`d34582d`](https://github.com/enboxorg/enbox/commit/d34582da959f2da5b1dc92eab210deddfb77e03b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Retain successful DID resolutions in bounded idle and byte-based caches, use retained documents only when refreshes report a temporary network failure, and protect the vault-owned agent DID from automatic eviction.
+
+- Updated dependencies [[`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396)]:
+  - @enbox/common@0.1.7
+  - @enbox/crypto@0.1.10
+
 ## 0.1.10
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @enbox/protocol-codegen
 
+## 0.1.7
+
+### Patch Changes
+
+- Updated dependencies [[`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396)]:
+  - @enbox/common@0.1.7
+
 ## 0.1.6
 
 ### Patch Changes
