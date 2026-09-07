@@ -27,6 +27,36 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
  */
 const recordsReadPageSize = 25;
 
+/**
+ * Authorization-denial codes that make a candidate invisible to the requester.
+ * A broad Read skips candidates denied with one of these codes. Any other failure
+ * (malformed retained state, unresolvable protocol, store or validation-state
+ * failure) propagates fail-closed instead of becoming invisibility. Codes added
+ * later fail closed by construction until classified here. (DWN-PROTO-001)
+ */
+const authorizationDenialCodes: ReadonlySet<string> = new Set([
+  DwnErrorCode.EncryptionControlReadUnauthorized,
+  DwnErrorCode.GrantAuthorizationGrantExpired,
+  DwnErrorCode.GrantAuthorizationGrantMissing,
+  DwnErrorCode.GrantAuthorizationGrantNotYetActive,
+  DwnErrorCode.GrantAuthorizationGrantRevoked,
+  DwnErrorCode.GrantAuthorizationInterfaceMismatch,
+  DwnErrorCode.GrantAuthorizationMethodMismatch,
+  DwnErrorCode.GrantAuthorizationNotGrantedForTenant,
+  DwnErrorCode.GrantAuthorizationNotGrantedToAuthor,
+  DwnErrorCode.ProtocolAuthorizationActionNotAllowed,
+  DwnErrorCode.ProtocolAuthorizationActionRulesNotFound,
+  DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound,
+  DwnErrorCode.ProtocolAuthorizationMissingContextId,
+  DwnErrorCode.ProtocolAuthorizationNotARole,
+  DwnErrorCode.RecordsGrantAuthorizationConditionPublicationProhibited,
+  DwnErrorCode.RecordsGrantAuthorizationConditionPublicationRequired,
+  DwnErrorCode.RecordsGrantAuthorizationScopeContextIdMismatch,
+  DwnErrorCode.RecordsGrantAuthorizationScopeMismatch,
+  DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch,
+  DwnErrorCode.RecordsGrantAuthorizationScopeProtocolPathMismatch,
+]);
+
 export class RecordsReadHandler implements MethodHandler {
 
   constructor(private readonly deps: HandlerDependencies) { }
@@ -135,13 +165,24 @@ export class RecordsReadHandler implements MethodHandler {
     }
 
     let parsedWrite: RecordsWrite;
-    let resolvedRole: ResolvedProtocolRole | undefined;
     try {
       parsedWrite = await RecordsWrite.parse(candidate);
+    } catch (error) {
+      if (isPointRead) {
+        return messageReplyFromError(error, 401);
+      }
+      throw error;
+    }
+
+    let resolvedRole: ResolvedProtocolRole | undefined;
+    try {
       resolvedRole = await RecordsReadHandler.authorizeRecordsRead(
         tenant, recordsRead, parsedWrite, this.deps,
       );
     } catch (error) {
+      if (!isPointRead && !RecordsReadHandler.isAuthorizationDenial(error)) {
+        throw error;
+      }
       if (!isPointRead && hasMoreCandidates) {
         return undefined;
       }
@@ -277,6 +318,9 @@ export class RecordsReadHandler implements MethodHandler {
     try {
       resolvedRole = await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
     } catch (error) {
+      if (!isPointRead && !RecordsReadHandler.isAuthorizationDenial(error)) {
+        throw error;
+      }
       if (!isPointRead && hasMoreCandidates) {
         return undefined;
       }
@@ -356,6 +400,14 @@ export class RecordsReadHandler implements MethodHandler {
       reply.entry!.initialWrite = supportInitialWrite as RecordsQueryReplyEntry;
     }
     return reply;
+  }
+
+  /**
+   * Whether the error is a classified authorization denial that makes a candidate
+   * invisible to the requester. All other failures propagate fail-closed.
+   */
+  private static isAuthorizationDenial(error: unknown): boolean {
+    return error instanceof DwnError && authorizationDenialCodes.has(error.code);
   }
 
   /**

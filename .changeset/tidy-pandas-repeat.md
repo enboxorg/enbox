@@ -12,3 +12,8 @@ hidden record can therefore no longer shadow a readable match with a false
 tombstones still return their 404-with-delete reply. Broad reads with no
 readable match now return a bare 404 rather than 401, matching
 `RecordsQuery` visibility semantics.
+
+Only classified authorization denials are skipped on a broad read.
+Malformed retained state, unresolvable protocols, and store or
+validation-state failures propagate fail-closed instead of becoming
+invisibility.
