@@ -1002,7 +1002,9 @@ export function testProtocolComposition(): void {
         const deleteRoleReply = await dwn.processMessage(alice.did, deleteRole.message);
         expect(deleteRoleReply.status.code).toBe(202);
 
-        // Bob tries to read the comment again — should be denied because role was deleted
+        // Bob tries to read the comment again — denied because the role was deleted.
+        // A broad read selects top-1 from the readable population, so the hidden
+        // comment is indistinguishable from a missing one.
         const bobRead2 = await RecordsRead.create({
           signer       : Jws.createSigner(bob),
           protocolRole : 'threads:thread/participant',
@@ -1013,8 +1015,8 @@ export function testProtocolComposition(): void {
           },
         });
         const bobRead2Reply = await dwn.processMessage(alice.did, bobRead2.message);
-        expect(bobRead2Reply.status.code).toBe(401);
-        expect(bobRead2Reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+        expect(bobRead2Reply.status.code).toBe(404);
+        expect(bobRead2Reply.entry).toBeUndefined();
       });
 
       it('should reject a cross-protocol role invocation if the invoker lacks the role record', async () => {
@@ -1057,7 +1059,9 @@ export function testProtocolComposition(): void {
         });
         await dwn.processMessage(alice.did, commentWrite.message, { dataStream: commentWrite.dataStream });
 
-        // Carol (who has NO participant role) tries to read the comment using the cross-protocol role
+        // Carol (who has NO participant role) tries to read the comment using the cross-protocol role.
+        // A broad read selects top-1 from the readable population, so the hidden
+        // comment is indistinguishable from a missing one.
         const carolRead = await RecordsRead.create({
           signer       : Jws.createSigner(carol),
           protocolRole : 'threads:thread/participant',
@@ -1068,8 +1072,8 @@ export function testProtocolComposition(): void {
           },
         });
         const carolReadReply = await dwn.processMessage(alice.did, carolRead.message);
-        expect(carolReadReply.status.code).toBe(401);
-        expect(carolReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+        expect(carolReadReply.status.code).toBe(404);
+        expect(carolReadReply.entry).toBeUndefined();
       });
     });
 
@@ -2326,7 +2330,9 @@ export function testProtocolComposition(): void {
         expect(threadsV2Reply.status.code).toBe(202);
 
         // Bob reads the comment using the cross-protocol role.
-        // The read is authored after V2, where participant is no longer a valid role.
+        // The read is authored after V2, where participant is no longer a valid role,
+        // so the comment is hidden from him. A broad read selects top-1 from the
+        // readable population, making the hidden comment indistinguishable from a missing one.
         const bobRead = await RecordsRead.create({
           signer       : Jws.createSigner(bob),
           protocolRole : 'threads:thread/participant',
@@ -2337,8 +2343,8 @@ export function testProtocolComposition(): void {
           },
         });
         const bobReadReply = await dwn.processMessage(alice.did, bobRead.message);
-        expect(bobReadReply.status.code).toBe(401);
-        expect(bobReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationNotARole);
+        expect(bobReadReply.status.code).toBe(404);
+        expect(bobReadReply.entry).toBeUndefined();
       });
     });
 

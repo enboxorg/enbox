@@ -14,11 +14,11 @@ import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { authenticate } from '../../src/core/auth.js';
-import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { Message } from '../../src/core/message.js';
+import { ProtocolAuthorization } from '../../src/core/protocol-authorization.js';
 import { RecordsReadHandler } from '../../src/handlers/records-read.js';
 import { RecordsReadReplicationSupport } from '../../src/core/records-read-replication-support.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -32,6 +32,7 @@ import { DataStoreLevel, MessageStoreLevel } from '../../src/store/level.js';
 import { DataStream, DateSort, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsDelete, RecordsRead , RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnConstant, PermissionsProtocol, Time } from '../../src/index.js';
+import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
@@ -1426,6 +1427,214 @@ export function testRecordsReadHandler(): void {
             const readReply = await dwn.processMessage(alice.did, read.message);
             expect(readReply.status.code).toBe(200);
             expect(readReply.entry!.recordsWrite!.recordId).toBe(write2.message.recordId);
+          });
+
+          describe('broad top-1 visibility', () => {
+            it('should skip an unpublished record shadowing a published match for an anonymous read', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              const schema = 'aSchema';
+
+              const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: true });
+              const publishedReply = await dwn.processMessage(alice.did, publishedWrite.message, { dataStream: publishedWrite.dataStream });
+              expect(publishedReply.status.code).toBe(202);
+
+              await Time.minimalSleep();
+
+              const privateWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: false });
+              const privateReply = await dwn.processMessage(alice.did, privateWrite.message, { dataStream: privateWrite.dataStream });
+              expect(privateReply.status.code).toBe(202);
+
+              const read = await RecordsRead.create({
+                filter   : { schema },
+                dateSort : DateSort.CreatedDescending,
+              });
+              const readReply = await dwn.processMessage(alice.did, read.message);
+              expect(readReply.status.code).toBe(200);
+              expect(readReply.entry!.recordsWrite!.recordId).toBe(publishedWrite.message.recordId);
+            });
+
+            it('should skip a full page of hidden records shadowing a published match', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              const schema = 'aSchema';
+
+              const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: true });
+              const publishedReply = await dwn.processMessage(alice.did, publishedWrite.message, { dataStream: publishedWrite.dataStream });
+              expect(publishedReply.status.code).toBe(202);
+
+              // more hidden records than one candidate page holds, forcing pagination past them
+              for (let index = 0; index < 26; index += 1) {
+                await Time.minimalSleep();
+                const privateWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: false });
+                const privateReply = await dwn.processMessage(alice.did, privateWrite.message, { dataStream: privateWrite.dataStream });
+                expect(privateReply.status.code).toBe(202);
+              }
+
+              const read = await RecordsRead.create({
+                filter   : { schema },
+                dateSort : DateSort.CreatedDescending,
+              });
+              const readReply = await dwn.processMessage(alice.did, read.message);
+              expect(readReply.status.code).toBe(200);
+              expect(readReply.entry!.recordsWrite!.recordId).toBe(publishedWrite.message.recordId);
+            });
+
+            it('should skip an unauthorized record shadowing a recipient-authorized match', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              const bob = await TestDataGenerator.generateDidKeyPersona();
+              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              const schema = 'aSchema';
+
+              const visibleWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, recipient: bob.did, schema });
+              const visibleReply = await dwn.processMessage(alice.did, visibleWrite.message, { dataStream: visibleWrite.dataStream });
+              expect(visibleReply.status.code).toBe(202);
+
+              await Time.minimalSleep();
+
+              const hiddenWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+              const hiddenReply = await dwn.processMessage(alice.did, hiddenWrite.message, { dataStream: hiddenWrite.dataStream });
+              expect(hiddenReply.status.code).toBe(202);
+
+              const read = await RecordsRead.create({
+                filter   : { schema },
+                dateSort : DateSort.CreatedDescending,
+                signer   : Jws.createSigner(bob),
+              });
+              const readReply = await dwn.processMessage(alice.did, read.message);
+              expect(readReply.status.code).toBe(200);
+              expect(readReply.entry!.recordsWrite!.recordId).toBe(visibleWrite.message.recordId);
+            });
+
+            it('should skip a non-occupant record shadowing the occupant under $recordLimit', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              const protocol = 'http://example.com/record-limit-read';
+              const protocolDefinition: ProtocolDefinition = {
+                protocol,
+                published : true,
+                types     : { post: {} },
+                structure : {
+                  post: {
+                    $recordLimit: { max: 1 },
+                  }
+                }
+              };
+              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+              const protocolsReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+              expect(protocolsReply.status.code).toBe(202);
+
+              const writes = [];
+              for (let index = 0; index < 3; index += 1) {
+                const write = await TestDataGenerator.generateRecordsWrite({ author: alice, protocol, protocolPath: 'post' });
+                const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+                expect(writeReply.status.code).toBe(202);
+                writes.push(write);
+                await Time.minimalSleep();
+              }
+
+              const read = await RecordsRead.create({
+                filter   : { protocol, protocolPath: 'post' },
+                dateSort : DateSort.CreatedDescending,
+                signer   : Jws.createSigner(alice),
+              });
+              const readReply = await dwn.processMessage(alice.did, read.message);
+              expect(readReply.status.code).toBe(200);
+              expect(readReply.entry!.recordsWrite!.recordId).toBe(writes[0].message.recordId);
+            });
+
+            it('should return the tombstone for an authorized deleted record matching a broad filter', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              const schema = 'aSchema';
+
+              const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+              const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+              expect(writeReply.status.code).toBe(202);
+
+              const recordsDelete = await RecordsDelete.create({ recordId: write.message.recordId, signer: Jws.createSigner(alice) });
+              const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
+              expect(deleteReply.status.code).toBe(202);
+
+              const read = await RecordsRead.create({
+                filter : { schema },
+                signer : Jws.createSigner(alice),
+              });
+              const readReply = await dwn.processMessage(alice.did, read.message);
+              expect(readReply.status.code).toBe(404);
+              expect(readReply.entry?.recordsDelete).toEqual(recordsDelete.message);
+              expect(readReply.entry?.initialWrite?.recordId).toBe(write.message.recordId);
+            });
+
+            it('should propagate malformed retained state instead of skipping it on a broad read', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              const schema = 'aSchema';
+
+              const visibleWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+              const visibleReply = await dwn.processMessage(alice.did, visibleWrite.message, { dataStream: visibleWrite.dataStream });
+              expect(visibleReply.status.code).toBe(202);
+
+              await Time.minimalSleep();
+
+              const corruptWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+              const corruptReply = await dwn.processMessage(alice.did, corruptWrite.message, { dataStream: corruptWrite.dataStream });
+              expect(corruptReply.status.code).toBe(202);
+
+              const originalParse = RecordsWrite.parse.bind(RecordsWrite);
+              sinon.stub(RecordsWrite, 'parse').callsFake(async (message) => {
+                if ((message as RecordsWriteMessage).recordId === corruptWrite.message.recordId) {
+                  throw new DwnError(DwnErrorCode.RecordsWriteDataCidMismatch, 'retained message is malformed');
+                }
+                return originalParse(message);
+              });
+
+              // the corrupt record ranks first: a skip would return the visible record instead of failing
+              const read = await RecordsRead.create({
+                filter   : { schema },
+                dateSort : DateSort.CreatedDescending,
+                signer   : Jws.createSigner(alice),
+              });
+              await expect(dwn.processMessage(alice.did, read.message)).rejects.toThrow('retained message is malformed');
+            });
+
+            it('should propagate operational authorization failures instead of hiding them on a broad read', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              const bob = await TestDataGenerator.generateDidKeyPersona();
+              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              const schema = 'aSchema';
+
+              const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+              const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+              expect(writeReply.status.code).toBe(202);
+
+              sinon.stub(ProtocolAuthorization, 'authorizeRead').rejects(new Error('store down'));
+
+              const read = await RecordsRead.create({
+                filter : { schema },
+                signer : Jws.createSigner(bob),
+              });
+              await expect(dwn.processMessage(alice.did, read.message)).rejects.toThrow('store down');
+            });
+
+            it('should map operational authorization failures to 401 for exact-record reads', async () => {
+              const alice = await TestDataGenerator.generateDidKeyPersona();
+              const bob = await TestDataGenerator.generateDidKeyPersona();
+              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              const schema = 'aSchema';
+
+              const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+              const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+              expect(writeReply.status.code).toBe(202);
+
+              sinon.stub(ProtocolAuthorization, 'authorizeRead').rejects(new Error('store down'));
+
+              const read = await RecordsRead.create({
+                filter : { recordId: write.message.recordId },
+                signer : Jws.createSigner(bob),
+              });
+              const readReply = await dwn.processMessage(alice.did, read.message);
+              expect(readReply.status.code).toBe(401);
+            });
           });
         });
 
