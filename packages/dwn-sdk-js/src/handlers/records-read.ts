@@ -1,5 +1,5 @@
-import type { Filter } from '../types/query-types.js';
 import type { ResolvedProtocolRole } from '../core/protocol-authorization-action.js';
+import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply } from '../types/records-types.js';
 
@@ -19,6 +19,13 @@ import { RecordsReadReplicationSupport } from '../core/records-read-replication-
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+
+/**
+ * Number of ordered candidates fetched per store page when resolving a broad
+ * RecordsRead. Pages bound per-query work while the skip loop guarantees a
+ * hidden record can never shadow the first result the requester may read.
+ */
+const recordsReadPageSize = 25;
 
 export class RecordsReadHandler implements MethodHandler {
 
@@ -45,7 +52,9 @@ export class RecordsReadHandler implements MethodHandler {
       return messageReplyFromError(e, 401);
     }
 
-    // get the latest active message matching the supplied filter, sorted and limited to 1 result
+    // A broad Read is a top-1 query over the readable population: walk the ordered
+    // candidates page by page so a hidden record cannot shadow the first result the
+    // requester is allowed to read. Exact-ID reads retain their 401/404 shape.
     const query: Filter = {
       // NOTE: we don't filter by `method` so that we get both RecordsWrite and RecordsDelete messages
       interface         : DwnInterfaceName.Records,
@@ -53,52 +62,106 @@ export class RecordsReadHandler implements MethodHandler {
       ...Records.convertFilter(message.descriptor.filter)
     };
     const messageSort = Records.convertDateSort(message.descriptor.dateSort);
-    const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [query], messageSort, { limit: 1 });
-    if (existingMessages.length === 0) {
-      return {
-        status: { code: 404, detail: 'Not Found' }
-      };
+    const isPointRead = message.descriptor.filter.recordId !== undefined;
+
+    let cursor: PaginationCursor | undefined = undefined;
+    for (;;) {
+      const { messages: candidates, cursor: nextCursor } = await this.deps.messageStore.query(
+        tenant, [query], messageSort, { cursor, limit: recordsReadPageSize }
+      );
+      if (candidates.length === 0) {
+        return {
+          status: { code: 404, detail: 'Not Found' }
+        };
+      }
+
+      for (let index = 0; index < candidates.length; index += 1) {
+        const candidate = candidates[index];
+        const hasMoreCandidates = index + 1 < candidates.length || nextCursor !== undefined;
+
+        if (candidate.descriptor.method === DwnMethodName.Delete) {
+          const tombstoneReply = await this.replyForTombstoneCandidate(
+            tenant, recordsRead, candidate as RecordsDeleteMessage, isPointRead, hasMoreCandidates
+          );
+          if (tombstoneReply === undefined) {
+            continue;
+          }
+          return tombstoneReply;
+        }
+
+        // else the candidate is a RecordsWrite
+        const writeReply = await this.replyForWriteCandidate(
+          tenant, recordsRead, candidate as RecordsQueryReplyEntry, isPointRead, hasMoreCandidates
+        );
+        if (writeReply === undefined) {
+          continue;
+        }
+        return writeReply;
+      }
+
+      if (nextCursor === undefined) {
+        return {
+          status: { code: 404, detail: 'Not Found' }
+        };
+      }
+      cursor = nextCursor;
     }
-
-    const matchedMessage = existingMessages[0];
-
-    if (matchedMessage.descriptor.method === DwnMethodName.Delete) {
-      return this.replyForDeletedRecord(tenant, recordsRead, matchedMessage as RecordsDeleteMessage);
-    }
-
-    // else the matched message is a RecordsWrite
-    const matchedRecordsWrite = matchedMessage as RecordsQueryReplyEntry;
-
-    return this.replyForActiveRecord(tenant, recordsRead, matchedRecordsWrite);
   };
 
-  private async replyForActiveRecord(
+  /**
+   * Resolves one ordered Write candidate to its reply. Returns `undefined` when a broad
+   * read must skip the candidate and consider the next one instead.
+   */
+  private async replyForWriteCandidate(
     tenant: string,
     recordsRead: RecordsRead,
-    matchedRecordsWrite: RecordsQueryReplyEntry,
-  ): Promise<RecordsReadReply> {
+    candidate: RecordsQueryReplyEntry,
+    isPointRead: boolean,
+    hasMoreCandidates: boolean,
+  ): Promise<RecordsReadReply | undefined> {
     if (!await isRecordLimitOccupant({
       messageStore          : this.deps.messageStore,
       validationStateReader : this.deps.validationStateReader,
       tenant,
-      message               : matchedRecordsWrite,
+      message               : candidate,
       messageTimestamp      : recordsRead.message.descriptor.messageTimestamp,
     })) {
+      if (!isPointRead && hasMoreCandidates) {
+        return undefined;
+      }
       return {
         status: { code: 404, detail: 'Not Found' }
       };
     }
 
+    let parsedWrite: RecordsWrite;
     let resolvedRole: ResolvedProtocolRole | undefined;
     try {
-      const parsedWrite = await RecordsWrite.parse(matchedRecordsWrite);
+      parsedWrite = await RecordsWrite.parse(candidate);
       resolvedRole = await RecordsReadHandler.authorizeRecordsRead(
         tenant, recordsRead, parsedWrite, this.deps,
       );
     } catch (error) {
-      return messageReplyFromError(error, 401);
+      if (!isPointRead && hasMoreCandidates) {
+        return undefined;
+      }
+      if (isPointRead) {
+        return messageReplyFromError(error, 401);
+      }
+      return {
+        status: { code: 404, detail: 'Not Found' }
+      };
     }
 
+    return this.buildActiveRecordReply(tenant, recordsRead, candidate, resolvedRole);
+  }
+
+  private async buildActiveRecordReply(
+    tenant: string,
+    recordsRead: RecordsRead,
+    matchedRecordsWrite: RecordsQueryReplyEntry,
+    resolvedRole: ResolvedProtocolRole | undefined,
+  ): Promise<RecordsReadReply> {
     const recordsReadReply: RecordsReadReply = {
       status : { code: 200, detail: 'OK' },
       entry  : {
@@ -188,19 +251,62 @@ export class RecordsReadHandler implements MethodHandler {
     });
   }
 
-  private async replyForDeletedRecord(
+  /**
+   * Resolves one ordered tombstone candidate to its reply. Returns `undefined` when a broad
+   * read must skip the candidate and consider the next one instead.
+   */
+  private async replyForTombstoneCandidate(
     tenant: string,
     recordsRead: RecordsRead,
     recordsDeleteMessage: RecordsDeleteMessage,
-  ): Promise<RecordsReadReply> {
+    isPointRead: boolean,
+    hasMoreCandidates: boolean,
+  ): Promise<RecordsReadReply | undefined> {
+    let initialWrite: RecordsQueryReplyEntry;
+    let parsedNewestWrite: RecordsWrite;
+    try {
+      ({ initialWrite, parsedNewestWrite } = await this.fetchDeleteAuthorizationBasis(tenant, recordsDeleteMessage));
+    } catch (error) {
+      if (error instanceof DwnError && error.code === DwnErrorCode.RecordsReadInitialWriteNotFound) {
+        return messageReplyFromError(error, 400);
+      }
+      throw error;
+    }
+
+    let resolvedRole: ResolvedProtocolRole | undefined;
+    try {
+      resolvedRole = await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
+    } catch (error) {
+      if (!isPointRead && hasMoreCandidates) {
+        return undefined;
+      }
+      if (isPointRead) {
+        return messageReplyFromError(error, 401);
+      }
+      return {
+        status: { code: 404, detail: 'Not Found' }
+      };
+    }
+
+    return this.buildDeletedRecordReply(tenant, recordsRead, recordsDeleteMessage, initialWrite, resolvedRole);
+  }
+
+  /**
+   * Fetches the writes a deleted-record read authorizes against. Throws
+   * `RecordsReadInitialWriteNotFound` when the initial write is missing.
+   */
+  private async fetchDeleteAuthorizationBasis(
+    tenant: string,
+    recordsDeleteMessage: RecordsDeleteMessage,
+  ): Promise<{ initialWrite: RecordsQueryReplyEntry; parsedNewestWrite: RecordsWrite }> {
     const recordId = recordsDeleteMessage.descriptor.recordId;
 
     const initialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(this.deps.messageStore, tenant, recordId);
     if (initialWrite === undefined) {
-      return messageReplyFromError(new DwnError(
+      throw new DwnError(
         DwnErrorCode.RecordsReadInitialWriteNotFound,
         'initial write for deleted record not found'
-      ), 400);
+      );
     }
 
     // Authorize against the newest RecordsWrite so that mutable properties like `published`
@@ -215,13 +321,16 @@ export class RecordsReadHandler implements MethodHandler {
     }
     const parsedNewestWrite = await RecordsWrite.parse(newestWrite);
 
-    let resolvedRole: ResolvedProtocolRole | undefined;
-    try {
-      resolvedRole = await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
-    } catch (error) {
-      return messageReplyFromError(error, 401);
-    }
+    return { initialWrite, parsedNewestWrite };
+  }
 
+  private async buildDeletedRecordReply(
+    tenant: string,
+    recordsRead: RecordsRead,
+    recordsDeleteMessage: RecordsDeleteMessage,
+    initialWrite: RecordsQueryReplyEntry,
+    resolvedRole: ResolvedProtocolRole | undefined,
+  ): Promise<RecordsReadReply> {
     const reply: RecordsReadReply = {
       status : { code: 404, detail: 'Not Found' },
       entry  : {
