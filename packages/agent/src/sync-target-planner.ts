@@ -3,6 +3,8 @@ import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { FollowedSyncSource, FollowedSyncSourceStore } from './followed-sync-source.js';
 
+import { isDidResolutionUnavailableError } from './did-resolution-error.js';
+
 /** Target-resolution surface required to plan registered sync targets. */
 export interface SyncTargetPlanningResolver {
   getEndpointUrls(did: string): Promise<string[]>;
@@ -153,6 +155,11 @@ export class SyncTargetPlanner {
       try {
         targets.push(...await this._getTargetResolver().buildTargetsForEndpoint(did, dwnUrl, options));
       } catch (error: unknown) {
+        // Grant/signing prerequisites are shared by the identity's endpoints.
+        // Let the supervisor defer this pass instead of repeating the lookup.
+        if (isDidResolutionUnavailableError(error)) {
+          throw error;
+        }
         unavailable = true;
         this._warn(`SyncEngineLevel: Unable to resolve sync targets for ${did} at ${dwnUrl}, skipping identity endpoint:`, error);
       }

@@ -918,6 +918,47 @@ describe('DidDht', () => {
       }
     });
 
+    it('preserves network failure identity and retries a later resolution', async () => {
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const resolver = new UniversalResolver({ cache: new DidResolverCacheMemory(), didResolvers: [DidDht] });
+      fetchStub.mockRejectedValue(new TypeError('fetch failed'));
+
+      const unavailable = await resolver.resolve(did);
+      expect(unavailable.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
+      expect(unavailable.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
+
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
+      const missing = await resolver.resolve(did);
+      expect(fetchStub).toHaveBeenCalledTimes(2);
+      expect(missing.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
+      expect(missing.didResolutionMetadata.errorCause).toBeUndefined();
+    });
+
+    it('distinguishes temporary gateway responses from an absent DID', async () => {
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      for (const status of [408, 429, 503]) {
+        fetchStub.mockResolvedValue(new Response(null, { status }));
+        const result = await DidDht.resolve(did);
+        expect(result.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
+        expect(result.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
+      }
+    });
+
+    it('classifies an interrupted response body as unavailable without masking malformed data', async () => {
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const response = new Response(new ReadableStream({
+        start(controller): void { controller.error(new TypeError('connection lost')); },
+      }));
+      fetchStub.mockResolvedValue(response);
+      const interrupted = await DidDht.resolve(did);
+      expect(interrupted.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
+
+      fetchStub.mockResolvedValue(new Response(new Uint8Array([1])));
+      const malformed = await DidDht.resolve(did);
+      expect(malformed.didResolutionMetadata.error).toBe(DidErrorCode.InvalidDidDocumentLength);
+      expect(malformed.didResolutionMetadata.errorCause).toBeUndefined();
+    });
+
     it('fetches normally when the runtime has no navigator', async () => {
       fetchStub.mockResolvedValue(fetchNotFoundResponse());
       const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');

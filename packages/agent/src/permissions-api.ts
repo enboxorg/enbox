@@ -205,7 +205,7 @@ export class AgentPermissionsApi implements PermissionsApi {
 
     const { reply } = remote ? await this.agent.sendDwnRequest(params) : await this.agent.processDwnRequest(params);
     if (reply.status.code !== 200) {
-      throw new Error(`PermissionsApi: Failed to fetch grants: ${reply.status.detail}`);
+      throw new Error(`PermissionsApi: Failed to fetch grants: ${reply.status.detail}`, { cause: reply.status });
     }
 
     const grantMessages = reply.entries! as DwnDataEncodedRecordsWriteMessage[];
@@ -345,7 +345,9 @@ export class AgentPermissionsApi implements PermissionsApi {
       return true;
     }
 
-    throw new Error(`PermissionsApi: Failed to check if grant is revoked: ${revocationReply.status.detail}`);
+    throw new Error(`PermissionsApi: Failed to check if grant is revoked: ${revocationReply.status.detail}`, {
+      cause: revocationReply.status,
+    });
   }
 
   async createGrant(params: CreateGrantParams): Promise<PermissionGrantEntry> {

@@ -9,6 +9,7 @@ import { AuthEventEmitter } from '../src/events.js';
 import { AuthManager } from '../src/auth-manager.js';
 import { AuthSession } from '../src/identity-session.js';
 import { Convert } from '@enbox/common';
+import { DidResolutionErrorCause } from '@enbox/dids';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
@@ -651,6 +652,69 @@ describe('delegated connection lifecycle', () => {
   });
 
   describe('AuthManager connection monitor', () => {
+    test('defers unavailable checks without expiry or refresh and resumes on the existing poll', async () => {
+      const clock = sinon.useFakeTimers();
+      const manager = createTestManager(createMockAgent());
+      const previousSession = manager.session;
+      const unavailable = new Error('grant read failed', {
+        cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+      });
+      const getStatus = sinon.stub(manager, 'getConnectionStatus');
+      getStatus.onCall(0).resolves({ state: 'active', connectSessionId: 'session-1' });
+      getStatus.onCall(1).rejects(unavailable);
+      getStatus.onCall(2).rejects(unavailable);
+      getStatus.onCall(3).resolves({ state: 'expired', connectSessionId: 'session-1' });
+      const refresh = sinon.stub(manager as never, '_refresh').resolves(previousSession);
+      const expired = sinon.spy();
+      manager.on('connection-expired', expired);
+      const report = sinon.stub(console, 'error');
+
+      const stop = manager.startConnectionMonitor({
+        intervalMs  : 1000,
+        autoRefresh : { protocols: PROTOCOLS },
+      });
+      try {
+        await clock.tickAsync(2000);
+        expect(getStatus.callCount).toBe(3);
+        expect(manager.session).toBe(previousSession);
+        expect(expired.notCalled).toBe(true);
+        expect(refresh.notCalled).toBe(true);
+        expect(report.notCalled).toBe(true);
+
+        await clock.tickAsync(1000);
+        expect(expired.calledOnce).toBe(true);
+        expect(refresh.calledOnce).toBe(true);
+      } finally {
+        stop();
+        clock.restore();
+      }
+    });
+
+    test('preserves custom error callbacks and unexpected monitor diagnostics', async () => {
+      const clock = sinon.useFakeTimers();
+      const manager = createTestManager(createMockAgent());
+      const unavailable = new Error('grant read failed', {
+        cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+      });
+      const unexpected = new Error('invalid local signature');
+      const getStatus = sinon.stub(manager, 'getConnectionStatus').rejects(unavailable);
+      const onError = sinon.spy();
+      const report = sinon.stub(console, 'error');
+      let stop = manager.startConnectionMonitor({ intervalMs: 1000, onError });
+      try {
+        await clock.tickAsync(0);
+        expect(onError.calledOnceWithExactly(unavailable)).toBe(true);
+        stop();
+        getStatus.rejects(unexpected);
+        stop = manager.startConnectionMonitor({ intervalMs: 1000 });
+        await clock.tickAsync(0);
+        expect(report.calledOnceWithExactly('[@enbox/auth] Connection monitor failed:', unexpected)).toBe(true);
+      } finally {
+        stop();
+        clock.restore();
+      }
+    });
+
     test('serializes polls, emits transitions once, and auto-refreshes an expiring session once', async () => {
       const clock = sinon.useFakeTimers();
       const manager = createTestManager(createMockAgent());

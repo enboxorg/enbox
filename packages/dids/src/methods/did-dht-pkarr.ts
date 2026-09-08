@@ -91,7 +91,7 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGateway
   // Transmit the Get request to the DID DHT Gateway or Pkarr Relay and get the response.
   // Redirects are followed manually so each `Location` is re-validated and cannot smuggle a
   // private host past the initial gateway check.
-  let response: Response;
+  let messageBytes: ArrayBuffer;
   try {
     if (isExplicitlyOffline()) {
       throw new DidError(
@@ -101,19 +101,28 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGateway
       );
     }
 
-    response = await pkarrFetch(url, { method: 'GET', signal: AbortSignal.timeout(30_000) }, allowPrivateGatewayUri);
+    const response = await pkarrFetch(url, { method: 'GET', signal: AbortSignal.timeout(30_000) }, allowPrivateGatewayUri);
+
+    if (response.status === 408 || response.status === 429 || response.status >= 500) {
+      throw new DidError(
+        DidErrorCode.InternalError,
+        `Pkarr gateway unavailable: ${response.status}`,
+        { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+      );
+    }
 
     if (!response.ok) {
       throw new DidError(DidErrorCode.NotFound, `Pkarr record not found for: ${identifier}`);
     }
 
+    messageBytes = await response.arrayBuffer();
+
   } catch (error: any) {
     if (error instanceof DidError) {throw error;}
-    throw new DidError(DidErrorCode.InternalError, `Failed to fetch Pkarr record: ${error.message}`);
+    throw new DidError(DidErrorCode.InternalError, `Failed to fetch Pkarr record: ${error.message}`, {
+      info: { errorCause: DidResolutionErrorCause.NetworkUnavailable },
+    });
   }
-
-  // Read the Fetch Response stream into a byte array.
-  const messageBytes = await response.arrayBuffer();
 
   if (!messageBytes) {
     throw new DidError(DidErrorCode.NotFound, `Pkarr record not found for: ${identifier}`);

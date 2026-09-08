@@ -51,7 +51,7 @@ import type {
   LocalDwnProbeResult,
 } from './discovery.js';
 
-import { EnboxUserAgent } from '@enbox/agent';
+import { EnboxUserAgent, isDidResolutionUnavailableError } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
@@ -1465,7 +1465,7 @@ export class AuthManager {
       } catch (callbackError: unknown) {
         console.error('[@enbox/auth] Connection monitor error callback failed:', callbackError);
       }
-    } else {
+    } else if (!isDidResolutionUnavailableError(error)) {
       console.error('[@enbox/auth] Connection monitor failed:', error);
     }
   }

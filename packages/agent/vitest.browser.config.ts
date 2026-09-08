@@ -41,16 +41,18 @@ export default defineConfig({
     noDiscovery: true,
     include: [
       // --- CJS packages reachable from agent browser test imports ---
+      '@enbox/dwn-sdk-js',
+      '@enbox/dwn-sdk-js/stores/level',
       'abstract-level',
       'level',
-      'ms',
     ],
     holdUntilCrawlEnd: true,
   },
   test: {
-    // Only include browser-safe tests (no LevelDB, no PlatformAgentTestHarness).
+    // Browser-safe tests; persistent stores use level's IndexedDB implementation.
     include: [
       'tests/crypto-api.spec.ts',
+      'tests/did-resolution-offline.spec.ts',
       'tests/utils-internal.spec.ts',
     ],
     testTimeout : 15_000,
