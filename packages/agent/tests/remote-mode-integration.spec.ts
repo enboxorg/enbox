@@ -70,6 +70,8 @@ describe('Agent remote mode integration', () => {
   afterEach(async () => {
     sinon.restore();
     await context?.testHarness.agent.sync.stopSync();
+    // Close pooled sockets before their servers so reconnect timers cannot leak into later tests.
+    await context?.testHarness.agent.rpc.close();
     await closeTestServer(context?.localServer);
     await closeTestServer(context?.remoteServer);
     await context?.testHarness.clearStorage();
