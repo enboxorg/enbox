@@ -266,7 +266,9 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     // Resolve the DID document.
     const { didDocument, didResolutionMetadata } = await this.resolve(didUri);
     if (!didDocument) {
-      throw new Error(`DID resolution failed for '${didUri}': ${JSON.stringify(didResolutionMetadata)}`);
+      throw new Error(`DID resolution failed for '${didUri}': ${JSON.stringify(didResolutionMetadata)}`, {
+        cause: didResolutionMetadata,
+      });
     }
 
     // Retrieve the method-specific verification method to be used for signing operations.

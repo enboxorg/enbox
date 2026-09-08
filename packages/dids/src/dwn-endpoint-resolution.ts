@@ -12,16 +12,18 @@ export type DwnEndpointResolution =
     didUri: string;
     message: string;
     resolutionError?: string;
+    /** Original resolution metadata or thrown error, retained for causal classification. */
+    cause?: unknown;
   };
 
-type DwnEndpointFailureStatus = Exclude<DwnEndpointResolution['status'], 'ready'>;
+type DwnEndpointFailure = Exclude<DwnEndpointResolution, { status: 'ready' }>;
 
 function failure(
-  status: DwnEndpointFailureStatus,
+  status: DwnEndpointFailure['status'],
   didUri: string,
   message: string,
   resolutionError?: string,
-): DwnEndpointResolution {
+): DwnEndpointFailure {
   return { status, didUri, message, ...(resolutionError === undefined ? {} : { resolutionError }) };
 }
 
@@ -104,21 +106,27 @@ export async function resolveDwnEndpointStatus(
   try {
     const result = await resolver.resolve(didUri);
     if (result.didResolutionMetadata.error !== undefined || result.didDocument === null) {
-      return failure(
-        'resolution-failed',
-        didUri,
-        result.didResolutionMetadata.errorMessage
-          ?? `Unable to resolve DID '${didUri}'.`,
-        result.didResolutionMetadata.error,
-      );
+      return {
+        ...failure(
+          'resolution-failed',
+          didUri,
+          result.didResolutionMetadata.errorMessage
+            ?? `Unable to resolve DID '${didUri}'.`,
+          result.didResolutionMetadata.error,
+        ),
+        cause: result.didResolutionMetadata,
+      };
     }
 
     return getDwnEndpointStatus(didUri, result.didDocument);
   } catch (error: unknown) {
-    return failure(
-      'resolution-failed',
-      didUri,
-      error instanceof Error ? error.message : `Unable to resolve DID '${didUri}'.`,
-    );
+    return {
+      ...failure(
+        'resolution-failed',
+        didUri,
+        error instanceof Error ? error.message : `Unable to resolve DID '${didUri}'.`,
+      ),
+      cause: error,
+    };
   }
 }

@@ -90,18 +90,21 @@ describe('DWN endpoint resolution', () => {
     };
 
     await expect(resolveDwnEndpointStatus(didUri, resolver)).resolves.toMatchObject({
-      status: 'resolution-failed',
+      status : 'resolution-failed',
       didUri,
+      cause  : { error: 'notFound' },
     });
   });
 
   it('returns a resolution failure when the resolver throws', async () => {
-    const resolver = { resolve: mock(async (): Promise<never> => { throw new Error('offline'); }) };
+    const error = new Error('offline');
+    const resolver = { resolve: mock(async (): Promise<never> => { throw error; }) };
 
     await expect(resolveDwnEndpointStatus(didUri, resolver)).resolves.toEqual({
       status  : 'resolution-failed',
       didUri,
       message : 'offline',
+      cause   : error,
     });
   });
 });

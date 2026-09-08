@@ -8,7 +8,7 @@ import { DateSort, DwnInterfaceName, DwnMethodName, Jws, Message } from '@enbox/
 export async function getDwnServiceEndpointUrls(didUri: string, resolver: DidResolver): Promise<string[]> {
   const result = await resolveDwnEndpointStatus(didUri, resolver);
   if (result.status !== 'ready') {
-    throw new Error(result.message);
+    throw new Error(result.message, { cause: result });
   }
 
   return result.endpoints;

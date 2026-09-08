@@ -89,9 +89,13 @@ describe('local DWN reads during a DID resolution outage', () => {
       author : agentDid.uri,
       target : agentDid.uri,
     }).catch((error: unknown) => error);
+    const endpointFailure = await agent.dwn.getRemoteDwnEndpointUrls(agentDid.uri).catch((error: unknown) => error);
+    const signingMethodFailure = await agent.did.getSigningMethod({ didUri: agentDid.uri }).catch((error: unknown) => error);
 
     expect(isDidResolutionUnavailableError(keyFailure)).toBe(true);
     expect(isDidResolutionUnavailableError(grantFailure)).toBe(true);
+    expect(isDidResolutionUnavailableError(endpointFailure)).toBe(true);
+    expect(isDidResolutionUnavailableError(signingMethodFailure)).toBe(true);
     await agent.did.cacheResolution(agentDid.uri, resolution);
     expect(await agent.keyManager.getPublicKey({ keyUri })).toEqual(publicKey);
   });
