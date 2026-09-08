@@ -10,6 +10,7 @@ import sinon from 'sinon';
 import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
+import { DidResolutionErrorCause } from '@enbox/dids';
 import { SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from '@enbox/dwn-sdk-js';
@@ -2495,7 +2496,20 @@ describe('SyncEngineLevel', () => {
         expect(settleCalls).toBe(2);
       });
 
-      it('arms the settle check and resolves startSync when startup target discovery fails', async () => {
+      it.each([
+        {
+          label                : 'a transient DID outage',
+          cause                : { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+          expectedConnectivity : 'offline',
+          shouldReport         : false,
+        },
+        {
+          label                : 'an unexpected discovery failure',
+          cause                : new Error('invalid local signature'),
+          expectedConnectivity : 'online',
+          shouldReport         : true,
+        },
+      ])('recovers startup after $label on the existing settle cadence', async ({ cause, expectedConnectivity, shouldReport }) => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
           options : { protocols: 'all' },
@@ -2505,14 +2519,15 @@ describe('SyncEngineLevel', () => {
         initStub.resolves({ status: 'active', durableLinkIdentityKey: 'key' });
         const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').resolves();
 
-        // DID endpoint discovery is transiently unavailable at startup: the
-        // settle timer is still armed (in the finally after planning fails)
-        // and startSync must resolve — planning is best-effort and the
-        // settle pass is the recovery path.
+        // Failed startup planning must leave the normal recovery timer armed.
         const recoveredTarget = { did: alice.did.uri } as never;
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
-        getSyncTargetsStub.onFirstCall().rejects(new Error('endpoint discovery unavailable'));
+        const failure = new Error('endpoint discovery unavailable', { cause });
+        getSyncTargetsStub.onFirstCall().rejects(failure);
         getSyncTargetsStub.resolves([recoveredTarget]);
+        const report = sinon.stub(console, 'error');
+        const syncEngine = testHarness.agent.sync as SyncEngineLevel;
+        syncEngine['_connectivityManager'].recordSuccess();
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
@@ -2520,14 +2535,20 @@ describe('SyncEngineLevel', () => {
 
         const settleCallsAfterStart = settleStub.callCount;
         const initCallsAfterStart = initStub.callCount;
+        const connectivityAfterStart = syncEngine.connectivityState;
         await clock.tickAsync(1_000);
         const settleCallsAfterInterval = settleStub.callCount;
         await testHarness.agent.sync.stopSync();
         settleStub.restore();
         initStub.restore();
         getSyncTargetsStub.restore();
+        report.restore();
         clock.restore();
 
+        expect(connectivityAfterStart).toBe(expectedConnectivity);
+        expect(report.args).toEqual(shouldReport ? [[
+          'SyncEngineLevel: Live-sync startup planning failed; the settle check retries link initialization', failure,
+        ]] : []);
         // Startup planning failed before a baseline could run, and the
         // periodic settle coordinator still fired afterwards.
         expect(settleCallsAfterStart).toBe(0);
@@ -2673,7 +2694,8 @@ describe('SyncEngineLevel', () => {
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
         const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle');
         settleStub.resolves();
-        settleStub.onSecondCall().rejects(new Error('Sync error'));
+        const unexpected = new Error('local store failed', { cause: new Error('disk unavailable') });
+        settleStub.onSecondCall().rejects(unexpected);
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
         getSyncTargetsStub.resolves([]);
@@ -2686,8 +2708,7 @@ describe('SyncEngineLevel', () => {
         // three intervals
         await clock.tickAsync(3_201);
         const settleCalls = settleStub.callCount;
-        const errorCalls = consoleErrorSpy.callCount;
-        const errorMessage = consoleErrorSpy.args[0]?.[0];
+        const planCalls = getSyncTargetsStub.callCount;
 
         await testHarness.agent.sync.stopSync();
         settleStub.restore();
@@ -2696,8 +2717,8 @@ describe('SyncEngineLevel', () => {
         clock.restore();
 
         expect(settleCalls).toBe(3);
-        expect(errorCalls).toBe(1);
-        expect(errorMessage).toContain('SyncEngineLevel: Error during durable feed settle check');
+        expect(planCalls).toBe(4); // startup and orphan planning after every settle, including the failed one
+        expect(consoleErrorSpy.calledOnceWithExactly('SyncEngineLevel: Error during durable feed settle check', unexpected)).toBe(true);
       });
 
       it('returns the owned link from re-initialization without reopening subscriptions', async () => {

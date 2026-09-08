@@ -892,6 +892,7 @@ describe('DidDht', () => {
       const didResolutionResult = await DidDht.resolve(did);
 
       expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'notFound');
+      expect(didResolutionResult.didResolutionMetadata.errorCause).toBeUndefined();
     });
 
     it('does not fetch while explicitly offline and allows a fresh fetch after coming online', async () => {
@@ -918,20 +919,13 @@ describe('DidDht', () => {
       }
     });
 
-    it('preserves network failure identity and retries a later resolution', async () => {
+    it('preserves network failure identity', async () => {
       const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
-      const resolver = new UniversalResolver({ cache: new DidResolverCacheMemory(), didResolvers: [DidDht] });
       fetchStub.mockRejectedValue(new TypeError('fetch failed'));
 
-      const unavailable = await resolver.resolve(did);
+      const unavailable = await DidDht.resolve(did);
       expect(unavailable.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
       expect(unavailable.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
-
-      fetchStub.mockResolvedValue(fetchNotFoundResponse());
-      const missing = await resolver.resolve(did);
-      expect(fetchStub).toHaveBeenCalledTimes(2);
-      expect(missing.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
-      expect(missing.didResolutionMetadata.errorCause).toBeUndefined();
     });
 
     it('distinguishes temporary gateway responses from an absent DID', async () => {
@@ -944,19 +938,15 @@ describe('DidDht', () => {
       }
     });
 
-    it('classifies an interrupted response body as unavailable without masking malformed data', async () => {
+    it('classifies an interrupted response body as unavailable', async () => {
       const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
       const response = new Response(new ReadableStream({
         start(controller): void { controller.error(new TypeError('connection lost')); },
       }));
       fetchStub.mockResolvedValue(response);
       const interrupted = await DidDht.resolve(did);
+      expect(interrupted.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
       expect(interrupted.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
-
-      fetchStub.mockResolvedValue(new Response(new Uint8Array([1])));
-      const malformed = await DidDht.resolve(did);
-      expect(malformed.didResolutionMetadata.error).toBe(DidErrorCode.InvalidDidDocumentLength);
-      expect(malformed.didResolutionMetadata.errorCause).toBeUndefined();
     });
 
     it('fetches normally when the runtime has no navigator', async () => {
@@ -1136,6 +1126,7 @@ describe('DidDht', () => {
       const didResolutionResult = await DidDht.resolve(did);
 
       expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'invalidDidDocumentLength');
+      expect(didResolutionResult.didResolutionMetadata.errorCause).toBeUndefined();
     });
 
     it('returns a invalidDidDocumentLength error if the Pkarr relay returns larger than the 1072 byte maximum', async () => {

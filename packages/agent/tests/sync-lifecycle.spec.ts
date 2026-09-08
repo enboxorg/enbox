@@ -5,7 +5,6 @@ import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 import sinon from 'sinon';
 
-import { DidResolutionErrorCause } from '@enbox/dids';
 import { Level } from 'level';
 import { runWithCrossContextLock } from '@enbox/common';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -1114,58 +1113,6 @@ describe('SyncEngineLevel lifecycle', () => {
     }).runSettleCheck(staleRuntime);
 
     expect(sync.called).toBe(false);
-  });
-
-  it('should recover a transient startup prerequisite on the existing settle cadence', async () => {
-    const engine = new SyncEngineLevel({ db });
-    const unavailable = new Error('DID resolution unavailable', {
-      cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
-    });
-    const plan = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
-    plan.onFirstCall().rejects(unavailable);
-    const report = sinon.stub(console, 'error');
-    const clock = sinon.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    engine['_connectivityManager'].recordSuccess();
-
-    try {
-      await engine.startSync({ interval: '1s' });
-      expect(plan.calledOnce).toBe(true);
-      expect(engine.connectivityState).toBe('offline');
-      expect(report.notCalled).toBe(true);
-
-      // The normal timer owns recovery even if startup never opened a link.
-      const recovered = createDeferred();
-      plan.callsFake(async () => {
-        if (plan.callCount === 3) {
-          recovered.resolve();
-        }
-        return [];
-      });
-      await clock.tickAsync(1000);
-      await recovered.promise;
-      await engine.stopSync();
-      expect(plan.callCount).toBe(3); // startup, settle, and orphan planning
-      expect(report.notCalled).toBe(true);
-    } finally {
-      await engine.stopSync();
-      clock.restore();
-    }
-  });
-
-  it('should retain the detailed diagnostic for an unexpected settle failure', async () => {
-    const engine = new SyncEngineLevel({ db });
-    engine['_runtime'] = new SyncRuntime(true);
-    const unexpected = new Error('local store failed', { cause: new Error('disk unavailable') });
-    sinon.stub(engine['_runCoordinator'], 'settle').rejects(unexpected);
-    const plan = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
-    const report = sinon.stub(console, 'error');
-    try {
-      await engine['runSettleCheck'](engine['_runtime']);
-      expect(report.calledOnceWithExactly('SyncEngineLevel: Error during durable feed settle check', unexpected)).toBe(true);
-      expect(plan.calledOnce).toBe(true);
-    } finally {
-      await engine.stopSync();
-    }
   });
 
   it('should skip a repairing link without parking the settle pass behind reconciliation readiness', async () => {

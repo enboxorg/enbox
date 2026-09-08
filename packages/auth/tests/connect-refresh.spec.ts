@@ -652,44 +652,6 @@ describe('delegated connection lifecycle', () => {
   });
 
   describe('AuthManager connection monitor', () => {
-    test('defers unavailable checks without expiry or refresh and resumes on the existing poll', async () => {
-      const clock = sinon.useFakeTimers();
-      const manager = createTestManager(createMockAgent());
-      const previousSession = manager.session;
-      const unavailable = new Error('grant read failed', {
-        cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
-      });
-      const getStatus = sinon.stub(manager, 'getConnectionStatus');
-      getStatus.onCall(0).resolves({ state: 'active', connectSessionId: 'session-1' });
-      getStatus.onCall(1).rejects(unavailable);
-      getStatus.onCall(2).rejects(unavailable);
-      getStatus.onCall(3).resolves({ state: 'expired', connectSessionId: 'session-1' });
-      const refresh = sinon.stub(manager as never, '_refresh').resolves(previousSession);
-      const expired = sinon.spy();
-      manager.on('connection-expired', expired);
-      const report = sinon.stub(console, 'error');
-
-      const stop = manager.startConnectionMonitor({
-        intervalMs  : 1000,
-        autoRefresh : { protocols: PROTOCOLS },
-      });
-      try {
-        await clock.tickAsync(2000);
-        expect(getStatus.callCount).toBe(3);
-        expect(manager.session).toBe(previousSession);
-        expect(expired.notCalled).toBe(true);
-        expect(refresh.notCalled).toBe(true);
-        expect(report.notCalled).toBe(true);
-
-        await clock.tickAsync(1000);
-        expect(expired.calledOnce).toBe(true);
-        expect(refresh.calledOnce).toBe(true);
-      } finally {
-        stop();
-        clock.restore();
-      }
-    });
-
     test('preserves custom error callbacks and unexpected monitor diagnostics', async () => {
       const clock = sinon.useFakeTimers();
       const manager = createTestManager(createMockAgent());
@@ -715,34 +677,53 @@ describe('delegated connection lifecycle', () => {
       }
     });
 
-    test('serializes polls, emits transitions once, and auto-refreshes an expiring session once', async () => {
+    test.each([
+      ['expiring-soon', 'connection-expiring'],
+      ['expired', 'connection-expired'],
+    ] as const)('defers unavailable polls and refreshes once after a confirmed %s result', async (state, eventType) => {
       const clock = sinon.useFakeTimers();
       const manager = createTestManager(createMockAgent());
+      const previousSession = manager.session;
       const status: ConnectionStatus = {
-        state              : 'expiring-soon',
+        state,
         connectSessionId   : 'session-1',
         connectedDid       : OWNER_DID,
         delegateDid        : DELEGATE_DID,
         expiresAt          : '2026-07-13T13:00:00.000000Z',
-        secondsUntilExpiry : 600,
+        secondsUntilExpiry : state === 'expired' ? 0 : 600,
       };
+      const unavailable = new Error('grant read failed', {
+        cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+      });
       const getStatus = sinon.stub(manager, 'getConnectionStatus').resolves(status);
-      const refresh = sinon.stub(manager as any, '_refresh').resolves(manager.session!);
-      const emitted: ConnectionStatus[] = [];
-      manager.on('connection-expiring', ({ status: eventStatus }) => { emitted.push(eventStatus); });
+      getStatus.onCall(0).resolves({ state: 'active', connectSessionId: 'session-1' });
+      getStatus.onCall(1).rejects(unavailable);
+      getStatus.onCall(2).rejects(unavailable);
+      const refresh = sinon.stub(manager as never, '_refresh').resolves(previousSession);
+      const report = sinon.stub(console, 'error');
+      const emitted: [string, ConnectionStatus][] = [];
+      manager.on('connection-expiring', ({ status: result }) => { emitted.push(['connection-expiring', result]); });
+      manager.on('connection-expired', ({ status: result }) => { emitted.push(['connection-expired', result]); });
 
       const stop = manager.startConnectionMonitor({
         intervalMs  : 1000,
         autoRefresh : { protocols: PROTOCOLS },
       });
-      await clock.tickAsync(0);
-      await clock.tickAsync(5000);
+      try {
+        await clock.tickAsync(2000);
+        expect(getStatus.callCount).toBe(3);
+        expect(manager.session).toBe(previousSession);
+        expect(emitted).toEqual([]);
+        expect(refresh.notCalled).toBe(true);
+        expect(report.notCalled).toBe(true);
 
-      expect(getStatus.callCount).toBeGreaterThanOrEqual(2);
-      expect(emitted).toEqual([status]);
-      expect(refresh.calledOnce).toBe(true);
-      stop();
-      clock.restore();
+        await clock.tickAsync(5000);
+        expect(emitted).toEqual([[eventType, status]]);
+        expect(refresh.calledOnce).toBe(true);
+      } finally {
+        stop();
+        clock.restore();
+      }
     });
 
     test('reports revoked sessions as invalid but never auto-refreshes them', async () => {
