@@ -53,6 +53,7 @@ export default defineConfig({
     include: [
       'tests/crypto-api.spec.ts',
       'tests/did-resolution-offline.spec.ts',
+      'tests/sync-followed-source.spec.ts',
       'tests/utils-internal.spec.ts',
     ],
     testTimeout : 15_000,

@@ -1602,12 +1602,10 @@ export class SyncEngineLevel implements SyncEngine {
     if (!runtime.live) {
       return;
     }
-    const pausedRoleIds = new Set<string>();
-    for (const link of await this.replicationLinkStore.getAllLinks()) {
-      if (link.status === 'paused' && link.authorization.kind === 'role') {
-        pausedRoleIds.add(link.authorization.roleRecordId);
-      }
-    }
+    const links = await this.replicationLinkStore.getAllLinks();
+    const pausedRoleIds = new Set(links.flatMap(({ status, authorization }) =>
+      status === 'paused' && authorization.kind === 'role' ? [authorization.roleRecordId] : []
+    ));
     for (const source of sources) {
       if (runtime.disposed) {
         return;
@@ -5001,9 +4999,7 @@ export class SyncEngineLevel implements SyncEngine {
       await this.addCurrentFollowedSourceKeys(identityKeys);
       return identityKeys;
     } catch (error: unknown) {
-      if (!this.deferDidResolutionFailure(error)) {
-        console.warn('SyncEngineLevel: Failed to resolve current link identities for health; excluding unproven role links', error);
-      }
+      console.warn('SyncEngineLevel: Failed to resolve current link identities for health; excluding unproven role links', error);
       return undefined;
     }
   }
@@ -5029,10 +5025,9 @@ export class SyncEngineLevel implements SyncEngine {
             error,
           );
         }
-        for (const link of await this.replicationLinkStore.getLinksForTenant(entry.did)) {
-          if (link.authorization.kind !== 'role') {
-            identityKeys.add(this.getDurableLinkIdentityKey(link));
-          }
+        const links = await this.replicationLinkStore.getLinksForTenant(entry.did);
+        for (const link of links.filter(link => link.authorization.kind !== 'role')) {
+          identityKeys.add(this.getDurableLinkIdentityKey(link));
         }
       }
     }

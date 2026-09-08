@@ -157,6 +157,8 @@ describe('SyncEngineLevel — followed sources', () => {
       expect(warn.notCalled).toBe(true);
       expect(report.notCalled).toBe(true);
       expect(engine.connectivityState).toBe('offline');
+      expect((await engine.getSyncHealth()).connectivity).toBe('offline');
+      expect(warn.notCalled).toBe(true);
       expect(await engine.getIdentityOptions(actorDid)).toEqual({ delegateDid, protocols: 'all' });
       for (const followed of sources) {
         expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
