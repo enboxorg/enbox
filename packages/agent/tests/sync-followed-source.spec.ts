@@ -1,7 +1,10 @@
+import type { MessagesQueryReply } from '@enbox/dwn-sdk-js';
+
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { RoleReplicationSupportBatch } from '../src/sync-role-replication-support.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '../src/followed-sync-source.js';
+import type { SyncDurableFeedQuery, SyncDurableFeedReconcileResult } from '../src/sync-durable-feed-reconciler.js';
 
 import sinon from 'sinon';
 
@@ -125,46 +128,25 @@ describe('SyncEngineLevel — followed sources', () => {
     await db.close();
   });
 
-  it('should end a failed shared plan once for two endpoints and retain followed contexts until the next settle', async () => {
-    const engine = new SyncEngineLevel({ db });
-    const sources = [source(), source('role-b', 'notebook-b')];
-    const actorDid = sources[0].actorDid;
-    const delegateDid = 'did:example:delegate';
-    const endpoints = ['https://a.example.com', 'https://b.example.com'];
-    await engine['_identityStore'].set(actorDid, { delegateDid, protocols: 'all' });
-    for (const followed of sources) {
-      await engine['_followedSourceStore'].replace(followed);
-    }
-    sinon.stub(engine['targetResolver'], 'getEndpointUrls').resolves(endpoints);
-    const unavailable = new Error('local grant query rejected', {
-      cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
-    });
-    const grants = sinon.stub(engine['_permissionsApi'], 'fetchGrants').rejects(unavailable);
-    const probe = sinon.stub(engine as never, 'probeFeedConvergence').resolves({ converged: true });
-    const initialize = sinon.stub(engine as never, 'initializeLinkTarget').resolves();
-    const refresh = sinon.spy(engine as never, 'scheduleFollowedSourceRefresh');
-    const warn = sinon.stub(console, 'warn');
-    const report = sinon.stub(console, 'error');
-    engine['_connectivityManager'].recordSuccess();
-    engine['_runtime'] = new SyncRuntime(true);
-
-    try {
-      await engine['runSettleCheck'](engine['_runtime']);
-      expect(grants.calledOnce).toBe(true);
-      expect(probe.notCalled).toBe(true);
-      expect(initialize.notCalled).toBe(true);
-      expect(refresh.notCalled).toBe(true);
-      expect(warn.notCalled).toBe(true);
-      expect(report.notCalled).toBe(true);
-      expect(engine.connectivityState).toBe('offline');
-      expect((await engine.getSyncHealth()).connectivity).toBe('offline');
-      expect(warn.notCalled).toBe(true);
-      expect(await engine.getIdentityOptions(actorDid)).toEqual({ delegateDid, protocols: 'all' });
+  it.each(['planning', 'cached signing', 'cached local query', 'partial endpoint'])(
+    'should defer a %s outage and recover retained endpoints and followed contexts at the next settle', async (scenario) => {
+      const engine = new SyncEngineLevel({ db });
+      const sources = [source(), source('role-b', 'notebook-b')];
+      const actorDid = sources[0].actorDid;
+      const delegateDid = 'did:example:delegate';
+      const endpoints = ['https://a.example.com', 'https://b.example.com'];
+      await engine['_identityStore'].set(actorDid, { delegateDid, protocols: 'all' });
       for (const followed of sources) {
-        expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+        await engine['_followedSourceStore'].replace(followed);
       }
-
-      grants.resolves([{
+      sinon.stub(engine['targetResolver'], 'getEndpointUrls').resolves(endpoints);
+      const unavailableStatus = {
+        code   : 401,
+        detail : 'DID resolution unavailable',
+        info   : { errorCause: DidResolutionErrorCause.NetworkUnavailable },
+      };
+      const unavailable = new Error('local request signing failed', { cause: unavailableStatus });
+      const validGrants = [{
         grant: {
           id          : 'grant-id',
           grantor     : actorDid,
@@ -173,16 +155,67 @@ describe('SyncEngineLevel — followed sources', () => {
           dateExpires : '2099-01-01T00:00:00.000000Z',
           scope       : { interface: 'Messages', method: 'Read' },
         },
-      }]);
-      await engine['runSettleCheck'](engine['_runtime']);
-      expect(probe.callCount).toBe(4);
-      expect(initialize.callCount).toBe(4);
-      expect(engine.connectivityState).toBe('online');
-      expect(report.notCalled).toBe(true);
-    } finally {
-      await engine.stopSync();
-    }
-  });
+      }];
+      const grants = sinon.stub(engine['_permissionsApi'], 'fetchGrants').resolves(validGrants);
+      const reconciler = engine['_durableFeedReconciler'];
+      const goodReply = { status: { code: 200, detail: 'OK' }, fingerprint: 'unchanged' };
+      const query = sinon.stub(reconciler['_operations'], 'queryFeed').resolves(goodReply);
+      // Exercise the real query error conversion; role admission has separate coverage.
+      const probe = sinon.stub(engine as never, 'probeFeedConvergence').callsFake(
+        (target: SyncTarget): Promise<SyncDurableFeedReconcileResult> => reconciler.verifyConvergence(target),
+      );
+      if (scenario === 'planning') {
+        grants.rejects(unavailable);
+      } else {
+        await engine['getSyncTargets']();
+        query.callsFake(async ({ source, target }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+          if (scenario === 'partial endpoint' && target.dwnUrl === endpoints[1]) {
+            return goodReply;
+          }
+          if (scenario === 'cached signing') {
+            throw unavailable;
+          }
+          return source === 'local' ? { status: unavailableStatus } : goodReply;
+        });
+      }
+      const initialize = sinon.stub(engine as never, 'initializeLinkTarget').resolves();
+      const refresh = sinon.spy(engine as never, 'scheduleFollowedSourceRefresh');
+      const warn = sinon.stub(console, 'warn');
+      const report = sinon.stub(console, 'error');
+      engine['_connectivityManager'].recordSuccess();
+      engine['_runtime'] = new SyncRuntime(true);
+
+      try {
+        await engine['runSettleCheck'](engine['_runtime']);
+        expect(grants.callCount).toBe(scenario === 'planning' ? 1 : 2);
+        expect(probe.callCount).toBe(scenario === 'planning' ? 0 : 3);
+        expect(query.callCount).toBe(scenario === 'planning' ? 0 : 6);
+        expect(initialize.notCalled).toBe(true);
+        expect(refresh.notCalled).toBe(true);
+        expect(warn.notCalled).toBe(true);
+        expect(report.notCalled).toBe(true);
+        const connectivity = scenario === 'partial endpoint' ? 'online' : 'offline';
+        expect(engine.connectivityState).toBe(connectivity);
+        expect((await engine.getSyncHealth()).connectivity).toBe(connectivity);
+        expect(warn.notCalled).toBe(true);
+        expect(await engine.getIdentityOptions(actorDid)).toEqual({ delegateDid, protocols: 'all' });
+        for (const followed of sources) {
+          expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+        }
+
+        grants.resolves(validGrants);
+        query.resolves(goodReply);
+        probe.resetHistory();
+        await engine['runSettleCheck'](engine['_runtime']);
+        expect(probe.callCount).toBe(4);
+        expect(initialize.callCount).toBe(4);
+        expect(engine.connectivityState).toBe('online');
+        expect(report.notCalled).toBe(true);
+      } finally {
+        await engine.stopSync();
+      }
+    },
+  );
 
   it('should defer followed refresh when the prerequisite becomes unavailable during orphan planning', async () => {
     const engine = new SyncEngineLevel({ db });

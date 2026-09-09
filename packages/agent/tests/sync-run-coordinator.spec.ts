@@ -6,6 +6,8 @@ import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 import sinon from 'sinon';
 
+import { DidResolutionErrorCause } from '@enbox/dids';
+
 import { describe, expect, it } from 'bun:test';
 
 import { SyncConnectivityManager } from '../src/sync-connectivity-manager.js';
@@ -378,20 +380,32 @@ describe('SyncRunCoordinator', () => {
     expect(connectivityManager.recordFailure.notCalled).toBe(true);
   });
 
-  it('records connectivity failure when every settle endpoint probe fails', async () => {
-    const alice = ownerTarget('did:example:alice', 'https://a.example');
-    const bob = ownerTarget('did:example:bob', 'https://b.example');
-    const { connectivityManager, coordinator, operations } = createFixture([alice, bob]);
-    operations.probeFeedConvergence.rejects(new Error('offline'));
+  it.each(['unexpected', 'mixed DID and unexpected'])(
+    'records connectivity failure while retaining diagnostics for %s probe failures', async (scenario) => {
+      const alice = ownerTarget('did:example:alice', 'https://a.example');
+      const bob = ownerTarget('did:example:bob', 'https://b.example');
+      const { connectivityManager, coordinator, operations } = createFixture([alice, bob]);
+      const unexpected = new Error('unexpected probe failure');
+      const secondFailure = scenario === 'unexpected' ? unexpected : new Error('local signer unavailable', {
+        cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+      });
+      operations.probeFeedConvergence.withArgs(alice).rejects(unexpected);
+      operations.probeFeedConvergence.withArgs(bob).rejects(secondFailure);
 
-    await expect(coordinator.settle()).rejects.toThrow(
-      'SyncRunCoordinator: Sync operation failed for 2 remote endpoint(s): https://a.example, https://b.example',
-    );
+      const settle = coordinator.settle();
+      await expect(settle).rejects.toThrow(
+        'SyncRunCoordinator: Sync operation failed for 2 remote endpoint(s): https://a.example, https://b.example',
+      );
 
-    expect(operations.reportError.callCount).toBe(2);
-    expect(connectivityManager.recordFailure.calledOnce).toBe(true);
-    expect(connectivityManager.recordSuccess.notCalled).toBe(true);
-  });
+      if (scenario !== 'unexpected') {
+        await expect(settle).rejects.toMatchObject({ cause: secondFailure });
+      }
+      expect(operations.reportError.callCount).toBe(scenario === 'unexpected' ? 2 : 1);
+      expect(operations.reportError.firstCall.args[1]).toBe(unexpected);
+      expect(connectivityManager.recordFailure.calledOnce).toBe(true);
+      expect(connectivityManager.recordSuccess.notCalled).toBe(true);
+    },
+  );
 
   it('settles endpoint groups concurrently and targets within each group sequentially', async () => {
     const alice = ownerTarget('did:example:alice', 'https://a.example');
@@ -469,7 +483,7 @@ describe('SyncRunCoordinator', () => {
     expect(feedConvergenceManager.handleVerifiedDivergence.notCalled).toBe(true);
   });
 
-  it('propagates target-planning failures before changing connectivity', async () => {
+  it('propagates unexpected target-planning failures before changing connectivity', async () => {
     const planningError = new Error('target planning failed');
     const { connectivityManager, coordinator, operations } = createFixture();
     operations.getTargets.rejects(planningError);

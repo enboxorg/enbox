@@ -8,10 +8,13 @@ import type { ReplicationLinkState, SyncDirection } from '../src/types/sync.js';
 
 import sinon from 'sinon';
 
+import { DidResolutionErrorCause } from '@enbox/dids';
+
 import { describe, expect, it } from 'bun:test';
 
 import type { SyncDurableFeedQuery, SyncDurableFeedReconcilerOperations } from '../src/sync-durable-feed-reconciler.js';
 
+import { isDidResolutionUnavailableError } from '../src/did-resolution-error.js';
 import { SyncCheckpoint } from '../src/sync-checkpoint.js';
 import { SyncDurableFeedReconciler } from '../src/sync-durable-feed-reconciler.js';
 import { SyncQuotaManager } from '../src/sync-quota-manager.js';
@@ -596,6 +599,25 @@ describe('SyncDurableFeedReconciler', () => {
       new Set(['blocked-a', 'blocked-b']),
       undefined,
     ]);
+  });
+
+  it.each(['local', 'remote'] as const)('should retain the failure scope of a %s query outage', async (failedSource) => {
+    const fixture = createReconciler();
+    const status = {
+      code   : 401,
+      detail : 'DID resolution unavailable',
+      info   : { errorCause: DidResolutionErrorCause.NetworkUnavailable },
+    };
+    fixture.queryFeed.callsFake(async ({ source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> =>
+      source === failedSource ? { status } : reply(),
+    );
+
+    const failure = await fixture.reconciler.verifyConvergence(target()).catch((error: unknown): unknown => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).toMatchObject({ message: expect.stringContaining('401 DID resolution unavailable') });
+    expect(isDidResolutionUnavailableError(failure)).toBe(failedSource === 'local');
+    expect(fixture.quotaManager.clearResolvedOmissionsForTarget.notCalled).toBe(true);
   });
 
   it('should clear resolved quota omissions only after exact fingerprint equality', async () => {

@@ -732,6 +732,9 @@ export class SyncDurableFeedReconciler {
       throw new Error(
         `SyncDurableFeedReconciler: ${label} failed for ${target.did} -> ${target.dwnUrl}: ` +
         `${reply.status.code} ${reply.status.detail}`,
+        // Local verification can block every endpoint's signing/grant work.
+        // Remote reply failures remain scoped to their endpoint.
+        { cause: direction === 'push' ? reply.status : undefined },
       );
     }
   }

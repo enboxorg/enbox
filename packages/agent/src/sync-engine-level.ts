@@ -2093,7 +2093,8 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       await this._runCoordinator.settle();
     } catch (error: unknown) {
-      if (this.deferDidResolutionFailure(error)) {
+      // The coordinator already folded endpoint outcomes into connectivity.
+      if (isDidResolutionUnavailableError(error)) {
         return;
       }
       console.error('SyncEngineLevel: Error during durable feed settle check', error);
