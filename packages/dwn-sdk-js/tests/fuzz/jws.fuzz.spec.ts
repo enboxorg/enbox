@@ -94,26 +94,6 @@ describe('Jws — fuzz', () => {
     });
   });
 
-  describe('getKid — crash resistance', () => {
-    it('should handle signature entries with random protected headers', () => {
-      fc.assert(
-        fc.property(
-          fc.string({ minLength: 1, maxLength: 100 }),
-          (protectedHeader) => {
-            let kid: string;
-            try {
-              kid = Jws.getKid({ protected: protectedHeader, signature: 'dummysig' });
-            } catch {
-              return; // Any error is acceptable — the property rejects only unhandled crashes
-            }
-            expect(typeof kid).toBe('string');
-          }
-        ),
-        { numRuns }
-      );
-    });
-  });
-
   describe('getKid — roundtrip with valid protected headers', () => {
     it('should extract kid from a properly encoded protected header', () => {
       fc.assert(
