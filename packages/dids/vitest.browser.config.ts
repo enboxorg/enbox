@@ -33,6 +33,9 @@ export default defineConfig({
       'events'   : 'eventemitter3',
     },
   },
+  optimizeDeps: {
+    include: ['@dnsquery/dns-packet'],
+  },
   test: {
     include : ['tests/**/*.test.ts'],
     exclude : [

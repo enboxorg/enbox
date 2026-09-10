@@ -85,7 +85,7 @@ describe('url utilities', () => {
       expect((fetchMock.mock.calls[0]![1] as RequestInit).redirect).toBe('manual');
     });
 
-    it('follows redirects to other public hosts', async () => {
+    it('follows redirects to other public hosts through the supplied fetch function', async () => {
       const finalResponse = new Response('done', { status: 200 });
       const fetchMock = mock(async (url: string | URL) => {
         const target = url.toString();
@@ -96,10 +96,12 @@ describe('url utilities', () => {
       });
       globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-      const result = await fetchPublicUrl('https://example.com/start');
+      const fetchFn = mock((url: string, init: RequestInit): Promise<Response> => fetch(url, init));
+      const result = await fetchPublicUrl('https://example.com/start', undefined, { fetchFn });
 
       expect(result).toBe(finalResponse);
       expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
       expect(fetchMock.mock.calls[1]![0]).toBe('https://other.example.com/end');
     });
 

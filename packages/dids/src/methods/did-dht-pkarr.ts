@@ -52,19 +52,32 @@ function pkarrUrl(publicKeyBytes: Uint8Array, gatewayUri: string): string {
  * for redirect targets, so `file:`, `javascript:`, etc. cannot be smuggled through.
  * Enabling the bypass also disables per-hop redirect validation; only opt in for trusted local relays.
  */
-async function pkarrFetch(url: string, init: RequestInit, allowPrivateGatewayUri: boolean): Promise<Response> {
+async function pkarrFetch(
+  url: string,
+  init: RequestInit,
+  allowPrivateGatewayUri: boolean,
+  fetchFn: (url: string, init: RequestInit) => Promise<Response> = fetch,
+): Promise<Response> {
   if (allowPrivateGatewayUri) {
-    return fetch(url, init);
+    return fetchFn(url, init);
   }
 
   try {
-    return await fetchPublicUrl(url, init, { description: 'Pkarr gateway URL' });
+    return await fetchPublicUrl(url, init, { description: 'Pkarr gateway URL', fetchFn });
   } catch (error: any) {
     if (error instanceof PublicUrlValidationError) {
       throw new DidError(DidErrorCode.InvalidGatewayUri, error.message);
     }
     throw error;
   }
+}
+
+/** Used only for fetch/body failures so redirect and parsing errors keep their own classification. */
+function throwPkarrNetworkError(error: unknown): never {
+  const detail = error instanceof Error ? error.message : String(error);
+  throw new DidError(DidErrorCode.InternalError, `Failed to fetch Pkarr record: ${detail}`, {
+    info: { errorCause: DidResolutionErrorCause.NetworkUnavailable },
+  });
 }
 
 /**
@@ -101,7 +114,12 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGateway
       );
     }
 
-    const response = await pkarrFetch(url, { method: 'GET', signal: AbortSignal.timeout(30_000) }, allowPrivateGatewayUri);
+    const response = await pkarrFetch(
+      url,
+      { method: 'GET', signal: AbortSignal.timeout(30_000) },
+      allowPrivateGatewayUri,
+      (url, init): Promise<Response> => fetch(url, init).catch(throwPkarrNetworkError),
+    );
 
     if (response.status === 408 || response.status === 429 || response.status >= 500) {
       throw new DidError(
@@ -115,13 +133,16 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGateway
       throw new DidError(DidErrorCode.NotFound, `Pkarr record not found for: ${identifier}`);
     }
 
-    messageBytes = await response.arrayBuffer();
+    try {
+      // An interrupted body can throw synchronously in Bun or reject its promise in browsers.
+      messageBytes = await response.arrayBuffer();
+    } catch (error: unknown) {
+      throwPkarrNetworkError(error);
+    }
 
   } catch (error: any) {
     if (error instanceof DidError) {throw error;}
-    throw new DidError(DidErrorCode.InternalError, `Failed to fetch Pkarr record: ${error.message}`, {
-      info: { errorCause: DidResolutionErrorCause.NetworkUnavailable },
-    });
+    throw new DidError(DidErrorCode.InternalError, `Failed to fetch Pkarr record: ${error.message}`);
   }
 
   if (!messageBytes) {

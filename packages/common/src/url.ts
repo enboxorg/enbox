@@ -111,13 +111,16 @@ export async function fetchPublicUrl(url: string | URL, init?: RequestInit, opti
   description?: string;
   allowedProtocols?: readonly string[];
   maxRedirects?: number;
+  /** Wrap each validated hop's fetch independently of URL and redirect handling. */
+  fetchFn?: (url: string, init: RequestInit) => Promise<Response>;
 }): Promise<Response> {
   const description = options?.description ?? 'URL';
   const maxRedirects = options?.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+  const fetchFn = options?.fetchFn ?? fetch;
   let currentUrl = assertPublicUrl(url, description, { allowedProtocols: options?.allowedProtocols }).href;
 
   for (let attempt = 0; attempt <= maxRedirects; attempt++) {
-    const response = await fetch(currentUrl, { ...init, redirect: 'manual' });
+    const response = await fetchFn(currentUrl, { ...init, redirect: 'manual' });
 
     if (!REDIRECT_STATUS_CODES.has(response.status)) {
       return response;

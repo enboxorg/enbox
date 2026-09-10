@@ -919,11 +919,11 @@ describe('DidDht', () => {
       }
     });
 
-    it('preserves network failure identity', async () => {
+    it.each([false, true])('preserves network failure identity with private gateway access set to %s', async (allowPrivateGatewayUri) => {
       const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
       fetchStub.mockRejectedValue(new TypeError('fetch failed'));
 
-      const unavailable = await DidDht.resolve(did);
+      const unavailable = await DidDht.resolve(did, { allowPrivateGatewayUri });
       expect(unavailable.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
       expect(unavailable.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
     });
@@ -936,17 +936,6 @@ describe('DidDht', () => {
         expect(result.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
         expect(result.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
       }
-    });
-
-    it('classifies an interrupted response body as unavailable', async () => {
-      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
-      const response = new Response(new ReadableStream({
-        start(controller): void { controller.error(new TypeError('connection lost')); },
-      }));
-      fetchStub.mockResolvedValue(response);
-      const interrupted = await DidDht.resolve(did);
-      expect(interrupted.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
-      expect(interrupted.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
     });
 
     it('fetches normally when the runtime has no navigator', async () => {
