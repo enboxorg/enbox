@@ -861,6 +861,12 @@ export interface SyncEngine {
    */
   refreshIdentityRouting(did: string, lifecycleOptions?: SyncLifecycleOptions): Promise<void>;
   /**
+   * Recheck a confirmed inactive wallet approval and park its delegated work.
+   * Preserves registration and followed contexts; fresh registration resumes sync.
+   * An observation of an older approval cannot pause a newer one.
+   */
+  pauseIdentity(params: { did: string; delegateDid: string; connectSessionId: string }): Promise<void>;
+  /**
    * Remove an identity from the SyncEngine, stopping sync for that identity.
    *
    * When live sync is active, the identity is hot-removed: its subscriptions

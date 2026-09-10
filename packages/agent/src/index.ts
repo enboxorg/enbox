@@ -51,5 +51,6 @@ export * from './store-identity.js';
 export * from './store-key.js';
 export * from './utils.js';
 export * from './connect-approval.js';
+export * from './connect-status.js';
 export * from './enbox-user-agent.js';
 export { IdentityProtocolDefinition, JwkProtocolDefinition } from './store-data-protocols.js';

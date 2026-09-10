@@ -56,10 +56,11 @@ import type {
 } from './sync-scope-closure-validator.js';
 import type { SyncStatusLink, SyncStatusSnapshot } from './sync-status-reporter.js';
 
-import { AgentPermissionsApi } from './permissions-api.js';
+import { AgentPermissionsApi, PermissionGrantNotFoundError } from './permissions-api.js';
 
 import { admitClosure } from './sync-admit-closure.js';
 import { DwnInterface } from './types/dwn.js';
+import { fetchConnectionStatus } from './connect-status.js';
 import { FollowedSyncSourceStoreLevel } from './followed-sync-source-store-level.js';
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
@@ -87,7 +88,7 @@ import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMess
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
+import { isTerminalSyncAuthorizationFailure, SyncAuthorizationInactiveError, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from './sync-target-resolver.js';
 import { projectReplicationLinks, projectSyncStatus } from './sync-status-reporter.js';
@@ -99,6 +100,11 @@ export type SyncEngineLevelParams = {
 };
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
+
+type PausedIdentityAuthorization = {
+  delegateDid: string;
+  pause: Promise<void>;
+};
 
 type LivePullContext = {
   controller: SyncLinkController;
@@ -259,6 +265,9 @@ export class SyncEngineLevel implements SyncEngine {
   /** One coalesced refresh of durable followed-context catalog changes. */
   private _followedSourceRefresh?: Promise<void>;
   private _followedSourceRefreshPending = false;
+
+  /** Intake remains parked until the identity's registration is refreshed. */
+  private readonly _pausedIdentities = new Map<string, PausedIdentityAuthorization>();
 
   /** Last catalog state applied to this engine's events and replication sessions. */
   private readonly _followedSourceSnapshot: Map<string, FollowedSyncSource> = new Map();
@@ -494,10 +503,13 @@ export class SyncEngineLevel implements SyncEngine {
   /** Wire SyncTargetPlanner to this engine. */
   private createTargetPlanner(): SyncTargetPlanner {
     return new SyncTargetPlanner({
-      getTargetResolver : (): SyncTargetResolver => this.targetResolver,
-      identityStore     : this._identityStore,
-      sourceStore       : this._followedSourceStore,
-      warn              : (message, error): void => { console.warn(message, error); },
+      getTargetResolver          : (): SyncTargetResolver => this.targetResolver,
+      identityStore              : this._identityStore,
+      sourceStore                : this._followedSourceStore,
+      isIdentityPaused           : (did, delegateDid): boolean => this.isIdentityPaused(did, delegateDid),
+      handleAuthorizationFailure : (did, options, error): Promise<boolean> =>
+        this.handleSyncAuthorizationFailure(did, options.delegateDid, error),
+      warn: (message, error): void => { console.warn(message, error); },
     });
   }
 
@@ -652,6 +664,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
     this._targetResolver = undefined;
+    this._pausedIdentities.clear();
     // Cached sync targets were resolved through the previous agent's
     // DID resolver / endpoint lookup — invalidate so the next sync
     // tick re-resolves through the new agent.
@@ -787,6 +800,7 @@ export class SyncEngineLevel implements SyncEngine {
         const followedSources = await this.readFollowedSources();
         await this._permissionsApi.clear();
         await this.clearSyncDb();
+        this._pausedIdentities.clear();
         this._followedSourceSnapshot.clear();
         this._followedSourceSnapshotInitialized = true;
         this.invalidateSyncTargetsCache();
@@ -890,6 +904,116 @@ export class SyncEngineLevel implements SyncEngine {
     );
   }
 
+  public pauseIdentity({ did, delegateDid, connectSessionId }: {
+    did: string;
+    delegateDid: string;
+    connectSessionId: string;
+  }): Promise<void> {
+    return this.runExclusiveIdentityMutation(did, async (): Promise<void> => {
+      const options = await this._identityStore.get(did);
+      if (options?.delegateDid !== delegateDid || this.isIdentityPaused(did, delegateDid)) {
+        return;
+      }
+      const status = await fetchConnectionStatus({ connectedDid: did, delegateDid, permissions: this._permissionsApi });
+      if (status.connectSessionId === connectSessionId && (status.state === 'expired' || status.state === 'revoked')) {
+        await this.pauseIdentityAuthorization(did, delegateDid);
+      }
+    }, {});
+  }
+
+  private isIdentityPaused(did: string, delegateDid?: string): boolean {
+    return delegateDid !== undefined && this._pausedIdentities.get(did)?.delegateDid === delegateDid;
+  }
+
+  private isTargetPaused(target: SyncTarget): boolean {
+    const did = target.authorization.kind === 'role' ? target.authorization.actorDid : target.did;
+    return this.isIdentityPaused(did, target.delegateDid);
+  }
+
+  /** An invoked grant failure does not prove that the newest wallet approval is inactive. */
+  private async pauseTargetForAuthorizationFailure(
+    target: SyncTarget,
+    errorCode: string | undefined,
+    isCurrent: () => boolean,
+  ): Promise<boolean> {
+    if (target.delegateDid === undefined) {
+      return false;
+    }
+    if (errorCode !== DwnErrorCode.GrantAuthorizationGrantExpired &&
+      errorCode !== DwnErrorCode.GrantAuthorizationGrantRevoked &&
+      errorCode !== DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed) {
+      return false;
+    }
+    const did = target.authorization.kind === 'role' ? target.authorization.actorDid : target.did;
+    return !isCurrent() || this.pauseInactiveIdentity(did, target.delegateDid);
+  }
+
+  /** Failed inspection or active-but-incomplete coverage never establishes expiry. */
+  private async handleSyncAuthorizationFailure(did: string, delegateDid: string | undefined, error: unknown): Promise<boolean> {
+    if (delegateDid === undefined ||
+      !(error instanceof SyncProtocolRootPermissionGrantMissingError || error instanceof PermissionGrantNotFoundError)) {
+      return false;
+    }
+    return this.pauseInactiveIdentity(did, delegateDid);
+  }
+
+  private async pauseInactiveIdentity(did: string, delegateDid: string): Promise<boolean> {
+    if (this.isIdentityPaused(did, delegateDid)) {
+      return true;
+    }
+    const topologyGeneration = this._targetPlanner.topologyGeneration;
+    const status = await fetchConnectionStatus({ connectedDid: did, delegateDid, permissions: this._permissionsApi });
+    if (topologyGeneration !== this._targetPlanner.topologyGeneration) {
+      return true;
+    }
+    if (status.state !== 'expired' && status.state !== 'revoked') {
+      return false;
+    }
+    await this.pauseIdentityAuthorization(did, delegateDid);
+    return true;
+  }
+
+  /** Coalesce observations onto the existing per-link pause and cancellation fences. */
+  private pauseIdentityAuthorization(did: string, delegateDid: string): Promise<void> {
+    const existing = this._pausedIdentities.get(did);
+    if (existing?.delegateDid === delegateDid) {
+      return existing.pause;
+    }
+    const entry: PausedIdentityAuthorization = {
+      delegateDid,
+      pause: Promise.resolve().then(async (): Promise<void> => {
+        const isCurrent = (): boolean => this._pausedIdentities.get(did) === entry;
+        const belongsToIdentity = (link: ReplicationLinkState): boolean => link.delegateDid === delegateDid &&
+          (link.authorization.kind === 'role' ? link.authorization.actorDid === did : link.tenantDid === did);
+        if (!isCurrent()) {
+          return;
+        }
+        this.cancelIdentityTimers(did);
+        const pauses = [...this._linkControllers.values()]
+          .filter(({ link }) => belongsToIdentity(link))
+          .map(({ linkKey, link }) => this.transitionToPaused(linkKey, link, false));
+        await Promise.all([...pauses, (async (): Promise<void> => {
+          const links = await this.replicationLinkStore.getAllLinks();
+          if (isCurrent()) {
+            await Promise.all(links.filter(belongsToIdentity).map((link): Promise<void> => {
+              const linkKey = this.getReplicationLinkKey(syncTargetFromLink(link), link);
+              this._runtime.cancelTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
+              return this.transitionToPaused(linkKey, this.getLinkController(linkKey)?.link ?? link, false);
+            }));
+          }
+        })()]);
+      }).catch((error: unknown): never => {
+        if (this._pausedIdentities.get(did) === entry) {
+          this._pausedIdentities.delete(did);
+        }
+        throw error;
+      }),
+    };
+    this._pausedIdentities.set(did, entry);
+    this.invalidateSyncTargetsCache();
+    return entry.pause;
+  }
+
   /**
    * Every identity mutation layers the engine-local exclusive sync lock
    * around the cross-context per-DID lifecycle lock. Composing both here
@@ -960,6 +1084,7 @@ export class SyncEngineLevel implements SyncEngine {
     // preparation barrier has completed. From this commit point onward the
     // mutation runs to completion and is never abandoned halfway through.
     await this._identityStore.set(did, options);
+    this._pausedIdentities.delete(did);
     this.invalidateSyncTargetsCache();
     this.emitIdentityRegistrationChange(did, options, true);
     await this.refreshRoleLinksForActor(did, options.delegateDid);
@@ -1026,6 +1151,7 @@ export class SyncEngineLevel implements SyncEngine {
       await this._deadLetterStore.deleteForTenant(did);
       await this._deferredPullStore.deleteForTenant(did);
       await this._identityStore.delete(did);
+      this._pausedIdentities.delete(did);
     });
     this.invalidateSyncTargetsCache();
     this.emitIdentityRegistrationChange(did, undefined, true);
@@ -1055,6 +1181,7 @@ export class SyncEngineLevel implements SyncEngine {
       tenantDid,
       async (): Promise<void> => {
         const options = await this._identityStore.get(tenantDid);
+        this._pausedIdentities.delete(tenantDid);
         this.invalidateSyncTargetsCache();
         this.emitIdentityRegistrationChange(tenantDid, options);
       },
@@ -1092,7 +1219,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       const target = { ...syncTargetFromLink(link), delegateDid };
-      if (!await this.isFollowedTargetRunnable(target)) {
+      if (!await this.isTargetRunnable(target)) {
         continue;
       }
 
@@ -1635,18 +1762,29 @@ export class SyncEngineLevel implements SyncEngine {
     expected: FollowedSyncSource,
   ): Promise<void> {
     const identity = await this._identityStore.get(expected.actorDid);
-    if (identity === undefined || runtime.disposed) {
+    if (identity === undefined || runtime.disposed || this.isIdentityPaused(expected.actorDid, identity.delegateDid)) {
       return;
     }
     const shouldContinue = (): boolean => !runtime.disposed;
-    const prepared = await this.resolveFollowedSourceAtEndpoint({
-      actorDid  : expected.actorDid,
-      contextId : expected.contextId,
-      protocol  : expected.protocol,
-      roles     : expected.roles,
-      sourceDid : expected.sourceDid,
-    }, identity.delegateDid, expected.remoteEndpoint, shouldContinue);
+    let prepared: PreparedFollowedSource | undefined;
+    try {
+      prepared = await this.resolveFollowedSourceAtEndpoint({
+        actorDid  : expected.actorDid,
+        contextId : expected.contextId,
+        protocol  : expected.protocol,
+        roles     : expected.roles,
+        sourceDid : expected.sourceDid,
+      }, identity.delegateDid, expected.remoteEndpoint, shouldContinue);
+    } catch (error: unknown) {
+      if (await this.handleSyncAuthorizationFailure(expected.actorDid, identity.delegateDid, error)) {
+        return;
+      }
+      throw error;
+    }
     if (runtime.disposed) {
+      return;
+    }
+    if (this.isIdentityPaused(expected.actorDid, identity.delegateDid)) {
       return;
     }
     if (prepared === undefined) {
@@ -2112,7 +2250,8 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
     if ([...this._linkControllers.values()].some(({ link }) =>
-      link.status === 'paused' && link.authorization.kind === 'role'
+      link.status === 'paused' && link.authorization.kind === 'role' &&
+      !this.isIdentityPaused(link.authorization.actorDid, link.delegateDid)
     )) {
       this.scheduleFollowedSourceRefresh();
     }
@@ -2332,7 +2471,7 @@ export class SyncEngineLevel implements SyncEngine {
     let link: ReplicationLinkState | undefined;
     let controller: SyncLinkController | undefined;
     try {
-      if (!await this.isFollowedTargetRunnable(target)) {
+      if (!await this.isTargetRunnable(target)) {
         return { status: LinkInitializationStatus.Failed };
       }
       link = await this.getOrCreateReplicationLink(target);
@@ -2340,13 +2479,8 @@ export class SyncEngineLevel implements SyncEngine {
         return { status: LinkInitializationStatus.Failed };
       }
       const linkKey = this.getReplicationLinkKey(target, link);
-      if (!await this.isFollowedTargetRunnable(target)) {
-        await this.replicationLinkStore.deleteLink(
-          link.tenantDid,
-          link.remoteEndpoint,
-          link.projectionId,
-          link.authorizationEpoch,
-        );
+      if (!await this.isTargetRunnable(target)) {
+        await this.retireUnrunnableLink(target, linkKey, link);
         return { status: LinkInitializationStatus.Failed };
       }
 
@@ -2362,14 +2496,8 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       controller = this.activateLink(linkKey, link);
-      if (!await this.isFollowedTargetRunnable(target)) {
-        this.removeLinkController(linkKey, controller);
-        await this.replicationLinkStore.deleteLink(
-          link.tenantDid,
-          link.remoteEndpoint,
-          link.projectionId,
-          link.authorizationEpoch,
-        );
+      if (!await this.isTargetRunnable(target)) {
+        await this.retireUnrunnableLink(target, linkKey, link, controller);
         return { status: LinkInitializationStatus.Failed };
       }
       return await this.initializeActivatedLinkTarget(target, linkKey, link, controller);
@@ -2379,6 +2507,23 @@ export class SyncEngineLevel implements SyncEngine {
       }
       return this.handleInitializeLinkTargetError(target, link, controller, error);
     }
+  }
+
+  /** Expired approval retains a paused link; removed source authority retires it. */
+  private async retireUnrunnableLink(
+    target: SyncTarget,
+    linkKey: string,
+    link: ReplicationLinkState,
+    controller?: SyncLinkController,
+  ): Promise<void> {
+    if (this.isTargetPaused(target)) {
+      await this.transitionToPaused(linkKey, link, false);
+      return;
+    }
+    if (controller !== undefined) {
+      this.removeLinkController(linkKey, controller);
+    }
+    await this.replicationLinkStore.deleteLink(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
   }
 
   /** A role target remains schedulable only while its exact source registration exists. */
@@ -2404,8 +2549,11 @@ export class SyncEngineLevel implements SyncEngine {
       source.protocolPaths.every((path, index) => path === scope.protocolPaths[index]);
   }
 
-  /** A current role target runs only under its actor's current delegate registration. */
-  private async isFollowedTargetRunnable(target: SyncTarget): Promise<boolean> {
+  /** Parked identities cannot run; role targets also require their actor's current registration. */
+  private async isTargetRunnable(target: SyncTarget): Promise<boolean> {
+    if (this.isTargetPaused(target)) {
+      return false;
+    }
     if (target.authorization.kind !== 'role') {
       return true;
     }
@@ -2424,7 +2572,7 @@ export class SyncEngineLevel implements SyncEngine {
     controller: SyncLinkController,
   ): Promise<LinkInitializationResult> {
     if (link.status === 'paused') {
-      if (link.authorization.kind === 'role') {
+      if (link.authorization.kind === 'role' && !this.isTargetPaused(target)) {
         this.scheduleFollowedSourceRefresh();
       }
       return this.activeLinkInitializationResultIfOwned(controller, link);
@@ -2657,6 +2805,11 @@ export class SyncEngineLevel implements SyncEngine {
     error: any,
   ): Promise<LinkInitializationResult> {
     if (controller !== undefined && !controller.isActive) {
+      return { status: LinkInitializationStatus.Failed };
+    }
+
+    const did = target.authorization.kind === 'role' ? target.authorization.actorDid : target.did;
+    if (error instanceof SyncAuthorizationInactiveError || await this.handleSyncAuthorizationFailure(did, target.delegateDid, error)) {
       return { status: LinkInitializationStatus.Failed };
     }
 
@@ -2897,12 +3050,11 @@ export class SyncEngineLevel implements SyncEngine {
     // targets left without an active controller.
     const targets: SyncTarget[] = [];
     try {
-      const dwnEndpointUrls = await this.targetResolver.getEndpointUrls(did);
-      for (const dwnUrl of dwnEndpointUrls) {
-        targets.push(...await this.targetResolver.buildTargetsForEndpoint(did, dwnUrl, options));
-      }
+      targets.push(...(await this._targetPlanner.resolveIdentity(did, options)).targets);
     } catch (error) {
-      console.error(`SyncEngineLevel: Live-sync hot-add planning failed for ${did}; the settle check retries link initialization`, error);
+      if (!this.deferDidResolutionFailure(error)) {
+        console.error(`SyncEngineLevel: Live-sync hot-add planning failed for ${did}; the settle check retries link initialization`, error);
+      }
       return new Set();
     }
     if (targets.length === 0) { return new Set(); }
@@ -3006,15 +3158,30 @@ export class SyncEngineLevel implements SyncEngine {
   private async tryPruneSupersededDurableLinksForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<void> {
     try {
       const currentIdentityKeys = await this.getDurableLinkIdentityKeysForRegisteredIdentity(did, options);
-      await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
+      if (currentIdentityKeys !== undefined) {
+        await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
+      }
     } catch (error: unknown) {
-      console.warn(`SyncEngineLevel: Failed to prune superseded durable links for ${did}`, error);
+      if (!this.deferDidResolutionFailure(error)) {
+        console.warn(`SyncEngineLevel: Failed to prune superseded durable links for ${did}`, error);
+      }
     }
   }
 
-  private async getDurableLinkIdentityKeysForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<Set<string>> {
+  private async getDurableLinkIdentityKeysForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<Set<string> | undefined> {
+    if (this.isIdentityPaused(did, options.delegateDid)) {
+      return undefined;
+    }
     const scope = syncScopeFromProtocols(options.protocols);
-    const resolutions = await this.targetResolver.buildTargetResolutions(did, scope, options);
+    const resolutions = await this.targetResolver.buildTargetResolutions(did, scope, options).catch(async (error: unknown) => {
+      if (await this.handleSyncAuthorizationFailure(did, options.delegateDid, error)) {
+        return undefined;
+      }
+      throw error;
+    });
+    if (resolutions === undefined) {
+      return undefined;
+    }
     const keys = new Set<string>();
     for (const resolution of resolutions) {
       const projectionId = await computeProjectionId(did, resolution.scope);
@@ -3172,6 +3339,9 @@ export class SyncEngineLevel implements SyncEngine {
         resubscribeFactory,
       },
     }) as MessagesSubscribeReply;
+    if (reply.status.code === 401 && await this.pauseTargetForAuthorizationFailure(target, reply.status.errorCode, (): boolean => !isStale())) {
+      return false;
+    }
     if (reply.status.code !== 200 || !reply.subscription) {
       throw new Error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
     }
@@ -3430,6 +3600,9 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async handleLivePullError(context: LivePullContext, errorCode: string): Promise<void> {
+    if (await this.pauseTargetForAuthorizationFailure(syncTargetFromLink(context.link), errorCode, (): boolean => !context.isStale())) {
+      return;
+    }
     const roleAuthorization = context.link.authorization.kind === 'role'
       ? context.link.authorization
       : undefined;
@@ -3603,6 +3776,9 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     const reply = response.reply as MessagesSubscribeReply;
+    if (reply.status.code === 401 && await this.pauseTargetForAuthorizationFailure(target, reply.status.errorCode, (): boolean => !isPushStale())) {
+      return false;
+    }
     if (reply.status.code !== 200 || !reply.subscription) {
       throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
     }
@@ -3634,6 +3810,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
     if (message.type === 'error') {
       const { code } = message.error;
+      if (await this.pauseTargetForAuthorizationFailure(syncTargetFromLink(controller.link), code, (): boolean => !isStale())) {
+        return;
+      }
       if (isTerminalSyncAuthorizationFailure(code)) {
         console.warn(
           `SyncEngineLevel: local sync authorization for ${controller.link.tenantDid} was revoked or expired — ` +
@@ -3727,6 +3906,9 @@ export class SyncEngineLevel implements SyncEngine {
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
+    if (this.isTargetPaused(target)) {
+      return { paused: true };
+    }
     const effectiveOptions = SyncEngineLevel.reconcileOptionsForTarget(target, options);
     if (effectiveOptions === 'skip') {
       return { aborted: true };
@@ -3820,6 +4002,10 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       return await this._durableFeedReconciler.reconcile(target, link, options, shouldContinue);
     } catch (error: unknown) {
+      const did = target.authorization.kind === 'role' ? target.authorization.actorDid : target.did;
+      if (error instanceof SyncAuthorizationInactiveError || await this.handleSyncAuthorizationFailure(did, target.delegateDid, error)) {
+        return this.isTargetPaused(target) ? { paused: true } : { aborted: true };
+      }
       if (
         target.authorization.kind === 'role' &&
         SyncEngineLevel.isRoleLinkPauseError(error)
@@ -3846,15 +4032,25 @@ export class SyncEngineLevel implements SyncEngine {
     return detail.includes(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
   }
 
-  private verifyFeedConvergence(
+  private async verifyFeedConvergence(
     target: SyncTarget,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
-    return this._durableFeedReconciler.verifyConvergence(target, shouldContinue);
+    try {
+      return await this._durableFeedReconciler.verifyConvergence(target, shouldContinue);
+    } catch (error: unknown) {
+      if (error instanceof SyncAuthorizationInactiveError) {
+        return this.isTargetPaused(target) ? { paused: true } : { aborted: true };
+      }
+      throw error;
+    }
   }
 
   /** Probe one active session through its link executor. */
   private async probeFeedConvergence(target: SyncTarget): Promise<SyncReconcileResult> {
+    if (this.isTargetPaused(target)) {
+      return { paused: true };
+    }
     if (target.authorization.kind === 'role') {
       const result = await this.reconcileTarget(target);
       return result.pullDrained === true ? { ...result, converged: true } : result;
@@ -3899,6 +4095,7 @@ export class SyncEngineLevel implements SyncEngine {
     source,
     target,
   }: SyncDurableFeedQuery): Promise<MessagesQueryReply> {
+    const topologyGeneration = this._targetPlanner.topologyGeneration;
     const currentTarget = await this.targetResolver.withCurrentRoleGrant(target);
     const roleAuthorization = currentTarget.authorization.kind === 'role'
       ? currentTarget.authorization
@@ -3921,6 +4118,16 @@ export class SyncEngineLevel implements SyncEngine {
       ? queryLocalMessageFeed(params)
       : queryRemoteMessageFeed({ ...params, dwnUrl: currentTarget.dwnUrl });
     const result = await reply;
+    if (result.status.code === 401) {
+      const paused = await this.pauseTargetForAuthorizationFailure(
+        currentTarget,
+        result.status.errorCode,
+        (): boolean => topologyGeneration === this._targetPlanner.topologyGeneration,
+      );
+      if (paused) {
+        throw new SyncAuthorizationInactiveError(result.status.errorCode!);
+      }
+    }
     if (result.status.code === 200) {
       SyncEngineLevel.assertRoleRecordId(currentTarget, result.roleRecordId);
     }
@@ -5013,11 +5220,12 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       try {
-        const scope = syncScopeFromProtocols(entry.options.protocols);
-        const resolutions = await this.targetResolver.buildTargetResolutions(entry.did, scope, entry.options);
-        for (const resolution of resolutions) {
-          const projectionId = await computeProjectionId(entry.did, resolution.scope);
-          identityKeys.add(buildDurableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
+        const currentKeys = await this.getDurableLinkIdentityKeysForRegisteredIdentity(entry.did, entry.options);
+        if (currentKeys !== undefined) {
+          for (const key of currentKeys) {
+            identityKeys.add(key);
+          }
+          continue;
         }
       } catch (error: unknown) {
         if (!this.deferDidResolutionFailure(error)) {
@@ -5026,10 +5234,10 @@ export class SyncEngineLevel implements SyncEngine {
             error,
           );
         }
-        const links = await this.replicationLinkStore.getLinksForTenant(entry.did);
-        for (const link of links.filter(link => link.authorization.kind !== 'role')) {
-          identityKeys.add(this.getDurableLinkIdentityKey(link));
-        }
+      }
+      const links = await this.replicationLinkStore.getLinksForTenant(entry.did);
+      for (const link of links.filter(link => link.authorization.kind !== 'role')) {
+        identityKeys.add(this.getDurableLinkIdentityKey(link));
       }
     }
   }

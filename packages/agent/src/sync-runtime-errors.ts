@@ -1,5 +1,13 @@
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 
+/** An invoked delegate grant has confirmed expiry or revocation. */
+export class SyncAuthorizationInactiveError extends Error {
+  public constructor(errorCode: string) {
+    super(`SyncEngineLevel: delegated sync authorization is inactive: ${errorCode}`);
+    this.name = 'SyncAuthorizationInactiveError';
+  }
+}
+
 /**
  * A queued `sync()` follow-up was invalidated by an engine runtime transition
  * (`startSync`/`stopSync`/`clear`/`close`) before it could run. Rejecting —
