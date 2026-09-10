@@ -1435,23 +1435,26 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toEqual([]);
   });
 
-  it('should park role work without deleting its source when the actor unregisters', async () => {
+  it('should retain followed sources and cache healthy targets until their actor registers again', async () => {
     const engine = new SyncEngineLevel({ db });
     const actorDid = 'did:example:member';
+    const healthyDid = 'did:example:healthy';
     const followed = source();
-    const target = targetFor(followed);
+    const target = await engine['targetResolver'].buildTargetForSource(followed);
+    const endpoints = sinon.stub(engine['targetResolver'], 'getEndpointUrls').resolves(['https://example.com/dwn']);
     const checkpoint = { epoch: 'epoch', position: '9', streamId: 'stream', messageCid: 'cid-9' };
-    await (engine as any)._identityStore.set(actorDid, { protocols: 'all' });
-    await (engine as any)._followedSourceStore.replace(followed);
+    await engine['_identityStore'].set(actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(healthyDid, { protocols: 'all' });
+    await engine['_followedSourceStore'].replace(followed);
     const link = await createRoleLink(engine, target);
     link.pull.contiguousAppliedToken = checkpoint;
-    await (engine as any).replicationLinkStore.persistCheckpoint(link, 'pull');
-    await (engine as any).replicationLinkStore.setStatus(link, 'live');
-    const controller = (engine as any).activateLink(linkKey(link), link);
+    await engine['replicationLinkStore'].persistCheckpoint(link, 'pull');
+    await engine['replicationLinkStore'].setStatus(link, 'live');
+    const controller = engine['activateLink'](linkKey(link), link);
     const close = sinon.stub().resolves();
     controller.setLiveSubscription({ close });
     controller.markReplicationReady();
-    (engine as any)._runtime = new SyncRuntime(true);
+    engine['_runtime'] = new SyncRuntime(true);
 
     await engine.removeIdentity(actorDid);
 
@@ -1459,17 +1462,30 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
     expect(close.calledOnce).toBe(true);
     expect(controller.isReplicationReady).toBe(false);
-    expect((await (engine as any).getSyncTargets()).some(
-      (planned: SyncTarget) => planned.authorization.kind === 'role',
-    )).toBe(false);
-    expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
+    expect((await engine['getSyncTargets']()).map(planned => planned.did)).toEqual([healthyDid]);
+    await engine.getSyncHealth();
+    expect(endpoints.calledOnceWithExactly(healthyDid)).toBe(true);
+    expect(await engine['replicationLinkStore'].getLinksForTenant(SOURCE_DID)).toMatchObject([{
       authorizationEpoch : target.authorizationEpoch,
       pull               : { contiguousAppliedToken: checkpoint },
       status             : 'paused',
     }]);
 
-    (engine as any)._runtime.dispose();
+    engine['_runtime'].dispose();
     await controller.dispose();
+
+    await engine.setIdentityOptions({ did: actorDid, options: { protocols: 'all' } });
+
+    expect(await engine['getSyncTargets']()).toContainEqual(target);
+    await engine.getSyncHealth();
+    expect(endpoints.withArgs(healthyDid).callCount).toBe(2);
+    expect(endpoints.withArgs(actorDid).callCount).toBe(1);
+    expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+    expect(await engine['replicationLinkStore'].getLinksForTenant(SOURCE_DID)).toMatchObject([{
+      authorizationEpoch : target.authorizationEpoch,
+      pull               : { contiguousAppliedToken: checkpoint },
+      status             : 'initializing',
+    }]);
   });
 
   it('should preserve another actor role link when its source identity unregisters', async () => {
