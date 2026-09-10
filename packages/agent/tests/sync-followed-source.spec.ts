@@ -281,15 +281,18 @@ describe('SyncEngineLevel — followed sources', () => {
         const oldController = [...engine['_linkControllers'].values()].find(({ link }) => link.tenantDid === actorDid)!;
         const oldGeneration = oldController.replicationGeneration;
         const oldContext = {
+          did        : actorDid,
           link       : oldController.link,
           controller : oldController,
           isStale    : (): boolean => !oldController.isReplicationGenerationCurrent(oldGeneration),
         };
 
-        clock.setSystemTime(Date.parse('2026-07-13T12:02:00Z'));
         revoked = scenario === 'planner revocation';
+        clock.setSystemTime(Date.parse(revoked ? '2026-07-13T12:00:45Z' : '2026-07-13T12:02:00Z'));
         if (scenario === 'subscription expiry') {
-          await engine['handleLivePullError'](oldContext as never, DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
+          await engine['handleLivePullMessage'](oldContext as never, {
+            type: 'error', error: { code: DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed, detail: 'delivery authorization failed' },
+          } as never);
         }
         if (scenario === 'monitor expiry') {
           await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' });
@@ -334,6 +337,7 @@ describe('SyncEngineLevel — followed sources', () => {
         expect((await engine['getSyncTargets']()).map(target => target.did)).toEqual([healthyDid]);
         validate.resolves();
         revoked = false;
+        clock.setSystemTime(Date.parse('2026-07-13T12:02:00Z'));
         grants = approval('fresh', '2026-07-13T12:02:00.000000Z', '2026-07-13T13:00:00.000000Z');
         await engine.setIdentityOptions({ did: actorDid, options });
         const after = await engine['getSyncTargets']();
@@ -343,11 +347,12 @@ describe('SyncEngineLevel — followed sources', () => {
         expect(oldContext.isStale()).toBe(true);
 
         // Neither a delayed server reply nor an old monitor result can undo reapproval.
-        await engine['handleLivePullError'](oldContext as never, DwnErrorCode.GrantAuthorizationGrantExpired);
+        await engine['handleLivePullMessage'](oldContext as never, {
+          type: 'error', error: { code: DwnErrorCode.GrantAuthorizationGrantExpired, detail: 'grant expired' },
+        } as never);
         await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' });
-        expect(await engine['pauseTargetForAuthorizationFailure'](
-          after.find(target => target.did === actorDid)!, DwnErrorCode.GrantAuthorizationGrantExpired, (): boolean => true,
-        )).toBe(false);
+        expect(await engine['handleSyncAuthorizationFailure'](actorDid, delegateDid, DwnErrorCode.GrantAuthorizationGrantExpired))
+          .toBe(false);
         expect((await engine['getSyncTargets']())).toHaveLength(5);
         expect((await engine['replicationLinkStore'].getAllLinks()).every(link => link.status === 'live')).toBe(true);
         expect(warn.notCalled).toBe(true);
@@ -1297,7 +1302,7 @@ describe('SyncEngineLevel — followed sources', () => {
     await controller.dispose();
   });
 
-  it('should resume a paused role pull when the actor delegate registration refreshes', async () => {
+  it('should park a delegated role pull after a structured remote expiry reply', async () => {
     const engine = new SyncEngineLevel({ db });
     const actorDid = 'did:example:member';
     const delegateDid = 'did:example:delegate';
@@ -1326,15 +1331,6 @@ describe('SyncEngineLevel — followed sources', () => {
         },
       },
     }]);
-    const send = (engine as any)._agent.rpc.sendDwnRequest;
-    send.onSecondCall().resolves({
-      status       : { code: 200 },
-      entries      : [],
-      drained      : true,
-      roleRecordId : followed.id,
-    });
-    sinon.stub((engine as any)._scopeClosureValidator, 'validateClosure').resolves();
-    sinon.stub(engine as any, 'tryPruneSupersededDurableLinksForRegisteredIdentity').resolves();
     sinon.stub((engine as any).targetResolver, 'withCurrentRoleGrant').callsFake(async value => value);
 
     await expect((engine as any).reconcileTarget(target)).resolves.toMatchObject({ paused: true });
@@ -1343,27 +1339,6 @@ describe('SyncEngineLevel — followed sources', () => {
       { remoteEndpoint: target.dwnUrl, status: 'paused', delegateDid },
     ]);
 
-    (engine as any)._runtime = new SyncRuntime(true);
-    const initialize = sinon.stub(engine as any, 'initializeLinkTargetWithRetry').callsFake(async value => {
-      const result = await (engine as any).reconcileTarget(value);
-      return {
-        status                 : 'active',
-        durableLinkIdentityKey : value.authorizationEpoch,
-        result,
-      };
-    });
-
-    await engine.setIdentityOptions({ did: actorDid, options });
-
-    expect(initialize.calledOnce).toBe(true);
-    expect(initialize.firstCall.args[0]).toMatchObject({ delegateDid });
-    expect(await initialize.firstCall.returnValue).toMatchObject({ result: { pullDrained: true } });
-    expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
-    expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([
-      { remoteEndpoint: target.dwnUrl, status: 'initializing', delegateDid },
-    ]);
-
-    (engine as any)._runtime.dispose();
   });
 
   it('should rebind a live role link when the actor delegate changes', async () => {

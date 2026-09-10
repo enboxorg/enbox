@@ -1,13 +1,5 @@
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 
-/** An invoked delegate grant has confirmed expiry or revocation. */
-export class SyncAuthorizationInactiveError extends Error {
-  public constructor(errorCode: string) {
-    super(`SyncEngineLevel: delegated sync authorization is inactive: ${errorCode}`);
-    this.name = 'SyncAuthorizationInactiveError';
-  }
-}
-
 /**
  * A queued `sync()` follow-up was invalidated by an engine runtime transition
  * (`startSync`/`stopSync`/`clear`/`close`) before it could run. Rejecting —
@@ -22,15 +14,20 @@ export class SyncRunCancelledError extends Error {
   }
 }
 
+const terminalAuthorizationCodes = [
+  DwnErrorCode.GrantAuthorizationGrantExpired,
+  DwnErrorCode.GrantAuthorizationGrantRevoked,
+  DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
+];
+
+/** Exact structured codes used to decide whether to inspect wallet approval status. */
+export function isTerminalSyncAuthorizationErrorCode(code: unknown): boolean {
+  return terminalAuthorizationCodes.some(candidate => code === candidate);
+}
+
 /** Authorization failures whose grants cannot recover through retry. */
 export function isTerminalSyncAuthorizationFailure(detail: string | undefined): boolean {
-  if (!detail) {
-    return false;
-  }
-
-  return detail.includes(DwnErrorCode.GrantAuthorizationGrantRevoked) ||
-    detail.includes(DwnErrorCode.GrantAuthorizationGrantExpired) ||
-    detail.includes(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
+  return detail !== undefined && terminalAuthorizationCodes.some(code => detail.includes(code));
 }
 
 /** Stable conversion for event diagnostics. */

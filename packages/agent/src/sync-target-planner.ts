@@ -165,26 +165,38 @@ export class SyncTargetPlanner {
     return targets;
   }
 
-  /** Resolve shared authorization once before materializing endpoint-specific targets. */
-  public async resolveIdentity(did: string, options: SyncIdentityOptions): Promise<RegisteredIdentityTargets> {
+  /** Shared prerequisite for endpoint planning and durable-link retention. */
+  public async resolveAuthorization(did: string, options: SyncIdentityOptions): Promise<SyncTargetResolution[] | undefined> {
     if (this._isIdentityPaused(did, options.delegateDid)) {
-      return { targets: [], unavailable: false };
+      return undefined;
     }
-    const resolver = this._getTargetResolver();
-    let resolutions: SyncTargetResolution[];
     try {
-      resolutions = await resolver.buildTargetResolutions(did, syncScopeFromProtocols(options.protocols), options);
+      return await this._getTargetResolver().buildTargetResolutions(did, syncScopeFromProtocols(options.protocols), options);
     } catch (error: unknown) {
       if (await this._handleAuthorizationFailure(did, options, error)) {
-        return { targets: [], unavailable: false };
+        return undefined;
       }
+      throw error;
+    }
+  }
+
+  /** Resolve shared authorization once before materializing endpoint-specific targets. */
+  public async resolveIdentity(did: string, options: SyncIdentityOptions): Promise<RegisteredIdentityTargets> {
+    let resolutions: SyncTargetResolution[] | undefined;
+    try {
+      resolutions = await this.resolveAuthorization(did, options);
+    } catch (error: unknown) {
       if (isDidResolutionUnavailableError(error)) {
         throw error;
       }
       this._warn(`SyncEngineLevel: Unable to resolve sync authorization for ${did}, skipping identity:`, error);
       return { targets: [], unavailable: true };
     }
-    const dwnEndpointUrls = await this._getTargetResolver().getEndpointUrls(did);
+    if (resolutions === undefined) {
+      return { targets: [], unavailable: false };
+    }
+    const resolver = this._getTargetResolver();
+    const dwnEndpointUrls = await resolver.getEndpointUrls(did);
     if (dwnEndpointUrls.length === 0) {
       return { targets: [], unavailable: true };
     }

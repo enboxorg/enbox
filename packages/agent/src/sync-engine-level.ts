@@ -5,7 +5,7 @@ import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, Messa
 
 import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
-import { BroadcastChannelWakePublisher, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
+import { BroadcastChannelWakePublisher, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 import { parseDurationInMilliseconds, runSerializedByKey, runWithCrossContextLock, sleep } from '@enbox/common';
 import { RateLimitError, SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 
@@ -82,13 +82,13 @@ import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildCurrentLinkIdentityKey, buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
-import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, singleProtocolForSyncScope, syncEventScope } from './types/sync.js';
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor } from './sync-messages.js';
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { isTerminalSyncAuthorizationFailure, SyncAuthorizationInactiveError, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
+import { isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from './sync-target-resolver.js';
 import { projectReplicationLinks, projectSyncStatus } from './sync-status-reporter.js';
@@ -103,7 +103,6 @@ type LinkSyncTarget = SyncTarget & { linkKey: string };
 
 type PausedIdentityAuthorization = {
   delegateDid: string;
-  pause: Promise<void>;
 };
 
 type LivePullContext = {
@@ -930,34 +929,13 @@ export class SyncEngineLevel implements SyncEngine {
     return this.isIdentityPaused(did, target.delegateDid);
   }
 
-  /** An invoked grant failure does not prove that the newest wallet approval is inactive. */
-  private async pauseTargetForAuthorizationFailure(
-    target: SyncTarget,
-    errorCode: string | undefined,
-    isCurrent: () => boolean,
-  ): Promise<boolean> {
-    if (target.delegateDid === undefined) {
-      return false;
-    }
-    if (errorCode !== DwnErrorCode.GrantAuthorizationGrantExpired &&
-      errorCode !== DwnErrorCode.GrantAuthorizationGrantRevoked &&
-      errorCode !== DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed) {
-      return false;
-    }
-    const did = target.authorization.kind === 'role' ? target.authorization.actorDid : target.did;
-    return !isCurrent() || this.pauseInactiveIdentity(did, target.delegateDid);
-  }
-
   /** Failed inspection or active-but-incomplete coverage never establishes expiry. */
   private async handleSyncAuthorizationFailure(did: string, delegateDid: string | undefined, error: unknown): Promise<boolean> {
-    if (delegateDid === undefined ||
-      !(error instanceof SyncProtocolRootPermissionGrantMissingError || error instanceof PermissionGrantNotFoundError)) {
+    const errorCode = error instanceof DwnError ? error.code : error;
+    if (delegateDid === undefined || !(error instanceof SyncProtocolRootPermissionGrantMissingError ||
+      error instanceof PermissionGrantNotFoundError || isTerminalSyncAuthorizationErrorCode(errorCode))) {
       return false;
     }
-    return this.pauseInactiveIdentity(did, delegateDid);
-  }
-
-  private async pauseInactiveIdentity(did: string, delegateDid: string): Promise<boolean> {
     if (this.isIdentityPaused(did, delegateDid)) {
       return true;
     }
@@ -973,45 +951,33 @@ export class SyncEngineLevel implements SyncEngine {
     return true;
   }
 
-  /** Coalesce observations onto the existing per-link pause and cancellation fences. */
-  private pauseIdentityAuthorization(did: string, delegateDid: string): Promise<void> {
-    const existing = this._pausedIdentities.get(did);
-    if (existing?.delegateDid === delegateDid) {
-      return existing.pause;
+  /** Park the registered delegate once, using the existing per-link cancellation fences. */
+  private async pauseIdentityAuthorization(did: string, delegateDid: string): Promise<void> {
+    if (this.isIdentityPaused(did, delegateDid)) {
+      return;
     }
-    const entry: PausedIdentityAuthorization = {
-      delegateDid,
-      pause: Promise.resolve().then(async (): Promise<void> => {
-        const isCurrent = (): boolean => this._pausedIdentities.get(did) === entry;
-        const belongsToIdentity = (link: ReplicationLinkState): boolean => link.delegateDid === delegateDid &&
-          (link.authorization.kind === 'role' ? link.authorization.actorDid === did : link.tenantDid === did);
-        if (!isCurrent()) {
-          return;
-        }
-        this.cancelIdentityTimers(did);
-        const pauses = [...this._linkControllers.values()]
-          .filter(({ link }) => belongsToIdentity(link))
-          .map(({ linkKey, link }) => this.transitionToPaused(linkKey, link, false));
-        await Promise.all([...pauses, (async (): Promise<void> => {
-          const links = await this.replicationLinkStore.getAllLinks();
-          if (isCurrent()) {
-            await Promise.all(links.filter(belongsToIdentity).map((link): Promise<void> => {
-              const linkKey = this.getReplicationLinkKey(syncTargetFromLink(link), link);
-              this._runtime.cancelTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
-              return this.transitionToPaused(linkKey, this.getLinkController(linkKey)?.link ?? link, false);
-            }));
-          }
-        })()]);
-      }).catch((error: unknown): never => {
-        if (this._pausedIdentities.get(did) === entry) {
-          this._pausedIdentities.delete(did);
-        }
-        throw error;
-      }),
-    };
-    this._pausedIdentities.set(did, entry);
+    const authorization = { delegateDid };
+    this._pausedIdentities.set(did, authorization);
     this.invalidateSyncTargetsCache();
-    return entry.pause;
+    this.cancelIdentityTimers(did);
+    try {
+      const links = await this.replicationLinkStore.getAllLinks();
+      if (this._pausedIdentities.get(did) !== authorization) {
+        return;
+      }
+      await Promise.all(links.filter(link => link.delegateDid === delegateDid &&
+        (link.authorization.kind === 'role' ? link.authorization.actorDid === did : link.tenantDid === did)
+      ).map((link): Promise<void> => {
+        const linkKey = this.getReplicationLinkKey(syncTargetFromLink(link), link);
+        this._runtime.cancelTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
+        return this._linkRecoveryCoordinator.transitionToPaused(linkKey, this.getLinkController(linkKey)?.link ?? link);
+      }));
+    } catch (error: unknown) {
+      if (this._pausedIdentities.get(did) === authorization) {
+        this._pausedIdentities.delete(did);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -2505,6 +2471,10 @@ export class SyncEngineLevel implements SyncEngine {
       if (runtime.disposed) {
         return { status: LinkInitializationStatus.Failed };
       }
+      const did = target.authorization.kind === 'role' ? target.authorization.actorDid : target.did;
+      if (await this.handleSyncAuthorizationFailure(did, target.delegateDid, error)) {
+        return { status: LinkInitializationStatus.Failed };
+      }
       return this.handleInitializeLinkTargetError(target, link, controller, error);
     }
   }
@@ -2808,11 +2778,6 @@ export class SyncEngineLevel implements SyncEngine {
       return { status: LinkInitializationStatus.Failed };
     }
 
-    const did = target.authorization.kind === 'role' ? target.authorization.actorDid : target.did;
-    if (error instanceof SyncAuthorizationInactiveError || await this.handleSyncAuthorizationFailure(did, target.delegateDid, error)) {
-      return { status: LinkInitializationStatus.Failed };
-    }
-
     if (
       target.authorization.kind === 'role' &&
           SyncEngineLevel.isRoleLinkPauseError(error)
@@ -3052,9 +3017,7 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       targets.push(...(await this._targetPlanner.resolveIdentity(did, options)).targets);
     } catch (error) {
-      if (!this.deferDidResolutionFailure(error)) {
-        console.error(`SyncEngineLevel: Live-sync hot-add planning failed for ${did}; the settle check retries link initialization`, error);
-      }
+      console.error(`SyncEngineLevel: Live-sync hot-add planning failed for ${did}; the settle check retries link initialization`, error);
       return new Set();
     }
     if (targets.length === 0) { return new Set(); }
@@ -3162,23 +3125,12 @@ export class SyncEngineLevel implements SyncEngine {
         await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
       }
     } catch (error: unknown) {
-      if (!this.deferDidResolutionFailure(error)) {
-        console.warn(`SyncEngineLevel: Failed to prune superseded durable links for ${did}`, error);
-      }
+      console.warn(`SyncEngineLevel: Failed to prune superseded durable links for ${did}`, error);
     }
   }
 
   private async getDurableLinkIdentityKeysForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<Set<string> | undefined> {
-    if (this.isIdentityPaused(did, options.delegateDid)) {
-      return undefined;
-    }
-    const scope = syncScopeFromProtocols(options.protocols);
-    const resolutions = await this.targetResolver.buildTargetResolutions(did, scope, options).catch(async (error: unknown) => {
-      if (await this.handleSyncAuthorizationFailure(did, options.delegateDid, error)) {
-        return undefined;
-      }
-      throw error;
-    });
+    const resolutions = await this._targetPlanner.resolveAuthorization(did, options);
     if (resolutions === undefined) {
       return undefined;
     }
@@ -3339,11 +3291,8 @@ export class SyncEngineLevel implements SyncEngine {
         resubscribeFactory,
       },
     }) as MessagesSubscribeReply;
-    if (reply.status.code === 401 && await this.pauseTargetForAuthorizationFailure(target, reply.status.errorCode, (): boolean => !isStale())) {
-      return false;
-    }
     if (reply.status.code !== 200 || !reply.subscription) {
-      throw new Error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
+      throw SyncEngineLevel.subscriptionError(reply.status, `${did} -> ${dwnUrl}`);
     }
     try {
       SyncEngineLevel.assertRoleRecordId(target, reply.roleRecordId);
@@ -3600,12 +3549,12 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async handleLivePullError(context: LivePullContext, errorCode: string): Promise<void> {
-    if (await this.pauseTargetForAuthorizationFailure(syncTargetFromLink(context.link), errorCode, (): boolean => !context.isStale())) {
-      return;
-    }
     const roleAuthorization = context.link.authorization.kind === 'role'
       ? context.link.authorization
       : undefined;
+    if (await this.handleSyncAuthorizationFailure(roleAuthorization?.actorDid ?? context.did, context.link.delegateDid, errorCode)) {
+      return;
+    }
     if (roleAuthorization !== undefined && SyncEngineLevel.isMissingRoleAuthorization(errorCode)) {
       console.warn(
         `SyncEngineLevel: role authorization for ${context.did} -> ${context.dwnUrl} is no longer active — ` +
@@ -3776,11 +3725,8 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     const reply = response.reply as MessagesSubscribeReply;
-    if (reply.status.code === 401 && await this.pauseTargetForAuthorizationFailure(target, reply.status.errorCode, (): boolean => !isPushStale())) {
-      return false;
-    }
     if (reply.status.code !== 200 || !reply.subscription) {
-      throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
+      throw SyncEngineLevel.subscriptionError(reply.status, did);
     }
 
     const close = async (): Promise<void> => { await reply.subscription!.close(); };
@@ -3799,6 +3745,11 @@ export class SyncEngineLevel implements SyncEngine {
     return true;
   }
 
+  private static subscriptionError(status: MessagesSubscribeReply['status'], target: string): Error {
+    const detail = `SyncEngineLevel: MessagesSubscribe failed for ${target}: ${status.code} ${status.detail}`;
+    return status.errorCode === undefined ? new Error(detail) : new DwnError(status.errorCode, detail);
+  }
+
   /** Coalesce one local feed event into the session's durable push work. */
   private async handleLocalPushMessage(
     controller: SyncLinkController,
@@ -3810,7 +3761,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
     if (message.type === 'error') {
       const { code } = message.error;
-      if (await this.pauseTargetForAuthorizationFailure(syncTargetFromLink(controller.link), code, (): boolean => !isStale())) {
+      if (await this.handleSyncAuthorizationFailure(controller.link.tenantDid, controller.link.delegateDid, code)) {
         return;
       }
       if (isTerminalSyncAuthorizationFailure(code)) {
@@ -4003,7 +3954,7 @@ export class SyncEngineLevel implements SyncEngine {
       return await this._durableFeedReconciler.reconcile(target, link, options, shouldContinue);
     } catch (error: unknown) {
       const did = target.authorization.kind === 'role' ? target.authorization.actorDid : target.did;
-      if (error instanceof SyncAuthorizationInactiveError || await this.handleSyncAuthorizationFailure(did, target.delegateDid, error)) {
+      if (await this.handleSyncAuthorizationFailure(did, target.delegateDid, error)) {
         return this.isTargetPaused(target) ? { paused: true } : { aborted: true };
       }
       if (
@@ -4039,7 +3990,7 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       return await this._durableFeedReconciler.verifyConvergence(target, shouldContinue);
     } catch (error: unknown) {
-      if (error instanceof SyncAuthorizationInactiveError) {
+      if (await this.handleSyncAuthorizationFailure(target.did, target.delegateDid, error)) {
         return this.isTargetPaused(target) ? { paused: true } : { aborted: true };
       }
       throw error;
@@ -4095,7 +4046,6 @@ export class SyncEngineLevel implements SyncEngine {
     source,
     target,
   }: SyncDurableFeedQuery): Promise<MessagesQueryReply> {
-    const topologyGeneration = this._targetPlanner.topologyGeneration;
     const currentTarget = await this.targetResolver.withCurrentRoleGrant(target);
     const roleAuthorization = currentTarget.authorization.kind === 'role'
       ? currentTarget.authorization
@@ -4118,15 +4068,8 @@ export class SyncEngineLevel implements SyncEngine {
       ? queryLocalMessageFeed(params)
       : queryRemoteMessageFeed({ ...params, dwnUrl: currentTarget.dwnUrl });
     const result = await reply;
-    if (result.status.code === 401) {
-      const paused = await this.pauseTargetForAuthorizationFailure(
-        currentTarget,
-        result.status.errorCode,
-        (): boolean => topologyGeneration === this._targetPlanner.topologyGeneration,
-      );
-      if (paused) {
-        throw new SyncAuthorizationInactiveError(result.status.errorCode!);
-      }
+    if (result.status.code === 401 && isTerminalSyncAuthorizationErrorCode(result.status.errorCode)) {
+      throw new DwnError(result.status.errorCode!, result.status.detail);
     }
     if (result.status.code === 200) {
       SyncEngineLevel.assertRoleRecordId(currentTarget, result.roleRecordId);

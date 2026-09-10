@@ -3,7 +3,7 @@ import type { AdmitOutcome } from '../src/sync-admit-closure.js';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../src/sync-admit-closure.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -65,9 +65,8 @@ describe('admitClosure', () => {
     const protocol = 'https://example.com/protocol';
     const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
     const update = await TestDataGenerator.generateFromRecordsWrite({
-      author           : initial.author,
-      existingWrite    : initial.recordsWrite,
-      messageTimestamp : Time.createOffsetTimestamp({ seconds: 1 }, initial.message.descriptor.messageTimestamp),
+      author        : initial.author,
+      existingWrite : initial.recordsWrite,
     });
     const rootCid = await Message.getCid(update.message);
     const agent = createMockAgent();
