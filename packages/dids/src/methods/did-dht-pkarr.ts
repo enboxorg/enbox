@@ -48,9 +48,7 @@ function pkarrUrl(publicKeyBytes: Uint8Array, gatewayUri: string): string {
  * timeouts, etc.) propagate unchanged so callers can map them to `internalError` as before.
  *
  * `allowPrivateGatewayUri` widens the validator to accept loopback / private targets — useful
- * for development and CI relays — but native `fetch()` will still refuse non-network schemes
- * for redirect targets, so `file:`, `javascript:`, etc. cannot be smuggled through.
- * Enabling the bypass also disables per-hop redirect validation; only opt in for trusted local relays.
+ * for development and CI relays — while retaining scheme validation and the redirect limit.
  */
 async function pkarrFetch(
   url: string,
@@ -58,12 +56,12 @@ async function pkarrFetch(
   allowPrivateGatewayUri: boolean,
   fetchFn: (url: string, init: RequestInit) => Promise<Response> = fetch,
 ): Promise<Response> {
-  if (allowPrivateGatewayUri) {
-    return fetchFn(url, init);
-  }
-
   try {
-    return await fetchPublicUrl(url, init, { description: 'Pkarr gateway URL', fetchFn });
+    return await fetchPublicUrl(url, init, {
+      description       : 'Pkarr gateway URL',
+      allowPrivateHosts : allowPrivateGatewayUri,
+      fetchFn,
+    });
   } catch (error: any) {
     if (error instanceof PublicUrlValidationError) {
       throw new DidError(DidErrorCode.InvalidGatewayUri, error.message);

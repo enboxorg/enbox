@@ -135,54 +135,56 @@ describe('UniversalResolver', () => {
         didDocumentMetadata   : {},
       };
 
-      it.each([
-        ['fetch rejection', async (): Promise<Response> => { throw new TypeError('fetch failed'); }, undefined, 1],
-        ['interrupted body', async (): Promise<Response> => new Response(new ReadableStream({
-          start(controller): void { controller.error(new TypeError('connection lost')); },
-        })), undefined, 1],
-        ['absent DID', async (): Promise<Response> => new Response(null, { status: 404 }), DidErrorCode.NotFound, 1],
-        ['redirect loop', async (): Promise<Response> => new Response(null, {
-          status: 302, headers: { location: 'https://gateway.example.com/loop' },
-        }), DidErrorCode.InternalError, 6],
-        ['malformed redirect URL', async (): Promise<Response> => new Response(null, {
-          status: 302, headers: { location: 'http://[' },
-        }), DidErrorCode.InternalError, 1],
-      ] as const)('only uses retained data for transport failures: %s', async (_scenario, fetchResult, expectedError, requests) => {
-        const ownedDid = await DidDht.create({ options: { publish: false } });
-        const retained = { didDocument: ownedDid.document, didDocumentMetadata: {}, didResolutionMetadata: {} };
-        const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
-        const cache = new DidResolverCacheMemory({ ttl: '1ms' });
-        await cache.set(ownedDid.uri, retained);
+      describe.each([false, true])('with private gateway access set to %s', (allowPrivateGatewayUri) => {
+        it.each([
+          ['fetch rejection', async (): Promise<Response> => { throw new TypeError('fetch failed'); }, undefined, 1],
+          ['interrupted body', async (): Promise<Response> => new Response(new ReadableStream({
+            start(controller): void { controller.error(new TypeError('connection lost')); },
+          })), undefined, 1],
+          ['absent DID', async (): Promise<Response> => new Response(null, { status: 404 }), DidErrorCode.NotFound, 1],
+          ['redirect loop', async (): Promise<Response> => new Response(null, {
+            status: 302, headers: { location: '/loop' },
+          }), DidErrorCode.InternalError, 6],
+          ['malformed redirect URL', async (): Promise<Response> => new Response(null, {
+            status: 302, headers: { location: 'http://[' },
+          }), DidErrorCode.InternalError, 1],
+        ] as const)('only uses retained data for transport failures: %s', async (_scenario, fetchResult, expectedError, requests) => {
+          const ownedDid = await DidDht.create({ options: { publish: false } });
+          const retained = { didDocument: ownedDid.document, didDocumentMetadata: {}, didResolutionMetadata: {} };
+          const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
+          const cache = new DidResolverCacheMemory({ ttl: '1ms' });
+          await cache.set(ownedDid.uri, retained);
 
-        try {
-          nowSpy.mockReturnValue(1_001);
-          const fetchStub = spyOn(globalThis, 'fetch').mockImplementation(fetchResult);
-          const resolver = new UniversalResolver({
-            cache,
-            didResolvers: [{
-              methodName : 'dht',
-              resolve    : (didUri: string): Promise<DidResolutionResult> => DidDht.resolve(didUri, {
-                gatewayUri             : 'https://gateway.example.com',
-                allowPrivateGatewayUri : false,
-              }),
-            }],
-          });
+          try {
+            nowSpy.mockReturnValue(1_001);
+            const fetchStub = spyOn(globalThis, 'fetch').mockImplementation(fetchResult);
+            const resolver = new UniversalResolver({
+              cache,
+              didResolvers: [{
+                methodName : 'dht',
+                resolve    : (didUri: string): Promise<DidResolutionResult> => DidDht.resolve(didUri, {
+                  gatewayUri: allowPrivateGatewayUri ? 'http://127.0.0.1:7527' : 'https://gateway.example.com',
+                  allowPrivateGatewayUri,
+                }),
+              }],
+            });
 
-          const result = await resolver.resolve(ownedDid.uri);
+            const result = await resolver.resolve(ownedDid.uri);
 
-          if (expectedError === undefined) {
-            expect(result).toEqual(retained);
-          } else {
-            expect(result.didResolutionMetadata.error).toBe(expectedError);
-            expect(result.didResolutionMetadata.errorCause).toBeUndefined();
-            expect(result.didDocument).toBeNull();
+            if (expectedError === undefined) {
+              expect(result).toEqual(retained);
+            } else {
+              expect(result.didResolutionMetadata.error).toBe(expectedError);
+              expect(result.didResolutionMetadata.errorCause).toBeUndefined();
+              expect(result.didDocument).toBeNull();
+            }
+            expect(fetchStub).toHaveBeenCalledTimes(requests);
+            expect(await cache.getRetained(ownedDid.uri)).toEqual(retained);
+          } finally {
+            await cache.clear();
+            nowSpy.mockRestore();
           }
-          expect(fetchStub).toHaveBeenCalledTimes(requests);
-          expect(await cache.getRetained(ownedDid.uri)).toEqual(retained);
-        } finally {
-          await cache.clear();
-          nowSpy.mockRestore();
-        }
+        });
       });
 
       it('replaces a retained result after a successful refresh', async () => {
