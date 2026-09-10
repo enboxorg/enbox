@@ -32,8 +32,8 @@ export type SyncTargetPlannerParams = {
   identityStore: SyncIdentityStore;
   sourceStore: FollowedSyncSourceStore;
   now?: () => number;
-  isIdentityPaused?: (did: string, delegateDid?: string) => boolean;
-  handleAuthorizationFailure?: (did: string, options: SyncIdentityOptions, error: unknown) => Promise<boolean>;
+  isIdentityPaused: (did: string, delegateDid?: string) => boolean;
+  handleAuthorizationFailure: (did: string, options: SyncIdentityOptions, error: unknown) => Promise<boolean>;
   warn?: (message: string, error: unknown) => void;
 };
 
@@ -65,8 +65,8 @@ export class SyncTargetPlanner {
   private readonly _cacheTtlMs: number;
   private readonly _getTargetResolver: () => SyncTargetPlanningResolver;
   private readonly _identityStore: SyncIdentityStore;
-  private readonly _isIdentityPaused: NonNullable<SyncTargetPlannerParams['isIdentityPaused']>;
-  private readonly _handleAuthorizationFailure: NonNullable<SyncTargetPlannerParams['handleAuthorizationFailure']>;
+  private readonly _isIdentityPaused: SyncTargetPlannerParams['isIdentityPaused'];
+  private readonly _handleAuthorizationFailure: SyncTargetPlannerParams['handleAuthorizationFailure'];
   private readonly _sourceStore: FollowedSyncSourceStore;
   private _lastResolutionComplete = false;
   private readonly _now: () => number;
@@ -77,8 +77,8 @@ export class SyncTargetPlanner {
     cacheTtlMs = SyncTargetPlanner.DEFAULT_CACHE_TTL_MS,
     getTargetResolver,
     identityStore,
-    isIdentityPaused = (): boolean => false,
-    handleAuthorizationFailure = async (): Promise<boolean> => false,
+    isIdentityPaused,
+    handleAuthorizationFailure,
     sourceStore,
     now = (): number => Date.now(),
     warn = (message, error): void => { console.warn(message, error); },

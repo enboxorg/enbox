@@ -128,7 +128,9 @@ function createPlanner({
     getTargetResolver,
     identityStore,
     sourceStore,
-    now: (): number => currentTime,
+    isIdentityPaused           : sinon.stub().returns(false),
+    handleAuthorizationFailure : sinon.stub().resolves(false),
+    now                        : (): number => currentTime,
     warn,
   });
 

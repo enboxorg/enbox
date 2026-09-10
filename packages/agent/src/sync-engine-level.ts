@@ -101,10 +101,6 @@ export type SyncEngineLevelParams = {
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
 
-type PausedIdentityAuthorization = {
-  delegateDid: string;
-};
-
 type LivePullContext = {
   controller: SyncLinkController;
   did: string;
@@ -266,7 +262,7 @@ export class SyncEngineLevel implements SyncEngine {
   private _followedSourceRefreshPending = false;
 
   /** Intake remains parked until the identity's registration is refreshed. */
-  private readonly _pausedIdentities = new Map<string, PausedIdentityAuthorization>();
+  private readonly _pausedIdentities = new Map<string, { delegateDid: string }>();
 
   /** Last catalog state applied to this engine's events and replication sessions. */
   private readonly _followedSourceSnapshot: Map<string, FollowedSyncSource> = new Map();
@@ -4069,7 +4065,7 @@ export class SyncEngineLevel implements SyncEngine {
       : queryRemoteMessageFeed({ ...params, dwnUrl: currentTarget.dwnUrl });
     const result = await reply;
     if (result.status.code === 401 && isTerminalSyncAuthorizationErrorCode(result.status.errorCode)) {
-      throw new DwnError(result.status.errorCode!, result.status.detail);
+      throw new DwnError(result.status.errorCode, result.status.detail);
     }
     if (result.status.code === 200) {
       SyncEngineLevel.assertRoleRecordId(currentTarget, result.roleRecordId);

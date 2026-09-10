@@ -14,15 +14,15 @@ export class SyncRunCancelledError extends Error {
   }
 }
 
-const terminalAuthorizationCodes = [
+const terminalAuthorizationCodes: readonly string[] = [
   DwnErrorCode.GrantAuthorizationGrantExpired,
   DwnErrorCode.GrantAuthorizationGrantRevoked,
   DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
 ];
 
 /** Exact structured codes used to decide whether to inspect wallet approval status. */
-export function isTerminalSyncAuthorizationErrorCode(code: unknown): boolean {
-  return terminalAuthorizationCodes.some(candidate => code === candidate);
+export function isTerminalSyncAuthorizationErrorCode(code: unknown): code is string {
+  return typeof code === 'string' && terminalAuthorizationCodes.includes(code);
 }
 
 /** Authorization failures whose grants cannot recover through retry. */
