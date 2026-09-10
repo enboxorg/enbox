@@ -864,8 +864,10 @@ export interface SyncEngine {
    * Recheck a confirmed inactive wallet approval and park its delegated work.
    * Preserves registration and followed contexts; fresh registration resumes sync.
    * An observation of an older approval cannot pause a newer one.
+   * Returns whether the observed approval is still current and inactive,
+   * even when no registered work needs parking.
    */
-  pauseIdentity(params: { did: string; delegateDid: string; connectSessionId: string }): Promise<void>;
+  pauseIdentity(params: { did: string; delegateDid: string; connectSessionId: string }): Promise<boolean>;
   /**
    * Remove an identity from the SyncEngine, stopping sync for that identity.
    *

@@ -899,21 +899,23 @@ export class SyncEngineLevel implements SyncEngine {
     );
   }
 
-  public pauseIdentity({ did, delegateDid, connectSessionId }: {
+  public async pauseIdentity({ did, delegateDid, connectSessionId }: {
     did: string;
     delegateDid: string;
     connectSessionId: string;
-  }): Promise<void> {
-    return this.runExclusiveIdentityMutation(did, async (): Promise<void> => {
-      const options = await this._identityStore.get(did);
-      if (options?.delegateDid !== delegateDid || this.isIdentityPaused(did, delegateDid)) {
-        return;
-      }
+  }): Promise<boolean> {
+    let confirmed = false;
+    await this.runExclusiveIdentityMutation(did, async (): Promise<void> => {
       const status = await fetchConnectionStatus({ connectedDid: did, delegateDid, permissions: this._permissionsApi });
       if (status.connectSessionId === connectSessionId && (status.state === 'expired' || status.state === 'revoked')) {
-        await this.pauseIdentityAuthorization(did, delegateDid);
+        const options = await this._identityStore.get(did);
+        if (options?.delegateDid === delegateDid) {
+          await this.pauseIdentityAuthorization(did, delegateDid);
+        }
+        confirmed = true;
       }
     }, {});
+    return confirmed;
   }
 
   private isIdentityPaused(did: string, delegateDid?: string): boolean {

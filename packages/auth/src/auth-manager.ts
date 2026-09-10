@@ -1435,12 +1435,12 @@ export class AuthManager {
 
     if (status.state === 'expired' || status.state === 'revoked') {
       const session = this._session;
-      await this._userAgent.sync.pauseIdentity({
+      const confirmed = await this._userAgent.sync.pauseIdentity({
         did              : status.connectedDid!,
         delegateDid      : status.delegateDid!,
         connectSessionId : status.connectSessionId!,
       });
-      if (this._connectionMonitor !== monitor || this._isConnecting || this._session !== session) {
+      if (!confirmed || this._connectionMonitor !== monitor || this._isConnecting || this._session !== session) {
         return;
       }
     }

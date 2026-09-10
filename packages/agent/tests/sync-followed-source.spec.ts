@@ -295,7 +295,7 @@ describe('SyncEngineLevel — followed sources', () => {
           } as never);
         }
         if (scenario === 'monitor expiry') {
-          await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' });
+          expect(await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' })).toBe(true);
         }
         if (scenario === 'followed expiry') {
           const role = [...engine['_linkControllers'].values()].find(({ link }) => link.authorization.kind === 'role')!;
@@ -330,6 +330,7 @@ describe('SyncEngineLevel — followed sources', () => {
         for (const followed of sources) {
           expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
         }
+        expect(await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' })).toBe(true);
 
         // A failed refresh leaves the dormant registration and links intact.
         validate.rejects(new Error('approval not installed'));
@@ -339,6 +340,8 @@ describe('SyncEngineLevel — followed sources', () => {
         revoked = false;
         clock.setSystemTime(Date.parse('2026-07-13T12:02:00Z'));
         grants = approval('fresh', '2026-07-13T12:02:00.000000Z', '2026-07-13T13:00:00.000000Z');
+        // Another context's grants can arrive before its registration wake clears the pause.
+        expect(await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' })).toBe(false);
         await engine.setIdentityOptions({ did: actorDid, options });
         const after = await engine['getSyncTargets']();
         expect(after).toHaveLength(5);
@@ -346,11 +349,10 @@ describe('SyncEngineLevel — followed sources', () => {
         expect((await engine['replicationLinkStore'].getAllLinks()).every(link => link.status === 'live')).toBe(true);
         expect(oldContext.isStale()).toBe(true);
 
-        // Neither a delayed server reply nor an old monitor result can undo reapproval.
+        // A delayed server reply cannot undo reapproval.
         await engine['handleLivePullMessage'](oldContext as never, {
           type: 'error', error: { code: DwnErrorCode.GrantAuthorizationGrantExpired, detail: 'grant expired' },
         } as never);
-        await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' });
         expect(await engine['handleSyncAuthorizationFailure'](actorDid, delegateDid, DwnErrorCode.GrantAuthorizationGrantExpired))
           .toBe(false);
         expect((await engine['getSyncTargets']())).toHaveLength(5);
@@ -363,6 +365,26 @@ describe('SyncEngineLevel — followed sources', () => {
       }
     },
   );
+
+  it('should confirm an expired approval even when no sync work is registered', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:member';
+    const delegateDid = 'did:example:delegate';
+    const dateExpires = '2020-01-01T01:00:00.000000Z';
+    sinon.stub(engine['_permissionsApi'], 'fetchGrants').resolves([{
+      grant: {
+        id             : 'expired-grant',
+        grantor        : did,
+        grantee        : delegateDid,
+        dateExpires,
+        connectSession : { id: 'approval', createdAt: '2020-01-01T00:00:00.000000Z', expiresAt: dateExpires },
+      },
+    }]);
+
+    expect(await engine.pauseIdentity({ did, delegateDid, connectSessionId: 'approval' })).toBe(true);
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+    expect(await engine['replicationLinkStore'].getAllLinks()).toEqual([]);
+  });
 
   it('should retain a link when expiry is confirmed while its initialization creates durable state', async () => {
     const engine = new SyncEngineLevel({ db });

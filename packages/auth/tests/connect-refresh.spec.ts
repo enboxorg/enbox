@@ -732,6 +732,34 @@ describe('delegated connection lifecycle', () => {
       }
     });
 
+    test('does not publish expiry or auto-refresh when sync rejects the approval as stale', async () => {
+      const clock = sinon.useFakeTimers();
+      const agent = createMockAgent();
+      const pause = sinon.stub(agent.sync, 'pauseIdentity').resolves(false);
+      const manager = createTestManager(agent);
+      const session = manager.session;
+      sinon.stub(manager, 'getConnectionStatus').resolves({
+        state            : 'expired',
+        connectSessionId : 'old-session',
+        connectedDid     : OWNER_DID,
+        delegateDid      : DELEGATE_DID,
+      });
+      const expired = sinon.spy();
+      manager.on('connection-expired', expired);
+      const refresh = sinon.stub(manager as never, '_refresh').resolves(session);
+      const stop = manager.startConnectionMonitor({ intervalMs: 1000, autoRefresh: { protocols: PROTOCOLS } });
+      try {
+        await clock.tickAsync(0);
+        expect(pause.calledOnce).toBe(true);
+        expect(manager.session).toBe(session);
+        expect(expired.notCalled).toBe(true);
+        expect(refresh.notCalled).toBe(true);
+      } finally {
+        stop();
+        clock.restore();
+      }
+    });
+
     test('reports revoked sessions as invalid but never auto-refreshes them', async () => {
       const clock = sinon.useFakeTimers();
       const agent = createMockAgent();
