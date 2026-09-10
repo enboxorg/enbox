@@ -45,8 +45,8 @@ export interface AgentDataStore<TStoreObject> {
 export class DwnDataStoreReadError extends Error {
   public readonly status: Readonly<Status>;
 
-  public constructor(storeName: string, recordId: string, status: Status) {
-    super(`${storeName}: Failed to read data from DWN for: ${recordId} (${status.code}): ${status.detail}`);
+  public constructor(storeName: string, recordOrProtocol: string, status: Status) {
+    super(`${storeName}: Failed to read data from DWN for: ${recordOrProtocol} (${status.code}): ${status.detail}`);
     this.name = 'DwnDataStoreReadError';
     this.status = { ...status };
   }
@@ -250,9 +250,6 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
     agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<TStoreObject[]> {
-    // Clear the index since it will be rebuilt from the query results.
-    this._index.clear();
-
     // Query the DWN for all stored objects.
     const { reply: queryReply } = await agent.dwn.processRequest({
       author        : tenantDid,
@@ -260,6 +257,13 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
       messageType   : DwnInterface.RecordsQuery,
       messageParams : { filter: { ...this._recordProperties } }
     });
+
+    if (queryReply.status.code !== 200) {
+      throw new DwnDataStoreReadError(this.name, this._recordProperties.protocol, queryReply.status);
+    }
+
+    // A failed query must not erase the last successfully built index.
+    this._index.clear();
 
     // Loop through all of the stored records and accumulate the store objects.
     const storedObjects: TStoreObject[] = [];

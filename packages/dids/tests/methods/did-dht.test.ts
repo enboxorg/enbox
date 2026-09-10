@@ -892,6 +892,7 @@ describe('DidDht', () => {
       const didResolutionResult = await DidDht.resolve(did);
 
       expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'notFound');
+      expect(didResolutionResult.didResolutionMetadata.errorCause).toBeUndefined();
     });
 
     it('does not fetch while explicitly offline and allows a fresh fetch after coming online', async () => {
@@ -915,6 +916,25 @@ describe('DidDht', () => {
         expect(onlineResult.didResolutionMetadata.errorCause).toBeUndefined();
       } finally {
         navigatorOnline.restore();
+      }
+    });
+
+    it.each([false, true])('preserves network failure identity with private gateway access set to %s', async (allowPrivateGatewayUri) => {
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      fetchStub.mockRejectedValue(new TypeError('fetch failed'));
+
+      const unavailable = await DidDht.resolve(did, { allowPrivateGatewayUri });
+      expect(unavailable.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
+      expect(unavailable.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
+    });
+
+    it('distinguishes temporary gateway responses from an absent DID', async () => {
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      for (const status of [408, 429, 503]) {
+        fetchStub.mockResolvedValue(new Response(null, { status }));
+        const result = await DidDht.resolve(did);
+        expect(result.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
+        expect(result.didResolutionMetadata.errorCause).toBe(DidResolutionErrorCause.NetworkUnavailable);
       }
     });
 
@@ -1095,6 +1115,7 @@ describe('DidDht', () => {
       const didResolutionResult = await DidDht.resolve(did);
 
       expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'invalidDidDocumentLength');
+      expect(didResolutionResult.didResolutionMetadata.errorCause).toBeUndefined();
     });
 
     it('returns a invalidDidDocumentLength error if the Pkarr relay returns larger than the 1072 byte maximum', async () => {

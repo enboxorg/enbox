@@ -512,16 +512,22 @@ describe('AgentDataStore', () => {
           // since we are writing directly to the dwn we first initialize the storage protocol
           await (testStore as DwnDataStore<PortableDid>)['initialize']({ agent: testHarness.agent });
 
-          // Stub the DWN API to return a failed response.
-          const dwnApiStub = spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
-            messageCid : 'test-cid',
-            message    : {} as RecordsWriteMessage,
-            reply      : {
-              status: {
-                code   : 401,
-                detail : 'Not Authorized'
-              }
+          // Fail only the write; the preceding record lookup must succeed.
+          const processRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
+          const dwnApiStub = spyOn(testHarness.agent.dwn, 'processRequest').mockImplementation(async (request) => {
+            if (request.messageType !== DwnInterface.RecordsWrite) {
+              return processRequest(request);
             }
+            return {
+              messageCid : 'test-cid',
+              message    : {} as RecordsWriteMessage,
+              reply      : {
+                status: {
+                  code   : 401,
+                  detail : 'Not Authorized'
+                }
+              }
+            };
           });
 
           try {

@@ -4,6 +4,8 @@ import type { SyncFeedConvergenceManager } from './sync-feed-convergence-manager
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, SyncDirection, SyncRunOptions } from './types/sync.js';
 
+import { isDidResolutionUnavailableError } from './did-resolution-error.js';
+
 export type { SyncRunOptions } from './types/sync.js';
 
 export interface SyncRunCoordinatorOperations {
@@ -26,11 +28,13 @@ export type SyncRunCoordinatorParams = {
 
 type SyncTargetGroupRunResult = {
   attempted: boolean;
+  cause?: unknown;
   dwnUrl: string;
   succeeded: boolean;
 };
 
 type SyncTargetGroupSummary = {
+  cause?: unknown;
   failedUrls: string[];
   groupsFailed: number;
   groupsSucceeded: number;
@@ -57,7 +61,7 @@ export class SyncRunCoordinator {
 
   /** Run all current targets, concurrently by endpoint and sequentially within each endpoint. */
   public async run(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
-    let targets = await this._operations.getTargets();
+    let targets = await this.getTargets();
     if (options?.did !== undefined) {
       // A followed target is hosted by its source DID but belongs to the
       // member identity that invokes its role authorization.
@@ -75,13 +79,24 @@ export class SyncRunCoordinator {
 
   /** Probe all current targets and reconcile only feeds whose exact fingerprints differ. */
   public async settle(): Promise<void> {
-    const targets = await this._operations.getTargets();
+    const targets = await this.getTargets();
     const summary = await this.runTargetGroups(
       targets,
       (target): Promise<boolean> => this.settleTarget(target),
     );
     this.updateConnectivity(summary);
     SyncRunCoordinator.assertTargetGroupsSucceeded(summary);
+  }
+
+  private async getTargets(): Promise<SyncTarget[]> {
+    try {
+      return await this._operations.getTargets();
+    } catch (error: unknown) {
+      if (isDidResolutionUnavailableError(error)) {
+        this._connectivityManager.recordFailure();
+      }
+      throw error;
+    }
   }
 
   private async runTargetGroups(
@@ -118,17 +133,19 @@ export class SyncRunCoordinator {
     dwnUrl: string,
     targets: SyncTarget[],
     runTarget: SyncTargetRunner,
-  ): Promise<{ attempted: boolean; succeeded: boolean }> {
+  ): Promise<Omit<SyncTargetGroupRunResult, 'dwnUrl'>> {
     let attempted = false;
     for (const target of targets) {
       try {
         attempted = await runTarget(target) || attempted;
       } catch (error: unknown) {
-        this._operations.reportError(
-          `SyncRunCoordinator: Error syncing ${target.did} with ${dwnUrl}`,
-          error,
-        );
-        return { attempted: true, succeeded: false };
+        if (!isDidResolutionUnavailableError(error)) {
+          this._operations.reportError(
+            `SyncRunCoordinator: Error syncing ${target.did} with ${dwnUrl}`,
+            error,
+          );
+        }
+        return { attempted: true, succeeded: false, cause: error };
       }
     }
     return { attempted, succeeded: true };
@@ -209,6 +226,11 @@ export class SyncRunCoordinator {
     }
     summary.groupsFailed++;
     summary.failedUrls.push(result.value.dwnUrl);
+    if (isDidResolutionUnavailableError(result.value.cause)) {
+      // Preserve the shared prerequisite even when another endpoint failed
+      // unexpectedly; that endpoint's detailed diagnostic was already reported.
+      summary.cause ??= result.value.cause;
+    }
   }
 
   private updateConnectivity(summary: SyncTargetGroupSummary): void {
@@ -230,6 +252,7 @@ export class SyncRunCoordinator {
     throw new Error(
       `SyncRunCoordinator: Sync operation failed for ${summary.groupsFailed} remote endpoint(s)`
       + (summary.failedUrls.length > 0 ? `: ${summary.failedUrls.join(', ')}` : '.'),
+      { cause: summary.cause },
     );
   }
 }

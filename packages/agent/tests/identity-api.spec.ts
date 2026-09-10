@@ -481,6 +481,7 @@ describe('AgentIdentityApi', () => {
         });
 
         it('should throw an error if the DID is not found', async () => {
+          sinon.stub(testHarness.agent.did, 'get').resolves(undefined);
           try {
             await testHarness.agent.identity.setDwnEndpoints({ didUri: 'did:method:xyz123', endpoints: ['https://example.com/dwn'] });
             throw new Error('Expected an error to be thrown');

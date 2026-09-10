@@ -1,10 +1,14 @@
+import type { MessagesQueryReply } from '@enbox/dwn-sdk-js';
+
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { RoleReplicationSupportBatch } from '../src/sync-role-replication-support.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '../src/followed-sync-source.js';
+import type { SyncDurableFeedQuery, SyncDurableFeedReconcileResult } from '../src/sync-durable-feed-reconciler.js';
 
 import sinon from 'sinon';
 
+import { DidResolutionErrorCause } from '@enbox/dids';
 import { Level } from 'level';
 import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
@@ -122,6 +126,195 @@ describe('SyncEngineLevel — followed sources', () => {
 
   afterAll(async () => {
     await db.close();
+  });
+
+  it.each(['planning', 'cached signing', 'cached local query', 'partial endpoint'])(
+    'should defer a %s outage and recover retained endpoints and followed contexts at the next settle', async (scenario) => {
+      const engine = new SyncEngineLevel({ db });
+      const sources = [source(), source('role-b', 'notebook-b')];
+      const actorDid = sources[0].actorDid;
+      const delegateDid = 'did:example:delegate';
+      const endpoints = ['https://a.example.com', 'https://b.example.com'];
+      await engine['_identityStore'].set(actorDid, { delegateDid, protocols: 'all' });
+      for (const followed of sources) {
+        await engine['_followedSourceStore'].replace(followed);
+      }
+      sinon.stub(engine['targetResolver'], 'getEndpointUrls').resolves(endpoints);
+      const unavailableStatus = {
+        code   : 401,
+        detail : 'DID resolution unavailable',
+        info   : { errorCause: DidResolutionErrorCause.NetworkUnavailable },
+      };
+      const unavailable = new Error('local request signing failed', { cause: unavailableStatus });
+      const validGrants = [{
+        grant: {
+          id          : 'grant-id',
+          grantor     : actorDid,
+          grantee     : delegateDid,
+          dateGranted : '2020-01-01T00:00:00.000000Z',
+          dateExpires : '2099-01-01T00:00:00.000000Z',
+          scope       : { interface: 'Messages', method: 'Read' },
+        },
+      }];
+      const grants = sinon.stub(engine['_permissionsApi'], 'fetchGrants').resolves(validGrants);
+      const reconciler = engine['_durableFeedReconciler'];
+      const goodReply = { status: { code: 200, detail: 'OK' }, fingerprint: 'unchanged' };
+      const query = sinon.stub(reconciler['_operations'], 'queryFeed').resolves(goodReply);
+      // Exercise the real query error conversion; role admission has separate coverage.
+      const probe = sinon.stub(engine as never, 'probeFeedConvergence').callsFake(
+        (target: SyncTarget): Promise<SyncDurableFeedReconcileResult> => reconciler.verifyConvergence(target),
+      );
+      if (scenario === 'planning') {
+        grants.rejects(unavailable);
+      } else {
+        await engine['getSyncTargets']();
+        query.callsFake(async ({ source, target }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+          if (scenario === 'partial endpoint' && target.dwnUrl === endpoints[1]) {
+            return goodReply;
+          }
+          if (scenario === 'cached signing') {
+            throw unavailable;
+          }
+          return source === 'local' ? { status: unavailableStatus } : goodReply;
+        });
+      }
+      const initialize = sinon.stub(engine as never, 'initializeLinkTarget').resolves();
+      const refresh = sinon.spy(engine as never, 'scheduleFollowedSourceRefresh');
+      const warn = sinon.stub(console, 'warn');
+      const report = sinon.stub(console, 'error');
+      engine['_connectivityManager'].recordSuccess();
+      engine['_runtime'] = new SyncRuntime(true);
+
+      try {
+        await engine['runSettleCheck'](engine['_runtime']);
+        expect(grants.callCount).toBe(scenario === 'planning' ? 1 : 2);
+        expect(probe.callCount).toBe(scenario === 'planning' ? 0 : 3);
+        expect(query.callCount).toBe(scenario === 'planning' ? 0 : 6);
+        expect(initialize.notCalled).toBe(true);
+        expect(refresh.notCalled).toBe(true);
+        expect(warn.notCalled).toBe(true);
+        expect(report.notCalled).toBe(true);
+        const connectivity = scenario === 'partial endpoint' ? 'online' : 'offline';
+        expect(engine.connectivityState).toBe(connectivity);
+        expect((await engine.getSyncHealth()).connectivity).toBe(connectivity);
+        expect(warn.notCalled).toBe(true);
+        expect(await engine.getIdentityOptions(actorDid)).toEqual({ delegateDid, protocols: 'all' });
+        for (const followed of sources) {
+          expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+        }
+
+        grants.resolves(validGrants);
+        query.resolves(goodReply);
+        probe.resetHistory();
+        await engine['runSettleCheck'](engine['_runtime']);
+        expect(probe.callCount).toBe(4);
+        expect(initialize.callCount).toBe(4);
+        expect(engine.connectivityState).toBe('online');
+        expect(report.notCalled).toBe(true);
+      } finally {
+        await engine.stopSync();
+      }
+    },
+  );
+
+  it('should defer followed refresh when the prerequisite becomes unavailable during orphan planning', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_followedSourceStore'].replace(followed);
+    const link = await createRoleLink(engine, targetFor(followed));
+    await engine['replicationLinkStore'].setStatus(link, 'paused');
+    await engine['refreshFollowedSourceState']();
+    engine['_runtime'] = new SyncRuntime(true);
+    engine['activateLink'](linkKey(link), link);
+
+    sinon.stub(engine['_runCoordinator'], 'settle').resolves();
+    const plan = sinon.stub(engine as never, 'getSyncTargets').rejects(new Error('DID resolution unavailable', {
+      cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+    }));
+    const refresh = sinon.stub(engine as never, 'scheduleFollowedSourceRefresh');
+    const report = sinon.stub(console, 'error');
+    try {
+      await engine['runSettleCheck'](engine['_runtime']);
+      expect(plan.calledOnce).toBe(true);
+      expect(refresh.notCalled).toBe(true);
+      expect(report.notCalled).toBe(true);
+      expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+
+      plan.resolves([]);
+      await engine['runSettleCheck'](engine['_runtime']);
+      expect(refresh.calledOnce).toBe(true);
+    } finally {
+      await engine.stopSync();
+    }
+  });
+
+  it('should defer a followed-context wave on a shared lookup outage and resume both retained sources', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const sources = [source(), source('role-b', 'notebook-b')];
+    await engine['_identityStore'].set(sources[0].actorDid, { protocols: 'all' });
+    for (const followed of sources) {
+      await engine['_followedSourceStore'].replace(followed);
+      const link = await createRoleLink(engine, targetFor(followed));
+      await engine['replicationLinkStore'].setStatus(link, 'paused');
+    }
+    await engine['refreshFollowedSourceState']();
+    engine['_runtime'] = new SyncRuntime(true);
+    const resolve = sinon.stub(engine as never, 'resolveFollowedSourceAtEndpoint').rejects(new Error('signer unavailable', {
+      cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+    }));
+    const initialize = sinon.stub(engine as never, 'initializeLinkTargetWithRetry').resolves();
+    const report = sinon.stub(console, 'error');
+    try {
+      await engine['reconcileFollowedSources'](engine['_runtime']);
+      expect(resolve.calledOnce).toBe(true);
+      expect(initialize.notCalled).toBe(true);
+      expect(report.notCalled).toBe(true);
+      for (const followed of sources) {
+        expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+      }
+      expect((await engine['replicationLinkStore'].getAllLinks()).every(link => link.status === 'paused')).toBe(true);
+
+      resolve.reset();
+      resolve.callsFake(async (input: FollowedSyncSourceInput) => {
+        const followed = sources.find(candidate => candidate.contextId === input.contextId)!;
+        return { source: followed, batch: supportBatch(followed.id) };
+      });
+      await engine['reconcileFollowedSources'](engine['_runtime']);
+      expect(resolve.callCount).toBe(2);
+      await waitFor(() => sources.every(followed => initialize.calledWithMatch({
+        scope: { contextId: followed.contextId },
+      })));
+    } finally {
+      await engine.stopSync();
+    }
+  });
+
+  it('should preserve unexpected followed-context errors and continue independent source recovery', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const sources = [source(), source('role-b', 'notebook-b')];
+    await engine['_identityStore'].set(sources[0].actorDid, { protocols: 'all' });
+    for (const followed of sources) {
+      await engine['_followedSourceStore'].replace(followed);
+      const link = await createRoleLink(engine, targetFor(followed));
+      await engine['replicationLinkStore'].setStatus(link, 'paused');
+    }
+    await engine['refreshFollowedSourceState']();
+    engine['_runtime'] = new SyncRuntime(true);
+    const unexpected = new Error('invalid signature');
+    const resolve = sinon.stub(engine as never, 'resolveFollowedSourceAtEndpoint');
+    resolve.onFirstCall().rejects(unexpected);
+    resolve.onSecondCall().resolves({ source: sources[1], batch: supportBatch(sources[1].id) });
+    const initialize = sinon.stub(engine as never, 'initializeLinkTargetWithRetry').resolves();
+    const report = sinon.stub(console, 'error');
+    try {
+      await engine['reconcileFollowedSources'](engine['_runtime']);
+      expect(report.calledOnceWithExactly('SyncEngineLevel: Followed context notebook-a refresh failed', unexpected)).toBe(true);
+      await waitFor(() => initialize.calledWithMatch({ scope: { contextId: sources[1].contextId } }));
+      expect(await engine.getFollowedSource(sources[0].id)).toEqual(sources[0]);
+    } finally {
+      await engine.stopSync();
+    }
   });
 
   it('should resolve the context root for an exact nested role context', () => {

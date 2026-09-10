@@ -61,6 +61,7 @@ import { AgentPermissionsApi } from './permissions-api.js';
 import { admitClosure } from './sync-admit-closure.js';
 import { DwnInterface } from './types/dwn.js';
 import { FollowedSyncSourceStoreLevel } from './followed-sync-source-store-level.js';
+import { isDidResolutionUnavailableError } from './did-resolution-error.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
 import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';
@@ -1601,12 +1602,10 @@ export class SyncEngineLevel implements SyncEngine {
     if (!runtime.live) {
       return;
     }
-    const pausedRoleIds = new Set<string>();
-    for (const link of await this.replicationLinkStore.getAllLinks()) {
-      if (link.status === 'paused' && link.authorization.kind === 'role') {
-        pausedRoleIds.add(link.authorization.roleRecordId);
-      }
-    }
+    const links = await this.replicationLinkStore.getAllLinks();
+    const pausedRoleIds = new Set(links.flatMap(({ status, authorization }) =>
+      status === 'paused' && authorization.kind === 'role' ? [authorization.roleRecordId] : []
+    ));
     for (const source of sources) {
       if (runtime.disposed) {
         return;
@@ -1618,6 +1617,12 @@ export class SyncEngineLevel implements SyncEngine {
         await this.refreshFollowedSourceAuthority(runtime, source);
       } catch (error: unknown) {
         if (!runtime.disposed) {
+          if (this.deferDidResolutionFailure(error)) {
+            // This wave cannot inspect the shared signing/grant prerequisite.
+            // Retain every source and retry on the next existing cadence/wake.
+            this._followedSourceRefreshPending = false;
+            return;
+          }
           console.error(`SyncEngineLevel: Followed context ${source.contextId} refresh failed`, error);
         }
       }
@@ -2061,7 +2066,9 @@ export class SyncEngineLevel implements SyncEngine {
       const syncTargets = await this.getSyncTargets();
       await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
     } catch (error) {
-      console.error('SyncEngineLevel: Live-sync startup planning failed; the settle check retries link initialization', error);
+      if (!this.deferDidResolutionFailure(error)) {
+        console.error('SyncEngineLevel: Live-sync startup planning failed; the settle check retries link initialization', error);
+      }
     } finally {
       // Schedule the periodic durable feed settle check.
       const settleCheck = async (): Promise<void> => this.runSettleCheck(runtime);
@@ -2086,6 +2093,10 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       await this._runCoordinator.settle();
     } catch (error: unknown) {
+      // The coordinator already folded endpoint outcomes into connectivity.
+      if (isDidResolutionUnavailableError(error)) {
+        return;
+      }
       console.error('SyncEngineLevel: Error during durable feed settle check', error);
     } finally {
       this._lifecycle.releaseSync();
@@ -2097,7 +2108,9 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    await this.reinitializeOrphanedLinkTargets(runtime);
+    if (!await this.reinitializeOrphanedLinkTargets(runtime)) {
+      return;
+    }
     if ([...this._linkControllers.values()].some(({ link }) =>
       link.status === 'paused' && link.authorization.kind === 'role'
     )) {
@@ -2130,13 +2143,13 @@ export class SyncEngineLevel implements SyncEngine {
    * task intake. Keep it that way; an awaited `acquireSync` under this
    * hold would self-deadlock rather than merely queue.
    */
-  private async reinitializeOrphanedLinkTargets(runtime: SyncRuntime): Promise<void> {
+  private async reinitializeOrphanedLinkTargets(runtime: SyncRuntime): Promise<boolean> {
     if (!this._lifecycle.tryAcquireSync()) {
-      return;
+      return false;
     }
     try {
       if (runtime.disposed) {
-        return;
+        return false;
       }
       const syncTargets = await this.getSyncTargets();
       // Re-check after the plan await: a transition that disposed this runtime
@@ -2146,15 +2159,28 @@ export class SyncEngineLevel implements SyncEngine {
       // out from under a lock holder — which lets the retry-timer check below
       // read the current runtime.
       if (runtime.disposed) {
-        return;
+        return false;
       }
       const orphanedTargets = syncTargets.filter(target => !this.hasPendingLinkInitRetryForTarget(target));
       await Promise.allSettled(orphanedTargets.map(t => this.initializeLinkTarget(t)));
     } catch (error) {
+      if (this.deferDidResolutionFailure(error)) {
+        return false;
+      }
       console.error('SyncEngineLevel: Error during settle-check link re-initialization', error);
     } finally {
       this._lifecycle.releaseSync();
     }
+    return true;
+  }
+
+  /** Record a transient prerequisite failure without changing confirmed authorization or transport state. */
+  private deferDidResolutionFailure(error: unknown): boolean {
+    if (!isDidResolutionUnavailableError(error)) {
+      return false;
+    }
+    this._connectivityManager.recordFailure();
+    return true;
   }
 
   /**
@@ -4994,14 +5020,15 @@ export class SyncEngineLevel implements SyncEngine {
           identityKeys.add(buildDurableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
         }
       } catch (error: unknown) {
-        console.warn(
-          `SyncEngineLevel: Failed to resolve current link identities for ${entry.did}; retaining its durable links`,
-          error,
-        );
-        for (const link of await this.replicationLinkStore.getLinksForTenant(entry.did)) {
-          if (link.authorization.kind !== 'role') {
-            identityKeys.add(this.getDurableLinkIdentityKey(link));
-          }
+        if (!this.deferDidResolutionFailure(error)) {
+          console.warn(
+            `SyncEngineLevel: Failed to resolve current link identities for ${entry.did}; retaining its durable links`,
+            error,
+          );
+        }
+        const links = await this.replicationLinkStore.getLinksForTenant(entry.did);
+        for (const link of links.filter(link => link.authorization.kind !== 'role')) {
+          identityKeys.add(this.getDurableLinkIdentityKey(link));
         }
       }
     }
@@ -5033,7 +5060,9 @@ export class SyncEngineLevel implements SyncEngine {
 
       return new Set(targets.map((target) => this._quotaManager.getLinkKey(target)));
     } catch (error: unknown) {
-      console.warn('SyncEngineLevel: Failed to resolve current quota link keys for health; falling back to all quota blocks', error);
+      if (!this.deferDidResolutionFailure(error)) {
+        console.warn('SyncEngineLevel: Failed to resolve current quota link keys for health; falling back to all quota blocks', error);
+      }
       return undefined;
     }
   }

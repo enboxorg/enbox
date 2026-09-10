@@ -65,13 +65,16 @@ export class PublicUrlValidationError extends Error {
  *   cannot smuggle `file:`, `javascript:`, `data:`, `ws:`, etc. past a downstream `fetch()`.
  * - URLs without a hostname.
  * - URLs whose hostname is a loopback, private, link-local, or otherwise non-routable literal per
- *   {@link isPrivateHostname}.
+ *   {@link isPrivateHostname}, unless `allowPrivateHosts` explicitly permits trusted local targets.
  *
  * This intentionally does not perform DNS resolution, so callers handling high-risk server-side
  * fetches should still consider DNS rebinding defenses (and use {@link fetchPublicUrl} to also
  * validate every redirect target).
  */
-export function assertPublicUrl(url: string | URL, description = 'URL', options?: { allowedProtocols?: readonly string[] }): URL {
+export function assertPublicUrl(url: string | URL, description = 'URL', options?: {
+  allowedProtocols?: readonly string[];
+  allowPrivateHosts?: boolean;
+}): URL {
   const parsedUrl = typeof url === 'string' ? new URL(url) : new URL(url.toString());
   const allowedProtocols = options?.allowedProtocols ?? DEFAULT_PUBLIC_URL_PROTOCOLS;
 
@@ -83,7 +86,7 @@ export function assertPublicUrl(url: string | URL, description = 'URL', options?
     throw new PublicUrlValidationError(`${description} must specify a hostname.`);
   }
 
-  if (isPrivateHostname(parsedUrl.hostname)) {
+  if (!options?.allowPrivateHosts && isPrivateHostname(parsedUrl.hostname)) {
     throw new PublicUrlValidationError(`${description} must not target a private, loopback, or link-local host: ${parsedUrl.hostname}`);
   }
 
@@ -110,14 +113,19 @@ const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
 export async function fetchPublicUrl(url: string | URL, init?: RequestInit, options?: {
   description?: string;
   allowedProtocols?: readonly string[];
+  /** Allow trusted local targets without bypassing scheme validation or redirect limits. */
+  allowPrivateHosts?: boolean;
   maxRedirects?: number;
+  /** Wrap each validated hop's fetch independently of URL and redirect handling. */
+  fetchFn?: (url: string, init: RequestInit) => Promise<Response>;
 }): Promise<Response> {
   const description = options?.description ?? 'URL';
   const maxRedirects = options?.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-  let currentUrl = assertPublicUrl(url, description, { allowedProtocols: options?.allowedProtocols }).href;
+  const fetchFn = options?.fetchFn ?? fetch;
+  let currentUrl = assertPublicUrl(url, description, options).href;
 
   for (let attempt = 0; attempt <= maxRedirects; attempt++) {
-    const response = await fetch(currentUrl, { ...init, redirect: 'manual' });
+    const response = await fetchFn(currentUrl, { ...init, redirect: 'manual' });
 
     if (!REDIRECT_STATUS_CODES.has(response.status)) {
       return response;
@@ -128,7 +136,7 @@ export async function fetchPublicUrl(url: string | URL, init?: RequestInit, opti
       return response;
     }
 
-    currentUrl = assertPublicUrl(new URL(location, currentUrl), description, { allowedProtocols: options?.allowedProtocols }).href;
+    currentUrl = assertPublicUrl(new URL(location, currentUrl), description, options).href;
   }
 
   throw new Error(`${description} exceeded the maximum number of redirects (${maxRedirects}).`);

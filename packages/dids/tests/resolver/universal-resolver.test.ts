@@ -4,12 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:te
 
 import type { DidResolutionResult, DidResource } from '../../src/types/did-core.js';
 
+import { DidDht } from '../../src/methods/did-dht.js';
+import { DidErrorCode } from '../../src/did-error.js';
 import { DidJwk } from '../../src/methods/did-jwk.js';
 import DidJwkResolveTestVector from '../fixtures/web5-spec-vectors/did_jwk/resolve.json' with { type: 'json' };
 import { DidResolverCacheMemory } from '../../src/resolver/resolver-cache-memory.js';
 import { isDidVerificationMethod } from '../../src/utils.js';
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
-import { DidErrorCode, DidResolutionErrorCause } from '../../src/did-error.js';
 
 describe('UniversalResolver', () => {
   describe('open()', () => {
@@ -134,49 +135,56 @@ describe('UniversalResolver', () => {
         didDocumentMetadata   : {},
       };
 
-      it('uses the last successful result when a refresh cannot reach the network', async () => {
-        const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
-        const cache = new DidResolverCacheMemory({ ttl: '1ms' });
-        await cache.set(did, retainedResult);
+      describe.each([false, true])('with private gateway access set to %s', (allowPrivateGatewayUri) => {
+        it.each([
+          ['fetch rejection', async (): Promise<Response> => { throw new TypeError('fetch failed'); }, undefined, 1],
+          ['interrupted body', async (): Promise<Response> => new Response(new ReadableStream({
+            start(controller): void { controller.error(new TypeError('connection lost')); },
+          })), undefined, 1],
+          ['absent DID', async (): Promise<Response> => new Response(null, { status: 404 }), DidErrorCode.NotFound, 1],
+          ['redirect loop', async (): Promise<Response> => new Response(null, {
+            status: 302, headers: { location: '/loop' },
+          }), DidErrorCode.InternalError, 6],
+          ['malformed redirect URL', async (): Promise<Response> => new Response(null, {
+            status: 302, headers: { location: 'http://[' },
+          }), DidErrorCode.InternalError, 1],
+        ] as const)('only uses retained data for transport failures: %s', async (_scenario, fetchResult, expectedError, requests) => {
+          const ownedDid = await DidDht.create({ options: { publish: false } });
+          const retained = { didDocument: ownedDid.document, didDocumentMetadata: {}, didResolutionMetadata: {} };
+          const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
+          const cache = new DidResolverCacheMemory({ ttl: '1ms' });
+          await cache.set(ownedDid.uri, retained);
 
-        try {
-          nowSpy.mockReturnValue(1_001);
-          const methodResolver = spyOn(DidJwk, 'resolve').mockResolvedValue({
-            didResolutionMetadata: {
-              error      : DidErrorCode.InternalError,
-              errorCause : DidResolutionErrorCause.NetworkUnavailable,
-            },
-            didDocument         : null,
-            didDocumentMetadata : {},
-          });
-          const resolver = new UniversalResolver({ didResolvers: [DidJwk], cache });
+          try {
+            nowSpy.mockReturnValue(1_001);
+            const fetchStub = spyOn(globalThis, 'fetch').mockImplementation(fetchResult);
+            const resolver = new UniversalResolver({
+              cache,
+              didResolvers: [{
+                methodName : 'dht',
+                resolve    : (didUri: string): Promise<DidResolutionResult> => DidDht.resolve(didUri, {
+                  gatewayUri: allowPrivateGatewayUri ? 'http://127.0.0.1:7527' : 'https://gateway.example.com',
+                  allowPrivateGatewayUri,
+                }),
+              }],
+            });
 
-          expect(await resolver.resolve(did)).toEqual(retainedResult);
-          expect(methodResolver).toHaveBeenCalledTimes(1);
-        } finally {
-          nowSpy.mockRestore();
-        }
-      });
+            const result = await resolver.resolve(ownedDid.uri);
 
-      it('does not hide a definitive resolution failure with a retained result', async () => {
-        const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000);
-        const cache = new DidResolverCacheMemory({ ttl: '1ms' });
-        await cache.set(did, retainedResult);
-
-        try {
-          nowSpy.mockReturnValue(1_001);
-          const notFoundResult: DidResolutionResult = {
-            didResolutionMetadata : { error: DidErrorCode.NotFound },
-            didDocument           : null,
-            didDocumentMetadata   : {},
-          };
-          spyOn(DidJwk, 'resolve').mockResolvedValue(notFoundResult);
-          const resolver = new UniversalResolver({ didResolvers: [DidJwk], cache });
-
-          expect(await resolver.resolve(did)).toEqual(notFoundResult);
-        } finally {
-          nowSpy.mockRestore();
-        }
+            if (expectedError === undefined) {
+              expect(result).toEqual(retained);
+            } else {
+              expect(result.didResolutionMetadata.error).toBe(expectedError);
+              expect(result.didResolutionMetadata.errorCause).toBeUndefined();
+              expect(result.didDocument).toBeNull();
+            }
+            expect(fetchStub).toHaveBeenCalledTimes(requests);
+            expect(await cache.getRetained(ownedDid.uri)).toEqual(retained);
+          } finally {
+            await cache.clear();
+            nowSpy.mockRestore();
+          }
+        });
       });
 
       it('replaces a retained result after a successful refresh', async () => {

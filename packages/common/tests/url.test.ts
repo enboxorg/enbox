@@ -85,22 +85,27 @@ describe('url utilities', () => {
       expect((fetchMock.mock.calls[0]![1] as RequestInit).redirect).toBe('manual');
     });
 
-    it('follows redirects to other public hosts', async () => {
+    it.each([
+      ['https://example.com/start', 'https://other.example.com/end', false],
+      ['http://127.0.0.1/start', 'http://localhost/end', true],
+    ])('follows allowed redirects from %s to %s through the supplied fetch function', async (startUrl, endUrl, allowPrivateHosts) => {
       const finalResponse = new Response('done', { status: 200 });
       const fetchMock = mock(async (url: string | URL) => {
         const target = url.toString();
-        if (target === 'https://example.com/start') {
-          return new Response(null, { status: 302, headers: { location: 'https://other.example.com/end' } });
+        if (target === startUrl) {
+          return new Response(null, { status: 302, headers: { location: endUrl } });
         }
         return finalResponse;
       });
       globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-      const result = await fetchPublicUrl('https://example.com/start');
+      const fetchFn = mock((url: string, init: RequestInit): Promise<Response> => fetch(url, init));
+      const result = await fetchPublicUrl(startUrl, undefined, { allowPrivateHosts, fetchFn });
 
       expect(result).toBe(finalResponse);
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(fetchMock.mock.calls[1]![0]).toBe('https://other.example.com/end');
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1]![0]).toBe(endUrl);
     });
 
     it('blocks redirects to private hosts (the SSRF-via-redirect attack)', async () => {
@@ -113,13 +118,13 @@ describe('url utilities', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('blocks redirects that switch to a non-network scheme', async () => {
+    it.each([false, true])('blocks non-network redirect schemes with private host access set to %s', async (allowPrivateHosts) => {
       const fetchMock = mock(async () =>
         new Response(null, { status: 302, headers: { location: 'file:///etc/hosts' } }),
       );
       globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-      await expect(fetchPublicUrl('https://example.com/redirect-me')).rejects.toThrow('allowed schemes');
+      await expect(fetchPublicUrl('https://example.com/redirect-me', undefined, { allowPrivateHosts })).rejects.toThrow('allowed schemes');
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
