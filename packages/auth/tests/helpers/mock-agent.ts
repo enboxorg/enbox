@@ -200,6 +200,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     },
 
     sync: {
+      pauseIdentity          : async (): Promise<boolean> => true,
       setIdentityOptions     : overrides.syncSetIdentityOptions ?? (async (): Promise<void> => {}),
       removeIdentity         : overrides.syncRemoveIdentity ?? (async (): Promise<void> => {}),
       startSync              : overrides.syncStartSync ?? (async (): Promise<void> => {}),

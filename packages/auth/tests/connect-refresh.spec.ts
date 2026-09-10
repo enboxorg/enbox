@@ -682,7 +682,9 @@ describe('delegated connection lifecycle', () => {
       ['expired', 'connection-expired'],
     ] as const)('defers unavailable polls and refreshes once after a confirmed %s result', async (state, eventType) => {
       const clock = sinon.useFakeTimers();
-      const manager = createTestManager(createMockAgent());
+      const agent = createMockAgent();
+      const pause = sinon.spy(agent.sync, 'pauseIdentity');
+      const manager = createTestManager(agent);
       const previousSession = manager.session;
       const status: ConnectionStatus = {
         state,
@@ -719,7 +721,39 @@ describe('delegated connection lifecycle', () => {
 
         await clock.tickAsync(5000);
         expect(emitted).toEqual([[eventType, status]]);
+        expect(pause.callCount).toBe(state === 'expired' ? 1 : 0);
+        if (state === 'expired') {
+          expect(pause.calledOnceWithExactly({ did: OWNER_DID, delegateDid: DELEGATE_DID, connectSessionId: 'session-1' })).toBe(true);
+        }
         expect(refresh.calledOnce).toBe(true);
+      } finally {
+        stop();
+        clock.restore();
+      }
+    });
+
+    test('does not publish expiry or auto-refresh when sync rejects the approval as stale', async () => {
+      const clock = sinon.useFakeTimers();
+      const agent = createMockAgent();
+      const pause = sinon.stub(agent.sync, 'pauseIdentity').resolves(false);
+      const manager = createTestManager(agent);
+      const session = manager.session;
+      sinon.stub(manager, 'getConnectionStatus').resolves({
+        state            : 'expired',
+        connectSessionId : 'old-session',
+        connectedDid     : OWNER_DID,
+        delegateDid      : DELEGATE_DID,
+      });
+      const expired = sinon.spy();
+      manager.on('connection-expired', expired);
+      const refresh = sinon.stub(manager as never, '_refresh').resolves(session);
+      const stop = manager.startConnectionMonitor({ intervalMs: 1000, autoRefresh: { protocols: PROTOCOLS } });
+      try {
+        await clock.tickAsync(0);
+        expect(pause.calledOnce).toBe(true);
+        expect(manager.session).toBe(session);
+        expect(expired.notCalled).toBe(true);
+        expect(refresh.notCalled).toBe(true);
       } finally {
         stop();
         clock.restore();
@@ -728,10 +762,14 @@ describe('delegated connection lifecycle', () => {
 
     test('reports revoked sessions as invalid but never auto-refreshes them', async () => {
       const clock = sinon.useFakeTimers();
-      const manager = createTestManager(createMockAgent());
+      const agent = createMockAgent();
+      const pause = sinon.spy(agent.sync, 'pauseIdentity');
+      const manager = createTestManager(agent);
       const status: ConnectionStatus = {
         state            : 'revoked',
         connectSessionId : 'session-1',
+        connectedDid     : OWNER_DID,
+        delegateDid      : DELEGATE_DID,
       };
       sinon.stub(manager, 'getConnectionStatus').resolves(status);
       const refresh = sinon.stub(manager as any, '_refresh').resolves(manager.session!);
@@ -745,6 +783,7 @@ describe('delegated connection lifecycle', () => {
       await clock.tickAsync(3000);
 
       expect(emitted).toEqual([status]);
+      expect(pause.calledOnce).toBe(true);
       expect(refresh.called).toBe(false);
       stop();
       clock.restore();
@@ -798,9 +837,13 @@ describe('delegated connection lifecycle', () => {
       expect(permissionsClear.called).toBe(false);
     });
 
-    test('does not overlap slow status polls', async () => {
+    test('does not overlap slow polls or apply a result from a replaced session', async () => {
       const clock = sinon.useFakeTimers();
-      const manager = createTestManager(createMockAgent());
+      const agent = createMockAgent();
+      const pause = sinon.spy(agent.sync, 'pauseIdentity');
+      const manager = createTestManager(agent);
+      const expired = sinon.spy();
+      manager.on('connection-expired', expired);
       let resolveFirst!: (status: ConnectionStatus) => void;
       const firstPoll = new Promise<ConnectionStatus>((resolve) => { resolveFirst = resolve; });
       const getStatus = sinon.stub(manager, 'getConnectionStatus');
@@ -811,10 +854,18 @@ describe('delegated connection lifecycle', () => {
       await clock.tickAsync(3000);
       expect(getStatus.callCount).toBe(1);
 
-      resolveFirst({ state: 'active', connectSessionId: 'session-1' });
+      manager['_session'] = { ...manager.session! };
+      resolveFirst({
+        state            : 'expired',
+        connectSessionId : 'old-session',
+        connectedDid     : OWNER_DID,
+        delegateDid      : DELEGATE_DID,
+      });
       await clock.tickAsync(0);
       await clock.tickAsync(1000);
       expect(getStatus.callCount).toBe(2);
+      expect(pause.notCalled).toBe(true);
+      expect(expired.notCalled).toBe(true);
       stop();
       clock.restore();
     });

@@ -1404,13 +1404,14 @@ export class AuthManager {
       return;
     }
 
+    const session = this._session;
     monitor.isPolling = true;
     try {
       const status = await this.getConnectionStatus({
         checkRevoked                 : monitor.options.checkRevoked,
         expiringSoonThresholdSeconds : monitor.options.expiringSoonThresholdSeconds,
       });
-      if (this._connectionMonitor !== monitor || this._isConnecting) {
+      if (this._connectionMonitor !== monitor || this._isConnecting || this._session !== session) {
         return;
       }
 
@@ -1430,6 +1431,18 @@ export class AuthManager {
     const statusKey = `${status.connectSessionId ?? 'none'}:${status.state}`;
     if (statusKey === monitor.lastStatusKey) {
       return;
+    }
+
+    if (status.state === 'expired' || status.state === 'revoked') {
+      const session = this._session;
+      const confirmed = await this._userAgent.sync.pauseIdentity({
+        did              : status.connectedDid!,
+        delegateDid      : status.delegateDid!,
+        connectSessionId : status.connectSessionId!,
+      });
+      if (!confirmed || this._connectionMonitor !== monitor || this._isConnecting || this._session !== session) {
+        return;
+      }
     }
     monitor.lastStatusKey = statusKey;
 

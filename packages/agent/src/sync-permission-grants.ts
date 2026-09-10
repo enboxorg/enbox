@@ -15,10 +15,12 @@ export type MessagesScopeResolution = {
 };
 
 export class SyncProtocolRootPermissionGrantMissingError extends Error {
-  public readonly protocol: string;
+  public readonly protocol?: string;
 
-  public constructor(messageType: DwnInterface, protocol: string) {
-    super(`SyncPermissions: No active protocol-root Messages.Read permission found for ${messageType}: ${protocol}`);
+  public constructor(messageType: DwnInterface, protocol?: string) {
+    super(protocol === undefined
+      ? `SyncPermissions: No active Messages.Read permission found for ${messageType}: all protocols`
+      : `SyncPermissions: No active protocol-root Messages.Read permission found for ${messageType}: ${protocol}`);
     this.name = 'SyncProtocolRootPermissionGrantMissingError';
     this.protocol = protocol;
   }
@@ -118,7 +120,7 @@ function resolveFullScope(
     .filter(grantMatchesFullRoot)
     .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
   if (grants.length === 0) {
-    throw new Error(`SyncPermissions: No active Messages.Read permission found for ${messageType}: all protocols`);
+    throw new SyncProtocolRootPermissionGrantMissingError(messageType);
   }
 
   return { scope: requestedScope, permissionGrants: grants };

@@ -1,5 +1,6 @@
 import type { MessagesQueryReply } from '@enbox/dwn-sdk-js';
 
+import type { PermissionGrantEntry } from '../src/types/permissions.js';
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { RoleReplicationSupportBatch } from '../src/sync-role-replication-support.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
@@ -10,12 +11,14 @@ import sinon from 'sinon';
 
 import { DidResolutionErrorCause } from '@enbox/dids';
 import { Level } from 'level';
-import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
 import { deferred } from './utils/deferred.js';
+import { DwnInterface } from '../src/types/dwn.js';
+import { PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { resolveFollowedSyncRoleRoot } from '../src/followed-sync-source.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
@@ -187,7 +190,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
       try {
         await engine['runSettleCheck'](engine['_runtime']);
-        expect(grants.callCount).toBe(scenario === 'planning' ? 1 : 2);
+        expect(grants.callCount).toBe(1);
         expect(probe.callCount).toBe(scenario === 'planning' ? 0 : 3);
         expect(query.callCount).toBe(scenario === 'planning' ? 0 : 6);
         expect(initialize.notCalled).toBe(true);
@@ -214,6 +217,244 @@ describe('SyncEngineLevel — followed sources', () => {
       } finally {
         await engine.stopSync();
       }
+    },
+  );
+
+  it.each(['planner expiry', 'planner revocation', 'subscription expiry', 'monitor expiry', 'followed expiry'])(
+    'should park delegated endpoints and followed contexts on %s until fresh approval', async (scenario) => {
+      const clock = sinon.useFakeTimers({ now: Date.parse('2026-07-13T12:00:00Z'), toFake: ['Date'] });
+      const engine = new SyncEngineLevel({ db });
+      const sources = [source(), source('role-b', 'notebook-b')];
+      const actorDid = sources[0].actorDid;
+      const delegateDid = 'did:example:delegate';
+      const healthyDid = 'did:example:healthy';
+      const options = { delegateDid, protocols: [PROTOCOL] as [string] };
+      const approval = (id: string, createdAt: string, dateExpires: string): PermissionGrantEntry[] =>
+        ['Messages', 'Records'].map((interfaceName) => ({
+          grant: {
+            id             : `${id}-${interfaceName}`,
+            grantor        : actorDid,
+            grantee        : delegateDid,
+            dateGranted    : createdAt,
+            dateExpires,
+            scope          : { interface: interfaceName, method: 'Read', protocol: PROTOCOL },
+            connectSession : { id, createdAt, expiresAt: dateExpires },
+          },
+        })) as unknown as PermissionGrantEntry[];
+      let grants = approval('old', '2026-07-13T11:00:00.000000Z', '2026-07-13T12:01:00.000000Z');
+      let revoked = false;
+      const fetch = sinon.stub(engine['_permissionsApi'], 'fetchGrants').callsFake(async ({ checkRevoked }) =>
+        revoked && checkRevoked ? [] : grants);
+      const endpoints = sinon.stub(engine['targetResolver'], 'getEndpointUrls').callsFake(async (did) =>
+        did === healthyDid ? ['https://healthy.example.com'] : ['https://a.example.com', 'https://b.example.com']);
+      await engine['_identityStore'].set(actorDid, options);
+      await engine['_identityStore'].set(healthyDid, { protocols: 'all' });
+      for (const followed of sources) {
+        await engine['_followedSourceStore'].replace(followed);
+      }
+      await engine['refreshFollowedSourceState']();
+      engine['_runtime'] = new SyncRuntime(true);
+      const closures: { did: string; close: ReturnType<typeof sinon.stub> }[] = [];
+      sinon.stub(engine as never, 'openLivePullSubscription').callsFake(async (target, controller) => {
+        const close = sinon.stub().resolves();
+        closures.push({ did: target.did, close });
+        return controller.setLiveSubscription({ close });
+      });
+      sinon.stub(engine as never, 'openLocalPushSubscription').callsFake(async (target, controller) => {
+        const close = sinon.stub().resolves();
+        closures.push({ did: target.did, close });
+        return controller.setLocalSubscription({ close });
+      });
+      const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({ pullDrained: true });
+      const probe = sinon.stub(engine['_durableFeedReconciler'], 'verifyConvergence').resolves({ converged: true });
+      const authority = sinon.stub(engine as never, 'resolveFollowedSourceAtEndpoint');
+      const validate = sinon.stub(engine['_scopeClosureValidator'], 'validateClosure').resolves();
+      const warn = sinon.stub(console, 'warn');
+      const report = sinon.stub(console, 'error');
+      try {
+        const before = await engine['getSyncTargets']();
+        expect(before).toHaveLength(5);
+        expect(fetch.calledOnce).toBe(true);
+        await Promise.all(before.map(target => engine['initializeLinkTarget'](target)));
+        expect((await engine['replicationLinkStore'].getAllLinks()).every(link => link.status === 'live')).toBe(true);
+        const oldTarget = before.find(target => target.did === actorDid)!;
+        const oldController = [...engine['_linkControllers'].values()].find(({ link }) => link.tenantDid === actorDid)!;
+        const oldGeneration = oldController.replicationGeneration;
+        const oldContext = {
+          did        : actorDid,
+          link       : oldController.link,
+          controller : oldController,
+          isStale    : (): boolean => !oldController.isReplicationGenerationCurrent(oldGeneration),
+        };
+
+        revoked = scenario === 'planner revocation';
+        clock.setSystemTime(Date.parse(revoked ? '2026-07-13T12:00:45Z' : '2026-07-13T12:02:00Z'));
+        if (scenario === 'subscription expiry') {
+          await engine['handleLivePullMessage'](oldContext as never, {
+            type: 'error', error: { code: DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed, detail: 'delivery authorization failed' },
+          } as never);
+        }
+        if (scenario === 'monitor expiry') {
+          expect(await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' })).toBe(true);
+        }
+        if (scenario === 'followed expiry') {
+          const role = [...engine['_linkControllers'].values()].find(({ link }) => link.authorization.kind === 'role')!;
+          await engine['transitionToPaused'](role.linkKey, role.link, false);
+          authority.rejects(new PermissionGrantNotFoundError({ messageType: DwnInterface.RecordsRead, protocol: PROTOCOL }));
+          await engine['reconcileFollowedSources'](engine['_runtime']);
+          expect(authority.calledOnce).toBe(true);
+        }
+        await engine['runSettleCheck'](engine['_runtime']);
+        expect((await engine['replicationLinkStore'].getAllLinks()).filter(link => link.tenantDid !== healthyDid))
+          .toHaveLength(4);
+        expect((await engine['replicationLinkStore'].getAllLinks()).filter(link => link.tenantDid !== healthyDid)
+          .every(link => link.status === 'paused')).toBe(true);
+        expect(closures.filter(entry => entry.did !== healthyDid).every(({ close }) => close.calledOnce)).toBe(true);
+        expect(closures.filter(entry => entry.did === healthyDid).every(({ close }) => close.notCalled)).toBe(true);
+        const callsAfterPause = fetch.callCount;
+        fetch.resetHistory();
+        endpoints.resetHistory();
+        reconcile.resetHistory();
+        probe.resetHistory();
+        authority.resetHistory();
+        await engine['runSettleCheck'](engine['_runtime']);
+        await engine['reconcileFollowedSources'](engine['_runtime']);
+        await engine.getSyncHealth();
+        expect(callsAfterPause).toBe(scenario.startsWith('planner') ? 5 : 4);
+        expect(fetch.notCalled).toBe(true);
+        expect(authority.notCalled).toBe(true);
+        expect(reconcile.notCalled).toBe(true);
+        expect(probe.calledOnceWithMatch({ did: healthyDid })).toBe(true);
+        expect(endpoints.getCalls().every(call => call.args[0] === healthyDid)).toBe(true);
+        expect(await engine.getIdentityOptions(actorDid)).toEqual(options);
+        for (const followed of sources) {
+          expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+        }
+        expect(await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' })).toBe(true);
+
+        // A failed refresh leaves the dormant registration and links intact.
+        validate.rejects(new Error('approval not installed'));
+        await expect(engine.setIdentityOptions({ did: actorDid, options })).rejects.toThrow('approval not installed');
+        expect((await engine['getSyncTargets']()).map(target => target.did)).toEqual([healthyDid]);
+        validate.resolves();
+        revoked = false;
+        clock.setSystemTime(Date.parse('2026-07-13T12:02:00Z'));
+        grants = approval('fresh', '2026-07-13T12:02:00.000000Z', '2026-07-13T13:00:00.000000Z');
+        // Another context's grants can arrive before its registration wake clears the pause.
+        expect(await engine.pauseIdentity({ did: actorDid, delegateDid, connectSessionId: 'old' })).toBe(false);
+        await engine.setIdentityOptions({ did: actorDid, options });
+        const after = await engine['getSyncTargets']();
+        expect(after).toHaveLength(5);
+        expect(after.find(target => target.did === actorDid)!.authorizationEpoch).not.toBe(oldTarget.authorizationEpoch);
+        expect((await engine['replicationLinkStore'].getAllLinks()).every(link => link.status === 'live')).toBe(true);
+        expect(oldContext.isStale()).toBe(true);
+
+        // A delayed server reply cannot undo reapproval.
+        await engine['handleLivePullMessage'](oldContext as never, {
+          type: 'error', error: { code: DwnErrorCode.GrantAuthorizationGrantExpired, detail: 'grant expired' },
+        } as never);
+        expect(await engine['handleSyncAuthorizationFailure'](actorDid, delegateDid, DwnErrorCode.GrantAuthorizationGrantExpired))
+          .toBe(false);
+        expect((await engine['getSyncTargets']())).toHaveLength(5);
+        expect((await engine['replicationLinkStore'].getAllLinks()).every(link => link.status === 'live')).toBe(true);
+        expect(warn.notCalled).toBe(true);
+        expect(report.notCalled).toBe(true);
+      } finally {
+        await engine.stopSync();
+        clock.restore();
+      }
+    },
+  );
+
+  it('should confirm an expired approval even when no sync work is registered', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:member';
+    const delegateDid = 'did:example:delegate';
+    const dateExpires = '2020-01-01T01:00:00.000000Z';
+    sinon.stub(engine['_permissionsApi'], 'fetchGrants').resolves([{
+      grant: {
+        id             : 'expired-grant',
+        grantor        : did,
+        grantee        : delegateDid,
+        dateExpires,
+        connectSession : { id: 'approval', createdAt: '2020-01-01T00:00:00.000000Z', expiresAt: dateExpires },
+      },
+    }]);
+
+    expect(await engine.pauseIdentity({ did, delegateDid, connectSessionId: 'approval' })).toBe(true);
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+    expect(await engine['replicationLinkStore'].getAllLinks()).toEqual([]);
+  });
+
+  it('should retain a link when expiry is confirmed while its initialization creates durable state', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    const delegateDid = 'did:example:delegate';
+    const target = { ...targetFor(followed), delegateDid };
+    await engine['_identityStore'].set(followed.actorDid, { delegateDid, protocols: [PROTOCOL] });
+    await engine['_followedSourceStore'].replace(followed);
+    const getOrCreate = engine['getOrCreateReplicationLink'].bind(engine);
+    sinon.stub(engine as never, 'getOrCreateReplicationLink').callsFake(async (value: SyncTarget) => {
+      const link = await getOrCreate(value);
+      await engine['pauseIdentityAuthorization'](followed.actorDid, delegateDid);
+      return link;
+    });
+    const open = sinon.stub(engine as never, 'openLivePullSubscription');
+
+    await engine['initializeLinkTarget'](target);
+
+    expect(open.notCalled).toBe(true);
+    expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+    expect(await engine['replicationLinkStore'].getLinksForTenant(followed.sourceDid)).toMatchObject([{ status: 'paused' }]);
+  });
+
+  it.each(['active missing coverage', 'incomplete copies', 'unavailable inspection'])(
+    'should not park a delegated identity for %s', async (scenario) => {
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:member';
+      const delegateDid = 'did:example:delegate';
+      await engine['_identityStore'].set(did, { delegateDid, protocols: [PROTOCOL] });
+      const grants = [{
+        grant: {
+          id             : 'records-grant',
+          grantor        : did,
+          grantee        : delegateDid,
+          dateGranted    : '2020-01-01T00:00:00.000000Z',
+          dateExpires    : '2099-01-01T00:00:00.000000Z',
+          scope          : { interface: 'Records', method: 'Read', protocol: PROTOCOL },
+          connectSession : {
+            id        : 'approval',
+            createdAt : '2020-01-01T00:00:00.000000Z',
+            expiresAt : '2099-01-01T00:00:00.000000Z',
+          },
+        },
+      }] as unknown as PermissionGrantEntry[];
+      const unavailable = new Error('grant inspection unavailable', {
+        cause: { info: { errorCause: DidResolutionErrorCause.NetworkUnavailable } },
+      });
+      const fetch = sinon.stub(engine['_permissionsApi'], 'fetchGrants').callsFake(async ({ target }) => {
+        if (target === did && scenario === 'unavailable inspection') {
+          throw unavailable;
+        }
+        return scenario === 'incomplete copies' && target === delegateDid ? [] : grants;
+      });
+      const endpoints = sinon.stub(engine['targetResolver'], 'getEndpointUrls').resolves(['https://a.example.com', 'https://b.example.com']);
+      const warn = sinon.stub(console, 'warn');
+      if (scenario === 'unavailable inspection') {
+        await expect(engine['getSyncTargets']()).rejects.toBe(unavailable);
+        expect(warn.notCalled).toBe(true);
+      } else {
+        expect(await engine['getSyncTargets']()).toEqual([]);
+        expect(warn.calledOnce).toBe(true);
+        expect(warn.firstCall.args[1].message).toContain('No active protocol-root Messages.Read');
+      }
+      expect(endpoints.notCalled).toBe(true);
+      expect(await engine.getIdentityOptions(did)).toEqual({ delegateDid, protocols: [PROTOCOL] });
+
+      // Recovery without re-registering proves that none of these failures latched a pause.
+      grants[0].grant.scope = { interface: 'Messages', method: 'Read', protocol: PROTOCOL };
+      fetch.resolves(grants);
+      expect(await engine['getSyncTargets']()).toHaveLength(2);
     },
   );
 
@@ -1083,7 +1324,7 @@ describe('SyncEngineLevel — followed sources', () => {
     await controller.dispose();
   });
 
-  it('should resume a paused role pull when the actor delegate registration refreshes', async () => {
+  it('should park a delegated role pull after a structured remote expiry reply', async () => {
     const engine = new SyncEngineLevel({ db });
     const actorDid = 'did:example:member';
     const delegateDid = 'did:example:delegate';
@@ -1093,46 +1334,33 @@ describe('SyncEngineLevel — followed sources', () => {
     await (engine as any)._followedSourceStore.replace(followed);
     await (engine as any)._identityStore.set(actorDid, options);
     stubRemoteQuery(engine, {
-      status: { code: 401, detail: 'GrantAuthorizationGrantExpired: refresh the delegate grant' },
+      status: {
+        code      : 401,
+        detail    : 'GrantAuthorizationGrantExpired: refresh the delegate grant',
+        errorCode : DwnErrorCode.GrantAuthorizationGrantExpired,
+      },
     });
-    const send = (engine as any)._agent.rpc.sendDwnRequest;
-    send.onSecondCall().resolves({
-      status       : { code: 200 },
-      entries      : [],
-      drained      : true,
-      roleRecordId : followed.id,
-    });
-    sinon.stub((engine as any)._scopeClosureValidator, 'validateClosure').resolves();
-    sinon.stub(engine as any, 'tryPruneSupersededDurableLinksForRegisteredIdentity').resolves();
+    sinon.stub(engine['_permissionsApi'], 'fetchGrants').resolves([{
+      grant: {
+        id             : 'expired-grant',
+        grantor        : actorDid,
+        grantee        : delegateDid,
+        dateExpires    : '2020-01-01T01:00:00.000000Z',
+        connectSession : {
+          id        : 'approval',
+          createdAt : '2020-01-01T00:00:00.000000Z',
+          expiresAt : '2020-01-01T01:00:00.000000Z',
+        },
+      },
+    }]);
     sinon.stub((engine as any).targetResolver, 'withCurrentRoleGrant').callsFake(async value => value);
 
-    await expect((engine as any).reconcileTarget(target)).rejects.toThrow('GrantAuthorizationGrantExpired');
+    await expect((engine as any).reconcileTarget(target)).resolves.toMatchObject({ paused: true });
     expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
     expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([
       { remoteEndpoint: target.dwnUrl, status: 'paused', delegateDid },
     ]);
 
-    (engine as any)._runtime = new SyncRuntime(true);
-    const initialize = sinon.stub(engine as any, 'initializeLinkTargetWithRetry').callsFake(async value => {
-      const result = await (engine as any).reconcileTarget(value);
-      return {
-        status                 : 'active',
-        durableLinkIdentityKey : value.authorizationEpoch,
-        result,
-      };
-    });
-
-    await engine.setIdentityOptions({ did: actorDid, options });
-
-    expect(initialize.calledOnce).toBe(true);
-    expect(initialize.firstCall.args[0]).toMatchObject({ delegateDid });
-    expect(await initialize.firstCall.returnValue).toMatchObject({ result: { pullDrained: true } });
-    expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
-    expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([
-      { remoteEndpoint: target.dwnUrl, status: 'initializing', delegateDid },
-    ]);
-
-    (engine as any)._runtime.dispose();
   });
 
   it('should rebind a live role link when the actor delegate changes', async () => {

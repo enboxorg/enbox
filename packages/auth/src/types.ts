@@ -4,10 +4,12 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
-import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult, ConnectSessionMetadata } from '@enbox/connect';
+import type { AgentSessionIdentity, ConnectionStatus, DwnProtocolDefinition, EnboxUserAgent, GetConnectionStatusOptions, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
+import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/connect';
 
 import type { PasswordProvider } from './password-provider.js';
+
+export type { ComputeConnectionStatusOptions, ConnectionState, ConnectionStatus, ConnectionStatusGrant, GetConnectionStatusOptions } from '@enbox/agent';
 
 // Re-export types that consumers will need
 export type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/connect';
@@ -574,52 +576,6 @@ export interface HandlerConnectOptions {
 }
 
 // ─── Delegated connection status + refresh ───────────────────────
-
-/** Lifecycle state of the newest delegated connect approval. */
-export type ConnectionState =
-  | 'active'
-  | 'expiring-soon'
-  | 'expired'
-  | 'revoked'
-  | 'none';
-
-/** Status of the current delegated connect approval. */
-export type ConnectionStatus = {
-  state: ConnectionState;
-  connectSessionId?: string;
-  connectedDid?: string;
-  delegateDid?: string;
-  /** Earliest enforcing `dateExpires` among the session's grants. */
-  expiresAt?: string;
-  secondsUntilExpiry?: number;
-};
-
-/** Minimal grant shape consumed by {@link computeConnectionStatus}. */
-export type ConnectionStatusGrant = {
-  id: string;
-  grantor: string;
-  grantee: string;
-  dateExpires: string;
-  connectSession?: ConnectSessionMetadata;
-  revoked?: boolean;
-};
-
-/** Options for the pure connection-status computation. */
-export type ComputeConnectionStatusOptions = {
-  /**
-   * Seconds before expiry at which the state becomes `expiring-soon`.
-   * Defaults to the smaller of one hour or 10% of the approval lifetime.
-   */
-  expiringSoonThresholdSeconds?: number;
-  /** DWN timestamp used as the clock. Defaults to the current time. */
-  now?: string;
-};
-
-/** Options for {@link AuthManager.getConnectionStatus}. */
-export type GetConnectionStatusOptions = Omit<ComputeConnectionStatusOptions, 'now'> & {
-  /** Check revocations visible in the connected identity's local partition. Defaults to `true`. */
-  checkRevoked?: boolean;
-};
 
 /** Options for adding fresh grants to an existing delegated session. */
 export type RefreshOptions = {

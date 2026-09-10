@@ -23,6 +23,7 @@ type PlannerFixtureParams = {
 };
 
 type PlannerFixture = {
+  buildTargetResolutions: SinonStub;
   buildTargetsForEndpoint: SinonStub;
   buildTargetForSource: SinonStub;
   entries: SinonStub;
@@ -92,6 +93,7 @@ function createPlanner({
   const getEndpointUrls = sinon.stub().callsFake(async (did: string): Promise<string[]> => [
     `https://${did.slice('did:example:'.length)}.example.com`,
   ]);
+  const buildTargetResolutions = sinon.stub().resolves([]);
   const buildTargetsForEndpoint = sinon.stub().callsFake(
     async (did: string, dwnUrl: string): Promise<SyncTarget[]> => [ownerTarget(did, dwnUrl)],
   );
@@ -117,7 +119,7 @@ function createPlanner({
     authorizationEpoch : 'role-epoch',
     projectionId       : 'role-projection',
   }));
-  const resolver = { buildTargetsForEndpoint, buildTargetForSource, getEndpointUrls };
+  const resolver = { buildTargetResolutions, buildTargetsForEndpoint, buildTargetForSource, getEndpointUrls };
   const getTargetResolver = sinon.stub().returns(resolver);
   const warn = sinon.stub();
   let currentTime = 1_000;
@@ -126,11 +128,14 @@ function createPlanner({
     getTargetResolver,
     identityStore,
     sourceStore,
-    now: (): number => currentTime,
+    isIdentityPaused           : sinon.stub().returns(false),
+    handleAuthorizationFailure : sinon.stub().resolves(false),
+    now                        : (): number => currentTime,
     warn,
   });
 
   return {
+    buildTargetResolutions,
     buildTargetsForEndpoint,
     buildTargetForSource,
     entries,
@@ -281,7 +286,7 @@ describe('SyncTargetPlanner', () => {
   });
 
   it('should retain healthy endpoint targets without caching when another endpoint fails', async () => {
-    const expectedError = new Error('grant resolution failed');
+    const expectedError = new Error('endpoint target construction failed');
     const { buildTargetsForEndpoint, entries, getEndpointUrls, planner, warn } = createPlanner();
     getEndpointUrls.resolves(['https://healthy.example.com', 'https://failing.example.com']);
     buildTargetsForEndpoint.callsFake(async (did: string, dwnUrl: string): Promise<SyncTarget[]> => {
@@ -345,6 +350,7 @@ describe('SyncTargetPlanner', () => {
     await planner.getTargets();
 
     const replacementResolver = {
+      buildTargetResolutions  : sinon.stub().resolves([]),
       getEndpointUrls         : sinon.stub().resolves(['https://replacement.example.com']),
       buildTargetsForEndpoint : sinon.stub().callsFake(
         async (did: string, dwnUrl: string): Promise<SyncTarget[]> => [ownerTarget(did, dwnUrl)],

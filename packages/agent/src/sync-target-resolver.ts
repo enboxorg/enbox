@@ -133,9 +133,14 @@ export class SyncTargetResolver {
   }
 
   /** Build every canonical target for one identity and endpoint. */
-  public async buildTargetsForEndpoint(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget[]> {
+  public async buildTargetsForEndpoint(
+    did: string,
+    dwnUrl: string,
+    options: SyncIdentityOptions,
+    resolvedTargets?: SyncTargetResolution[],
+  ): Promise<SyncTarget[]> {
     const requestedScope = syncScopeFromProtocols(options.protocols);
-    const resolutions = await this.buildTargetResolutions(did, requestedScope, options);
+    const resolutions = resolvedTargets ?? await this.buildTargetResolutions(did, requestedScope, options);
 
     return Promise.all(resolutions.map(async (resolution) => ({
       did,
