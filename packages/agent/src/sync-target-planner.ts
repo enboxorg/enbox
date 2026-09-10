@@ -146,7 +146,8 @@ export class SyncTargetPlanner {
 
       const identity = await this._identityStore.get(entry.source.actorDid);
       if (identity === undefined) {
-        anyTargetUnavailable = true;
+        // Retain the source while its actor is inactive. Registration changes
+        // invalidate the plan so it can include the source when the actor returns.
         continue;
       }
       if (this._isIdentityPaused(entry.source.actorDid, identity.delegateDid)) {
