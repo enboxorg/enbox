@@ -57,6 +57,10 @@ const RECONCILE_RETRY_DELAY_MS = 5000;
 const DEFAULT_REPAIR_BACKOFF_MS = [1000, 3000, 10_000] as const;
 const RECONCILE_TIMER_PREFIX = 'syncReconcile:';
 const REPAIR_RETRY_TIMER_PREFIX = 'syncRepairRetry:';
+const RETRY_REASON_BY_DIRECTION: Readonly<Record<SyncDirection, string>> = {
+  pull : 'pull-retryable',
+  push : 'push-retryable',
+};
 
 /**
  * Coordinates per-link repair and durable reconciliation without depending on
@@ -459,7 +463,7 @@ export class SyncLinkRecoveryCoordinator {
       error     : errorMessage,
       failedAt,
       attempt   : attempts,
-      ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
+      nextRetryAt,
     });
     if (this.isRepairSuperseded(controller, runtime)) {
       return;
@@ -471,7 +475,7 @@ export class SyncLinkRecoveryCoordinator {
       ...eventScope(link.scope),
       attempt        : attempts,
       error          : errorMessage,
-      ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
+      nextRetryAt,
     };
     if (terminal) {
       this._operations.warn(
@@ -631,7 +635,7 @@ export class SyncLinkRecoveryCoordinator {
         : link.recovery?.nextRetryAt;
       const recorded = await this.recordReconcileFailure(controller, error, failedAt, nextRetryAt, shouldContinue);
       if (scheduled && recorded) {
-        this.emitReconcileNeeded(controller, direction === 'push' ? 'push-retryable' : 'pull-retryable');
+        this.emitReconcileNeeded(controller, RETRY_REASON_BY_DIRECTION[direction]);
       }
     }
   }
@@ -653,7 +657,7 @@ export class SyncLinkRecoveryCoordinator {
       operation : 'reconcile',
       error     : errorMessage,
       failedAt,
-      ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
+      nextRetryAt,
     });
     if (!shouldContinue()) {
       return false;
@@ -664,7 +668,7 @@ export class SyncLinkRecoveryCoordinator {
       remoteEndpoint : controller.link.remoteEndpoint,
       ...eventScope(controller.link.scope),
       error          : errorMessage,
-      ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
+      nextRetryAt,
     });
     return true;
   }
