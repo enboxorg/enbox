@@ -200,7 +200,7 @@ describe('SyncEngineLevel — identity management', () => {
       const validationReached = new Promise<void>((resolve): void => { reachValidation = resolve; });
       (SyncScopeClosureValidator.prototype.validateClosure as sinon.SinonStub).callsFake(
         async (_did: string, options: SyncIdentityOptions): Promise<void> => {
-          if (options.protocols !== 'all' && options.protocols.includes('https://new.example')) {
+          if (options.protocols !== 'all' && options.protocols.some(protocol => protocol === 'https://new.example')) {
             reachValidation();
             await validationGate;
           }
