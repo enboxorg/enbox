@@ -146,7 +146,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   private readonly _followedSourceId?: string;
 
   private _hasMaterialized = false;
-  private _directRemoteTransportGeneration = 0;
   private readonly _directRemoteUnavailableSubscriptions = new Set<symbol>();
   private _hasTerminationReason = false;
   private _isOpen = false;
@@ -358,7 +357,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       return;
     }
 
-    this._directRemoteTransportGeneration += 1;
     this.publishProvisionalReplicationCurrentness();
   }
 
@@ -464,17 +462,13 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   /** Execute and publish one generation without owning the outer drain loop. */
   protected async materialize(generation: number): Promise<void> {
     const query = this.materializationQuery();
-    const directRemoteTransportGeneration = this._directRemoteTransportGeneration;
     try {
       const result = await this._dwn.records.query(query);
       requireDwnSuccess('RecordView query', result);
       const records = await this._materializeRecords(result.records);
 
       let currentness = await this.resolveCurrentness();
-      if (this._isDirectRemote && (
-        this._directRemoteUnavailableSubscriptions.size > 0
-        || directRemoteTransportGeneration !== this._directRemoteTransportGeneration
-      )) {
+      if (this._isDirectRemote && this._directRemoteUnavailableSubscriptions.size > 0) {
         currentness = { current: false };
       }
       if (!this.canPublishMaterialization(generation)) {
