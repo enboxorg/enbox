@@ -407,8 +407,65 @@ describe('RecordView', () => {
       });
     }
 
+    harness.emit({ type: 'disconnected' }, 0);
+    harness.emit({ type: 'disconnected' }, 1);
+    expect(view.getSnapshot()).toMatchObject({ status: 'ready', current: false });
+    harness.emit({ type: 'reconnected' }, 0);
+    await Promise.resolve();
+    expect(harness.queryRequests).toHaveLength(2);
+    harness.emit({ type: 'reconnected' }, 1);
+    await waitFor(() => {
+      expect(harness.queryRequests).toHaveLength(4);
+      expect(view.getSnapshot()).toMatchObject({ status: 'ready', current: true });
+    });
+    expect(view.getSnapshot().records).toHaveLength(1);
+
     harness.emit(recordEvent(), 1);
-    await waitFor(() => { expect(harness.queryRequests).toHaveLength(4); });
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(6); });
+    await view.close();
+  });
+
+  it('marks a direct remote view non-current until reconnect rematerializes it', async () => {
+    const initial = testRecord('initial');
+    const stale = testRecord('stale');
+    const refreshed = testRecord('refreshed');
+    let releaseInFlightQuery!: (response: RecordsQueryResponse) => void;
+    const harness = createHarness(async (_request, call) => {
+      if (call === 1) {
+        return ok([initial]);
+      }
+      if (call === 2) {
+        return new Promise<RecordsQueryResponse>((resolve) => { releaseInFlightQuery = resolve; });
+      }
+      return ok([refreshed]);
+    });
+    const view = await createTyped(harness).records.observe('note', {
+      from       : 'did:example:remote',
+      pagination : { limit: 10 },
+    });
+    await waitFor(() => {
+      expect(view.getSnapshot()).toMatchObject({ status: 'ready', current: true, records: [initial] });
+    });
+
+    harness.emit(recordEvent());
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
+
+    harness.emit({ type: 'disconnected' });
+    expect(view.getSnapshot()).toMatchObject({ status: 'ready', current: false, records: [initial] });
+    harness.emit({ type: 'reconnecting', attempt: 1 });
+    expect(harness.queryRequests).toHaveLength(2);
+
+    releaseInFlightQuery(ok([stale]));
+    await waitFor(() => {
+      expect(view.getSnapshot()).toMatchObject({ status: 'ready', current: false, records: [stale] });
+    });
+
+    harness.emit({ type: 'reconnected' });
+    await waitFor(() => {
+      expect(harness.queryRequests).toHaveLength(3);
+      expect(view.getSnapshot()).toMatchObject({ status: 'ready', current: true, records: [refreshed] });
+    });
+    expect(view.getSnapshot().records).toEqual([refreshed]);
     await view.close();
   });
 
