@@ -450,8 +450,11 @@ announced by `session-start`.
 
 Before the first query, every view is `loading`. After the first local
 materialization it is `ready`, including for an empty or offline result.
-`current` separately reports whether the relevant replication links are caught
-up. Successful local queries continue to update a non-current state, so offline
+`current` separately reports whether freshness is established for the view's
+source. Local replicated views use the relevant replication links. Direct
+remote views become non-current when their subscription transport disconnects
+and become current again only after reconnect rematerializes the query.
+Successful local queries continue to update a non-current state, so offline
 writes remain visible. Query, authorization, and terminal sync failures publish
 `error` while retaining the latest successful records.
 `hasMore` is always present: it is `false` before the first query and whenever

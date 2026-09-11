@@ -133,6 +133,7 @@ type PendingLoad = {
 class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> implements RecordView<Item> {
   private readonly _additionalWakeFilters: readonly RecordsFilter[];
   private readonly _definition: ProtocolDefinition;
+  private readonly _isDirectRemote: boolean;
   private readonly _dwn: DwnApi;
   private readonly _expandBy?: number;
   private readonly _materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
@@ -145,6 +146,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   private readonly _followedSourceId?: string;
 
   private _hasMaterialized = false;
+  private readonly _directRemoteUnavailableSubscriptions = new Set<symbol>();
   private _hasTerminationReason = false;
   private _isOpen = false;
   private _limit?: number;
@@ -164,15 +166,14 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     }), options.callerSignal, options.signal);
     this._additionalWakeFilters = options.additionalWakeFilters ?? [];
     this._definition = options.definition;
+    this._isDirectRemote = options.query.from !== undefined && options.dwn.followedSourceId === undefined;
     this._dwn = options.dwn;
     this._expandBy = options.expandBy;
     this._limit = options.expandBy === undefined ? undefined : options.query.pagination?.limit;
     this._materializeRecords = options.materializeRecords;
     this._query = options.query;
     this._subscribeToWakes = options.subscribeToWakes;
-    this._sync = options.dwn.followedSourceId !== undefined || options.query.from === undefined
-      ? options.sync
-      : undefined;
+    this._sync = this._isDirectRemote ? undefined : options.sync;
     this._tenantDid = options.dwn.recordTenantDid;
     this._followedContextId = options.dwn.followedContextId;
     this._followedSourceAcceptanceId = options.dwn.followedSourceAcceptanceId;
@@ -184,17 +185,16 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
 
   /** Install the wake subscription before starting the first query. */
   public async open(): Promise<void> {
-    const subscriptionHandler = (message: DwnSubscriptionMessage): void => {
-      this.handleSubscriptionMessage(message);
-    };
-
     try {
       const wakeFilters = [
         structuralWakeFilter(this._definition, this._query.filter),
         ...this._additionalWakeFilters,
       ];
       for (const filter of wakeFilters) {
-        await this.openSubscription(filter, subscriptionHandler);
+        const subscriptionId = Symbol();
+        await this.openSubscription(filter, (message): void => {
+          this.handleSubscriptionMessage(message, subscriptionId);
+        });
       }
       this._wakeUnsubscribe = this._subscribeToWakes?.((): void => { this.requestMaterialization(); });
 
@@ -319,7 +319,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   }
 
   /** Keep transport acknowledgements independent from query latency. */
-  private handleSubscriptionMessage(message: DwnSubscriptionMessage): void {
+  private handleSubscriptionMessage(message: DwnSubscriptionMessage, subscriptionId: symbol): void {
     if (this.isClosed) {
       return;
     }
@@ -332,7 +332,43 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     if (message.type === 'error') {
       this.publishError(new Error(`RecordView: subscription failed (${message.error.code}): ${message.error.detail}`));
       void this.close().catch((): void => {});
+      return;
     }
+
+    if (message.type === 'disconnected' || message.type === 'reconnecting') {
+      this.handleDirectRemoteTransportUnavailable(subscriptionId);
+      return;
+    }
+
+    if (message.type === 'reconnected') {
+      this.handleDirectRemoteTransportReconnected(subscriptionId);
+    }
+  }
+
+  /** Degrade a direct remote view when its first dependency transport becomes unavailable. */
+  private handleDirectRemoteTransportUnavailable(subscriptionId: symbol): void {
+    if (!this._isDirectRemote || this._directRemoteUnavailableSubscriptions.has(subscriptionId)) {
+      return;
+    }
+
+    const wasConnected = this._directRemoteUnavailableSubscriptions.size === 0;
+    this._directRemoteUnavailableSubscriptions.add(subscriptionId);
+    if (!wasConnected) {
+      return;
+    }
+
+    this.publishProvisionalReplicationCurrentness();
+  }
+
+  /** Requery a direct remote source after every dependency subscription recovers. */
+  private handleDirectRemoteTransportReconnected(subscriptionId: symbol): void {
+    if (!this._isDirectRemote
+      || !this._directRemoteUnavailableSubscriptions.delete(subscriptionId)
+      || this._directRemoteUnavailableSubscriptions.size > 0) {
+      return;
+    }
+
+    this.requestMaterialization();
   }
 
   /** Wake only for sync transitions that can change this local materialization. */
@@ -431,7 +467,10 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       requireDwnSuccess('RecordView query', result);
       const records = await this._materializeRecords(result.records);
 
-      const currentness = await this.resolveCurrentness();
+      let currentness = await this.resolveCurrentness();
+      if (this._isDirectRemote && this._directRemoteUnavailableSubscriptions.size > 0) {
+        currentness = { current: false };
+      }
       if (!this.canPublishMaterialization(generation)) {
         return;
       }
@@ -510,6 +549,10 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
 
   /** Resolve whether this protocol has completed its configured remote baseline. */
   private async resolveCurrentness(): Promise<RecordViewCurrentness> {
+    if (this._isDirectRemote) {
+      return { current: this._directRemoteUnavailableSubscriptions.size === 0 };
+    }
+
     if (this._sync === undefined) {
       return { current: true };
     }

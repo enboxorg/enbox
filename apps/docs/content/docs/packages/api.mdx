@@ -383,11 +383,13 @@ invitation, or member observation, when its lifetime belongs to one caller.
 Aborting it rejects an opening call or closes the opened resource without
 ending the typed API or bound context; `close()` safely joins the same cleanup.
 
-`RecordView` additionally exposes `current`. `false` means the rendered local
-replica is still catching up or is offline; `true` means the relevant
-replication links are caught up. Local usability and remote freshness are
-separate, so an app can remain useful offline. Do not treat an empty result as
-authoritative remote absence until `current` is true.
+`RecordView` additionally exposes `current`. For local replicated views, `false`
+means the rendered replica is still catching up or is offline; `true` means the
+relevant replication links are caught up. A direct remote view also becomes
+non-current when its subscription transport disconnects and returns to current
+only after reconnect rematerializes the query. Usability and remote freshness
+are separate, so an app can remain useful offline. Do not treat an empty result
+as authoritative remote absence until `current` is true.
 
 For append-only histories, a context-bound subscription can replay existing
 records before handing off to live delivery:
