@@ -5,13 +5,16 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { SyncLinkRecoveryCoordinatorOperations } from '../src/sync-link-recovery-coordinator.js';
 
+import { Level } from 'level';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { buildLinkKey } from '../src/sync-link-key.js';
 import { SyncFeedConvergenceManager } from '../src/sync-feed-convergence-manager.js';
 import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncLinkRecoveryCoordinator } from '../src/sync-link-recovery-coordinator.js';
+import { SyncReplicationLinkStoreLevel } from '../src/sync-replication-link-store-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 
 import { deferred } from './utils/deferred.js';
@@ -274,6 +277,65 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     expect(fixture.operations.setStatus.calledOnce).toBe(true);
     await clock.runAllAsync();
+  });
+
+  it('clears the durable deadline for a reconciliation retry cancelled by pause', async () => {
+    const db = new Level<string, string>(
+      `__TESTDATA__/sync-link-recovery-pause/${crypto.randomUUID()}`,
+    );
+    const store = new SyncReplicationLinkStoreLevel(db);
+    const fixture = createFixture();
+    try {
+      const state = await store.getOrCreateLink({
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        remoteEndpoint     : REMOTE,
+        scope              : { kind: 'full' },
+        tenantDid          : DID,
+      });
+      state.connectivity = 'online';
+      await store.setStatus(state, 'live');
+      const recovery = {
+        operation   : 'reconcile' as const,
+        error       : 'offline',
+        failedAt    : '2026-09-11T12:00:00.000Z',
+        nextRetryAt : '2026-09-11T12:00:05.000Z',
+      };
+      await store.setRecovery(state, recovery);
+
+      const linkKey = buildLinkKey(
+        state.tenantDid,
+        state.remoteEndpoint,
+        state.projectionId,
+        state.authorizationEpoch,
+      );
+      const controller = new SyncLinkController(linkKey, state);
+      controller.markReplicationReady();
+      fixture.controllers.set(linkKey, controller);
+      fixture.operations.setStatus.callsFake(
+        (linkState, status) => store.setStatus(linkState, status),
+      );
+      const timerKey = `syncReconcile:${linkKey}`;
+      fixture.getRuntime().armTimeout(timerKey, () => undefined, 5_000);
+
+      await fixture.coordinator.transitionToPaused(linkKey, state);
+
+      const expectedRecovery = {
+        operation : recovery.operation,
+        error     : recovery.error,
+        failedAt  : recovery.failedAt,
+      };
+      expect(fixture.getRuntime().hasTimer(timerKey)).toBe(false);
+      expect(state.recovery).toEqual(expectedRecovery);
+      expect(await store.getAllLinks()).toMatchObject([{
+        status   : 'paused',
+        recovery : expectedRecovery,
+      }]);
+    } finally {
+      fixture.getRuntime().dispose();
+      await db.clear();
+      await db.close();
+    }
   });
 
   it('repairs through durable feeds, restores subscriptions, and schedules retryable push work', async () => {

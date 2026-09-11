@@ -153,17 +153,11 @@ export class SyncReplicationLinkStoreLevel {
   }
 
   public async setStatus(link: ReplicationLinkState, status: LinkStatus): Promise<void> {
-    link.status = status;
-    if (status === 'live') {
-      delete link.recovery;
-    }
+    SyncReplicationLinkStoreLevel.assignStatus(link, status);
     const connectivity = link.connectivity;
     await this.updateLink(link, (persistedLink): void => {
-      persistedLink.status = status;
+      SyncReplicationLinkStoreLevel.assignStatus(persistedLink, status);
       persistedLink.connectivity = connectivity;
-      if (status === 'live') {
-        delete persistedLink.recovery;
-      }
     });
   }
 
@@ -227,6 +221,17 @@ export class SyncReplicationLinkStoreLevel {
       delete link.recovery;
     } else {
       link.recovery = { ...recovery };
+    }
+  }
+
+  private static assignStatus(link: ReplicationLinkState, status: LinkStatus): void {
+    link.status = status;
+    if (status === 'live') {
+      delete link.recovery;
+    } else if (status === 'paused' && link.recovery?.nextRetryAt !== undefined) {
+      const recovery = { ...link.recovery };
+      delete recovery.nextRetryAt;
+      link.recovery = recovery;
     }
   }
 
