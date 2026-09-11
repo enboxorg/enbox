@@ -164,33 +164,18 @@ function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialec
  * Memoize a shared Postgres pool's shutdown without wrapping the pool itself.
  * Several Kysely drivers can own the cached dialect and each destroys it, but
  * `pg` rejects a second `end()`. The first call evicts the ended dialect and
- * every Promise or callback caller observes the same underlying completion.
+ * every Kysely driver observes the same underlying completion.
  */
-export function makePostgresPoolEndIdempotent(pool: PgPool, onFirstEnd?: () => void): PgPool {
+export function makePostgresPoolEndIdempotent(pool: PgPool, onFirstEnd?: () => void): void {
   const end = pool.end.bind(pool);
   let completion: Promise<void> | undefined;
-  const endOnce = (callback?: (error?: Error) => void): Promise<void> | void => {
-    if (completion === undefined) {
-      completion = new Promise<void>((resolve, reject): void => {
-        onFirstEnd?.();
-        void end().then(resolve, reject);
-      });
-    }
-
-    if (callback === undefined) {
-      return completion;
-    }
-    void completion.then(
-      (): void => {
-        callback();
-      },
-      (error: unknown): void => {
-        callback(error instanceof Error ? error : new Error(String(error)));
-      },
-    );
-  };
-  pool.end = endOnce as PgPool['end'];
-  return pool;
+  pool.end = ((): Promise<void> => {
+    completion ??= (async (): Promise<void> => {
+      onFirstEnd?.();
+      await end();
+    })();
+    return completion;
+  }) as PgPool['end'];
 }
 
 export async function getDwnConfig(

@@ -30,7 +30,7 @@ describe('storage', () => {
   });
 
   describe('makePostgresPoolEndIdempotent()', () => {
-    it('should retain the pool and share one shutdown across Promise and callback callers', async () => {
+    it('should share one shutdown across concurrent Kysely-style callers', async () => {
       let endCalls = 0;
       let releaseEnd!: () => void;
       const ending = new Promise<void>((resolve): void => {
@@ -43,21 +43,14 @@ describe('storage', () => {
         },
       } as unknown as FakePool;
 
-      const pool = makePostgresPoolEndIdempotent(fakePool);
-      const first = pool.end();
-      const second = pool.end();
-      let callbackCalls = 0;
-      pool.end((): void => {
-        callbackCalls++;
-      });
+      makePostgresPoolEndIdempotent(fakePool);
+      const first = fakePool.end();
+      const second = fakePool.end();
 
-      expect(pool).toBe(fakePool);
       expect(first).toBe(second);
       expect(endCalls).toBe(1);
       releaseEnd();
       await Promise.all([first, second]);
-      await Promise.resolve();
-      expect(callbackCalls).toBe(1);
     });
 
     it('should evict before ending and memoize a rejected shutdown', async () => {
@@ -69,14 +62,14 @@ describe('storage', () => {
           return Promise.reject(failure);
         },
       } as unknown as FakePool;
-      const pool = makePostgresPoolEndIdempotent(fakePool, (): void => {
+      makePostgresPoolEndIdempotent(fakePool, (): void => {
         order.push('evict');
       });
 
-      const first = pool.end();
+      const first = fakePool.end();
       expect(order).toEqual(['evict', 'end']);
       await expect(first).rejects.toBe(failure);
-      await expect(pool.end()).rejects.toBe(failure);
+      await expect(fakePool.end()).rejects.toBe(failure);
       expect(order).toEqual(['evict', 'end']);
     });
   });
