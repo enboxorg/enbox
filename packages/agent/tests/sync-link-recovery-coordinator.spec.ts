@@ -829,6 +829,46 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('uses an already queued reconciliation instead of scheduling a redundant retry', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const firstStarted = deferred<void>();
+    const releaseFirst = deferred<void>();
+    const trailingStarted = deferred<void>();
+    const releaseTrailing = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      firstStarted.resolve();
+      await releaseFirst.promise;
+      throw new Error('offline');
+    });
+    fixture.operations.reconcileTarget.onSecondCall().callsFake(async () => {
+      trailingStarted.resolve();
+      await releaseTrailing.promise;
+      return { converged: true };
+    });
+
+    const first = runReconcile(fixture, controller);
+    await firstStarted.promise;
+    const trailing = runReconcile(fixture, controller);
+    releaseFirst.resolve();
+    await trailingStarted.promise;
+
+    expect(controller.link.recovery).toMatchObject({
+      operation   : 'reconcile',
+      error       : 'offline',
+      nextRetryAt : undefined,
+    });
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
+    expect(fixture.operations.emitEvent.calledWithMatch({
+      type   : 'reconcile:needed',
+      reason : 'reconcile-failed',
+    })).toBe(false);
+
+    releaseTrailing.resolve();
+    await Promise.all([first, trailing]);
+    expect(controller.link.recovery).toBeUndefined();
+  });
+
   it('runs repair after an in-flight push pass yields to its generation fence', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);
