@@ -1,5 +1,22 @@
 # @enbox/auth
 
+## 0.6.92
+
+### Patch Changes
+
+- [#1670](https://github.com/enboxorg/enbox/pull/1670) [`2e44c90`](https://github.com/enboxorg/enbox/commit/2e44c903854b45ab538052aa30df0a3f58471676) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Park delegated sync after confirmed wallet approval expiry or revocation, preserving registrations and followed contexts until fresh approval resumes them. Resolve shared feed authorization once per identity before planning its endpoints.
+
+- [#1668](https://github.com/enboxorg/enbox/pull/1668) [`ab6cbfd`](https://github.com/enboxorg/enbox/commit/ab6cbfdd236af8fbf291a6307ac1e56e64f4c1e9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Preserve transient DID gateway failures through endpoint discovery, signing-method lookup, and local key and grant reads. Defer dependent sync and connection-monitor work until its next recovery attempt, keeping confirmed authorization and trusted cached DID documents available during an outage while retaining diagnostics for unexpected failures. Keep redirect and URL-handling failures distinct from transport failures so they cannot trigger retained DID fallback.
+
+- Updated dependencies [[`21ec003`](https://github.com/enboxorg/enbox/commit/21ec00321e797487b5529884c542e7de95531b87), [`24f00aa`](https://github.com/enboxorg/enbox/commit/24f00aad3b6f43e4c1b7aaa39a73f8cd3d721841), [`e17d307`](https://github.com/enboxorg/enbox/commit/e17d307d268cbcc3a773490b618b56589298314a), [`2e44c90`](https://github.com/enboxorg/enbox/commit/2e44c903854b45ab538052aa30df0a3f58471676), [`ab6cbfd`](https://github.com/enboxorg/enbox/commit/ab6cbfdd236af8fbf291a6307ac1e56e64f4c1e9), [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396), [`994f448`](https://github.com/enboxorg/enbox/commit/994f4484e605ad8e626652b4d69b7d240eda032f), [`d34582d`](https://github.com/enboxorg/enbox/commit/d34582da959f2da5b1dc92eab210deddfb77e03b)]:
+  - @enbox/agent@0.8.46
+  - @enbox/dwn-sdk-js@0.4.26
+  - @enbox/dwn-clients@0.4.34
+  - @enbox/common@0.1.7
+  - @enbox/dids@0.1.11
+  - @enbox/connect@0.1.22
+  - @enbox/crypto@0.1.10
+
 ## 0.6.91
 
 ### Patch Changes

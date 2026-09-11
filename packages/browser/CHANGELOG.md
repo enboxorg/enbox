@@ -1,5 +1,20 @@
 # @enbox/browser
 
+## 0.3.77
+
+### Patch Changes
+
+- Updated dependencies [[`21ec003`](https://github.com/enboxorg/enbox/commit/21ec00321e797487b5529884c542e7de95531b87), [`24f00aa`](https://github.com/enboxorg/enbox/commit/24f00aad3b6f43e4c1b7aaa39a73f8cd3d721841), [`2e44c90`](https://github.com/enboxorg/enbox/commit/2e44c903854b45ab538052aa30df0a3f58471676), [`ab6cbfd`](https://github.com/enboxorg/enbox/commit/ab6cbfdd236af8fbf291a6307ac1e56e64f4c1e9), [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396), [`844890d`](https://github.com/enboxorg/enbox/commit/844890d030ebb4c450644d6fc249005d2c9dad52), [`994f448`](https://github.com/enboxorg/enbox/commit/994f4484e605ad8e626652b4d69b7d240eda032f), [`0ad642d`](https://github.com/enboxorg/enbox/commit/0ad642daced12e1ad563541da65504e6c09c33e3), [`d34582d`](https://github.com/enboxorg/enbox/commit/d34582da959f2da5b1dc92eab210deddfb77e03b)]:
+  - @enbox/agent@0.8.46
+  - @enbox/dwn-sdk-js@0.4.26
+  - @enbox/auth@0.6.92
+  - @enbox/common@0.1.7
+  - @enbox/dids@0.1.11
+  - @enbox/api@0.6.85
+  - @enbox/protocols@0.2.112
+  - @enbox/connect@0.1.22
+  - @enbox/crypto@0.1.10
+
 ## 0.3.76
 
 ### Patch Changes
