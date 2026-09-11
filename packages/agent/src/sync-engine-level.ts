@@ -82,7 +82,7 @@ import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildCurrentLinkIdentityKey, buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
-import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, singleProtocolForSyncScope, syncEventScope } from './types/sync.js';
+import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, normalizeSyncProtocols, singleProtocolForSyncScope, syncEventScope } from './types/sync.js';
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor } from './sync-messages.js';
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
@@ -882,6 +882,32 @@ export class SyncEngineLevel implements SyncEngine {
     );
   }
 
+  public async ensureIdentityOptions(
+    params: { did: string; options: SyncIdentityOptions },
+    lifecycleOptions: SyncLifecycleOptions = {},
+  ): Promise<boolean> {
+    let changed = false;
+    await this.runExclusiveIdentityMutation(
+      params.did,
+      async (deadline): Promise<void> => {
+        this._scopeClosureValidator.validateOptions(params.options);
+        const existing = await this.waitForLifecycleBarrier(
+          this.getIdentityOptions(params.did),
+          deadline,
+          'Identity options preparation did not complete',
+        );
+        if (existing !== undefined && SyncEngineLevel.identityOptionsEqual(existing, params.options)) {
+          return;
+        }
+
+        await this.doSetIdentityOptions(params, deadline);
+        changed = true;
+      },
+      lifecycleOptions,
+    );
+    return changed;
+  }
+
   public refreshIdentityRouting(did: string, lifecycleOptions: SyncLifecycleOptions = {}): Promise<void> {
     return this.runExclusiveIdentityMutation(
       did,
@@ -1064,6 +1090,20 @@ export class SyncEngineLevel implements SyncEngine {
     } else {
       await this.tryPruneSupersededDurableLinksForRegisteredIdentity(did, options);
     }
+  }
+
+  private static identityOptionsEqual(left: SyncIdentityOptions, right: SyncIdentityOptions): boolean {
+    if (left.delegateDid !== right.delegateDid) {
+      return false;
+    }
+    if (left.protocols === 'all' || right.protocols === 'all') {
+      return left.protocols === right.protocols;
+    }
+
+    const leftProtocols = normalizeSyncProtocols(left.protocols);
+    const rightProtocols = normalizeSyncProtocols(right.protocols);
+    return leftProtocols.length === rightProtocols.length
+      && leftProtocols.every((protocol, index): boolean => protocol === rightProtocols[index]);
   }
 
   public removeIdentity(did: string, lifecycleOptions: SyncLifecycleOptions = {}): Promise<void> {

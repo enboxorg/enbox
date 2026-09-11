@@ -51,6 +51,16 @@ export * from './store-identity.js';
 export * from './store-key.js';
 export * from './utils.js';
 export * from './connect-approval.js';
+export {
+  getProtocolSetupStatus,
+  hasEncryptedProtocolTypes,
+  inspectConnectProtocol,
+} from './connect-protocol-preparation.js';
+export type {
+  ConnectProtocolInspection,
+  InspectConnectProtocolParams,
+  ProtocolSetupStatus,
+} from './connect-protocol-preparation.js';
 export * from './connect-status.js';
 export * from './enbox-user-agent.js';
 export { IdentityProtocolDefinition, JwkProtocolDefinition } from './store-data-protocols.js';
