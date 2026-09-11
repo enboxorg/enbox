@@ -8,6 +8,7 @@ import type {
   ReplicationLinkState,
   SyncDirection,
   SyncEvent,
+  SyncLinkRecoveryState,
 } from './types/sync.js';
 import type {
   SyncDurableFeedReconcileOptions,
@@ -36,6 +37,7 @@ export interface SyncLinkRecoveryCoordinatorOperations {
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult>;
   reportError(message: string, error: unknown): void;
+  setRecovery(link: ReplicationLinkState, recovery: SyncLinkRecoveryState | undefined): Promise<void>;
   setStatus(link: ReplicationLinkState, status: ReplicationLinkState['status']): Promise<void>;
   warn(message: string): void;
 }
@@ -170,9 +172,7 @@ export class SyncLinkRecoveryCoordinator {
     }
 
     const attempts = controller.repairAttempts || 1;
-    const delayMs = this._repairBackoffMs[
-      Math.min(attempts - 1, this._repairBackoffMs.length - 1)
-    ] ?? 0;
+    const delayMs = this.repairRetryDelayMs(attempts);
     const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
     runtime.armTimeout(timerKey, (): void => {
       if (this.isStale(controller, runtime) || link.status !== 'repairing') {
@@ -218,14 +218,7 @@ export class SyncLinkRecoveryCoordinator {
     if (!this.scheduleReconcile(controller, delayMs)) {
       return;
     }
-
-    this._operations.emitEvent({
-      type           : 'reconcile:needed',
-      tenantDid      : link.tenantDid,
-      remoteEndpoint : link.remoteEndpoint,
-      ...eventScope(link.scope),
-      reason,
-    });
+    this.emitReconcileNeeded(controller, reason);
   }
 
   /** Schedule the earliest reconciliation fenced by the captured controller lifetime. */
@@ -294,6 +287,7 @@ export class SyncLinkRecoveryCoordinator {
   private async repairExclusive(controller: SyncLinkController): Promise<void> {
     const { link } = controller;
     const runtime = this._operations.getRuntime();
+    runtime.cancelTimer(SyncLinkRecoveryCoordinator.repairRetryTimerKey(controller.linkKey));
     const attempts = controller.incrementRepairAttempts();
     this._operations.emitEvent({
       type           : 'repair:started',
@@ -454,6 +448,22 @@ export class SyncLinkRecoveryCoordinator {
 
     const { link, linkKey } = controller;
     const errorMessage = syncErrorMessage(error);
+    const failedAt = new Date().toISOString();
+    const terminal = isTerminalSyncAuthorizationFailure(errorMessage);
+    const exhausted = attempts >= this._maxRepairAttempts;
+    const nextRetryAt = terminal || exhausted
+      ? undefined
+      : SyncLinkRecoveryCoordinator.retryAt(failedAt, this.repairRetryDelayMs(attempts));
+    await this._operations.setRecovery(link, {
+      operation : 'repair',
+      error     : errorMessage,
+      failedAt,
+      attempt   : attempts,
+      ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
+    });
+    if (this.isRepairSuperseded(controller, runtime)) {
+      return;
+    }
     const failedEvent: SyncEvent = {
       type           : 'repair:failed',
       tenantDid      : link.tenantDid,
@@ -461,8 +471,9 @@ export class SyncLinkRecoveryCoordinator {
       ...eventScope(link.scope),
       attempt        : attempts,
       error          : errorMessage,
+      ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
     };
-    if (isTerminalSyncAuthorizationFailure(errorMessage)) {
+    if (terminal) {
       this._operations.warn(
         `SyncLinkRecoveryCoordinator: sync authorization for ${link.tenantDid} -> ${link.remoteEndpoint} ` +
         'was revoked or expired — pausing link (reconnect to resume).',
@@ -477,7 +488,7 @@ export class SyncLinkRecoveryCoordinator {
       error,
     );
     this._operations.emitEvent(failedEvent);
-    if (attempts >= this._maxRepairAttempts) {
+    if (exhausted) {
       this._operations.warn(
         `SyncLinkRecoveryCoordinator: Max repair attempts reached for ${link.tenantDid} -> ${link.remoteEndpoint}, pausing link`,
       );
@@ -534,6 +545,12 @@ export class SyncLinkRecoveryCoordinator {
         ? outcome.pullDrained === true
         : outcome.converged === true;
       if (reconciled) {
+        if (link.recovery !== undefined) {
+          await this._operations.setRecovery(link, undefined);
+        }
+        if (!shouldContinue()) {
+          return;
+        }
         this._feedConvergenceManager.clearLink(linkKey);
         this.restoreLinkConnectivity(link);
         this._operations.emitEvent({
@@ -556,10 +573,19 @@ export class SyncLinkRecoveryCoordinator {
         `SyncLinkRecoveryCoordinator: Reconciliation failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
         error,
       );
+      const failedAt = new Date().toISOString();
+      const shouldSchedule = !controller.executor.hasPending('reconcile');
       // A trailing pass is already requested: it subsumes this retry, so
       // arming a timer as well would run a third full pass later.
-      if (!controller.executor.hasPending('reconcile')) {
-        this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS);
+      const scheduled = shouldSchedule
+        ? this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS)
+        : false;
+      const nextRetryAt = scheduled
+        ? SyncLinkRecoveryCoordinator.retryAt(failedAt, RECONCILE_RETRY_DELAY_MS)
+        : shouldSchedule ? link.recovery?.nextRetryAt : undefined;
+      const recorded = await this.recordReconcileFailure(controller, error, failedAt, nextRetryAt, shouldContinue);
+      if (scheduled && recorded) {
+        this.emitReconcileNeeded(controller, 'reconcile-failed');
       }
     }
   }
@@ -598,10 +624,14 @@ export class SyncLinkRecoveryCoordinator {
         `SyncLinkRecoveryCoordinator: Durable ${direction} pass failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
         error,
       );
-      if (direction === 'push') {
-        this.schedulePushRetry(controller);
-      } else {
-        this.scheduleLinkReconcileByKey(controller, 'pull-retryable', RECONCILE_RETRY_DELAY_MS);
+      const failedAt = new Date().toISOString();
+      const scheduled = this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS);
+      const nextRetryAt = scheduled
+        ? SyncLinkRecoveryCoordinator.retryAt(failedAt, RECONCILE_RETRY_DELAY_MS)
+        : link.recovery?.nextRetryAt;
+      const recorded = await this.recordReconcileFailure(controller, error, failedAt, nextRetryAt, shouldContinue);
+      if (scheduled && recorded) {
+        this.emitReconcileNeeded(controller, direction === 'push' ? 'push-retryable' : 'pull-retryable');
       }
     }
   }
@@ -609,6 +639,50 @@ export class SyncLinkRecoveryCoordinator {
   /** A retryable push failure falls back to the verified reconciliation path. */
   private schedulePushRetry(controller: SyncLinkController): void {
     this.scheduleLinkReconcileByKey(controller, 'push-retryable', RECONCILE_RETRY_DELAY_MS);
+  }
+
+  private async recordReconcileFailure(
+    controller: SyncLinkController,
+    error: unknown,
+    failedAt: string,
+    nextRetryAt: string | undefined,
+    shouldContinue: () => boolean,
+  ): Promise<boolean> {
+    const errorMessage = syncErrorMessage(error);
+    await this._operations.setRecovery(controller.link, {
+      operation : 'reconcile',
+      error     : errorMessage,
+      failedAt,
+      ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
+    });
+    if (!shouldContinue()) {
+      return false;
+    }
+    this._operations.emitEvent({
+      type           : 'reconcile:failed',
+      tenantDid      : controller.link.tenantDid,
+      remoteEndpoint : controller.link.remoteEndpoint,
+      ...eventScope(controller.link.scope),
+      error          : errorMessage,
+      ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
+    });
+    return true;
+  }
+
+  private emitReconcileNeeded(controller: SyncLinkController, reason: string): void {
+    this._operations.emitEvent({
+      type           : 'reconcile:needed',
+      tenantDid      : controller.link.tenantDid,
+      remoteEndpoint : controller.link.remoteEndpoint,
+      ...eventScope(controller.link.scope),
+      reason,
+    });
+  }
+
+  private repairRetryDelayMs(attempts: number): number {
+    return this._repairBackoffMs[
+      Math.min(attempts - 1, this._repairBackoffMs.length - 1)
+    ] ?? 0;
   }
 
   /**
@@ -703,5 +777,9 @@ export class SyncLinkRecoveryCoordinator {
 
   private static repairRetryTimerKey(linkKey: string): string {
     return `${REPAIR_RETRY_TIMER_PREFIX}${linkKey}`;
+  }
+
+  private static retryAt(failedAt: string, delayMs: number): string {
+    return new Date(Date.parse(failedAt) + delayMs).toISOString();
   }
 }

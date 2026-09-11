@@ -174,6 +174,57 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(persisted.push).toEqual(checkpointLink.push);
   });
 
+  it('should persist recovery diagnostics without recording successful activity', async () => {
+    const link = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const recovery = {
+      operation   : 'repair' as const,
+      error       : 'authority endpoint unavailable',
+      failedAt    : '2026-09-11T12:00:00.000Z',
+      attempt     : 1,
+      nextRetryAt : '2026-09-11T12:00:01.000Z',
+    };
+
+    await store.setRecovery(link, recovery);
+
+    expect(link.lastActivityAt).toBeUndefined();
+    expect(link.recovery).toEqual(recovery);
+    expect(await store.getAllLinks()).toMatchObject([{ recovery }]);
+  });
+
+  it('should preserve a concurrent recovery failure and checkpoint update', async () => {
+    const recoveryLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const checkpointLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    checkpointLink.pull.contiguousAppliedToken = token(31);
+
+    await Promise.all([
+      store.setRecovery(recoveryLink, {
+        operation : 'reconcile',
+        error     : 'remote query failed',
+        failedAt  : '2026-09-11T12:00:00.000Z',
+      }),
+      store.persistCheckpoint(checkpointLink, 'pull'),
+    ]);
+
+    const [persisted] = await store.getAllLinks();
+    expect(persisted.recovery).toMatchObject({ error: 'remote query failed' });
+    expect(persisted.pull).toEqual(checkpointLink.pull);
+  });
+
   it('should serialize same-link read-merge-write operations across store instances', async () => {
     const pullLink = makeLink();
     const pushLink = makeLink();
@@ -459,6 +510,44 @@ describe('SyncReplicationLinkStoreLevel', () => {
     }
   });
 
+  it('should retain a paused recovery reason across storage restart', async () => {
+    const dataPath = `__TESTDATA__/sync-replication-link-recovery-restart/${crypto.randomUUID()}`;
+    const params = {
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' } as const,
+      ...ownerAuthorization,
+    };
+    const recovery = {
+      operation : 'repair' as const,
+      error     : 'authority endpoint unavailable',
+      failedAt  : '2026-09-11T12:00:00.000Z',
+      attempt   : 3,
+    };
+    const firstDb = new Level<string, string>(dataPath);
+    try {
+      const firstStore = new SyncReplicationLinkStoreLevel(firstDb);
+      const link = await firstStore.getOrCreateLink(params);
+      await firstStore.setRecovery(link, recovery);
+      await firstStore.setStatus(link, 'paused');
+    } finally {
+      await firstDb.close();
+    }
+
+    const secondDb = new Level<string, string>(dataPath);
+    try {
+      const secondStore = new SyncReplicationLinkStoreLevel(secondDb);
+      const reloaded = await secondStore.getOrCreateLink(params);
+
+      expect(reloaded.status).toBe('paused');
+      expect(reloaded.connectivity).toBe('unknown');
+      expect(reloaded.recovery).toEqual(recovery);
+    } finally {
+      await secondDb.clear();
+      await secondDb.close();
+    }
+  });
+
   it('should reload a persisted repairing link as initializing while paused stays durable', async () => {
     const params = {
       tenantDid      : 'did:example:alice',
@@ -476,13 +565,22 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(reloadedRepairing.connectivity).toBe('unknown');
 
     // 'paused' is a durable decision and must survive reload.
+    const recovery = {
+      operation : 'repair' as const,
+      error     : 'authority endpoint unavailable',
+      failedAt  : '2026-09-11T12:00:00.000Z',
+      attempt   : 3,
+    };
+    await store.setRecovery(link, recovery);
     await store.setStatus(link, 'paused');
     const reloadedPaused = await store.getOrCreateLink(params);
     expect(reloadedPaused.status).toBe('paused');
+    expect(reloadedPaused.recovery).toEqual(recovery);
 
     await store.setStatus(link, 'live');
     const reloadedLive = await store.getOrCreateLink(params);
     expect(reloadedLive.status).toBe('live');
+    expect(reloadedLive.recovery).toBeUndefined();
   });
 
   it('should clear only replication-link records', async () => {

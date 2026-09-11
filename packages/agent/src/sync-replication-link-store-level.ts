@@ -7,6 +7,7 @@ import type {
   ReplicationLinkState,
   SyncAuthorization,
   SyncDirection,
+  SyncLinkRecoveryState,
   SyncScope,
 } from './types/sync.js';
 
@@ -153,11 +154,28 @@ export class SyncReplicationLinkStoreLevel {
 
   public async setStatus(link: ReplicationLinkState, status: LinkStatus): Promise<void> {
     link.status = status;
+    if (status === 'live') {
+      delete link.recovery;
+    }
     const connectivity = link.connectivity;
     await this.updateLink(link, (persistedLink): void => {
       persistedLink.status = status;
       persistedLink.connectivity = connectivity;
+      if (status === 'live') {
+        delete persistedLink.recovery;
+      }
     });
+  }
+
+  /** Persist or clear the latest recovery diagnostic without claiming successful sync activity. */
+  public async setRecovery(
+    link: ReplicationLinkState,
+    recovery: SyncLinkRecoveryState | undefined,
+  ): Promise<void> {
+    SyncReplicationLinkStoreLevel.assignRecovery(link, recovery);
+    await this.updateLink(link, (persistedLink): void => {
+      SyncReplicationLinkStoreLevel.assignRecovery(persistedLink, recovery);
+    }, false);
   }
 
   private static buildKey(
@@ -201,6 +219,17 @@ export class SyncReplicationLinkStoreLevel {
     return structuredClone(checkpoint);
   }
 
+  private static assignRecovery(
+    link: ReplicationLinkState,
+    recovery: SyncLinkRecoveryState | undefined,
+  ): void {
+    if (recovery === undefined) {
+      delete link.recovery;
+    } else {
+      link.recovery = { ...recovery };
+    }
+  }
+
   /**
    * Merge an in-memory checkpoint into the persisted one without regressing
    * within a token domain. One-shot work and another browser context can still
@@ -239,10 +268,16 @@ export class SyncReplicationLinkStoreLevel {
    * stored record is gone is dropped silently: a checkpoint persist racing a
    * deliberate superseded-link prune must not resurrect the deleted link.
    */
-  private async updateLink(link: ReplicationLinkState, mutate: (persistedLink: ReplicationLinkState) => void): Promise<void> {
+  private async updateLink(
+    link: ReplicationLinkState,
+    mutate: (persistedLink: ReplicationLinkState) => void,
+    recordActivity = true,
+  ): Promise<void> {
     const key = SyncReplicationLinkStoreLevel.buildKeyForLink(link);
-    const lastActivityAt = new Date().toISOString();
-    link.lastActivityAt = lastActivityAt;
+    const lastActivityAt = recordActivity ? new Date().toISOString() : undefined;
+    if (lastActivityAt !== undefined) {
+      link.lastActivityAt = lastActivityAt;
+    }
 
     await this.runForLink(key, async (): Promise<void> => {
       const persistedLink = await this.getLink(key);
@@ -250,7 +285,9 @@ export class SyncReplicationLinkStoreLevel {
         return;
       }
       mutate(persistedLink);
-      persistedLink.lastActivityAt = lastActivityAt;
+      if (lastActivityAt !== undefined) {
+        persistedLink.lastActivityAt = lastActivityAt;
+      }
       await this._links.put(key, JSON.stringify(persistedLink));
     });
   }
