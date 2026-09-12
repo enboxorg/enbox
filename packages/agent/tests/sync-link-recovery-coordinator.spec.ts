@@ -719,12 +719,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
     }
   });
 
-  it('schedules verified reconciliation after a durable pull failure', async () => {
+  it('keeps the earliest verified reconciliation retry across durable failures', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const controller = activate(fixture);
     fixture.operations.reconcileTarget.onFirstCall().rejects(new Error('remote query failed'));
-    fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: true });
+    fixture.operations.reconcileTarget.onSecondCall().rejects(new Error('remote write failed'));
+    fixture.operations.reconcileTarget.onThirdCall().resolves({ converged: true });
 
     await runWake(fixture, controller, 'pull');
 
@@ -739,12 +740,23 @@ describe('SyncLinkRecoveryCoordinator', () => {
       reason : 'pull-retryable',
     })).toBe(true);
     expect(fixture.operations.setRecovery.calledBefore(fixture.operations.emitEvent)).toBe(true);
+
+    const nextRetryAt = controller.link.recovery?.nextRetryAt;
+    await runWake(fixture, controller, 'push');
+
+    expect(fixture.operations.reportError.callCount).toBe(2);
+    expect(controller.link.recovery).toMatchObject({
+      error: 'remote write failed',
+      nextRetryAt,
+    });
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
+
     await clock.tickAsync(4999);
-    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
     await clock.tickAsync(1);
     await waitForLastTask(fixture.taskRunner);
-    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
-    expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ verifyConvergence: true });
+    expect(fixture.operations.reconcileTarget.callCount).toBe(3);
+    expect(fixture.operations.reconcileTarget.thirdCall.args[2]).toEqual({ verifyConvergence: true });
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     expect(controller.link.recovery).toBeUndefined();
     controller.deactivate();
