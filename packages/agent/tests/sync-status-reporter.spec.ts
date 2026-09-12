@@ -282,7 +282,6 @@ describe('sync status projection', () => {
 
   it('projects durable link recovery into per-link, remote, and health status', () => {
     const recovery = {
-      operation   : 'reconcile' as const,
       error       : 'authority endpoint unavailable',
       failedAt    : timestamp(4),
       nextRetryAt : timestamp(9),

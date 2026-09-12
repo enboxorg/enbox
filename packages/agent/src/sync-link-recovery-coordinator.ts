@@ -455,10 +455,8 @@ export class SyncLinkRecoveryCoordinator {
       ? undefined
       : SyncLinkRecoveryCoordinator.retryAt(failedAt, this.repairRetryDelayMs(attempts));
     await this._operations.setRecovery(link, {
-      operation : 'repair',
-      error     : errorMessage,
+      error: errorMessage,
       failedAt,
-      attempt   : attempts,
       nextRetryAt,
     });
     if (this.isRepairSuperseded(controller, runtime)) {
@@ -471,7 +469,6 @@ export class SyncLinkRecoveryCoordinator {
       ...eventScope(link.scope),
       attempt        : attempts,
       error          : errorMessage,
-      nextRetryAt,
     };
     if (terminal) {
       this._operations.warn(
@@ -656,8 +653,7 @@ export class SyncLinkRecoveryCoordinator {
 
     const errorMessage = syncErrorMessage(error);
     await this._operations.setRecovery(link, {
-      operation : 'reconcile',
-      error     : errorMessage,
+      error: errorMessage,
       failedAt,
       nextRetryAt,
     });
@@ -670,7 +666,6 @@ export class SyncLinkRecoveryCoordinator {
       remoteEndpoint : link.remoteEndpoint,
       ...eventScope(link.scope),
       error          : errorMessage,
-      nextRetryAt,
     });
     if (retryScheduled && retryReason !== undefined) {
       this.emitReconcileNeeded(controller, retryReason);

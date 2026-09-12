@@ -1190,10 +1190,8 @@ describe('RecordView', () => {
     fakeSync.links = [{
       ...link('paused', 'offline'),
       recovery: {
-        operation : 'repair',
-        error     : 'authority endpoint unavailable',
-        failedAt  : '2026-09-11T12:00:00.000Z',
-        attempt   : 3,
+        error    : 'authority endpoint unavailable',
+        failedAt : '2026-09-11T12:00:00.000Z',
       },
     }];
 

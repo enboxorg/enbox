@@ -296,7 +296,6 @@ describe('SyncLinkRecoveryCoordinator', () => {
       state.connectivity = 'online';
       await store.setStatus(state, 'live');
       const recovery = {
-        operation   : 'reconcile' as const,
         error       : 'offline',
         failedAt    : '2026-09-11T12:00:00.000Z',
         nextRetryAt : '2026-09-11T12:00:05.000Z',
@@ -319,11 +318,11 @@ describe('SyncLinkRecoveryCoordinator', () => {
       fixture.getRuntime().armTimeout(timerKey, () => undefined, 5_000);
 
       await fixture.coordinator.transitionToPaused(linkKey, state);
+      await store.setRecovery(state, recovery);
 
       const expectedRecovery = {
-        operation : recovery.operation,
-        error     : recovery.error,
-        failedAt  : recovery.failedAt,
+        error    : recovery.error,
+        failedAt : recovery.failedAt,
       };
       expect(fixture.getRuntime().hasTimer(timerKey)).toBe(false);
       expect(state.recovery).toEqual(expectedRecovery);
@@ -537,9 +536,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await runRepair(fixture, terminalController);
     expect(terminalState.status).toBe('paused');
     expect(terminalState.recovery).toMatchObject({
-      operation : 'repair',
-      error     : 'GrantAuthorizationGrantRevoked',
-      attempt   : 1,
+      error: 'GrantAuthorizationGrantRevoked',
     });
     expect(terminalState.recovery?.nextRetryAt).toBeUndefined();
     expect(fixture.operations.warn.calledWithMatch('authorization')).toBe(true);
@@ -553,7 +550,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await runRepair(fixture, transientController);
 
     expect(transientState.status).toBe('paused');
-    expect(transientState.recovery).toMatchObject({ operation: 'repair', error: 'offline', attempt: 3 });
+    expect(transientState.recovery).toMatchObject({ error: 'offline' });
     expect(transientState.recovery?.nextRetryAt).toBeUndefined();
     expect(transientController.repairAttempts).toBe(0);
     expect(fixture.operations.reportError.callCount).toBe(3);
@@ -572,16 +569,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await runRepair(fixture, controller);
 
     expect(state.recovery).toEqual({
-      operation   : 'repair',
       error       : 'authority endpoint unavailable',
       failedAt    : now.toISOString(),
-      attempt     : 1,
       nextRetryAt : '2026-09-11T12:00:01.000Z',
     });
-    expect(fixture.operations.emitEvent.calledWithMatch({
-      type        : 'repair:failed',
-      nextRetryAt : '2026-09-11T12:00:01.000Z',
-    })).toBe(true);
 
     await clock.tickAsync(1000);
     await waitForLastTask(fixture.taskRunner);
@@ -740,8 +731,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.reportError.calledOnce).toBe(true);
     expect(fixture.operations.reportError.firstCall.calledWithMatch('Durable pull pass failed')).toBe(true);
     expect(controller.link.recovery).toMatchObject({
-      operation : 'reconcile',
-      error     : 'remote query failed',
+      error: 'remote query failed',
     });
     expect(fixture.operations.emitEvent.calledWithMatch({
       type  : 'reconcile:failed',
@@ -861,7 +851,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     await runReconcile(fixture, controller);
     expect(fixture.operations.reportError.calledOnce).toBe(true);
-    expect(controller.link.recovery).toMatchObject({ operation: 'reconcile', error: 'offline' });
+    expect(controller.link.recovery).toMatchObject({ error: 'offline' });
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:failed', error: 'offline' })).toBe(true);
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     await clock.tickAsync(4999);
@@ -895,7 +885,6 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const fixture = createFixture();
     const controller = activate(fixture);
     controller.link.recovery = {
-      operation   : 'reconcile',
       error       : 'earlier failure',
       failedAt    : '2026-09-11T11:00:00.000Z',
       nextRetryAt : '2026-09-11T11:00:05.000Z',
@@ -923,7 +912,6 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await trailingStarted.promise;
 
     expect(controller.link.recovery).toMatchObject({
-      operation   : 'reconcile',
       error       : 'offline',
       nextRetryAt : undefined,
     });

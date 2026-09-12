@@ -220,7 +220,11 @@ export class SyncReplicationLinkStoreLevel {
     if (recovery === undefined) {
       delete link.recovery;
     } else {
-      link.recovery = { ...recovery };
+      const assigned = { ...recovery };
+      if (link.status === 'paused') {
+        delete assigned.nextRetryAt;
+      }
+      link.recovery = assigned;
     }
   }
 
@@ -228,10 +232,8 @@ export class SyncReplicationLinkStoreLevel {
     link.status = status;
     if (status === 'live') {
       delete link.recovery;
-    } else if (status === 'paused' && link.recovery?.nextRetryAt !== undefined) {
-      const recovery = { ...link.recovery };
-      delete recovery.nextRetryAt;
-      link.recovery = recovery;
+    } else if (status === 'paused') {
+      SyncReplicationLinkStoreLevel.assignRecovery(link, link.recovery);
     }
   }
 

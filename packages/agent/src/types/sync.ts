@@ -351,14 +351,10 @@ export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'paused';
 
 /** Durable diagnostic state for the latest failed link recovery operation. */
 export type SyncLinkRecoveryState = Readonly<{
-  /** Operation that failed. */
-  operation: 'reconcile' | 'repair';
   /** Human-readable failure detail. */
   error: string;
   /** ISO-8601 timestamp of the failure. */
   failedAt: string;
-  /** Bounded repair attempt that failed, when recovery is repairing a transport. */
-  attempt?: number;
   /** ISO-8601 timestamp of the scheduled retry, when one is armed. */
   nextRetryAt?: string;
 }>;
@@ -660,10 +656,10 @@ export type SyncEvent =
   | SyncEventBase & { type: 'delivery:applied'; messageCid: string; descriptor: SyncMessageDescriptor }
   | SyncEventBase & { type: 'reconcile:needed'; reason: string }
   | SyncEventBase & { type: 'reconcile:completed' }
-  | SyncEventBase & { type: 'reconcile:failed'; error: string; nextRetryAt?: string }
+  | SyncEventBase & { type: 'reconcile:failed'; error: string }
   | SyncEventBase & { type: 'repair:started'; attempt: number }
   | SyncEventBase & { type: 'repair:completed' }
-  | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string; nextRetryAt?: string }
+  | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
   /** A push was rejected because the remote is out of storage/message quota for this tenant. Re-probing is deferred until `nextProbeAt`. */
   | SyncEventBase & { type: 'push:quota-blocked'; messageCid: string; detail?: string; nextProbeAt: string }
   /** A previously quota-blocked push was acknowledged or retired because it no longer exists locally. */

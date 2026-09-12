@@ -182,10 +182,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
       ...ownerAuthorization,
     });
     const recovery = {
-      operation   : 'repair' as const,
       error       : 'authority endpoint unavailable',
       failedAt    : '2026-09-11T12:00:00.000Z',
-      attempt     : 1,
       nextRetryAt : '2026-09-11T12:00:01.000Z',
     };
 
@@ -213,9 +211,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
 
     await Promise.all([
       store.setRecovery(recoveryLink, {
-        operation : 'reconcile',
-        error     : 'remote query failed',
-        failedAt  : '2026-09-11T12:00:00.000Z',
+        error    : 'remote query failed',
+        failedAt : '2026-09-11T12:00:00.000Z',
       }),
       store.persistCheckpoint(checkpointLink, 'pull'),
     ]);
@@ -519,10 +516,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
       ...ownerAuthorization,
     };
     const recovery = {
-      operation : 'repair' as const,
-      error     : 'authority endpoint unavailable',
-      failedAt  : '2026-09-11T12:00:00.000Z',
-      attempt   : 3,
+      error    : 'authority endpoint unavailable',
+      failedAt : '2026-09-11T12:00:00.000Z',
     };
     const firstDb = new Level<string, string>(dataPath);
     try {
@@ -566,10 +561,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
 
     // 'paused' is a durable decision and must survive reload.
     const recovery = {
-      operation : 'repair' as const,
-      error     : 'authority endpoint unavailable',
-      failedAt  : '2026-09-11T12:00:00.000Z',
-      attempt   : 3,
+      error    : 'authority endpoint unavailable',
+      failedAt : '2026-09-11T12:00:00.000Z',
     };
     await store.setRecovery(link, recovery);
     await store.setStatus(link, 'paused');
