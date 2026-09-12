@@ -57,10 +57,6 @@ const RECONCILE_RETRY_DELAY_MS = 5000;
 const DEFAULT_REPAIR_BACKOFF_MS = [1000, 3000, 10_000] as const;
 const RECONCILE_TIMER_PREFIX = 'syncReconcile:';
 const REPAIR_RETRY_TIMER_PREFIX = 'syncRepairRetry:';
-const RETRY_REASON_BY_DIRECTION: Readonly<Record<SyncDirection, string>> = {
-  pull : 'pull-retryable',
-  push : 'push-retryable',
-};
 
 /**
  * Coordinates per-link repair and durable reconciliation without depending on
@@ -620,7 +616,7 @@ export class SyncLinkRecoveryCoordinator {
         controller,
         error,
         `Durable ${direction} pass`,
-        RETRY_REASON_BY_DIRECTION[direction],
+        `${direction}-retryable`,
         shouldContinue,
       );
     }
@@ -652,15 +648,11 @@ export class SyncLinkRecoveryCoordinator {
     );
 
     const failedAt = new Date().toISOString();
-    let nextRetryAt: string | undefined;
-    let scheduledReason: string | undefined;
-    if (retryReason !== undefined) {
-      nextRetryAt = link.recovery?.nextRetryAt;
-      if (this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS)) {
-        nextRetryAt = SyncLinkRecoveryCoordinator.retryAt(failedAt, RECONCILE_RETRY_DELAY_MS);
-        scheduledReason = retryReason;
-      }
-    }
+    const retryScheduled = retryReason !== undefined
+      && this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS);
+    const nextRetryAt = retryScheduled
+      ? SyncLinkRecoveryCoordinator.retryAt(failedAt, RECONCILE_RETRY_DELAY_MS)
+      : undefined;
 
     const errorMessage = syncErrorMessage(error);
     await this._operations.setRecovery(link, {
@@ -680,8 +672,8 @@ export class SyncLinkRecoveryCoordinator {
       error          : errorMessage,
       nextRetryAt,
     });
-    if (scheduledReason !== undefined) {
-      this.emitReconcileNeeded(controller, scheduledReason);
+    if (retryScheduled && retryReason !== undefined) {
+      this.emitReconcileNeeded(controller, retryReason);
     }
   }
 

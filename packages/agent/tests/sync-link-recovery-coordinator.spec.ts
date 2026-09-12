@@ -891,9 +891,16 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('uses an already queued reconciliation instead of scheduling a redundant retry', async () => {
+  it('uses an already queued reconciliation without retaining a cancelled retry deadline', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);
+    controller.link.recovery = {
+      operation   : 'reconcile',
+      error       : 'earlier failure',
+      failedAt    : '2026-09-11T11:00:00.000Z',
+      nextRetryAt : '2026-09-11T11:00:05.000Z',
+    };
+    fixture.coordinator.scheduleReconcile(controller, 60_000);
     const firstStarted = deferred<void>();
     const releaseFirst = deferred<void>();
     const trailingStarted = deferred<void>();
