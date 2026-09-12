@@ -733,15 +733,12 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(controller.link.recovery).toMatchObject({
       error: 'remote query failed',
     });
-    expect(fixture.operations.emitEvent.calledWithMatch({
-      type  : 'reconcile:failed',
-      error : 'remote query failed',
-    })).toBe(true);
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
       reason : 'pull-retryable',
     })).toBe(true);
+    expect(fixture.operations.setRecovery.calledBefore(fixture.operations.emitEvent)).toBe(true);
     await clock.tickAsync(4999);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
     await clock.tickAsync(1);
@@ -852,7 +849,6 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await runReconcile(fixture, controller);
     expect(fixture.operations.reportError.calledOnce).toBe(true);
     expect(controller.link.recovery).toMatchObject({ error: 'offline' });
-    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:failed', error: 'offline' })).toBe(true);
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     await clock.tickAsync(4999);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
@@ -919,7 +915,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
       reason : 'reconcile-failed',
-    })).toBe(false);
+    })).toBe(true);
 
     releaseTrailing.resolve();
     await Promise.all([first, trailing]);

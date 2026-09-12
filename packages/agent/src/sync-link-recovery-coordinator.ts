@@ -448,17 +448,13 @@ export class SyncLinkRecoveryCoordinator {
 
     const { link, linkKey } = controller;
     const errorMessage = syncErrorMessage(error);
-    const failedAt = new Date().toISOString();
     const terminal = isTerminalSyncAuthorizationFailure(errorMessage);
     const exhausted = attempts >= this._maxRepairAttempts;
-    const nextRetryAt = terminal || exhausted
-      ? undefined
-      : SyncLinkRecoveryCoordinator.retryAt(failedAt, this.repairRetryDelayMs(attempts));
-    await this._operations.setRecovery(link, {
-      error: errorMessage,
-      failedAt,
-      nextRetryAt,
-    });
+    const retryDelayMs = terminal || exhausted ? undefined : this.repairRetryDelayMs(attempts);
+    await this._operations.setRecovery(
+      link,
+      SyncLinkRecoveryCoordinator.recoveryState(errorMessage, retryDelayMs),
+    );
     if (this.isRepairSuperseded(controller, runtime)) {
       return;
     }
@@ -522,12 +518,7 @@ export class SyncLinkRecoveryCoordinator {
       }
       await this.handleReconcileOutcome(controller, target, outcome, shouldContinue);
     } catch (error: unknown) {
-      // A trailing pass is already requested: it subsumes this retry, so
-      // arming a timer as well would run a third full pass later.
-      const retryReason = controller.executor.hasPending('reconcile')
-        ? undefined
-        : 'reconcile-failed';
-      await this.handleReconcileFailure(controller, error, 'Reconciliation', retryReason, shouldContinue);
+      await this.handleReconcileFailure(controller, error, 'Reconciliation', 'reconcile-failed', shouldContinue);
     }
   }
 
@@ -628,7 +619,7 @@ export class SyncLinkRecoveryCoordinator {
     controller: SyncLinkController,
     error: unknown,
     failureLabel: string,
-    retryReason: string | undefined,
+    retryReason: string,
     shouldContinue: () => boolean,
   ): Promise<void> {
     // A rejection landing after an external pause (or a repair transition)
@@ -644,32 +635,18 @@ export class SyncLinkRecoveryCoordinator {
       error,
     );
 
-    const failedAt = new Date().toISOString();
-    const retryScheduled = retryReason !== undefined
+    // A trailing pass subsumes the retry; arming a timer too would run a third pass later.
+    const retryScheduled = !controller.executor.hasPending('reconcile')
       && this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS);
-    const nextRetryAt = retryScheduled
-      ? SyncLinkRecoveryCoordinator.retryAt(failedAt, RECONCILE_RETRY_DELAY_MS)
-      : undefined;
-
-    const errorMessage = syncErrorMessage(error);
-    await this._operations.setRecovery(link, {
-      error: errorMessage,
-      failedAt,
-      nextRetryAt,
-    });
+    const retryDelayMs = retryScheduled ? RECONCILE_RETRY_DELAY_MS : undefined;
+    await this._operations.setRecovery(
+      link,
+      SyncLinkRecoveryCoordinator.recoveryState(syncErrorMessage(error), retryDelayMs),
+    );
     if (!shouldContinue()) {
       return;
     }
-    this._operations.emitEvent({
-      type           : 'reconcile:failed',
-      tenantDid      : link.tenantDid,
-      remoteEndpoint : link.remoteEndpoint,
-      ...eventScope(link.scope),
-      error          : errorMessage,
-    });
-    if (retryScheduled && retryReason !== undefined) {
-      this.emitReconcileNeeded(controller, retryReason);
-    }
+    this.emitReconcileNeeded(controller, retryReason);
   }
 
   private emitReconcileNeeded(controller: SyncLinkController, reason: string): void {
@@ -782,7 +759,14 @@ export class SyncLinkRecoveryCoordinator {
     return `${REPAIR_RETRY_TIMER_PREFIX}${linkKey}`;
   }
 
-  private static retryAt(failedAt: string, delayMs: number): string {
-    return new Date(Date.parse(failedAt) + delayMs).toISOString();
+  private static recoveryState(error: string, retryDelayMs?: number): SyncLinkRecoveryState {
+    const failedAt = new Date().toISOString();
+    return {
+      error,
+      failedAt,
+      nextRetryAt: retryDelayMs === undefined
+        ? undefined
+        : new Date(Date.parse(failedAt) + retryDelayMs).toISOString(),
+    };
   }
 }

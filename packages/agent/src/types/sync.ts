@@ -656,7 +656,6 @@ export type SyncEvent =
   | SyncEventBase & { type: 'delivery:applied'; messageCid: string; descriptor: SyncMessageDescriptor }
   | SyncEventBase & { type: 'reconcile:needed'; reason: string }
   | SyncEventBase & { type: 'reconcile:completed' }
-  | SyncEventBase & { type: 'reconcile:failed'; error: string }
   | SyncEventBase & { type: 'repair:started'; attempt: number }
   | SyncEventBase & { type: 'repair:completed' }
   | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
