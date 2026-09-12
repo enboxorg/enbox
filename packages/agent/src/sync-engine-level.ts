@@ -877,7 +877,9 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<void> {
     return this.runExclusiveIdentityMutation(
       params.did,
-      (deadline): Promise<void> => this.doSetIdentityOptions(params, deadline),
+      async (deadline): Promise<void> => {
+        await this.doSetIdentityOptions(params, deadline);
+      },
       lifecycleOptions,
     );
   }
@@ -890,18 +892,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this.runExclusiveIdentityMutation(
       params.did,
       async (deadline): Promise<void> => {
-        this._scopeClosureValidator.validateOptions(params.options);
-        const existing = await this.waitForLifecycleBarrier(
-          this.getIdentityOptions(params.did),
-          deadline,
-          'Identity options preparation did not complete',
-        );
-        if (existing !== undefined && SyncEngineLevel.identityOptionsEqual(existing, params.options)) {
-          return;
-        }
-
-        await this.doSetIdentityOptions(params, deadline);
-        changed = true;
+        changed = await this.doSetIdentityOptions(params, deadline, true);
       },
       lifecycleOptions,
     );
@@ -1023,7 +1014,8 @@ export class SyncEngineLevel implements SyncEngine {
   private async doSetIdentityOptions(
     { did, options }: { did: string; options: SyncIdentityOptions },
     deadline?: SyncLifecycleDeadline,
-  ): Promise<void> {
+    skipIfUnchanged = false,
+  ): Promise<boolean> {
     this._scopeClosureValidator.validateOptions(options);
 
     const existingOptions = await this.waitForLifecycleBarrier(
@@ -1031,6 +1023,13 @@ export class SyncEngineLevel implements SyncEngine {
       deadline,
       'Identity options preparation did not complete',
     );
+    if (
+      skipIfUnchanged
+      && existingOptions !== undefined
+      && SyncEngineLevel.identityOptionsEqual(existingOptions, options)
+    ) {
+      return false;
+    }
 
     await this.waitForLifecycleBarrier(
       this._scopeClosureValidator.validateClosure(did, options),
@@ -1090,6 +1089,7 @@ export class SyncEngineLevel implements SyncEngine {
     } else {
       await this.tryPruneSupersededDurableLinksForRegisteredIdentity(did, options);
     }
+    return true;
   }
 
   private static identityOptionsEqual(left: SyncIdentityOptions, right: SyncIdentityOptions): boolean {
