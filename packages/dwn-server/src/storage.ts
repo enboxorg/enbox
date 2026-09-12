@@ -84,6 +84,7 @@ type PgModule = {
 };
 
 type PgPool = Pg.Pool;
+type EndablePool = { end(): Promise<void> };
 
 type PostgresDependencies = {
   Cursor : PgCursorModule;
@@ -147,6 +148,9 @@ function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialec
     max               : config.pgPoolMax,
     idleTimeoutMillis : config.pgPoolIdleTimeout,
   });
+  makePostgresPoolEndIdempotent(pool, (): void => {
+    postgresDialectCache.delete(key);
+  });
 
   const dialect = new PostgresDialect({
     pool   : async (): Promise<PgPool> => pool,
@@ -155,6 +159,24 @@ function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialec
 
   postgresDialectCache.set(key, dialect);
   return dialect;
+}
+
+/**
+ * Memoize a shared Postgres pool's shutdown without wrapping the pool itself.
+ * Several Kysely drivers can own the cached dialect and each destroys it, but
+ * `pg` rejects a second `end()`. The first call evicts the ended dialect and
+ * every Kysely driver observes the same underlying completion.
+ */
+export function makePostgresPoolEndIdempotent(pool: EndablePool, onFirstEnd?: () => void): void {
+  const end = pool.end.bind(pool);
+  let completion: Promise<void> | undefined;
+  pool.end = (): Promise<void> => {
+    if (completion === undefined) {
+      onFirstEnd?.();
+      completion = end();
+    }
+    return completion;
+  };
 }
 
 export async function getDwnConfig(
