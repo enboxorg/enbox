@@ -84,6 +84,7 @@ type PgModule = {
 };
 
 type PgPool = Pg.Pool;
+type EndablePool = { end(): Promise<void> };
 
 type PostgresDependencies = {
   Cursor : PgCursorModule;
@@ -166,16 +167,16 @@ function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialec
  * `pg` rejects a second `end()`. The first call evicts the ended dialect and
  * every Kysely driver observes the same underlying completion.
  */
-export function makePostgresPoolEndIdempotent(pool: PgPool, onFirstEnd?: () => void): void {
+export function makePostgresPoolEndIdempotent(pool: EndablePool, onFirstEnd?: () => void): void {
   const end = pool.end.bind(pool);
   let completion: Promise<void> | undefined;
-  pool.end = ((): Promise<void> => {
+  pool.end = (): Promise<void> => {
     if (completion === undefined) {
       onFirstEnd?.();
       completion = end();
     }
     return completion;
-  }) as PgPool['end'];
+  };
 }
 
 export async function getDwnConfig(

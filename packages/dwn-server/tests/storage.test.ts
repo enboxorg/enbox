@@ -2,8 +2,6 @@ import { describe, expect, it } from 'bun:test';
 
 import { BackendTypes, getDialectFromUrl, makePostgresPoolEndIdempotent } from '../src/storage.js';
 
-type FakePool = Parameters<typeof makePostgresPoolEndIdempotent>[0];
-
 describe('storage', () => {
   describe('getDialectFromUrl()', () => {
     it.each([
@@ -41,7 +39,7 @@ describe('storage', () => {
           endCalls++;
           return ending;
         },
-      } as unknown as FakePool;
+      };
 
       makePostgresPoolEndIdempotent(fakePool);
       const first = fakePool.end();
@@ -61,7 +59,7 @@ describe('storage', () => {
           order.push('end');
           return Promise.reject(failure);
         },
-      } as unknown as FakePool;
+      };
       makePostgresPoolEndIdempotent(fakePool, (): void => {
         order.push('evict');
       });
