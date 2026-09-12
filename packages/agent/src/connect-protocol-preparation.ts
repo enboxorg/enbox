@@ -297,7 +297,7 @@ async function getVerifiedProtocolSetupStatus(
 function getProtocolSetupConflictMessage(
   installedDefinition: DwnProtocolDefinition | undefined,
   requestedDefinition: DwnProtocolDefinition,
-): string | undefined {
+): string {
   if (!isNormalizedProtocolUri(requestedDefinition.protocol)) {
     return `Protocol URI '${requestedDefinition.protocol}' is not normalized.`;
   }
@@ -314,7 +314,7 @@ function getProtocolSetupConflictMessage(
       + 'A connection request cannot replace an owner protocol definition.';
   }
 
-  return undefined;
+  return `Protocol '${requestedDefinition.protocol}' has encryption keys that do not match this wallet owner.`;
 }
 
 function getProtocolDefinitionFromEntry(
@@ -379,7 +379,6 @@ export async function inspectConnectProtocol({
   const { installedDefinition, setupStatus } = await queryLocalProtocolStatus(ownerDid, agent, definition);
   const conflictReason = setupStatus === 'conflict'
     ? getProtocolSetupConflictMessage(installedDefinition, definition)
-      ?? `Protocol '${definition.protocol}' has encryption keys that do not match this wallet owner.`
     : undefined;
 
   return {
@@ -548,10 +547,7 @@ export async function prepareProtocol(
     setupStatus,
   } = await queryLocalProtocolStatus(selectedDid, agent, protocolDefinition);
   if (setupStatus === 'conflict') {
-    throw new Error(
-      getProtocolSetupConflictMessage(installedDefinition, protocolDefinition)
-      ?? `Protocol '${protocolDefinition.protocol}' has encryption keys that do not match this wallet owner.`,
-    );
+    throw new Error(getProtocolSetupConflictMessage(installedDefinition, protocolDefinition));
   }
 
   const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
