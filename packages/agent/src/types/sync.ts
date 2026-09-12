@@ -349,6 +349,16 @@ export type SyncLifecycleOptions = {
  */
 export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'paused';
 
+/** Durable diagnostic state for the latest failed link recovery operation. */
+export type SyncLinkRecoveryState = Readonly<{
+  /** Human-readable failure detail. */
+  error: string;
+  /** ISO-8601 timestamp of the failure. */
+  failedAt: string;
+  /** ISO-8601 timestamp of the scheduled retry, when one is armed. */
+  nextRetryAt?: string;
+}>;
+
 /**
  * Durable state of a single replication link. Persisted to LevelDB and
  * loaded on startup. Each link is identified by the tuple
@@ -375,6 +385,9 @@ export type ReplicationLinkState = {
 
   /** Current link status. */
   status: LinkStatus;
+
+  /** Latest recovery failure. Cleared after the failed operation succeeds. */
+  recovery?: SyncLinkRecoveryState;
 
   /** Pull-direction replication checkpoint (remote → local). */
   readonly pull: DirectionCheckpoint;
@@ -690,7 +703,7 @@ export type SyncHealthSummary = {
    * the engine self-heals — entries are auto-cleared on later success.
    */
   failedMessageCount: number;
-  /** Number of current sync links in `repairing` or `paused` status. */
+  /** Number of current links with a recovery failure or `repairing`/`paused` status. */
   degradedLinkCount: number;
   /**
    * Number of messages currently deferred because a remote rejected the push
@@ -727,7 +740,9 @@ export type RemoteSyncStatus = {
   failedMessageCount: number;
   /** ISO-8601 time of the soonest quota re-probe across this remote's blocked messages, if any. */
   nextProbeAt?: string;
-  /** Human-readable detail of the most recent quota block, if any. */
+  /** ISO-8601 time of the soonest scheduled link-recovery retry, if any. */
+  nextRetryAt?: string;
+  /** Human-readable detail of the most recent recovery, quota, or terminal failure, if any. */
   lastError?: string;
   /** ISO-8601 timestamp of the latest successful activity across current links for this remote. */
   lastActivityAt?: string;
@@ -753,6 +768,8 @@ export type ReplicationLinkSnapshot = {
   scope: SyncScope;
   /** Current link status (`initializing` | `live` | `repairing` | `paused`). */
   status: LinkStatus;
+  /** Latest durable recovery failure and scheduled retry, when present. */
+  recovery?: SyncLinkRecoveryState;
   /** Per-link connectivity state. */
   connectivity: SyncConnectivityState;
   /** Whether all accepted remote pull work is settled. */

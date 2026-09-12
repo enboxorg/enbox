@@ -5,13 +5,16 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { SyncLinkRecoveryCoordinatorOperations } from '../src/sync-link-recovery-coordinator.js';
 
+import { Level } from 'level';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { buildLinkKey } from '../src/sync-link-key.js';
 import { SyncFeedConvergenceManager } from '../src/sync-feed-convergence-manager.js';
 import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncLinkRecoveryCoordinator } from '../src/sync-link-recovery-coordinator.js';
+import { SyncReplicationLinkStoreLevel } from '../src/sync-replication-link-store-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 
 import { deferred } from './utils/deferred.js';
@@ -78,8 +81,20 @@ function createFixture(options: {
     openPushSubscription : sinon.stub().resolves(true),
     reconcileTarget      : sinon.stub().resolves({ converged: true }),
     reportError          : sinon.stub(),
-    setStatus            : sinon.stub().callsFake(async (state, status) => { state.status = status; }),
-    warn                 : sinon.stub(),
+    setRecovery          : sinon.stub().callsFake(async (state, recovery) => {
+      if (recovery === undefined) {
+        delete state.recovery;
+      } else {
+        state.recovery = recovery;
+      }
+    }),
+    setStatus: sinon.stub().callsFake(async (state, status) => {
+      state.status = status;
+      if (status === 'live') {
+        delete state.recovery;
+      }
+    }),
+    warn: sinon.stub(),
   };
   const coordinator = new SyncLinkRecoveryCoordinator({ ...options, feedConvergenceManager, operations });
   return {
@@ -262,6 +277,64 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     expect(fixture.operations.setStatus.calledOnce).toBe(true);
     await clock.runAllAsync();
+  });
+
+  it('clears the durable deadline for a reconciliation retry cancelled by pause', async () => {
+    const db = new Level<string, string>(
+      `__TESTDATA__/sync-link-recovery-pause/${crypto.randomUUID()}`,
+    );
+    const store = new SyncReplicationLinkStoreLevel(db);
+    const fixture = createFixture();
+    try {
+      const state = await store.getOrCreateLink({
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        remoteEndpoint     : REMOTE,
+        scope              : { kind: 'full' },
+        tenantDid          : DID,
+      });
+      state.connectivity = 'online';
+      await store.setStatus(state, 'live');
+      const recovery = {
+        error       : 'offline',
+        failedAt    : '2026-09-11T12:00:00.000Z',
+        nextRetryAt : '2026-09-11T12:00:05.000Z',
+      };
+      await store.setRecovery(state, recovery);
+
+      const linkKey = buildLinkKey(
+        state.tenantDid,
+        state.remoteEndpoint,
+        state.projectionId,
+        state.authorizationEpoch,
+      );
+      const controller = new SyncLinkController(linkKey, state);
+      controller.markReplicationReady();
+      fixture.controllers.set(linkKey, controller);
+      fixture.operations.setStatus.callsFake(
+        (linkState, status) => store.setStatus(linkState, status),
+      );
+      const timerKey = `syncReconcile:${linkKey}`;
+      fixture.getRuntime().armTimeout(timerKey, () => undefined, 5_000);
+
+      await fixture.coordinator.transitionToPaused(linkKey, state);
+      await store.setRecovery(state, recovery);
+
+      const expectedRecovery = {
+        error    : recovery.error,
+        failedAt : recovery.failedAt,
+      };
+      expect(fixture.getRuntime().hasTimer(timerKey)).toBe(false);
+      expect(state.recovery).toEqual(expectedRecovery);
+      expect(await store.getAllLinks()).toMatchObject([{
+        status   : 'paused',
+        recovery : expectedRecovery,
+      }]);
+    } finally {
+      fixture.getRuntime().dispose();
+      await db.clear();
+      await db.close();
+    }
   });
 
   it('repairs through durable feeds, restores subscriptions, and schedules retryable push work', async () => {
@@ -462,6 +535,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     await runRepair(fixture, terminalController);
     expect(terminalState.status).toBe('paused');
+    expect(terminalState.recovery).toMatchObject({
+      error: 'GrantAuthorizationGrantRevoked',
+    });
+    expect(terminalState.recovery?.nextRetryAt).toBeUndefined();
     expect(fixture.operations.warn.calledWithMatch('authorization')).toBe(true);
 
     const transientState = link('repairing');
@@ -473,9 +550,37 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await runRepair(fixture, transientController);
 
     expect(transientState.status).toBe('paused');
+    expect(transientState.recovery).toMatchObject({ error: 'offline' });
+    expect(transientState.recovery?.nextRetryAt).toBeUndefined();
     expect(transientController.repairAttempts).toBe(0);
     expect(fixture.operations.reportError.callCount).toBe(3);
     expect(fixture.operations.warn.calledWithMatch('Max repair attempts reached')).toBe(true);
+  });
+
+  it('persists the bounded repair retry and clears it after recovery succeeds', async () => {
+    const now = new Date('2026-09-11T12:00:00.000Z');
+    const clock = sinon.useFakeTimers({ now });
+    const fixture = createFixture({ repairBackoffMs: [1000] });
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    fixture.operations.reconcileTarget.onFirstCall().rejects(new Error('authority endpoint unavailable'));
+    fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: true });
+
+    await runRepair(fixture, controller);
+
+    expect(state.recovery).toEqual({
+      error       : 'authority endpoint unavailable',
+      failedAt    : now.toISOString(),
+      nextRetryAt : '2026-09-11T12:00:01.000Z',
+    });
+
+    await clock.tickAsync(1000);
+    await waitForLastTask(fixture.taskRunner);
+
+    expect(state.status).toBe('live');
+    expect(state.recovery).toBeUndefined();
+    controller.deactivate();
+    await clock.runAllAsync();
   });
 
   it('guards the production repair-retry timer by runtime disposal and consumes it before starting work', async () => {
@@ -625,11 +730,15 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     expect(fixture.operations.reportError.calledOnce).toBe(true);
     expect(fixture.operations.reportError.firstCall.calledWithMatch('Durable pull pass failed')).toBe(true);
+    expect(controller.link.recovery).toMatchObject({
+      error: 'remote query failed',
+    });
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
       reason : 'pull-retryable',
     })).toBe(true);
+    expect(fixture.operations.setRecovery.calledBefore(fixture.operations.emitEvent)).toBe(true);
     await clock.tickAsync(4999);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
     await clock.tickAsync(1);
@@ -637,6 +746,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.reconcileTarget.callCount).toBe(2);
     expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ verifyConvergence: true });
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
+    expect(controller.link.recovery).toBeUndefined();
     controller.deactivate();
     await clock.runAllAsync();
   });
@@ -738,6 +848,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     await runReconcile(fixture, controller);
     expect(fixture.operations.reportError.calledOnce).toBe(true);
+    expect(controller.link.recovery).toMatchObject({ error: 'offline' });
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     await clock.tickAsync(4999);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
@@ -746,6 +857,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.reconcileTarget.callCount).toBe(2);
     expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ verifyConvergence: true });
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
+    expect(controller.link.recovery).toBeUndefined();
 
     const started = deferred<void>();
     const release = deferred<void>();
@@ -763,6 +875,51 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.reportError.calledOnce).toBe(true);
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     await clock.runAllAsync();
+  });
+
+  it('uses an already queued reconciliation without retaining a cancelled retry deadline', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    controller.link.recovery = {
+      error       : 'earlier failure',
+      failedAt    : '2026-09-11T11:00:00.000Z',
+      nextRetryAt : '2026-09-11T11:00:05.000Z',
+    };
+    fixture.coordinator.scheduleReconcile(controller, 60_000);
+    const firstStarted = deferred<void>();
+    const releaseFirst = deferred<void>();
+    const trailingStarted = deferred<void>();
+    const releaseTrailing = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      firstStarted.resolve();
+      await releaseFirst.promise;
+      throw new Error('offline');
+    });
+    fixture.operations.reconcileTarget.onSecondCall().callsFake(async () => {
+      trailingStarted.resolve();
+      await releaseTrailing.promise;
+      return { converged: true };
+    });
+
+    const first = runReconcile(fixture, controller);
+    await firstStarted.promise;
+    const trailing = runReconcile(fixture, controller);
+    releaseFirst.resolve();
+    await trailingStarted.promise;
+
+    expect(controller.link.recovery).toMatchObject({
+      error       : 'offline',
+      nextRetryAt : undefined,
+    });
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
+    expect(fixture.operations.emitEvent.calledWithMatch({
+      type   : 'reconcile:needed',
+      reason : 'reconcile-failed',
+    })).toBe(true);
+
+    releaseTrailing.resolve();
+    await Promise.all([first, trailing]);
+    expect(controller.link.recovery).toBeUndefined();
   });
 
   it('runs repair after an in-flight push pass yields to its generation fence', async () => {

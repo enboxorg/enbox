@@ -279,6 +279,25 @@ describe('sync status projection', () => {
       }),
     ]);
   });
+
+  it('projects durable link recovery into per-link, remote, and health status', () => {
+    const recovery = {
+      error       : 'authority endpoint unavailable',
+      failedAt    : timestamp(4),
+      nextRetryAt : timestamp(9),
+    };
+    const projection = createProjection({
+      links: [link({ isPullCurrent: false, recovery })],
+    });
+
+    expect(projection.getHealth()).toMatchObject({ degradedLinkCount: 1, syncHealthy: false });
+    expect(projection.getReplicationLinks()).toMatchObject([{ recovery }]);
+    expect(projection.getRemoteStatus()).toMatchObject([{
+      state       : 'degraded',
+      lastError   : 'authority endpoint unavailable',
+      nextRetryAt : timestamp(9),
+    }]);
+  });
 });
 
 function createProjection(overrides: Partial<SyncStatusProjectionState> = {}): SyncStatusProjection {
