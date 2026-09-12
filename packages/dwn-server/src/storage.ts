@@ -170,10 +170,10 @@ export function makePostgresPoolEndIdempotent(pool: PgPool, onFirstEnd?: () => v
   const end = pool.end.bind(pool);
   let completion: Promise<void> | undefined;
   pool.end = ((): Promise<void> => {
-    completion ??= (async (): Promise<void> => {
+    if (completion === undefined) {
       onFirstEnd?.();
-      await end();
-    })();
+      completion = end();
+    }
     return completion;
   }) as PgPool['end'];
 }
