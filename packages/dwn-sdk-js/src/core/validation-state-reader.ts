@@ -3,9 +3,9 @@ import type { DataStore } from '../types/data-store.js';
 import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
-import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
+import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from './constants.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
@@ -44,9 +44,9 @@ export class StoreValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async fetchInitialWrite(tenant: string, recordId: string): Promise<RecordsWriteMessage | undefined> {
     const query: Filter = {
-      interface: DwnInterfaceName.Records,
-      method: DwnMethodName.Write,
-      recordId: recordId
+      interface : DwnInterfaceName.Records,
+      method    : DwnMethodName.Write,
+      recordId  : recordId
     };
     const { messages } = await this.messageStore.query(tenant, [query]);
 
@@ -99,11 +99,11 @@ export class StoreValidationStateReader implements ValidationStateReader {
     const { tenant, parentProtocolUri, parentId } = input;
 
     const latestStateQuery: Filter = {
-      isLatestBaseState: true, // NOTE: this filter is critical, to ensure are are not returning a deleted parent
-      interface: DwnInterfaceName.Records,
-      method: DwnMethodName.Write,
-      protocol: parentProtocolUri,
-      recordId: parentId
+      isLatestBaseState : true, // NOTE: this filter is critical, to ensure are are not returning a deleted parent
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      protocol          : parentProtocolUri,
+      recordId          : parentId
     };
     const { messages: parentMessages } = await this.messageStore.query(tenant, [latestStateQuery]);
     const latestParent = (parentMessages as RecordsWriteMessage[])[0];
@@ -180,14 +180,14 @@ export class StoreValidationStateReader implements ValidationStateReader {
     keyId?: string;
   }): Promise<RecordsWriteMessage[]> {
     const filter: Filter = {
-      interface: DwnInterfaceName.Records,
-      method: DwnMethodName.Write,
-      isLatestBaseState: true,
-      protocol: input.protocol,
-      protocolPath: ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      'tag.protocol': input.protocol,
-      'tag.rolePath': input.rolePath,
-      'tag.contextId': input.contextId,
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      protocol          : input.protocol,
+      protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      'tag.protocol'    : input.protocol,
+      'tag.rolePath'    : input.rolePath,
+      'tag.contextId'   : input.contextId,
     };
 
     if (input.keyId !== undefined) {
@@ -201,8 +201,8 @@ export class StoreValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async fetchGrant(tenant: string, permissionGrantId: string): Promise<PermissionGrant> {
     const grantQuery = {
-      recordId: permissionGrantId,
-      isLatestBaseState: true
+      recordId          : permissionGrantId,
+      isLatestBaseState : true
     };
     const { messages } = await this.messageStore.query(tenant, [grantQuery]);
     const possibleGrantMessage: GenericMessage | undefined = messages[0];
@@ -270,12 +270,12 @@ export class StoreValidationStateReader implements ValidationStateReader {
     contextIdPrefix?: string;
   }): Promise<RecordsWriteMessage | undefined> {
     const filter: Filter = {
-      interface: DwnInterfaceName.Records,
-      method: DwnMethodName.Write,
-      isLatestBaseState: true,
-      protocol: input.protocol,
-      protocolPath: input.protocolPath,
-      squash: true,
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      protocol          : input.protocol,
+      protocolPath      : input.protocolPath,
+      squash            : true,
     };
 
     if (input.contextIdPrefix !== undefined) {
@@ -304,9 +304,9 @@ export class StoreValidationStateReader implements ValidationStateReader {
    */
   private async recordHasLocalTombstone(tenant: string, recordId: string): Promise<boolean> {
     const tombstoneQuery: Filter = {
-      interface: DwnInterfaceName.Records,
-      method: DwnMethodName.Delete,
-      recordId: recordId
+      interface : DwnInterfaceName.Records,
+      method    : DwnMethodName.Delete,
+      recordId  : recordId
     };
     const { messages } = await this.messageStore.query(tenant, [tombstoneQuery]);
     return messages.length > 0;
@@ -324,11 +324,11 @@ export class StoreValidationStateReader implements ValidationStateReader {
     latestStateOnly: boolean;
   }): Filter {
     const filter: Filter = {
-      interface: DwnInterfaceName.Records,
-      method: DwnMethodName.Write,
-      protocol: input.protocol,
-      protocolPath: input.protocolPath,
-      recipient: input.recipient,
+      interface    : DwnInterfaceName.Records,
+      method       : DwnMethodName.Write,
+      protocol     : input.protocol,
+      protocolPath : input.protocolPath,
+      recipient    : input.recipient,
     };
 
     if (input.latestStateOnly) {
