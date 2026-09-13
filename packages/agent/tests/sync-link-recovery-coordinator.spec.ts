@@ -317,14 +317,21 @@ describe('SyncLinkRecoveryCoordinator', () => {
       const timerKey = `syncReconcile:${linkKey}`;
       fixture.getRuntime().armTimeout(timerKey, () => undefined, 5_000);
 
-      await fixture.coordinator.transitionToPaused(linkKey, state);
-      await store.setRecovery(state, recovery);
-
       const expectedRecovery = {
         error    : recovery.error,
         failedAt : recovery.failedAt,
       };
+      await fixture.coordinator.transitionToPaused(linkKey, state);
+
       expect(fixture.getRuntime().hasTimer(timerKey)).toBe(false);
+      expect(state.recovery).toEqual(expectedRecovery);
+      expect(await store.getAllLinks()).toMatchObject([{
+        status   : 'paused',
+        recovery : expectedRecovery,
+      }]);
+
+      await store.setRecovery(state, recovery);
+
       expect(state.recovery).toEqual(expectedRecovery);
       expect(await store.getAllLinks()).toMatchObject([{
         status   : 'paused',

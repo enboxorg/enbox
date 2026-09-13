@@ -635,13 +635,18 @@ export class SyncLinkRecoveryCoordinator {
       error,
     );
 
-    // A trailing pass subsumes the retry; otherwise earliest-wins may retain an existing timer.
-    const reconcilePending = controller.executor.hasPending('reconcile');
-    const retryScheduled = !reconcilePending
-      && this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS);
-    const retryDelayMs = retryScheduled ? RECONCILE_RETRY_DELAY_MS : undefined;
-    const recovery = SyncLinkRecoveryCoordinator.recoveryState(syncErrorMessage(error), retryDelayMs);
-    const nextRetryAt = reconcilePending ? undefined : recovery.nextRetryAt ?? link.recovery?.nextRetryAt;
+    // A trailing pass subsumes the retry. Otherwise earliest-wins either arms
+    // this deadline or retains the earlier one already persisted on the link.
+    const recovery = SyncLinkRecoveryCoordinator.recoveryState(
+      syncErrorMessage(error),
+      RECONCILE_RETRY_DELAY_MS,
+    );
+    let nextRetryAt = recovery.nextRetryAt;
+    if (controller.executor.hasPending('reconcile')) {
+      nextRetryAt = undefined;
+    } else if (!this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS)) {
+      nextRetryAt = link.recovery?.nextRetryAt;
+    }
     await this._operations.setRecovery(link, { ...recovery, nextRetryAt });
     if (!shouldContinue()) {
       return;

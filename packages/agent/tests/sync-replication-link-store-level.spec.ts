@@ -465,83 +465,51 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(persisted.connectivity).toBe('offline');
   });
 
-  it('should reload both directional checkpoints after storage restart', async () => {
-    const dataPath = `__TESTDATA__/sync-replication-link-store-restart/${crypto.randomUUID()}`;
-    const firstDb = new Level<string, string>(dataPath);
-    let link: ReplicationLinkState;
-    try {
-      const firstStore = new SyncReplicationLinkStoreLevel(firstDb);
-      link = await firstStore.getOrCreateLink({
+  for (const status of ['live', 'paused'] as const) {
+    it(`should reload a ${status} link across storage restart`, async () => {
+      const dataPath = `__TESTDATA__/sync-replication-link-store-restart/${status}/${crypto.randomUUID()}`;
+      const params = {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
-        scope          : { kind: 'full' },
+        scope          : { kind: 'full' } as const,
         ...ownerAuthorization,
-      });
-      link.pull.contiguousAppliedToken = token(40);
-      link.push.contiguousAppliedToken = token(50);
-      link.connectivity = 'online';
-      await firstStore.persistCheckpoint(link, 'pull');
-      await firstStore.persistCheckpoint(link, 'push');
-      await firstStore.setStatus(link, 'live');
-    } finally {
-      await firstDb.close();
-    }
+      };
+      const pullToken = token(40);
+      const pushToken = token(50);
+      const recovery = {
+        error    : 'authority endpoint unavailable',
+        failedAt : '2026-09-11T12:00:00.000Z',
+      };
+      const firstDb = new Level<string, string>(dataPath);
+      try {
+        const firstStore = new SyncReplicationLinkStoreLevel(firstDb);
+        const link = await firstStore.getOrCreateLink(params);
+        link.pull.contiguousAppliedToken = pullToken;
+        link.push.contiguousAppliedToken = pushToken;
+        link.connectivity = 'online';
+        await firstStore.persistCheckpoints(link);
+        await firstStore.setRecovery(link, recovery);
+        await firstStore.setStatus(link, status);
+      } finally {
+        await firstDb.close();
+      }
 
-    const secondDb = new Level<string, string>(dataPath);
-    try {
-      const secondStore = new SyncReplicationLinkStoreLevel(secondDb);
-      const reloaded = await secondStore.getOrCreateLink({
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        scope          : { kind: 'full' },
-        ...ownerAuthorization,
-      });
+      const secondDb = new Level<string, string>(dataPath);
+      try {
+        const secondStore = new SyncReplicationLinkStoreLevel(secondDb);
+        const reloaded = await secondStore.getOrCreateLink(params);
 
-      expect(reloaded.pull).toEqual(link.pull);
-      expect(reloaded.push).toEqual(link.push);
-      expect(reloaded.status).toBe('live');
-      expect(reloaded.connectivity).toBe('unknown');
-    } finally {
-      await secondDb.clear();
-      await secondDb.close();
-    }
-  });
-
-  it('should retain a paused recovery reason across storage restart', async () => {
-    const dataPath = `__TESTDATA__/sync-replication-link-recovery-restart/${crypto.randomUUID()}`;
-    const params = {
-      tenantDid      : 'did:example:alice',
-      remoteEndpoint : 'https://dwn.example.com',
-      scope          : { kind: 'full' } as const,
-      ...ownerAuthorization,
-    };
-    const recovery = {
-      error    : 'authority endpoint unavailable',
-      failedAt : '2026-09-11T12:00:00.000Z',
-    };
-    const firstDb = new Level<string, string>(dataPath);
-    try {
-      const firstStore = new SyncReplicationLinkStoreLevel(firstDb);
-      const link = await firstStore.getOrCreateLink(params);
-      await firstStore.setRecovery(link, recovery);
-      await firstStore.setStatus(link, 'paused');
-    } finally {
-      await firstDb.close();
-    }
-
-    const secondDb = new Level<string, string>(dataPath);
-    try {
-      const secondStore = new SyncReplicationLinkStoreLevel(secondDb);
-      const reloaded = await secondStore.getOrCreateLink(params);
-
-      expect(reloaded.status).toBe('paused');
-      expect(reloaded.connectivity).toBe('unknown');
-      expect(reloaded.recovery).toEqual(recovery);
-    } finally {
-      await secondDb.clear();
-      await secondDb.close();
-    }
-  });
+        expect(reloaded.pull.contiguousAppliedToken).toEqual(pullToken);
+        expect(reloaded.push.contiguousAppliedToken).toEqual(pushToken);
+        expect(reloaded.status).toBe(status);
+        expect(reloaded.connectivity).toBe('unknown');
+        expect(reloaded.recovery).toEqual(status === 'paused' ? recovery : undefined);
+      } finally {
+        await secondDb.clear();
+        await secondDb.close();
+      }
+    });
+  }
 
   it('should reload a persisted repairing link as initializing while paused stays durable', async () => {
     const params = {
