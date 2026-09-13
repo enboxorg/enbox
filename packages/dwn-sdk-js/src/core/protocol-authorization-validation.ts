@@ -67,7 +67,10 @@ export async function verifyProtocolPathAndContextId(
   });
 
   if (parentMessage === undefined) {
-    // if this is a cross-protocol composition lookup, use a more descriptive error
+    // A missing parent and a tombstoned parent are indistinguishable here; the replication apply
+    // layer classifies a tombstone as terminal locally via `parentRecordDeletedFromReply`. This
+    // keeps the client-facing reply from leaking whether a record was deleted.
+    // If this is a cross-protocol composition lookup, use a more descriptive error.
     if (parentProtocolUri !== childProtocol) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound,

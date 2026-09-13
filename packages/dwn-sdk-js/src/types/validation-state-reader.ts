@@ -53,6 +53,14 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage | undefined>;
 
   /**
+   * Checks whether a record has a local `RecordsDelete` tombstone. A tombstone is terminal, so a
+   * parent missing because of one can never be repaired. The replication apply layer uses this to
+   * classify a generic missing-parent reply as terminal without exposing the distinction in the
+   * client-facing reply.
+   */
+  isRecordTombstoned(tenant: string, recordId: string): Promise<boolean>;
+
+  /**
    * Checks whether a role record matching the invoked-role selector exists.
    * Filter-only — role validation never reads record data. The latest-state match is the fast
    * path. If no latest match exists, a retained initial role write is sufficient for immutable

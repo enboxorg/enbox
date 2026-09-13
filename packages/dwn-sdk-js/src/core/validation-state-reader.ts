@@ -124,6 +124,11 @@ export class StoreValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
+  public async isRecordTombstoned(tenant: string, recordId: string): Promise<boolean> {
+    return this.recordHasLocalTombstone(tenant, recordId);
+  }
+
+  /** @inheritdoc */
   public async hasMatchingRoleRecord(input: {
     tenant: string;
     protocol: string;
@@ -206,8 +211,8 @@ export class StoreValidationStateReader implements ValidationStateReader {
     const dwnMethod = possibleGrantMessage?.descriptor.method;
 
     if (dwnInterface !== DwnInterfaceName.Records ||
-        dwnMethod !== DwnMethodName.Write ||
-        (possibleGrantMessage as RecordsWriteMessage).descriptor.protocolPath !== PermissionsProtocol.grantPath) {
+      dwnMethod !== DwnMethodName.Write ||
+      (possibleGrantMessage as RecordsWriteMessage).descriptor.protocolPath !== PermissionsProtocol.grantPath) {
       throw new DwnError(
         DwnErrorCode.GrantAuthorizationGrantMissing,
         `Could not find permission grant with record ID ${permissionGrantId}.`
