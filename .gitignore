@@ -9,6 +9,7 @@ pnpm-debug.log*
 dist/
 *.tsbuildinfo
 .turbo
+.direnv
 # Note: packages/*/build/ contains build scripts, not outputs
 
 # Coverage
