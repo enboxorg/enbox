@@ -68,7 +68,7 @@ services:
       timeout: 3s
       retries: 10
   minio:
-    image: minio/minio:latest
+    image: sourcemation/minio
     container_name: enbox-test-minio
     command: server /data --console-address ":9001"
     environment:
