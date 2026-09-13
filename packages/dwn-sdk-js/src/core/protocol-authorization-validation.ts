@@ -60,13 +60,22 @@ export async function verifyProtocolPathAndContextId(
   );
 
   // fetch the parent message
-  const parentMessage = await validationStateReader.fetchParentRecord({
+  const parentLookup = await validationStateReader.fetchParentRecord({
     tenant,
     parentProtocolUri,
     parentId,
   });
 
-  if (parentMessage === undefined) {
+  if (parentLookup.status === 'deleted') {
+    // A delete is terminal: the parent can never return, so the child is permanently invalid
+    // rather than a repairable missing dependency.
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationParentRecordDeleted,
+      `Parent record '${parentId}' in protocol '${parentProtocolUri}' was deleted and cannot be repaired.`
+    );
+  }
+
+  if (parentLookup.status === 'missing') {
     // if this is a cross-protocol composition lookup, use a more descriptive error
     if (parentProtocolUri !== childProtocol) {
       throw new DwnError(
@@ -81,6 +90,8 @@ export async function verifyProtocolPathAndContextId(
       `Could not find parent record '${parentId}' to verify declared protocol path '${declaredProtocolPath}'.`
     );
   }
+
+  const parentMessage = parentLookup.message;
 
   // verifying protocolPath of incoming message is a child of the parent message's protocolPath
   const parentProtocolPath = parentMessage.descriptor.protocolPath;

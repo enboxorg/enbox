@@ -5,6 +5,15 @@ import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from './records-types.js';
 
 /**
+ * The outcome of resolving an immediate parent record. A `missing` parent may still arrive and is
+ * repairable; a `deleted` parent is tombstoned and can never return.
+ */
+export type ParentRecordLookup =
+  | { status: 'found'; message: RecordsWriteMessage }
+  | { status: 'missing' }
+  | { status: 'deleted' };
+
+/**
  * The single narrow surface through which validation logic reads state.
  *
  * Every validation-time state read performed during message admission routes through this
@@ -44,13 +53,14 @@ export interface ValidationStateReader {
    * Queries the latest-state write first — the fast path that excludes deleted parents. If no
    * latest write exists, a retained initial write is sufficient for immutable parent facts
    * (protocolPath/contextId) provided no local tombstone exists for that record.
-   * @returns the parent write, or `undefined` when the parent is absent (or deleted).
+   * @returns `found` with the parent write; `missing` when no write exists yet (repairable); or
+   *          `deleted` when a local tombstone exists (terminal — the parent can never return).
    */
   fetchParentRecord(input: {
     tenant: string;
     parentProtocolUri: string;
     parentId: string;
-  }): Promise<RecordsWriteMessage | undefined>;
+  }): Promise<ParentRecordLookup>;
 
   /**
    * Checks whether a role record matching the invoked-role selector exists.

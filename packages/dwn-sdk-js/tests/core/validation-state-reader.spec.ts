@@ -244,12 +244,43 @@ describe('validation-state reader admission parity', () => {
         parentContextId : parentWrite.message.contextId,
       });
 
-      // processMessage rejects — the latest-only filter exists exactly to exclude deleted parents
+      // processMessage rejects — the parent is tombstoned and can never be repaired
       const processReply = await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream });
       expect(processReply.status.code).toBe(400);
-      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordDeleted);
 
-      // applyReplicatedMessage uses the same admission rule
+      // applyReplicatedMessage uses the same admission rule and classifies the terminal failure
+      // as Invalid rather than an Incomplete dependency that could be retried forever
+      const replicatedResult = await dwn.applyReplicatedMessage(alice.did, childMessage, {
+        dataStream: DataStream.fromBytes(childDataBytes!),
+      });
+      expect(replicatedResult.kind).toBe('Invalid');
+    });
+
+    it('should classify a not-yet-seen parent as a repairable Incomplete dependency', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+
+      const protocolDefinition = nestedProtocolDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+        author: alice,
+        protocolDefinition,
+      });
+      expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
+
+      // No parent was ever written, so the missing dependency can still be repaired.
+      const { message: childMessage, dataBytes: childDataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'foo/bar',
+        schema          : 'bar',
+        dataFormat      : 'text/plain',
+        parentContextId : 'missingparentcontext',
+      });
+
+      const reply = await dwn.processMessage(alice.did, childMessage, { dataStream: DataStream.fromBytes(childDataBytes!) });
+      expect(reply.status.code).toBe(400);
+      expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
+
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, childMessage, {
         dataStream: DataStream.fromBytes(childDataBytes!),
       });
