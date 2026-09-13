@@ -3,7 +3,7 @@ import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
-import type { ParentRecordLookup, ValidationStateReader } from '../types/validation-state-reader.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
 /**
  * One recorded validation-time state read: the reader method invoked.
@@ -58,9 +58,15 @@ export class RecordingValidationStateReader implements ValidationStateReader {
     tenant: string;
     parentProtocolUri: string;
     parentId: string;
-  }): Promise<ParentRecordLookup> {
+  }): Promise<RecordsWriteMessage | undefined> {
     this.recordedReads.push({ method: 'fetchParentRecord' });
     return this.inner.fetchParentRecord(input);
+  }
+
+  /** @inheritdoc */
+  public async isRecordTombstoned(tenant: string, recordId: string): Promise<boolean> {
+    this.recordedReads.push({ method: 'isRecordTombstoned' });
+    return this.inner.isRecordTombstoned(tenant, recordId);
   }
 
   /** @inheritdoc */

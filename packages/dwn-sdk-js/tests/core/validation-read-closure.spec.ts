@@ -36,6 +36,7 @@ const VALIDATION_READER_METHODS = new Set<string>([
   'fetchInitialWrite',
   'constructRecordChain',
   'fetchParentRecord',
+  'isRecordTombstoned',
   'hasMatchingRoleRecord',
   'queryLatestRoleRecords',
   'queryAudienceRecords',

@@ -244,13 +244,13 @@ describe('validation-state reader admission parity', () => {
         parentContextId : parentWrite.message.contextId,
       });
 
-      // processMessage rejects — the parent is tombstoned and can never be repaired
+      // processMessage rejects with the same generic missing-parent code as a not-yet-seen parent
       const processReply = await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream });
       expect(processReply.status.code).toBe(400);
-      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordDeleted);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
 
-      // applyReplicatedMessage uses the same admission rule and classifies the terminal failure
-      // as Invalid rather than an Incomplete dependency that could be retried forever
+      // The receiver can see the local tombstone, so it classifies the terminal failure as Invalid
+      // rather than an Incomplete dependency that could be retried forever.
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, childMessage, {
         dataStream: DataStream.fromBytes(childDataBytes!),
       });

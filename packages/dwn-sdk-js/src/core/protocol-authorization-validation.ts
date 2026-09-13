@@ -60,23 +60,17 @@ export async function verifyProtocolPathAndContextId(
   );
 
   // fetch the parent message
-  const parentLookup = await validationStateReader.fetchParentRecord({
+  const parentMessage = await validationStateReader.fetchParentRecord({
     tenant,
     parentProtocolUri,
     parentId,
   });
 
-  if (parentLookup.status === 'deleted') {
-    // A delete is terminal: the parent can never return, so the child is permanently invalid
-    // rather than a repairable missing dependency.
-    throw new DwnError(
-      DwnErrorCode.ProtocolAuthorizationParentRecordDeleted,
-      `Parent record '${parentId}' in protocol '${parentProtocolUri}' was deleted and cannot be repaired.`
-    );
-  }
-
-  if (parentLookup.status === 'missing') {
-    // if this is a cross-protocol composition lookup, use a more descriptive error
+  if (parentMessage === undefined) {
+    // A missing parent and a tombstoned parent are indistinguishable here; the replication apply
+    // layer classifies a tombstone as terminal locally via `parentRecordDeletedFromReply`. This
+    // keeps the client-facing reply from leaking whether a record was deleted.
+    // If this is a cross-protocol composition lookup, use a more descriptive error.
     if (parentProtocolUri !== childProtocol) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound,
@@ -90,8 +84,6 @@ export async function verifyProtocolPathAndContextId(
       `Could not find parent record '${parentId}' to verify declared protocol path '${declaredProtocolPath}'.`
     );
   }
-
-  const parentMessage = parentLookup.message;
 
   // verifying protocolPath of incoming message is a child of the parent message's protocolPath
   const parentProtocolPath = parentMessage.descriptor.protocolPath;

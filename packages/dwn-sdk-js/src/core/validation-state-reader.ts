@@ -4,7 +4,7 @@ import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
-import type { ParentRecordLookup, ValidationStateReader } from '../types/validation-state-reader.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
 
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from './constants.js';
@@ -95,7 +95,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
     tenant: string;
     parentProtocolUri: string;
     parentId: string;
-  }): Promise<ParentRecordLookup> {
+  }): Promise<RecordsWriteMessage | undefined> {
     const { tenant, parentProtocolUri, parentId } = input;
 
     const latestStateQuery: Filter = {
@@ -108,19 +108,24 @@ export class StoreValidationStateReader implements ValidationStateReader {
     const { messages: parentMessages } = await this.messageStore.query(tenant, [latestStateQuery]);
     const latestParent = (parentMessages as RecordsWriteMessage[])[0];
     if (latestParent !== undefined) {
-      return { status: 'found', message: latestParent };
+      return latestParent;
     }
 
     const initialWrite = await fetchInitialRecordsWriteMessage(this.messageStore, tenant, parentId);
     if (initialWrite?.descriptor.protocol !== parentProtocolUri) {
-      return { status: 'missing' };
+      return undefined;
     }
 
     if (await this.recordHasLocalTombstone(tenant, parentId)) {
-      return { status: 'deleted' };
+      return undefined;
     }
 
-    return { status: 'found', message: initialWrite };
+    return initialWrite;
+  }
+
+  /** @inheritdoc */
+  public async isRecordTombstoned(tenant: string, recordId: string): Promise<boolean> {
+    return this.recordHasLocalTombstone(tenant, recordId);
   }
 
   /** @inheritdoc */
