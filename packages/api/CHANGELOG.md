@@ -1,5 +1,23 @@
 # @enbox/api
 
+## 0.6.85
+
+### Patch Changes
+
+- [#1676](https://github.com/enboxorg/enbox/pull/1676) [`d39687a`](https://github.com/enboxorg/enbox/commit/d39687a09c617a3d7e1feba0a66344a0c369a29b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Persist replication recovery failures and retry deadlines, expose them through sync status, and include the durable reason when paused application views report an error.
+
+- [#1673](https://github.com/enboxorg/enbox/pull/1673) [`844890d`](https://github.com/enboxorg/enbox/commit/844890d030ebb4c450644d6fc249005d2c9dad52) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: reject failed typed protocol auto-configuration and retry transient readiness failures
+
+- [#1674](https://github.com/enboxorg/enbox/pull/1674) [`0ad642d`](https://github.com/enboxorg/enbox/commit/0ad642daced12e1ad563541da65504e6c09c33e3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: mark direct remote record views non-current across transport recovery
+
+- Updated dependencies [[`21ec003`](https://github.com/enboxorg/enbox/commit/21ec00321e797487b5529884c542e7de95531b87), [`24f00aa`](https://github.com/enboxorg/enbox/commit/24f00aad3b6f43e4c1b7aaa39a73f8cd3d721841), [`e17d307`](https://github.com/enboxorg/enbox/commit/e17d307d268cbcc3a773490b618b56589298314a), [`d39687a`](https://github.com/enboxorg/enbox/commit/d39687a09c617a3d7e1feba0a66344a0c369a29b), [`2e44c90`](https://github.com/enboxorg/enbox/commit/2e44c903854b45ab538052aa30df0a3f58471676), [`ab6cbfd`](https://github.com/enboxorg/enbox/commit/ab6cbfdd236af8fbf291a6307ac1e56e64f4c1e9), [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396), [`162060d`](https://github.com/enboxorg/enbox/commit/162060d8ce8d62d4caeeff22f04bf7e566ef4e0f), [`77e689c`](https://github.com/enboxorg/enbox/commit/77e689ce1a35b0408ea53bfef0631f8438299810), [`994f448`](https://github.com/enboxorg/enbox/commit/994f4484e605ad8e626652b4d69b7d240eda032f), [`9caf4de`](https://github.com/enboxorg/enbox/commit/9caf4de88a726c433c8be69c9dd003f539b979c8), [`d34582d`](https://github.com/enboxorg/enbox/commit/d34582da959f2da5b1dc92eab210deddfb77e03b)]:
+  - @enbox/agent@0.8.46
+  - @enbox/dwn-sdk-js@0.4.26
+  - @enbox/dwn-clients@0.4.34
+  - @enbox/auth@0.6.92
+  - @enbox/common@0.1.7
+  - @enbox/dids@0.1.11
+
 ## 0.6.84
 
 ### Patch Changes

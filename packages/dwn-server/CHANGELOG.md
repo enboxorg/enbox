@@ -1,5 +1,19 @@
 # @enbox/dwn-server
 
+## 0.1.42
+
+### Patch Changes
+
+- [#1677](https://github.com/enboxorg/enbox/pull/1677) [`efd4e5e`](https://github.com/enboxorg/enbox/commit/efd4e5efabfaafe76d4de1cfb41a46bb1c556812) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Make shutdown idempotent when multiple SQL stores share one cached Postgres pool.
+
+- Updated dependencies [[`24f00aa`](https://github.com/enboxorg/enbox/commit/24f00aad3b6f43e4c1b7aaa39a73f8cd3d721841), [`e17d307`](https://github.com/enboxorg/enbox/commit/e17d307d268cbcc3a773490b618b56589298314a), [`ab6cbfd`](https://github.com/enboxorg/enbox/commit/ab6cbfdd236af8fbf291a6307ac1e56e64f4c1e9), [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396), [`77e689c`](https://github.com/enboxorg/enbox/commit/77e689ce1a35b0408ea53bfef0631f8438299810), [`994f448`](https://github.com/enboxorg/enbox/commit/994f4484e605ad8e626652b4d69b7d240eda032f), [`9caf4de`](https://github.com/enboxorg/enbox/commit/9caf4de88a726c433c8be69c9dd003f539b979c8), [`d34582d`](https://github.com/enboxorg/enbox/commit/d34582da959f2da5b1dc92eab210deddfb77e03b)]:
+  - @enbox/dwn-sdk-js@0.4.26
+  - @enbox/dwn-clients@0.4.34
+  - @enbox/common@0.1.7
+  - @enbox/dids@0.1.11
+  - @enbox/dwn-sql-store@0.0.51
+  - @enbox/crypto@0.1.10
+
 ## 0.1.41
 
 ### Patch Changes
