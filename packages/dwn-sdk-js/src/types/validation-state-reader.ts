@@ -53,9 +53,9 @@ export interface ValidationStateReader {
 
   /**
    * Checks whether a record has a local `prune: true` tombstone. Prune is terminal, so a
-   * parent missing because of one can never be repaired. The replication apply layer uses this to
-   * classify a generic missing-parent reply as terminal without exposing the distinction in the
-   * client-facing reply.
+   * missing descendant whose ancestry includes one can never be repaired. The replication apply
+   * layer uses this to classify a generic missing-parent reply as terminal without exposing the
+   * distinction in the client-facing reply.
    */
   isRecordPruned(tenant: string, recordId: string): Promise<boolean>;
 

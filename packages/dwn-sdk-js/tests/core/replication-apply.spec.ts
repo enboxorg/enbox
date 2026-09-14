@@ -77,6 +77,13 @@ describe('replicationApplyResultFromReply', () => {
       kind    : 'Incomplete',
       missing : [{ type: 'Parent', recordId: 'parent-record', protocol }],
     });
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.ProtocolAuthorizationParentRecordNotFound}: parent record 'parent-record' was not found`,
+      },
+    }, { parentRecordPruned: true })).toEqual({ kind: 'Superseded' });
   });
 
   it('classifies parent-chain misses with the incoming protocol', async () => {

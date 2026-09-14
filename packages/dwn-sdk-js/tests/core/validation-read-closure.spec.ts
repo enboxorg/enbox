@@ -668,7 +668,7 @@ describe('validation read closure', () => {
       });
       recorder.clearRecordedReads();
       const result = await dwn.applyReplicatedMessage(alice.did, child.message, { dataStream: child.dataStream });
-      expect(result.kind).toBe(prune ? 'Invalid' : 'Applied');
+      expect(result.kind).toBe(prune ? 'Superseded' : 'Applied');
       snapshot(`replicated: child of ${prune ? 'pruned' : 'soft-deleted'} parent`);
     }
 

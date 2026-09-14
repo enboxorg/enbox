@@ -109,7 +109,7 @@ export function replicationApplyResultFromReply(
     && (getDwnErrorCode(detail) === DwnErrorCode.ProtocolAuthorizationParentRecordNotFound
       || getDwnErrorCode(detail) === DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound)
   ) {
-    return { kind: 'Invalid', reason: detail };
+    return { kind: 'Superseded' };
   }
 
   const missing = dependencyRefsFromStatus(message, code, detail, context);
@@ -257,7 +257,17 @@ export async function parentRecordPrunedFromReply(
     return false;
   }
 
-  return validationStateReader.isRecordPruned(tenant, parentId);
+  const contextId = (message as { contextId?: unknown }).contextId;
+  const ancestorRecordIds = typeof contextId === 'string'
+    ? contextId.split('/').slice(0, -1)
+    : [parentId];
+  for (const ancestorRecordId of ancestorRecordIds) {
+    if (await validationStateReader.isRecordPruned(tenant, ancestorRecordId)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function getDwnErrorCode(detail: string): string | undefined {

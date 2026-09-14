@@ -1377,10 +1377,7 @@ export function testProtocolComposition(): void {
             parentContextId : thread.message.contextId,
           });
           const result = await dwn.applyReplicatedMessage(alice.did, comment.message, { dataStream: comment.dataStream });
-          expect(result.kind).toBe(prune ? 'Invalid' : 'Applied');
-          if (result.kind === 'Invalid') {
-            expect(result.reason).toContain(DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound);
-          }
+          expect(result.kind).toBe(prune ? 'Superseded' : 'Applied');
         });
       }
 

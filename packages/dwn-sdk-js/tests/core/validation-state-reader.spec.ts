@@ -264,7 +264,7 @@ describe('validation-state reader admission parity', () => {
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, childMessage, {
         dataStream: DataStream.fromBytes(childDataBytes!),
       });
-      expect(replicatedResult.kind).toBe('Invalid');
+      expect(replicatedResult.kind).toBe('Superseded');
     });
 
     for (const prune of [false, true]) {
@@ -303,7 +303,7 @@ describe('validation-state reader admission parity', () => {
             if (result.kind === 'Incomplete') {
               pending.push(index);
             } else {
-              expect(result.kind).toBe(parentPruned && index === 1 ? 'Invalid' : 'Applied');
+              expect(result.kind).toBe(parentPruned && index === 1 ? 'Superseded' : 'Applied');
               if (prune && index === 2) {
                 parentPruned = true;
               }
@@ -316,7 +316,7 @@ describe('validation-state reader admission parity', () => {
             const result = await dwn.applyReplicatedMessage(alice.did, delivery.message, {
               dataStream: dataBytes === undefined ? undefined : DataStream.fromBytes(dataBytes),
             });
-            expect(result.kind).toBe(prune && index === 1 ? 'Invalid' : 'Applied');
+            expect(result.kind).toBe(prune && index === 1 ? 'Superseded' : 'Applied');
           }
           const readParent = await RecordsRead.create({ filter: { recordId: parent.message.recordId }, signer: Jws.createSigner(alice) });
           expect((await dwn.processMessage(alice.did, readParent.message)).status.code).toBe(404);
@@ -343,11 +343,49 @@ describe('validation-state reader admission parity', () => {
           const reply = await dwn.processMessage(alice.did, newChild.message, { dataStream: newChild.dataStream });
           expect(reply.status.code).toBe(prune ? 400 : 202);
           if (prune) {
-            expect((await dwn.applyReplicatedMessage(alice.did, newChild.message)).kind).toBe('Invalid');
+            expect((await dwn.applyReplicatedMessage(alice.did, newChild.message)).kind).toBe('Superseded');
           }
         }
       });
     }
+
+    it('should settle a late descendant of a pruned subtree without retrying it', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocolDefinition = nestedProtocolDefinition;
+      const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+      expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+      const parent = await TestDataGenerator.generateRecordsWrite({
+        author: alice, protocol: protocolDefinition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+      });
+      expect((await dwn.processMessage(alice.did, parent.message, { dataStream: parent.dataStream })).status.code).toBe(202);
+      const child = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'foo/bar',
+        schema          : 'bar',
+        dataFormat      : 'text/plain',
+        parentContextId : parent.message.contextId,
+      });
+      expect((await dwn.processMessage(alice.did, child.message, { dataStream: child.dataStream })).status.code).toBe(202);
+      const deletion = await RecordsDelete.create({
+        recordId : parent.message.recordId,
+        prune    : true,
+        signer   : Jws.createSigner(alice),
+      });
+      expect((await dwn.processMessage(alice.did, deletion.message)).status.code).toBe(202);
+      const grandchild = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'foo/bar/baz',
+        schema          : 'baz',
+        dataFormat      : 'text/plain',
+        parentContextId : child.message.contextId,
+      });
+
+      expect((await dwn.applyReplicatedMessage(
+        alice.did, grandchild.message, { dataStream: grandchild.dataStream },
+      )).kind).toBe('Superseded');
+    });
 
     it('should classify a not-yet-seen parent as a repairable Incomplete dependency', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
