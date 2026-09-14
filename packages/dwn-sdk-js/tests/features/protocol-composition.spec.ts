@@ -1351,6 +1351,36 @@ export function testProtocolComposition(): void {
         }
       });
 
+      for (const prune of [false, true]) {
+        it(`should use retained cross-protocol ancestry with prune=${prune}`, async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          for (const definition of [threadsProtocol, commentsProtocol]) {
+            const configure = await ProtocolsConfigure.create({ definition, signer: Jws.createSigner(alice) });
+            expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+          }
+          const thread = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : threadsProtocol.protocol,
+            protocolPath : 'thread',
+            schema       : threadsProtocol.types.thread.schema,
+            dataFormat   : 'application/json',
+          });
+          expect((await dwn.processMessage(alice.did, thread.message, { dataStream: thread.dataStream })).status.code).toBe(202);
+          const deletion = await RecordsDelete.create({ recordId: thread.message.recordId, prune, signer: Jws.createSigner(alice) });
+          expect((await dwn.processMessage(alice.did, deletion.message)).status.code).toBe(202);
+          const comment = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : commentsProtocol.protocol,
+            protocolPath    : 'thread/comment',
+            schema          : commentsProtocol.types.comment.schema,
+            dataFormat      : 'application/json',
+            parentContextId : thread.message.contextId,
+          });
+          const result = await dwn.applyReplicatedMessage(alice.did, comment.message, { dataStream: comment.dataStream });
+          expect(result.kind).toBe(prune ? 'Superseded' : 'Applied');
+        });
+      }
+
       it('should return 400 when cross-protocol parent record does not exist at runtime', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 

@@ -98,25 +98,12 @@ export class StoreValidationStateReader implements ValidationStateReader {
   }): Promise<RecordsWriteMessage | undefined> {
     const { tenant, parentProtocolUri, parentId } = input;
 
-    const latestStateQuery: Filter = {
-      isLatestBaseState : true, // NOTE: this filter is critical, to ensure are are not returning a deleted parent
-      interface         : DwnInterfaceName.Records,
-      method            : DwnMethodName.Write,
-      protocol          : parentProtocolUri,
-      recordId          : parentId
-    };
-    const { messages: parentMessages } = await this.messageStore.query(tenant, [latestStateQuery]);
-    const latestParent = (parentMessages as RecordsWriteMessage[])[0];
-    if (latestParent !== undefined) {
-      return latestParent;
-    }
-
     const initialWrite = await fetchInitialRecordsWriteMessage(this.messageStore, tenant, parentId);
     if (initialWrite?.descriptor.protocol !== parentProtocolUri) {
       return undefined;
     }
 
-    if (await this.recordHasLocalTombstone(tenant, parentId)) {
+    if (await this.recordHasPruneTombstone(tenant, parentId)) {
       return undefined;
     }
 
@@ -124,8 +111,8 @@ export class StoreValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async isRecordTombstoned(tenant: string, recordId: string): Promise<boolean> {
-    return this.recordHasLocalTombstone(tenant, recordId);
+  public async isRecordPruned(tenant: string, recordId: string): Promise<boolean> {
+    return this.recordHasPruneTombstone(tenant, recordId);
   }
 
   /** @inheritdoc */
@@ -300,7 +287,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
 
   /**
    * Checks whether a `RecordsDelete` tombstone for the given record is locally present.
-   * Retained initial writes can prove immutable parent/role facts, but a tombstone still wins.
+   * Role revocation remains current-state, including soft deletes.
    */
   private async recordHasLocalTombstone(tenant: string, recordId: string): Promise<boolean> {
     const tombstoneQuery: Filter = {
@@ -309,6 +296,17 @@ export class StoreValidationStateReader implements ValidationStateReader {
       recordId  : recordId
     };
     const { messages } = await this.messageStore.query(tenant, [tombstoneQuery]);
+    return messages.length > 0;
+  }
+
+  /** Checks whether prune has removed a record's structural ancestry. */
+  private async recordHasPruneTombstone(tenant: string, recordId: string): Promise<boolean> {
+    const { messages } = await this.messageStore.query(tenant, [{
+      interface : DwnInterfaceName.Records,
+      method    : DwnMethodName.Delete,
+      recordId,
+      prune     : true,
+    }]);
     return messages.length > 0;
   }
 

@@ -67,9 +67,9 @@ export async function verifyProtocolPathAndContextId(
   });
 
   if (parentMessage === undefined) {
-    // A missing parent and a tombstoned parent are indistinguishable here; the replication apply
-    // layer classifies a tombstone as terminal locally via `parentRecordDeletedFromReply`. This
-    // keeps the client-facing reply from leaking whether a record was deleted.
+    // A missing parent and a pruned parent are indistinguishable here; the replication apply
+    // layer classifies a prune tombstone as terminal locally via `parentRecordPrunedFromReply`. This
+    // keeps the client-facing reply from leaking whether a record was pruned.
     // If this is a cross-protocol composition lookup, use a more descriptive error.
     if (parentProtocolUri !== childProtocol) {
       throw new DwnError(

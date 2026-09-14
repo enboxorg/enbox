@@ -59,5 +59,14 @@
   "replicated: tombstone-beaten dataless update missing compacted data": [
     "fetchProtocolDefinition",
     "hasStoredData"
+  ],
+  "replicated: child of soft-deleted parent": [
+    "fetchParentRecord",
+    "fetchProtocolDefinition"
+  ],
+  "replicated: child of pruned parent": [
+    "fetchParentRecord",
+    "fetchProtocolDefinition",
+    "isRecordPruned"
   ]
 }

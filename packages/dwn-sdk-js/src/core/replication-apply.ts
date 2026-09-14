@@ -45,11 +45,11 @@ export type ReplicationApplyResultContext = {
 
   /**
    * Set by the receiver when a parent-missing reply is locally known to be terminal because the
-   * referenced parent record carries a tombstone. The generic on-wire parent-not-found code then
+   * referenced parent record carries a prune tombstone. The generic on-wire parent-not-found code then
    * classifies as `Invalid` instead of a retryable `Incomplete`, so the receiver stops retrying a
    * dependency that can never be repaired without the reply leaking the tombstone to its sender.
    */
-  parentRecordDeleted?: boolean;
+  parentRecordPruned?: boolean;
 };
 
 export type DependencyRef =
@@ -105,11 +105,11 @@ export function replicationApplyResultFromReply(
   }
 
   if (
-    context.parentRecordDeleted === true
+    context.parentRecordPruned === true
     && (getDwnErrorCode(detail) === DwnErrorCode.ProtocolAuthorizationParentRecordNotFound
       || getDwnErrorCode(detail) === DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound)
   ) {
-    return { kind: 'Invalid', reason: detail };
+    return { kind: 'Superseded' };
   }
 
   const missing = dependencyRefsFromStatus(message, code, detail, context);
@@ -234,12 +234,12 @@ function toRefList(ref: DependencyRef | undefined): DependencyRef[] {
 }
 
 /**
- * Whether a parent-missing reply is terminal because the referenced parent record is tombstoned
+ * Whether a parent-missing reply is terminal because the referenced parent record is pruned
  * locally. Returns `false` for any other reply. The receiver calls this so it can classify a
  * generic on-wire missing-parent error as terminal without the error code itself revealing that a
  * tombstone exists.
  */
-export async function parentRecordDeletedFromReply(
+export async function parentRecordPrunedFromReply(
   tenant: string,
   message: GenericMessage,
   reply: { status: { detail?: string } },
@@ -257,7 +257,17 @@ export async function parentRecordDeletedFromReply(
     return false;
   }
 
-  return validationStateReader.isRecordTombstoned(tenant, parentId);
+  const contextId = (message as { contextId?: unknown }).contextId;
+  const ancestorRecordIds = typeof contextId === 'string'
+    ? contextId.split('/').slice(0, -1)
+    : [parentId];
+  for (const ancestorRecordId of ancestorRecordIds) {
+    if (await validationStateReader.isRecordPruned(tenant, ancestorRecordId)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function getDwnErrorCode(detail: string): string | undefined {

@@ -277,6 +277,28 @@ describe('SyncEngineLevel durable pull admission', () => {
     })).toBe(true);
   });
 
+  it('settles a pruned-parent rejection without recording a dead letter', async () => {
+    const message = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const messageCid = await Message.getCid(message);
+    const engine = new SyncEngineLevel({
+      agent: {
+        dwn: { applyReplicatedMessage: sinon.stub().resolves({ kind: 'Superseded' }), isRemoteMode: false },
+      } as never,
+      db: {} as never,
+    });
+    const internal = engine as any;
+    const recordDeadLetter = sinon.stub(internal, 'recordDeadLetter').resolves();
+
+    const result = await internal.admitRemoteFeedEntry(target(), {
+      isLatestBaseState: true,
+      message,
+      messageCid,
+    });
+
+    expect(result).toEqual({ kind: 'admitted', appliedCids: [messageCid], freshEntries: [] });
+    expect(recordDeadLetter.notCalled).toBe(true);
+  });
+
   it('leaves terminal role admission failures retryable instead of persisting a dead letter', async () => {
     const message = protocolMessage('2026-07-21T00:00:00.000000Z');
     const messageCid = await Message.getCid(message);

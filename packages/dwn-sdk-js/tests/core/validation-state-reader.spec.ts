@@ -16,6 +16,9 @@ import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from '../../src/core/constants.js';
 import { Jws } from '../../src/utils/jws.js';
 import { RecordingValidationStateReader } from '../../src/core/recording-validation-state-reader.js';
+import { RecordsDelete } from '../../src/interfaces/records-delete.js';
+import { RecordsQuery } from '../../src/interfaces/records-query.js';
+import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { StoreValidationStateReader } from '../../src/core/validation-state-reader.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -194,6 +197,12 @@ describe('validation-state reader admission parity', () => {
       const parentUpdateReply = await dwn.processMessage(alice.did, parentUpdate.message);
       expect(parentUpdateReply.status.code).toBe(202);
 
+      const reader = new StoreValidationStateReader({ messageStore, dataStore });
+      const retainedParent = await reader.fetchParentRecord({
+        tenant: alice.did, parentProtocolUri: protocolDefinition.protocol, parentId: parentMessage.recordId,
+      });
+      expect(retainedParent?.descriptor).toEqual(parentMessage.descriptor);
+
       const { message: childMessage, dataStream: childDataStream } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
         protocol        : protocolDefinition.protocol,
@@ -206,7 +215,7 @@ describe('validation-state reader admission parity', () => {
       expect(childReply.status.code).toBe(202);
     });
 
-    it('should reject a child of a tombstoned parent through processMessage and replication apply', async () => {
+    it('should reject a child of a pruned parent through processMessage and replication apply', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolDefinition = nestedProtocolDefinition;
@@ -228,9 +237,10 @@ describe('validation-state reader admission parity', () => {
       const parentReply = await dwn.processMessage(alice.did, parentMessage, { dataStream: parentDataStream });
       expect(parentReply.status.code).toBe(202);
 
-      const { message: deleteMessage } = await TestDataGenerator.generateRecordsDelete({
-        author   : alice,
+      const { message: deleteMessage } = await RecordsDelete.create({
+        signer   : Jws.createSigner(alice),
         recordId : parentMessage.recordId,
+        prune    : true,
       });
       const deleteReply = await dwn.processMessage(alice.did, deleteMessage);
       expect(deleteReply.status.code).toBe(202);
@@ -254,7 +264,127 @@ describe('validation-state reader admission parity', () => {
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, childMessage, {
         dataStream: DataStream.fromBytes(childDataBytes!),
       });
-      expect(replicatedResult.kind).toBe('Invalid');
+      expect(replicatedResult.kind).toBe('Superseded');
+    });
+
+    for (const prune of [false, true]) {
+      it(`should converge parent/child/delete arrival orders with prune=${prune}`, async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocolDefinition = nestedProtocolDefinition;
+        const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+        const parent = await TestDataGenerator.generateRecordsWrite({
+          author: alice, protocol: protocolDefinition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+        });
+        const child = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : protocolDefinition.protocol,
+          protocolPath    : 'foo/bar',
+          schema          : 'bar',
+          dataFormat      : 'text/plain',
+          parentContextId : parent.message.contextId,
+        });
+        const deletion = await RecordsDelete.create({ signer: Jws.createSigner(alice), recordId: parent.message.recordId, prune });
+        const deliveries = [parent, child, deletion];
+        // Each replica receives the exact same signed messages; only delivery order changes.
+        const orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+        for (const order of orders) {
+          await messageStore.clear();
+          await dataStore.clear();
+          await resumableTaskStore.clear();
+          expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+          const pending: number[] = [];
+          let parentPruned = false;
+          for (const index of order) {
+            const delivery = deliveries[index];
+            const dataBytes = 'dataBytes' in delivery ? delivery.dataBytes : undefined;
+            const result = await dwn.applyReplicatedMessage(alice.did, delivery.message, {
+              dataStream: dataBytes === undefined ? undefined : DataStream.fromBytes(dataBytes),
+            });
+            if (result.kind === 'Incomplete') {
+              pending.push(index);
+            } else {
+              expect(result.kind).toBe(parentPruned && index === 1 ? 'Superseded' : 'Applied');
+              if (prune && index === 2) {
+                parentPruned = true;
+              }
+            }
+          }
+          // Repair the delete before retrying the child, once the retained parent is available.
+          for (const index of pending.sort((a, b): number => b - a)) {
+            const delivery = deliveries[index];
+            const dataBytes = 'dataBytes' in delivery ? delivery.dataBytes : undefined;
+            const result = await dwn.applyReplicatedMessage(alice.did, delivery.message, {
+              dataStream: dataBytes === undefined ? undefined : DataStream.fromBytes(dataBytes),
+            });
+            expect(result.kind).toBe(prune && index === 1 ? 'Superseded' : 'Applied');
+          }
+          const readParent = await RecordsRead.create({ filter: { recordId: parent.message.recordId }, signer: Jws.createSigner(alice) });
+          expect((await dwn.processMessage(alice.did, readParent.message)).status.code).toBe(404);
+          const readChild = await RecordsRead.create({ filter: { recordId: child.message.recordId }, signer: Jws.createSigner(alice) });
+          expect((await dwn.processMessage(alice.did, readChild.message)).status.code).toBe(prune ? 404 : 200);
+          for (const filter of [
+            { recordId: child.message.recordId },
+            { protocol: protocolDefinition.protocol, protocolPath: 'foo/bar', contextId: child.message.contextId },
+          ]) {
+            const query = await RecordsQuery.create({ filter, signer: Jws.createSigner(alice) });
+            const reply = await dwn.processMessage(alice.did, query.message);
+            expect(reply.status.code).toBe(200);
+            expect(reply.entries?.length).toBe(prune ? 0 : 1);
+          }
+          // Soft-deleted parents produce the same client-facing admission reply as live parents.
+          const newChild = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : protocolDefinition.protocol,
+            protocolPath    : 'foo/bar',
+            schema          : 'bar',
+            dataFormat      : 'text/plain',
+            parentContextId : parent.message.contextId,
+          });
+          const reply = await dwn.processMessage(alice.did, newChild.message, { dataStream: newChild.dataStream });
+          expect(reply.status.code).toBe(prune ? 400 : 202);
+          if (prune) {
+            expect((await dwn.applyReplicatedMessage(alice.did, newChild.message)).kind).toBe('Superseded');
+          }
+        }
+      });
+    }
+
+    it('should settle a late descendant of a pruned subtree without retrying it', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocolDefinition = nestedProtocolDefinition;
+      const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+      expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+      const parent = await TestDataGenerator.generateRecordsWrite({
+        author: alice, protocol: protocolDefinition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+      });
+      expect((await dwn.processMessage(alice.did, parent.message, { dataStream: parent.dataStream })).status.code).toBe(202);
+      const child = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'foo/bar',
+        schema          : 'bar',
+        dataFormat      : 'text/plain',
+        parentContextId : parent.message.contextId,
+      });
+      expect((await dwn.processMessage(alice.did, child.message, { dataStream: child.dataStream })).status.code).toBe(202);
+      const deletion = await RecordsDelete.create({
+        recordId : parent.message.recordId,
+        prune    : true,
+        signer   : Jws.createSigner(alice),
+      });
+      expect((await dwn.processMessage(alice.did, deletion.message)).status.code).toBe(202);
+      const grandchild = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'foo/bar/baz',
+        schema          : 'baz',
+        dataFormat      : 'text/plain',
+        parentContextId : child.message.contextId,
+      });
+
+      expect((await dwn.applyReplicatedMessage(
+        alice.did, grandchild.message, { dataStream: grandchild.dataStream },
+      )).kind).toBe('Superseded');
     });
 
     it('should classify a not-yet-seen parent as a repairable Incomplete dependency', async () => {

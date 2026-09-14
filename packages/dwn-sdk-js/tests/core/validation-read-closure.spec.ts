@@ -36,7 +36,7 @@ const VALIDATION_READER_METHODS = new Set<string>([
   'fetchInitialWrite',
   'constructRecordChain',
   'fetchParentRecord',
-  'isRecordTombstoned',
+  'isRecordPruned',
   'hasMatchingRoleRecord',
   'queryLatestRoleRecords',
   'queryAudienceRecords',
@@ -643,6 +643,33 @@ describe('validation read closure', () => {
       expect(datalessUpdateResult.kind).toBe('Incomplete');
 
       snapshot('replicated: tombstone-beaten dataless update missing compacted data');
+    }
+
+    // ---- retained parent ancestry and receiver-local prune classification ----
+    for (const prune of [false, true]) {
+      await clearStores();
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const definition = nestedProtocolDefinition;
+      const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+      const parent = await TestDataGenerator.generateRecordsWrite({
+        author: alice, protocol: definition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+      });
+      expect((await dwn.processMessage(alice.did, parent.message, { dataStream: parent.dataStream })).status.code).toBe(202);
+      const deletion = await RecordsDelete.create({ recordId: parent.message.recordId, prune, signer: Jws.createSigner(alice) });
+      expect((await dwn.processMessage(alice.did, deletion.message)).status.code).toBe(202);
+      const child = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : definition.protocol,
+        protocolPath    : 'foo/bar',
+        schema          : 'bar',
+        dataFormat      : 'text/plain',
+        parentContextId : parent.message.contextId,
+      });
+      recorder.clearRecordedReads();
+      const result = await dwn.applyReplicatedMessage(alice.did, child.message, { dataStream: child.dataStream });
+      expect(result.kind).toBe(prune ? 'Superseded' : 'Applied');
+      snapshot(`replicated: child of ${prune ? 'pruned' : 'soft-deleted'} parent`);
     }
 
     // ---- closure assertion: every recorded read is part of the validation reader surface ----

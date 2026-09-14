@@ -5514,12 +5514,12 @@ export function testRecordsWriteHandler(): void {
           expect(reply2.status.code).toBe(202);
         });
 
-        it('should fail if a write references a parent that has been deleted', async () => {
+        it('should admit a write referencing a soft-deleted parent', async () => {
           // scenario:
           // 0. Alice installs a nested protocol foo -> bar -> baz
           // 1. Alice writes foo1
           // 2. Alice deletes foo1
-          // 3. Alice tries to write a bar1 referencing the deleted foo and should fail
+          // 3. Alice tries to write a bar1 referencing the deleted foo and should succeed
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -5554,7 +5554,7 @@ export function testRecordsWriteHandler(): void {
           const deleteFooReply = await dwn.processMessage(alice.did, deleteFoo.message);
           expect(deleteFooReply.status.code).toBe(202);
 
-          // 3. Alice tries to write a bar1 referencing the deleted foo and should fail
+          // 3. Alice tries to write a bar1 referencing the deleted foo and should succeed
           const barOptions = {
             author          : alice,
             protocol        : nestedProtocol.protocol,
@@ -5565,8 +5565,7 @@ export function testRecordsWriteHandler(): void {
           };
           const bar1 = await TestDataGenerator.generateRecordsWrite(barOptions);
           const bar1WriteResponse = await dwn.processMessage(alice.did, bar1.message, { dataStream: bar1.dataStream });
-          expect(bar1WriteResponse.status.code).toBe(400);
-          expect(bar1WriteResponse.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
+          expect(bar1WriteResponse.status.code).toBe(202);
         });
 
         it('should fail if a write references a mismatching parent that compared to the parent in the `contextId` ', async () => {
