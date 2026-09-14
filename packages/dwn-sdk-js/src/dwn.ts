@@ -65,7 +65,7 @@ import { StoreValidationStateReader } from './core/validation-state-reader.js';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from './core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
-import { missingAncestorRecordIdsFromReply, parentRecordDeletedFromReply, replicationApplyResultFromReply } from './core/replication-apply.js';
+import { missingAncestorRecordIdsFromReply, parentRecordPrunedFromReply, replicationApplyResultFromReply } from './core/replication-apply.js';
 
 /**
  * Structural shape for `DidResolver` implementations that expose
@@ -311,26 +311,26 @@ export class Dwn {
 
     const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
     const missingAncestorRecordIds = await this.getReplicationApplyMissingAncestors(tenant, rawMessage, reply);
-    const parentRecordDeleted = await this.getReplicationApplyParentDeleted(tenant, rawMessage, reply);
+    const parentRecordPruned = await this.getReplicationApplyParentPruned(tenant, rawMessage, reply);
     return replicationApplyResultFromReply(rawMessage, reply, {
       protocolDefinition,
       missingAncestorRecordIds,
-      parentRecordDeleted,
+      parentRecordPruned,
     });
   }
 
   /**
    * Determines whether a parent-missing reply is terminal because the referenced parent record is
-   * tombstoned locally. This lets the receiver classify the generic on-wire missing-parent error
+   * pruned locally. This lets the receiver classify the generic on-wire missing-parent error
    * as `Invalid` without the reply itself revealing that a tombstone exists.
    */
-  private async getReplicationApplyParentDeleted(
+  private async getReplicationApplyParentPruned(
     tenant: string,
     message: GenericMessage,
     reply: { status: { detail?: string } },
   ): Promise<boolean> {
     try {
-      return await parentRecordDeletedFromReply(tenant, message, reply, this.validationStateReader);
+      return await parentRecordPrunedFromReply(tenant, message, reply, this.validationStateReader);
     } catch {
       return false;
     }

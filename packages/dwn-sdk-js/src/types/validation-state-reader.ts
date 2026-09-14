@@ -41,10 +41,9 @@ export interface ValidationStateReader {
   /**
    * Fetches the immediate parent record for protocolPath/contextId verification.
    *
-   * Queries the latest-state write first — the fast path that excludes deleted parents. If no
-   * latest write exists, a retained initial write is sufficient for immutable parent facts
-   * (protocolPath/contextId) provided no local tombstone exists for that record.
-   * @returns the parent write, or `undefined` when the parent is absent (or deleted).
+   * Uses the retained initial write in the expected protocol. Soft deletes preserve ancestry;
+   * only prune removes it.
+   * @returns the initial parent write, or `undefined` when the parent is absent or pruned.
    */
   fetchParentRecord(input: {
     tenant: string;
@@ -53,12 +52,12 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage | undefined>;
 
   /**
-   * Checks whether a record has a local `RecordsDelete` tombstone. A tombstone is terminal, so a
+   * Checks whether a record has a local `prune: true` tombstone. Prune is terminal, so a
    * parent missing because of one can never be repaired. The replication apply layer uses this to
    * classify a generic missing-parent reply as terminal without exposing the distinction in the
    * client-facing reply.
    */
-  isRecordTombstoned(tenant: string, recordId: string): Promise<boolean>;
+  isRecordPruned(tenant: string, recordId: string): Promise<boolean>;
 
   /**
    * Checks whether a role record matching the invoked-role selector exists.

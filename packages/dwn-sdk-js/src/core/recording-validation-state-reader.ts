@@ -64,9 +64,9 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async isRecordTombstoned(tenant: string, recordId: string): Promise<boolean> {
-    this.recordedReads.push({ method: 'isRecordTombstoned' });
-    return this.inner.isRecordTombstoned(tenant, recordId);
+  public async isRecordPruned(tenant: string, recordId: string): Promise<boolean> {
+    this.recordedReads.push({ method: 'isRecordPruned' });
+    return this.inner.isRecordPruned(tenant, recordId);
   }
 
   /** @inheritdoc */
