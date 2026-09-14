@@ -552,7 +552,14 @@ describe('createConnectionStore()', () => {
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(mixedRead); });
       expect(store.getSnapshot().sync?.connectivity).toBe('offline');
 
-      engine.links = [syncLink({ status: 'paused', connectivity: 'offline' })];
+      engine.links = [syncLink({
+        status       : 'paused',
+        connectivity : 'offline',
+        recovery     : {
+          error    : 'authority endpoint unavailable',
+          failedAt : '2026-09-11T12:00:00.000Z',
+        },
+      })];
       engine.emit({
         type           : 'link:status-change',
         tenantDid      : OWNER_DID,
@@ -562,6 +569,7 @@ describe('createConnectionStore()', () => {
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('error'); });
       expect(store.getSnapshot().sync?.error?.message).toContain('paused');
+      expect(store.getSnapshot().sync?.error?.message).toContain('authority endpoint unavailable');
     });
 
     it('should treat an identity without a sync registration as locally caught up', async () => {
@@ -689,6 +697,7 @@ describe('createConnectionStore()', () => {
         remoteStatus({ remoteEndpoint: 'https://backup.example', state: 'degraded' }),
         remoteStatus({
           nextProbeAt    : '2026-07-29T12:00:00.000Z',
+          nextRetryAt    : '2026-07-29T11:30:00.000Z',
           lastError      : 'Quota exceeded',
           lastActivityAt : '2026-07-29T11:00:00.000Z',
         }),
@@ -717,6 +726,14 @@ describe('createConnectionStore()', () => {
       });
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
       expect(store.getSnapshot()).toBe(stable);
+
+      engine.remotes[2] = remoteStatus({ nextRetryAt: '2026-07-29T11:45:00.000Z' });
+      engine.emit({
+        type: 'dead-letter:change', tenantDid: OWNER_DID, remoteEndpoint: 'https://dwn.example',
+      });
+      await waitFor(() => {
+        expect(store.getSnapshot().sync?.remotes[0]?.nextRetryAt).toBe('2026-07-29T11:45:00.000Z');
+      });
 
       engine.remotes = [remoteStatus()];
       engine.emit({

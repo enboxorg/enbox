@@ -561,6 +561,7 @@ export class SyncEngineLevel implements SyncEngine {
           this.openLocalPushSubscription(target, controller),
         reconcileTarget: (controller, target, options, shouldContinue): Promise<SyncReconcileResult> =>
           this.reconcileOwnedTarget(controller, target, options, shouldContinue),
+        setRecovery : (link, recovery): Promise<void> => this.replicationLinkStore.setRecovery(link, recovery),
         reportError : (message, error): void => { console.error(message, error); },
         setStatus   : (link, status): Promise<void> => this.replicationLinkStore.setStatus(link, status),
         warn        : (message): void => { console.warn(message); },
