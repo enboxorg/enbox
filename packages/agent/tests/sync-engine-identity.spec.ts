@@ -141,6 +141,86 @@ describe('SyncEngineLevel — identity management', () => {
     });
   });
 
+  describe('ensureIdentityOptions', () => {
+    it('should create an absent registration and report the change', async () => {
+      const did = 'did:example:ensure-new';
+
+      await expect(syncEngine.ensureIdentityOptions({
+        did,
+        options: { protocols: ['https://proto.example'] },
+      })).resolves.toBe(true);
+      expect(await syncEngine.getIdentityOptions(did)).toEqual({ protocols: ['https://proto.example'] });
+    });
+
+    it('should skip storage, quota, and routing work for semantically equal options', async () => {
+      const did = 'did:example:ensure-equal';
+      await syncEngine.setIdentityOptions({
+        did,
+        options: { protocols: ['https://b.example', 'https://a.example'] },
+      });
+      const storeSet = sinon.spy(syncEngine['_identityStore'], 'set');
+      const clearQuota = sinon.spy(syncEngine['_quotaManager'], 'clearTenant');
+      const refreshRouting = sinon.spy(syncEngine as any, 'refreshRoleLinksForActor');
+
+      await expect(syncEngine.ensureIdentityOptions({
+        did,
+        options: {
+          protocols: ['https://a.example', 'https://b.example', 'https://a.example'],
+        },
+      })).resolves.toBe(false);
+
+      expect(storeSet.called).toBe(false);
+      expect(clearQuota.called).toBe(false);
+      expect(refreshRouting.called).toBe(false);
+    });
+
+    it('should apply a changed delegate under the existing identity fence', async () => {
+      const did = 'did:example:ensure-delegate';
+      await syncEngine.setIdentityOptions({ did, options: { protocols: ['https://proto.example'] } });
+
+      await expect(syncEngine.ensureIdentityOptions({
+        did,
+        options: {
+          delegateDid : 'did:example:delegate',
+          protocols   : ['https://proto.example'],
+        },
+      })).resolves.toBe(true);
+      expect(await syncEngine.getIdentityOptions(did)).toEqual({
+        delegateDid : 'did:example:delegate',
+        protocols   : ['https://proto.example'],
+      });
+    });
+
+    it('should let a concurrently queued removal win without resurrecting the identity', async () => {
+      const did = 'did:example:ensure-remove-race';
+      await syncEngine.setIdentityOptions({ did, options: { protocols: ['https://old.example'] } });
+      let releaseValidation!: () => void;
+      const validationGate = new Promise<void>((resolve): void => { releaseValidation = resolve; });
+      let reachValidation!: () => void;
+      const validationReached = new Promise<void>((resolve): void => { reachValidation = resolve; });
+      (SyncScopeClosureValidator.prototype.validateClosure as sinon.SinonStub).callsFake(
+        async (_did: string, options: SyncIdentityOptions): Promise<void> => {
+          if (options.protocols !== 'all' && options.protocols.some(protocol => protocol === 'https://new.example')) {
+            reachValidation();
+            await validationGate;
+          }
+        },
+      );
+
+      const ensure = syncEngine.ensureIdentityOptions({
+        did,
+        options: { protocols: ['https://new.example'] },
+      });
+      await validationReached;
+      const remove = syncEngine.removeIdentity(did);
+      releaseValidation();
+
+      await expect(ensure).resolves.toBe(true);
+      await remove;
+      expect(await syncEngine.getIdentityOptions(did)).toBeUndefined();
+    });
+  });
+
   describe('refreshIdentityRouting', () => {
     it('should not resurrect an identity removed before a queued routing refresh', async () => {
       const did = 'did:example:refresh-remove';

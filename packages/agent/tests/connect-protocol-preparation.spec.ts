@@ -9,6 +9,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import {
   getProtocolSetupStatus,
   hasEncryptedProtocolTypes,
+  inspectConnectProtocol,
   prepareProtocol,
 } from '../src/connect-protocol-preparation.js';
 
@@ -196,6 +197,71 @@ describe('connect protocol preparation', () => {
       } as DwnProtocolDefinition;
 
       expect(getProtocolSetupStatus(olderInstalled, notesProtocol)).toBe('conflict');
+    });
+  });
+
+  describe('inspectConnectProtocol', () => {
+    it('should report an install without mutating protocol state', async () => {
+      const { agent, processDwnRequest, sendDwnRequest } = stubAgent();
+
+      await expect(inspectConnectProtocol({
+        agent      : agent,
+        ownerDid   : 'did:example:owner',
+        definition : notesProtocol,
+      })).resolves.toEqual({ status: 'install' });
+      expect(processDwnRequest.callCount).toBe(1);
+      expect(configureCalls(processDwnRequest)).toHaveLength(0);
+      expect(sendDwnRequest.callCount).toBe(0);
+    });
+
+    it('should report verified encryption upgrades and the installed definition', async () => {
+      const { agent } = stubAgent({ installed: encryptedProtocol });
+
+      await expect(inspectConnectProtocol({
+        agent      : agent,
+        ownerDid   : 'did:example:owner',
+        definition : encryptedProtocol,
+      })).resolves.toEqual({
+        status              : 'upgrade',
+        installedDefinition : encryptedProtocol,
+      });
+    });
+
+    it('should return structured definition conflicts for wallet policy', async () => {
+      const installedDefinition = {
+        ...notesProtocol,
+        types: { note: { schema: 'old-note' } },
+      } as DwnProtocolDefinition;
+      const { agent } = stubAgent({ installed: installedDefinition });
+
+      await expect(inspectConnectProtocol({
+        agent      : agent,
+        ownerDid   : 'did:example:owner',
+        definition : notesProtocol,
+      })).resolves.toEqual({
+        status              : 'conflict',
+        installedDefinition : installedDefinition,
+        conflictReason      : `Protocol '${notesProtocol.protocol}' is already installed with a different definition. `
+          + 'A connection request cannot replace an owner protocol definition.',
+      });
+    });
+
+    it('should distinguish owner-key conflicts from overridable definition conflicts', async () => {
+      const installedDefinition = {
+        ...installedEncryptedProtocol,
+        $keyAgreement: { publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'attacker-key' } },
+      } as DwnProtocolDefinition;
+      const { agent } = stubAgent({ installed: installedDefinition });
+
+      await expect(inspectConnectProtocol({
+        agent      : agent,
+        ownerDid   : 'did:example:owner',
+        definition : encryptedProtocol,
+      })).resolves.toEqual({
+        status              : 'conflict',
+        installedDefinition : installedDefinition,
+        conflictReason      : `Protocol '${encryptedProtocol.protocol}' has encryption keys that do not match this wallet owner.`,
+      });
     });
   });
 

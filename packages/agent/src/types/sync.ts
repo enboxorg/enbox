@@ -853,6 +853,24 @@ export interface SyncEngine {
     lifecycleOptions?: SyncLifecycleOptions,
   ): Promise<void>;
   /**
+   * Create or replace an identity's sync options only when their effective
+   * scope or delegate changes.
+   *
+   * The comparison and optional update run under the same per-DID lifecycle
+   * fence, so callers do not need a read/compare/single-flight wrapper.
+   * Protocol-list order and duplicates do not count as changes. Returns
+   * `true` when new options were applied and `false` for an existing,
+   * semantically equal registration.
+   *
+   * This compares durable identity options only. Call
+   * {@link refreshIdentityRouting} when authorization or endpoint state changes
+   * without changing those options.
+   */
+  ensureIdentityOptions(
+    params: { did: string, options: SyncIdentityOptions },
+    lifecycleOptions?: SyncLifecycleOptions,
+  ): Promise<boolean>;
+  /**
    * Reapply one registered identity's durable options to its live routing.
    *
    * The read and rebuild are serialized with identity replacement/removal, so

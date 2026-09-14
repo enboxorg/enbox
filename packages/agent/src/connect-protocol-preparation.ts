@@ -60,6 +60,22 @@ const PROTOCOL_REQUEST_TIMEOUT_MS = 10_000;
 /** Resolved preparation state of one protocol against one DWN. */
 export type ProtocolSetupStatus = 'configured' | 'conflict' | 'install' | 'upgrade';
 
+/** Result of inspecting one requested protocol against the owner's local DWN. */
+export type ConnectProtocolInspection = Readonly<{
+  status: ProtocolSetupStatus;
+  installedDefinition?: DwnProtocolDefinition;
+  conflictReason?: string;
+}>;
+
+/** Parameters for {@link inspectConnectProtocol}. */
+export type InspectConnectProtocolParams = {
+  agent: ConnectProtocolInspectionAgent;
+  ownerDid: string;
+  definition: DwnProtocolDefinition;
+};
+
+type ConnectProtocolInspectionAgent = Pick<EnboxPlatformAgent, 'dwn' | 'processDwnRequest'>;
+
 type ProtocolQueryReply = {
   status: { code: number; detail: string };
   entries?: ProtocolConfigureEntry[];
@@ -256,7 +272,7 @@ async function getVerifiedProtocolSetupStatus(
   installedDefinition: DwnProtocolDefinition | undefined,
   requestedDefinition: DwnProtocolDefinition,
   selectedDid: string,
-  agent: EnboxPlatformAgent,
+  agent: ConnectProtocolInspectionAgent,
 ): Promise<ProtocolSetupStatus> {
   const structuralStatus = getProtocolSetupStatus(installedDefinition, requestedDefinition);
   if (
@@ -281,7 +297,7 @@ async function getVerifiedProtocolSetupStatus(
 function getProtocolSetupConflictMessage(
   installedDefinition: DwnProtocolDefinition | undefined,
   requestedDefinition: DwnProtocolDefinition,
-): string | undefined {
+): string {
   if (!isNormalizedProtocolUri(requestedDefinition.protocol)) {
     return `Protocol URI '${requestedDefinition.protocol}' is not normalized.`;
   }
@@ -298,7 +314,7 @@ function getProtocolSetupConflictMessage(
       + 'A connection request cannot replace an owner protocol definition.';
   }
 
-  return undefined;
+  return `Protocol '${requestedDefinition.protocol}' has encryption keys that do not match this wallet owner.`;
 }
 
 function getProtocolDefinitionFromEntry(
@@ -313,16 +329,17 @@ function getProtocolDefinitionFromEntry(
 
 /**
  * Runs the local `ProtocolsQuery` for the requested protocol and computes its
- * verified setup status, throwing on a non-200 reply or a definition/key
- * conflict — the shared preamble every preparation path starts from.
+ * verified setup status. This is the shared read used by public inspection and
+ * the mutating preparation path.
  */
 async function queryLocalProtocolStatus(
   selectedDid: string,
-  agent: EnboxPlatformAgent,
+  agent: ConnectProtocolInspectionAgent,
   protocolDefinition: DwnProtocolDefinition,
 ): Promise<{
   queryResult: DwnResponse<DwnInterface.ProtocolsQuery>;
   existingEntry: ProtocolConfigureEntry | undefined;
+  installedDefinition: DwnProtocolDefinition | undefined;
   setupStatus: ProtocolSetupStatus;
 }> {
   const queryResult = await agent.processDwnRequest({
@@ -345,14 +362,30 @@ async function queryLocalProtocolStatus(
     agent,
   );
 
-  if (setupStatus === 'conflict') {
-    throw new Error(
-      getProtocolSetupConflictMessage(installedDefinition, protocolDefinition)
-      ?? `Protocol '${protocolDefinition.protocol}' has encryption keys that do not match this wallet owner.`,
-    );
-  }
+  return { queryResult, existingEntry, installedDefinition, setupStatus };
+}
 
-  return { queryResult, existingEntry, setupStatus };
+/**
+ * Inspect a requested Connect protocol without configuring local or remote
+ * state. Enbox owns DWN normalization, requester-key rejection, authored
+ * definition comparison, and owner-derived encryption-key verification;
+ * wallets retain canonical-definition pinning and explicit override policy.
+ */
+export async function inspectConnectProtocol({
+  agent,
+  ownerDid,
+  definition,
+}: InspectConnectProtocolParams): Promise<ConnectProtocolInspection> {
+  const { installedDefinition, setupStatus } = await queryLocalProtocolStatus(ownerDid, agent, definition);
+  const conflictReason = setupStatus === 'conflict'
+    ? getProtocolSetupConflictMessage(installedDefinition, definition)
+    : undefined;
+
+  return {
+    status: setupStatus,
+    ...(installedDefinition === undefined ? {} : { installedDefinition }),
+    ...(conflictReason === undefined ? {} : { conflictReason }),
+  };
 }
 
 /**
@@ -507,7 +540,15 @@ export async function prepareProtocol(
   agent: EnboxPlatformAgent,
   protocolDefinition: DwnProtocolDefinition,
 ): Promise<void> {
-  const { queryResult, existingEntry, setupStatus } = await queryLocalProtocolStatus(selectedDid, agent, protocolDefinition);
+  const {
+    queryResult,
+    existingEntry,
+    installedDefinition,
+    setupStatus,
+  } = await queryLocalProtocolStatus(selectedDid, agent, protocolDefinition);
+  if (setupStatus === 'conflict') {
+    throw new Error(getProtocolSetupConflictMessage(installedDefinition, protocolDefinition));
+  }
 
   const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
   if (queryResult.message === undefined) {
