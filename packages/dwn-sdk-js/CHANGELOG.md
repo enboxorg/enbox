@@ -1,5 +1,36 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.26
+
+### Patch Changes
+
+- [#1661](https://github.com/enboxorg/enbox/pull/1661) [`24f00aa`](https://github.com/enboxorg/enbox/commit/24f00aad3b6f43e4c1b7aaa39a73f8cd3d721841) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Preserve transient DID resolution causes through DWN verification and agent signer errors.
+
+- [#1685](https://github.com/enboxorg/enbox/pull/1685) [`77e689c`](https://github.com/enboxorg/enbox/commit/77e689ce1a35b0408ea53bfef0631f8438299810) Thanks [@enmand](https://github.com/enmand)! - fix: resolve structural parent ancestry from retained initial writes; preserve ancestry after soft deletes and classify pruned parents as terminal during replication.
+
+- [#1666](https://github.com/enboxorg/enbox/pull/1666) [`994f448`](https://github.com/enboxorg/enbox/commit/994f4484e605ad8e626652b4d69b7d240eda032f) Thanks [@enmand](https://github.com/enmand)! - fix: select broad RecordsRead top-1 from the readable, occupied population
+
+  A broad `RecordsRead` now walks the ordered candidates in pages of 25 and
+  returns the first record the requester may read that is also a current
+  `$recordLimit` occupant, instead of checking only the raw top-1 match. A
+  hidden record can therefore no longer shadow a readable match with a false
+  404/401. Exact-`recordId` reads keep their 401/404 shape, and authorized
+  tombstones still return their 404-with-delete reply. Broad reads with no
+  readable match now return a bare 404 rather than 401, matching
+  `RecordsQuery` visibility semantics.
+
+  Only classified authorization denials are skipped on a broad read.
+  Malformed retained state, unresolvable protocols, and store or
+  validation-state failures propagate fail-closed instead of becoming
+  invisibility.
+
+- [#1680](https://github.com/enboxorg/enbox/pull/1680) [`9caf4de`](https://github.com/enboxorg/enbox/commit/9caf4de88a726c433c8be69c9dd003f539b979c8) Thanks [@enmand](https://github.com/enmand)! - Classify a tombstoned parent as terminal during replication apply, instead of a repairable missing dependency. The client-facing reply is unchanged — it returns the same missing-parent error as a parent that has not arrived yet — while the receiver, which can see the local tombstone, marks the write `Invalid` rather than retrying a dependency that can never be repaired. A parent that has merely not arrived yet remains `Incomplete`.
+
+- Updated dependencies [[`ab6cbfd`](https://github.com/enboxorg/enbox/commit/ab6cbfdd236af8fbf291a6307ac1e56e64f4c1e9), [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396), [`d34582d`](https://github.com/enboxorg/enbox/commit/d34582da959f2da5b1dc92eab210deddfb77e03b)]:
+  - @enbox/common@0.1.7
+  - @enbox/dids@0.1.11
+  - @enbox/crypto@0.1.10
+
 ## 0.4.25
 
 ### Patch Changes

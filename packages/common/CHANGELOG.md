@@ -1,5 +1,13 @@
 # @enbox/common
 
+## 0.1.7
+
+### Patch Changes
+
+- [#1668](https://github.com/enboxorg/enbox/pull/1668) [`ab6cbfd`](https://github.com/enboxorg/enbox/commit/ab6cbfdd236af8fbf291a6307ac1e56e64f4c1e9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Preserve transient DID gateway failures through endpoint discovery, signing-method lookup, and local key and grant reads. Defer dependent sync and connection-monitor work until its next recovery attempt, keeping confirmed authorization and trusted cached DID documents available during an outage while retaining diagnostics for unexpected failures. Keep redirect and URL-handling failures distinct from transport failures so they cannot trigger retained DID fallback.
+
+- [#1659](https://github.com/enboxorg/enbox/pull/1659) [`19f8374`](https://github.com/enboxorg/enbox/commit/19f83745aee9e274cd33f71f0c9fe0b382180396) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Skip DID-DHT Pkarr reads while a browser explicitly reports that it is offline, return a machine-readable transient resolution cause without caching the failure, and share the negative connectivity hint with WebSocket transport.
+
 ## 0.1.6
 
 ### Patch Changes
