@@ -4,17 +4,17 @@ import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import {
   fetchRemoteMessages,
   getLocalMessage,
   getMessageCid,
-  pushMessageEntries,
   pushMessages,
   queryLocalMessageFeed,
   queryRemoteMessageFeed,
+  RemoteApplyPushContext,
   SyncDataSizeLimitExceededError,
 } from '../src/sync-messages.js';
 
@@ -592,26 +592,196 @@ describe('sync-messages', () => {
       ]);
     });
 
-    it('should deduplicate acknowledgements and preserve Superseded over Applied for the same CID', async () => {
+    it.each([
+      ['Applied', 'applied'],
+      ['Duplicate', 'applied'],
+      ['Superseded', 'superseded'],
+    ] as const)('should not resend a root after a settled %s result', async (kind, resolution) => {
       const { message } = await TestDataGenerator.generateRecordsWrite();
       const messageCid = await Message.getCid(message);
-      const { agent } = createLocalAgentFixture({
+      const { agent, applyStub } = createLocalAgentFixture({
         messagesByCid : new Map(),
-        applyResults  : [{ kind: 'Applied' }, { kind: 'Superseded' }],
+        applyResults  : [{ kind }],
       });
-      const onBeforeApply = sinon.spy();
-
-      const result = await pushMessageEntries({
-        did     : 'did:example:alice',
-        dwnUrl  : 'https://dwn.example.com',
-        entries : [{ message }, { message }],
-        onBeforeApply,
+      const context = new RemoteApplyPushContext({
+        did    : 'did:example:alice',
+        dwnUrl : 'https://dwn.example.com',
         agent,
       });
 
-      expect(result.acknowledged).toEqual([{ cid: messageCid, resolution: 'superseded' }]);
-      expect(onBeforeApply.callCount).toBe(2);
-      expect(onBeforeApply.alwaysCalledWithExactly(messageCid)).toBe(true);
+      const expected = {
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution }],
+        failed       : [],
+      };
+      expect(await context.pushEntries([{ message }])).toEqual(expected);
+      expect(await context.pushEntries([{ message }])).toEqual(expected);
+      expect(applyStub.calledOnce).toBe(true);
+    });
+
+    it('should allow another attempt after Incomplete because it is not a settled acknowledgement', async () => {
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [
+          { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: 'https://example.com/pending' }] },
+          { kind: 'Applied' },
+        ],
+      });
+      const context = new RemoteApplyPushContext({
+        did    : 'did:example:alice',
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      const first = await context.pushEntries([{ message }]);
+      const second = await context.pushEntries([{ message }]);
+
+      expect(first.succeeded).toEqual([]);
+      expect(first.acknowledged).toEqual([]);
+      expect(first.failed).toEqual([expect.objectContaining({ cid: messageCid, kind: 'Incomplete' })]);
+      expect(second).toEqual({
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution: 'applied' }],
+        failed       : [],
+      });
+      expect(applyStub.callCount).toBe(2);
+    });
+
+    it('should allow another attempt after an ambiguous transport failure', async () => {
+      const consoleStub = sinon.stub(console, 'error');
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      let attempts = 0;
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : async () => {
+          attempts++;
+          if (attempts === 1) {
+            throw new Error('connection closed before acknowledgement');
+          }
+          return { kind: 'Applied' };
+        },
+      });
+      const context = new RemoteApplyPushContext({
+        did    : 'did:example:alice',
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      expect(await context.pushEntries([{ message }])).toMatchObject({
+        succeeded : [],
+        failed    : [{ cid: messageCid }],
+      });
+      expect(await context.pushEntries([{ message }])).toEqual({
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution: 'applied' }],
+        failed       : [],
+      });
+      expect(applyStub.callCount).toBe(2);
+      expect(consoleStub.calledOnce).toBe(true);
+    });
+
+    it('should isolate settled acknowledgements between remote contexts', async () => {
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [{ kind: 'Applied' }, { kind: 'Applied' }],
+      });
+      const firstRemote = new RemoteApplyPushContext({
+        did    : 'did:example:alice',
+        dwnUrl : 'https://one.dwn.example.com',
+        agent,
+      });
+      const secondRemote = new RemoteApplyPushContext({
+        did    : 'did:example:alice',
+        dwnUrl : 'https://two.dwn.example.com',
+        agent,
+      });
+
+      expect((await firstRemote.pushEntries([{ message }])).succeeded).toEqual([messageCid]);
+      expect((await secondRemote.pushEntries([{ message }])).succeeded).toEqual([messageCid]);
+      expect(applyStub.callCount).toBe(2);
+      expect(applyStub.firstCall.args[0].dwnUrl).toBe('https://one.dwn.example.com');
+      expect(applyStub.secondCall.args[0].dwnUrl).toBe('https://two.dwn.example.com');
+    });
+
+    it('should not resend a dependency after its acknowledgement settles in the same context', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocolDefinition: ProtocolDefinition = {
+        protocol  : 'https://example.com/page-context-acknowledgement',
+        published : false,
+        types     : { note: {} },
+        structure : { note: {} },
+      };
+      const dependency = await TestDataGenerator.generateProtocolsConfigure({
+        author: alice,
+        protocolDefinition,
+      });
+      const root = await TestDataGenerator.generateRecordsWrite({ author: alice });
+      const dependencyCid = await Message.getCid(dependency.message);
+      const rootCid = await Message.getCid(root.message);
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid: new Map([
+          [dependencyCid, { message: dependency.message }],
+        ]),
+        applyResults: [
+          { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: protocolDefinition.protocol, messageCid: dependencyCid }] },
+          { kind: 'Applied' },
+          { kind: 'Applied' },
+        ],
+      });
+      const context = new RemoteApplyPushContext({
+        did    : alice.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      expect(await context.pushEntries([{ message: root.message }])).toMatchObject({
+        succeeded : [rootCid],
+        failed    : [],
+      });
+      expect(await context.pushEntries([{ message: dependency.message }])).toEqual({
+        succeeded    : [dependencyCid],
+        acknowledged : [{ cid: dependencyCid, resolution: 'applied' }],
+        failed       : [],
+      });
+      expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
+        Message.getCid(call.args[0].message)))).toEqual([rootCid, dependencyCid, rootCid]);
+    });
+
+    it('should push a complete feed snapshot without re-reading its root by CID', async () => {
+      const payload = new TextEncoder().encode('feed-snapshot');
+      const write = await TestDataGenerator.generateRecordsWrite({ data: payload });
+      const messageCid = await Message.getCid(write.message);
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [{ kind: 'Applied' }],
+      });
+      const context = new RemoteApplyPushContext({
+        did    : write.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      const result = await context.pushFeedEntry({
+        encodedData       : Encoder.bytesToBase64Url(payload),
+        isLatestBaseState : true,
+        message           : write.message,
+        messageCid,
+        seq               : '1',
+      });
+
+      expect(result).toEqual({
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution: 'applied' }],
+        failed       : [],
+      });
+      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).called).toBe(false);
+      const data = applyStub.firstCall.args[0].data as Blob;
+      expect(new Uint8Array(await data.arrayBuffer())).toEqual(payload);
     });
 
     it('should report transport failures in PushResult.failed instead of throwing', async () => {

@@ -42,7 +42,7 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     await db.close();
   });
 
-  it('uses local events only as wakes and durably replays a retryable page from its push checkpoint', async () => {
+  it('uses local events only as wakes and durably resumes after a settled push prefix', async () => {
     const engine = new SyncEngineLevel({ db });
     const identity = {
       authorization      : { kind: 'owner' as const },
@@ -61,21 +61,27 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     const controller = (engine as any).activateLink(linkKey, link);
     controller.markReplicationReady();
 
+    const entries = [
+      { seq: '2', messageCid: 'cid-2', isLatestBaseState: true },
+      { seq: '3', messageCid: 'cid-3', isLatestBaseState: true },
+      { seq: '4', messageCid: 'cid-4', isLatestBaseState: true },
+    ];
     const replayQueries: SyncDurableFeedQuery[] = [];
     sinon.stub(engine as any, 'queryDurableFeed').callsFake(async (query: SyncDurableFeedQuery) => {
       replayQueries.push(query);
       return {
-        cursor      : token(2),
+        cursor      : token(4),
         drained     : true,
-        entries     : [{ messageCid: 'cid-2' }],
-        fingerprint : 'local-feed-at-2',
+        entries     : query.cursor?.position === '3' ? [entries[2]] : entries,
+        fingerprint : 'local-feed-at-4',
         status      : { code: 200, detail: 'OK' },
       };
     });
     const pushLocalPage = sinon.stub(engine as any, 'pushLocalFeedPage');
     pushLocalPage.onFirstCall().resolves({
-      failures : [{ cid: 'cid-2', detail: 'remote storage unavailable', kind: 'Deferred', reason: 'storage' }],
-      kind     : 'failed',
+      failedEntry : entries[2],
+      failures    : [{ cid: 'cid-4', detail: 'remote storage unavailable', kind: 'Deferred', reason: 'storage' }],
+      kind        : 'failed',
     });
     pushLocalPage.onSecondCall().resolves({ kind: 'processed' });
     sinon.stub(engine as any, 'probeQuotaBlocksForTarget').resolves();
@@ -93,10 +99,13 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     await (engine as any).handleLocalPushMessage(controller, (): boolean => false, event(99));
 
     expect(replayQueries.map(({ cursor }) => cursor)).toEqual([durableCursor]);
-    expect(pushLocalPage.firstCall.args[1]).toEqual([{ messageCid: 'cid-2' }]);
-    expect(controller.link.push.contiguousAppliedToken).toEqual(durableCursor);
+    expect(pushLocalPage.firstCall.args[1]).toEqual(entries);
+    expect(controller.link.push.contiguousAppliedToken).toEqual(token(3));
     const persistedAfterFailure = await (engine as any).replicationLinkStore.getOrCreateLink(identity);
-    expect(persistedAfterFailure.push.contiguousAppliedToken).toEqual(durableCursor);
+    expect(persistedAfterFailure.push.contiguousAppliedToken).toEqual(token(3));
+    const restartedEngine = new SyncEngineLevel({ db });
+    const restoredAfterRestart = await (restartedEngine as any).replicationLinkStore.getOrCreateLink(identity);
+    expect(restoredAfterRestart.push.contiguousAppliedToken).toEqual(token(3));
 
     // A remote-mode local DWN reconnect may have skipped writes while its
     // socket was down. The reconnect notification is also only a wake: it
@@ -107,11 +116,11 @@ describe('SyncEngineLevel — durable push replay seam', () => {
       { type: 'reconnected' },
     );
 
-    expect(replayQueries.map(({ cursor }) => cursor)).toEqual([durableCursor, durableCursor]);
-    expect(pushLocalPage.secondCall.args[1]).toEqual([{ messageCid: 'cid-2' }]);
-    expect(controller.link.push.contiguousAppliedToken).toEqual(token(2));
+    expect(replayQueries.map(({ cursor }) => cursor)).toEqual([durableCursor, token(3)]);
+    expect(pushLocalPage.secondCall.args[1]).toEqual([entries[2]]);
+    expect(controller.link.push.contiguousAppliedToken).toEqual(token(4));
     const persistedAfterSuccess = await (engine as any).replicationLinkStore.getOrCreateLink(identity);
-    expect(persistedAfterSuccess.push.contiguousAppliedToken).toEqual(token(2));
+    expect(persistedAfterSuccess.push.contiguousAppliedToken).toEqual(token(4));
 
     await controller.dispose();
   });

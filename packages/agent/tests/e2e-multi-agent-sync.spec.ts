@@ -1414,19 +1414,24 @@ describe('E2E Multi-Agent Sync', () => {
       const pushStarted = createDeferred();
       const releasePush = createDeferred();
       const syncEngine = primaryHarness.agent.sync as unknown as {
-        pushMessages(params: {
-          did: string;
-          dwnUrl: string;
-          delegateDid?: string;
-          permissionGrantIds?: string[];
-          messageCids: string[];
-        }): Promise<PushResult>;
+        createRemoteApplyPushContext(target: unknown): {
+          pushFeedEntry(entry: MessagesQueryReplyEntry, stagedRootCids?: string[]): Promise<PushResult>;
+        };
       };
-      const pushMessages = syncEngine.pushMessages.bind(syncEngine);
-      const pushStub = sinon.stub(syncEngine, 'pushMessages').callsFake(async (params): Promise<PushResult> => {
-        pushStarted.resolve();
-        await releasePush.promise;
-        return pushMessages(params);
+      const createPushContext = syncEngine.createRemoteApplyPushContext.bind(syncEngine);
+      let shouldGatePush = true;
+      const pushContextStub = sinon.stub(syncEngine, 'createRemoteApplyPushContext').callsFake((target) => {
+        const context = createPushContext(target);
+        const pushFeedEntry = context.pushFeedEntry.bind(context);
+        sinon.stub(context, 'pushFeedEntry').callsFake(async (entry, stagedRootCids): Promise<PushResult> => {
+          if (shouldGatePush) {
+            shouldGatePush = false;
+            pushStarted.resolve();
+            await releasePush.promise;
+          }
+          return pushFeedEntry(entry, stagedRootCids);
+        });
+        return context;
       });
       let unregisterPromise: Promise<void> | undefined;
 
@@ -1470,7 +1475,7 @@ describe('E2E Multi-Agent Sync', () => {
       } finally {
         releasePush.resolve();
         await unregisterPromise?.catch((): void => {});
-        pushStub.restore();
+        pushContextStub.restore();
         await primaryHarness.agent.sync.stopSync();
       }
     }, 20_000);

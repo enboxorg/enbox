@@ -610,7 +610,7 @@ async function readLocalMessage({ author, delegateDid, permissionGrantIds, messa
   return { kind: 'found', entry: result };
 }
 
-class RemoteApplyPushContext {
+export class RemoteApplyPushContext {
   private readonly entryCids = new WeakMap<SyncMessageEntry, string>();
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly fetchedRefs = new Set<string>();
@@ -628,9 +628,30 @@ class RemoteApplyPushContext {
 
   public async push(rootCids: string[]): Promise<PushResult> {
     const failedByRoot = new Map<string, PushFailure>();
+    const rootEntries = await this.fetchRootEntries(rootCids, failedByRoot);
+
+    return this.pushEntries(rootEntries, failedByRoot);
+  }
+
+  /** Push one complete local-feed root alongside any explicitly staged roots. */
+  public async pushFeedEntry(
+    entry: NonNullable<MessagesQueryReply['entries']>[number],
+    stagedRootCids: string[] = [],
+  ): Promise<PushResult> {
+    const failedByRoot = new Map<string, PushFailure>();
+    const rootEntries = await this.fetchRootEntries(stagedRootCids, failedByRoot);
+    rootEntries.push(await this.entryForMessageFeedEntry(entry));
+
+    return this.pushEntries(rootEntries, failedByRoot);
+  }
+
+  private async fetchRootEntries(
+    rootCids: string[],
+    failedByRoot: Map<string, PushFailure>,
+  ): Promise<SyncMessageEntry[]> {
     const rootEntries: SyncMessageEntry[] = [];
 
-    for (const rootCid of rootCids) {
+    for (const rootCid of new Set(rootCids)) {
       const root = await this.fetchMessageCid(rootCid);
       if (root.kind === 'failed') {
         failedByRoot.set(rootCid, {
@@ -643,14 +664,15 @@ class RemoteApplyPushContext {
       rootEntries.push(...root.entries);
     }
 
-    return this.pushEntries(rootEntries, failedByRoot);
+    return rootEntries;
   }
 
   public async pushEntries(
     rootEntries: SyncMessageEntry[],
     failedByRoot = new Map<string, PushFailure>(),
   ): Promise<PushResult> {
-    const succeeded: string[] = [];
+    const acknowledgedBefore = new Set(this.acknowledgementsByCid.keys());
+    const succeeded = new Set<string>();
 
     for (const rootEntry of orderMessagesForAdmission(rootEntries)) {
       const rootCid = await this.rememberEntry(rootEntry);
@@ -660,7 +682,7 @@ class RemoteApplyPushContext {
 
       const outcome = await this.pushRoot(rootCid, rootEntry);
       if (outcome.kind === 'succeeded') {
-        succeeded.push(outcome.cid);
+        succeeded.add(outcome.cid);
         failedByRoot.delete(outcome.cid);
       } else {
         failedByRoot.set(outcome.failure.cid, outcome.failure);
@@ -668,9 +690,10 @@ class RemoteApplyPushContext {
     }
 
     const acknowledged: PushAcknowledgement[] = [...this.acknowledgementsByCid]
+      .filter(([cid]) => !acknowledgedBefore.has(cid) || succeeded.has(cid))
       .map(([cid, resolution]) => ({ cid, resolution }));
 
-    return { succeeded, acknowledged, failed: [...failedByRoot.values()] };
+    return { succeeded: [...succeeded], acknowledged, failed: [...failedByRoot.values()] };
   }
 
   private async pushRoot(rootCid: string, rootEntry: SyncMessageEntry): Promise<PushRootOutcome> {
@@ -713,6 +736,13 @@ class RemoteApplyPushContext {
 
   private async pushEntry(rootCid: string, entry: SyncMessageEntry): Promise<PushEntryResult> {
     const cid = await this.rememberEntry(entry);
+    // Only settled remote outcomes enter this cache. Incomplete dependency
+    // resolution remains eligible for another apply attempt.
+    const acknowledged = this.acknowledgementsByCid.get(cid);
+    if (acknowledged !== undefined) {
+      return { kind: 'applied', cid, resolution: acknowledged };
+    }
+
     try {
       await bufferSmallStreams([entry]);
     } catch (error: any) {
