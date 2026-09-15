@@ -784,6 +784,278 @@ describe('sync-messages', () => {
       expect(new Uint8Array(await data.arrayBuffer())).toEqual(payload);
     });
 
+    it('should retry a current feed write when its required payload is temporarily missing', async () => {
+      const payload = new TextEncoder().encode('temporarily-missing-payload');
+      const write = await TestDataGenerator.generateRecordsWrite({ data: payload });
+      const messageCid = await Message.getCid(write.message);
+      const messagesByCid = new Map<string, { message: any; data?: ReadableStream<Uint8Array> }>();
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid,
+        applyResults: [{ kind: 'Applied' }],
+      });
+      const context = new RemoteApplyPushContext({
+        did    : write.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+      const feedEntry = {
+        isLatestBaseState : true,
+        message           : write.message,
+        messageCid,
+        seq               : '1',
+      };
+
+      const failed = await context.pushFeedEntry(feedEntry);
+
+      expect(failed.succeeded).toEqual([]);
+      expect(failed.acknowledged).toEqual([]);
+      expect(failed.failed).toEqual([expect.objectContaining({
+        cid    : messageCid,
+        detail : expect.stringContaining('local payload read failed'),
+      })]);
+      expect(failed.failed[0].localMissing).toBeUndefined();
+      expect(failed.failed[0].terminal).toBeUndefined();
+      expect(applyStub.called).toBe(false);
+
+      messagesByCid.set(messageCid, { message: write.message, data: streamFromBytes(payload) });
+      expect(await context.pushFeedEntry(feedEntry)).toEqual({
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution: 'applied' }],
+        failed       : [],
+      });
+      expect(applyStub.calledOnce).toBe(true);
+      expect(new Uint8Array(await (applyStub.firstCall.args[0].data as Blob).arrayBuffer())).toEqual(payload);
+      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).callCount).toBe(2);
+    });
+
+    it('should not fall back to data-less after an Incomplete attempt consumes a large current payload', async () => {
+      const payload = new Uint8Array(1_048_577);
+      payload[0] = 1;
+      payload[payload.length - 1] = 2;
+      const write = await TestDataGenerator.generateRecordsWrite({ data: payload });
+      const protocolDefinition: ProtocolDefinition = {
+        protocol  : 'https://example.com/current-payload-retry',
+        published : false,
+        types     : { note: {} },
+        structure : { note: {} },
+      };
+      const protocol = await TestDataGenerator.generateProtocolsConfigure({
+        author: write.author,
+        protocolDefinition,
+      });
+      const messageCid = await Message.getCid(write.message);
+      const protocolCid = await Message.getCid(protocol.message);
+      const messagesByCid = new Map([
+        [messageCid, { message: write.message, data: streamFromBytes(payload) }],
+        [protocolCid, { message: protocol.message }],
+      ]);
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid,
+        applyResults: [],
+      });
+      let rootAttempts = 0;
+      let protocolAttempts = 0;
+      applyStub.callsFake(async ({ message, data }: {
+        message: any;
+        data?: ReadableStream<Uint8Array>;
+      }): Promise<ReplicationApplyResult> => {
+        const cid = await Message.getCid(message);
+        if (cid === protocolCid) {
+          protocolAttempts++;
+          return { kind: 'Applied' };
+        }
+        if (cid !== messageCid) {
+          throw new Error(`unexpected message ${cid}`);
+        }
+
+        rootAttempts++;
+        expect(data).toBeInstanceOf(ReadableStream);
+        expect(await readStreamBytes(data!)).toEqual(payload);
+        if (rootAttempts === 1) {
+          messagesByCid.delete(messageCid);
+        }
+        return rootAttempts === 1
+          ? { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: protocolDefinition.protocol, messageCid: protocolCid }] }
+          : { kind: 'Applied' };
+      });
+      const context = new RemoteApplyPushContext({
+        did    : write.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+      const feedEntry = {
+        isLatestBaseState : true,
+        message           : write.message,
+        messageCid,
+        seq               : '1',
+      };
+
+      const failed = await context.pushFeedEntry(feedEntry);
+
+      expect(failed.succeeded).toEqual([]);
+      expect(failed.acknowledged).toEqual([{ cid: protocolCid, resolution: 'applied' }]);
+      expect(failed.failed).toEqual([{
+        cid    : messageCid,
+        detail : 'required payload is unavailable for current feed message',
+      }]);
+      expect(rootAttempts).toBe(1);
+      expect(protocolAttempts).toBe(1);
+
+      messagesByCid.set(messageCid, { message: write.message, data: streamFromBytes(payload) });
+      expect(await context.pushFeedEntry(feedEntry)).toEqual({
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution: 'applied' }],
+        failed       : [],
+      });
+      expect(rootAttempts).toBe(2);
+      expect(protocolAttempts).toBe(1);
+      expect(processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).callCount).toBe(3);
+    });
+
+    it('should retry a current feed write when MessagesRead finds the message without its data', async () => {
+      const payload = new TextEncoder().encode('required-current-data');
+      const write = await TestDataGenerator.generateRecordsWrite({ data: payload });
+      const messageCid = await Message.getCid(write.message);
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid : new Map([[messageCid, { message: write.message }]]),
+        applyResults  : [],
+      });
+      const context = new RemoteApplyPushContext({
+        did    : write.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      const result = await context.pushFeedEntry({
+        isLatestBaseState : true,
+        message           : write.message,
+        messageCid,
+        seq               : '1',
+      });
+
+      expect(result.succeeded).toEqual([]);
+      expect(result.acknowledged).toEqual([]);
+      expect(result.failed).toEqual([{
+        cid    : messageCid,
+        detail : `local payload read returned no data for current feed message ${messageCid}`,
+      }]);
+      expect(applyStub.called).toBe(false);
+    });
+
+    it('should apply retained non-latest writes as data-less ancestry without reading payload data', async () => {
+      const payload = new TextEncoder().encode('superseded-record-data');
+      const write = await TestDataGenerator.generateRecordsWrite({ data: payload });
+      const messageCid = await Message.getCid(write.message);
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [{ kind: 'Applied' }],
+      });
+      const context = new RemoteApplyPushContext({
+        did    : write.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      expect(await context.pushFeedEntry({
+        isLatestBaseState : false,
+        message           : write.message,
+        messageCid,
+        seq               : '1',
+      })).toEqual({
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution: 'applied' }],
+        failed       : [],
+      });
+      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).called).toBe(false);
+      expect(applyStub.calledOnce).toBe(true);
+      expect(applyStub.firstCall.args[0].data).toBeUndefined();
+    });
+
+    it('should not reopen or resend a payload when a dependency later appears in the feed', async () => {
+      const payload = new TextEncoder().encode('dependency-payload');
+      const dependency = await TestDataGenerator.generateRecordsWrite({ data: payload });
+      const root = await TestDataGenerator.generateRecordsWrite({ author: dependency.author });
+      const dependencyCid = await Message.getCid(dependency.message);
+      const rootCid = await Message.getCid(root.message);
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid: new Map([[dependencyCid, {
+          message : dependency.message,
+          data    : streamFromBytes(payload),
+        }]]),
+        applyResults: [
+          {
+            kind    : 'Incomplete',
+            missing : [{
+              type       : 'Parent',
+              recordId   : dependency.message.recordId,
+              protocol   : 'https://example.com/feed-dependency',
+              messageCid : dependencyCid,
+            }],
+          },
+          { kind: 'Applied' },
+          { kind: 'Applied' },
+        ],
+      });
+      const context = new RemoteApplyPushContext({
+        did    : dependency.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      expect(await context.pushEntries([{ message: root.message }])).toMatchObject({
+        succeeded : [rootCid],
+        failed    : [],
+      });
+      expect(await context.pushFeedEntry({
+        isLatestBaseState : true,
+        message           : dependency.message,
+        messageCid        : dependencyCid,
+        seq               : '2',
+      })).toEqual({
+        succeeded    : [dependencyCid],
+        acknowledged : [{ cid: dependencyCid, resolution: 'applied' }],
+        failed       : [],
+      });
+      expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
+        Message.getCid(call.args[0].message)))).toEqual([rootCid, dependencyCid, rootCid]);
+      expect(new Uint8Array(await (applyStub.secondCall.args[0].data as Blob).arrayBuffer())).toEqual(payload);
+      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).callCount).toBe(1);
+    });
+
+    it('should cancel an already-open payload stream when skipping an acknowledged entry', async () => {
+      const payload = new TextEncoder().encode('already-acknowledged');
+      const write = await TestDataGenerator.generateRecordsWrite({ data: payload });
+      const messageCid = await Message.getCid(write.message);
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [{ kind: 'Applied' }],
+      });
+      const context = new RemoteApplyPushContext({
+        did    : write.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+      const cancel = sinon.spy();
+      const unusedStream = new ReadableStream<Uint8Array>({
+        cancel(): void {
+          cancel();
+        },
+      });
+
+      await context.pushEntries([{ message: write.message, bufferedData: payload }]);
+      expect(await context.pushEntries([{ message: write.message, dataStream: unusedStream }])).toEqual({
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution: 'applied' }],
+        failed       : [],
+      });
+
+      expect(applyStub.calledOnce).toBe(true);
+      expect(cancel.calledOnce).toBe(true);
+    });
+
     it('should report transport failures in PushResult.failed instead of throwing', async () => {
       const consoleStub = sinon.stub(console, 'error');
       const { message } = await TestDataGenerator.generateRecordsWrite();
@@ -1229,8 +1501,11 @@ describe('sync-messages', () => {
       const rootCid = await Message.getCid(root.message);
       const audienceCid = await Message.getCid(audience.message);
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
-        messagesByCid      : new Map([[rootCid, { message: root.message }]]),
-        messageFeedEntries : [{
+        messagesByCid: new Map([
+          [rootCid, { message: root.message }],
+          [audienceCid, { message: audience.message, data: audience.dataStream }],
+        ]),
+        messageFeedEntries: [{
           isLatestBaseState : true,
           message           : audience.message,
           messageCid        : audienceCid,

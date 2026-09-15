@@ -63,6 +63,7 @@ import { DwnInterface } from './types/dwn.js';
 import { fetchConnectionStatus } from './connect-status.js';
 import { FollowedSyncSourceStoreLevel } from './followed-sync-source-store-level.js';
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
+import { recordsWriteRequiresData } from './sync-fetch-helpers.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
 import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';
@@ -4811,7 +4812,7 @@ export class SyncEngineLevel implements SyncEngine {
     const hasStoredData = local.dataStream !== undefined;
     await local.dataStream?.cancel();
     return entry.isLatestBaseState !== true ||
-      !SyncEngineLevel.recordsWriteRequiresRemoteData(local.message) ||
+      !recordsWriteRequiresData(local.message) ||
       hasStoredData;
   }
 
@@ -4851,7 +4852,7 @@ export class SyncEngineLevel implements SyncEngine {
       syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
     } else if (
       target.authorization.kind !== 'role' &&
-      SyncEngineLevel.recordsWriteRequiresRemoteData(message)
+      recordsWriteRequiresData(message)
     ) {
       syncEntry.dataStreamFactory = async (): Promise<ReadableStream<Uint8Array> | undefined> => {
         const fetched = await fetchRemoteMessages({
@@ -4960,14 +4961,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return descriptor.protocol;
-  }
-
-  private static recordsWriteRequiresRemoteData(message: GenericMessage): boolean {
-    const { descriptor } = message;
-    return descriptor.interface === DwnInterfaceName.Records &&
-      descriptor.method === DwnMethodName.Write &&
-      'dataCid' in descriptor &&
-      typeof descriptor.dataCid === 'string';
   }
 
   private static shouldAbortReconcile(shouldContinue?: () => boolean): boolean {

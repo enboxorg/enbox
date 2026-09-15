@@ -23,6 +23,13 @@ export function missingDependencyDetail(refs: DependencyRef[]): string {
   return refs.map(dependencyKey).join(', ');
 }
 
+/** Whether a RecordsWrite message names payload data required for current-state admission. */
+export function recordsWriteRequiresData(message: GenericMessage): boolean {
+  return message.descriptor.interface === DwnInterfaceName.Records &&
+    message.descriptor.method === DwnMethodName.Write &&
+    typeof (message.descriptor as { dataCid?: unknown }).dataCid === 'string';
+}
+
 /** Type guard for a `ProtocolsConfigure` message. */
 function isProtocolsConfigureMessage(message: GenericMessage): message is ProtocolsConfigureMessage {
   return message.descriptor.interface === DwnInterfaceName.Protocols &&

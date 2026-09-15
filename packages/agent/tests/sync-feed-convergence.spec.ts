@@ -227,6 +227,63 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(await remoteFingerprint()).toBe(await localFingerprint());
   });
 
+  it('holds the push checkpoint when a current feed payload read fails, then resumes with data', async () => {
+    await configureLocalProtocol(feedHarnessProtocolV1);
+    const payload = 'x'.repeat(1_048_577);
+    const write = await writeLocalRecord({
+      data         : payload,
+      protocolPath : 'note',
+      schema       : feedHarnessProtocolV1.types.note.schema,
+    });
+    const messageCid = await Message.getCid(write.message);
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+
+    const originalProcessRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
+    const processRequest = sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async (request: any) => {
+      if (
+        request.messageType === DwnInterface.MessagesRead &&
+        request.messageParams.messageCid === messageCid
+      ) {
+        return { reply: { status: { code: 503, detail: 'local payload temporarily unavailable' } } };
+      }
+      return originalProcessRequest(request);
+    });
+    const remoteApply = sinon.spy(testHarness.agent.rpc, 'applyReplicatedMessage');
+    sinon.stub(console, 'error');
+
+    await expect(syncEngine.sync('push')).rejects.toThrow('Sync operation failed');
+
+    expect(processRequest.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).called).toBe(true);
+    const firstAttemptCids = await Promise.all(remoteApply.getCalls().map(async (call): Promise<string> =>
+      Message.getCid(call.args[0].message)));
+    expect(firstAttemptCids).not.toContain(messageCid);
+    await expectRemoteRecordCount(write.message.recordId, 0);
+    expect(await remoteHarnessFingerprint()).not.toBe(await harnessFingerprint());
+
+    const localFeed = await queryLocalMessageFeed({
+      did      : tenantDid,
+      filters  : [{ protocol: feedHarnessProtocolV1.protocol }],
+      cidsOnly : true,
+      limit    : 100,
+      agent    : testHarness.agent,
+    });
+    const internal = syncEngine as unknown as {
+      getSyncTargets(): Promise<any[]>;
+      getOrCreateReplicationLink(target: any): Promise<any>;
+    };
+    const [target] = await internal.getSyncTargets();
+    const link = await internal.getOrCreateReplicationLink(target);
+    expect(link.push.contiguousAppliedToken).not.toEqual(localFeed.cursor);
+
+    processRequest.restore();
+    await syncEngine.sync('push');
+
+    const resumedLink = await internal.getOrCreateReplicationLink(target);
+    expect(resumedLink.push.contiguousAppliedToken).toEqual(localFeed.cursor);
+    expect(await readRemoteRecordText(write.message.recordId)).toBe(payload);
+    expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
+  });
+
   it('executes real local queries when an update push must discover its protocol and initial-write dependencies', async () => {
     await configureLocalProtocol(feedHarnessProtocolV1);
     const initial = await writeLocalRecord({
