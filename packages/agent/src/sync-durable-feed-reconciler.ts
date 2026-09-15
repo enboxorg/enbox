@@ -55,7 +55,11 @@ export type SyncDurableFeedPageAdmissionResult =
 /** Result of pushing one local feed page through engine-owned push policy. */
 export type SyncDurableFeedPagePushResult =
   | { kind: 'aborted' }
-  | { kind: 'failed'; failures: PushFailure[] }
+  | {
+    kind: 'failed';
+    failedEntry: Pick<MessagesQueryReplyEntry, 'messageCid' | 'seq'>;
+    failures: PushFailure[];
+  }
   | { kind: 'processed' };
 
 /** Result of ensuring delegated permission grants exist before a diff push. */
@@ -86,7 +90,7 @@ export interface SyncDurableFeedReconcilerOperations {
     forceQuotaProbe?: boolean,
   ): Promise<SyncDurableFeedPermissionGrantBootstrapResult>;
 
-  /** Persist one page's ordered checkpoint advance. */
+  /** Persist one ordered checkpoint advance. */
   commitCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 
   probeQuotaBlocks(
@@ -445,9 +449,10 @@ export class SyncDurableFeedReconciler {
       }
 
       const reply = await this._operations.queryFeed({
+        cidsOnly : false,
         cursor,
-        limit  : SyncDurableFeedReconciler.PAGE_LIMIT,
-        source : 'local',
+        limit    : SyncDurableFeedReconciler.PAGE_LIMIT,
+        source   : 'local',
         target,
       });
 
@@ -462,6 +467,7 @@ export class SyncDurableFeedReconciler {
       }
 
       if (pageResult.kind === 'failed') {
+        await this.commitPushPrefixProgress(link, cursor, reply, pageResult.failedEntry, target);
         return { pushFailures: pageResult.failures };
       }
 
@@ -516,7 +522,13 @@ export class SyncDurableFeedReconciler {
         return { aborted: true };
       }
 
-      const reply = await this.queryCidsPage(target, 'local', cursor);
+      const reply = await this._operations.queryFeed({
+        cidsOnly : false,
+        cursor,
+        limit    : SyncDurableFeedReconciler.PAGE_LIMIT,
+        source   : 'local',
+        target,
+      });
       if (await this.resetAfterProgressGap(reply, link, 'push', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
@@ -531,6 +543,7 @@ export class SyncDurableFeedReconciler {
       }
 
       if (pageResult.kind === 'failed') {
+        await this.commitPushPrefixProgress(link, cursor, reply, pageResult.failedEntry, target);
         return { pushFailures: pageResult.failures };
       }
       for (const entry of missingEntries) {
@@ -670,6 +683,59 @@ export class SyncDurableFeedReconciler {
     await this._operations.commitCheckpoint(link, direction);
 
     return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
+  }
+
+  /** Persist the contiguous local-feed prefix preceding one failed push root. */
+  private async commitPushPrefixProgress(
+    link: ReplicationLinkState,
+    previousCursor: ProgressToken | undefined,
+    reply: MessagesQueryReply,
+    failedEntry: Pick<MessagesQueryReplyEntry, 'messageCid' | 'seq'>,
+    target: SyncTarget,
+  ): Promise<void> {
+    const entries = reply.entries ?? [];
+    const failedIndex = entries.findIndex((entry): boolean =>
+      entry.seq === failedEntry.seq && entry.messageCid === failedEntry.messageCid
+    );
+    if (failedIndex < 0) {
+      throw new Error(
+        `SyncDurableFeedReconciler: failed push entry ${failedEntry.messageCid} was not in the local MessagesQuery page for ` +
+        `${target.did} -> ${target.dwnUrl}`,
+      );
+    }
+    if (failedIndex === 0) {
+      return;
+    }
+
+    if (reply.cursor === undefined) {
+      throw new Error(
+        `SyncDurableFeedReconciler: local MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor for a processed prefix`,
+      );
+    }
+    const precedingEntry = entries[failedIndex - 1];
+    const prefixCursor: ProgressToken = {
+      epoch      : reply.cursor.epoch,
+      messageCid : precedingEntry.messageCid,
+      position   : precedingEntry.seq,
+      streamId   : reply.cursor.streamId,
+    };
+    SyncDurableFeedReconciler.assertCursorProgress(
+      link,
+      previousCursor,
+      prefixCursor,
+      false,
+      target.dwnUrl,
+      'push',
+    );
+    if (SyncCheckpoint.comparePosition(prefixCursor, reply.cursor) > 0) {
+      throw new Error(
+        `SyncDurableFeedReconciler: processed push prefix exceeded its local MessagesQuery cursor for ` +
+        `${link.tenantDid} -> ${target.dwnUrl}`,
+      );
+    }
+
+    SyncCheckpoint.commitContiguousToken(link.push, prefixCursor);
+    await this._operations.commitCheckpoint(link, 'push');
   }
 
   private async resetAfterProgressGap(

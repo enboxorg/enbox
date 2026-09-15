@@ -1,6 +1,6 @@
 import type { DependencyRef, GenericMessage, ProtocolsConfigureMessage } from '@enbox/dwn-sdk-js';
 
-import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message, Records } from '@enbox/dwn-sdk-js';
 
 /**
  * Helpers used by the push (`sync-messages.ts`) and pull (`sync-admit-closure.ts`)
@@ -21,6 +21,13 @@ export function hasTerminalDependency(refs: DependencyRef[]): boolean {
 /** Human-readable detail listing the missing dependencies. */
 export function missingDependencyDetail(refs: DependencyRef[]): string {
   return refs.map(dependencyKey).join(', ');
+}
+
+/** Whether a RecordsWrite message names payload data required for current-state admission. */
+export function recordsWriteRequiresData(message: GenericMessage): boolean {
+  const isRecordsWrite = Records.isRecordsWrite(message);
+  const hasData = typeof (message.descriptor as { dataCid?: unknown }).dataCid === 'string';
+  return isRecordsWrite && hasData;
 }
 
 /** Type guard for a `ProtocolsConfigure` message. */

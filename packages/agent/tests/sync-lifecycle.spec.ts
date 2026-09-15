@@ -536,6 +536,7 @@ describe('SyncEngineLevel lifecycle', () => {
       pushLocalFeedEntry(
         runTarget: typeof target,
         entry: { messageCid: string },
+        pushContext: { pushFeedEntry(): Promise<{ acknowledged: never[]; failed: never[]; succeeded: string[] }> },
         shouldContinue?: () => boolean,
       ): Promise<
         | { kind: 'aborted' }
@@ -549,18 +550,20 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine as never, 'hasDeadLetter').resolves(false);
     sinon.stub(engine['_quotaManager'], 'getState').resolves(undefined);
     sinon.stub(engine as never, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
-    sinon.stub(engine as never, 'pushMessages').callsFake(async (): Promise<{ acknowledged: never[]; failed: never[]; succeeded: string[] }> => {
-      pushStarted.resolve();
-      await releasePush.promise;
-      return { acknowledged: [], failed: [], succeeded: ['cid-1'] };
-    });
+    const pushContext = {
+      pushFeedEntry: async (): Promise<{ acknowledged: never[]; failed: never[]; succeeded: string[] }> => {
+        pushStarted.resolve();
+        await releasePush.promise;
+        return { acknowledged: [], failed: [], succeeded: ['cid-1'] };
+      },
+    };
     sinon.stub(durableFeedReconciler, 'push').callsFake(async (
       runTarget: typeof target,
       _link: typeof link,
       _options: unknown,
       shouldContinue?: () => boolean,
     ): Promise<Record<string, unknown>> => {
-      const result = await internal.pushLocalFeedEntry(runTarget, { messageCid: 'cid-1' }, shouldContinue);
+      const result = await internal.pushLocalFeedEntry(runTarget, { messageCid: 'cid-1' }, pushContext, shouldContinue);
       if (result.kind === 'aborted') {
         return { aborted: true };
       }

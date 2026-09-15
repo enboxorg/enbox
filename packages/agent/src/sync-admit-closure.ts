@@ -39,6 +39,7 @@ import {
   matchesEncryptionControlDependency,
   missingDependencyDetail,
   newestProtocolConfig,
+  recordsWriteRequiresData,
 } from './sync-fetch-helpers.js';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 
@@ -689,17 +690,6 @@ async function replayableDataStream(entry: SyncMessageEntry): Promise<ReadableSt
 
 function entryRequiresDataBeforeApply(entry: SyncMessageEntry): boolean {
   return entry.isLatestBaseState === true && recordsWriteRequiresData(entry.message);
-}
-
-function recordsWriteRequiresData(message: GenericMessage): boolean {
-  if (
-    message.descriptor.interface !== DwnInterfaceName.Records ||
-    message.descriptor.method !== DwnMethodName.Write
-  ) {
-    return false;
-  }
-
-  return typeof (message.descriptor as { dataCid?: unknown }).dataCid === 'string';
 }
 
 /**

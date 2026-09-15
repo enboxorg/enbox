@@ -581,6 +581,95 @@ describe('SyncDurableFeedReconciler', () => {
     });
   });
 
+  it('should persist a contiguous push prefix before returning a later failure', async () => {
+    const fixture = createReconciler();
+    const entries: MessagesQueryReplyEntry[] = [
+      { seq: '2', messageCid: 'root-a', isLatestBaseState: true },
+      { seq: '3', messageCid: 'root-b', isLatestBaseState: true },
+      { seq: '4', messageCid: 'root-c', isLatestBaseState: true },
+    ];
+    const failure = { cid: 'root-c', detail: 'remote unavailable' };
+    fixture.link.push.contiguousAppliedToken = token(1);
+    fixture.queryFeed.onFirstCall().resolves(reply({ cursor: token(4, 'root-c'), entries }));
+    fixture.queryFeed.onSecondCall().resolves(reply({
+      cursor  : token(4, 'root-c'),
+      entries : [entries[2]],
+    }));
+    fixture.operations.pushLocalPage.onFirstCall().resolves({
+      kind        : 'failed',
+      failedEntry : entries[2],
+      failures    : [failure],
+    });
+    fixture.operations.pushLocalPage.onSecondCall().resolves({ kind: 'processed' });
+
+    expect(await fixture.reconciler.push(target(), fixture.link)).toEqual({ pushFailures: [failure] });
+    expect(fixture.link.push.contiguousAppliedToken).toEqual(token(3, 'root-b'));
+    expect(fixture.operations.commitCheckpoint.calledOnceWithExactly(fixture.link, 'push')).toBe(true);
+
+    expect(await fixture.reconciler.push(target(), fixture.link)).toEqual({
+      localFingerprint : 'fingerprint',
+      pushFailures     : [],
+    });
+    expect(fixture.queryFeed.getCalls().map(({ args }) => args[0].cursor)).toEqual([
+      token(1),
+      token(3, 'root-b'),
+    ]);
+    expect(fixture.operations.pushLocalPage.firstCall.args[1]).toEqual(entries);
+    expect(fixture.operations.pushLocalPage.secondCall.args[1]).toEqual([entries[2]]);
+  });
+
+  it('should leave push progress unchanged when the first page entry fails', async () => {
+    const fixture = createReconciler();
+    const entry: MessagesQueryReplyEntry = {
+      seq               : '2',
+      messageCid        : 'root-a',
+      isLatestBaseState : true,
+    };
+    const failure = { cid: entry.messageCid, detail: 'remote unavailable' };
+    fixture.link.push.contiguousAppliedToken = token(1);
+    fixture.queryFeed.resolves(reply({ cursor: token(2, entry.messageCid), entries: [entry] }));
+    fixture.operations.pushLocalPage.resolves({
+      kind        : 'failed',
+      failedEntry : entry,
+      failures    : [failure],
+    });
+
+    expect(await fixture.reconciler.push(target(), fixture.link)).toEqual({ pushFailures: [failure] });
+    expect(fixture.link.push.contiguousAppliedToken).toEqual(token(1));
+    expect(fixture.operations.commitCheckpoint.notCalled).toBe(true);
+  });
+
+  it('should preserve remote-known progress when an inventory-diff push fails later in the page', async () => {
+    const fixture = createReconciler();
+    const entries: MessagesQueryReplyEntry[] = [
+      { seq: '1', messageCid: 'remote-a', isLatestBaseState: true },
+      { seq: '2', messageCid: 'missing-b', isLatestBaseState: true },
+      { seq: '3', messageCid: 'remote-c', isLatestBaseState: true },
+      { seq: '4', messageCid: 'missing-d', isLatestBaseState: true },
+    ];
+    const failure = { cid: 'missing-d', detail: 'remote unavailable' };
+    fixture.queryFeed.callsFake(async ({ cidsOnly, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+      if (source === 'remote') {
+        expect(cidsOnly).toBe(true);
+        return reply({ entries: [entries[0], entries[2]] });
+      }
+
+      expect(cidsOnly).toBe(false);
+      return reply({ cursor: token(4, 'missing-d'), entries });
+    });
+    fixture.operations.pushLocalPage.resolves({
+      kind        : 'failed',
+      failedEntry : entries[3],
+      failures    : [failure],
+    });
+
+    expect(await fixture.reconciler.push(target(), fixture.link)).toEqual({ pushFailures: [failure] });
+    expect(fixture.operations.pushLocalPage.calledOnce).toBe(true);
+    expect(fixture.operations.pushLocalPage.firstCall.args[1]).toEqual([entries[1], entries[3]]);
+    expect(fixture.link.push.contiguousAppliedToken).toEqual(token(3, 'remote-c'));
+    expect(fixture.operations.commitCheckpoint.calledOnceWithExactly(fixture.link, 'push')).toBe(true);
+  });
+
   it('should source an exact force-probe CID snapshot from the quota manager', async () => {
     const fixture = createReconciler();
     const syncTarget = target();
