@@ -712,12 +712,6 @@ export class SyncDurableFeedReconciler {
         `SyncDurableFeedReconciler: local MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor for a processed prefix`,
       );
     }
-    if (!isValidProgressToken(reply.cursor) || !SyncCheckpoint.validateTokenDomain(link.push, reply.cursor)) {
-      throw new Error(
-        `SyncDurableFeedReconciler: push MessagesQuery returned an invalid cursor for ${link.tenantDid} -> ${target.dwnUrl}`,
-      );
-    }
-
     const precedingEntry = entries[failedIndex - 1];
     const prefixCursor: ProgressToken = {
       epoch      : reply.cursor.epoch,

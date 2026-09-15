@@ -1415,7 +1415,7 @@ describe('E2E Multi-Agent Sync', () => {
       const releasePush = createDeferred();
       const syncEngine = primaryHarness.agent.sync as unknown as {
         createRemoteApplyPushContext(target: unknown): {
-          pushFeedEntry(entry: MessagesQueryReplyEntry, stagedRootCids?: string[]): Promise<PushResult>;
+          pushFeedEntry(entry: MessagesQueryReplyEntry, stagedRootCids: string[]): Promise<PushResult>;
         };
       };
       const createPushContext = syncEngine.createRemoteApplyPushContext.bind(syncEngine);

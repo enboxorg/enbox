@@ -772,7 +772,7 @@ describe('sync-messages', () => {
         message           : write.message,
         messageCid,
         seq               : '1',
-      });
+      }, []);
 
       expect(result).toEqual({
         succeeded    : [messageCid],
@@ -805,7 +805,7 @@ describe('sync-messages', () => {
         seq               : '1',
       };
 
-      const failed = await context.pushFeedEntry(feedEntry);
+      const failed = await context.pushFeedEntry(feedEntry, []);
 
       expect(failed.succeeded).toEqual([]);
       expect(failed.acknowledged).toEqual([]);
@@ -818,7 +818,7 @@ describe('sync-messages', () => {
       expect(applyStub.called).toBe(false);
 
       messagesByCid.set(messageCid, { message: write.message, data: streamFromBytes(payload) });
-      expect(await context.pushFeedEntry(feedEntry)).toEqual({
+      expect(await context.pushFeedEntry(feedEntry, [])).toEqual({
         succeeded    : [messageCid],
         acknowledged : [{ cid: messageCid, resolution: 'applied' }],
         failed       : [],
@@ -890,7 +890,7 @@ describe('sync-messages', () => {
         seq               : '1',
       };
 
-      const failed = await context.pushFeedEntry(feedEntry);
+      const failed = await context.pushFeedEntry(feedEntry, []);
 
       expect(failed.succeeded).toEqual([]);
       expect(failed.acknowledged).toEqual([{ cid: protocolCid, resolution: 'applied' }]);
@@ -902,7 +902,7 @@ describe('sync-messages', () => {
       expect(protocolAttempts).toBe(1);
 
       messagesByCid.set(messageCid, { message: write.message, data: streamFromBytes(payload) });
-      expect(await context.pushFeedEntry(feedEntry)).toEqual({
+      expect(await context.pushFeedEntry(feedEntry, [])).toEqual({
         succeeded    : [messageCid],
         acknowledged : [{ cid: messageCid, resolution: 'applied' }],
         failed       : [],
@@ -934,7 +934,7 @@ describe('sync-messages', () => {
         message           : write.message,
         messageCid,
         seq               : '1',
-      });
+      }, []);
 
       expect(result.succeeded).toEqual([]);
       expect(result.acknowledged).toEqual([]);
@@ -964,7 +964,7 @@ describe('sync-messages', () => {
         message           : write.message,
         messageCid,
         seq               : '1',
-      })).toEqual({
+      }, [])).toEqual({
         succeeded    : [messageCid],
         acknowledged : [{ cid: messageCid, resolution: 'applied' }],
         failed       : [],
@@ -1014,7 +1014,7 @@ describe('sync-messages', () => {
         message           : dependency.message,
         messageCid        : dependencyCid,
         seq               : '2',
-      })).toEqual({
+      }, [])).toEqual({
         succeeded    : [dependencyCid],
         acknowledged : [{ cid: dependencyCid, resolution: 'applied' }],
         failed       : [],
@@ -1540,6 +1540,123 @@ describe('sync-messages', () => {
       })).calledOnce).toBe(true);
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([rootCid, audienceCid, rootCid]);
+    });
+
+    it('should release a partially hydrated encryption-control closure and refetch it after recovery', async () => {
+      const protocol = 'https://example.com/encrypted-control-retry';
+      const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
+      const root = await TestDataGenerator.generateRecordsDelete({
+        author   : initial.author,
+        recordId : initial.message.recordId,
+      });
+      const tags = {
+        protocol,
+        contextId : 'retry-thread',
+        rolePath  : 'thread/member',
+        keyId     : 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      };
+      const firstAudience = await TestDataGenerator.generateRecordsWrite({
+        author       : initial.author,
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags,
+      });
+      const secondAudience = await TestDataGenerator.generateRecordsWrite({
+        author       : initial.author,
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags,
+      });
+      const rootCid = await Message.getCid(root.message);
+      const firstAudienceCid = await Message.getCid(firstAudience.message);
+      const secondAudienceCid = await Message.getCid(secondAudience.message);
+      const cancelFirstPayload = sinon.spy();
+      const openFirstPayload = new ReadableStream<Uint8Array>({
+        cancel(): void {
+          cancelFirstPayload();
+        },
+      });
+      const messagesByCid = new Map<string, { message: any; data?: ReadableStream<Uint8Array> }>([
+        [rootCid, { message: root.message }],
+        [firstAudienceCid, { message: firstAudience.message, data: openFirstPayload }],
+      ]);
+      const missing = [{
+        type         : 'EncryptionControl' as const,
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags,
+      }];
+      let rootAttempts = 0;
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid,
+        messageFeedEntries: [
+          {
+            isLatestBaseState : true,
+            message           : firstAudience.message,
+            messageCid        : firstAudienceCid,
+            protocol,
+          },
+          {
+            isLatestBaseState : true,
+            message           : secondAudience.message,
+            messageCid        : secondAudienceCid,
+            protocol,
+          },
+        ],
+        applyResults: async (message): Promise<ReplicationApplyResult> => {
+          const messageCid = await Message.getCid(message);
+          if (messageCid !== rootCid) {
+            return { kind: 'Applied' };
+          }
+
+          rootAttempts++;
+          return rootAttempts < 3 ? { kind: 'Incomplete', missing } : { kind: 'Applied' };
+        },
+      });
+      const context = new RemoteApplyPushContext({
+        did    : initial.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      const failed = await context.push([rootCid]);
+
+      expect(failed.succeeded).toEqual([]);
+      expect(failed.failed).toEqual([expect.objectContaining({
+        cid    : rootCid,
+        detail : expect.stringContaining(secondAudienceCid),
+      })]);
+      expect(cancelFirstPayload.calledOnce).toBe(true);
+      expect(applyStub.calledOnce).toBe(true);
+
+      messagesByCid.set(firstAudienceCid, {
+        message : firstAudience.message,
+        data    : firstAudience.dataStream,
+      });
+      messagesByCid.set(secondAudienceCid, {
+        message : secondAudience.message,
+        data    : secondAudience.dataStream,
+      });
+
+      const recovered = await context.push([rootCid]);
+
+      expect(recovered.succeeded).toEqual([rootCid]);
+      expect(recovered.failed).toEqual([]);
+      expect(recovered.acknowledged).toEqual(expect.arrayContaining([
+        { cid: firstAudienceCid, resolution: 'applied' },
+        { cid: secondAudienceCid, resolution: 'applied' },
+        { cid: rootCid, resolution: 'applied' },
+      ]));
+      expect(rootAttempts).toBe(3);
+      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesQuery })).callCount).toBe(2);
+      expect(processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid: firstAudienceCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).callCount).toBe(2);
+      expect(processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid: secondAudienceCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).callCount).toBe(2);
     });
 
     it('should query a missing role dependency with contextPrefix', async () => {

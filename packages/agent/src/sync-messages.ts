@@ -34,6 +34,7 @@ import {
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { resolveDelegatePermissionGrantId } from './delegate-permission-grant.js';
+import { syncErrorMessage } from './sync-runtime-errors.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import {
   dependencyKey,
@@ -637,7 +638,7 @@ export class RemoteApplyPushContext {
   /** Push one complete local-feed root alongside any explicitly staged roots. */
   public async pushFeedEntry(
     entry: NonNullable<MessagesQueryReply['entries']>[number],
-    stagedRootCids: string[] = [],
+    stagedRootCids: string[],
   ): Promise<PushResult> {
     const failedByRoot = new Map<string, PushFailure>();
     const rootEntries = await this.fetchRootEntries(stagedRootCids, failedByRoot);
@@ -1243,7 +1244,7 @@ export class RemoteApplyPushContext {
         agent              : this.deps.agent,
       });
     } catch (error: unknown) {
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = syncErrorMessage(error);
       return {
         kind   : 'failed',
         detail : `local payload read failed for current feed message ${entry.messageCid}: ${detail}`,
@@ -1251,10 +1252,10 @@ export class RemoteApplyPushContext {
     }
 
     if (hydrated.kind === 'missing') {
-      const status = hydrated.localStatusCode === undefined ? '' : `${hydrated.localStatusCode} `;
+      const status = [hydrated.localStatusCode, hydrated.detail].join(' ');
       return {
         kind   : 'failed',
-        detail : `local payload read failed for current feed message ${entry.messageCid}: ${status}${hydrated.detail ?? 'missing data'}`,
+        detail : `local payload read failed for current feed message ${entry.messageCid}: ${status}`,
       };
     }
 
