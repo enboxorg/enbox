@@ -762,13 +762,6 @@ export class SyncDurableFeedReconciler {
       target.dwnUrl,
       'push',
     );
-    if (SyncCheckpoint.comparePosition(prefixCursor, reply.cursor) > 0) {
-      throw new Error(
-        `SyncDurableFeedReconciler: processed push prefix exceeded its local MessagesQuery cursor for ` +
-        `${link.tenantDid} -> ${target.dwnUrl}`,
-      );
-    }
-
     SyncCheckpoint.commitContiguousToken(link.push, prefixCursor);
     await this._operations.commitCheckpoint(link, 'push');
   }
