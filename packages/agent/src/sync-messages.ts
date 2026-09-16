@@ -126,6 +126,14 @@ type FetchDependencyResult =
   | { kind: 'fetched'; entries: SyncMessageEntry[] }
   | { kind: 'failed'; dependencyCid?: string; detail: string; localMissing?: boolean };
 
+type PrepareLocalEntryParams = {
+  message: GenericMessage;
+  isLatestBaseState: boolean;
+  encodedData?: string;
+  messageCid?: string;
+  source: 'feed message' | 'RecordsQuery dependency';
+};
+
 function fetchFailureFromError(
   error: unknown,
   detail: string,
@@ -1287,19 +1295,8 @@ export class RemoteApplyPushContext {
   }
 
   /** Prepare one locally enumerated message without reopening acknowledged payloads. */
-  private async prepareLocalEntry({
-    message,
-    isLatestBaseState,
-    encodedData,
-    messageCid,
-    source,
-  }: {
-    message: GenericMessage;
-    isLatestBaseState: boolean;
-    encodedData?: string;
-    messageCid?: string;
-    source: 'feed message' | 'RecordsQuery dependency';
-  }): Promise<FetchDependencyResult> {
+  private async prepareLocalEntry(params: PrepareLocalEntryParams): Promise<FetchDependencyResult> {
+    const { message, isLatestBaseState, encodedData, messageCid, source } = params;
     const entry: SyncMessageEntry = { message, isLatestBaseState };
     const cid = await this.rememberEntry(entry);
     const payloadCid = messageCid ?? cid;
