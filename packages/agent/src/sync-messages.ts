@@ -529,7 +529,7 @@ export async function pushMessages({
     permissionsApi,
     onBeforeApply,
   });
-  return context.push([...new Set(messageCids)]);
+  return context.push(messageCids);
 }
 
 export async function pushMessageEntries({

@@ -13,6 +13,7 @@ import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 const DID = 'did:example:seam-alice';
 const REMOTE = 'https://seam.dwn.example.com';
+const TEST_DB_LOCATION = '__TESTDATA__/sync-push-checkpoint-seam-spec';
 
 function token(position: number): ProgressToken {
   return { epoch: 'epoch', messageCid: `cid-${position}`, position: String(position), streamId: 'stream' };
@@ -30,19 +31,24 @@ describe('SyncEngineLevel — durable push replay seam', () => {
   let db: Level<string, string>;
 
   beforeAll(() => {
-    db = new Level<string, string>('__TESTDATA__/sync-push-checkpoint-seam-spec');
+    db = new Level<string, string>(TEST_DB_LOCATION);
   });
 
   afterEach(async () => {
     sinon.restore();
+    if (db.status === 'closed') {
+      db = new Level<string, string>(TEST_DB_LOCATION);
+    }
     await db.clear();
   });
 
   afterAll(async () => {
-    await db.close();
+    if (db.status !== 'closed') {
+      await db.close();
+    }
   });
 
-  it('uses local events only as wakes and durably resumes after a settled push prefix', async () => {
+  it('uses local events only as wakes and resumes a settled push prefix after storage restart', async () => {
     const engine = new SyncEngineLevel({ db });
     const identity = {
       authorization      : { kind: 'owner' as const },
@@ -72,18 +78,16 @@ describe('SyncEngineLevel — durable push replay seam', () => {
       return {
         cursor      : token(4),
         drained     : true,
-        entries     : query.cursor?.position === '3' ? [entries[2]] : entries,
+        entries,
         fingerprint : 'local-feed-at-4',
         status      : { code: 200, detail: 'OK' },
       };
     });
-    const pushLocalPage = sinon.stub(engine as any, 'pushLocalFeedPage');
-    pushLocalPage.onFirstCall().resolves({
+    const pushLocalPage = sinon.stub(engine as any, 'pushLocalFeedPage').resolves({
       failedEntry : entries[2],
       failures    : [{ cid: 'cid-4', detail: 'remote storage unavailable', kind: 'Deferred', reason: 'storage' }],
       kind        : 'failed',
     });
-    pushLocalPage.onSecondCall().resolves({ kind: 'processed' });
     sinon.stub(engine as any, 'probeQuotaBlocksForTarget').resolves();
 
     // EOSE is control information, not a push wake.
@@ -103,26 +107,49 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     expect(controller.link.push.contiguousAppliedToken).toEqual(token(3));
     const persistedAfterFailure = await (engine as any).replicationLinkStore.getOrCreateLink(identity);
     expect(persistedAfterFailure.push.contiguousAppliedToken).toEqual(token(3));
+
+    await engine.close();
+    expect(db.status).toBe('closed');
+    db = new Level<string, string>(TEST_DB_LOCATION);
+    await db.open();
+
     const restartedEngine = new SyncEngineLevel({ db });
     const restoredAfterRestart = await (restartedEngine as any).replicationLinkStore.getOrCreateLink(identity);
     expect(restoredAfterRestart.push.contiguousAppliedToken).toEqual(token(3));
+    const restartedController = (restartedEngine as any).activateLink(linkKey, restoredAfterRestart);
+    restartedController.markReplicationReady();
+    const restartedReplayQueries: SyncDurableFeedQuery[] = [];
+    sinon.stub(restartedEngine as any, 'queryDurableFeed').callsFake(async (query: SyncDurableFeedQuery) => {
+      restartedReplayQueries.push(query);
+      return {
+        cursor      : token(4),
+        drained     : true,
+        entries     : [entries[2]],
+        fingerprint : 'local-feed-at-4',
+        status      : { code: 200, detail: 'OK' },
+      };
+    });
+    const restartedPushLocalPage = sinon.stub(restartedEngine as any, 'pushLocalFeedPage')
+      .resolves({ kind: 'processed' });
+    sinon.stub(restartedEngine as any, 'probeQuotaBlocksForTarget').resolves();
 
     // A remote-mode local DWN reconnect may have skipped writes while its
     // socket was down. The reconnect notification is also only a wake: it
     // replays from durable progress rather than trusting transport state.
-    await (engine as any).handleLocalPushMessage(
-      controller,
+    await (restartedEngine as any).handleLocalPushMessage(
+      restartedController,
       (): boolean => false,
       { type: 'reconnected' },
     );
 
-    expect(replayQueries.map(({ cursor }) => cursor)).toEqual([durableCursor, token(3)]);
-    expect(pushLocalPage.secondCall.args[1]).toEqual([entries[2]]);
-    expect(controller.link.push.contiguousAppliedToken).toEqual(token(4));
-    const persistedAfterSuccess = await (engine as any).replicationLinkStore.getOrCreateLink(identity);
+    expect(replayQueries.map(({ cursor }) => cursor)).toEqual([durableCursor]);
+    expect(restartedReplayQueries.map(({ cursor }) => cursor)).toEqual([token(3)]);
+    expect(restartedPushLocalPage.firstCall.args[1]).toEqual([entries[2]]);
+    expect(restartedController.link.push.contiguousAppliedToken).toEqual(token(4));
+    const persistedAfterSuccess = await (restartedEngine as any).replicationLinkStore.getOrCreateLink(identity);
     expect(persistedAfterSuccess.push.contiguousAppliedToken).toEqual(token(4));
 
-    await controller.dispose();
+    await restartedEngine.close();
   });
 
   it('repairs a failed local subscription recovery and pauses terminal authorization failures', async () => {

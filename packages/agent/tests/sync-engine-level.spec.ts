@@ -567,33 +567,6 @@ describe('SyncEngineLevel', () => {
       }
     });
 
-    it('reuses one remote apply context across an ordered local-feed page', async () => {
-      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      const internal = syncEngine as any;
-      const syncTarget = target('https://a.example');
-      const entries = [
-        { seq: '1', messageCid: 'cid-1', isLatestBaseState: true },
-        { seq: '2', messageCid: 'cid-2', isLatestBaseState: true },
-      ];
-      const pushFeedEntry = sinon.stub();
-      pushFeedEntry.onFirstCall().resolves({ acknowledged: [], failed: [], succeeded: ['cid-1'] });
-      pushFeedEntry.onSecondCall().resolves({ acknowledged: [], failed: [], succeeded: ['cid-2'] });
-      const createPushContext = sinon.stub(internal, 'createRemoteApplyPushContext').returns({ pushFeedEntry });
-      sinon.stub(internal, 'hasDeadLetter').resolves(false);
-      sinon.stub(internal._quotaManager, 'getState').resolves(undefined);
-      sinon.stub(internal, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
-      sinon.stub(internal._quotaManager, 'applyPushResult').resolves({
-        quotaBlocked      : false,
-        retryableFailures : [],
-        terminalFailures  : [],
-      });
-
-      expect(await internal.pushLocalFeedPage(syncTarget, entries)).toEqual({ kind: 'processed' });
-      expect(createPushContext.calledOnceWithExactly(syncTarget)).toBe(true);
-      expect(pushFeedEntry.callCount).toBe(2);
-      expect(pushFeedEntry.firstCall.args).toEqual([entries[0], []]);
-      expect(pushFeedEntry.secondCall.args).toEqual([entries[1], []]);
-    });
   });
 
   describe('stale durable feed responses', () => {

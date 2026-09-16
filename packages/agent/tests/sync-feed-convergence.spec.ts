@@ -284,6 +284,55 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
   });
 
+  it('reads and delivers a shared parent payload once when it later appears in the same feed page', async () => {
+    await configureLocalProtocol(feedHarnessProtocolV1);
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.sync('push');
+
+    const parent = await writeLocalRecord({
+      data         : 'parent before remote quota recovery',
+      protocolPath : 'thread',
+      schema       : feedHarnessProtocolV1.types.thread.schema,
+    });
+    const parentCid = await Message.getCid(parent.message);
+    const gate = installRemoteApplyGate(parentCid);
+    await syncEngine.sync('push');
+    expect(gate.attempts()).toBe(1);
+
+    const child = await writeLocalRecord({
+      data            : 'child that discovers the shared parent',
+      parentContextId : parent.message.contextId,
+      protocolPath    : 'thread/reply',
+      schema          : feedHarnessProtocolV1.types.reply.schema,
+    });
+    const updatedParentData = 'p'.repeat(900_001);
+    const updatedParent = await updateLocalRecord(parent.message, updatedParentData);
+    const updatedParentCid = await Message.getCid(updatedParent.message);
+
+    gate.allow();
+    const processRequest = sinon.spy(testHarness.agent.dwn, 'processRequest');
+    const remoteApply = sinon.spy(testHarness.agent.rpc, 'applyReplicatedMessage');
+
+    await syncEngine.sync('push');
+
+    expect(gate.attempts()).toBe(2);
+    const parentPayloadReads = processRequest.getCalls().filter(({ args }) =>
+      args[0].messageType === DwnInterface.MessagesRead &&
+      args[0].messageParams.messageCid === updatedParentCid);
+    expect(parentPayloadReads).toHaveLength(1);
+
+    const updatedParentApplies: ReplicationApplyResult[] = [];
+    for (const call of remoteApply.getCalls()) {
+      if (await Message.getCid(call.args[0].message as GenericMessage) === updatedParentCid) {
+        updatedParentApplies.push(await call.returnValue);
+      }
+    }
+    expect(updatedParentApplies).toHaveLength(1);
+    expect(updatedParentApplies[0]).toMatchObject({ kind: 'Applied' });
+    expect(await readRemoteRecordText(parent.message.recordId)).toBe(updatedParentData);
+    expect(await readRemoteRecordText(child.message.recordId)).toBe('child that discovers the shared parent');
+  });
+
   it('executes real local queries when an update push must discover its protocol and initial-write dependencies', async () => {
     await configureLocalProtocol(feedHarnessProtocolV1);
     const initial = await writeLocalRecord({

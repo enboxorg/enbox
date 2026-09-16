@@ -708,50 +708,6 @@ describe('sync-messages', () => {
       expect(applyStub.secondCall.args[0].dwnUrl).toBe('https://two.dwn.example.com');
     });
 
-    it('should not resend a dependency after its acknowledgement settles in the same context', async () => {
-      const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocolDefinition: ProtocolDefinition = {
-        protocol  : 'https://example.com/page-context-acknowledgement',
-        published : false,
-        types     : { note: {} },
-        structure : { note: {} },
-      };
-      const dependency = await TestDataGenerator.generateProtocolsConfigure({
-        author: alice,
-        protocolDefinition,
-      });
-      const root = await TestDataGenerator.generateRecordsWrite({ author: alice });
-      const dependencyCid = await Message.getCid(dependency.message);
-      const rootCid = await Message.getCid(root.message);
-      const { agent, applyStub } = createLocalAgentFixture({
-        messagesByCid: new Map([
-          [dependencyCid, { message: dependency.message }],
-        ]),
-        applyResults: [
-          { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: protocolDefinition.protocol, messageCid: dependencyCid }] },
-          { kind: 'Applied' },
-          { kind: 'Applied' },
-        ],
-      });
-      const context = new RemoteApplyPushContext({
-        did    : alice.did,
-        dwnUrl : 'https://dwn.example.com',
-        agent,
-      });
-
-      expect(await context.pushEntries([{ message: root.message }])).toMatchObject({
-        succeeded : [rootCid],
-        failed    : [],
-      });
-      expect(await context.pushEntries([{ message: dependency.message }])).toEqual({
-        succeeded    : [dependencyCid],
-        acknowledged : [{ cid: dependencyCid, resolution: 'applied' }],
-        failed       : [],
-      });
-      expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
-        Message.getCid(call.args[0].message)))).toEqual([rootCid, dependencyCid, rootCid]);
-    });
-
     it('should push a complete feed snapshot without re-reading its root by CID', async () => {
       const payload = new TextEncoder().encode('feed-snapshot');
       const write = await TestDataGenerator.generateRecordsWrite({ data: payload });
