@@ -1294,9 +1294,7 @@ export class RemoteApplyPushContext {
     }
 
     if (hydrated.kind === 'missing') {
-      const status = [hydrated.localStatusCode, hydrated.detail]
-        .filter((part): boolean => part !== undefined)
-        .join(' ');
+      const status = [hydrated.localStatusCode, hydrated.detail].join(' ').trim();
       return {
         kind          : 'failed',
         dependencyCid : payloadCid,
