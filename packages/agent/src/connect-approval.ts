@@ -132,6 +132,19 @@ export type ConnectApprovalRequest = Pick<
   | 'expectedProviderDid'
 >;
 
+/** A user-visible phase of the connect approval ceremony. */
+export type ConnectApprovalProgressPhase =
+  | 'delegate'
+  | 'protocols'
+  | 'permission-grants'
+  | 'grant-keys'
+  | 'revocations';
+
+/** Progress notification emitted when the approval ceremony enters a new phase. */
+export type ConnectApprovalProgress = Readonly<{
+  phase: ConnectApprovalProgressPhase;
+}>;
+
 /** Parameters for {@link executeConnectApproval}. */
 export type ExecuteConnectApprovalParams = {
   /** The agent used for DWN operations and key management. */
@@ -151,6 +164,12 @@ export type ExecuteConnectApprovalParams = {
    * over the requester's advisory `requestedSessionTtlSeconds`.
    */
   approvedSessionTtlSeconds?: number;
+
+  /**
+   * Synchronous observer notified as the ceremony enters each major phase.
+   * Observer failures are isolated and cannot fail or interrupt approval.
+   */
+  onProgress?: (progress: ConnectApprovalProgress) => void;
 };
 
 /**
@@ -669,6 +688,17 @@ export const ConnectCeremony = {
   createPermissionGrants,
 };
 
+function reportConnectApprovalProgress(
+  observer: ExecuteConnectApprovalParams['onProgress'],
+  phase: ConnectApprovalProgressPhase,
+): void {
+  try {
+    observer?.({ phase });
+  } catch {
+    logger.error(`Connect approval progress observer failed during '${phase}'.`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Approval ceremony
 // ---------------------------------------------------------------------------
@@ -725,6 +755,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     let responseSigner: BearerDid;
     let grantedDelegateDid: string;
 
+    reportConnectApprovalProgress(params.onProgress, 'delegate');
     if (preSuppliedDelegateDid !== undefined) {
       grantedDelegateDid = preSuppliedDelegateDid;
       responseSigner = await timed(`${CONNECT_PERF_LOG_PREFIX} responseDid.create`, () => DidJwk.create());
@@ -761,8 +792,9 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       transport      : params.transport,
     });
 
-    const grantSetup = await timed(
-      `${CONNECT_PERF_LOG_PREFIX} permissionGrants.fanout (protocols=${numProtocols})`,
+    reportConnectApprovalProgress(params.onProgress, 'protocols');
+    await timed(
+      `${CONNECT_PERF_LOG_PREFIX} protocols.prepare (n=${numProtocols})`,
       async () => {
         // Prepare in `uses`-dependency order: a composing protocol's configure
         // is rejected by the DWN unless its `uses` targets are already
@@ -774,47 +806,54 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
             ({ protocolDefinition }) => prepareProtocol(providerDid, agent, protocolDefinition)
           ));
         }
-
-        const permissionScopes = request.permissionRequests.flatMap((permissionRequest) => permissionRequest.permissionScopes);
-        const createdGrants = await ConnectCeremony.createPermissionGrants(
-          providerDid,
-          grantedDelegateDid,
-          agent,
-          permissionScopes,
-          connectSession,
-        );
-
-        let grantOffset = 0;
-        const requestsWithGrants = request.permissionRequests.map((permissionRequest) => {
-          const nextGrantOffset = grantOffset + permissionRequest.permissionScopes.length;
-          const grants = createdGrants.slice(grantOffset, nextGrantOffset);
-          grantOffset = nextGrantOffset;
-          return { grants, permissionRequest };
-        });
-
-        const durableGrantKeyRecords = (await Promise.all(requestsWithGrants.map(
-          async ({ grants, permissionRequest }) => {
-            if (!permissionRequestHasEncryptedReadScopes(permissionRequest)) {
-              return [];
-            }
-
-            return ConnectCeremony.createGrantKeyRecordsForGrants({
-              agent,
-              ownerDid   : providerDid,
-              granteeDid : grantedDelegateDid,
-              ...(delegateRootPrivateKey !== undefined
-                ? { granteeRootPrivateKey: delegateRootPrivateKey }
-                : { granteeRootPublicKey: preSuppliedDelegateRootPublicKey }),
-              grantMessages       : grants,
-              protocolDefinitions : [permissionRequest.protocolDefinition],
-            });
-          }
-        ))).flat();
-
-        return { createdGrants, durableGrantKeyRecords };
       },
     );
-    const { createdGrants, durableGrantKeyRecords } = grantSetup;
+
+    const permissionScopes = request.permissionRequests.flatMap(
+      (permissionRequest) => permissionRequest.permissionScopes,
+    );
+    reportConnectApprovalProgress(params.onProgress, 'permission-grants');
+    const createdGrants = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} permissionGrants.createAndFanout (n=${permissionScopes.length})`,
+      () => ConnectCeremony.createPermissionGrants(
+        providerDid,
+        grantedDelegateDid,
+        agent,
+        permissionScopes,
+        connectSession,
+      ),
+    );
+
+    let grantOffset = 0;
+    const requestsWithGrants = request.permissionRequests.map((permissionRequest) => {
+      const nextGrantOffset = grantOffset + permissionRequest.permissionScopes.length;
+      const grants = createdGrants.slice(grantOffset, nextGrantOffset);
+      grantOffset = nextGrantOffset;
+      return { grants, permissionRequest };
+    });
+
+    reportConnectApprovalProgress(params.onProgress, 'grant-keys');
+    const durableGrantKeyRecords = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} grantKeys.create (protocols=${numProtocols})`,
+      async () => (await Promise.all(requestsWithGrants.map(
+        async ({ grants, permissionRequest }) => {
+          if (!permissionRequestHasEncryptedReadScopes(permissionRequest)) {
+            return [];
+          }
+
+          return ConnectCeremony.createGrantKeyRecordsForGrants({
+            agent,
+            ownerDid   : providerDid,
+            granteeDid : grantedDelegateDid,
+            ...(delegateRootPrivateKey !== undefined
+              ? { granteeRootPrivateKey: delegateRootPrivateKey }
+              : { granteeRootPublicKey: preSuppliedDelegateRootPublicKey }),
+            grantMessages       : grants,
+            protocolDefinitions : [permissionRequest.protocolDefinition],
+          });
+        }
+      ))).flat(),
+    );
 
     await timed(
       `${CONNECT_PERF_LOG_PREFIX} grantKeys.fanout (n=${durableGrantKeyRecords.length})`,
@@ -824,6 +863,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     // Create per-grant contextId-scoped revocation grants.
     // Each revocation grant authorizes the delegate to write a revocation
     // ONLY for the specific session grant it corresponds to.
+    reportConnectApprovalProgress(params.onProgress, 'revocations');
     const permissionsApi = new AgentPermissionsApi({ agent });
     let revGrantEndpoints: string[] = [];
     try {

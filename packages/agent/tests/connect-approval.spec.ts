@@ -16,6 +16,7 @@ import { AgentPermissionsApi, DwnInterface, DwnPermissionGrant } from '../src/in
 import {
   CONNECT_SESSION_DEFAULT_TTL_SECONDS,
   CONNECT_SESSION_MAX_TTL_SECONDS,
+  type ConnectApprovalProgressPhase,
   type ConnectApprovalRequest,
   ConnectCeremony,
   createConnectSessionMetadata,
@@ -652,6 +653,36 @@ describe('connect approval ceremony', () => {
 
       // The approval output never carries in-band decryption keys.
       expect('delegateDecryptionKeys' in result).toBe(false);
+    });
+
+    it('should report approval phases in order without letting an observer interrupt the ceremony', async () => {
+      await stubApprovalDependencies();
+      const phases: ConnectApprovalProgressPhase[] = [];
+      const logStub = sinon.stub(logger, 'error');
+
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
+        request     : approvalRequest(),
+        onProgress  : ({ phase }) => {
+          phases.push(phase);
+          if (phase === 'protocols') {
+            throw new Error('observer failed');
+          }
+        },
+      });
+
+      expect(phases).toEqual([
+        'delegate',
+        'protocols',
+        'permission-grants',
+        'grant-keys',
+        'revocations',
+      ]);
+      expect(logStub.calledOnceWith(
+        'Connect approval progress observer failed during \'protocols\'.',
+      )).toBe(true);
     });
 
     it('should create contextId-scoped revocation grants for each session grant', async () => {
