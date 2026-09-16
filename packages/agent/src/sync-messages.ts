@@ -131,7 +131,6 @@ type PrepareLocalEntryParams = {
   isLatestBaseState: boolean;
   encodedData?: string;
   messageCid?: string;
-  source: 'feed message' | 'RecordsQuery dependency';
 };
 
 function fetchFailureFromError(
@@ -152,12 +151,12 @@ function fetchFailureFromError(
 }
 
 type PushEntryResult =
-  | { kind: 'applied'; cid: string; resolution: PushSuccessResolution }
+  | { kind: 'applied' }
   | { kind: 'retry'; entries: SyncMessageEntry[] }
   | { kind: 'failed'; failure: PushFailure };
 
 type PushRootOutcome =
-  | { kind: 'succeeded'; cid: string }
+  | { kind: 'succeeded' }
   | { kind: 'failed'; failure: PushFailure };
 
 /**
@@ -181,12 +180,6 @@ export class SyncDataSizeLimitExceededError extends Error {
   public constructor(dataSize: number) {
     super(`SyncMessages: RecordsWrite data exceeded descriptor dataSize ${dataSize}.`);
     this.name = 'SyncDataSizeLimitExceededError';
-  }
-}
-
-function assertShouldContinue(shouldContinue: (() => boolean) | undefined): void {
-  if (shouldContinue?.() === false) {
-    throw new SyncPullAbortedError();
   }
 }
 
@@ -286,42 +279,31 @@ function capDataStream(
   }));
 }
 
-/**
- * Buffers small data streams into `Uint8Array` so they can be replayed on retry.
- * Streams larger than `MAX_BUFFER_SIZE` are left as-is (will be re-fetched on retry).
- */
-async function bufferSmallStreams(entries: SyncMessageEntry[], shouldContinue?: () => boolean): Promise<void> {
-  for (const entry of entries) {
-    assertShouldContinue(shouldContinue);
-    if (!shouldReadStreamIntoBuffer(entry)) {
-      continue;
-    }
-
-    const buffer = await bufferDataStream(entry, shouldContinue);
-    entry.bufferedData = buffer;
-    // Create a fresh ReadableStream from the buffer for the first processing attempt.
-    entry.dataStream = dataStreamFromBytes(buffer);
-    assertShouldContinue(shouldContinue);
+/** Buffer one small data stream so it can be replayed on retry. */
+async function bufferSmallStream(entry: SyncMessageEntry): Promise<void> {
+  if (
+    entry.dataStream === undefined ||
+    entry.dataStreamConsumed === true ||
+    entry.bufferedData !== undefined ||
+    !shouldBufferDataStream(entry)
+  ) {
+    return;
   }
+
+  entry.bufferedData = await bufferDataStream(entry.dataStream);
+  // The buffered bytes now own retryability; retain no redundant stream.
+  entry.dataStream = undefined;
 }
 
-function shouldReadStreamIntoBuffer(entry: SyncMessageEntry): boolean {
-  return entry.dataStream !== undefined &&
-    entry.dataStreamConsumed !== true &&
-    entry.bufferedData === undefined &&
-    shouldBufferDataStream(entry);
-}
-
-async function bufferDataStream(entry: SyncMessageEntry, shouldContinue?: () => boolean): Promise<Uint8Array> {
+async function bufferDataStream(dataStream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let totalSize = 0;
-  const reader = entry.dataStream!.getReader();
+  const reader = dataStream.getReader();
 
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) { break; }
-      assertShouldContinue(shouldContinue);
       totalSize += value.byteLength;
       if (totalSize > MAX_BUFFER_SIZE) {
         throw new Error('SyncMessages: unexpected large stream while buffering push data.');
@@ -621,7 +603,7 @@ async function readLocalMessage({ author, delegateDid, permissionGrantIds, messa
   if (reply.status.code !== 200 || !reply.entry) {
     return { kind: 'missing', localStatusCode: reply.status.code, detail: reply.status.detail };
   }
-  const messageEntry = reply.entry!;
+  const messageEntry = reply.entry;
 
   const result: SyncMessageEntry = {
     message: messageEntry.message
@@ -715,8 +697,8 @@ export class RemoteApplyPushContext {
 
       const outcome = await this.pushRoot(rootCid, rootEntry);
       if (outcome.kind === 'succeeded') {
-        succeeded.add(outcome.cid);
-        failedByRoot.delete(outcome.cid);
+        succeeded.add(rootCid);
+        failedByRoot.delete(rootCid);
       } else {
         failedByRoot.set(outcome.failure.cid, outcome.failure);
       }
@@ -731,7 +713,6 @@ export class RemoteApplyPushContext {
 
   private async pushRoot(rootCid: string, rootEntry: SyncMessageEntry): Promise<PushRootOutcome> {
     let pending = [rootEntry];
-    let rootResolution: PushSuccessResolution | undefined;
     for (let pass = 0; pass < MAX_ADMISSION_PASSES && pending.length > 0; pass++) {
       const retry: SyncMessageEntry[] = [];
       const ordered = orderMessagesForAdmission(pending);
@@ -740,15 +721,12 @@ export class RemoteApplyPushContext {
         const result = await this.pushEntry(rootCid, entry);
         switch (result.kind) {
           case 'applied':
-            if (result.cid === rootCid) {
-              rootResolution = result.resolution;
-            }
             break;
           case 'retry':
             retry.push(...result.entries);
             break;
           case 'failed':
-            await releaseUnusedPushPayloads([...retry, ...ordered.slice(index + 1)]);
+            await releaseUnusedPushPayloads([entry, ...retry, ...ordered.slice(index + 1)]);
             return { kind: 'failed', failure: result.failure };
         }
       }
@@ -763,26 +741,25 @@ export class RemoteApplyPushContext {
       };
     }
 
-    return rootResolution === undefined
-      ? {
+    return this.acknowledgementsByCid.has(rootCid)
+      ? { kind: 'succeeded' }
+      : {
         kind    : 'failed',
         failure : { cid: rootCid, kind: 'Incomplete', detail: 'remote did not acknowledge the pushed root message' },
-      }
-      : { kind: 'succeeded', cid: rootCid };
+      };
   }
 
   private async pushEntry(rootCid: string, entry: SyncMessageEntry): Promise<PushEntryResult> {
     const cid = await this.rememberEntry(entry);
     // Only settled remote outcomes enter this cache. Incomplete dependency
     // resolution remains eligible for another apply attempt.
-    const acknowledged = this.acknowledgementsByCid.get(cid);
-    if (acknowledged !== undefined) {
+    if (this.acknowledgementsByCid.has(cid)) {
       await releaseUnusedPushPayload(entry);
-      return { kind: 'applied', cid, resolution: acknowledged };
+      return { kind: 'applied' };
     }
 
     try {
-      await bufferSmallStreams([entry]);
+      await bufferSmallStream(entry);
     } catch (error: any) {
       const detail = error.message ?? String(error);
       console.error(`SyncMessages: push error for ${cid}: ${detail}`);
@@ -844,9 +821,11 @@ export class RemoteApplyPushContext {
     switch (result.kind) {
       case 'Applied':
       case 'Duplicate':
-        return { kind: 'applied', cid, resolution: this.recordAcknowledgement(cid, 'applied') };
+        this.acknowledgementsByCid.set(cid, 'applied');
+        return { kind: 'applied' };
       case 'Superseded':
-        return { kind: 'applied', cid, resolution: this.recordAcknowledgement(cid, 'superseded') };
+        this.acknowledgementsByCid.set(cid, 'superseded');
+        return { kind: 'applied' };
       case 'Deferred':
         return {
           kind    : 'failed',
@@ -915,13 +894,6 @@ export class RemoteApplyPushContext {
     }
 
     return { kind: 'retry', entries: [...unacknowledgedDependencies, entry] };
-  }
-
-  private recordAcknowledgement(cid: string, resolution: PushSuccessResolution): PushSuccessResolution {
-    const existing = this.acknowledgementsByCid.get(cid);
-    const resolved = existing === 'superseded' || resolution === 'superseded' ? 'superseded' : 'applied';
-    this.acknowledgementsByCid.set(cid, resolved);
-    return resolved;
   }
 
   private terminalFailure(
@@ -1023,9 +995,7 @@ export class RemoteApplyPushContext {
       case 'Protocol':
         return this.fetchProtocolConfig(ref.protocol);
       case 'InitialWrite':
-        return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
       case 'Parent':
-        return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
       case 'Ancestor':
       case 'CrossProtocolRef':
         return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
@@ -1246,22 +1216,16 @@ export class RemoteApplyPushContext {
     for (const recordEntry of recordsQueryEntries) {
       const { encodedData, initialWrite, ...message } = recordEntry;
       if (initialWrite !== undefined) {
-        const initialEntry = await this.prepareLocalEntry({
+        entries.push({
           message           : initialWrite,
           isLatestBaseState : false,
-          source            : 'RecordsQuery dependency',
         });
-        if (initialEntry.kind === 'failed') {
-          return initialEntry;
-        }
-        entries.push(...initialEntry.entries);
       }
 
       const currentEntry = await this.prepareLocalEntry({
         message,
-        isLatestBaseState : true,
+        isLatestBaseState: true,
         encodedData,
-        source            : 'RecordsQuery dependency',
       });
       if (currentEntry.kind === 'failed') {
         await releaseUnusedPushPayloads(entries);
@@ -1281,22 +1245,17 @@ export class RemoteApplyPushContext {
       throw new Error(`SyncMessages: local feed entry ${entry.messageCid} did not include a message.`);
     }
 
-    const messageWithEncodedData = { ...entry.message } as GenericMessage & { encodedData?: string };
-    const encodedData = entry.encodedData;
-    delete messageWithEncodedData.encodedData;
-
     return this.prepareLocalEntry({
-      message           : messageWithEncodedData,
+      message           : entry.message,
       isLatestBaseState : entry.isLatestBaseState,
-      encodedData,
+      encodedData       : entry.encodedData,
       messageCid        : entry.messageCid,
-      source            : 'feed message',
     });
   }
 
   /** Prepare one locally enumerated message without reopening acknowledged payloads. */
   private async prepareLocalEntry(params: PrepareLocalEntryParams): Promise<FetchDependencyResult> {
-    const { message, isLatestBaseState, encodedData, messageCid, source } = params;
+    const { message, isLatestBaseState, encodedData, messageCid } = params;
     const entry: SyncMessageEntry = { message, isLatestBaseState };
     const cid = await this.rememberEntry(entry);
     const payloadCid = messageCid ?? cid;
@@ -1329,7 +1288,7 @@ export class RemoteApplyPushContext {
     } catch (error: unknown) {
       return fetchFailureFromError(
         error,
-        `local payload read failed for current ${source} ${payloadCid}`,
+        `local payload read failed for current message ${payloadCid}`,
         payloadCid,
       );
     }
@@ -1341,7 +1300,7 @@ export class RemoteApplyPushContext {
       return {
         kind          : 'failed',
         dependencyCid : payloadCid,
-        detail        : `local payload read failed for current ${source} ${payloadCid}: ${status}`,
+        detail        : `local payload read failed for current message ${payloadCid}: ${status}`,
       };
     }
 
@@ -1349,7 +1308,7 @@ export class RemoteApplyPushContext {
       return {
         kind          : 'failed',
         dependencyCid : payloadCid,
-        detail        : `local payload read returned no data for current ${source} ${payloadCid}`,
+        detail        : `local payload read returned no data for current message ${payloadCid}`,
       };
     }
 

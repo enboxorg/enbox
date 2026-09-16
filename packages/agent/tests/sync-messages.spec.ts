@@ -896,7 +896,7 @@ describe('sync-messages', () => {
       expect(result.acknowledged).toEqual([]);
       expect(result.failed).toEqual([{
         cid    : messageCid,
-        detail : `local payload read returned no data for current feed message ${messageCid}`,
+        detail : `local payload read returned no data for current message ${messageCid}`,
       }]);
       expect(applyStub.called).toBe(false);
     });
@@ -966,7 +966,7 @@ describe('sync-messages', () => {
         cid           : rootCid,
         dependencyCid : parentCid,
         detail        : expect.stringContaining(
-          `local payload read failed for current RecordsQuery dependency ${parentCid}: 404 not found`,
+          `local payload read failed for current message ${parentCid}: 404 not found`,
         ),
       })]);
       expect(parentAttempts).toBe(0);

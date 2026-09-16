@@ -117,7 +117,6 @@ export async function admitClosure(rootCid: string, deps: AdmitClosureDeps): Pro
 class AdmitClosureContext {
   private readonly entriesByCid = new Map<string, SyncMessageEntry>();
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
-  private readonly fetchedRefs = new Set<string>();
   private readonly prefetchedEntries: SyncMessageEntry[];
   private replicationSupportAttempted = false;
 
@@ -386,11 +385,11 @@ class AdmitClosureContext {
     const fetched: SyncMessageEntry[] = [];
     for (const ref of refs) {
       const key = dependencyKey(ref);
-      if (this.fetchedRefs.has(key)) {
-        fetched.push(...(this.fetchedDependencyEntries.get(key) ?? []));
+      const cached = this.fetchedDependencyEntries.get(key);
+      if (cached !== undefined) {
+        fetched.push(...cached);
         continue;
       }
-      this.fetchedRefs.add(key);
       const entries = await this.fetchDependency(ref);
       this.fetchedDependencyEntries.set(key, entries);
       fetched.push(...entries);

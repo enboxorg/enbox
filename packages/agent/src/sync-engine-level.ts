@@ -4315,14 +4315,15 @@ export class SyncEngineLevel implements SyncEngine {
       if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
         return { kind: 'aborted' };
       }
+      const failedEntry = { messageCid: entry.messageCid, seq: entry.seq };
 
       let result: FeedPushEntryResult;
       try {
         result = await this.pushLocalFeedEntry(target, entry, pushContext, shouldContinue);
       } catch (error: unknown) {
         return {
-          kind        : 'error',
-          failedEntry : { messageCid: entry.messageCid, seq: entry.seq },
+          kind: 'error',
+          failedEntry,
           error,
         };
       }
@@ -4331,9 +4332,9 @@ export class SyncEngineLevel implements SyncEngine {
       }
       if (result.kind === 'failed') {
         return {
-          kind        : 'failed',
-          failedEntry : { messageCid: entry.messageCid, seq: entry.seq },
-          failures    : result.failures,
+          kind     : 'failed',
+          failedEntry,
+          failures : result.failures,
         };
       }
     }

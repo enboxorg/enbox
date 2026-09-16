@@ -453,13 +453,7 @@ export class SyncDurableFeedReconciler {
         return { aborted: true };
       }
 
-      const reply = await this._operations.queryFeed({
-        cidsOnly : false,
-        cursor,
-        limit    : SyncDurableFeedReconciler.PAGE_LIMIT,
-        source   : 'local',
-        target,
-      });
+      const reply = await this.queryLocalPage(target, cursor);
 
       if (await this.resetAfterProgressGap(reply, link, 'push', false)) {
         return this.pushLocalDiffWithRemoteInventory(target, link, shouldContinue, forceQuotaProbe);
@@ -524,13 +518,7 @@ export class SyncDurableFeedReconciler {
         return { aborted: true };
       }
 
-      const reply = await this._operations.queryFeed({
-        cidsOnly : false,
-        cursor,
-        limit    : SyncDurableFeedReconciler.PAGE_LIMIT,
-        source   : 'local',
-        target,
-      });
+      const reply = await this.queryLocalPage(target, cursor);
       if (await this.resetAfterProgressGap(reply, link, 'push', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
@@ -601,6 +589,20 @@ export class SyncDurableFeedReconciler {
       cursor,
       limit    : SyncDurableFeedReconciler.PAGE_LIMIT,
       source,
+      target,
+    });
+  }
+
+  /** Query one complete local feed page for snapshot-based push. */
+  private queryLocalPage(
+    target: SyncTarget,
+    cursor: ProgressToken | undefined,
+  ): Promise<MessagesQueryReply> {
+    return this._operations.queryFeed({
+      cidsOnly : false,
+      cursor,
+      limit    : SyncDurableFeedReconciler.PAGE_LIMIT,
+      source   : 'local',
       target,
     });
   }
