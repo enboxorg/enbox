@@ -618,6 +618,25 @@ describe('SyncDurableFeedReconciler', () => {
     expect(fixture.operations.pushLocalPage.secondCall.args[1]).toEqual([entries[2]]);
   });
 
+  it('should persist a contiguous push prefix before propagating a later entry exception', async () => {
+    const fixture = createReconciler();
+    const entries: MessagesQueryReplyEntry[] = [
+      { seq: '2', messageCid: 'root-a', isLatestBaseState: true },
+      { seq: '3', messageCid: 'root-b', isLatestBaseState: true },
+      { seq: '4', messageCid: 'root-c', isLatestBaseState: true },
+    ];
+    const originalError = new Error('local storage disconnected');
+    fixture.link.push.contiguousAppliedToken = token(1);
+    fixture.queryFeed.resolves(reply({ cursor: token(4, 'root-c'), entries }));
+    fixture.operations.pushLocalPage.resolves({ kind: 'error', failedEntry: entries[2], error: originalError });
+
+    const push = fixture.reconciler.push(target(), fixture.link);
+
+    await expect(push).rejects.toBe(originalError);
+    expect(fixture.link.push.contiguousAppliedToken).toEqual(token(3, 'root-b'));
+    expect(fixture.operations.commitCheckpoint.calledOnceWithExactly(fixture.link, 'push')).toBe(true);
+  });
+
   it('should leave push progress unchanged when the first page entry fails', async () => {
     const fixture = createReconciler();
     const entry: MessagesQueryReplyEntry = {

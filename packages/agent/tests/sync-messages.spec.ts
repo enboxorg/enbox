@@ -3,8 +3,8 @@ import type { ProtocolDefinition, ReplicationApplyResult } from '@enbox/dwn-sdk-
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
+import { DwnError, DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import {
@@ -1030,6 +1030,222 @@ describe('sync-messages', () => {
         detail        : expect.stringContaining('local DWN transport disconnected'),
       })]);
       expect(applyStub.calledOnce).toBe(true);
+    });
+
+    it('should release a fetched dependency payload and refetch it when a later dependency query rejects', async () => {
+      const protocol = 'https://example.com/dependency-batch-recovery';
+      const parentPayload = new TextEncoder().encode('parent payload opened before a later query fails');
+      const parent = await TestDataGenerator.generateRecordsWrite({ data: parentPayload, protocol });
+      const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        author             : parent.author,
+        protocolDefinition : {
+          protocol,
+          published : false,
+          types     : { note: {} },
+          structure : { note: {} },
+        },
+      });
+      const root = await TestDataGenerator.generateProtocolsConfigure({ author: parent.author });
+      const parentCid = await Message.getCid(parent.message);
+      const protocolCid = await Message.getCid(protocolConfig.message);
+      const rootCid = await Message.getCid(root.message);
+      const cancelFirstPayload = sinon.spy();
+      const firstPayload = new ReadableStream<Uint8Array>({
+        cancel(): void {
+          cancelFirstPayload();
+        },
+      });
+      const messagesByCid = new Map<string, { message: any; data?: ReadableStream<Uint8Array> }>([
+        [rootCid, { message: root.message }],
+        [parentCid, { message: parent.message, data: firstPayload }],
+      ]);
+      let rejectProtocolQuery = true;
+      let rootAttempts = 0;
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid,
+        recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
+        applyResults      : async (message): Promise<ReplicationApplyResult> => {
+          const cid = await Message.getCid(message);
+          if (cid !== rootCid) {
+            return { kind: 'Applied' };
+          }
+
+          rootAttempts++;
+          return rootAttempts < 3
+            ? {
+              kind    : 'Incomplete',
+              missing : [
+                { type: 'Parent', recordId: parent.message.recordId, protocol },
+                { type: 'Protocol', protocol },
+              ],
+            }
+            : { kind: 'Applied' };
+        },
+      });
+      processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery }))
+        .callsFake(async (): Promise<any> => {
+          if (rejectProtocolQuery) {
+            throw new Error('local protocol query disconnected');
+          }
+          return { reply: { status: { code: 200 }, entries: [protocolConfig.message] } };
+        });
+      const context = new RemoteApplyPushContext({
+        did    : parent.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      const failed = await context.push([rootCid]);
+
+      expect(failed.succeeded).toEqual([]);
+      expect(failed.failed).toEqual([expect.objectContaining({
+        cid    : rootCid,
+        detail : expect.stringContaining('local protocol query disconnected'),
+      })]);
+      expect(cancelFirstPayload.calledOnce).toBe(true);
+
+      rejectProtocolQuery = false;
+      messagesByCid.set(parentCid, {
+        message : parent.message,
+        data    : streamFromBytes(parentPayload),
+      });
+      const recovered = await context.push([rootCid]);
+
+      expect(recovered).toMatchObject({ succeeded: [rootCid], failed: [] });
+      expect(rootAttempts).toBe(3);
+      expect(processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid: parentCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).callCount).toBe(2);
+      const applyCids = await Promise.all(applyStub.getCalls().map(async ({ args }): Promise<string> =>
+        Message.getCid(args[0].message)));
+      expect(applyCids.filter(cid => cid === rootCid)).toHaveLength(3);
+      expect(applyCids.filter(cid => cid === protocolCid)).toHaveLength(1);
+      expect(applyCids.filter(cid => cid === parentCid)).toHaveLength(1);
+    });
+
+    it('should propagate terminal authorization errors from dependency payload reads', async () => {
+      const protocol = 'https://example.com/terminal-dependency-read';
+      const parent = await TestDataGenerator.generateRecordsWrite({ protocol });
+      const root = await TestDataGenerator.generateProtocolsConfigure({ author: parent.author });
+      const parentCid = await Message.getCid(parent.message);
+      const rootCid = await Message.getCid(root.message);
+      const authorizationError = new DwnError(
+        DwnErrorCode.GrantAuthorizationGrantRevoked,
+        'the local sync grant was revoked',
+      );
+      const { agent, processRequestStub } = createLocalAgentFixture({
+        messagesByCid     : new Map([[rootCid, { message: root.message }]]),
+        recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
+        applyResults      : [{
+          kind    : 'Incomplete',
+          missing : [{ type: 'Parent', recordId: parent.message.recordId, protocol }],
+        }],
+      });
+      processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid: parentCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).rejects(authorizationError);
+
+      const push = new RemoteApplyPushContext({
+        did    : parent.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      }).push([rootCid]);
+
+      await expect(push).rejects.toBe(authorizationError);
+    });
+
+    it('should release unattempted dependency payloads when an earlier dependency apply fails', async () => {
+      const protocol = 'https://example.com/unattempted-dependency-cleanup';
+      const parentPayload = new TextEncoder().encode('payload waiting behind protocol admission');
+      const parent = await TestDataGenerator.generateRecordsWrite({ data: parentPayload, protocol });
+      const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        author             : parent.author,
+        protocolDefinition : {
+          protocol,
+          published : false,
+          types     : { note: {} },
+          structure : { note: {} },
+        },
+      });
+      const root = await TestDataGenerator.generateProtocolsConfigure({ author: parent.author });
+      const parentCid = await Message.getCid(parent.message);
+      const protocolCid = await Message.getCid(protocolConfig.message);
+      const rootCid = await Message.getCid(root.message);
+      const cancelFirstPayload = sinon.spy();
+      const firstPayload = new ReadableStream<Uint8Array>({
+        cancel(): void {
+          cancelFirstPayload();
+        },
+      });
+      const messagesByCid = new Map<string, { message: any; data?: ReadableStream<Uint8Array> }>([
+        [rootCid, { message: root.message }],
+        [parentCid, { message: parent.message, data: firstPayload }],
+      ]);
+      let failProtocolApply = true;
+      let parentApplied = false;
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid,
+        protocols         : [protocolConfig.message],
+        recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
+        applyResults      : async (message): Promise<ReplicationApplyResult> => {
+          const cid = await Message.getCid(message);
+          if (cid === protocolCid) {
+            if (failProtocolApply) {
+              throw new Error('remote protocol apply disconnected');
+            }
+            return { kind: 'Applied' };
+          }
+          if (cid === parentCid) {
+            parentApplied = true;
+            return { kind: 'Applied' };
+          }
+          return parentApplied
+            ? { kind: 'Applied' }
+            : {
+              kind    : 'Incomplete',
+              missing : [
+                { type: 'Parent', recordId: parent.message.recordId, protocol },
+                { type: 'Protocol', protocol },
+              ],
+            };
+        },
+      });
+      sinon.stub(console, 'error');
+      const context = new RemoteApplyPushContext({
+        did    : parent.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      const failed = await context.push([rootCid]);
+
+      expect(failed.succeeded).toEqual([]);
+      expect(failed.failed).toEqual([expect.objectContaining({
+        cid           : rootCid,
+        dependencyCid : protocolCid,
+        detail        : expect.stringContaining('remote protocol apply disconnected'),
+      })]);
+      expect(cancelFirstPayload.calledOnce).toBe(true);
+
+      failProtocolApply = false;
+      messagesByCid.set(parentCid, {
+        message : parent.message,
+        data    : streamFromBytes(parentPayload),
+      });
+      const recovered = await context.push([rootCid]);
+
+      expect(recovered).toMatchObject({ succeeded: [rootCid], failed: [] });
+      expect(processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid: parentCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).callCount).toBe(2);
+      const applyCids = await Promise.all(applyStub.getCalls().map(async ({ args }): Promise<string> =>
+        Message.getCid(args[0].message)));
+      expect(applyCids.filter(cid => cid === parentCid)).toHaveLength(1);
+      const parentApply = applyStub.getCalls()[applyCids.indexOf(parentCid)];
+      expect(await readStreamBytes(parentApply.args[0].data as ReadableStream<Uint8Array>)).toEqual(parentPayload);
     });
 
     it('should apply retained non-latest writes as data-less ancestry without reading payload data', async () => {

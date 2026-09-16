@@ -30,6 +30,17 @@ export function isTerminalSyncAuthorizationFailure(detail: string | undefined): 
   return detail !== undefined && terminalAuthorizationCodes.some(code => detail.includes(code));
 }
 
+/** Whether a role-authorized operation no longer has its matching role record. */
+export function isMissingRoleAuthorizationFailure(detail: string | undefined): boolean {
+  return detail?.includes(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound) === true;
+}
+
+/** Authorization failures that must reach engine lifecycle handling instead of entering retry queues. */
+export function isNonRetryableSyncAuthorizationFailure(detail: string | undefined): boolean {
+  return isTerminalSyncAuthorizationFailure(detail) ||
+    isMissingRoleAuthorizationFailure(detail);
+}
+
 /** Stable conversion for event diagnostics. */
 export function syncErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

@@ -5,7 +5,7 @@ import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, Messa
 
 import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
-import { BroadcastChannelWakePublisher, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
+import { BroadcastChannelWakePublisher, DwnError, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 import { parseDurationInMilliseconds, runSerializedByKey, runWithCrossContextLock, sleep } from '@enbox/common';
 import { RateLimitError, SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 
@@ -89,7 +89,7 @@ import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMess
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
+import { isMissingRoleAuthorizationFailure, isNonRetryableSyncAuthorizationFailure, isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from './sync-target-resolver.js';
 import { projectReplicationLinks, projectSyncStatus } from './sync-status-reporter.js';
@@ -2386,7 +2386,7 @@ export class SyncEngineLevel implements SyncEngine {
       );
     }
     const refreshAuthority = error instanceof FollowedSourceRoleRecordMismatchError ||
-      SyncEngineLevel.isMissingRoleAuthorization(syncErrorMessage(error));
+      isMissingRoleAuthorizationFailure(syncErrorMessage(error));
     await this.transitionToPaused(this.getReplicationLinkKey(target, link), link, refreshAuthority);
   }
 
@@ -3600,7 +3600,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (await this.handleSyncAuthorizationFailure(roleAuthorization?.actorDid ?? context.did, context.link.delegateDid, errorCode)) {
       return;
     }
-    if (roleAuthorization !== undefined && SyncEngineLevel.isMissingRoleAuthorization(errorCode)) {
+    if (roleAuthorization !== undefined && isMissingRoleAuthorizationFailure(errorCode)) {
       console.warn(
         `SyncEngineLevel: role authorization for ${context.did} -> ${context.dwnUrl} is no longer active — ` +
         'pausing this endpoint link.',
@@ -4021,11 +4021,7 @@ export class SyncEngineLevel implements SyncEngine {
       return true;
     }
     const detail = syncErrorMessage(error);
-    return SyncEngineLevel.isMissingRoleAuthorization(detail) || isTerminalSyncAuthorizationFailure(detail);
-  }
-
-  private static isMissingRoleAuthorization(detail: string): boolean {
-    return detail.includes(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+    return isNonRetryableSyncAuthorizationFailure(detail);
   }
 
   private async verifyFeedConvergence(
@@ -4320,7 +4316,16 @@ export class SyncEngineLevel implements SyncEngine {
         return { kind: 'aborted' };
       }
 
-      const result = await this.pushLocalFeedEntry(target, entry, pushContext, shouldContinue);
+      let result: FeedPushEntryResult;
+      try {
+        result = await this.pushLocalFeedEntry(target, entry, pushContext, shouldContinue);
+      } catch (error: unknown) {
+        return {
+          kind        : 'error',
+          failedEntry : { messageCid: entry.messageCid, seq: entry.seq },
+          error,
+        };
+      }
       if (result.kind === 'aborted') {
         return { kind: 'aborted' };
       }

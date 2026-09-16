@@ -227,6 +227,82 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(await remoteFingerprint()).toBe(await localFingerprint());
   });
 
+  it.each(['incremental', 'inventory-diff'] as const)(
+    'pushes the captured inline feed snapshot through the %s path when its record is updated behind an earlier apply',
+    async (pushPath) => {
+      await configureLocalProtocol(feedHarnessProtocolV1);
+      await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+      await syncEngine.sync('push');
+
+      const first = await writeLocalRecord({
+        data         : 'first record gates the captured page',
+        protocolPath : 'note',
+        schema       : feedHarnessProtocolV1.types.note.schema,
+      });
+      const captured = await writeLocalRecord({
+        data         : 'captured value before concurrent update',
+        protocolPath : 'note',
+        schema       : feedHarnessProtocolV1.types.note.schema,
+      });
+      const firstCid = await Message.getCid(first.message);
+      const capturedCid = await Message.getCid(captured.message);
+      if (pushPath === 'inventory-diff') {
+        const internal = syncEngine as unknown as {
+          getSyncTargets(): Promise<any[]>;
+          getOrCreateReplicationLink(target: any): Promise<any>;
+          replicationLinkStore: { persistCheckpoint(link: any, direction: 'push'): Promise<void> };
+        };
+        const [target] = await internal.getSyncTargets();
+        const link = await internal.getOrCreateReplicationLink(target);
+        link.push.contiguousAppliedToken = undefined;
+        await internal.replicationLinkStore.persistCheckpoint(link, 'push');
+      }
+      const rpc = createLocalDwnRpc(remoteStores.dwn);
+      const applyReplicatedMessage = rpc.applyReplicatedMessage.bind(rpc);
+      let releaseFirstApply!: () => void;
+      let resolveFirstApplyStarted!: () => void;
+      const firstApplyGate = new Promise<void>(resolve => { releaseFirstApply = resolve; });
+      const firstApplyStarted = new Promise<void>(resolve => { resolveFirstApplyStarted = resolve; });
+      rpc.applyReplicatedMessage = async (request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> => {
+        if (await Message.getCid(request.message as GenericMessage) === firstCid) {
+          resolveFirstApplyStarted();
+          await firstApplyGate;
+        }
+        return applyReplicatedMessage(request);
+      };
+      testHarness.agent.rpc = rpc;
+      const localRequest = sinon.spy(testHarness.agent.dwn, 'processRequest');
+      const remoteApply = sinon.spy(rpc, 'applyReplicatedMessage');
+
+      const push = syncEngine.sync('push');
+      await firstApplyStarted;
+      const updated = await updateLocalRecord(captured.message, 'value written while the page was in flight');
+      const updatedCid = await Message.getCid(updated.message);
+      releaseFirstApply();
+      await push;
+
+      expect(localRequest.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid: capturedCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).called).toBe(false);
+      const applyCids = await Promise.all(remoteApply.getCalls().map(async ({ args }): Promise<string> =>
+        Message.getCid(args[0].message as GenericMessage)));
+      expect(applyCids.filter(cid => cid === firstCid)).toHaveLength(1);
+      expect(applyCids.filter(cid => cid === capturedCid)).toHaveLength(1);
+      expect(applyCids.filter(cid => cid === updatedCid)).toHaveLength(0);
+      expect(await readRemoteRecordText(captured.message.recordId)).toBe('captured value before concurrent update');
+
+      await syncEngine.sync('push');
+
+      const recoveredApplyCids = await Promise.all(remoteApply.getCalls().map(async ({ args }): Promise<string> =>
+        Message.getCid(args[0].message as GenericMessage)));
+      expect(recoveredApplyCids.filter(cid => cid === capturedCid)).toHaveLength(1);
+      expect(recoveredApplyCids.filter(cid => cid === updatedCid)).toHaveLength(1);
+      expect(await readRemoteRecordText(captured.message.recordId)).toBe('value written while the page was in flight');
+      expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
+    },
+  );
+
   it('holds the push checkpoint when a current feed payload read fails, then resumes with data', async () => {
     await configureLocalProtocol(feedHarnessProtocolV1);
     const payload = 'x'.repeat(1_048_577);
@@ -674,7 +750,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(status.quotaBlockedMessageCount).toBe(0);
   });
 
-  it('recovers a blocked-then-deleted record through the cidsOnly diff push path after a checkpoint reset', async () => {
+  it('recovers a blocked-then-deleted record through the complete-entry diff push path after a checkpoint reset', async () => {
     await configureLocalProtocol(feedHarnessProtocolV1);
     const blockedWrite = await writeLocalRecord({
       data         : 'initial data rejected while over quota, then deleted before recovery',
@@ -692,7 +768,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     // Delete the blocked record so its initial write is retained locally as
     // dataless ancestry, then clear the push checkpoint to simulate a
     // 410/history-compaction progress-gap reset. The next push must re-enumerate
-    // through the cidsOnly diff path (message-less feed entries) rather than the
+    // through the complete-entry diff path rather than the
     // incremental, message-bearing path exercised by the other recovery tests.
     await deleteLocalRecord(blockedWrite.message.recordId);
     const internal = syncEngine as unknown as {
@@ -705,8 +781,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
     link.push.contiguousAppliedToken = undefined;
     await internal.replicationLinkStore.persistCheckpoint(link, 'push');
 
-    // Quota is now available. Even though the diff enumeration omits the message,
-    // the tombstone must still stage its retained dataless initial ancestor so
+    // Quota is now available. The tombstone must still stage its retained
+    // dataless initial ancestor so
     // both entries apply together and the record converges — otherwise the page
     // halts on the tombstone's unresolvable missing-initial dependency and every
     // newer record behind it is head-of-line blocked forever.

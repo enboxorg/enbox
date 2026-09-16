@@ -56,6 +56,11 @@ export type SyncDurableFeedPageAdmissionResult =
 export type SyncDurableFeedPagePushResult =
   | { kind: 'aborted' }
   | {
+    kind: 'error';
+    error: unknown;
+    failedEntry: Pick<MessagesQueryReplyEntry, 'messageCid' | 'seq'>;
+  }
+  | {
     kind: 'failed';
     failedEntry: Pick<MessagesQueryReplyEntry, 'messageCid' | 'seq'>;
     failures: PushFailure[];
@@ -659,8 +664,11 @@ export class SyncDurableFeedReconciler {
       return { result: { aborted: true } };
     }
 
-    if (pageResult.kind === 'failed') {
+    if (pageResult.kind === 'error' || pageResult.kind === 'failed') {
       await this.commitPushPrefixProgress(link, cursor, reply, pageResult.failedEntry, target);
+      if (pageResult.kind === 'error') {
+        throw pageResult.error;
+      }
       return { result: { pushFailures: pageResult.failures } };
     }
 

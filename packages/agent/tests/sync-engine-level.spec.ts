@@ -615,6 +615,33 @@ describe('SyncEngineLevel', () => {
       expect(transition.called).toBe(false);
     });
 
+    it('attributes an unexpected feed push exception to the exact entry', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const entries = [
+        { seq: '1', messageCid: 'cid-1', isLatestBaseState: true },
+        { seq: '2', messageCid: 'cid-2', isLatestBaseState: true },
+      ];
+      const originalError = new Error('local quota store disconnected');
+      const pushFeedEntry = sinon.stub()
+        .onFirstCall().resolves({ acknowledged: [], succeeded: ['cid-1'], failed: [] })
+        .onSecondCall().rejects(originalError);
+      sinon.stub(internal, 'createRemoteApplyPushContext').returns({ pushFeedEntry });
+      sinon.stub(internal, 'hasDeadLetter').resolves(false);
+      sinon.stub(internal._quotaManager, 'getState').resolves(undefined);
+      sinon.stub(internal, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
+      sinon.stub(internal._quotaManager, 'applyPushResult').resolves({ retryableFailures: [] });
+
+      const result = await internal.pushLocalFeedPage(target, entries);
+
+      expect(result).toEqual({
+        kind        : 'error',
+        failedEntry : { messageCid: entries[1].messageCid, seq: entries[1].seq },
+        error       : originalError,
+      });
+      expect(pushFeedEntry.callCount).toBe(2);
+    });
+
     it('does not transition a permission-grant response after its link becomes stale in flight', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;

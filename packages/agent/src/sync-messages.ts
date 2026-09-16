@@ -34,7 +34,6 @@ import {
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { resolveDelegatePermissionGrantId } from './delegate-permission-grant.js';
-import { syncErrorMessage } from './sync-runtime-errors.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import {
   dependencyKey,
@@ -47,6 +46,7 @@ import {
 } from './sync-fetch-helpers.js';
 import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
 import { getRoleKey, orderMessagesForAdmission } from './sync-admission-order.js';
+import { isNonRetryableSyncAuthorizationFailure, syncErrorMessage } from './sync-runtime-errors.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
 const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
@@ -125,6 +125,23 @@ type FetchLocalMessageResult =
 type FetchDependencyResult =
   | { kind: 'fetched'; entries: SyncMessageEntry[] }
   | { kind: 'failed'; dependencyCid?: string; detail: string; localMissing?: boolean };
+
+function fetchFailureFromError(
+  error: unknown,
+  detail: string,
+  dependencyCid?: string,
+): FetchDependencyResult {
+  const errorDetail = syncErrorMessage(error);
+  if (isNonRetryableSyncAuthorizationFailure(errorDetail)) {
+    throw error;
+  }
+
+  return {
+    kind   : 'failed',
+    ...(dependencyCid === undefined ? {} : { dependencyCid }),
+    detail : `${detail}: ${errorDetail}`,
+  };
+}
 
 type PushEntryResult =
   | { kind: 'applied'; cid: string; resolution: PushSuccessResolution }
@@ -282,6 +299,7 @@ async function bufferSmallStreams(entries: SyncMessageEntry[], shouldContinue?: 
 
 function shouldReadStreamIntoBuffer(entry: SyncMessageEntry): boolean {
   return entry.dataStream !== undefined &&
+    entry.dataStreamConsumed !== true &&
     entry.bufferedData === undefined &&
     shouldBufferDataStream(entry);
 }
@@ -708,7 +726,9 @@ export class RemoteApplyPushContext {
     let rootResolution: PushSuccessResolution | undefined;
     for (let pass = 0; pass < MAX_ADMISSION_PASSES && pending.length > 0; pass++) {
       const retry: SyncMessageEntry[] = [];
-      for (const entry of orderMessagesForAdmission(pending)) {
+      const ordered = orderMessagesForAdmission(pending);
+      for (let index = 0; index < ordered.length; index++) {
+        const entry = ordered[index];
         const result = await this.pushEntry(rootCid, entry);
         switch (result.kind) {
           case 'applied':
@@ -720,6 +740,7 @@ export class RemoteApplyPushContext {
             retry.push(...result.entries);
             break;
           case 'failed':
+            await releaseUnusedPushPayloads([...retry, ...ordered.slice(index + 1)]);
             return { kind: 'failed', failure: result.failure };
         }
       }
@@ -727,6 +748,7 @@ export class RemoteApplyPushContext {
     }
 
     if (pending.length > 0) {
+      await releaseUnusedPushPayloads(pending);
       return {
         kind    : 'failed',
         failure : { cid: rootCid, kind: 'Incomplete', detail: 'remote dependency apply pass budget exhausted' },
@@ -947,31 +969,41 @@ export class RemoteApplyPushContext {
 
   private async fetchMissingDependencies(refs: DependencyRef[]): Promise<FetchDependencyResult> {
     const fetched: SyncMessageEntry[] = [];
-    for (const ref of refs) {
-      const key = dependencyKey(ref);
-      const cached = this.fetchedDependencyEntries.get(key);
-      if (cached !== undefined) {
-        fetched.push(...cached);
-        continue;
+    const staged = new Map<string, SyncMessageEntry[]>();
+    let committed = false;
+    try {
+      for (const ref of refs) {
+        const key = dependencyKey(ref);
+        const cached = this.fetchedDependencyEntries.get(key) ?? staged.get(key);
+        if (cached !== undefined) {
+          fetched.push(...cached);
+          continue;
+        }
+
+        let result: FetchDependencyResult;
+        try {
+          result = await this.fetchDependency(ref);
+        } catch (error: unknown) {
+          return fetchFailureFromError(error, `local dependency fetch failed for ${key}`);
+        }
+        if (result.kind === 'failed') {
+          return result;
+        }
+
+        staged.set(key, result.entries);
+        fetched.push(...result.entries);
       }
 
-      let result: FetchDependencyResult;
-      try {
-        result = await this.fetchDependency(ref);
-      } catch (error: unknown) {
-        return {
-          kind   : 'failed',
-          detail : `local dependency fetch failed for ${key}: ${syncErrorMessage(error)}`,
-        };
+      for (const [key, entries] of staged) {
+        this.fetchedDependencyEntries.set(key, entries);
       }
-      if (result.kind === 'failed') {
-        return result;
+      committed = true;
+      return { kind: 'fetched', entries: fetched };
+    } finally {
+      if (!committed) {
+        await releaseUnusedPushPayloads([...staged.values()].flat());
       }
-
-      this.fetchedDependencyEntries.set(key, result.entries);
-      fetched.push(...result.entries);
     }
-    return { kind: 'fetched', entries: fetched };
   }
 
   private async fetchDependency(ref: DependencyRef): Promise<FetchDependencyResult> {
@@ -1013,11 +1045,11 @@ export class RemoteApplyPushContext {
         agent              : this.deps.agent,
       });
     } catch (error: unknown) {
-      return {
-        kind          : 'failed',
-        dependencyCid : messageCid,
-        detail        : `local dependency message ${messageCid} read failed: ${syncErrorMessage(error)}`,
-      };
+      return fetchFailureFromError(
+        error,
+        `local dependency message ${messageCid} read failed`,
+        messageCid,
+      );
     }
     if (result.kind === 'missing') {
       return {
@@ -1056,7 +1088,6 @@ export class RemoteApplyPushContext {
 
     const config = newestProtocolConfig(protocolsReply.entries.filter(isTenantProtocolConfig(this.deps.did, protocol)));
     const entries = config === undefined ? [] : [{ message: config }];
-    await this.rememberEntries(entries);
     return { kind: 'fetched', entries };
   }
 
@@ -1156,7 +1187,6 @@ export class RemoteApplyPushContext {
       cursor = reply.cursor;
     }
 
-    await this.rememberEntries(entries);
     return { kind: 'fetched', entries };
   }
 
@@ -1300,11 +1330,11 @@ export class RemoteApplyPushContext {
         agent              : this.deps.agent,
       });
     } catch (error: unknown) {
-      return {
-        kind          : 'failed',
-        dependencyCid : payloadCid,
-        detail        : `local payload read failed for current ${source} ${payloadCid}: ${syncErrorMessage(error)}`,
-      };
+      return fetchFailureFromError(
+        error,
+        `local payload read failed for current ${source} ${payloadCid}`,
+        payloadCid,
+      );
     }
 
     if (hydrated.kind === 'missing') {
@@ -1329,12 +1359,6 @@ export class RemoteApplyPushContext {
     entry.dataStream = hydrated.entry.dataStream;
     entry.dataStreamFactory = hydrated.entry.dataStreamFactory;
     return { kind: 'fetched', entries: [entry] };
-  }
-
-  private async rememberEntries(entries: SyncMessageEntry[]): Promise<void> {
-    for (const entry of entries) {
-      await this.rememberEntry(entry);
-    }
   }
 
   /**
