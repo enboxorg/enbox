@@ -57,7 +57,7 @@ export type SyncMessageEntry = {
   dataStream?: ReadableStream<Uint8Array>;
   dataStreamConsumed?: boolean;
   dataStreamFactory?: () => Promise<ReadableStream<Uint8Array> | undefined>;
-  /** Source feed attestation. Latest RecordsWrite entries must carry data before apply. */
+  /** Source query/feed attestation. Latest RecordsWrite entries must carry data before apply. */
   isLatestBaseState?: boolean;
   /** Buffered data bytes for retry — avoids re-fetching from remote when stream is consumed. */
   bufferedData?: Uint8Array;
@@ -772,7 +772,7 @@ export class RemoteApplyPushContext {
       if (entry.isLatestBaseState === true && recordsWriteRequiresData(entry.message) && data === undefined) {
         return {
           kind    : 'failed',
-          failure : this.retryableFailure(rootCid, cid, 'required payload is unavailable for current feed message'),
+          failure : this.retryableFailure(rootCid, cid, 'required payload is unavailable for current message'),
         };
       }
       this.deps.onBeforeApply?.(cid);
@@ -866,7 +866,9 @@ export class RemoteApplyPushContext {
     const unacknowledgedDependencies: SyncMessageEntry[] = [];
     for (const dependency of dependencies.entries) {
       const dependencyCid = await this.rememberEntry(dependency);
-      if (!this.acknowledgementsByCid.has(dependencyCid)) {
+      if (this.acknowledgementsByCid.has(dependencyCid)) {
+        await releaseUnusedPushPayload(dependency);
+      } else {
         unacknowledgedDependencies.push(dependency);
       }
     }
@@ -1187,10 +1189,10 @@ export class RemoteApplyPushContext {
     for (const recordEntry of recordsQueryEntries) {
       const { encodedData, initialWrite, ...message } = recordEntry;
       if (initialWrite !== undefined) {
-        entries.push(await this.entryForRecordsQueryMessage(initialWrite));
+        entries.push(await this.entryForRecordsQueryMessage(initialWrite, false));
       }
 
-      entries.push(await this.entryForRecordsQueryMessage(message, encodedData));
+      entries.push(await this.entryForRecordsQueryMessage(message, true, encodedData));
     }
 
     const dedupedEntries = await dedupeSyncMessageEntries(entries);
@@ -1271,25 +1273,31 @@ export class RemoteApplyPushContext {
     return { kind: 'fetched', entries: [syncEntry] };
   }
 
-  private async entryForRecordsQueryMessage(message: GenericMessage, encodedData?: string): Promise<SyncMessageEntry> {
-    const entry: SyncMessageEntry = { message };
+  private async entryForRecordsQueryMessage(
+    message: GenericMessage,
+    isLatestBaseState: boolean,
+    encodedData?: string,
+  ): Promise<SyncMessageEntry> {
+    const entry: SyncMessageEntry = { message, isLatestBaseState };
     if (encodedData !== undefined) {
       entry.bufferedData = Encoder.base64UrlToBytes(encodedData);
       return entry;
     }
 
-    if (isRecordsWriteMessage(message) && message.descriptor.dataCid !== undefined) {
-      const messageCid = await getMessageCid(message);
-      const hydrated = await getLocalMessage({
-        author             : this.deps.did,
-        delegateDid        : this.deps.delegateDid,
-        permissionGrantIds : this.deps.permissionGrantIds,
-        messageCid,
-        agent              : this.deps.agent,
-      });
-      if (hydrated !== undefined) {
-        return hydrated;
-      }
+    if (!isLatestBaseState || !recordsWriteRequiresData(message)) {
+      return entry;
+    }
+
+    const messageCid = await getMessageCid(message);
+    const hydrated = await getLocalMessage({
+      author             : this.deps.did,
+      delegateDid        : this.deps.delegateDid,
+      permissionGrantIds : this.deps.permissionGrantIds,
+      messageCid,
+      agent              : this.deps.agent,
+    });
+    if (hydrated !== undefined) {
+      return { ...hydrated, isLatestBaseState };
     }
 
     return entry;

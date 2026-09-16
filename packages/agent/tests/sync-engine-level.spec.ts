@@ -566,7 +566,6 @@ describe('SyncEngineLevel', () => {
         }
       }
     });
-
   });
 
   describe('stale durable feed responses', () => {

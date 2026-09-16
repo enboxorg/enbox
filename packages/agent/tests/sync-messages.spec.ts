@@ -852,7 +852,7 @@ describe('sync-messages', () => {
       expect(failed.acknowledged).toEqual([{ cid: protocolCid, resolution: 'applied' }]);
       expect(failed.failed).toEqual([{
         cid    : messageCid,
-        detail : 'required payload is unavailable for current feed message',
+        detail : 'required payload is unavailable for current message',
       }]);
       expect(rootAttempts).toBe(1);
       expect(protocolAttempts).toBe(1);
@@ -899,6 +899,99 @@ describe('sync-messages', () => {
         detail : `local payload read returned no data for current feed message ${messageCid}`,
       }]);
       expect(applyStub.called).toBe(false);
+    });
+
+    it('should not settle a current RecordsQuery dependency until its payload is available', async () => {
+      const protocol = 'https://example.com/current-dependency-payload';
+      const payload = new Uint8Array(1_048_577);
+      payload[0] = 1;
+      payload[payload.length - 1] = 2;
+      const parent = await TestDataGenerator.generateRecordsWrite({ data: payload, protocol });
+      const root = await TestDataGenerator.generateRecordsWrite({ author: parent.author, protocol });
+      const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        author             : parent.author,
+        protocolDefinition : {
+          protocol,
+          published : false,
+          types     : { note: {} },
+          structure : { note: {} },
+        },
+      });
+      const parentCid = await Message.getCid(parent.message);
+      const protocolCid = await Message.getCid(protocolConfig.message);
+      const rootCid = await Message.getCid(root.message);
+      const messagesByCid = new Map<string, { message: any; data?: ReadableStream<Uint8Array> }>([
+        [rootCid, { message: root.message }],
+      ]);
+      let parentAttempts = 0;
+      let parentSettled = false;
+      let protocolAttempts = 0;
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid,
+        protocols         : [protocolConfig.message],
+        recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
+        applyResults      : async (message): Promise<ReplicationApplyResult> => {
+          const cid = await Message.getCid(message);
+          if (cid === parentCid) {
+            parentAttempts++;
+            if (parentAttempts === 1) {
+              messagesByCid.delete(parentCid);
+              return { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol }] };
+            }
+            parentSettled = true;
+            return { kind: 'Applied' };
+          }
+          if (cid === protocolCid) {
+            protocolAttempts++;
+            return { kind: 'Applied' };
+          }
+          return parentSettled
+            ? { kind: 'Applied' }
+            : {
+              kind    : 'Incomplete',
+              missing : [{ type: 'Parent', recordId: parent.message.recordId, protocol }],
+            };
+        },
+      });
+      const contextDeps = {
+        did    : parent.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      };
+
+      const missingPayload = await new RemoteApplyPushContext(contextDeps).push([rootCid]);
+
+      expect(missingPayload.succeeded).toEqual([]);
+      expect(missingPayload.failed).toEqual([expect.objectContaining({
+        cid           : rootCid,
+        dependencyCid : parentCid,
+        detail        : expect.stringContaining('required payload is unavailable'),
+      })]);
+      expect(parentAttempts).toBe(0);
+
+      messagesByCid.set(parentCid, { message: parent.message, data: streamFromBytes(payload) });
+      const consumedPayload = await new RemoteApplyPushContext(contextDeps).push([rootCid]);
+
+      expect(consumedPayload.succeeded).toEqual([]);
+      expect(consumedPayload.failed).toEqual([expect.objectContaining({
+        cid           : rootCid,
+        dependencyCid : parentCid,
+        detail        : expect.stringContaining('required payload is unavailable'),
+      })]);
+      expect(parentAttempts).toBe(1);
+      expect(protocolAttempts).toBe(1);
+
+      messagesByCid.set(parentCid, { message: parent.message, data: streamFromBytes(payload) });
+      const recovered = await new RemoteApplyPushContext(contextDeps).push([rootCid]);
+
+      expect(recovered).toMatchObject({ succeeded: [rootCid], failed: [] });
+      expect(parentAttempts).toBe(2);
+      expect(protocolAttempts).toBe(1);
+      const applyCids = await Promise.all(applyStub.getCalls().map(async ({ args }): Promise<string> =>
+        Message.getCid(args[0].message)));
+      const parentApply = applyStub.getCalls()[applyCids.lastIndexOf(parentCid)];
+      expect(parentApply).toBeDefined();
+      expect(await readStreamBytes(parentApply!.args[0].data as ReadableStream<Uint8Array>)).toEqual(payload);
     });
 
     it('should apply retained non-latest writes as data-less ancestry without reading payload data', async () => {
@@ -1009,6 +1102,51 @@ describe('sync-messages', () => {
       });
 
       expect(applyStub.calledOnce).toBe(true);
+      expect(cancel.calledOnce).toBe(true);
+    });
+
+    it('should cancel an acknowledged dependency payload that the remote still reports missing', async () => {
+      const protocol = 'https://example.com/acknowledged-dependency';
+      const payload = new TextEncoder().encode('acknowledged parent payload');
+      const parent = await TestDataGenerator.generateRecordsWrite({ data: payload, protocol });
+      const root = await TestDataGenerator.generateRecordsWrite({ author: parent.author, protocol });
+      const parentCid = await Message.getCid(parent.message);
+      const rootCid = await Message.getCid(root.message);
+      const cancel = sinon.spy();
+      const unusedStream = new ReadableStream<Uint8Array>({
+        cancel(): void {
+          cancel();
+        },
+      });
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid: new Map([[parentCid, {
+          message : parent.message,
+          data    : unusedStream,
+        }]]),
+        recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
+        applyResults      : async (message): Promise<ReplicationApplyResult> =>
+          await Message.getCid(message) === parentCid
+            ? { kind: 'Applied' }
+            : {
+              kind    : 'Incomplete',
+              missing : [{ type: 'Parent', recordId: parent.message.recordId, protocol }],
+            },
+      });
+      const context = new RemoteApplyPushContext({
+        did    : parent.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      expect((await context.pushEntries([{ message: parent.message, bufferedData: payload }])).failed).toEqual([]);
+      const result = await context.pushEntries([{ message: root.message }]);
+
+      expect(result.succeeded).toEqual([]);
+      expect(result.failed).toEqual([expect.objectContaining({
+        cid    : rootCid,
+        detail : expect.stringContaining('remote still reports acknowledged dependencies as missing'),
+      })]);
+      expect(applyStub.callCount).toBe(2);
       expect(cancel.calledOnce).toBe(true);
     });
 
@@ -1238,7 +1376,10 @@ describe('sync-messages', () => {
       const childCid = await Message.getCid(child.message);
       const appliedCids: string[] = [];
       const { agent, applyStub } = createLocalAgentFixture({
-        messagesByCid     : new Map([[childCid, { message: child.message, data: child.dataStream }]]),
+        messagesByCid: new Map([
+          [childCid, { message: child.message, data: child.dataStream }],
+          [parentCid, { message: parent.message, data: parent.dataStream }],
+        ]),
         protocols         : [protocolsConfigure.message],
         recordsByRecordId : new Map([
           [parent.message.recordId, [parent.message]],
@@ -1308,7 +1449,10 @@ describe('sync-messages', () => {
       const childCid = await Message.getCid(child.message);
       const appliedCids: string[] = [];
       const { agent, processRequestStub } = createLocalAgentFixture({
-        messagesByCid     : new Map([[childCid, { message: child.message, data: child.dataStream }]]),
+        messagesByCid: new Map([
+          [childCid, { message: child.message, data: child.dataStream }],
+          [parentCid, { message: parent.message, data: parent.dataStream }],
+        ]),
         protocols         : [protocolsConfigure.message],
         recordsByRecordId : new Map([
           [parent.message.recordId, [parent.message]],
@@ -1352,10 +1496,14 @@ describe('sync-messages', () => {
       });
       const initialCid = await Message.getCid(initial.message);
       const updateCid = await Message.getCid(update.message);
-      const { agent, applyStub } = createLocalAgentFixture({
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
         messagesByCid     : new Map([[updateCid, { message: update.message, data: update.dataStream }]]),
-        recordsByRecordId : new Map([[initial.message.recordId, [initial.message, update.message]]]),
-        applyResults      : [
+        recordsByRecordId : new Map([[initial.message.recordId, [{
+          ...update.message,
+          encodedData  : Encoder.bytesToBase64Url(update.dataBytes!),
+          initialWrite : initial.message,
+        }]]]),
+        applyResults: [
           { kind: 'Incomplete', missing: [{ type: 'InitialWrite', recordId: initial.message.recordId }] },
           { kind: 'Superseded' },
           { kind: 'Duplicate' },
@@ -1379,6 +1527,11 @@ describe('sync-messages', () => {
       });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([updateCid, initialCid, updateCid]);
+      expect(applyStub.secondCall.args[0].data).toBeUndefined();
+      expect(processRequestStub.withArgs(sinon.match({
+        messageParams : { messageCid: initialCid },
+        messageType   : DwnInterface.MessagesRead,
+      })).called).toBe(false);
     });
 
     it('should fetch an initial write before retrying a delete the remote has never seen', async () => {
@@ -1390,7 +1543,10 @@ describe('sync-messages', () => {
       const initialCid = await Message.getCid(initial.message);
       const deleteCid = await Message.getCid(recordsDelete.message);
       const { agent, applyStub } = createLocalAgentFixture({
-        messagesByCid     : new Map([[deleteCid, { message: recordsDelete.message }]]),
+        messagesByCid: new Map([
+          [deleteCid, { message: recordsDelete.message }],
+          [initialCid, { message: initial.message, data: initial.dataStream }],
+        ]),
         recordsByRecordId : new Map([[initial.message.recordId, [initial.message]]]),
         applyResults      : [
           { kind: 'Incomplete', missing: [{ type: 'InitialWrite', recordId: initial.message.recordId }] },
@@ -1417,7 +1573,10 @@ describe('sync-messages', () => {
       const rootCid = await Message.getCid(root.message);
       const grantCid = await Message.getCid(grant.message);
       const { agent, applyStub } = createLocalAgentFixture({
-        messagesByCid     : new Map([[rootCid, { message: root.message }]]),
+        messagesByCid: new Map([
+          [rootCid, { message: root.message }],
+          [grantCid, { message: grant.message, data: grant.dataStream }],
+        ]),
         recordsByRecordId : new Map([[grant.message.recordId, [grant.message]]]),
         applyResults      : [
           { kind: 'Incomplete', missing: [{ type: 'Grant', permissionGrantId: grant.message.recordId }] },
@@ -1636,7 +1795,10 @@ describe('sync-messages', () => {
         contextId: contextPrefix,
       };
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
-        messagesByCid   : new Map([[rootCid, { message: root.message }]]),
+        messagesByCid: new Map([
+          [rootCid, { message: root.message }],
+          [roleCid, { message: role.message, data: role.dataStream }],
+        ]),
         recordsByFilter : new Map([[filterKey(roleFilter), [role.message]]]),
         applyResults    : [
           { kind: 'Incomplete', missing: [{ type: 'Role', protocol, protocolPath, recipient, contextPrefix }] },
@@ -1669,7 +1831,10 @@ describe('sync-messages', () => {
       const rootCid = await Message.getCid(root.message);
       const referencedCid = await Message.getCid(referenced.message);
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
-        messagesByCid     : new Map([[rootCid, { message: root.message }]]),
+        messagesByCid: new Map([
+          [rootCid, { message: root.message }],
+          [referencedCid, { message: referenced.message, data: referenced.dataStream }],
+        ]),
         recordsByRecordId : new Map([[referenced.message.recordId, [referenced.message]]]),
         applyResults      : [
           { kind: 'Incomplete', missing: [{ type: 'CrossProtocolRef', protocol: referencedProtocol, recordId: referenced.message.recordId }] },

@@ -4373,7 +4373,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const quotaBlockedInitialCids = await this.getQuotaBlockedInitialCidsForFeedEntry(target, entry);
-    const result = await pushContext.pushFeedEntry(entry, [...quotaBlockedInitialCids]);
+    const result = await pushContext.pushFeedEntry(entry, quotaBlockedInitialCids);
     if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
       return { kind: 'aborted' };
     }
