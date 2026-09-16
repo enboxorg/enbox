@@ -33,3 +33,19 @@ export class ConnectDeniedError extends Error {
 export function isConnectDeniedError(error: unknown): error is ConnectDeniedError {
   return error instanceof ConnectDeniedError;
 }
+
+/**
+ * Signals that a password provider cannot run in the current environment.
+ *
+ * {@link PasswordProvider.chain} only advances to the next provider for this
+ * error. Cancellation, credential failures, and unexpected errors stop the
+ * chain so they cannot be hidden by a different authorization method.
+ */
+export class PasswordProviderUnavailableError extends Error {
+  public readonly code = 'PASSWORD_PROVIDER_UNAVAILABLE';
+
+  constructor(message = '[@enbox/auth] Password provider is unavailable.') {
+    super(message);
+    this.name = 'PasswordProviderUnavailableError';
+  }
+}

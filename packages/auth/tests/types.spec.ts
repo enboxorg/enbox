@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ConnectDeniedError, isConnectDeniedError, isRecoveryPhraseMismatchError, RecoveryPhraseMismatchError } from '../src/errors.js';
+import {
+  ConnectDeniedError,
+  isConnectDeniedError,
+  isRecoveryPhraseMismatchError,
+  PasswordProviderUnavailableError,
+  RecoveryPhraseMismatchError,
+} from '../src/errors.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../src/types.js';
 
 describe('types constants', () => {
@@ -45,5 +51,22 @@ describe('ConnectDeniedError', () => {
     expect(isConnectDeniedError(new RecoveryPhraseMismatchError())).toBe(false);
     expect(isConnectDeniedError(undefined)).toBe(false);
     expect(isConnectDeniedError('denied')).toBe(false);
+  });
+});
+
+describe('PasswordProviderUnavailableError', () => {
+  test('should carry the default unavailable message, name, and code', () => {
+    const error = new PasswordProviderUnavailableError();
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe('PasswordProviderUnavailableError');
+    expect(error.code).toBe('PASSWORD_PROVIDER_UNAVAILABLE');
+    expect(error.message).toBe('[@enbox/auth] Password provider is unavailable.');
+  });
+
+  test('should preserve a caller-supplied message', () => {
+    const error = new PasswordProviderUnavailableError('Passkeys are not supported.');
+
+    expect(error.message).toBe('Passkeys are not supported.');
   });
 });

@@ -74,6 +74,12 @@ entry. Browser apps should pass a password directly, import
 `PasswordProvider.fromCallback()` from `@enbox/auth/browser`, or collect
 credentials through their own UI.
 
+`PasswordProvider.chain()` only tries the next provider when the current one
+throws `PasswordProviderUnavailableError` (exported by both auth entrypoints).
+Custom providers should use that error when a capability is absent.
+Cancellation, invalid credentials, and unexpected failures should throw their
+original error so authorization stops instead of silently switching methods.
+
 ## License
 
 Apache-2.0

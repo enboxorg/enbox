@@ -7,7 +7,13 @@
 export { AuthManager } from './auth-manager.js';
 export { AuthSession } from './identity-session.js';
 export { AuthEventEmitter } from './events.js';
-export { ConnectDeniedError, RecoveryPhraseMismatchError, isConnectDeniedError, isRecoveryPhraseMismatchError } from './errors.js';
+export {
+  ConnectDeniedError,
+  PasswordProviderUnavailableError,
+  RecoveryPhraseMismatchError,
+  isConnectDeniedError,
+  isRecoveryPhraseMismatchError,
+} from './errors.js';
 
 export { processConnectedGrants } from './connect/wallet.js';
 export {
