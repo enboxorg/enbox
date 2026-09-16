@@ -284,7 +284,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
   });
 
-  it('reads and delivers a shared parent payload once when it later appears in the same feed page', async () => {
+  it('persists the settled prefix when a shared-parent payload read rejects, then delivers it once', async () => {
     await configureLocalProtocol(feedHarnessProtocolV1);
     await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
     await syncEngine.sync('push');
@@ -299,6 +299,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
 
+    const firstSettled = await writeLocalRecord({
+      data         : 'settled before dependency read failure A',
+      protocolPath : 'note',
+      schema       : feedHarnessProtocolV1.types.note.schema,
+    });
+    const secondSettled = await writeLocalRecord({
+      data         : 'settled before dependency read failure B',
+      protocolPath : 'note',
+      schema       : feedHarnessProtocolV1.types.note.schema,
+    });
     const child = await writeLocalRecord({
       data            : 'child that discovers the shared parent',
       parentContextId : parent.message.contextId,
@@ -308,22 +318,73 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const updatedParentData = 'p'.repeat(900_001);
     const updatedParent = await updateLocalRecord(parent.message, updatedParentData);
     const updatedParentCid = await Message.getCid(updatedParent.message);
+    const firstSettledCid = await Message.getCid(firstSettled.message);
+    const secondSettledCid = await Message.getCid(secondSettled.message);
+
+    const localFeed = await queryLocalMessageFeed({
+      did      : tenantDid,
+      filters  : [{ protocol: feedHarnessProtocolV1.protocol }],
+      cidsOnly : true,
+      limit    : 100,
+      agent    : testHarness.agent,
+    });
+    const secondSettledFeedEntry = localFeed.entries?.find(({ messageCid }) => messageCid === secondSettledCid);
+    expect(secondSettledFeedEntry).toBeDefined();
+    expect(localFeed.cursor).toBeDefined();
 
     gate.allow();
-    const processRequest = sinon.spy(testHarness.agent.dwn, 'processRequest');
+    const originalProcessRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
+    let rejectParentPayloadRead = true;
+    let parentPayloadReadAttempts = 0;
+    sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async (request: any) => {
+      if (
+        request.messageType === DwnInterface.MessagesRead &&
+        request.messageParams.messageCid === updatedParentCid
+      ) {
+        parentPayloadReadAttempts++;
+        if (rejectParentPayloadRead) {
+          throw new Error('local DWN connection lost while reading shared parent');
+        }
+      }
+      return originalProcessRequest(request);
+    });
     const remoteApply = sinon.spy(testHarness.agent.rpc, 'applyReplicatedMessage');
+    sinon.stub(console, 'error');
 
+    await expect(syncEngine.sync('push')).rejects.toThrow('Sync operation failed');
+
+    expect(await readRemoteRecordText(firstSettled.message.recordId)).toBe('settled before dependency read failure A');
+    expect(await readRemoteRecordText(secondSettled.message.recordId)).toBe('settled before dependency read failure B');
+    await expectRemoteRecordCount(child.message.recordId, 0);
+
+    const internal = syncEngine as unknown as {
+      getSyncTargets(): Promise<any[]>;
+      getOrCreateReplicationLink(target: any): Promise<any>;
+    };
+    const [target] = await internal.getSyncTargets();
+    const failedLink = await internal.getOrCreateReplicationLink(target);
+    expect(failedLink.push.contiguousAppliedToken).toEqual({
+      epoch      : localFeed.cursor!.epoch,
+      messageCid : secondSettledCid,
+      position   : secondSettledFeedEntry!.seq,
+      streamId   : localFeed.cursor!.streamId,
+    });
+
+    rejectParentPayloadRead = false;
     await syncEngine.sync('push');
 
     expect(gate.attempts()).toBe(2);
-    const parentPayloadReads = processRequest.getCalls().filter(({ args }) =>
-      args[0].messageType === DwnInterface.MessagesRead &&
-      args[0].messageParams.messageCid === updatedParentCid);
-    expect(parentPayloadReads).toHaveLength(1);
+    expect(parentPayloadReadAttempts).toBe(2);
+
+    const applyCids = await Promise.all(remoteApply.getCalls().map(async ({ args }): Promise<string> =>
+      Message.getCid(args[0].message as GenericMessage)));
+    expect(applyCids.filter((cid) => cid === firstSettledCid)).toHaveLength(1);
+    expect(applyCids.filter((cid) => cid === secondSettledCid)).toHaveLength(1);
 
     const updatedParentApplies: ReplicationApplyResult[] = [];
-    for (const call of remoteApply.getCalls()) {
-      if (await Message.getCid(call.args[0].message as GenericMessage) === updatedParentCid) {
+    for (let index = 0; index < remoteApply.callCount; index++) {
+      const call = remoteApply.getCall(index);
+      if (applyCids[index] === updatedParentCid) {
         updatedParentApplies.push(await call.returnValue);
       }
     }

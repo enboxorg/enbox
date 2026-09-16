@@ -120,11 +120,11 @@ type FeedCursorAdvanceResult =
   | { drained: true }
   | { cursor: ProgressToken; drained: false };
 
-type ProcessPullPageResult =
+type ProcessFeedPageResult =
   | { nextCursor: ProgressToken }
   | { result: SyncDurableFeedReconcileResult };
 
-type ProcessPullPageParams = {
+type ProcessFeedPageParams = {
   cursor: ProgressToken | undefined;
   entries: MessagesQueryReplyEntry[];
   knownCids?: Set<string>;
@@ -461,21 +461,18 @@ export class SyncDurableFeedReconciler {
       }
 
       SyncDurableFeedReconciler.assertQuerySucceeded(reply, target, 'push');
-      const pageResult = await this._operations.pushLocalPage(target, reply.entries ?? [], shouldContinue);
-      if (pageResult.kind === 'aborted') {
-        return { aborted: true };
+      const result = await this.processPushPage({
+        target,
+        cursor,
+        entries: reply.entries ?? [],
+        link,
+        reply,
+        shouldContinue,
+      });
+      if ('result' in result) {
+        return result.result;
       }
-
-      if (pageResult.kind === 'failed') {
-        await this.commitPushPrefixProgress(link, cursor, reply, pageResult.failedEntry, target);
-        return { pushFailures: pageResult.failures };
-      }
-
-      const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
-      if (cursorAdvance.drained) {
-        return { localFingerprint: reply.fingerprint, pushFailures: [] };
-      }
-      cursor = cursorAdvance.cursor;
+      cursor = result.nextCursor;
     }
   }
 
@@ -537,24 +534,19 @@ export class SyncDurableFeedReconciler {
 
       SyncDurableFeedReconciler.assertQuerySucceeded(reply, target, 'push');
       const missingEntries = SyncDurableFeedReconciler.entriesMissingFrom(remoteCids, reply.entries ?? []);
-      const pageResult = await this._operations.pushLocalPage(target, missingEntries, shouldContinue);
-      if (pageResult.kind === 'aborted') {
-        return { aborted: true };
+      const result = await this.processPushPage({
+        target,
+        cursor,
+        entries   : missingEntries,
+        knownCids : remoteCids,
+        link,
+        reply,
+        shouldContinue,
+      });
+      if ('result' in result) {
+        return result.result;
       }
-
-      if (pageResult.kind === 'failed') {
-        await this.commitPushPrefixProgress(link, cursor, reply, pageResult.failedEntry, target);
-        return { pushFailures: pageResult.failures };
-      }
-      for (const entry of missingEntries) {
-        remoteCids.add(entry.messageCid);
-      }
-
-      const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
-      if (cursorAdvance.drained) {
-        return { localFingerprint: reply.fingerprint, pushFailures: [] };
-      }
-      cursor = cursorAdvance.cursor;
+      cursor = result.nextCursor;
     }
   }
 
@@ -617,7 +609,7 @@ export class SyncDurableFeedReconciler {
     reply,
     shouldContinue,
     target,
-  }: ProcessPullPageParams): Promise<ProcessPullPageResult> {
+  }: ProcessFeedPageParams): Promise<ProcessFeedPageResult> {
     const pageResult = await this._operations.admitRemotePage(target, entries, shouldContinue);
     if (pageResult.kind === 'aborted') {
       return { result: { aborted: true } };
@@ -648,6 +640,39 @@ export class SyncDurableFeedReconciler {
           remoteFingerprint : reply.fingerprint,
         },
       };
+    }
+    return { nextCursor: cursorAdvance.cursor };
+  }
+
+  /** Push one local page and persist either its settled prefix or full progress. */
+  private async processPushPage({
+    cursor,
+    entries,
+    knownCids,
+    link,
+    reply,
+    shouldContinue,
+    target,
+  }: ProcessFeedPageParams): Promise<ProcessFeedPageResult> {
+    const pageResult = await this._operations.pushLocalPage(target, entries, shouldContinue);
+    if (pageResult.kind === 'aborted') {
+      return { result: { aborted: true } };
+    }
+
+    if (pageResult.kind === 'failed') {
+      await this.commitPushPrefixProgress(link, cursor, reply, pageResult.failedEntry, target);
+      return { result: { pushFailures: pageResult.failures } };
+    }
+
+    if (knownCids !== undefined) {
+      for (const entry of entries) {
+        knownCids.add(entry.messageCid);
+      }
+    }
+
+    const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
+    if (cursorAdvance.drained) {
+      return { result: { localFingerprint: reply.fingerprint, pushFailures: [] } };
     }
     return { nextCursor: cursorAdvance.cursor };
   }

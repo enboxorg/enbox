@@ -965,7 +965,9 @@ describe('sync-messages', () => {
       expect(missingPayload.failed).toEqual([expect.objectContaining({
         cid           : rootCid,
         dependencyCid : parentCid,
-        detail        : expect.stringContaining('required payload is unavailable'),
+        detail        : expect.stringContaining(
+          `local payload read failed for current RecordsQuery dependency ${parentCid}: 404 not found`,
+        ),
       })]);
       expect(parentAttempts).toBe(0);
 
@@ -992,6 +994,42 @@ describe('sync-messages', () => {
       const parentApply = applyStub.getCalls()[applyCids.lastIndexOf(parentCid)];
       expect(parentApply).toBeDefined();
       expect(await readStreamBytes(parentApply!.args[0].data as ReadableStream<Uint8Array>)).toEqual(payload);
+    });
+
+    it('should return a retryable failure when a queried dependency payload read rejects', async () => {
+      const protocol = 'https://example.com/rejected-dependency-payload-read';
+      const parent = await TestDataGenerator.generateRecordsWrite({ protocol });
+      const root = await TestDataGenerator.generateRecordsWrite({ author: parent.author, protocol });
+      const parentCid = await Message.getCid(parent.message);
+      const rootCid = await Message.getCid(root.message);
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid     : new Map([[rootCid, { message: root.message }]]),
+        recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
+        applyResults      : [{
+          kind    : 'Incomplete',
+          missing : [{ type: 'Parent', recordId: parent.message.recordId, protocol }],
+        }],
+      });
+      processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid: parentCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).callsFake(async (): Promise<never> => {
+        throw new Error('local DWN transport disconnected');
+      });
+
+      const result = await new RemoteApplyPushContext({
+        did    : parent.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      }).push([rootCid]);
+
+      expect(result.succeeded).toEqual([]);
+      expect(result.failed).toEqual([expect.objectContaining({
+        cid           : rootCid,
+        dependencyCid : parentCid,
+        detail        : expect.stringContaining('local DWN transport disconnected'),
+      })]);
+      expect(applyStub.calledOnce).toBe(true);
     });
 
     it('should apply retained non-latest writes as data-less ancestry without reading payload data', async () => {
@@ -1105,7 +1143,7 @@ describe('sync-messages', () => {
       expect(cancel.calledOnce).toBe(true);
     });
 
-    it('should cancel an acknowledged dependency payload that the remote still reports missing', async () => {
+    it('should not open an acknowledged dependency payload that the remote still reports missing', async () => {
       const protocol = 'https://example.com/acknowledged-dependency';
       const payload = new TextEncoder().encode('acknowledged parent payload');
       const parent = await TestDataGenerator.generateRecordsWrite({ data: payload, protocol });
@@ -1118,7 +1156,7 @@ describe('sync-messages', () => {
           cancel();
         },
       });
-      const { agent, applyStub } = createLocalAgentFixture({
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
         messagesByCid: new Map([[parentCid, {
           message : parent.message,
           data    : unusedStream,
@@ -1147,7 +1185,11 @@ describe('sync-messages', () => {
         detail : expect.stringContaining('remote still reports acknowledged dependencies as missing'),
       })]);
       expect(applyStub.callCount).toBe(2);
-      expect(cancel.calledOnce).toBe(true);
+      expect(processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid: parentCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).called).toBe(false);
+      expect(cancel.called).toBe(false);
     });
 
     it('should report transport failures in PushResult.failed instead of throwing', async () => {
