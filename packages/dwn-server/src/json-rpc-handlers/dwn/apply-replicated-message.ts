@@ -1,11 +1,11 @@
-import type { JsonRpcHandler } from '../../lib/json-rpc-router.js';
 import type { GenericMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type { HandlerResponse, JsonRpcHandler } from '../../lib/json-rpc-router.js';
 
 import log from 'loglevel';
 
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
-import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder } from '@enbox/dwn-sdk-js';
+import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { enforceQuota, enforceTenantRateLimit, validateInboundDwnMessageTransport } from './inbound-message.js';
 
@@ -14,7 +14,12 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   context,
 ) => {
   const { dwn, dataStream } = context;
-  const { encodedData, target, message } = dwnRequest.params as { encodedData?: string, target: string, message: GenericMessage };
+  const { ancestryOnly, encodedData, target, message } = dwnRequest.params as {
+    ancestryOnly?: unknown;
+    encodedData?: string;
+    target: string;
+    message: GenericMessage;
+  };
   const requestId = dwnRequest.id ?? crypto.randomUUID();
   if ((message as { encodedData?: unknown }).encodedData !== undefined) {
     return {
@@ -28,10 +33,21 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   const hasInboundData = encodedData !== undefined || dataStream !== undefined;
 
   try {
+    const ancestryResult = await validateAncestryOnlyRequest({
+      ancestryOnly,
+      hasInboundData,
+      message,
+      requestId,
+    });
+    if (ancestryResult !== undefined) {
+      return ancestryResult;
+    }
+
     const transportResult = validateInboundDwnMessageTransport({
-      allowRecordsWriteOverNonHttp : true,
+      allowDatalessRecordsWriteOverNonHttp : ancestryOnly === true,
+      allowRecordsWriteOverNonHttp         : true,
       context,
-      hasEncodedData               : encodedData !== undefined,
+      hasEncodedData                       : encodedData !== undefined,
       message,
       requestId,
       target,
@@ -97,6 +113,58 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     };
   }
 };
+
+async function validateAncestryOnlyRequest({
+  ancestryOnly,
+  hasInboundData,
+  message,
+  requestId,
+}: {
+  ancestryOnly: unknown;
+  hasInboundData: boolean;
+  message: GenericMessage;
+  requestId: Parameters<typeof createJsonRpcErrorResponse>[0];
+}): Promise<HandlerResponse | undefined> {
+  const descriptor = message?.descriptor as {
+    dataCid?: unknown;
+    dataSize?: unknown;
+    interface?: unknown;
+    method?: unknown;
+  } | undefined;
+  const isDataBearingWrite = descriptor?.interface === DwnInterfaceName.Records &&
+    descriptor.method === DwnMethodName.Write &&
+    typeof descriptor.dataCid === 'string' &&
+    typeof descriptor.dataSize === 'number' &&
+    descriptor.dataSize >= 0;
+
+  if (ancestryOnly !== undefined && ancestryOnly !== true) {
+    return invalidAncestryOnlyResponse(requestId, 'ancestryOnly must be true when present');
+  }
+  if (ancestryOnly === true) {
+    let isInitialWrite = false;
+    try {
+      isInitialWrite = isDataBearingWrite && await RecordsWrite.isInitialWrite(message);
+    } catch {
+      // Malformed messages carrying the marker are invalid input, not server failures.
+    }
+    if (!isInitialWrite || hasInboundData) {
+      return invalidAncestryOnlyResponse(
+        requestId,
+        'ancestryOnly requires a data-less initial RecordsWrite with a payload descriptor',
+      );
+    }
+    return undefined;
+  }
+}
+
+function invalidAncestryOnlyResponse(
+  requestId: Parameters<typeof createJsonRpcErrorResponse>[0],
+  message: string,
+): HandlerResponse {
+  return {
+    jsonRpcResponse: createJsonRpcErrorResponse(requestId, JsonRpcErrorCodes.InvalidParams, message),
+  };
+}
 
 function getDataStreamForApply({
   dataStream,

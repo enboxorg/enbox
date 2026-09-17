@@ -174,6 +174,9 @@ export type DwnRpcRequest = {
  * server-side replication entry point.
  */
 export type DwnReplicationApplyRequest = {
+  /** Explicitly identifies a retained non-latest initial RecordsWrite whose payload was discarded. */
+  ancestryOnly?: true;
+
   /** Optional data to be sent with the request. */
   data?: any;
 

@@ -516,6 +516,41 @@ describe('WebSocketDwnRpcClient', () => {
         }
       });
 
+      it('sends an explicit ancestry-only apply without record data', async () => {
+        const requests: any[] = [];
+        const socket = {
+          request: async (request: any): Promise<any> => {
+            requests.push(request);
+            return {
+              jsonrpc : '2.0',
+              id      : request.id,
+              result  : { result: { kind: 'Applied', ancestryOnly: true } },
+            };
+          },
+        };
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
+        (WebSocketDwnRpcClient as any)['connections'].set(connectionKey, {
+          socket,
+          subscriptions : new Map(),
+          url           : socketDwnUrl,
+        });
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        (client.getServerInfo as sinon.SinonStub).resetHistory();
+
+        const result = await client.applyReplicatedMessage({
+          ancestryOnly : true,
+          dwnUrl       : socketDwnUrl,
+          targetDid    : alice.did,
+          message,
+        });
+
+        expect(result).toEqual({ kind: 'Applied', ancestryOnly: true });
+        expect(requests).toHaveLength(1);
+        expect(requests[0].params.ancestryOnly).toBe(true);
+        expect(requests[0].params.encodedData).toBeUndefined();
+        expect((client.getServerInfo as sinon.SinonStub).called).toBe(false);
+      });
+
       it('uses the server advertised raw record limit for replicated apply WebSocket framing', async () => {
         (client.getServerInfo as sinon.SinonStub).resolves(testServerInfo(2));
         const data = new Uint8Array([1, 2, 3, 4, 5]);

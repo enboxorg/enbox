@@ -61,6 +61,79 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
+  it('accepts an explicitly ancestry-only initial RecordsWrite over WebSocket', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const { recordsWrite } = await createRecordsWriteMessage(alice);
+    const requestId = crypto.randomUUID();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      ancestryOnly : true,
+      message      : recordsWrite.toJSON(),
+      target       : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport: 'ws',
+    });
+
+    expect(jsonRpcResponse.error).toBeUndefined();
+    expect(jsonRpcResponse.result.result).toEqual(expect.objectContaining({
+      kind         : 'Applied',
+      ancestryOnly : true,
+    }));
+    await dwn.close();
+  });
+
+  it('rejects ancestryOnly for a non-initial RecordsWrite before applying it', async () => {
+    const initial = await TestDataGenerator.generateRecordsWrite();
+    const update = await TestDataGenerator.generateFromRecordsWrite({
+      author        : initial.author,
+      existingWrite : initial.recordsWrite,
+    });
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      ancestryOnly : true,
+      message      : update.message,
+      target       : initial.author.did,
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage');
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport: 'ws',
+    });
+
+    expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error?.message).toContain('data-less initial RecordsWrite');
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('rejects ancestryOnly when record data is also present', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([1, 2, 3]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      ancestryOnly : true,
+      encodedData  : Encoder.bytesToBase64Url(data),
+      message      : recordsWrite.toJSON(),
+      target       : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage');
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport: 'ws',
+    });
+
+    expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
   it('decodes encoded RecordsWrite data over non-HTTP transports', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const dataBytes = new Uint8Array(1_048_577);

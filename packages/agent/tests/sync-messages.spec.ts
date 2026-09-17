@@ -1275,6 +1275,35 @@ describe('sync-messages', () => {
       expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).called).toBe(false);
       expect(applyStub.calledOnce).toBe(true);
       expect(applyStub.firstCall.args[0].data).toBeUndefined();
+      expect(applyStub.firstCall.args[0].ancestryOnly).toBe(true);
+    });
+
+    it('should keep retained non-initial writes on the legacy data-less path', async () => {
+      const initial = await TestDataGenerator.generateRecordsWrite();
+      const update = await TestDataGenerator.generateFromRecordsWrite({
+        author        : initial.author,
+        existingWrite : initial.recordsWrite,
+      });
+      const messageCid = await Message.getCid(update.message);
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [{ kind: 'Superseded' }],
+      });
+      const context = new RemoteApplyPushContext({
+        did    : initial.author.did,
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      });
+
+      expect(await context.pushFeedEntry({
+        isLatestBaseState : false,
+        message           : update.message,
+        messageCid,
+        seq               : '1',
+      }, [])).toMatchObject({ succeeded: [messageCid], failed: [] });
+      expect(applyStub.calledOnce).toBe(true);
+      expect(applyStub.firstCall.args[0].data).toBeUndefined();
+      expect(applyStub.firstCall.args[0].ancestryOnly).toBeUndefined();
     });
 
     it('should not reopen or resend a payload when a dependency later appears in the feed', async () => {
