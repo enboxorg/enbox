@@ -1062,11 +1062,12 @@ export interface SyncEngine {
   getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]>;
 
   /**
-   * Immediately re-probe a remote's quota-blocked messages instead of waiting
-   * for the backoff. Runs targeted, per-link probes for
-   * `(tenantDid, remoteEndpoint)`, so a UI "Retry now" button (or a freshly
-   * purchased quota) resumes without touching unrelated remotes. No-op when
-   * nothing is blocked.
+   * Immediately retry a remote's recoverable link repairs and quota-blocked
+   * messages instead of waiting for their next scheduled checks. Runs
+   * targeted, per-link work for `(tenantDid, remoteEndpoint)`, so a UI
+   * "Retry now" button (or a freshly purchased quota) resumes without touching
+   * unrelated remotes. Deliberate authorization pauses remain parked. No-op
+   * when nothing is retryable.
    */
   retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void>;
 }

@@ -9,9 +9,10 @@ import { Level } from 'level';
 import { runWithCrossContextLock } from '@enbox/common';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
+import { buildLinkKey } from '../src/sync-link-key.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
-import { SyncRunCancelledError } from '../src/sync-runtime-errors.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
+import { SyncPushFailuresError, SyncRunCancelledError } from '../src/sync-runtime-errors.js';
 
 import { deferred as createDeferred } from './utils/deferred.js';
 
@@ -637,6 +638,397 @@ describe('SyncEngineLevel lifecycle', () => {
     await closePromise;
 
     expect(db.status).toBe('closed');
+  });
+
+  it('should recover exhausted durable repairs through sync, settle, and explicit retry', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const tenantDid = 'did:example:repair-retry';
+    const remoteEndpoint = 'https://repair.example.com';
+    const link = await internal.replicationLinkStore.getOrCreateLink({
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      remoteEndpoint,
+      scope              : { kind: 'full' },
+      tenantDid,
+    });
+    const target: SyncTarget = {
+      authorization      : link.authorization,
+      authorizationEpoch : link.authorizationEpoch,
+      did                : link.tenantDid,
+      dwnUrl             : link.remoteEndpoint,
+      projectionId       : link.projectionId,
+      scope              : link.scope,
+    };
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    internal._runtime = new SyncRuntime(true);
+    const controller = internal.activateLink(linkKey, link);
+    const getStoredLink = async (): Promise<ReplicationLinkState | undefined> =>
+      (await internal.replicationLinkStore.getAllLinks()).find(
+        (storedLink: ReplicationLinkState) => storedLink.tenantDid === tenantDid,
+      );
+    sinon.stub(internal, 'getSyncTargets').resolves([target]);
+    sinon.stub(internal, 'openLivePullSubscription').resolves(true);
+    sinon.stub(internal, 'openLocalPushSubscription').resolves(true);
+    sinon.stub(internal, 'verifyFeedConvergence').resolves({ converged: true });
+    const reconcile = sinon.stub(internal, 'reconcileOwnedTarget');
+    const offline = new Error('offline');
+    for (const call of [0, 1, 2, 4, 5, 6, 8, 9, 10]) {
+      reconcile.onCall(call).rejects(offline);
+    }
+    reconcile.onCall(3).resolves({ converged: true });
+    reconcile.onCall(7).resolves({ converged: true });
+    reconcile.onCall(11).resolves({ converged: true });
+    sinon.stub(console, 'error');
+    sinon.stub(console, 'warn');
+
+    const exhaustRepair = async (): Promise<void> => {
+      await internal._linkRecoveryCoordinator.transitionToRepairing(controller);
+      expect(await internal._lifecycle.waitForBackgroundTasks()).toBe(true);
+      await clock.tickAsync(1_000);
+      expect(await internal._lifecycle.waitForBackgroundTasks()).toBe(true);
+      await clock.tickAsync(3_000);
+      expect(await internal._lifecycle.waitForBackgroundTasks()).toBe(true);
+      expect(controller.link.status).toBe('repairing');
+      expect(controller.link.recovery).toMatchObject({ error: 'offline' });
+      expect(controller.link.recovery?.nextRetryAt).toBeUndefined();
+    };
+
+    await exhaustRepair();
+    expect(reconcile.callCount).toBe(3);
+    expect(await getStoredLink()).toMatchObject({
+      recovery : { error: 'offline' },
+      status   : 'repairing',
+    });
+
+    await engine.sync();
+    expect(reconcile.callCount).toBe(4);
+    expect(controller.link.status).toBe('live');
+    expect((await getStoredLink())?.recovery).toBeUndefined();
+
+    await exhaustRepair();
+    expect(reconcile.callCount).toBe(7);
+    await internal.runSettleCheck(internal._runtime);
+    expect(reconcile.callCount).toBe(8);
+    expect(controller.link.status).toBe('live');
+    expect((await getStoredLink())?.recovery).toBeUndefined();
+
+    await exhaustRepair();
+    expect(reconcile.callCount).toBe(11);
+    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
+    expect(reconcile.callCount).toBe(12);
+    expect(controller.link.status).toBe('live');
+    expect((await getStoredLink())?.recovery).toBeUndefined();
+
+    await engine.close();
+  });
+
+  it('should stop a drain-triggered repair before reopening subscriptions after cancellation', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const tenantDid = 'did:example:cancel-repair';
+    const remoteEndpoint = 'https://cancel-repair.example.com';
+    const link = await internal.replicationLinkStore.getOrCreateLink({
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      remoteEndpoint,
+      scope              : { kind: 'full' },
+      tenantDid,
+    });
+    await internal.replicationLinkStore.setRecovery(link, {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    });
+    await internal.replicationLinkStore.setStatus(link, 'repairing');
+    const target: SyncTarget = {
+      authorization      : link.authorization,
+      authorizationEpoch : link.authorizationEpoch,
+      did                : link.tenantDid,
+      dwnUrl             : link.remoteEndpoint,
+      projectionId       : link.projectionId,
+      scope              : link.scope,
+    };
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    internal._runtime = new SyncRuntime(true);
+    const controller = internal.activateLink(linkKey, link);
+    await internal._identityStore.set(tenantDid, { protocols: 'all' });
+    sinon.stub(internal.targetResolver, 'buildTargetsForEndpoint').resolves([target]);
+    const pullSubscription = sinon.stub(internal, 'openLivePullSubscription').resolves(true);
+    const pushSubscription = sinon.stub(internal, 'openLocalPushSubscription').resolves(true);
+    const queryStarted = createDeferred();
+    const releaseQuery = createDeferred();
+    let repairShouldContinue: (() => boolean) | undefined;
+    sinon.stub(internal, 'reconcileOwnedTarget').callsFake(async (
+      _controller: SyncLinkController,
+      _target: SyncTarget,
+      _options: unknown,
+      shouldContinue: () => boolean,
+    ): Promise<{ aborted?: true; converged?: true }> => {
+      repairShouldContinue = shouldContinue;
+      queryStarted.resolve();
+      await releaseQuery.promise;
+      return shouldContinue() ? { converged: true } : { aborted: true };
+    });
+
+    const abort = new AbortController();
+    const drain = engine.drainTo(remoteEndpoint, { signal: abort.signal });
+    await queryStarted.promise;
+    abort.abort();
+    expect(repairShouldContinue?.()).toBe(false);
+    releaseQuery.resolve();
+    const result = await drain;
+
+    expect(result.cancelled).toBe(true);
+    expect(pullSubscription.notCalled).toBe(true);
+    expect(pushSubscription.notCalled).toBe(true);
+    expect(controller.link.status).toBe('repairing');
+
+    await engine.close();
+  });
+
+  it('should resume retryable legacy pauses without a live controller', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const tenantDid = 'did:example:legacy-pause';
+    const remoteEndpoint = 'https://legacy-pause.example.com';
+    const link = await internal.replicationLinkStore.getOrCreateLink({
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      remoteEndpoint,
+      scope              : { kind: 'full' },
+      tenantDid,
+    });
+    const target: SyncTarget = {
+      authorization      : link.authorization,
+      authorizationEpoch : link.authorizationEpoch,
+      did                : link.tenantDid,
+      dwnUrl             : link.remoteEndpoint,
+      projectionId       : link.projectionId,
+      scope              : link.scope,
+    };
+    const pull = sinon.stub(internal._durableFeedReconciler, 'pull').resolves({ pullDrained: true });
+    const push = sinon.stub(internal._durableFeedReconciler, 'push').resolves({});
+    sinon.stub(internal, 'getSyncTargets').resolves([target]);
+    const getStoredLink = async (): Promise<ReplicationLinkState | undefined> =>
+      (await internal.replicationLinkStore.getAllLinks()).find(
+        (storedLink: ReplicationLinkState) => storedLink.tenantDid === tenantDid,
+      );
+
+    const parkWith = async (error: string): Promise<void> => {
+      // Emulate the durable shape written by older versions: current pause
+      // transitions deliberately supersede stale transient diagnostics.
+      await internal.replicationLinkStore.setStatus(link, 'paused');
+      await internal.replicationLinkStore.setRecovery(link, {
+        error,
+        failedAt: '2026-09-17T12:00:00.000Z',
+      });
+    };
+
+    await parkWith('offline');
+    await engine.sync();
+    expect(pull.calledOnce).toBe(true);
+    expect(push.calledOnce).toBe(true);
+    expect(await getStoredLink()).toMatchObject({
+      status: 'initializing',
+    });
+    expect((await getStoredLink())?.recovery).toBeUndefined();
+
+    pull.resetHistory();
+    push.resetHistory();
+    await parkWith('offline');
+    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
+    expect(pull.calledOnce).toBe(true);
+    expect(push.calledOnce).toBe(true);
+
+    pull.resetHistory();
+    push.resetHistory();
+    await parkWith('GrantAuthorizationGrantRevoked');
+    await engine.sync();
+    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
+    expect(pull.notCalled).toBe(true);
+    expect(push.notCalled).toBe(true);
+    expect(await getStoredLink()).toMatchObject({
+      status   : 'paused',
+      recovery : { error: 'GrantAuthorizationGrantRevoked' },
+    });
+
+    await engine.close();
+  });
+
+  it('should retain controller-less recovery until rejected or deferred work settles', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const tenantDid = 'did:example:legacy-push-retry';
+    const remoteEndpoint = 'https://legacy-push-retry.example.com';
+    const link = await internal.replicationLinkStore.getOrCreateLink({
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      remoteEndpoint,
+      scope              : { kind: 'full' },
+      tenantDid,
+    });
+    const target: SyncTarget = {
+      authorization      : link.authorization,
+      authorizationEpoch : link.authorizationEpoch,
+      did                : link.tenantDid,
+      dwnUrl             : link.remoteEndpoint,
+      projectionId       : link.projectionId,
+      scope              : link.scope,
+    };
+    const getStoredLink = async (): Promise<ReplicationLinkState | undefined> =>
+      (await internal.replicationLinkStore.getAllLinks()).find(
+        (storedLink: ReplicationLinkState) => storedLink.tenantDid === tenantDid,
+      );
+    await internal.replicationLinkStore.setStatus(link, 'paused');
+    await internal.replicationLinkStore.setRecovery(link, {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    });
+    expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
+    sinon.stub(internal, 'getSyncTargets').resolves([target]);
+    const pull = sinon.stub(internal._durableFeedReconciler, 'pull').resolves({ pullDrained: true });
+    const push = sinon.stub(internal._durableFeedReconciler, 'push').resolves({});
+    push.onFirstCall().resolves({
+      pushFailures: [{ cid: 'rejected-cid', detail: 'remote unavailable' }],
+    });
+
+    await expect(engine.retryRemoteNow(tenantDid, remoteEndpoint)).rejects.toBeInstanceOf(SyncPushFailuresError);
+    expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
+
+    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
+    expect(push.callCount).toBe(2);
+    expect((await getStoredLink())?.recovery).toBeUndefined();
+
+    // A dependency deferral is also incomplete recovery. Keep the explicit
+    // retry eligible until a later pass drains it.
+    await internal.replicationLinkStore.setStatus(link, 'paused');
+    await internal.replicationLinkStore.setRecovery(link, {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:01:00.000Z',
+    });
+    pull.onThirdCall().resolves({
+      deferredPull: { messageCid: 'deferred-cid', detail: 'dependency unavailable' },
+    });
+    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
+    expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
+
+    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
+    expect(push.callCount).toBe(4);
+    expect((await getStoredLink())?.recovery).toBeUndefined();
+
+    await engine.close();
+  });
+
+  it('should keep controller-less followed-link retries pull-only', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const sourceDid = 'did:example:followed-source';
+    const remoteEndpoint = 'https://followed-source.example.com';
+    const link = await internal.replicationLinkStore.getOrCreateLink({
+      authorization: {
+        kind         : 'role',
+        actorDid     : 'did:example:member',
+        protocolRole : 'notebook/viewer',
+        roleRecordId : 'role-record',
+      },
+      authorizationEpoch : 'role-epoch',
+      remoteEndpoint,
+      scope              : {
+        kind          : 'context',
+        contextId     : 'notebook-a',
+        protocol      : 'https://example.com/notebooks',
+        protocolPaths : ['notebook', 'notebook/page'],
+      },
+      tenantDid: sourceDid,
+    });
+    const target: SyncTarget = {
+      authorization      : link.authorization,
+      authorizationEpoch : link.authorizationEpoch,
+      did                : link.tenantDid,
+      dwnUrl             : link.remoteEndpoint,
+      projectionId       : link.projectionId,
+      scope              : link.scope,
+    };
+    const getStoredLink = async (): Promise<ReplicationLinkState | undefined> =>
+      (await internal.replicationLinkStore.getAllLinks()).find(
+        (storedLink: ReplicationLinkState) => storedLink.tenantDid === sourceDid,
+      );
+    await internal.replicationLinkStore.setStatus(link, 'paused');
+    await internal.replicationLinkStore.setRecovery(link, {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    });
+    sinon.stub(internal, 'getSyncTargets').resolves([target]);
+    const pull = sinon.stub(internal._durableFeedReconciler, 'pull').resolves({ pullDrained: true });
+    const pushLocalPages = sinon.stub(internal._durableFeedReconciler, 'pushLocalPages').resolves({});
+
+    await engine.retryRemoteNow(sourceDid, remoteEndpoint);
+
+    expect(pull.calledOnce).toBe(true);
+    expect(pushLocalPages.notCalled).toBe(true);
+    expect((await getStoredLink())?.recovery).toBeUndefined();
+
+    await engine.close();
+  });
+
+  it('should keep the lifecycle lock until every started endpoint retry settles', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const tenantDid = 'did:example:parallel-retry';
+    const remoteEndpoint = 'https://parallel-retry.example.com';
+    const targets: SyncTarget[] = ['projection-a', 'projection-b'].map((projectionId) => ({
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      did                : tenantDid,
+      dwnUrl             : remoteEndpoint,
+      projectionId,
+      scope              : { kind: 'full' },
+    }));
+    sinon.stub(internal, 'getSyncTargets').resolves(targets);
+    sinon.stub(internal, 'getOrCreateReplicationLink').callsFake(async (target: SyncTarget) => ({
+      authorization      : target.authorization,
+      authorizationEpoch : target.authorizationEpoch,
+      connectivity       : 'unknown',
+      projectionId       : target.projectionId,
+      pull               : {},
+      push               : {},
+      recovery           : { error: 'offline', failedAt: '2026-09-17T12:00:00.000Z' },
+      remoteEndpoint     : target.dwnUrl,
+      scope              : target.scope,
+      status             : 'initializing',
+      tenantDid          : target.did,
+    }));
+    const secondStarted = createDeferred();
+    const releaseSecond = createDeferred();
+    const failure = new Error('first retry failed');
+    sinon.stub(internal, 'reconcileTarget').callsFake(async (target: SyncTarget) => {
+      if (target.projectionId === 'projection-a') {
+        throw failure;
+      }
+      secondStarted.resolve();
+      await releaseSecond.promise;
+      return {};
+    });
+    sinon.stub(internal, 'retryQuotaBlocksForTarget').resolves();
+    let settled = false;
+    let retryError: unknown;
+
+    const retry = engine.retryRemoteNow(tenantDid, remoteEndpoint).catch((error: unknown): void => {
+      settled = true;
+      retryError = error;
+    });
+    await secondStarted.promise;
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(internal._lifecycle.isSyncInProgress).toBe(true);
+    releaseSecond.resolve();
+    await retry;
+
+    expect(retryError).toBe(failure);
+    expect(internal._lifecycle.isSyncInProgress).toBe(false);
+    await engine.close();
   });
 
   it('should wait for a scheduled reconcile before closing storage', async () => {

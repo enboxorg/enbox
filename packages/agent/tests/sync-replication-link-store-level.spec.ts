@@ -477,7 +477,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
       const pullToken = token(40);
       const pushToken = token(50);
       const recovery = {
-        error    : 'authority endpoint unavailable',
+        error    : status === 'paused' ? 'GrantAuthorizationGrantRevoked' : 'authority endpoint unavailable',
         failedAt : '2026-09-11T12:00:00.000Z',
       };
       const firstDb = new Level<string, string>(dataPath);
@@ -511,7 +511,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
     });
   }
 
-  it('should reload a persisted repairing link as initializing while paused stays durable', async () => {
+  it('should resume interrupted and legacy transient repair state without reviving authorization pauses', async () => {
     const params = {
       tenantDid      : 'did:example:alice',
       remoteEndpoint : 'https://dwn.example.com',
@@ -527,18 +527,38 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(reloadedRepairing.status).toBe('initializing');
     expect(reloadedRepairing.connectivity).toBe('unknown');
 
-    // 'paused' is a durable decision and must survive reload.
+    // Older versions parked exhausted transient repair batches as paused.
+    // Their retryable diagnostic lets the next session resume initialization.
     const recovery = {
       error    : 'authority endpoint unavailable',
       failedAt : '2026-09-11T12:00:00.000Z',
     };
-    await store.setRecovery(link, recovery);
     await store.setStatus(link, 'paused');
+    await store.setRecovery(link, recovery);
     const reloadedPaused = await store.getOrCreateLink(params);
-    expect(reloadedPaused.status).toBe('paused');
+    expect(reloadedPaused.status).toBe('initializing');
     expect(reloadedPaused.recovery).toEqual(recovery);
 
-    await store.setStatus(link, 'live');
+    // A current deliberate pause supersedes a transient diagnostic left by
+    // earlier failed work; loading it must not reinterpret that pause as an
+    // exhausted legacy repair.
+    await store.setRecovery(reloadedPaused, recovery);
+    await store.setStatus(reloadedPaused, 'paused');
+    const reloadedDeliberatePause = await store.getOrCreateLink(params);
+    expect(reloadedDeliberatePause.status).toBe('paused');
+    expect(reloadedDeliberatePause.recovery).toBeUndefined();
+
+    const authorizationRecovery = {
+      error    : 'GrantAuthorizationGrantRevoked',
+      failedAt : '2026-09-11T12:01:00.000Z',
+    };
+    await store.setRecovery(reloadedDeliberatePause, authorizationRecovery);
+    await store.setStatus(reloadedDeliberatePause, 'paused');
+    const reloadedAuthorizationPause = await store.getOrCreateLink(params);
+    expect(reloadedAuthorizationPause.status).toBe('paused');
+    expect(reloadedAuthorizationPause.recovery).toEqual(authorizationRecovery);
+
+    await store.setStatus(reloadedAuthorizationPause, 'live');
     const reloadedLive = await store.getOrCreateLink(params);
     expect(reloadedLive.status).toBe('live');
     expect(reloadedLive.recovery).toBeUndefined();

@@ -617,7 +617,7 @@ jobs:
           echo "Shard ${{ matrix.shard }}/3 running ${#shard_specs[@]} of ${#all_specs[@]} spec files"
           bun test --timeout 10000 --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage "${shard_specs[@]}"
 
-      # Bun's LCOV reporter does not emit branch records. Run the two core
+      # Bun's LCOV reporter does not emit branch records. Run selected core
       # sync unit suites once through Istanbul so Sonar receives the condition
       # coverage those same tests exercise.
       - name: Collect agent branch coverage

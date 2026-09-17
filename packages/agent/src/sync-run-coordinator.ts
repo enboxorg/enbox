@@ -45,6 +45,25 @@ type SyncTargetGroupSummary = {
 
 type SyncTargetRunner = (target: SyncTarget) => Promise<boolean>;
 
+/** Record terminal push failures and surface the retryable remainder. */
+export async function handleSyncPushFailures(
+  target: SyncTarget,
+  failures: PushFailure[],
+  recordPushFailures: SyncRunCoordinatorOperations['recordPushFailures'],
+): Promise<void> {
+  const retryableFailures = await recordPushFailures(target, failures);
+  if (retryableFailures.length === 0) {
+    return;
+  }
+
+  throw new SyncPushFailuresError({
+    authorization  : target.authorization,
+    failures       : retryableFailures,
+    remoteEndpoint : target.dwnUrl,
+    tenantDid      : target.did,
+  });
+}
+
 /**
  * Coordinates an ordinary one-shot sync cycle without depending on a storage
  * backend. Connectivity and convergence policy are direct collaborators;
@@ -167,15 +186,12 @@ export class SyncRunCoordinator {
     );
 
     if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
-      const retryableFailures = await this._operations.recordPushFailures(target, result.pushFailures);
-      if (retryableFailures.length > 0) {
-        throw new SyncPushFailuresError({
-          authorization  : target.authorization,
-          failures       : retryableFailures,
-          remoteEndpoint : target.dwnUrl,
-          tenantDid      : target.did,
-        });
-      }
+      await handleSyncPushFailures(
+        target,
+        result.pushFailures,
+        (pushTarget, failures): Promise<PushFailure[]> =>
+          this._operations.recordPushFailures(pushTarget, failures),
+      );
     }
 
     if (options?.verifyConvergence !== true) {

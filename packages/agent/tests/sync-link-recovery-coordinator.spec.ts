@@ -318,21 +318,20 @@ describe('SyncLinkRecoveryCoordinator', () => {
       const timerKey = `syncReconcile:${linkKey}`;
       fixture.getRuntime().armTimeout(timerKey, () => undefined, 5_000);
 
-      const expectedRecovery = {
-        error    : recovery.error,
-        failedAt : recovery.failedAt,
-      };
       await fixture.coordinator.transitionToPaused(linkKey, state);
 
       expect(fixture.getRuntime().hasTimer(timerKey)).toBe(false);
-      expect(state.recovery).toEqual(expectedRecovery);
+      expect(state.recovery).toBeUndefined();
       expect(await store.getAllLinks()).toMatchObject([{
-        status   : 'paused',
-        recovery : expectedRecovery,
+        status: 'paused',
       }]);
 
       await store.setRecovery(state, recovery);
 
+      const expectedRecovery = {
+        error    : recovery.error,
+        failedAt : recovery.failedAt,
+      };
       expect(state.recovery).toEqual(expectedRecovery);
       expect(await store.getAllLinks()).toMatchObject([{
         status   : 'paused',
@@ -343,6 +342,40 @@ describe('SyncLinkRecoveryCoordinator', () => {
       await db.clear();
       await db.close();
     }
+  });
+
+  it('lets a new deliberate pause supersede a legacy retryable pause', async () => {
+    const fixture = createFixture();
+    const state = link('paused');
+    state.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-11T12:00:00.000Z',
+    };
+    fixture.operations.setStatus.callsFake(async (linkState, status) => {
+      linkState.status = status;
+      if (status === 'paused') {
+        delete linkState.recovery;
+      }
+    });
+
+    await fixture.coordinator.transitionToPaused(LINK_KEY, state);
+
+    expect(fixture.operations.setStatus.calledOnceWithExactly(state, 'paused')).toBe(true);
+    expect(state.recovery).toBeUndefined();
+
+    fixture.operations.setStatus.resetHistory();
+    const replacement = activate(fixture);
+    const stale = link('paused');
+    stale.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-11T12:01:00.000Z',
+    };
+
+    await fixture.coordinator.transitionToPaused(LINK_KEY, stale);
+
+    expect(fixture.operations.setStatus.notCalled).toBe(true);
+    expect(stale.recovery).toMatchObject({ error: 'offline' });
+    replacement.deactivate();
   });
 
   it('repairs through durable feeds, restores subscriptions, and schedules retryable push work', async () => {
@@ -535,7 +568,119 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.setStatus.calledOnceWithExactly(state, 'repairing')).toBe(true);
   });
 
-  it('pauses terminal authorization failures immediately and pauses transient failures at the attempt limit', async () => {
+  it('rolls back a repair cancelled while its live status is being persisted', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const state = link('repairing');
+    state.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    };
+    const controller = activate(fixture, state);
+    const closePull = sinon.stub().resolves();
+    const closePush = sinon.stub().resolves();
+    fixture.operations.openPullSubscription.callsFake(async (): Promise<boolean> => {
+      controller.setLiveSubscription({ close: closePull });
+      return true;
+    });
+    fixture.operations.openPushSubscription.callsFake(async (): Promise<boolean> => {
+      controller.setLocalSubscription({ close: closePush });
+      return true;
+    });
+    const liveStatusStarted = deferred<void>();
+    const releaseLiveStatus = deferred<void>();
+    fixture.operations.setStatus.callsFake(async (linkState, status) => {
+      linkState.status = status;
+      if (status === 'live') {
+        delete linkState.recovery;
+        liveStatusStarted.resolve();
+        await releaseLiveStatus.promise;
+      }
+    });
+    let shouldContinue = true;
+
+    const retry = fixture.coordinator.retryFailedRepair(controller, {
+      shouldContinue: (): boolean => shouldContinue,
+    });
+    await liveStatusStarted.promise;
+    shouldContinue = false;
+    releaseLiveStatus.resolve();
+    expect(await retry).toBe(true);
+
+    expect(closePull.calledOnce).toBe(true);
+    expect(closePush.calledOnce).toBe(true);
+    expect(state.status).toBe('repairing');
+    expect(state.recovery).toMatchObject({ error: 'offline' });
+    expect(controller.isReplicationReady).toBe(false);
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(false);
+
+    // The cancelled caller fence belongs only to the first repair. A later
+    // retry can reuse the same controller and recovery state normally.
+    shouldContinue = true;
+    expect(await fixture.coordinator.retryFailedRepair(controller, {
+      shouldContinue: (): boolean => shouldContinue,
+    })).toBe(true);
+    expect(state.status).toBe('live');
+    expect(state.recovery).toBeUndefined();
+    expect(controller.isReplicationReady).toBe(true);
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
+  it('does not overwrite a newer pause while closing subscriptions for cancellation rollback', async () => {
+    const fixture = createFixture();
+    const state = link('repairing');
+    state.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    };
+    const controller = activate(fixture, state);
+    const rollbackCloseStarted = deferred<void>();
+    const releaseRollbackClose = deferred<void>();
+    fixture.operations.openPullSubscription.callsFake(async (): Promise<boolean> => {
+      controller.setLiveSubscription({
+        close: async (): Promise<void> => {
+          rollbackCloseStarted.resolve();
+          await releaseRollbackClose.promise;
+        },
+      });
+      return true;
+    });
+    fixture.operations.openPushSubscription.callsFake(async (): Promise<boolean> => {
+      controller.setLocalSubscription({ close: sinon.stub().resolves() });
+      return true;
+    });
+    const liveStatusStarted = deferred<void>();
+    const releaseLiveStatus = deferred<void>();
+    fixture.operations.setStatus.callsFake(async (linkState, status) => {
+      linkState.status = status;
+      if (status === 'live') {
+        delete linkState.recovery;
+        liveStatusStarted.resolve();
+        await releaseLiveStatus.promise;
+      }
+    });
+    let shouldContinue = true;
+
+    const retry = fixture.coordinator.retryFailedRepair(controller, {
+      shouldContinue: (): boolean => shouldContinue,
+    });
+    await liveStatusStarted.promise;
+    shouldContinue = false;
+    releaseLiveStatus.resolve();
+    await rollbackCloseStarted.promise;
+
+    await fixture.coordinator.transitionToPaused(LINK_KEY, state);
+    expect(state.status).toBe('paused');
+    releaseRollbackClose.resolve();
+    await retry;
+
+    expect(state.status).toBe('paused');
+    expect(state.recovery).toBeUndefined();
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(false);
+  });
+
+  it('pauses terminal authorization failures but parks exhausted transient repairs for a later retry', async () => {
     const fixture = createFixture({ maxRepairAttempts: 3 });
     const terminalState = link('repairing');
     const terminalController = activate(fixture, terminalState);
@@ -557,12 +702,76 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await runRepair(fixture, transientController);
     await runRepair(fixture, transientController);
 
-    expect(transientState.status).toBe('paused');
+    expect(transientState.status).toBe('repairing');
     expect(transientState.recovery).toMatchObject({ error: 'offline' });
     expect(transientState.recovery?.nextRetryAt).toBeUndefined();
     expect(transientController.repairAttempts).toBe(0);
     expect(fixture.operations.reportError.callCount).toBe(3);
     expect(fixture.operations.warn.calledWithMatch('Max repair attempts reached')).toBe(true);
+  });
+
+  it('restarts exhausted repairs without reviving authorization pauses', async () => {
+    const fixture = createFixture();
+    const exhaustedState = link('repairing');
+    exhaustedState.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    };
+    const exhaustedController = activate(fixture, exhaustedState);
+
+    expect(await fixture.coordinator.retryFailedRepair(exhaustedController)).toBe(true);
+    expect(exhaustedState.status).toBe('live');
+    expect(exhaustedState.recovery).toBeUndefined();
+
+    const scheduledState = link('repairing');
+    scheduledState.recovery = {
+      error       : 'offline',
+      failedAt    : '2026-09-17T12:00:00.000Z',
+      nextRetryAt : '2026-09-17T12:01:00.000Z',
+    };
+    const scheduledController = activate(fixture, scheduledState);
+    fixture.getRuntime().armTimeout(REPAIR_RETRY_TIMER_KEY, () => undefined, 60_000);
+
+    expect(await fixture.coordinator.retryFailedRepair(scheduledController)).toBe(false);
+    expect(await fixture.coordinator.retryFailedRepair(
+      scheduledController,
+      { ignoreRetryDeadline: true },
+    )).toBe(true);
+    expect(scheduledState.status).toBe('live');
+    expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(false);
+
+    const legacyState = link('paused');
+    legacyState.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    };
+    const legacyController = activate(fixture, legacyState);
+
+    expect(await fixture.coordinator.retryFailedRepair(legacyController)).toBe(false);
+    expect(legacyState.status).toBe('paused');
+    expect(await fixture.coordinator.retryFailedRepair(legacyController, { resumePaused: true })).toBe(true);
+    expect(legacyState.status).toBe('live');
+
+    const deliberateState = link('paused');
+    const deliberateController = activate(fixture, deliberateState);
+    expect(await fixture.coordinator.retryFailedRepair(
+      deliberateController,
+      { ignoreRetryDeadline: true, resumePaused: true },
+    )).toBe(false);
+    expect(deliberateState.status).toBe('paused');
+
+    const authorizationState = link('paused');
+    authorizationState.recovery = {
+      error    : 'GrantAuthorizationGrantRevoked',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    };
+    const authorizationController = activate(fixture, authorizationState);
+
+    expect(await fixture.coordinator.retryFailedRepair(
+      authorizationController,
+      { ignoreRetryDeadline: true, resumePaused: true },
+    )).toBe(false);
+    expect(authorizationState.status).toBe('paused');
   });
 
   it('persists the bounded repair retry and clears it after recovery succeeds', async () => {
@@ -1307,7 +1516,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
       .map((event) => event.attempt);
     expect(startedAttempts).toEqual([1, 1]);
     expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(false);
-    expect(state.status).toBe('paused');
+    expect(state.status).toBe('repairing');
     controller.deactivate();
     await clock.runAllAsync();
   });

@@ -13,6 +13,7 @@ import type {
 
 import { runSerializedByKey, runWithCrossContextLock } from '@enbox/common';
 
+import { isRetryableSyncRecovery } from './sync-runtime-errors.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
 import { canonicalizeSyncScope, computeProjectionId } from './types/sync.js';
 
@@ -80,11 +81,20 @@ export class SyncReplicationLinkStoreLevel {
     return this.runForLink(key, async (): Promise<ReplicationLinkState> => {
       const existing = await this.getLink(key);
       if (existing !== undefined) {
+        let changed = false;
         if (params.authorization.kind === 'role' && existing.delegateDid !== params.delegateDid) {
           existing.delegateDid = params.delegateDid;
+          changed = true;
+        }
+        const previousStatus = existing.status;
+        SyncReplicationLinkStoreLevel.normalizeResumedLink(existing);
+        if (existing.status !== previousStatus) {
+          changed = true;
+        }
+        if (changed) {
           await this._links.put(key, JSON.stringify(existing));
         }
-        return SyncReplicationLinkStoreLevel.normalizeResumedLink(existing);
+        return existing;
       }
 
       const link: ReplicationLinkState = {
@@ -199,14 +209,17 @@ export class SyncReplicationLinkStoreLevel {
    * repair was in flight when that session ended — nothing re-kicks repair on
    * load (subscription setup refuses 'repairing' links as a concurrent-
    * transition guard), so a fresh initialization subsumes the interrupted
-   * repair. 'paused' is a durable decision and stays.
+   * repair. Older versions also converted exhausted transient repairs into
+   * pauses; their retryable recovery diagnostic distinguishes those rows from
+   * deliberate and authorization pauses. Current pause transitions clear a
+   * stale retryable diagnostic when they supersede it.
    */
-  private static normalizeResumedLink(existing: ReplicationLinkState): ReplicationLinkState {
+  private static normalizeResumedLink(existing: ReplicationLinkState): void {
     existing.connectivity = 'unknown';
-    if (existing.status === 'repairing') {
+    if (existing.status === 'repairing' ||
+      (existing.status === 'paused' && isRetryableSyncRecovery(existing.recovery))) {
       existing.status = 'initializing';
     }
-    return existing;
   }
 
   private static cloneCheckpoint(checkpoint: DirectionCheckpoint): DirectionCheckpoint {
@@ -233,7 +246,11 @@ export class SyncReplicationLinkStoreLevel {
     if (status === 'live') {
       delete link.recovery;
     } else if (status === 'paused') {
-      SyncReplicationLinkStoreLevel.assignRecovery(link, link.recovery);
+      if (isRetryableSyncRecovery(link.recovery)) {
+        delete link.recovery;
+      } else {
+        SyncReplicationLinkStoreLevel.assignRecovery(link, link.recovery);
+      }
     }
   }
 

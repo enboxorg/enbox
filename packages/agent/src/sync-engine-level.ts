@@ -78,7 +78,6 @@ import { SyncLinkRecoveryCoordinator } from './sync-link-recovery-coordinator.js
 import { SyncQuotaManager } from './sync-quota-manager.js';
 import { SyncQuotaStoreLevel } from './sync-quota-store-level.js';
 import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-level.js';
-import { SyncRunCoordinator } from './sync-run-coordinator.js';
 import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
@@ -89,7 +88,8 @@ import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMess
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { isMissingRoleAuthorizationFailure, isNonRetryableSyncAuthorizationFailure, isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncPushFailuresError, SyncRunCancelledError, SyncRunFailedError } from './sync-runtime-errors.js';
+import { handleSyncPushFailures, SyncRunCoordinator } from './sync-run-coordinator.js';
+import { isMissingRoleAuthorizationFailure, isNonRetryableSyncAuthorizationFailure, isRetryableSyncRecovery, isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncPushFailuresError, SyncRunCancelledError, SyncRunFailedError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from './sync-target-resolver.js';
 import { projectReplicationLinks, projectSyncStatus } from './sync-status-reporter.js';
@@ -3932,9 +3932,21 @@ export class SyncEngineLevel implements SyncEngine {
     const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
     const controller = this.getLinkController(linkKey);
     if (controller?.isActive !== true) {
-      return this.reconcileDurableTarget(target, link, effectiveOptions, shouldContinue);
+      return this.reconcileUnownedTarget(target, link, effectiveOptions, shouldContinue);
     }
 
+    const retriedRepair = await this.retryFailedRepairForTarget(target, controller, { shouldContinue });
+    // A successful repair already ran a full durable pass. Only an explicit
+    // convergence check needs another pass; otherwise avoid duplicating it.
+    if (retriedRepair && (
+      controller.link.status !== 'live' ||
+      !controller.isReplicationReady ||
+      effectiveOptions?.verifyConvergence !== true
+    )) {
+      return controller.link.status === 'live' && controller.isReplicationReady
+        ? {}
+        : { aborted: true };
+    }
     if (controller.link.status === 'paused') {
       return { paused: true };
     }
@@ -4031,6 +4043,29 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  /** Reconcile a controller-less link and retire a recovered transient diagnostic. */
+  private async reconcileUnownedTarget(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    options?: SyncReconcileOptions,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult> {
+    const recovering = isRetryableSyncRecovery(link.recovery);
+    const result = await this.reconcileDurableTarget(target, link, options, shouldContinue);
+    const hasRetryablePushFailures = result.pushFailures?.some(
+      (failure): boolean => !isTerminalPushFailure(failure),
+    ) === true;
+    const recovered = result.aborted !== true &&
+      result.paused !== true &&
+      result.deferredPull === undefined &&
+      !hasRetryablePushFailures &&
+      (shouldContinue?.() ?? true);
+    if (recovering && recovered) {
+      await this.replicationLinkStore.setRecovery(link, undefined);
+    }
+    return result;
+  }
+
   private static isRoleLinkPauseError(error: unknown): boolean {
     if (
       error instanceof FollowedSourceRoleRecordMismatchError ||
@@ -4072,6 +4107,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (controller?.isActive !== true) {
       return this.verifyFeedConvergence(target);
     }
+    await this.retryFailedRepairForTarget(target, controller);
     if (controller.link.status === 'paused') {
       return { paused: true };
     }
@@ -5151,9 +5187,41 @@ export class SyncEngineLevel implements SyncEngine {
         (target) => target.did === tenantDid && target.dwnUrl === remoteEndpoint,
       );
 
-      await Promise.all(targets.map(async (target) => {
+      const retryResults = await Promise.allSettled(targets.map(async (target) => {
+        const shouldContinue = (): boolean =>
+          transitionFence() && this._targetPlanner.topologyGeneration === topologyGeneration;
+        const linkKey = buildLinkKey(
+          target.did,
+          target.dwnUrl,
+          target.projectionId,
+          target.authorizationEpoch,
+        );
+        const link = await this.getOrCreateReplicationLink(target);
+        const controller = this.getLinkController(linkKey);
+        if (controller?.isActive === true) {
+          await this.retryFailedRepairForTarget(target, controller, {
+            ignoreRetryDeadline : true,
+            resumePaused        : true,
+            shouldContinue,
+          });
+        } else if (isRetryableSyncRecovery(link.recovery) && shouldContinue()) {
+          const result = await this.reconcileTarget(target, undefined, shouldContinue);
+          const pushFailures = result.pushFailures ?? [];
+          if (pushFailures.length > 0) {
+            await handleSyncPushFailures(
+              target,
+              pushFailures,
+              (pushTarget, failures): Promise<PushFailure[]> =>
+                this.recordTerminalPushFailures(pushTarget, failures),
+            );
+          }
+        }
         await this.retryQuotaBlocksForTarget(target, transitionFence, topologyGeneration);
       }));
+      const failedRetry = retryResults.find((result) => result.status === 'rejected');
+      if (failedRetry?.status === 'rejected') {
+        throw failedRetry.reason;
+      }
     } finally {
       this._lifecycle.releaseSync();
     }
@@ -5199,6 +5267,34 @@ export class SyncEngineLevel implements SyncEngine {
     });
     this._quotaRetryInFlight.set(key, retry);
     await retry;
+  }
+
+  /** Reuse the link coordinator's bounded repair ladder for automatic and explicit retries. */
+  private async retryFailedRepairForTarget(
+    target: SyncTarget,
+    controller: SyncLinkController,
+    {
+      ignoreRetryDeadline = false,
+      resumePaused = false,
+      shouldContinue = (): boolean => true,
+    }: {
+      ignoreRetryDeadline?: boolean;
+      resumePaused?: boolean;
+      shouldContinue?: () => boolean;
+    } = {},
+  ): Promise<boolean> {
+    if (
+      (controller.link.status !== 'repairing' && !(resumePaused && controller.link.status === 'paused')) ||
+      !shouldContinue() ||
+      !await this.isTargetRunnable(target) ||
+      !shouldContinue()
+    ) {
+      return false;
+    }
+    return this._linkRecoveryCoordinator.retryFailedRepair(
+      controller,
+      { ignoreRetryDeadline, resumePaused, shouldContinue },
+    );
   }
 
   private async getCurrentLinkIdentityKeys(): Promise<Set<string> | undefined> {
