@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { PasswordProviderUnavailableError } from '../src/browser.js';
 import type { PasswordProvider as BrowserPasswordProvider, PasswordContext } from '../src/browser.js';
 
 type BrowserPasswordProviderNamespace = {
@@ -24,6 +25,7 @@ describe('@enbox/auth/browser', () => {
     expect(mod.LevelStorage).toBeDefined();
     expect(mod.MemoryStorage).toBeDefined();
     expect(mod.PasswordProvider).toBeDefined();
+    expect(mod.PasswordProviderUnavailableError).toBe(PasswordProviderUnavailableError);
     expect(mod.WalletConnect).toBeDefined();
     expect(mod.createDefaultStorage).toBeDefined();
     expect(mod.discoverLocalDwn).toBeDefined();
@@ -55,7 +57,9 @@ describe('@enbox/auth/browser', () => {
     expect(contexts).toEqual([{ reason: 'create' }]);
 
     const chainedProvider = passwordProvider.chain([
-      passwordProvider.fromCallback(async () => { throw new Error('not available'); }),
+      passwordProvider.fromCallback(async () => {
+        throw new PasswordProviderUnavailableError('not available');
+      }),
       passwordProvider.fromCallback(async () => 'fallback-password'),
     ]);
 

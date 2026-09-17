@@ -23,6 +23,7 @@
 import type { PasswordContext, PasswordProvider as PasswordProviderBase } from './password-provider-core.js';
 
 import { PasswordProvider as BrowserSafePasswordProvider } from './password-provider-core.js';
+import { PasswordProviderUnavailableError } from './errors.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -135,6 +136,23 @@ export interface DevTtyIo {
   execSync(cmd: string, opts: { stdio: 'pipe' | 'ignore' | 'inherit' }): void;
 }
 
+const DEV_TTY_UNAVAILABLE_ERROR_CODES = new Set([
+  'EACCES',
+  'ENODEV',
+  'ENOENT',
+  'ENOTTY',
+  'ENXIO',
+  'EPERM',
+]);
+
+function isDevTtyUnavailableError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return false;
+  }
+
+  return DEV_TTY_UNAVAILABLE_ERROR_CODES.has(String(error.code));
+}
+
 /**
  * Read a password from `/dev/tty` using synchronous I/O.
  *
@@ -165,14 +183,22 @@ export async function readPasswordDevTty(
     };
   }
 
-  let readFd: number;
-  let writeFd: number;
+  let readFd: number | undefined;
+  let writeFd: number | undefined;
 
   try {
     readFd = fsIo.openSync('/dev/tty', 'r');
     writeFd = fsIo.openSync('/dev/tty', 'w');
-  } catch {
-    throw new Error(
+  } catch (error) {
+    if (readFd !== undefined) {
+      try { fsIo.closeSync(readFd); } catch { /* best-effort */ }
+    }
+
+    if (!isDevTtyUnavailableError(error)) {
+      throw error;
+    }
+
+    throw new PasswordProviderUnavailableError(
       '[@enbox/auth] PasswordProvider.fromDevTty: cannot open /dev/tty. ' +
       'No controlling terminal available.'
     );
@@ -211,8 +237,11 @@ export async function readPasswordDevTty(
   } finally {
     // Restore echo.
     try { fsIo.execSync('stty echo < /dev/tty', { stdio: 'ignore' }); } catch { /* best-effort */ }
-    fsIo.closeSync(readFd);
-    fsIo.closeSync(writeFd);
+    try {
+      fsIo.closeSync(readFd);
+    } finally {
+      fsIo.closeSync(writeFd);
+    }
   }
 }
 
@@ -224,8 +253,8 @@ export namespace PasswordProvider {
   /**
    * Read the password from an environment variable.
    *
-   * Throws if the variable is not set or is empty, allowing `chain()`
-   * to fall through to the next provider.
+   * Throws {@link PasswordProviderUnavailableError} if the variable is not set
+   * or is empty, allowing `chain()` to fall through to the next provider.
    *
    * @param envVar - Name of the environment variable. Default: `'ENBOX_PASSWORD'`.
    *
@@ -239,7 +268,7 @@ export namespace PasswordProvider {
       async getPassword(): Promise<string> {
         const value = process.env[envVar];
         if (!value) {
-          throw new Error(
+          throw new PasswordProviderUnavailableError(
             `[@enbox/auth] PasswordProvider.fromEnv: environment variable '${envVar}' is not set.`
           );
         }
@@ -277,8 +306,9 @@ export namespace PasswordProvider {
    *
    * Input is read character-by-character with no echo. Handles
    * backspace and Ctrl-C (rejects with an error). Only works when
-   * `process.stdin.isTTY` is `true`; throws otherwise so `chain()`
-   * can fall through to the next provider.
+   * `process.stdin.isTTY` is `true`; throws
+   * {@link PasswordProviderUnavailableError} otherwise so `chain()` can fall
+   * through to the next provider.
    *
    * Suitable for main CLI processes that own stdin/stdout.
    *
@@ -296,7 +326,7 @@ export namespace PasswordProvider {
     return {
       async getPassword(): Promise<string> {
         if (!process.stdin.isTTY) {
-          throw new Error(
+          throw new PasswordProviderUnavailableError(
             '[@enbox/auth] PasswordProvider.fromTty: stdin is not a TTY.'
           );
         }
@@ -318,8 +348,9 @@ export namespace PasswordProvider {
    * (e.g. Git credential helpers, SSH, GPG). Uses `stty -echo` to
    * suppress input echo.
    *
-   * Throws if `/dev/tty` cannot be opened (e.g. non-Unix platform,
-   * no controlling terminal), allowing `chain()` to fall through.
+   * Throws {@link PasswordProviderUnavailableError} when the environment has
+   * no usable `/dev/tty` (e.g. non-Unix platform, no controlling terminal),
+   * allowing `chain()` to fall through. Unexpected I/O failures propagate.
    *
    * @param options - Optional configuration.
    * @param options.prompt - Text to display before reading. Default: `'Vault password: '`.
@@ -343,8 +374,10 @@ export namespace PasswordProvider {
   /**
    * Compose multiple providers with automatic fallback.
    *
-   * Tries each provider in order. If a provider throws, the next one
-   * is tried. If all providers fail, the last error is rethrown.
+   * Tries each provider in order. If a provider throws
+   * {@link PasswordProviderUnavailableError}, the next one is tried. Other
+   * failures stop immediately. If every provider is unavailable, the last
+   * unavailable error is rethrown.
    *
    * @param providers - Ordered list of providers to try.
    *

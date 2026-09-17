@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { PasswordProviderUnavailableError } from '../src/errors.js';
 import type { DevTtyIo, PasswordContext, TtyReadable, TtyWritable } from '../src/password-provider.js';
 import { PasswordProvider, readPasswordDevTty, readPasswordRawMode } from '../src/password-provider.js';
 
@@ -86,9 +87,10 @@ describe('PasswordProvider', () => {
       try {
         delete process.env.ENBOX_PASSWORD;
         const provider = PasswordProvider.fromEnv();
-        await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow(
-          'environment variable \'ENBOX_PASSWORD\' is not set'
-        );
+        const error = await provider.getPassword({ reason: 'unlock' }).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(PasswordProviderUnavailableError);
+        expect((error as Error).message).toContain('environment variable \'ENBOX_PASSWORD\' is not set');
       } finally {
         if (original !== undefined) {
           process.env.ENBOX_PASSWORD = original;
@@ -101,9 +103,10 @@ describe('PasswordProvider', () => {
       try {
         process.env.ENBOX_PASSWORD = '';
         const provider = PasswordProvider.fromEnv();
-        await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow(
-          'environment variable \'ENBOX_PASSWORD\' is not set'
-        );
+        const error = await provider.getPassword({ reason: 'unlock' }).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(PasswordProviderUnavailableError);
+        expect((error as Error).message).toContain('environment variable \'ENBOX_PASSWORD\' is not set');
       } finally {
         if (original === undefined) {
           delete process.env.ENBOX_PASSWORD;
@@ -175,9 +178,11 @@ describe('PasswordProvider', () => {
       expect(password).toBe('first');
     });
 
-    test('falls through to next provider on failure', async () => {
+    test('falls through to next provider when the first is unavailable', async () => {
       const provider = PasswordProvider.chain([
-        PasswordProvider.fromCallback(async () => { throw new Error('fail'); }),
+        PasswordProvider.fromCallback(async () => {
+          throw new PasswordProviderUnavailableError('first unavailable');
+        }),
         PasswordProvider.fromCallback(async () => 'fallback'),
       ]);
 
@@ -185,10 +190,14 @@ describe('PasswordProvider', () => {
       expect(password).toBe('fallback');
     });
 
-    test('falls through multiple failures', async () => {
+    test('falls through multiple unavailable providers', async () => {
       const provider = PasswordProvider.chain([
-        PasswordProvider.fromCallback(async () => { throw new Error('fail 1'); }),
-        PasswordProvider.fromCallback(async () => { throw new Error('fail 2'); }),
+        PasswordProvider.fromCallback(async () => {
+          throw new PasswordProviderUnavailableError('first unavailable');
+        }),
+        PasswordProvider.fromCallback(async () => {
+          throw new PasswordProviderUnavailableError('second unavailable');
+        }),
         PasswordProvider.fromCallback(async () => 'third'),
       ]);
 
@@ -196,13 +205,30 @@ describe('PasswordProvider', () => {
       expect(password).toBe('third');
     });
 
-    test('throws last error when all providers fail', async () => {
+    test('throws the last unavailable error when every provider is unavailable', async () => {
+      const firstError = new PasswordProviderUnavailableError('first unavailable');
+      const lastError = new PasswordProviderUnavailableError('last unavailable');
       const provider = PasswordProvider.chain([
-        PasswordProvider.fromCallback(async () => { throw new Error('fail 1'); }),
-        PasswordProvider.fromCallback(async () => { throw new Error('fail 2'); }),
+        PasswordProvider.fromCallback(async () => { throw firstError; }),
+        PasswordProvider.fromCallback(async () => { throw lastError; }),
       ]);
 
-      await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow('fail 2');
+      await expect(provider.getPassword({ reason: 'unlock' })).rejects.toBe(lastError);
+    });
+
+    test('stops immediately on cancellation or other provider failures', async () => {
+      const cancellation = new Error('dialog cancelled');
+      let fallbackCalled = false;
+      const provider = PasswordProvider.chain([
+        PasswordProvider.fromCallback(async () => { throw cancellation; }),
+        PasswordProvider.fromCallback(async () => {
+          fallbackCalled = true;
+          return 'fallback';
+        }),
+      ]);
+
+      await expect(provider.getPassword({ reason: 'unlock' })).rejects.toBe(cancellation);
+      expect(fallbackCalled).toBe(false);
     });
 
     test('passes context to each provider', async () => {
@@ -210,7 +236,7 @@ describe('PasswordProvider', () => {
       const provider = PasswordProvider.chain([
         PasswordProvider.fromCallback(async (ctx) => {
           contexts.push(ctx);
-          throw new Error('fail');
+          throw new PasswordProviderUnavailableError();
         }),
         PasswordProvider.fromCallback(async (ctx) => {
           contexts.push(ctx);
@@ -231,13 +257,18 @@ describe('PasswordProvider', () => {
       );
     });
 
-    test('handles non-Error throws from providers', async () => {
+    test('normalizes non-Error failures and stops the chain', async () => {
+      let fallbackCalled = false;
       const provider = PasswordProvider.chain([
         PasswordProvider.fromCallback(async () => { throw 'string-error'; }),
-        PasswordProvider.fromCallback(async () => { throw 42; }),
+        PasswordProvider.fromCallback(async () => {
+          fallbackCalled = true;
+          return 'fallback';
+        }),
       ]);
 
-      await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow('42');
+      await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow('string-error');
+      expect(fallbackCalled).toBe(false);
     });
 
     test('env-first pattern works end-to-end', async () => {
@@ -286,9 +317,10 @@ describe('PasswordProvider', () => {
     // since the non-TTY rejection cannot be reliably tested from a TTY.
     test.skipIf(Boolean(process.stdin.isTTY))('throws when stdin is not a TTY', async () => {
       const provider = PasswordProvider.fromTty();
-      await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow(
-        'stdin is not a TTY'
-      );
+      const error = await provider.getPassword({ reason: 'unlock' }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(PasswordProviderUnavailableError);
+      expect((error as Error).message).toContain('stdin is not a TTY');
     });
 
     test('uses custom prompt text', () => {
@@ -555,11 +587,37 @@ describe('PasswordProvider', () => {
 
     test('throws when openSync fails', async () => {
       const io = createMockDevTtyIo('');
-      io.openSync = (): number => { throw new Error('ENOENT'); };
+      io.openSync = (): number => {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      };
 
-      await expect(readPasswordDevTty('> ', io)).rejects.toThrow(
-        'cannot open /dev/tty'
-      );
+      const error = await readPasswordDevTty('> ', io).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(PasswordProviderUnavailableError);
+      expect((error as Error).message).toContain('cannot open /dev/tty');
+    });
+
+    test('closes the read descriptor when opening the write descriptor fails', async () => {
+      const io = createMockDevTtyIo('');
+      io.openSync = (_path: string, flags: string): number => {
+        if (flags === 'r') { return 10; }
+        throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      };
+
+      await expect(readPasswordDevTty('> ', io)).rejects.toBeInstanceOf(PasswordProviderUnavailableError);
+      expect(io.closedFds).toEqual([10]);
+    });
+
+    test('propagates unexpected open failures after closing a partial setup', async () => {
+      const io = createMockDevTtyIo('');
+      const resourceError = Object.assign(new Error('too many open files'), { code: 'EMFILE' });
+      io.openSync = (_path: string, flags: string): number => {
+        if (flags === 'r') { return 10; }
+        throw resourceError;
+      };
+
+      await expect(readPasswordDevTty('> ', io)).rejects.toBe(resourceError);
+      expect(io.closedFds).toEqual([10]);
     });
 
     test('continues when stty -echo fails', async () => {

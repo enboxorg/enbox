@@ -4,6 +4,8 @@
  * @module
  */
 
+import { PasswordProviderUnavailableError } from './errors.js';
+
 /** Context passed to a password provider explaining why a password is needed. */
 export interface PasswordContext {
   /**
@@ -42,7 +44,9 @@ export namespace PasswordProvider {
   }
 
   /**
-   * Try providers in order until one returns a password.
+   * Try providers in order until one returns a password. A provider must throw
+   * `PasswordProviderUnavailableError` to continue to the next provider; all
+   * other failures stop the chain.
    *
    * @param providers - Candidate providers.
    * @returns A provider that falls back through the supplied list.
@@ -60,7 +64,12 @@ export namespace PasswordProvider {
           try {
             return await provider.getPassword(context);
           } catch (err) {
-            lastError = err instanceof Error ? err : new Error(String(err));
+            const providerError = err instanceof Error ? err : new Error(String(err));
+            if (!(providerError instanceof PasswordProviderUnavailableError)) {
+              throw providerError;
+            }
+
+            lastError = providerError;
           }
         }
 
