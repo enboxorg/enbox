@@ -709,6 +709,10 @@ export function testDwnClass(): void {
           schema          : nestedProtocolDefinition.types.bar.schema,
           dataFormat      : nestedProtocolDefinition.types.bar.dataFormats![0],
         });
+        // the prune must be strictly newer than foo: on a millisecond tie the newest-existing
+        // message is decided by CID order, so the prune would only intermittently be the
+        // tombstone that beats the incoming plain delete below
+        await Time.minimalSleep();
         const prune = await RecordsDelete.create({
           recordId : foo.message.recordId,
           prune    : true,
