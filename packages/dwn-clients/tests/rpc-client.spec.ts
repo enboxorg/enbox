@@ -506,6 +506,51 @@ describe('RPC Clients', () => {
       expect(applied).toHaveLength(0);
     });
 
+    it('falls back to HTTP when an older server rejects ancestry-only socket transport', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+      socketRequest.resolves({
+        error: {
+          code    : JsonRpcErrorCodes.InvalidParams,
+          message : 'RecordsWrite is not supported via ws',
+        },
+      });
+
+      const result = await rpcClient.applyReplicatedMessage({
+        ancestryOnly : true,
+        dwnUrl       : httpEndpoint,
+        targetDid    : 'did:example:alice',
+        message      : replicatedWriteMessage(3) as never,
+      });
+
+      expect(result).toEqual({ kind: 'Applied' });
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(applied).toEqual([expect.objectContaining({ ancestryOnly: true })]);
+    });
+
+    it('does not fall back after another ancestry-only socket rejection', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+      socketRequest.resolves({
+        error: {
+          code    : JsonRpcErrorCodes.InvalidParams,
+          message : 'ancestryOnly requires a data-less initial RecordsWrite with a payload descriptor',
+        },
+      });
+
+      await expect(rpcClient.applyReplicatedMessage({
+        ancestryOnly : true,
+        dwnUrl       : httpEndpoint,
+        targetDid    : 'did:example:alice',
+        message      : replicatedWriteMessage(3) as never,
+      })).rejects.toThrow('ancestryOnly requires a data-less initial RecordsWrite');
+
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(applied).toHaveLength(0);
+    });
+
     it('preserves ancestryOnly when no pooled socket is available', async () => {
       const { applied, client: httpStub } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);

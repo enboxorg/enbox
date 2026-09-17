@@ -4,4 +4,4 @@
 '@enbox/dwn-server': patch
 ---
 
-Carry explicitly ancestry-only initial record writes over pooled WebSocket replication connections while preserving HTTP fallback and rejecting unmarked missing payloads.
+Carry explicitly ancestry-only initial record writes over pooled WebSocket replication connections, fall back to HTTP when older servers explicitly reject that transport, and reject unmarked missing payloads.
