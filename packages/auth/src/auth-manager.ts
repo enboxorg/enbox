@@ -944,7 +944,11 @@ export class AuthManager {
           signal   : guard.sessionLifetime.signal,
         });
 
-        startSyncInBackgroundIfEnabled(this._userAgent, this._defaultSync);
+        startSyncInBackgroundIfEnabled(
+          this._userAgent,
+          this._defaultSync,
+          guard.sessionLifetime.signal,
+        );
         return session;
       });
     });

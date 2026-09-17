@@ -248,19 +248,70 @@ export async function startSyncAndWaitIfEnabled(
   await userAgent.sync.startSync(resolveSyncOption(sync));
 }
 
+type BackgroundSyncStart = {
+  cleanupStarted: boolean;
+  restart?: {
+    signal: AbortSignal | undefined;
+    sync: SyncOption | undefined;
+  };
+  signal: AbortSignal | undefined;
+};
+
+const backgroundSyncStarts = new WeakMap<EnboxUserAgent, BackgroundSyncStart>();
+
 /**
  * Begin DWN synchronisation without making initial network catch-up part of
  * the auth critical path. Startup failures are reported instead of becoming
  * unhandled rejections or invalidating an otherwise usable local session.
+ * Concurrent requests share the in-flight startup. If that startup outlives
+ * its session, the runtime is stopped after startup settles so a timed-out
+ * lock cannot leave sync running behind a locked vault.
  *
  * @internal
  */
 export function startSyncInBackgroundIfEnabled(
   userAgent: EnboxUserAgent,
   sync: SyncOption | undefined,
+  signal?: AbortSignal,
 ): void {
-  void startSyncAndWaitIfEnabled(userAgent, sync).catch((error: unknown): void => {
-    console.error('[@enbox/auth] Sync failed:', error);
+  if (sync === 'off' || signal?.aborted) {
+    return;
+  }
+
+  const activeStart = backgroundSyncStarts.get(userAgent);
+  if (activeStart !== undefined) {
+    activeStart.signal = signal;
+    if (activeStart.cleanupStarted) {
+      activeStart.restart = { signal, sync };
+    }
+    return;
+  }
+
+  const start: BackgroundSyncStart = { cleanupStarted: false, signal };
+  backgroundSyncStarts.set(userAgent, start);
+
+  void (async (): Promise<void> => {
+    try {
+      await startSyncAndWaitIfEnabled(userAgent, sync);
+    } catch (error: unknown) {
+      console.error('[@enbox/auth] Sync failed:', error);
+    }
+
+    if (start.signal?.aborted && backgroundSyncStarts.get(userAgent) === start) {
+      start.cleanupStarted = true;
+      try {
+        await userAgent.sync.stopSync();
+      } catch (error: unknown) {
+        console.error('[@enbox/auth] Sync cleanup failed:', error);
+      }
+    }
+  })().finally((): void => {
+    if (backgroundSyncStarts.get(userAgent) === start) {
+      backgroundSyncStarts.delete(userAgent);
+      if (start.restart !== undefined) {
+        startSyncInBackgroundIfEnabled(userAgent, start.restart.sync, start.restart.signal);
+      }
+    }
   });
 }
 
@@ -823,7 +874,7 @@ export async function finalizeDelegateSession(params: {
   });
 
   if (startSync) {
-    startSyncInBackgroundIfEnabled(userAgent, sync);
+    startSyncInBackgroundIfEnabled(userAgent, sync, signal);
   }
 
   return session;

@@ -365,7 +365,7 @@ async function finalizeRestoredSession(
   });
 
   if (!syncRepairFailed) {
-    startSyncInBackgroundIfEnabled(userAgent, ctx.defaultSync);
+    startSyncInBackgroundIfEnabled(userAgent, ctx.defaultSync, ctx.sessionSignal);
   }
 
   return session;

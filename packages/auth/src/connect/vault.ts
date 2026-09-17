@@ -267,7 +267,7 @@ export async function vaultConnect(
       identityConnectedDid : identity?.metadata.connectedDid,
     });
 
-    startSyncInBackgroundIfEnabled(userAgent, sync);
+    startSyncInBackgroundIfEnabled(userAgent, sync, ctx.sessionSignal);
     return session;
   });
 }

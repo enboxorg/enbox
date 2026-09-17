@@ -100,7 +100,7 @@ describe('sync startup', () => {
     expect(startSyncCalls[0]).toEqual({ interval: '10s' });
   });
 
-  test('should begin background sync without waiting for initial catch-up', async () => {
+  test('should share background sync startup without waiting for initial catch-up', async () => {
     let finishCatchUp!: () => void;
     const catchUp = new Promise<void>((resolve) => { finishCatchUp = resolve; });
     const startSyncCalls: any[] = [];
@@ -112,10 +112,94 @@ describe('sync startup', () => {
     });
 
     expect(startSyncInBackgroundIfEnabled(agent, undefined)).toBeUndefined();
+    expect(startSyncInBackgroundIfEnabled(agent, undefined)).toBeUndefined();
     expect(startSyncCalls).toEqual([{}]);
 
     finishCatchUp();
     await catchUp;
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  test('should stop a background startup that outlives its auth session', async () => {
+    let finishCatchUp!: () => void;
+    const catchUp = new Promise<void>((resolve) => { finishCatchUp = resolve; });
+    let finishCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => { finishCleanup = resolve; });
+    const stopSyncCalls: Array<number | undefined> = [];
+    const agent = createMockAgent({
+      syncStartSync : () => catchUp,
+      syncStopSync  : async (timeout) => {
+        stopSyncCalls.push(timeout);
+        finishCleanup();
+      },
+    });
+    const session = new AbortController();
+
+    startSyncInBackgroundIfEnabled(agent, undefined, session.signal);
+    session.abort();
+    finishCatchUp();
+    await cleanup;
+
+    expect(stopSyncCalls).toEqual([undefined]);
+  });
+
+  test('should transfer an in-flight startup to the newest auth session', async () => {
+    let finishCatchUp!: () => void;
+    const catchUp = new Promise<void>((resolve) => { finishCatchUp = resolve; });
+    const stopSyncCalls: Array<number | undefined> = [];
+    const agent = createMockAgent({
+      syncStartSync : () => catchUp,
+      syncStopSync  : async (timeout) => { stopSyncCalls.push(timeout); },
+    });
+    const previousSession = new AbortController();
+    const activeSession = new AbortController();
+
+    startSyncInBackgroundIfEnabled(agent, undefined, previousSession.signal);
+    previousSession.abort();
+    startSyncInBackgroundIfEnabled(agent, undefined, activeSession.signal);
+    finishCatchUp();
+    await catchUp;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(stopSyncCalls).toHaveLength(0);
+  });
+
+  test('should restart for a new session that arrives during stale cleanup', async () => {
+    let finishCatchUp!: () => void;
+    const catchUp = new Promise<void>((resolve) => { finishCatchUp = resolve; });
+    let cleanupStarted!: () => void;
+    const cleanup = new Promise<void>((resolve) => { cleanupStarted = resolve; });
+    let finishCleanup!: () => void;
+    const cleanupFinished = new Promise<void>((resolve) => { finishCleanup = resolve; });
+    let restartStarted!: () => void;
+    const restart = new Promise<void>((resolve) => { restartStarted = resolve; });
+    let startSyncCallCount = 0;
+    const agent = createMockAgent({
+      syncStartSync: () => {
+        startSyncCallCount++;
+        if (startSyncCallCount === 2) { restartStarted(); }
+        return startSyncCallCount === 1 ? catchUp : Promise.resolve();
+      },
+      syncStopSync: () => {
+        cleanupStarted();
+        return cleanupFinished;
+      },
+    });
+    const previousSession = new AbortController();
+    const activeSession = new AbortController();
+
+    startSyncInBackgroundIfEnabled(agent, undefined, previousSession.signal);
+    previousSession.abort();
+    finishCatchUp();
+    await cleanup;
+
+    startSyncInBackgroundIfEnabled(agent, undefined, activeSession.signal);
+    finishCleanup();
+    await restart;
+
+    expect(startSyncCallCount).toBe(2);
   });
 
   test('should report background sync failures without rejecting the auth caller', async () => {
@@ -129,6 +213,33 @@ describe('sync startup', () => {
       expect(startSyncInBackgroundIfEnabled(agent, undefined)).toBeUndefined();
       await Promise.resolve();
       await Promise.resolve();
+
+      expect(report.calledOnceWithExactly('[@enbox/auth] Sync failed:', failure)).toBe(true);
+    } finally {
+      report.restore();
+    }
+  });
+
+  test('should clean up a failed startup after its auth session ends', async () => {
+    const failure = new Error('initial catch-up failed after starting');
+    let failCatchUp!: () => void;
+    const catchUp = new Promise<void>((_resolve, reject) => {
+      failCatchUp = (): void => { reject(failure); };
+    });
+    let finishCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => { finishCleanup = resolve; });
+    const report = sinon.stub(console, 'error');
+    const agent = createMockAgent({
+      syncStartSync : () => catchUp,
+      syncStopSync  : async () => { finishCleanup(); },
+    });
+    const session = new AbortController();
+
+    try {
+      startSyncInBackgroundIfEnabled(agent, undefined, session.signal);
+      session.abort();
+      failCatchUp();
+      await cleanup;
 
       expect(report.calledOnceWithExactly('[@enbox/auth] Sync failed:', failure)).toBe(true);
     } finally {
