@@ -13,6 +13,7 @@ import { describe, expect, it } from 'bun:test';
 import { SyncConnectivityManager } from '../src/sync-connectivity-manager.js';
 import { SyncFeedConvergenceManager } from '../src/sync-feed-convergence-manager.js';
 import { SyncRunCoordinator } from '../src/sync-run-coordinator.js';
+import { SyncPushFailuresError, SyncRunFailedError } from '../src/sync-runtime-errors.js';
 
 import { deferred } from './utils/deferred.js';
 
@@ -76,7 +77,7 @@ function createFixture(targets: SyncTarget[] = [
     getTargets           : sinon.stub().resolves(targets),
     probeFeedConvergence : sinon.stub().resolves(reconciled()),
     reconcileTarget      : sinon.stub().resolves(reconciled()),
-    recordPushFailures   : sinon.stub().resolves(0),
+    recordPushFailures   : sinon.stub().resolves([]),
     reportError          : sinon.stub(),
   } satisfies SyncRunCoordinatorOperations;
 
@@ -245,10 +246,13 @@ describe('SyncRunCoordinator', () => {
     operations.reconcileTarget.rejects(new Error('offline'));
     operations.reportError.throws(new Error('logger failed'));
 
-    await expect(coordinator.run()).rejects.toThrow(
-      'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s).',
-    );
+    const error = await coordinator.run().catch((caught: unknown) => caught);
 
+    expect(error).toBeInstanceOf(SyncRunFailedError);
+    expect(error).toMatchObject({
+      detailsReported : false,
+      message         : 'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s).',
+    });
     expect(connectivityManager.recordFailure.calledOnce).toBe(true);
   });
 
@@ -272,19 +276,29 @@ describe('SyncRunCoordinator', () => {
 
   it('reports retryable push failures with coordinator-owned diagnostics', async () => {
     const pushFailures = [{ cid: 'retryable-cid' }];
-    const { coordinator, feedConvergenceManager, operations } = createFixture();
+    const target = roleTarget('did:example:alice');
+    const { coordinator, feedConvergenceManager, operations } = createFixture([target]);
     operations.reconcileTarget.resolves({ converged: true, pushFailures });
-    operations.recordPushFailures.resolves(2);
+    operations.recordPushFailures.resolves(pushFailures);
 
-    await expect(coordinator.run()).rejects.toThrow(
-      'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s): https://a.example',
-    );
+    const runError = await coordinator.run().catch((caught: unknown) => caught);
 
+    expect(runError).toBeInstanceOf(SyncRunFailedError);
+    expect(runError).toMatchObject({
+      detailsReported : true,
+      message         : 'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s): https://owner.example',
+    });
     const reportedError = operations.reportError.firstCall.args[1];
-    expect(reportedError).toBeInstanceOf(Error);
+    expect(reportedError).toBeInstanceOf(SyncPushFailuresError);
     expect(reportedError.message).toBe(
-      'SyncRunCoordinator: reconciliation push failed for 2 retryable message(s).',
+      'Sync reconciliation push failed for 1 message(s) for did:example:owner -> https://owner.example.',
     );
+    expect(reportedError).toMatchObject({
+      authorization  : target.authorization,
+      failures       : pushFailures,
+      remoteEndpoint : 'https://owner.example',
+      tenantDid      : 'did:example:owner',
+    });
     expect(feedConvergenceManager.handleVerifiedDivergence.notCalled).toBe(true);
     expect(feedConvergenceManager.clear.notCalled).toBe(true);
   });
@@ -468,7 +482,7 @@ describe('SyncRunCoordinator', () => {
     const { coordinator, feedConvergenceManager, operations } = createFixture([target]);
     operations.probeFeedConvergence.resolves(reconciled(false));
     operations.reconcileTarget.resolves({ converged: false, pushFailures });
-    operations.recordPushFailures.resolves(1);
+    operations.recordPushFailures.resolves(pushFailures);
 
     await expect(coordinator.settle()).rejects.toThrow(
       'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s): https://a.example',
@@ -476,9 +490,9 @@ describe('SyncRunCoordinator', () => {
 
     expect(operations.recordPushFailures.calledOnceWithExactly(target, pushFailures)).toBe(true);
     const reportedError = operations.reportError.firstCall.args[1];
-    expect(reportedError).toBeInstanceOf(Error);
+    expect(reportedError).toBeInstanceOf(SyncPushFailuresError);
     expect(reportedError.message).toBe(
-      'SyncRunCoordinator: reconciliation push failed for 1 retryable message(s).',
+      'Sync reconciliation push failed for 1 message(s) for did:example:alice -> https://a.example.',
     );
     expect(feedConvergenceManager.handleVerifiedDivergence.notCalled).toBe(true);
   });

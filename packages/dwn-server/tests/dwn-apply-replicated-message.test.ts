@@ -840,6 +840,161 @@ describe('handleDwnApplyReplicatedMessage', () => {
     }
   });
 
+  it('should classify a data replay as superseded when newer record state already won', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const initialData = new Uint8Array([1, 2, 3, 4]);
+    const updateData = new Uint8Array([5, 6, 7, 8]);
+    const { recordsWrite: initialWrite } = await createRecordsWriteMessage(alice, { data: initialData });
+    const updateWrite = await RecordsWrite.createFrom({
+      recordsWriteMessage : initialWrite.message,
+      data                : updateData,
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, initialWrite.message.descriptor.messageTimestamp),
+      signer              : Jws.createSigner(alice),
+    });
+    const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : initialWrite.toJSON(),
+      target  : alice.did,
+    });
+    const updateRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : updateWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      const ancestryApply = await handleDwnApplyReplicatedMessage(initialRequest, {
+        dwn,
+        transport: 'http',
+      });
+      expect(ancestryApply.jsonRpcResponse.result.result).toEqual(expect.objectContaining({
+        kind         : 'Applied',
+        ancestryOnly : true,
+      }));
+
+      const updateApply = await handleDwnApplyReplicatedMessage(updateRequest, {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(updateData),
+      });
+      expect((updateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
+
+      const replay = await handleDwnApplyReplicatedMessage(initialRequest, {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(initialData),
+      });
+
+      expect(replay.jsonRpcResponse.error).toBeUndefined();
+      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Superseded' });
+    } finally {
+      await dwn.close();
+    }
+  });
+
+  it('should classify a proven obsolete replay before charging quota', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const initialData = new Uint8Array(8).fill(1);
+    const updateData = new Uint8Array(4).fill(2);
+    const { recordsWrite: initialWrite } = await createRecordsWriteMessage(alice, { data: initialData });
+    const updateWrite = await RecordsWrite.createFrom({
+      recordsWriteMessage : initialWrite.message,
+      data                : updateData,
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, initialWrite.message.descriptor.messageTimestamp),
+      signer              : Jws.createSigner(alice),
+    });
+    const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : initialWrite.toJSON(),
+      target  : alice.did,
+    });
+    const updateRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : updateWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn, dialect } = await getTestDwn();
+    const adminStore = AdminStore.createFromDialect(dialect, 0);
+    const quotaContext = {
+      dwn,
+      transport : 'http' as const,
+      adminStore,
+      config    : {
+        quotaMaxMessages     : 100,
+        quotaMaxStorageBytes : updateData.length,
+      } as any,
+    };
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      const ancestryApply = await handleDwnApplyReplicatedMessage(initialRequest, quotaContext);
+      expect((ancestryApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
+
+      const updateApply = await handleDwnApplyReplicatedMessage(updateRequest, {
+        ...quotaContext,
+        dataStream: DataStream.fromBytes(updateData),
+      });
+      expect((updateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
+      expect(await adminStore.getTenantStorageSize(alice.did)).toBe(updateData.length);
+
+      const replay = await handleDwnApplyReplicatedMessage(initialRequest, {
+        ...quotaContext,
+        dataStream: DataStream.fromBytes(initialData),
+      });
+
+      expect(replay.jsonRpcResponse.error).toBeUndefined();
+      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Superseded' });
+      expect(await adminStore.getTenantStorageSize(alice.did)).toBe(updateData.length);
+    } finally {
+      await dwn.close();
+      await adminStore.close();
+    }
+  });
+
+  it('should classify a data replay as superseded when an older tombstone won', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const recordsDelete = await RecordsDelete.create({
+      messageTimestamp : Time.createOffsetTimestamp({ seconds: -60 }),
+      recordId         : recordsWrite.message.recordId,
+      signer           : Jws.createSigner(alice),
+    });
+    const writeRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const deleteRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : recordsDelete.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      const ancestryApply = await handleDwnApplyReplicatedMessage(writeRequest, {
+        dwn,
+        transport: 'http',
+      });
+      expect(ancestryApply.jsonRpcResponse.result.result).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+      const deleteApply = await handleDwnApplyReplicatedMessage(deleteRequest, {
+        dwn,
+        transport: 'http',
+      });
+      expect((deleteApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
+
+      const replay = await handleDwnApplyReplicatedMessage(writeRequest, {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(data),
+      });
+
+      expect(replay.jsonRpcResponse.error).toBeUndefined();
+      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Superseded' });
+    } finally {
+      await dwn.close();
+    }
+  });
+
   it('returns an internal JSON-RPC error for unexpected thrown errors', async () => {
     const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
