@@ -12,8 +12,8 @@ import { describe, expect, it } from 'bun:test';
 
 import { SyncConnectivityManager } from '../src/sync-connectivity-manager.js';
 import { SyncFeedConvergenceManager } from '../src/sync-feed-convergence-manager.js';
-import { SyncPushFailuresError } from '../src/sync-runtime-errors.js';
 import { SyncRunCoordinator } from '../src/sync-run-coordinator.js';
+import { SyncPushFailuresError, SyncRunFailedError } from '../src/sync-runtime-errors.js';
 
 import { deferred } from './utils/deferred.js';
 
@@ -246,10 +246,13 @@ describe('SyncRunCoordinator', () => {
     operations.reconcileTarget.rejects(new Error('offline'));
     operations.reportError.throws(new Error('logger failed'));
 
-    await expect(coordinator.run()).rejects.toThrow(
-      'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s).',
-    );
+    const error = await coordinator.run().catch((caught: unknown) => caught);
 
+    expect(error).toBeInstanceOf(SyncRunFailedError);
+    expect(error).toMatchObject({
+      detailsReported : false,
+      message         : 'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s).',
+    });
     expect(connectivityManager.recordFailure.calledOnce).toBe(true);
   });
 
@@ -278,10 +281,13 @@ describe('SyncRunCoordinator', () => {
     operations.reconcileTarget.resolves({ converged: true, pushFailures });
     operations.recordPushFailures.resolves(pushFailures);
 
-    await expect(coordinator.run()).rejects.toThrow(
-      'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s): https://owner.example',
-    );
+    const runError = await coordinator.run().catch((caught: unknown) => caught);
 
+    expect(runError).toBeInstanceOf(SyncRunFailedError);
+    expect(runError).toMatchObject({
+      detailsReported : true,
+      message         : 'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s): https://owner.example',
+    });
     const reportedError = operations.reportError.firstCall.args[1];
     expect(reportedError).toBeInstanceOf(SyncPushFailuresError);
     expect(reportedError.message).toBe(

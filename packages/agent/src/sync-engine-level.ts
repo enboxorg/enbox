@@ -89,7 +89,7 @@ import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMess
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { isMissingRoleAuthorizationFailure, isNonRetryableSyncAuthorizationFailure, isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
+import { isMissingRoleAuthorizationFailure, isNonRetryableSyncAuthorizationFailure, isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError, SyncRunFailedError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from './sync-target-resolver.js';
 import { projectReplicationLinks, projectSyncStatus } from './sync-status-reporter.js';
@@ -2241,6 +2241,9 @@ export class SyncEngineLevel implements SyncEngine {
     } catch (error: unknown) {
       // The coordinator already folded endpoint outcomes into connectivity.
       if (isDidResolutionUnavailableError(error)) {
+        return;
+      }
+      if (error instanceof SyncRunFailedError && error.detailsReported) {
         return;
       }
       console.error('SyncEngineLevel: Error during durable feed settle check', error);

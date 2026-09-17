@@ -5,7 +5,7 @@ import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, SyncDirection, SyncRunOptions } from './types/sync.js';
 
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
-import { SyncPushFailuresError } from './sync-runtime-errors.js';
+import { SyncPushFailuresError, SyncRunFailedError } from './sync-runtime-errors.js';
 
 export type { SyncRunOptions } from './types/sync.js';
 
@@ -31,6 +31,7 @@ type SyncTargetGroupRunResult = {
   attempted: boolean;
   cause?: unknown;
   dwnUrl: string;
+  failureReported: boolean;
   succeeded: boolean;
 };
 
@@ -38,6 +39,7 @@ type SyncTargetGroupSummary = {
   cause?: unknown;
   failedUrls: string[];
   groupsFailed: number;
+  groupsReported: number;
   groupsSucceeded: number;
 };
 
@@ -140,16 +142,17 @@ export class SyncRunCoordinator {
       try {
         attempted = await runTarget(target) || attempted;
       } catch (error: unknown) {
-        if (!isDidResolutionUnavailableError(error)) {
+        const failureReported = !isDidResolutionUnavailableError(error);
+        if (failureReported) {
           this._operations.reportError(
             `SyncRunCoordinator: Error syncing ${target.did} with ${dwnUrl}`,
             error,
           );
         }
-        return { attempted: true, succeeded: false, cause: error };
+        return { attempted: true, succeeded: false, cause: error, failureReported };
       }
     }
-    return { attempted, succeeded: true };
+    return { attempted, succeeded: true, failureReported: false };
   }
 
   private async runTarget(
@@ -205,6 +208,7 @@ export class SyncRunCoordinator {
     const summary: SyncTargetGroupSummary = {
       failedUrls      : [],
       groupsFailed    : 0,
+      groupsReported  : 0,
       groupsSucceeded : 0,
     };
     for (const result of results) {
@@ -230,6 +234,9 @@ export class SyncRunCoordinator {
     }
     summary.groupsFailed++;
     summary.failedUrls.push(result.value.dwnUrl);
+    if (result.value.failureReported) {
+      summary.groupsReported++;
+    }
     if (isDidResolutionUnavailableError(result.value.cause)) {
       // Preserve the shared prerequisite even when another endpoint failed
       // unexpectedly; that endpoint's detailed diagnostic was already reported.
@@ -253,10 +260,13 @@ export class SyncRunCoordinator {
     if (summary.groupsFailed === 0) {
       return;
     }
-    throw new Error(
+    throw new SyncRunFailedError(
       `SyncRunCoordinator: Sync operation failed for ${summary.groupsFailed} remote endpoint(s)`
       + (summary.failedUrls.length > 0 ? `: ${summary.failedUrls.join(', ')}` : '.'),
-      { cause: summary.cause },
+      {
+        cause           : summary.cause,
+        detailsReported : summary.groupsReported === summary.groupsFailed,
+      },
     );
   }
 }

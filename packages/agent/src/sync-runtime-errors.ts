@@ -16,6 +16,17 @@ export class SyncRunCancelledError extends Error {
   }
 }
 
+/** Aggregate run failure whose endpoint diagnostics may already have been reported. */
+export class SyncRunFailedError extends Error {
+  public readonly detailsReported: boolean;
+
+  public constructor(message: string, params: { cause?: unknown; detailsReported: boolean }) {
+    super(message, { cause: params.cause });
+    this.name = 'SyncRunFailedError';
+    this.detailsReported = params.detailsReported;
+  }
+}
+
 /** Structured reconciliation failure retained until the workflow's single logging boundary. */
 export class SyncPushFailuresError extends Error {
   public readonly authorization: SyncAuthorization;

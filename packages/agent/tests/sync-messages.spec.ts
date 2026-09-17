@@ -2463,6 +2463,38 @@ describe('sync-messages', () => {
       expect(result.failed[0].detail).toContain('local protocol query failed');
     });
 
+    it('should not classify a missing exact-CID dependency as a missing root', async () => {
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const rootCid = await Message.getCid(message);
+      const dependencyCid = 'bafyreimissingdependency';
+      const missing = [{
+        type       : 'Parent' as const,
+        recordId   : 'missing-parent',
+        protocol   : 'https://example.com/dependency',
+        messageCid : dependencyCid,
+      }];
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map([[rootCid, { message }]]),
+        applyResults  : [{ kind: 'Incomplete', missing }],
+      });
+
+      const result = await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [rootCid],
+        agent,
+      });
+
+      expect(result.failed).toEqual([expect.objectContaining({
+        cid             : rootCid,
+        dependencyCid,
+        kind            : 'Incomplete',
+        localStatusCode : 404,
+        remoteResult    : { kind: 'Incomplete', missing },
+      })]);
+      expect(result.failed[0].localMissing).toBeUndefined();
+    });
+
     it('should not loop forever on repeated identical Incomplete refs', async () => {
       const { message } = await TestDataGenerator.generateRecordsWrite({ protocol: 'https://example.com/repeated-incomplete' });
       const messageCid = await Message.getCid(message);

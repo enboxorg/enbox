@@ -960,7 +960,7 @@ export class RemoteApplyPushContext {
       ...(remoteResult === undefined ? {} : { kind: remoteResult.kind, remoteResult }),
       ...(deferred === undefined ? {} : { reason: deferred.reason }),
       ...(deferred?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
-      ...(localMissing === true ? { localMissing: true } : {}),
+      ...(localMissing === true && cid === rootCid ? { localMissing: true } : {}),
       ...(localStatusCode === undefined ? {} : { localStatusCode }),
       detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
     };
@@ -972,7 +972,10 @@ export class RemoteApplyPushContext {
       ...(failure.dependencyCid === undefined || failure.dependencyCid === rootCid
         ? {}
         : { dependencyCid: failure.dependencyCid }),
-      ...(failure.localMissing === true ? { localMissing: true } : {}),
+      ...(failure.localMissing === true &&
+        (failure.dependencyCid === undefined || failure.dependencyCid === rootCid)
+        ? { localMissing: true }
+        : {}),
       ...(failure.localStatusCode === undefined ? {} : { localStatusCode: failure.localStatusCode }),
       detail: failure.detail,
     };

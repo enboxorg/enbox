@@ -5,9 +5,11 @@ import log from 'loglevel';
 
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
-import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { enforceQuota, enforceTenantRateLimit, validateInboundDwnMessageTransport } from './inbound-message.js';
+
+type StoredReplayState = 'complete' | 'missing-data' | 'not-stored';
 
 export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   dwnRequest,
@@ -56,15 +58,9 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return transportResult;
     }
 
-    const limitsResult = await enforceApplyReplicatedMessageLimits({
-      context,
-      hasInboundData,
-      message,
-      requestId,
-      target,
-    });
-    if (limitsResult !== undefined) {
-      return limitsResult;
+    const rateLimitResult = enforceTenantRateLimit({ context, message, requestId, target });
+    if (rateLimitResult !== undefined) {
+      return rateLimitResult;
     }
 
     const encodedDataResult = validateEncodedData({ context, encodedData, message, requestId });
@@ -72,15 +68,35 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return encodedDataResult;
     }
 
-    if (hasInboundData && await isStoredRecordsWriteMissingData(context, target, message)) {
+    const storedReplayState = await getStoredReplayState(context, target, message, hasInboundData);
+    if (storedReplayState === 'missing-data' && await hasDifferentStoredLatestRecordState(context, target, message)) {
+      await dataStream?.cancel().catch((): void => {
+        // A proven obsolete replay does not need its inbound body.
+      });
+      return {
+        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result: { kind: 'Superseded' } }),
+      };
+    }
+
+    const quotaResult = await enforceApplyReplicatedMessageQuota({
+      context,
+      hasInboundData,
+      isFullyStoredDuplicate: storedReplayState === 'complete',
+      message,
+      target,
+    });
+    if (quotaResult !== undefined) {
+      return quotaResult;
+    }
+
+    if (storedReplayState === 'missing-data') {
       await dataStream?.cancel().catch((): void => {
         // The body is unnecessary for either settled or deferred replay.
       });
-      const result: ReplicationApplyResult = await hasNewerStoredRecordState(context, target, message)
-        ? { kind: 'Superseded' }
-        : { kind: 'Deferred', reason: 'storage' };
       return {
-        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
+        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, {
+          result: { kind: 'Deferred', reason: 'storage' } satisfies ReplicationApplyResult,
+        }),
       };
     }
 
@@ -236,25 +252,20 @@ function capDataStreamAtDescriptorSize(
   });
 }
 
-async function enforceApplyReplicatedMessageLimits({
+async function enforceApplyReplicatedMessageQuota({
   context,
   hasInboundData,
+  isFullyStoredDuplicate,
   message,
-  requestId,
   target,
 }: {
   context: Parameters<JsonRpcHandler>[1];
   hasInboundData: boolean;
+  isFullyStoredDuplicate: boolean;
   message: GenericMessage;
-  requestId: Parameters<typeof createJsonRpcErrorResponse>[0];
   target: string;
 }): Promise<ReturnType<typeof validateInboundDwnMessageTransport>> {
-  const rateLimitResult = enforceTenantRateLimit({ context, message, requestId, target });
-  if (rateLimitResult !== undefined) {
-    return rateLimitResult;
-  }
-
-  if (await isFullyStoredDuplicate({ context, hasInboundData, message, target })) {
+  if (isFullyStoredDuplicate) {
     return undefined;
   }
 
@@ -273,28 +284,21 @@ async function enforceApplyReplicatedMessageLimits({
   return undefined;
 }
 
-async function isFullyStoredDuplicate({
-  context,
-  hasInboundData,
-  message,
-  target,
-}: {
-  context: Parameters<JsonRpcHandler>[1];
-  hasInboundData: boolean;
-  message: GenericMessage;
-  target: string;
-}): Promise<boolean> {
+async function getStoredReplayState(
+  context: Parameters<JsonRpcHandler>[1],
+  target: string,
+  message: GenericMessage,
+  hasInboundData: boolean,
+): Promise<StoredReplayState> {
   const messageCid = await Cid.computeCid(message);
   const existingMessage = await context.dwn.storage.messageStore.get(target, messageCid);
   if (existingMessage === undefined) {
-    return false;
+    return 'not-stored';
   }
 
-  if (!hasInboundData) {
-    return true;
-  }
-
-  return await storedRecordsWriteHasData(context, target, existingMessage);
+  return !hasInboundData || await storedRecordsWriteHasData(context, target, existingMessage)
+    ? 'complete'
+    : 'missing-data';
 }
 
 async function storedRecordsWriteHasData(
@@ -333,19 +337,8 @@ async function storedRecordsWriteHasData(
   return storedData !== undefined;
 }
 
-async function isStoredRecordsWriteMissingData(
-  context: Parameters<JsonRpcHandler>[1],
-  tenant: string,
-  message: GenericMessage,
-): Promise<boolean> {
-  const messageCid = await Cid.computeCid(message);
-  const existingMessage = await context.dwn.storage.messageStore.get(tenant, messageCid);
-  return existingMessage !== undefined &&
-    !await storedRecordsWriteHasData(context, tenant, existingMessage);
-}
-
-/** Whether receiver-owned record state proves that this stored data-less write is obsolete. */
-async function hasNewerStoredRecordState(
+/** Whether the DWN's committed latest-state index proves that this stored data-less write is obsolete. */
+async function hasDifferentStoredLatestRecordState(
   context: Parameters<JsonRpcHandler>[1],
   tenant: string,
   message: GenericMessage,
@@ -363,11 +356,16 @@ async function hasNewerStoredRecordState(
   }
 
   const { messages } = await context.dwn.storage.messageStore.query(tenant, [{
-    interface: DwnInterfaceName.Records,
+    interface         : DwnInterfaceName.Records,
+    isLatestBaseState : true,
     recordId,
   }]);
-  const newest = await Message.getNewestMessage(messages);
-  return newest !== undefined && await Message.isNewer(newest, message);
+  if (messages.length === 0) {
+    return false;
+  }
+
+  const messageCid = await Cid.computeCid(message);
+  return await Cid.computeCid(messages[0]) !== messageCid;
 }
 
 function recordApplyActivity(
