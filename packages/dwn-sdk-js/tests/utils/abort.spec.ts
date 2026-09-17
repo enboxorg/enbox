@@ -15,6 +15,7 @@ describe('executeUnlessAborted', () => {
   it('rejects with an already-aborted signal reason even when the operation is settled', async () => {
     const controller = new AbortController();
     const reason = new Error('already stopped');
+    controller.signal.throwIfAborted = (): void => { };
     controller.abort(reason);
 
     await expect(executeUnlessAborted(Promise.resolve('complete'), controller.signal)).rejects.toBe(reason);

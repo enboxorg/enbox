@@ -8,7 +8,9 @@ export async function executeUnlessAborted<T>(promise: Promise<T>, signal: Abort
     return promise;
   }
 
-  signal.throwIfAborted();
+  if (signal.aborted) {
+    throw signal.reason;
+  }
 
   let onAbort!: () => void;
   const abortPromise = new Promise<never>((_resolve, reject) => {
