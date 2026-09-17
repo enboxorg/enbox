@@ -1,5 +1,7 @@
 import type { EnboxPlatformAgent } from './types/agent.js';
 
+import { executeUnlessAborted } from '@enbox/dwn-sdk-js';
+
 import { getEncryptionKeyInfo } from './dwn-encryption.js';
 
 /** Maximum time an interactive connect approval waits for DID-backed network discovery. */
@@ -36,29 +38,26 @@ export function resolveConnectDelegateEncryptionKeyInfo(
  * DID method resolvers have longer transport timeouts, so awaiting them
  * directly can leave the wallet on "Authorizing…" for tens of seconds.
  *
- * The underlying operation is allowed to finish so the resolver's
- * single-flight/cache can still benefit a retry. Promise.race attaches a
- * rejection handler to both inputs, preventing a late operation failure from
- * becoming unhandled after the caller has received the timeout.
+ * The shared abort fence stops only the caller's wait. The underlying operation
+ * remains attached and can finish so the resolver's single-flight/cache still
+ * benefits a retry.
  */
 async function settleConnectNetworkOperation<T>(
   operation: Promise<T>,
   description: string,
 ): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<never>((_resolve, reject) => {
-    timeoutId = setTimeout((): void => {
-      reject(new Error(
+  const deadline = new AbortController();
+  const timeoutId = setTimeout((): void => {
+    deadline.abort(
+      new Error(
         `${description} timed out after ${CONNECT_DID_RESOLUTION_TIMEOUT_MS}ms.`,
-      ));
-    }, CONNECT_DID_RESOLUTION_TIMEOUT_MS);
-  });
+      ),
+    );
+  }, CONNECT_DID_RESOLUTION_TIMEOUT_MS);
 
   try {
-    return await Promise.race([operation, timedOut]);
+    return await executeUnlessAborted(operation, deadline.signal);
   } finally {
-    if (timeoutId !== undefined) {
-      clearTimeout(timeoutId);
-    }
+    clearTimeout(timeoutId);
   }
 }
