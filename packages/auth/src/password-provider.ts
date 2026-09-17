@@ -20,9 +20,10 @@
  * @module
  */
 
+import type { PasswordContext, PasswordProvider as PasswordProviderBase } from './password-provider-core.js';
+
 import { PasswordProvider as BrowserSafePasswordProvider } from './password-provider-core.js';
 import { PasswordProviderUnavailableError } from './errors.js';
-import type { PasswordContext, PasswordProvider as PasswordProviderBase } from './password-provider-core.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
