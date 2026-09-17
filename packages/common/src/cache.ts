@@ -1,3 +1,5 @@
+import { MAX_TIMER_DELAY_MS } from './time.js';
+
 type TtlCacheEntry<V> = {
   expiresAt: number;
   sequence: number;
@@ -16,8 +18,6 @@ type TtlCachePurgeState = {
 };
 
 type TtlCacheTimer = ReturnType<typeof setTimeout>;
-
-const MAX_TIMER_DELAY = 2_147_483_647;
 
 function now(): number {
   return performance.now();
@@ -442,7 +442,7 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
 
     this.cancelTimer();
 
-    const delay = Math.min(MAX_TIMER_DELAY, Math.max(0, Math.ceil(expiresAt - now())));
+    const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, Math.ceil(expiresAt - now())));
     const timer = setTimeout((): void => {
       this._timer = undefined;
       this._timerExpiresAt = Infinity;

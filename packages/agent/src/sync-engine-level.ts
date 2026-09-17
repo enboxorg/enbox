@@ -6,7 +6,7 @@ import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, Messa
 import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
 import { BroadcastChannelWakePublisher, DwnError, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
-import { parseDurationInMilliseconds, runSerializedByKey, runWithCrossContextLock, sleep } from '@enbox/common';
+import { MAX_TIMER_DELAY_MS, parseDurationInMilliseconds, runSerializedByKey, runWithCrossContextLock, sleep } from '@enbox/common';
 import { RateLimitError, SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -2043,7 +2043,7 @@ export class SyncEngineLevel implements SyncEngine {
     // ~1ms — also a tight loop).
     const intervalMilliseconds = Math.min(
       Math.max(parseDurationInMilliseconds(params.interval ?? '5m'), SyncEngineLevel.MIN_SYNC_INTERVAL_MS),
-      SyncEngineLevel.MAX_TIMER_DELAY_MS,
+      MAX_TIMER_DELAY_MS,
     );
 
     const hadLiveRuntime = this.hasLiveSyncRuntime();
@@ -2110,7 +2110,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private static coerceStopSyncTimeout(timeout: number): number {
     return Number.isFinite(timeout)
-      ? Math.min(Math.max(0, timeout), SyncEngineLevel.MAX_TIMER_DELAY_MS)
+      ? Math.min(Math.max(0, timeout), MAX_TIMER_DELAY_MS)
       : 2000;
   }
 
@@ -2120,9 +2120,9 @@ export class SyncEngineLevel implements SyncEngine {
     if (timeout === undefined) {
       return undefined;
     }
-    if (!Number.isFinite(timeout) || timeout < 0 || timeout > SyncEngineLevel.MAX_TIMER_DELAY_MS) {
+    if (!Number.isFinite(timeout) || timeout < 0 || timeout > MAX_TIMER_DELAY_MS) {
       throw new RangeError(
-        `SyncEngineLevel: Lifecycle timeout must be between 0 and ${SyncEngineLevel.MAX_TIMER_DELAY_MS} milliseconds.`,
+        `SyncEngineLevel: Lifecycle timeout must be between 0 and ${MAX_TIMER_DELAY_MS} milliseconds.`,
       );
     }
     return createSyncLifecycleDeadline(timeout);
@@ -2173,9 +2173,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Settle-check cadence floor — prevents a tight reconciliation loop. */
   private static readonly MIN_SYNC_INTERVAL_MS = 1_000;
-
-  /** The 32-bit native timer ceiling shared by intervals and lifecycle waits. */
-  private static readonly MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
   /** Wrap a scheduled operation so each tick runs as supervised background work. */
   private supervisedTick(operation: () => Promise<void>): () => void {

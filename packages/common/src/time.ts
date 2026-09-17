@@ -114,8 +114,13 @@ export async function timed<T>(
   }
 }
 
+/** Largest delay accepted by the native timer APIs without overflow coercion. */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 /**
- * Returns a promise that resolves after the given duration.
+ * Returns a promise that resolves after the given duration or rejects when
+ * `signal` aborts. Long waits are split into native-timer-sized chunks so an
+ * oversized delay cannot be coerced by the runtime into an immediate timer.
  *
  * Use this anywhere you would otherwise inline
  * `new Promise(resolve => setTimeout(resolve, ms))` — retry backoff,
@@ -127,6 +132,7 @@ export async function timed<T>(
  * `setTimeout(_, 0)`; they do not throw.
  *
  * @param durationInMilliseconds - How long to wait, in milliseconds.
+ * @param signal - Optional cancellation signal for the wait.
  * @returns A promise that resolves after the duration elapses.
  *
  * @example
@@ -136,6 +142,37 @@ export async function timed<T>(
  * await sleep(250); // pause for 250ms
  * ```
  */
-export function sleep(durationInMilliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, Math.max(0, durationInMilliseconds)));
+export function sleep(durationInMilliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (!Number.isFinite(durationInMilliseconds)) {
+    return Promise.reject(new TypeError('sleep duration must be finite'));
+  }
+  if (signal?.aborted === true) {
+    return Promise.reject(signal.reason);
+  }
+
+  let remaining = Math.max(0, durationInMilliseconds);
+  return new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = (): void => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      reject(signal?.reason);
+    };
+    const schedule = (): void => {
+      const delay = Math.min(remaining, MAX_TIMER_DELAY_MS);
+      timer = setTimeout((): void => {
+        remaining -= delay;
+        if (remaining > 0) {
+          schedule();
+          return;
+        }
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, delay);
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+    schedule();
+  });
 }
