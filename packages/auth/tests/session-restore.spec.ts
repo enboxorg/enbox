@@ -394,11 +394,15 @@ describe('restoreSession', () => {
       });
 
       const registerCalls: any[] = [];
+      const lifecycleOptions: any[] = [];
       const agent = createMockAgent({
         firstLaunch               : async () => false,
         identityConnectedIdentity : async () => identity,
-        syncSetIdentityOptions    : async (params) => { registerCalls.push(params); },
-        processDwnRequest         : async (params: any) => {
+        syncSetIdentityOptions    : async (params, options) => {
+          registerCalls.push(params);
+          lifecycleOptions.push(options);
+        },
+        processDwnRequest: async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
               reply: {
@@ -418,6 +422,7 @@ describe('restoreSession', () => {
       expect(session).toBeDefined();
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].options.protocols).toContain('https://proto.example.com/notes');
+      expect(lifecycleOptions).toEqual([{ timeout: 10_000 }]);
     });
 
     test('does not start sync when setIdentityOptions fails', async () => {
@@ -705,13 +710,17 @@ describe('restoreSession', () => {
 
       const syncStartCalls: any[] = [];
       const unregisterCalls: string[] = [];
+      const cleanupLifecycleOptions: any[] = [];
       const agent = createMockAgent({
         firstLaunch               : async () => false,
         identityConnectedIdentity : async () => identity,
         syncSetIdentityOptions    : async () => { throw new Error('database write error'); },
-        syncRemoveIdentity        : async (did) => { unregisterCalls.push(did); },
-        syncStartSync             : async (params) => { syncStartCalls.push(params); },
-        processDwnRequest         : async () => ({
+        syncRemoveIdentity        : async (did, options) => {
+          unregisterCalls.push(did);
+          cleanupLifecycleOptions.push(options);
+        },
+        syncStartSync     : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest : async () => ({
           reply: { status: { code: 200 }, entries: [grantEntry] },
         }),
       });
@@ -723,6 +732,7 @@ describe('restoreSession', () => {
       expect(session).toBeDefined();
       expect(syncStartCalls).toHaveLength(0);
       expect(unregisterCalls).toHaveLength(1);
+      expect(cleanupLifecycleOptions).toEqual([{ timeout: 0 }]);
     });
 
     test('sets syncRepairFailed when zero-grant unregister throws I/O error', async () => {

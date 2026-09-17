@@ -21,6 +21,8 @@ import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
 import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
 
+const SESSION_RESTORE_SYNC_REPAIR_TIMEOUT_MS = 10_000;
+
 /**
  * Attempt to restore a previous session.
  *
@@ -323,13 +325,16 @@ async function finalizeRestoredSession(
       userAgent,
       connectedDid,
       delegateDid,
-      identitySyncProtocols: ctx.defaultIdentitySyncProtocols,
+      identitySyncProtocols : ctx.defaultIdentitySyncProtocols,
+      lifecycleOptions      : { timeout: SESSION_RESTORE_SYNC_REPAIR_TIMEOUT_MS },
     });
   } catch {
     // Grant query or registration repair failed — don't block restore,
     // but don't let a stale registration remain usable.
     syncRepairFailed = true;
-    try { await userAgent.sync.removeIdentity(connectedDid); } catch { /* best-effort cleanup */ }
+    try {
+      await userAgent.sync.removeIdentity(connectedDid, { timeout: 0 });
+    } catch { /* best-effort cleanup */ }
   }
 
   if (delegateDid && connectedDid) {

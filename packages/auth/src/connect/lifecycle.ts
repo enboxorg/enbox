@@ -16,7 +16,7 @@
 
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry } from '@enbox/agent';
+import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry, SyncLifecycleOptions } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
@@ -418,14 +418,15 @@ export async function applyIdentitySyncScope(params: {
   connectedDid: string;
   delegateDid?: string;
   scope: 'all' | string[] | undefined;
+  lifecycleOptions?: SyncLifecycleOptions;
 }): Promise<boolean> {
-  const { userAgent, connectedDid, delegateDid, scope } = params;
+  const { userAgent, connectedDid, delegateDid, scope, lifecycleOptions } = params;
 
   if (scope === undefined) {
     return false;
   }
   if (delegateDid !== undefined && scope !== 'all' && scope.length === 0) {
-    await userAgent.sync.removeIdentity(connectedDid);
+    await userAgent.sync.removeIdentity(connectedDid, lifecycleOptions);
     return false;
   }
 
@@ -433,7 +434,7 @@ export async function applyIdentitySyncScope(params: {
   const options = delegateDid === undefined
     ? { protocols }
     : { delegateDid, protocols };
-  await userAgent.sync.setIdentityOptions({ did: connectedDid, options });
+  await userAgent.sync.setIdentityOptions({ did: connectedDid, options }, lifecycleOptions);
   return true;
 }
 
@@ -459,8 +460,9 @@ export async function registerSyncScopeForIdentity(params: {
   connectedDid: string;
   delegateDid?: string;
   identitySyncProtocols?: IdentitySyncProtocols;
+  lifecycleOptions?: SyncLifecycleOptions;
 }): Promise<void> {
-  const { userAgent, connectedDid, delegateDid, identitySyncProtocols } = params;
+  const { userAgent, connectedDid, delegateDid, identitySyncProtocols, lifecycleOptions } = params;
   const scope = delegateDid === undefined
     ? identitySyncProtocols
     : await deriveActiveSyncScope(userAgent, delegateDid);
@@ -470,6 +472,7 @@ export async function registerSyncScopeForIdentity(params: {
     connectedDid,
     delegateDid,
     scope,
+    lifecycleOptions,
   });
 }
 
