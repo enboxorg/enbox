@@ -16,8 +16,8 @@ import type {
 } from './sync-durable-feed-reconciler.js';
 import type { SyncRuntime, SyncRuntimeHandle } from './sync-runtime.js';
 
-import { syncEventScope as eventScope } from './types/sync.js';
 import { syncTargetFromLink } from './sync-target-resolver.js';
+import { syncEventScope as eventScope, isTerminalPushFailure } from './types/sync.js';
 import { isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncPushFailuresError } from './sync-runtime-errors.js';
 
 export type SyncLinkRecoveryTarget = SyncTarget & { linkKey: string };
@@ -658,12 +658,19 @@ export class SyncLinkRecoveryCoordinator {
     this.emitReconcileNeeded(controller, 'push-retryable');
   }
 
-  /** Report one structured error for a failed pass, then schedule its retry. */
+  /** Report retryable failures once at this boundary, then schedule their retry. */
   private handlePushFailures(controller: SyncLinkController, failures: PushFailure[]): void {
+    // Terminal failures were already dead-lettered and reported while their
+    // push result was folded. They must neither be reported again nor retried.
+    const retryableFailures = failures.filter(failure => !isTerminalPushFailure(failure));
+    if (retryableFailures.length === 0) {
+      return;
+    }
+
     const { link } = controller;
     const error = new SyncPushFailuresError({
       authorization  : link.authorization,
-      failures,
+      failures       : retryableFailures,
       remoteEndpoint : link.remoteEndpoint,
       tenantDid      : link.tenantDid,
     });

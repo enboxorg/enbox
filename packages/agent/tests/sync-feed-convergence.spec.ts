@@ -29,6 +29,7 @@ import { createLocalDwnRpc } from './utils/local-dwn-rpc-shim.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { SyncPushFailuresError } from '../src/sync-runtime-errors.js';
 import { TestAgent } from './utils/test-agent.js';
 import { pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed } from '../src/sync-messages.js';
 
@@ -1071,6 +1072,13 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
     expect(gate.attempts()).toBe(2);
     expect(consoleError.calledOnce).toBe(true);
+    expect(consoleError.firstCall.args[0]).toBe('SyncEngineLevel: Terminal reconciliation push failed');
+    expect(consoleError.firstCall.args[1]).toBeInstanceOf(SyncPushFailuresError);
+    expect(consoleError.firstCall.args[1]).toMatchObject({
+      failures: [expect.objectContaining({ cid: blockedCid, terminal: true })],
+      remoteEndpoint,
+      tenantDid,
+    });
     const failed = await syncEngine.getDeadLetters(tenantDid);
     expect(failed).toHaveLength(1);
     expect(failed[0]).toMatchObject({
@@ -1089,6 +1097,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     // sending a message that has already been classified as terminal.
     await syncEngine.retryRemoteNow(tenantDid, remoteEndpoint);
     expect(gate.attempts()).toBe(2);
+    expect(consoleError.calledOnce).toBe(true);
   });
 
   it('converges updates, deletes, prune cascades, config churn, and data bytes after a resumed feed cycle', async () => {

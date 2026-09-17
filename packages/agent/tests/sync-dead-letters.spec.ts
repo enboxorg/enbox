@@ -1,10 +1,10 @@
 import type { MessagesQueryReplyEntry } from '@enbox/dwn-sdk-js';
 
 import type { SyncDeadLetterStoreLevel } from '../src/sync-dead-letter-store-level.js';
-import type { SyncIdentityOptions } from '../src/types/sync.js';
 import type { SyncIdentityStore } from '../src/sync-identity-store.js';
 import type { SyncReplicationLinkStoreLevel } from '../src/sync-replication-link-store-level.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
+import type { PushFailure, SyncIdentityOptions } from '../src/types/sync.js';
 import type { SyncDeferredPullState, SyncDeferredPullStoreLevel } from '../src/sync-deferred-pull-store-level.js';
 
 import sinon from 'sinon';
@@ -132,6 +132,26 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     expect(health.failedMessageCount).toBe(1);
     expect(health.syncHealthy).toBe(false);
+  });
+
+  it('should report a terminal push failure only when its dead letter is first recorded', async () => {
+    const did = 'did:example:alice';
+    const failure: PushFailure = {
+      cid      : 'cid-terminal',
+      detail   : 'bad signature',
+      kind     : 'Invalid',
+      terminal : true,
+    };
+    const internal = syncEngine as unknown as {
+      recordTerminalPushFailure(target: SyncTarget, failure: PushFailure): Promise<void>;
+    };
+    const report = sinon.stub(console, 'error');
+
+    await internal.recordTerminalPushFailure(target(did), failure);
+    await internal.recordTerminalPushFailure(target(did), failure);
+
+    expect(report.calledOnce).toBe(true);
+    expect(await syncEngine.getDeadLetters(did)).toHaveLength(1);
   });
 
   it('should promote an expired deferred pull to a dead letter and clear its retry state', async () => {

@@ -706,6 +706,23 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('does not re-report or retry terminal push failures owned by dead-letter policy', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    fixture.operations.reconcileTarget.resolves({
+      pushFailures: [{ cid: 'terminal-cid', detail: 'invalid message', terminal: true }],
+    });
+
+    await runReconcile(fixture, controller);
+
+    expect(fixture.operations.reportError.notCalled).toBe(true);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
+    expect(fixture.operations.emitEvent.calledWithMatch({
+      type   : 'reconcile:needed',
+      reason : 'push-retryable',
+    })).toBe(false);
+  });
+
   it('coalesces a pull wake burst into one trailing durable-feed pass', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);

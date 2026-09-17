@@ -89,7 +89,7 @@ import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMess
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { isMissingRoleAuthorizationFailure, isNonRetryableSyncAuthorizationFailure, isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError, SyncRunFailedError } from './sync-runtime-errors.js';
+import { isMissingRoleAuthorizationFailure, isNonRetryableSyncAuthorizationFailure, isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncPushFailuresError, SyncRunCancelledError, SyncRunFailedError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from './sync-target-resolver.js';
 import { projectReplicationLinks, projectSyncStatus } from './sync-status-reporter.js';
@@ -2243,10 +2243,11 @@ export class SyncEngineLevel implements SyncEngine {
       if (isDidResolutionUnavailableError(error)) {
         return;
       }
-      if (error instanceof SyncRunFailedError && error.detailsReported) {
-        return;
+      // Endpoint diagnostics and the recovery phases below are independent:
+      // suppress a duplicate aggregate log without abandoning unrelated links.
+      if (!(error instanceof SyncRunFailedError && error.detailsReported)) {
+        console.error('SyncEngineLevel: Error during durable feed settle check', error);
       }
-      console.error('SyncEngineLevel: Error during durable feed settle check', error);
     } finally {
       this._lifecycle.releaseSync();
     }
@@ -3870,8 +3871,20 @@ export class SyncEngineLevel implements SyncEngine {
     return retryableFailures;
   }
 
-  private recordTerminalPushFailure(target: SyncTarget, failure: PushFailure): Promise<void> {
-    return this.recordDeadLetter({
+  private async recordTerminalPushFailure(target: SyncTarget, failure: PushFailure): Promise<void> {
+    try {
+      if (await this.hasDeadLetter(target.did, target.dwnUrl, failure.cid)) {
+        return;
+      }
+    } catch (error: unknown) {
+      // Match recordDeadLetter's late-shutdown behavior without hiding storage faults.
+      if (SyncEngineLevel.isDatabaseNotOpenError(error)) {
+        return;
+      }
+      throw error;
+    }
+
+    await this.recordDeadLetter({
       messageCid     : failure.cid,
       tenantDid      : target.did,
       remoteEndpoint : target.dwnUrl,
@@ -3879,6 +3892,12 @@ export class SyncEngineLevel implements SyncEngine {
       errorCode      : failure.kind ?? 'Invalid',
       errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
     });
+    console.error('SyncEngineLevel: Terminal reconciliation push failed', new SyncPushFailuresError({
+      authorization  : target.authorization,
+      failures       : [failure],
+      remoteEndpoint : target.dwnUrl,
+      tenantDid      : target.did,
+    }));
   }
 
   private scheduleLinkReconcileByKey(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void {

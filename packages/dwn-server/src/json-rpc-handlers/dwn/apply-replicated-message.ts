@@ -73,8 +73,10 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       await dataStream?.cancel().catch((): void => {
         // A proven obsolete replay does not need its inbound body.
       });
+      const result = { kind: 'Superseded' } satisfies ReplicationApplyResult;
+      recordApplyActivity(target, message, result, context);
       return {
-        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result: { kind: 'Superseded' } }),
+        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
       };
     }
 

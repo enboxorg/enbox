@@ -848,6 +848,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const updateWrite = await RecordsWrite.createFrom({
       recordsWriteMessage : initialWrite.message,
       data                : updateData,
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, initialWrite.message.descriptor.messageTimestamp),
       signer              : Jws.createSigner(alice),
     });
     const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
@@ -899,6 +900,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const updateWrite = await RecordsWrite.createFrom({
       recordsWriteMessage : initialWrite.message,
       data                : updateData,
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, initialWrite.message.descriptor.messageTimestamp),
       signer              : Jws.createSigner(alice),
     });
     const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
