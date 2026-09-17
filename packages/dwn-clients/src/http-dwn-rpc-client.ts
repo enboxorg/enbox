@@ -1,5 +1,4 @@
 import type { JsonRpcResponse } from './json-rpc.js';
-import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
@@ -17,6 +16,7 @@ import {
   HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
 } from './http-dwn-rpc-framing.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
+import { executeUnlessAborted, type ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Retry configuration
@@ -138,24 +138,6 @@ function getRetryDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: numbe
   const backoffMs = computeBackoffDelay(attempt, baseDelayMs, maxDelayMs);
 
   return retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs);
-}
-
-/**
- * Rejects with the signal's abort reason if `signal` aborts before `promise`
- * settles. The underlying operation is not cancelled — only the caller's wait.
- */
-async function waitForPromiseWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (signal === undefined) {
-    return promise;
-  }
-  signal.throwIfAborted();
-
-  return Promise.race([
-    promise,
-    new Promise<never>((_resolve, reject) => {
-      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-    }),
-  ]);
 }
 
 /**
@@ -410,7 +392,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       const discoverySignal = signal === undefined
         ? discoveryTimeout
         : AbortSignal.any([signal, discoveryTimeout]);
-      return advertisesHttpRpcBodyV1(await waitForPromiseWithSignal(this.getServerInfo(dwnUrl), discoverySignal));
+      return advertisesHttpRpcBodyV1(await executeUnlessAborted(this.getServerInfo(dwnUrl), discoverySignal));
     } catch (error) {
       if (signal?.aborted === true) {
         throw error;
