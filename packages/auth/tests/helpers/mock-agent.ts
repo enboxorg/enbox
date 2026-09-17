@@ -77,8 +77,8 @@ export interface MockAgentOverrides {
   dwnProcessRawMessage?: (tenant: string, message: any, options?: any) => Promise<any>;
   dwnIsRemoteMode?: boolean;
   dwnClearDelegateDecryptionKeys?: (delegateDid?: string) => void;
-  syncSetIdentityOptions?: (params: any) => Promise<void>;
-  syncRemoveIdentity?: (did: string) => Promise<void>;
+  syncSetIdentityOptions?: (params: any, lifecycleOptions?: any) => Promise<void>;
+  syncRemoveIdentity?: (did: string, lifecycleOptions?: any) => Promise<void>;
   syncStartSync?: (params: any) => Promise<void>;
   syncStopSync?: (timeout: number) => Promise<void>;
   syncSync?: (direction: string) => Promise<void>;

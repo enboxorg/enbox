@@ -1,3 +1,4 @@
+import sinon from 'sinon';
 import { describe, expect, test } from 'bun:test';
 
 import { DwnPermissionGrant } from '@enbox/agent';
@@ -394,11 +395,15 @@ describe('restoreSession', () => {
       });
 
       const registerCalls: any[] = [];
+      const lifecycleOptions: any[] = [];
       const agent = createMockAgent({
         firstLaunch               : async () => false,
         identityConnectedIdentity : async () => identity,
-        syncSetIdentityOptions    : async (params) => { registerCalls.push(params); },
-        processDwnRequest         : async (params: any) => {
+        syncSetIdentityOptions    : async (params, options) => {
+          registerCalls.push(params);
+          lifecycleOptions.push(options);
+        },
+        processDwnRequest: async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
               reply: {
@@ -418,6 +423,55 @@ describe('restoreSession', () => {
       expect(session).toBeDefined();
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].options.protocols).toContain('https://proto.example.com/notes');
+      expect(lifecycleOptions).toHaveLength(1);
+      expect(lifecycleOptions[0].timeout).toBeGreaterThan(0);
+      expect(lifecycleOptions[0].timeout).toBeLessThanOrEqual(10_000);
+    });
+
+    test('restores locally when delegated grant scope lookup exceeds its repair budget', async () => {
+      const clock = sinon.useFakeTimers();
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+      let markQueryStarted!: () => void;
+      const queryStarted = new Promise<void>((resolve) => { markQueryStarted = resolve; });
+      const unregisterCalls: Array<{ did: string; options: unknown }> = [];
+      const syncStartCalls: unknown[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        processDwnRequest         : () => {
+          markQueryStarted();
+          return new Promise(() => {});
+        },
+        syncRemoveIdentity: async (did, options) => {
+          unregisterCalls.push({ did, options });
+        },
+        syncStartSync: async (params) => { syncStartCalls.push(params); },
+      });
+
+      try {
+        const restore = restoreSession(
+          { userAgent: agent, emitter, storage, defaultSync: '15s' },
+        );
+        await queryStarted;
+        await clock.tickAsync(10_000);
+
+        const session = await restore;
+
+        expect(session).toBeDefined();
+        expect(unregisterCalls).toEqual([{
+          did     : 'did:dht:external',
+          options : { timeout: 0 },
+        }]);
+        expect(syncStartCalls).toHaveLength(0);
+      } finally {
+        clock.restore();
+      }
     });
 
     test('does not start sync when setIdentityOptions fails', async () => {
@@ -705,13 +759,17 @@ describe('restoreSession', () => {
 
       const syncStartCalls: any[] = [];
       const unregisterCalls: string[] = [];
+      const cleanupLifecycleOptions: any[] = [];
       const agent = createMockAgent({
         firstLaunch               : async () => false,
         identityConnectedIdentity : async () => identity,
         syncSetIdentityOptions    : async () => { throw new Error('database write error'); },
-        syncRemoveIdentity        : async (did) => { unregisterCalls.push(did); },
-        syncStartSync             : async (params) => { syncStartCalls.push(params); },
-        processDwnRequest         : async () => ({
+        syncRemoveIdentity        : async (did, options) => {
+          unregisterCalls.push(did);
+          cleanupLifecycleOptions.push(options);
+        },
+        syncStartSync     : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest : async () => ({
           reply: { status: { code: 200 }, entries: [grantEntry] },
         }),
       });
@@ -723,6 +781,7 @@ describe('restoreSession', () => {
       expect(session).toBeDefined();
       expect(syncStartCalls).toHaveLength(0);
       expect(unregisterCalls).toHaveLength(1);
+      expect(cleanupLifecycleOptions).toEqual([{ timeout: 0 }]);
     });
 
     test('sets syncRepairFailed when zero-grant unregister throws I/O error', async () => {
