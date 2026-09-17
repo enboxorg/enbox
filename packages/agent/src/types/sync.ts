@@ -1,4 +1,4 @@
-import type { MessagesFilter, ProgressToken } from '@enbox/dwn-sdk-js';
+import type { MessagesFilter, ProgressToken, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
@@ -441,6 +441,10 @@ export type PushFailure = {
   quotaBlocked?: boolean;
   /** True when the requested root CID was definitively absent from the local DWN. */
   localMissing?: boolean;
+  /** Local DWN status code when a local read/query produced this failure. */
+  localStatusCode?: number;
+  /** Complete structured result returned by the remote replication apply, when available. */
+  remoteResult?: Extract<ReplicationApplyResult, { kind: PushFailureKind }>;
   /** Human-readable diagnostic detail. */
   detail?: string;
 };

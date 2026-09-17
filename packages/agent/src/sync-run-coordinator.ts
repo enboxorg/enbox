@@ -5,6 +5,7 @@ import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, SyncDirection, SyncRunOptions } from './types/sync.js';
 
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
+import { SyncPushFailuresError } from './sync-runtime-errors.js';
 
 export type { SyncRunOptions } from './types/sync.js';
 
@@ -16,7 +17,7 @@ export interface SyncRunCoordinatorOperations {
     direction: SyncDirection | undefined,
     verifyConvergence: boolean | undefined,
   ): Promise<SyncDurableFeedReconcileResult>;
-  recordPushFailures(target: SyncTarget, failures: PushFailure[]): Promise<number>;
+  recordPushFailures(target: SyncTarget, failures: PushFailure[]): Promise<PushFailure[]>;
   reportError(message: string, error: unknown): void;
 }
 
@@ -164,10 +165,13 @@ export class SyncRunCoordinator {
 
     if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
       const retryableFailures = await this._operations.recordPushFailures(target, result.pushFailures);
-      if (retryableFailures > 0) {
-        throw new Error(
-          `SyncRunCoordinator: reconciliation push failed for ${retryableFailures} retryable message(s).`,
-        );
+      if (retryableFailures.length > 0) {
+        throw new SyncPushFailuresError({
+          authorization  : target.authorization,
+          failures       : retryableFailures,
+          remoteEndpoint : target.dwnUrl,
+          tenantDid      : target.did,
+        });
       }
     }
 

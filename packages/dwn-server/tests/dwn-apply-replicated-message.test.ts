@@ -840,6 +840,57 @@ describe('handleDwnApplyReplicatedMessage', () => {
     }
   });
 
+  it('should classify a data replay as superseded when newer record state already won', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const initialData = new Uint8Array([1, 2, 3, 4]);
+    const updateData = new Uint8Array([5, 6, 7, 8]);
+    const { recordsWrite: initialWrite } = await createRecordsWriteMessage(alice, { data: initialData });
+    const updateWrite = await RecordsWrite.createFrom({
+      recordsWriteMessage : initialWrite.message,
+      data                : updateData,
+      signer              : Jws.createSigner(alice),
+    });
+    const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : initialWrite.toJSON(),
+      target  : alice.did,
+    });
+    const updateRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : updateWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      const ancestryApply = await handleDwnApplyReplicatedMessage(initialRequest, {
+        dwn,
+        transport: 'http',
+      });
+      expect(ancestryApply.jsonRpcResponse.result.result).toEqual(expect.objectContaining({
+        kind         : 'Applied',
+        ancestryOnly : true,
+      }));
+
+      const updateApply = await handleDwnApplyReplicatedMessage(updateRequest, {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(updateData),
+      });
+      expect((updateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
+
+      const replay = await handleDwnApplyReplicatedMessage(initialRequest, {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(initialData),
+      });
+
+      expect(replay.jsonRpcResponse.error).toBeUndefined();
+      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Superseded' });
+    } finally {
+      await dwn.close();
+    }
+  });
+
   it('returns an internal JSON-RPC error for unexpected thrown errors', async () => {
     const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {

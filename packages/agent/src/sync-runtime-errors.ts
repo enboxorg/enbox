@@ -1,5 +1,7 @@
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 
+import type { PushFailure, SyncAuthorization } from './types/sync.js';
+
 /**
  * A queued `sync()` follow-up was invalidated by an engine runtime transition
  * (`startSync`/`stopSync`/`clear`/`close`) before it could run. Rejecting —
@@ -11,6 +13,32 @@ export class SyncRunCancelledError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SyncRunCancelledError';
+  }
+}
+
+/** Structured reconciliation failure retained until the workflow's single logging boundary. */
+export class SyncPushFailuresError extends Error {
+  public readonly authorization: SyncAuthorization;
+  public readonly failures: readonly PushFailure[];
+  public readonly remoteEndpoint: string;
+  public readonly tenantDid: string;
+
+  public constructor(params: {
+    authorization: SyncAuthorization;
+    failures: readonly PushFailure[];
+    remoteEndpoint: string;
+    tenantDid: string;
+  }) {
+    const { authorization, failures, remoteEndpoint, tenantDid } = params;
+    super(
+      `Sync reconciliation push failed for ${failures.length} message(s) ` +
+      `for ${tenantDid} -> ${remoteEndpoint}.`,
+    );
+    this.name = 'SyncPushFailuresError';
+    this.authorization = authorization;
+    this.failures = [...failures];
+    this.remoteEndpoint = remoteEndpoint;
+    this.tenantDid = tenantDid;
   }
 }
 

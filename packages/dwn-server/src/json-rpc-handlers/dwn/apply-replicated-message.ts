@@ -5,7 +5,7 @@ import log from 'loglevel';
 
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
-import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { enforceQuota, enforceTenantRateLimit, validateInboundDwnMessageTransport } from './inbound-message.js';
 
@@ -74,13 +74,13 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
 
     if (hasInboundData && await isStoredRecordsWriteMissingData(context, target, message)) {
       await dataStream?.cancel().catch((): void => {
-        // The fetch-first replication contract does not support same-CID
-        // hydration; cancellation is best-effort before deferring the replay.
+        // The body is unnecessary for either settled or deferred replay.
       });
+      const result: ReplicationApplyResult = await hasNewerStoredRecordState(context, target, message)
+        ? { kind: 'Superseded' }
+        : { kind: 'Deferred', reason: 'storage' };
       return {
-        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, {
-          result: { kind: 'Deferred', reason: 'storage' } satisfies ReplicationApplyResult,
-        }),
+        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
       };
     }
 
@@ -342,6 +342,32 @@ async function isStoredRecordsWriteMissingData(
   const existingMessage = await context.dwn.storage.messageStore.get(tenant, messageCid);
   return existingMessage !== undefined &&
     !await storedRecordsWriteHasData(context, tenant, existingMessage);
+}
+
+/** Whether receiver-owned record state proves that this stored data-less write is obsolete. */
+async function hasNewerStoredRecordState(
+  context: Parameters<JsonRpcHandler>[1],
+  tenant: string,
+  message: GenericMessage,
+): Promise<boolean> {
+  if (
+    message.descriptor.interface !== DwnInterfaceName.Records ||
+    message.descriptor.method !== DwnMethodName.Write
+  ) {
+    return false;
+  }
+
+  const recordId = (message as { recordId?: unknown }).recordId;
+  if (typeof recordId !== 'string') {
+    return false;
+  }
+
+  const { messages } = await context.dwn.storage.messageStore.query(tenant, [{
+    interface: DwnInterfaceName.Records,
+    recordId,
+  }]);
+  const newest = await Message.getNewestMessage(messages);
+  return newest !== undefined && await Message.isNewer(newest, message);
 }
 
 function recordApplyActivity(

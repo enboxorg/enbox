@@ -18,7 +18,7 @@ import type { SyncRuntime, SyncRuntimeHandle } from './sync-runtime.js';
 
 import { syncEventScope as eventScope } from './types/sync.js';
 import { syncTargetFromLink } from './sync-target-resolver.js';
-import { isTerminalSyncAuthorizationFailure, syncErrorMessage } from './sync-runtime-errors.js';
+import { isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncPushFailuresError } from './sync-runtime-errors.js';
 
 export type SyncLinkRecoveryTarget = SyncTarget & { linkKey: string };
 
@@ -431,7 +431,7 @@ export class SyncLinkRecoveryCoordinator {
     controller.markReplicationReady();
 
     if (pushFailures.length > 0 && !this.isRepairSuperseded(controller, runtime)) {
-      this.schedulePushRetry(controller);
+      this.handlePushFailures(controller, pushFailures);
     }
 
     const linkEventScope = eventScope(link.scope);
@@ -567,8 +567,9 @@ export class SyncLinkRecoveryCoordinator {
     shouldContinue: () => boolean,
   ): Promise<void> {
     const { link, linkKey } = controller;
-    if ((outcome.pushFailures?.length ?? 0) > 0) {
-      this.schedulePushRetry(controller);
+    const pushFailures = outcome.pushFailures ?? [];
+    if (pushFailures.length > 0) {
+      this.handlePushFailures(controller, pushFailures);
       return;
     }
     // A pause took the link before the cycle ran, so nothing was compared.
@@ -635,8 +636,9 @@ export class SyncLinkRecoveryCoordinator {
         return;
       }
       controller.clearRetryNotBefore([direction]);
-      if (direction === 'push' && (outcome.pushFailures?.length ?? 0) > 0) {
-        this.schedulePushRetry(controller);
+      const pushFailures = outcome.pushFailures ?? [];
+      if (direction === 'push' && pushFailures.length > 0) {
+        this.handlePushFailures(controller, pushFailures);
       }
     } catch (error: unknown) {
       await this.handleReconcileFailure(
@@ -654,6 +656,19 @@ export class SyncLinkRecoveryCoordinator {
   private schedulePushRetry(controller: SyncLinkController): void {
     this.scheduleReconcileRetry(controller, ['push']);
     this.emitReconcileNeeded(controller, 'push-retryable');
+  }
+
+  /** Report one structured error for a failed pass, then schedule its retry. */
+  private handlePushFailures(controller: SyncLinkController, failures: PushFailure[]): void {
+    const { link } = controller;
+    const error = new SyncPushFailuresError({
+      authorization  : link.authorization,
+      failures,
+      remoteEndpoint : link.remoteEndpoint,
+      tenantDid      : link.tenantDid,
+    });
+    this._operations.reportError('SyncLinkRecoveryCoordinator: Reconciliation push failed', error);
+    this.schedulePushRetry(controller);
   }
 
   private async handleReconcileFailure(

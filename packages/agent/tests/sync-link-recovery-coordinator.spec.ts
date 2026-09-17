@@ -14,6 +14,7 @@ import { buildLinkKey } from '../src/sync-link-key.js';
 import { SyncFeedConvergenceManager } from '../src/sync-feed-convergence-manager.js';
 import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncLinkRecoveryCoordinator } from '../src/sync-link-recovery-coordinator.js';
+import { SyncPushFailuresError } from '../src/sync-runtime-errors.js';
 import { SyncReplicationLinkStoreLevel } from '../src/sync-replication-link-store-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 
@@ -692,6 +693,14 @@ describe('SyncLinkRecoveryCoordinator', () => {
       type   : 'reconcile:needed',
       reason : 'push-retryable',
     })).toBe(true);
+    expect(fixture.operations.reportError.calledOnce).toBe(true);
+    expect(fixture.operations.reportError.firstCall.args[1]).toBeInstanceOf(SyncPushFailuresError);
+    expect(fixture.operations.reportError.firstCall.args[1]).toMatchObject({
+      authorization  : { kind: 'owner' },
+      failures       : [failure],
+      remoteEndpoint : REMOTE,
+      tenantDid      : DID,
+    });
     expect(fixture.feedConvergenceManager.handleVerifiedDivergence.calledOnce).toBe(true);
     controller.deactivate();
     await clock.runAllAsync();

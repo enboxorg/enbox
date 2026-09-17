@@ -125,7 +125,17 @@ type FetchLocalMessageResult =
 
 type FetchDependencyResult =
   | { kind: 'fetched'; entries: SyncMessageEntry[] }
-  | { kind: 'failed'; dependencyCid?: string; detail: string; localMissing?: boolean };
+  | {
+      kind: 'failed';
+      dependencyCid?: string;
+      detail: string;
+      localMissing?: boolean;
+      localStatusCode?: number;
+    };
+
+type FailedFetchDependencyResult = Extract<FetchDependencyResult, { kind: 'failed' }>;
+type RemoteRetryableResult = Extract<ReplicationApplyResult, { kind: 'Deferred' | 'Incomplete' }>;
+type RemoteTerminalResult = Extract<ReplicationApplyResult, { kind: 'Invalid' | 'Incomplete' }>;
 
 type PrepareLocalEntryParams = {
   message: GenericMessage;
@@ -654,7 +664,7 @@ export class RemoteApplyPushContext {
     const rootEntries = await this.fetchRootEntries(stagedRootCids, failedByRoot);
     const feedRoot = await this.fetchMessageFeedEntry(entry);
     if (feedRoot.kind === 'failed') {
-      failedByRoot.set(entry.messageCid, { cid: entry.messageCid, detail: feedRoot.detail });
+      failedByRoot.set(entry.messageCid, RemoteApplyPushContext.localFetchFailure(entry.messageCid, feedRoot));
     } else {
       rootEntries.push(...feedRoot.entries);
     }
@@ -671,11 +681,7 @@ export class RemoteApplyPushContext {
     for (const rootCid of new Set(rootCids)) {
       const root = await this.fetchMessageCid(rootCid);
       if (root.kind === 'failed') {
-        failedByRoot.set(rootCid, {
-          cid    : rootCid,
-          ...(root.localMissing === true ? { localMissing: true } : {}),
-          detail : root.detail,
-        });
+        failedByRoot.set(rootCid, RemoteApplyPushContext.localFetchFailure(rootCid, root));
         continue;
       }
       rootEntries.push(...root.entries);
@@ -765,11 +771,10 @@ export class RemoteApplyPushContext {
       await bufferSmallStream(entry);
     } catch (error: any) {
       const detail = error.message ?? String(error);
-      console.error(`SyncMessages: push error for ${cid}: ${detail}`);
       if (error instanceof SyncDataSizeLimitExceededError) {
         return {
           kind    : 'failed',
-          failure : this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }),
+          failure : this.terminalFailure(rootCid, cid, detail, 'Invalid'),
         };
       }
       return { kind: 'failed', failure: this.retryableFailure(rootCid, cid, detail) };
@@ -796,8 +801,7 @@ export class RemoteApplyPushContext {
     } catch (error: any) {
       const detail = error.message ?? String(error);
       if (error instanceof SyncDataSizeLimitExceededError) {
-        console.error(`SyncMessages: push error for ${cid}: ${detail}`);
-        return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
+        return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, 'Invalid') };
       }
       if (error instanceof DwnRpcError && isQuotaExceededError(error.message, error.data)) {
         // Quota rejection: retryable but NOT hot-loopable. The remote is out of
@@ -807,9 +811,8 @@ export class RemoteApplyPushContext {
         // this is an expected, surfaced condition, not an error.
         return { kind: 'failed', failure: this.quotaBlockedFailure(rootCid, cid, detail) };
       }
-      console.error(`SyncMessages: push error for ${cid}: ${detail}`);
       if (error instanceof DwnRpcError && error.terminal) {
-        return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
+        return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, 'Invalid') };
       }
       return { kind: 'failed', failure: this.retryableFailure(rootCid, cid, detail) };
     }
@@ -834,12 +837,12 @@ export class RemoteApplyPushContext {
       case 'Deferred':
         return {
           kind    : 'failed',
-          failure : this.retryableFailure(rootCid, cid, result.reason, result),
+          failure : this.retryableFailure(rootCid, cid, result.reason, { remoteResult: result }),
         };
       case 'Invalid':
         return {
           kind    : 'failed',
-          failure : this.terminalFailure(rootCid, cid, result.reason, result),
+          failure : this.terminalFailure(rootCid, cid, result.reason, result.kind, result),
         };
       case 'Incomplete':
         return this.pushResultFromMissingDependencies(rootCid, cid, entry, result.missing);
@@ -855,9 +858,19 @@ export class RemoteApplyPushContext {
     missing: DependencyRef[],
   ): Promise<PushEntryResult> {
     if (hasTerminalDependency(missing)) {
+      const remoteResult = { kind: 'Incomplete', missing } as const;
+      const terminalDependencyCid = missing.find(
+        (dependency): boolean => dependency.terminal === true && dependency.messageCid !== undefined,
+      )?.messageCid ?? cid;
       return {
         kind    : 'failed',
-        failure : this.terminalFailure(rootCid, cid, missingDependencyDetail(missing), { kind: 'Incomplete', missing }),
+        failure : this.terminalFailure(
+          rootCid,
+          terminalDependencyCid,
+          missingDependencyDetail(missing),
+          remoteResult.kind,
+          remoteResult,
+        ),
       };
     }
 
@@ -865,14 +878,25 @@ export class RemoteApplyPushContext {
     if (dependencies.kind === 'failed') {
       return {
         kind    : 'failed',
-        failure : this.retryableFailure(rootCid, dependencies.dependencyCid ?? cid, dependencies.detail),
+        failure : this.retryableFailure(
+          rootCid,
+          dependencies.dependencyCid ?? cid,
+          dependencies.detail,
+          {
+            localMissing    : dependencies.localMissing,
+            localStatusCode : dependencies.localStatusCode,
+            remoteResult    : { kind: 'Incomplete', missing },
+          },
+        ),
       };
     }
 
     if (dependencies.entries.length === 0) {
       return {
         kind    : 'failed',
-        failure : this.retryableFailure(rootCid, cid, missingDependencyDetail(missing), { kind: 'Incomplete', missing }),
+        failure : this.retryableFailure(rootCid, cid, missingDependencyDetail(missing), {
+          remoteResult: { kind: 'Incomplete', missing },
+        }),
       };
     }
 
@@ -893,7 +917,7 @@ export class RemoteApplyPushContext {
           rootCid,
           cid,
           `remote still reports acknowledged dependencies as missing: ${missingDependencyDetail(missing)}`,
-          { kind: 'Incomplete', missing },
+          { remoteResult: { kind: 'Incomplete', missing } },
         ),
       };
     }
@@ -905,11 +929,14 @@ export class RemoteApplyPushContext {
     rootCid: string,
     cid: string,
     detail: string,
-    result: Extract<ReplicationApplyResult, { kind: 'Invalid' | 'Incomplete' }>,
+    kind: RemoteTerminalResult['kind'],
+    remoteResult?: RemoteTerminalResult,
   ): PushFailure {
     return {
       cid      : rootCid,
-      kind     : result.kind,
+      ...(cid === rootCid ? {} : { dependencyCid: cid }),
+      kind,
+      ...(remoteResult === undefined ? {} : { remoteResult }),
       terminal : true,
       detail   : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
     };
@@ -919,16 +946,35 @@ export class RemoteApplyPushContext {
     rootCid: string,
     cid: string,
     detail: string,
-    result?: Extract<ReplicationApplyResult, { kind: 'Deferred' | 'Incomplete' }>,
+    context: {
+      localMissing?: boolean;
+      localStatusCode?: number;
+      remoteResult?: RemoteRetryableResult;
+    } = {},
   ): PushFailure {
-    const deferred = result?.kind === 'Deferred' ? result : undefined;
+    const { localMissing, localStatusCode, remoteResult } = context;
+    const deferred = remoteResult?.kind === 'Deferred' ? remoteResult : undefined;
     return {
       cid    : rootCid,
       ...(cid === rootCid ? {} : { dependencyCid: cid }),
-      ...(result === undefined ? {} : { kind: result.kind }),
+      ...(remoteResult === undefined ? {} : { kind: remoteResult.kind, remoteResult }),
       ...(deferred === undefined ? {} : { reason: deferred.reason }),
       ...(deferred?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
+      ...(localMissing === true ? { localMissing: true } : {}),
+      ...(localStatusCode === undefined ? {} : { localStatusCode }),
       detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
+    };
+  }
+
+  private static localFetchFailure(rootCid: string, failure: FailedFetchDependencyResult): PushFailure {
+    return {
+      cid: rootCid,
+      ...(failure.dependencyCid === undefined || failure.dependencyCid === rootCid
+        ? {}
+        : { dependencyCid: failure.dependencyCid }),
+      ...(failure.localMissing === true ? { localMissing: true } : {}),
+      ...(failure.localStatusCode === undefined ? {} : { localStatusCode: failure.localStatusCode }),
+      detail: failure.detail,
     };
   }
 
@@ -1039,6 +1085,7 @@ export class RemoteApplyPushContext {
         kind          : 'failed',
         dependencyCid : messageCid,
         ...(result.localStatusCode === 404 ? { localMissing: true } : {}),
+        ...(result.localStatusCode === undefined ? {} : { localStatusCode: result.localStatusCode }),
         detail        : `local dependency message ${messageCid} not found (${result.localStatusCode ?? 'unknown'} ${result.detail ?? ''})`,
       };
     }
@@ -1064,8 +1111,9 @@ export class RemoteApplyPushContext {
     const protocolsReply = reply as ProtocolsQueryReply;
     if (protocolsReply.status.code !== 200 || protocolsReply.entries === undefined) {
       return {
-        kind   : 'failed',
-        detail : `local protocol query failed for ${protocol}: ${protocolsReply.status.code} ${protocolsReply.status.detail ?? ''}`,
+        kind            : 'failed',
+        localStatusCode : protocolsReply.status.code,
+        detail          : `local protocol query failed for ${protocol}: ${protocolsReply.status.code} ${protocolsReply.status.detail ?? ''}`,
       };
     }
 
@@ -1093,8 +1141,9 @@ export class RemoteApplyPushContext {
     const recordsReply = reply as RecordsQueryReply;
     if (recordsReply.status.code !== 200 || recordsReply.entries === undefined) {
       return {
-        kind   : 'failed',
-        detail : `local records query failed for ${recordId}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
+        kind            : 'failed',
+        localStatusCode : recordsReply.status.code,
+        detail          : `local records query failed for ${recordId}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
       };
     }
 
@@ -1124,8 +1173,9 @@ export class RemoteApplyPushContext {
     const recordsReply = reply as RecordsQueryReply;
     if (recordsReply.status.code !== 200 || recordsReply.entries === undefined) {
       return {
-        kind   : 'failed',
-        detail : `local role query failed for ${key}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
+        kind            : 'failed',
+        localStatusCode : recordsReply.status.code,
+        detail          : `local role query failed for ${key}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
       };
     }
 
@@ -1146,8 +1196,9 @@ export class RemoteApplyPushContext {
       });
       if (reply.status.code !== 200 || reply.entries === undefined) {
         return {
-          kind   : 'failed',
-          detail : `local encryption control feed query failed for ${ref.protocol}: ${reply.status.code} ${reply.status.detail ?? ''}`,
+          kind            : 'failed',
+          localStatusCode : reply.status.code,
+          detail          : `local encryption control feed query failed for ${ref.protocol}: ${reply.status.code} ${reply.status.detail ?? ''}`,
         };
       }
 
@@ -1192,8 +1243,9 @@ export class RemoteApplyPushContext {
     const recordsReply = reply as RecordsReadReply;
     if (recordsReply.status.code !== 200 || recordsReply.entry?.recordsWrite === undefined || recordsReply.entry.data === undefined) {
       return {
-        kind   : 'failed',
-        detail : `local record data read failed for ${ref.recordId}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
+        kind            : 'failed',
+        localStatusCode : recordsReply.status.code,
+        detail          : `local record data read failed for ${ref.recordId}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
       };
     }
 
@@ -1303,6 +1355,7 @@ export class RemoteApplyPushContext {
       return {
         kind          : 'failed',
         dependencyCid : payloadCid,
+        ...(hydrated.localStatusCode === undefined ? {} : { localStatusCode: hydrated.localStatusCode }),
         detail        : `local payload read failed for current message ${payloadCid}: ${status}`,
       };
     }

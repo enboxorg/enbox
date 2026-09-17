@@ -649,6 +649,37 @@ describe('sync-messages', () => {
       expect(applyStub.callCount).toBe(2);
     });
 
+    it('should preserve the terminal dependency CID and complete remote result', async () => {
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const rootCid = await Message.getCid(message);
+      const remoteResult = {
+        kind    : 'Incomplete' as const,
+        missing : [{
+          type       : 'Protocol' as const,
+          protocol   : 'https://example.com/revoked',
+          messageCid : 'dependency-cid',
+          terminal   : true,
+        }],
+      };
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [remoteResult],
+      });
+
+      const result = await new RemoteApplyPushContext({
+        did    : 'did:example:alice',
+        dwnUrl : 'https://dwn.example.com',
+        agent,
+      }).pushEntries([{ message }]);
+
+      expect(result.failed).toEqual([expect.objectContaining({
+        cid           : rootCid,
+        dependencyCid : 'dependency-cid',
+        remoteResult,
+        terminal      : true,
+      })]);
+    });
+
     it('should allow another attempt after an ambiguous transport failure', async () => {
       const consoleStub = sinon.stub(console, 'error');
       const { message } = await TestDataGenerator.generateRecordsWrite();
@@ -680,7 +711,7 @@ describe('sync-messages', () => {
         failed       : [],
       });
       expect(applyStub.callCount).toBe(2);
-      expect(consoleStub.calledOnce).toBe(true);
+      expect(consoleStub.called).toBe(false);
     });
 
     it('should isolate settled acknowledgements between remote contexts', async () => {
@@ -766,8 +797,9 @@ describe('sync-messages', () => {
       expect(failed.succeeded).toEqual([]);
       expect(failed.acknowledged).toEqual([]);
       expect(failed.failed).toEqual([expect.objectContaining({
-        cid    : messageCid,
-        detail : expect.stringContaining('local payload read failed'),
+        cid             : messageCid,
+        localStatusCode : 404,
+        detail          : expect.stringContaining('local payload read failed'),
       })]);
       expect(failed.failed[0].localMissing).toBeUndefined();
       expect(failed.failed[0].terminal).toBeUndefined();
@@ -963,9 +995,10 @@ describe('sync-messages', () => {
 
       expect(missingPayload.succeeded).toEqual([]);
       expect(missingPayload.failed).toEqual([expect.objectContaining({
-        cid           : rootCid,
-        dependencyCid : parentCid,
-        detail        : expect.stringContaining(
+        cid             : rootCid,
+        dependencyCid   : parentCid,
+        localStatusCode : 404,
+        detail          : expect.stringContaining(
           `local payload read failed for current message ${parentCid}: 404 not found`,
         ),
       })]);
@@ -1437,7 +1470,7 @@ describe('sync-messages', () => {
       expect(cancel.called).toBe(false);
     });
 
-    it('should report transport failures in PushResult.failed instead of throwing', async () => {
+    it('should return transport failures without logging below the workflow owner', async () => {
       const consoleStub = sinon.stub(console, 'error');
       const { message } = await TestDataGenerator.generateRecordsWrite();
       const messageCid = await Message.getCid(message);
@@ -1457,7 +1490,7 @@ describe('sync-messages', () => {
       expect(result.failed[0].cid).toBe(messageCid);
       expect(result.failed[0].terminal).toBeUndefined();
       expect(result.succeeded).toHaveLength(0);
-      expect(consoleStub.called).toBe(true);
+      expect(consoleStub.called).toBe(false);
     });
 
     it('should classify a tenant-quota rejection as quota-blocked and not flood the console', async () => {
@@ -1535,6 +1568,7 @@ describe('sync-messages', () => {
 
       expect(result.failed).toHaveLength(1);
       expect(result.failed[0].localMissing).toBeUndefined();
+      expect(result.failed[0].localStatusCode).toBe(500);
     });
 
     it('should send small RecordsWrite data as a replayable Blob', async () => {
@@ -2312,10 +2346,11 @@ describe('sync-messages', () => {
       });
 
       expect(result.failed).toEqual([{
-        cid      : messageCid,
-        detail   : 'bad signature',
-        kind     : 'Invalid',
-        terminal : true,
+        cid          : messageCid,
+        detail       : 'bad signature',
+        kind         : 'Invalid',
+        remoteResult : { kind: 'Invalid', reason: 'bad signature' },
+        terminal     : true,
       }]);
     });
 
@@ -2420,6 +2455,11 @@ describe('sync-messages', () => {
       expect(result.failed).toHaveLength(1);
       expect(result.failed[0].cid).toBe(messageCid);
       expect(result.failed[0].terminal).toBeUndefined();
+      expect(result.failed[0].localStatusCode).toBe(503);
+      expect(result.failed[0].remoteResult).toEqual({
+        kind    : 'Incomplete',
+        missing : [{ type: 'Protocol', protocol: 'https://example.com/missing-protocol' }],
+      });
       expect(result.failed[0].detail).toContain('local protocol query failed');
     });
 

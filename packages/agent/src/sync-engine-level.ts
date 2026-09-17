@@ -382,7 +382,7 @@ export class SyncEngineLevel implements SyncEngine {
           this.probeFeedConvergence(target),
         reconcileTarget: (target, direction, verifyConvergence): Promise<SyncReconcileResult> =>
           this.reconcileTarget(target, { direction, verifyConvergence }),
-        recordPushFailures: (target, failures): Promise<number> =>
+        recordPushFailures: (target, failures): Promise<PushFailure[]> =>
           this.recordTerminalPushFailures(target, failures),
         reportError: (message, error): void => { console.error(message, error); },
       },
@@ -3845,18 +3845,18 @@ export class SyncEngineLevel implements SyncEngine {
    * Dead-letter every TERMINAL failure in `failures` and clear its quota
    * block.
    *
-   * @returns The number of RETRYABLE failures — the ones deliberately left
+   * @returns The RETRYABLE failures — the ones deliberately left
    *   untouched for a later pass. Note the asymmetry: this method acts on
-   *   terminal failures and reports on the others.
+   *   terminal failures and returns the others.
    */
   private async recordTerminalPushFailures(
     target: SyncTarget,
     failures: PushFailure[],
-  ): Promise<number> {
-    let retryableFailures = 0;
+  ): Promise<PushFailure[]> {
+    const retryableFailures: PushFailure[] = [];
     for (const failure of failures) {
       if (!isTerminalPushFailure(failure)) {
-        retryableFailures++;
+        retryableFailures.push(failure);
         continue;
       }
 
