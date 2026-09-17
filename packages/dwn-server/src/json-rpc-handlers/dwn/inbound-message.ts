@@ -12,6 +12,7 @@ type InboundDwnMessageParams = {
   message: GenericMessage;
   requestId: JsonRpcId;
   target: string;
+  allowDatalessRecordsWriteOverNonHttp?: boolean;
   allowRecordsWriteOverNonHttp?: boolean;
 };
 
@@ -20,11 +21,18 @@ type QuotaOptions = {
 };
 
 export function validateInboundDwnMessageTransport(params: InboundDwnMessageParams): HandlerResponse | undefined {
-  const { allowRecordsWriteOverNonHttp, context, hasEncodedData, message, requestId } = params;
+  const {
+    allowDatalessRecordsWriteOverNonHttp,
+    allowRecordsWriteOverNonHttp,
+    context,
+    hasEncodedData,
+    message,
+    requestId,
+  } = params;
 
   // Normal RecordsWrite is HTTP-only because its data stream lives in the
   // request body. Replicated apply may opt in to non-HTTP when it carries the
-  // record data in JSON-RPC params.
+  // record data in JSON-RPC params or has already validated an ancestry-only write.
   if (
     context.transport !== 'http' &&
     message.descriptor.interface === DwnInterfaceName.Records &&
@@ -32,7 +40,10 @@ export function validateInboundDwnMessageTransport(params: InboundDwnMessagePara
   ) {
     const dataSize = (message.descriptor as { dataSize?: unknown }).dataSize;
     const needsData = typeof dataSize === 'number' && dataSize > 0;
-    if (allowRecordsWriteOverNonHttp === true && (!needsData || hasEncodedData === true)) {
+    if (
+      allowRecordsWriteOverNonHttp === true &&
+      (!needsData || hasEncodedData === true || allowDatalessRecordsWriteOverNonHttp === true)
+    ) {
       return undefined;
     }
 

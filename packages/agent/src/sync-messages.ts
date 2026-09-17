@@ -29,6 +29,7 @@ import {
   DwnMethodName,
   Encoder,
   Message,
+  RecordsWrite,
 } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
@@ -154,6 +155,8 @@ type PushEntryResult =
   | { kind: 'applied' }
   | { kind: 'retry'; entries: SyncMessageEntry[] }
   | { kind: 'failed'; failure: PushFailure };
+
+type PushPayload = Blob | ReadableStream<Uint8Array> | undefined;
 
 type PushRootOutcome =
   | { kind: 'succeeded' }
@@ -775,18 +778,20 @@ export class RemoteApplyPushContext {
     let result: ReplicationApplyResult;
     try {
       const data = await resolvePushPayload(entry);
-      if (entry.isLatestBaseState === true && recordsWriteRequiresData(entry.message) && data === undefined) {
+      if (isRequiredPushPayloadMissing(entry, data)) {
         return {
           kind    : 'failed',
           failure : this.retryableFailure(rootCid, cid, 'required payload is unavailable for current message'),
         };
       }
       this.deps.onBeforeApply?.(cid);
+      const ancestryOnly = await isAncestryOnlyPush(entry, data);
       result = await this.deps.agent.rpc.applyReplicatedMessage({
         dwnUrl    : this.deps.dwnUrl,
         targetDid : this.deps.did,
         data,
         message   : entry.message,
+        ...(ancestryOnly ? { ancestryOnly: true } : {}),
       });
     } catch (error: any) {
       const detail = error.message ?? String(error);
@@ -1352,7 +1357,7 @@ async function releaseUnusedPushPayloads(entries: SyncMessageEntry[]): Promise<v
   }
 }
 
-async function resolvePushPayload(entry: SyncMessageEntry): Promise<Blob | ReadableStream<Uint8Array> | undefined> {
+async function resolvePushPayload(entry: SyncMessageEntry): Promise<PushPayload> {
   if (entry.bufferedData !== undefined) {
     return new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' });
   }
@@ -1375,6 +1380,22 @@ export async function dedupeSyncMessageEntries(entries: SyncMessageEntry[]): Pro
     byCid.set(await getMessageCid(entry.message), entry);
   }
   return [...byCid.values()];
+}
+
+async function isAncestryOnlyPush(
+  entry: SyncMessageEntry,
+  data: PushPayload,
+): Promise<boolean> {
+  return entry.isLatestBaseState === false &&
+    data === undefined &&
+    recordsWriteRequiresData(entry.message) &&
+    await RecordsWrite.isInitialWrite(entry.message);
+}
+
+function isRequiredPushPayloadMissing(entry: SyncMessageEntry, data: PushPayload): boolean {
+  return entry.isLatestBaseState === true &&
+    data === undefined &&
+    recordsWriteRequiresData(entry.message);
 }
 
 function isRecordsWriteMessage(message: GenericMessage): message is RecordsWriteMessage {

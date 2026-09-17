@@ -488,6 +488,83 @@ describe('RPC Clients', () => {
       expect(applied).toHaveLength(1);
     });
 
+    it('routes an explicit ancestry-only apply over the pooled socket', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+
+      await rpcClient.applyReplicatedMessage({
+        ancestryOnly : true,
+        dwnUrl       : httpEndpoint,
+        targetDid    : 'did:example:alice',
+        message      : replicatedWriteMessage(3) as never,
+      });
+
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(socketRequest.firstCall.args[0].params.ancestryOnly).toBe(true);
+      expect(socketRequest.firstCall.args[0].params.encodedData).toBeUndefined();
+      expect(applied).toHaveLength(0);
+    });
+
+    it('falls back to HTTP when an older server rejects ancestry-only socket transport', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+      socketRequest.resolves({
+        error: {
+          code    : JsonRpcErrorCodes.InvalidParams,
+          message : 'RecordsWrite is not supported via ws',
+        },
+      });
+
+      const result = await rpcClient.applyReplicatedMessage({
+        ancestryOnly : true,
+        dwnUrl       : httpEndpoint,
+        targetDid    : 'did:example:alice',
+        message      : replicatedWriteMessage(3) as never,
+      });
+
+      expect(result).toEqual({ kind: 'Applied' });
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(applied).toEqual([expect.objectContaining({ ancestryOnly: true })]);
+    });
+
+    it('does not fall back after another ancestry-only socket rejection', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+      socketRequest.resolves({
+        error: {
+          code    : JsonRpcErrorCodes.InvalidParams,
+          message : 'ancestryOnly requires a data-less initial RecordsWrite with a payload descriptor',
+        },
+      });
+
+      await expect(rpcClient.applyReplicatedMessage({
+        ancestryOnly : true,
+        dwnUrl       : httpEndpoint,
+        targetDid    : 'did:example:alice',
+        message      : replicatedWriteMessage(3) as never,
+      })).rejects.toThrow('ancestryOnly requires a data-less initial RecordsWrite');
+
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(applied).toHaveLength(0);
+    });
+
+    it('preserves ancestryOnly when no pooled socket is available', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+
+      await rpcClient.applyReplicatedMessage({
+        ancestryOnly : true,
+        dwnUrl       : httpEndpoint,
+        targetDid    : 'did:example:alice',
+        message      : replicatedWriteMessage(3) as never,
+      });
+
+      expect(applied).toEqual([expect.objectContaining({ ancestryOnly: true })]);
+    });
+
     it('keeps replicated apply on HTTP without a connected socket', async () => {
       const { applied, client: httpStub } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);

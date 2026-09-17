@@ -256,7 +256,8 @@ export class HttpDwnRpcClient implements DwnRpc {
     const requestId = CryptoUtils.randomUuid();
     const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       target  : request.targetDid,
-      message : request.message
+      message : request.message,
+      ...(request.ancestryOnly === true ? { ancestryOnly: true } : {}),
     });
 
     const { fetchOpts, isRequestBodyReplayable } = await this.createDwnRequestInit({

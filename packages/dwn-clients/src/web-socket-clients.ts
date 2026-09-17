@@ -345,6 +345,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       wireRequest.message,
       encodedData,
       maxPayloadBytes,
+      wireRequest.ancestryOnly,
     );
   }
 
@@ -363,7 +364,12 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     }
 
     const declaredDataSize = recordsWriteDataSize(wireRequest.message);
-    if (declaredDataSize !== undefined && declaredDataSize > 0 && wireRequest.data === undefined) {
+    if (
+      declaredDataSize !== undefined &&
+      declaredDataSize > 0 &&
+      wireRequest.data === undefined &&
+      wireRequest.ancestryOnly !== true
+    ) {
       return undefined;
     }
 
@@ -371,6 +377,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     const frame = createJsonRpcRequest(FRAME_MEASUREMENT_ID, 'dwn.applyReplicatedMessage', {
       target  : wireRequest.targetDid,
       message : wireRequest.message,
+      ...(wireRequest.ancestryOnly === true ? { ancestryOnly: true } : {}),
       ...(wireRequest.data === undefined ? {} : { encodedData: '' }),
     });
     const payloadBytes = estimatedJsonRpcPayloadBytes(frame, encodedDataBytes);
@@ -389,6 +396,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       wireRequest.message,
       encodedData,
       WS_JSON_RPC_ENVELOPE_BYTES,
+      wireRequest.ancestryOnly,
     );
   }
 
@@ -397,7 +405,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private async maxPayloadBytesForReplicatedApply(request: DwnReplicationApplyRequest): Promise<number> {
-    if (recordsWriteDataSize(request.message) === undefined) {
+    if (request.ancestryOnly === true || recordsWriteDataSize(request.message) === undefined) {
       return DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES;
     }
 
@@ -571,11 +579,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     message: DwnReplicationApplyRequest['message'],
     encodedData?: string,
     maxPayloadBytes: number = DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES,
+    ancestryOnly?: true,
   ): Promise<ReplicationApplyResult> {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       target,
       message,
+      ...(ancestryOnly === true ? { ancestryOnly: true } : {}),
       ...(encodedData === undefined ? {} : { encodedData }),
     });
     WebSocketDwnRpcClient.assertPayloadFitsFrame(request, encodedData, maxPayloadBytes);
@@ -911,7 +921,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   private static assertReplicatedApplyDataIsPresent(request: DwnReplicationApplyRequest): void {
     const dataSize = recordsWriteDataSize(request.message);
-    if (dataSize !== undefined && dataSize > 0 && request.data === undefined) {
+    if (dataSize !== undefined && dataSize > 0 && request.data === undefined && request.ancestryOnly !== true) {
       throw new DwnRpcError(
         JsonRpcErrorCodes.InvalidParams,
         'data-bearing RecordsWrite replicated apply over WebSocket requires encoded data',
@@ -920,6 +930,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private static assertReplicatedApplyDataSizeIsSupported(request: DwnReplicationApplyRequest, maxPayloadBytes: number): void {
+    if (request.ancestryOnly === true) {
+      return;
+    }
     const dataSize = recordsWriteDataSize(request.message);
     if (dataSize !== undefined && maxWsJsonRpcPayloadBytes(dataSize) > maxPayloadBytes) {
       throw new DwnRpcError(

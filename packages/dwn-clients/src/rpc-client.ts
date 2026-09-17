@@ -3,12 +3,12 @@ import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoRpc, ServerInfo } from './server-info-types.js';
 
-import { createJsonRpcRequest } from './json-rpc.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { normalizeDwnRpcAuthEndpoint } from './rpc-auth.js';
-import { SocketUnavailableError } from './dwn-rpc-error.js';
 import { WebSocketDwnRpcClient } from './web-socket-clients.js';
+import { createJsonRpcRequest, JsonRpcErrorCodes } from './json-rpc.js';
+import { DwnRpcError, SocketUnavailableError } from './dwn-rpc-error.js';
 
 /**
  * Interface that can be implemented to communicate with {@link EnboxAgent | Enbox Agent}
@@ -272,7 +272,7 @@ export class EnboxRpcClient implements EnboxRpc {
     return socketClient.applyReplicatedMessageIfConnected(socketRequest)
       .then((result) => result ?? this.applyReplicatedMessageOverScheme(request, url))
       .catch((error: unknown) => {
-        if (error instanceof SocketUnavailableError) {
+        if (error instanceof SocketUnavailableError || isUnsupportedAncestrySocketApply(request, error)) {
           return this.applyReplicatedMessageOverScheme(request, url);
         }
         throw error;
@@ -302,6 +302,14 @@ export class EnboxRpcClient implements EnboxRpc {
 
     return this.transportClients.get(url.protocol);
   }
+}
+
+/** Whether an older server definitively rejected ancestry-only apply before DWN admission. */
+function isUnsupportedAncestrySocketApply(request: DwnReplicationApplyRequest, error: unknown): boolean {
+  return request.ancestryOnly === true &&
+    error instanceof DwnRpcError &&
+    error.code === JsonRpcErrorCodes.InvalidParams &&
+    error.message.endsWith('RecordsWrite is not supported via ws');
 }
 
 export class HttpEnboxRpcClient extends HttpDwnRpcClient implements EnboxRpc {
