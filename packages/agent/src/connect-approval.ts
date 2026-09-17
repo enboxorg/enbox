@@ -29,14 +29,11 @@ import { Did, DidJwk } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
-import { resolveConnectDwnEndpointUrls } from './connect-endpoint-resolution.js';
-import {
-  createGrantKeyRecordsForGrants,
-  getEncryptionKeyInfo,
-} from './dwn-encryption.js';
+import { createGrantKeyRecordsForGrants } from './dwn-encryption.js';
 import { hasEncryptedProtocolTypes, prepareProtocol } from './connect-protocol-preparation.js';
 import { isMessagesPermissionScope, isRecordPermissionScope } from './dwn-api.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
+import { resolveConnectDelegateEncryptionKeyInfo, resolveConnectDwnEndpointUrls } from './connect-network.js';
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -781,7 +778,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       request.permissionRequests.some(permissionRequestHasEncryptedReadScopes)
       ? (await timed(
         `${CONNECT_PERF_LOG_PREFIX} delegateDid.encryptionKey.resolve`,
-        () => getEncryptionKeyInfo(agent, grantedDelegateDid),
+        () => resolveConnectDelegateEncryptionKeyInfo(agent, grantedDelegateDid),
       )).publicKeyJwk
       : undefined;
 

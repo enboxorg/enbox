@@ -39,7 +39,7 @@ import { authoredProtocolDefinitionsEqual, KeyDerivationScheme } from '@enbox/dw
 
 import { DwnInterface } from './types/dwn.js';
 import { mapConcurrentSettled } from './utils.js';
-import { resolveConnectDwnEndpointUrls } from './connect-endpoint-resolution.js';
+import { resolveConnectDwnEndpointUrls } from './connect-network.js';
 
 // ---------------------------------------------------------------------------
 // Tunables (mirrors the connect-approval fan-out budgets)

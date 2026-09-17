@@ -4,11 +4,12 @@ import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import {
-  CONNECT_ENDPOINT_RESOLUTION_TIMEOUT_MS,
+  CONNECT_DID_RESOLUTION_TIMEOUT_MS,
+  resolveConnectDelegateEncryptionKeyInfo,
   resolveConnectDwnEndpointUrls,
-} from '../src/connect-endpoint-resolution.js';
+} from '../src/connect-network.js';
 
-describe('connect endpoint resolution', () => {
+describe('connect network resolution', () => {
   afterEach(() => {
     sinon.restore();
   });
@@ -44,10 +45,25 @@ describe('connect endpoint resolution', () => {
 
     const resolution = resolveConnectDwnEndpointUrls(agent, 'did:example:alice');
     const outcome = resolution.catch((error: unknown) => error);
-    await clock.tickAsync(CONNECT_ENDPOINT_RESOLUTION_TIMEOUT_MS);
+    await clock.tickAsync(CONNECT_DID_RESOLUTION_TIMEOUT_MS);
 
     expect(await outcome).toEqual(new Error(
-      `Connect DWN endpoint resolution for 'did:example:alice' timed out after ${CONNECT_ENDPOINT_RESOLUTION_TIMEOUT_MS}ms.`,
+      `Connect DWN endpoint resolution for 'did:example:alice' timed out after ${CONNECT_DID_RESOLUTION_TIMEOUT_MS}ms.`,
+    ));
+  });
+
+  it('should also bound requester-supplied delegate key resolution', async () => {
+    const clock = sinon.useFakeTimers();
+    const agent = {
+      did: { resolve: sinon.stub().returns(new Promise(() => {})) },
+    } as unknown as EnboxPlatformAgent;
+
+    const resolution = resolveConnectDelegateEncryptionKeyInfo(agent, 'did:dht:delegate');
+    const outcome = resolution.catch((error: unknown) => error);
+    await clock.tickAsync(CONNECT_DID_RESOLUTION_TIMEOUT_MS);
+
+    expect(await outcome).toEqual(new Error(
+      `Connect delegate encryption key resolution for 'did:dht:delegate' timed out after ${CONNECT_DID_RESOLUTION_TIMEOUT_MS}ms.`,
     ));
   });
 });
