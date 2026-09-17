@@ -200,7 +200,7 @@ export async function ensureVaultReady(params: {
   return recoveryPhrase;
 }
 
-// ─── startSyncIfEnabled ─────────────────────────────────────────
+// ─── Sync startup ───────────────────────────────────────────────
 
 /**
  * Resolve a {@link SyncOption} into explicit `startSync` parameters. Sync is
@@ -229,17 +229,14 @@ export function resolveSyncOption(
 }
 
 /**
- * Start DWN synchronisation if `sync` is not `'off'`.
- *
- * Consolidates 6 copies of:
- * ```ts
- * userAgent.sync.startSync(resolveSyncOption(sync))
- *   .catch((err) => console.error('[@enbox/auth] Sync failed:', err));
- * ```
+ * Start DWN synchronisation if `sync` is not `'off'` and wait for its initial
+ * catch-up. Use this only when subsequent work requires a ready sync runtime;
+ * terminal auth paths should use {@link startSyncInBackgroundIfEnabled} so
+ * network catch-up is not part of session creation.
  *
  * @internal
  */
-export async function startSyncIfEnabled(
+export async function startSyncAndWaitIfEnabled(
   userAgent: EnboxUserAgent,
   sync: SyncOption | undefined,
 ): Promise<void> {
@@ -249,6 +246,73 @@ export async function startSyncIfEnabled(
 
   if (userAgent.sync.hasActiveSubscriptions) { return; } // setIdentityOptions() hot-adds inline
   await userAgent.sync.startSync(resolveSyncOption(sync));
+}
+
+type BackgroundSyncStart = {
+  cleanupStarted: boolean;
+  restart?: {
+    signal: AbortSignal | undefined;
+    sync: SyncOption | undefined;
+  };
+  signal: AbortSignal | undefined;
+};
+
+const backgroundSyncStarts = new WeakMap<EnboxUserAgent, BackgroundSyncStart>();
+
+/**
+ * Begin DWN synchronisation without making initial network catch-up part of
+ * the auth critical path. Startup failures are reported instead of becoming
+ * unhandled rejections or invalidating an otherwise usable local session.
+ * Concurrent requests share the in-flight startup. If that startup outlives
+ * its session, the runtime is stopped after startup settles so a timed-out
+ * lock cannot leave sync running behind a locked vault.
+ *
+ * @internal
+ */
+export function startSyncInBackgroundIfEnabled(
+  userAgent: EnboxUserAgent,
+  sync: SyncOption | undefined,
+  signal?: AbortSignal,
+): void {
+  if (sync === 'off' || signal?.aborted) {
+    return;
+  }
+
+  const activeStart = backgroundSyncStarts.get(userAgent);
+  if (activeStart !== undefined) {
+    activeStart.signal = signal;
+    if (activeStart.cleanupStarted) {
+      activeStart.restart = { signal, sync };
+    }
+    return;
+  }
+
+  const start: BackgroundSyncStart = { cleanupStarted: false, signal };
+  backgroundSyncStarts.set(userAgent, start);
+
+  void (async (): Promise<void> => {
+    try {
+      await startSyncAndWaitIfEnabled(userAgent, sync);
+    } catch (error: unknown) {
+      console.error('[@enbox/auth] Sync failed:', error);
+    }
+
+    if (start.signal?.aborted && backgroundSyncStarts.get(userAgent) === start) {
+      start.cleanupStarted = true;
+      try {
+        await userAgent.sync.stopSync();
+      } catch (error: unknown) {
+        console.error('[@enbox/auth] Sync cleanup failed:', error);
+      }
+    }
+  })().finally((): void => {
+    if (backgroundSyncStarts.get(userAgent) === start) {
+      backgroundSyncStarts.delete(userAgent);
+      if (start.restart !== undefined) {
+        startSyncInBackgroundIfEnabled(userAgent, start.restart.sync, start.restart.signal);
+      }
+    }
+  });
 }
 
 // ─── createDefaultIdentity ──────────────────────────────────────
@@ -679,7 +743,7 @@ export async function importDelegateAndSetupSync(params: {
       delegateGrants,
     });
 
-    // No explicit sync('pull') here — startSyncIfEnabled() in the caller
+    // No explicit sync('pull') here — startSyncInBackgroundIfEnabled() in the caller
     // runs an immediate sync cycle (both pull and push) when it starts.
     // Doing a manual pull first would double the startup burst and can
     // trigger rate limits on the remote DWN.
@@ -782,10 +846,6 @@ export async function finalizeDelegateSession(params: {
     signal,
   } = params;
 
-  if (startSync) {
-    await startSyncIfEnabled(userAgent, sync);
-  }
-
   // Persist protocol path keys alongside the delegate session markers
   // so they survive agent restarts.  Delegate keys are stored in the
   // vault-backed SecretStore (encrypted at rest), while non-secret
@@ -800,7 +860,7 @@ export async function finalizeDelegateSession(params: {
   // from retaining old decryption material.
   await persistOrClearDelegateSecrets(userAgent, storage, extraStorageKeys, delegateState);
 
-  return finalizeSession({
+  const session = await finalizeSession({
     userAgent,
     emitter,
     storage,
@@ -812,6 +872,12 @@ export async function finalizeDelegateSession(params: {
     signal,
     extraStorageKeys,
   });
+
+  if (startSync) {
+    startSyncInBackgroundIfEnabled(userAgent, sync, signal);
+  }
+
+  return session;
 }
 
 // ─── finalizeSession ────────────────────────────────────────────

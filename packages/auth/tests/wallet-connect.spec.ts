@@ -782,7 +782,7 @@ describe('walletConnect', () => {
     );
 
     // sync('pull') is no longer called in importDelegateAndSetupSync —
-    // startSyncIfEnabled() handles the initial sync cycle instead.
+    // startSyncInBackgroundIfEnabled() handles the initial sync cycle instead.
     expect(syncCalls).not.toContain('pull');
   });
 

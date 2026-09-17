@@ -19,7 +19,7 @@ import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
-import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, runFlowMutation, startSyncAndWaitIfEnabled, startSyncInBackgroundIfEnabled } from './lifecycle.js';
 
 const SESSION_RESTORE_SYNC_REPAIR_TIMEOUT_MS = 10_000;
 
@@ -188,7 +188,7 @@ async function runRetryMaintenanceIfNeeded(
 
       let settledEntries: SettledRetryEntry[] = [];
       try {
-        await startSyncIfEnabled(userAgent, ctx.defaultSync);
+        await startSyncAndWaitIfEnabled(userAgent, ctx.defaultSync);
         settledEntries = await retryRevocationEntries(userAgent, storage, currentEntries);
       } catch {
         // The complete journal remains durable for the next attempt.
@@ -343,10 +343,6 @@ async function finalizeRestoredSession(
     await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {});
   }
 
-  if (!syncRepairFailed) {
-    await startSyncIfEnabled(userAgent, ctx.defaultSync);
-  }
-
   const extraStorageKeys = delegateDid === undefined
     ? undefined
     : {
@@ -355,7 +351,7 @@ async function finalizeRestoredSession(
     };
 
   // Session restore does not emit `identity-added` (identity was already added in the original flow).
-  return finalizeSession({
+  const session = await finalizeSession({
     userAgent,
     emitter,
     storage,
@@ -367,6 +363,12 @@ async function finalizeRestoredSession(
     emitIdentityAdded    : false,
     extraStorageKeys,
   });
+
+  if (!syncRepairFailed) {
+    startSyncInBackgroundIfEnabled(userAgent, ctx.defaultSync, ctx.sessionSignal);
+  }
+
+  return session;
 }
 
 // ─── Revocation retry helpers ───────────────────────────────────

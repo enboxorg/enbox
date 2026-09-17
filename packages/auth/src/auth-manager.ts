@@ -64,7 +64,7 @@ import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
-import { applyIdentitySyncScope, deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, startSyncIfEnabled } from './connect/lifecycle.js';
+import { applyIdentitySyncScope, deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, startSyncInBackgroundIfEnabled } from './connect/lifecycle.js';
 import {
   clearLocalDwnEjection,
   createLocalDwnRpcClient,
@@ -936,15 +936,20 @@ export class AuthManager {
           delegateDid,
           scope     : delegateDid === undefined ? this._defaultIdentitySyncProtocols : derivedProtocols,
         });
-        await startSyncIfEnabled(this._userAgent, this._defaultSync);
-
-        return new AuthSession({
+        const session = new AuthSession({
           agent    : this._userAgent,
           did      : connectedDid,
           delegateDid,
           identity : identityInfo,
           signal   : guard.sessionLifetime.signal,
         });
+
+        startSyncInBackgroundIfEnabled(
+          this._userAgent,
+          this._defaultSync,
+          guard.sessionLifetime.signal,
+        );
+        return session;
       });
     });
   }

@@ -833,6 +833,33 @@ describe('registerSyncScopeForIdentity', () => {
 });
 
 describe('finalizeDelegateSession', () => {
+  test('returns the delegated session before initial sync catch-up finishes', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    let finishCatchUp!: () => void;
+    const catchUp = new Promise<void>((resolve) => { finishCatchUp = resolve; });
+    const agent = createMockAgent({ syncStartSync: () => catchUp });
+    const identity = createMockIdentity({
+      did      : { uri: 'did:jwk:delegate2' },
+      metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+    });
+
+    const session = await finalizeDelegateSession({
+      userAgent    : agent,
+      emitter,
+      storage,
+      identity     : identity as any,
+      connectedDid : 'did:dht:connected1',
+      delegateDid  : 'did:jwk:delegate2',
+      sync         : 'live',
+      signal       : new AbortController().signal,
+    });
+
+    expect(session.did).toBe('did:dht:connected1');
+    finishCatchUp();
+    await catchUp;
+  });
+
   describe('stale state cleanup on reconnect', () => {
     test('clears old context keys and multi-party protocols when absent on reconnect', async () => {
       const emitter = new AuthEventEmitter();
