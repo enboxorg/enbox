@@ -39,6 +39,7 @@ import { authoredProtocolDefinitionsEqual, KeyDerivationScheme } from '@enbox/dw
 
 import { DwnInterface } from './types/dwn.js';
 import { mapConcurrentSettled } from './utils.js';
+import { resolveConnectDwnEndpointUrls } from './connect-endpoint-resolution.js';
 
 // ---------------------------------------------------------------------------
 // Tunables (mirrors the connect-approval fan-out budgets)
@@ -550,7 +551,7 @@ export async function prepareProtocol(
     throw new Error(getProtocolSetupConflictMessage(installedDefinition, protocolDefinition));
   }
 
-  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
+  const dwnEndpointUrls = await resolveConnectDwnEndpointUrls(agent, selectedDid);
   if (queryResult.message === undefined) {
     throw new Error('Could not query protocol: no signed query message was returned.');
   }

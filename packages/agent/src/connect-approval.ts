@@ -29,6 +29,7 @@ import { Did, DidJwk } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
+import { resolveConnectDwnEndpointUrls } from './connect-endpoint-resolution.js';
 import {
   createGrantKeyRecordsForGrants,
   getEncryptionKeyInfo,
@@ -467,7 +468,7 @@ export async function createPermissionGrants(
 
   // Resolve before creating local grants so an unusable or unavailable DID
   // document fails the approval without leaving undeliverable grant records.
-  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(selectedDid);
+  const dwnEndpointUrls = await resolveConnectDwnEndpointUrls(agent, selectedDid);
 
   const permissionGrants = await Promise.all(
     scopes.map((scope) => permissionsApi.createGrant({
@@ -628,7 +629,7 @@ async function fanOutDataEncodedRecords(
     return;
   }
 
-  const dwnEndpointUrls = await agent.dwn.getRemoteDwnEndpointUrls(ownerDid);
+  const dwnEndpointUrls = await resolveConnectDwnEndpointUrls(agent, ownerDid);
   const sendTasks = records.flatMap((record, recordIndex) => {
     const { encodedData, ...rawMessage } = record;
     const data = Convert.base64Url(encodedData).toUint8Array();
@@ -867,7 +868,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     const permissionsApi = new AgentPermissionsApi({ agent });
     let revGrantEndpoints: string[] = [];
     try {
-      revGrantEndpoints = await agent.dwn.getRemoteDwnEndpointUrls(providerDid);
+      revGrantEndpoints = await resolveConnectDwnEndpointUrls(agent, providerDid);
     } catch {
       // Endpoint resolution failure — revocation grants will be local-only until sync.
     }
