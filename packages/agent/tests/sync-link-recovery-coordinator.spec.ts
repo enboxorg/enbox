@@ -896,49 +896,118 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('uses an already queued reconciliation without retaining a cancelled retry deadline', async () => {
+  it('retains a queued reconciliation behind the failed pass retry deadline', async () => {
+    const clock = sinon.useFakeTimers({ now: Date.parse('2026-09-11T11:00:00.000Z') });
     const fixture = createFixture();
     const controller = activate(fixture);
-    controller.link.recovery = {
-      error       : 'earlier failure',
-      failedAt    : '2026-09-11T11:00:00.000Z',
-      nextRetryAt : '2026-09-11T11:00:05.000Z',
-    };
-    fixture.coordinator.scheduleReconcile(controller, 60_000);
     const firstStarted = deferred<void>();
     const releaseFirst = deferred<void>();
-    const trailingStarted = deferred<void>();
-    const releaseTrailing = deferred<void>();
     fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
       firstStarted.resolve();
       await releaseFirst.promise;
       throw new Error('offline');
     });
-    fixture.operations.reconcileTarget.onSecondCall().callsFake(async () => {
-      trailingStarted.resolve();
-      await releaseTrailing.promise;
-      return { converged: true };
-    });
+    fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: true });
 
     const first = runReconcile(fixture, controller);
     await firstStarted.promise;
     const trailing = runReconcile(fixture, controller);
     releaseFirst.resolve();
-    await trailingStarted.promise;
+    await Promise.all([first, trailing]);
 
     expect(controller.link.recovery).toMatchObject({
       error       : 'offline',
-      nextRetryAt : undefined,
+      nextRetryAt : '2026-09-11T11:00:05.000Z',
     });
-    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
+    expect(controller.executor.hasPending('reconcile')).toBe(true);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
       reason : 'reconcile-failed',
     })).toBe(true);
 
-    releaseTrailing.resolve();
-    await Promise.all([first, trailing]);
+    await clock.tickAsync(4999);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    await clock.tickAsync(1);
+    await waitForLastTask(fixture.taskRunner);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
     expect(controller.link.recovery).toBeUndefined();
+    expect(controller.executor.hasPending('reconcile')).toBe(false);
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
+  it('holds only the failed direction while another durable wake proceeds', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const pushStarted = deferred<void>();
+    const releasePush = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      pushStarted.resolve();
+      await releasePush.promise;
+      throw new Error('push offline');
+    });
+    fixture.operations.reconcileTarget.onSecondCall().resolves({ pullDrained: true });
+    fixture.operations.reconcileTarget.onThirdCall().resolves({ converged: true });
+
+    const firstPush = runWake(fixture, controller, 'push');
+    await pushStarted.promise;
+    const trailingPush = runWake(fixture, controller, 'push');
+    const pull = runWake(fixture, controller, 'pull');
+    releasePush.resolve();
+    await Promise.all([firstPush, trailingPush, pull]);
+
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ direction: 'pull' });
+    expect(controller.executor.hasPending('push')).toBe(true);
+    await clock.tickAsync(4999);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    await clock.tickAsync(1);
+    await waitForLastTask(fixture.taskRunner);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(3);
+    expect(fixture.operations.reconcileTarget.thirdCall.args[2]).toEqual({ verifyConvergence: true });
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
+  it('does not let an earlier reconcile timer absorb an eligible direction', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    fixture.coordinator.scheduleReconcile(controller, 1_000);
+    fixture.operations.reconcileTarget.onFirstCall().rejects(new Error('push offline'));
+    fixture.operations.reconcileTarget.onSecondCall().resolves({ pullDrained: true });
+    fixture.operations.reconcileTarget.onThirdCall().resolves({ converged: true });
+
+    await runWake(fixture, controller, 'push');
+
+    const gateStarted = deferred<void>();
+    const releaseGate = deferred<void>();
+    const gate = fixture.coordinator.execute(controller, async (): Promise<void> => {
+      gateStarted.resolve();
+      await releaseGate.promise;
+    });
+    await gateStarted.promise;
+    const push = runWake(fixture, controller, 'push');
+    const pull = runWake(fixture, controller, 'pull');
+
+    await clock.tickAsync(1_000);
+    releaseGate.resolve();
+    await Promise.all([gate, push, pull]);
+
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ direction: 'pull' });
+    expect(controller.executor.hasPending('push')).toBe(true);
+    expect(controller.executor.hasPending('reconcile')).toBe(true);
+
+    await clock.tickAsync(4_000);
+    await waitForLastTask(fixture.taskRunner);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(3);
+    expect(fixture.operations.reconcileTarget.thirdCall.args[2]).toEqual({ verifyConvergence: true });
+    controller.deactivate();
+    await clock.runAllAsync();
   });
 
   it('runs repair after an in-flight push pass yields to its generation fence', async () => {

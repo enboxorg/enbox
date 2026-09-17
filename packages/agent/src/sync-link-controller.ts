@@ -1,6 +1,6 @@
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { ReplicationLinkState } from './types/sync.js';
+import type { ReplicationLinkState, SyncDirection } from './types/sync.js';
 
 import { SyncLinkExecutor } from './sync-link-executor.js';
 
@@ -38,6 +38,7 @@ export class SyncLinkController {
   private _replicationGeneration = 0;
   private _pushSnapshot?: SyncFeedSnapshot;
   private _repairAttempts = 0;
+  private readonly _retryNotBefore = new Map<SyncDirection, number>();
 
   public constructor(
     public readonly linkKey: string,
@@ -279,6 +280,44 @@ export class SyncLinkController {
     this._repairAttempts = 0;
   }
 
+  /** Hold selected durable directions until their retry deadline. */
+  public setRetryNotBefore(directions: readonly SyncDirection[], retryNotBefore: number): number {
+    let effectiveRetryNotBefore = retryNotBefore;
+    for (const direction of directions) {
+      const existing = this._retryNotBefore.get(direction) ?? 0;
+      const effective = Math.max(existing, retryNotBefore);
+      this._retryNotBefore.set(direction, effective);
+      effectiveRetryNotBefore = Math.max(effectiveRetryNotBefore, effective);
+    }
+    return effectiveRetryNotBefore;
+  }
+
+  /** Clear retry eligibility after successful work or a superseding repair. */
+  public clearRetryNotBefore(directions: readonly SyncDirection[]): void {
+    for (const direction of directions) {
+      this._retryNotBefore.delete(direction);
+    }
+  }
+
+  /** Remaining delay before a direction or full reconciliation may run. */
+  public getRetryDelayMs(work: SyncDirection | 'reconcile', now = Date.now()): number | undefined {
+    const directions: readonly SyncDirection[] = work === 'reconcile' ? ['pull', 'push'] : [work];
+    let retryNotBefore = 0;
+    for (const direction of directions) {
+      const deadline = this._retryNotBefore.get(direction);
+      if (deadline === undefined) {
+        continue;
+      }
+      if (deadline <= now) {
+        this._retryNotBefore.delete(direction);
+        continue;
+      }
+      retryNotBefore = Math.max(retryNotBefore, deadline);
+    }
+
+    return retryNotBefore === 0 ? undefined : retryNotBefore - now;
+  }
+
   private static cloneFeedSnapshot(snapshot: SyncFeedSnapshot | undefined): SyncFeedSnapshot | undefined {
     if (snapshot === undefined) {
       return undefined;
@@ -308,6 +347,7 @@ export class SyncLinkController {
     this._pushSnapshot = undefined;
     this.executor.dispose();
     this._repairAttempts = 0;
+    this._retryNotBefore.clear();
   }
 
   /** Deactivate the link and close its transport subscriptions. */
