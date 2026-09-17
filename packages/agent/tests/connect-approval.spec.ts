@@ -261,6 +261,25 @@ describe('connect approval ceremony', () => {
       expect(DwnPermissionGrant.parse(protocolGrant).delegated).not.toBe(true);
     });
 
+    it('should reuse pre-resolved owner endpoints without resolving the DID again', async () => {
+      const endpointResolutionStub = sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls');
+      const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
+        status: { code: 202, detail: 'Accepted' },
+      } as any);
+
+      await createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        permissionScopes,
+        undefined,
+        ['https://resolved-dwn.example'],
+      );
+
+      expect(endpointResolutionStub.notCalled).toBe(true);
+      expect(sendStub.alwaysCalledWithMatch({ dwnUrl: 'https://resolved-dwn.example' })).toBe(true);
+    });
+
     it('should serialize permission grant writes per endpoint while sending to independent endpoints concurrently', async () => {
       const endpointUrls = ['https://dwn-a.example', 'https://dwn-b.example'];
       sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves(endpointUrls);
@@ -309,7 +328,6 @@ describe('connect approval ceremony', () => {
       timeoutStub.onFirstCall().returns(batchController.signal);
       timeoutStub.onSecondCall().returns(requestController.signal);
       timeoutStub.callsFake(() => new AbortController().signal);
-      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves(['https://dwn.example']);
       let rpcCallCount = 0;
       const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async ({ signal }) => {
         rpcCallCount++;
@@ -326,6 +344,8 @@ describe('connect approval ceremony', () => {
         delegateBearerDid.uri,
         testHarness.agent,
         permissionScopes,
+        undefined,
+        ['https://dwn.example'],
       );
       while (!sendStub.called) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -374,7 +394,6 @@ describe('connect approval ceremony', () => {
       const timeoutStub = sinon.stub(AbortSignal, 'timeout');
       timeoutStub.onFirstCall().returns(batchController.signal);
       timeoutStub.callsFake(() => new AbortController().signal);
-      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves(['https://dwn.example']);
       const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async ({ signal }) =>
         new Promise((_, reject) => {
           signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
@@ -386,6 +405,8 @@ describe('connect approval ceremony', () => {
         delegateBearerDid.uri,
         testHarness.agent,
         permissionScopes,
+        undefined,
+        ['https://dwn.example'],
       );
       while (!sendStub.called) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -476,6 +497,7 @@ describe('connect approval ceremony', () => {
     type ApprovalStubs = {
       capturedSessions: Array<{ createdAt: string; expiresAt: string }>;
       capturedDelegateDids: string[];
+      createGrantsStub: sinon.SinonStub;
       revocationGrantStub: sinon.SinonStub;
     };
 
@@ -580,7 +602,7 @@ describe('connect approval ceremony', () => {
     ): Promise<ApprovalStubs> {
       const capturedSessions: Array<{ createdAt: string; expiresAt: string }> = [];
       const capturedDelegateDids: string[] = [];
-      sinon.stub(ConnectCeremony, 'createPermissionGrants').callsFake(async (
+      const createGrantsStub = sinon.stub(ConnectCeremony, 'createPermissionGrants').callsFake(async (
         _selectedDid,
         delegateDid,
         _agent,
@@ -600,7 +622,7 @@ describe('connect approval ceremony', () => {
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
       await stubMissingProtocolPreparation(definitions);
 
-      return { capturedDelegateDids, capturedSessions, revocationGrantStub };
+      return { capturedDelegateDids, capturedSessions, createGrantsStub, revocationGrantStub };
     }
 
     /**
@@ -676,6 +698,21 @@ describe('connect approval ceremony', () => {
         'grant-keys',
         'revocations',
       ]);
+    });
+
+    it('should resolve owner DWN endpoints once and reuse them across approval phases', async () => {
+      const { createGrantsStub } = await stubApprovalDependencies();
+      const endpointResolutionStub = testHarness.agent.dwn.getRemoteDwnEndpointUrls as sinon.SinonStub;
+
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
+        request     : approvalRequest(),
+      });
+
+      expect(endpointResolutionStub.calledOnceWith(providerIdentity.did.uri)).toBe(true);
+      expect(createGrantsStub.firstCall.args[5]).toEqual(['https://dwn.example/']);
     });
 
     it('should isolate a throwing progress observer and still complete the approval', async () => {
