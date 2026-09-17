@@ -20,7 +20,7 @@ import { publishServiceConfigNotice } from '@enbox/agent';
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { assertFlowActive, commitFlowSession, createDefaultIdentity, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, createDefaultIdentity, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runFlowMutation, startSyncInBackgroundIfEnabled } from './lifecycle.js';
 import { recoverIdentitiesFromRemote, registerAgentDidForSync } from './recovery.js';
 
 function normalizeDwnEndpoints(endpoints: string[]): string[] {
@@ -254,10 +254,8 @@ export async function vaultConnect(
       await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncProtocols });
     }
 
-    await startSyncIfEnabled(userAgent, sync);
-
     // Persist session info and build the AuthSession for the manager to publish.
-    return finalizeSession({
+    const session = await finalizeSession({
       userAgent,
       emitter,
       storage,
@@ -268,5 +266,8 @@ export async function vaultConnect(
       identityName         : identity?.metadata.name,
       identityConnectedDid : identity?.metadata.connectedDid,
     });
+
+    startSyncInBackgroundIfEnabled(userAgent, sync);
+    return session;
   });
 }

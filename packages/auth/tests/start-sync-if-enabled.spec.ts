@@ -1,7 +1,8 @@
+import sinon from 'sinon';
 import { describe, expect, test } from 'bun:test';
 
 import { createMockAgent } from './helpers/mock-agent.js';
-import { resolveSyncOption, startSyncIfEnabled } from '../src/connect/lifecycle.js';
+import { resolveSyncOption, startSyncAndWaitIfEnabled, startSyncInBackgroundIfEnabled } from '../src/connect/lifecycle.js';
 
 describe('resolveSyncOption', () => {
   test('should resolve undefined and "live" to the engine-default settle-check interval', () => {
@@ -20,7 +21,7 @@ describe('resolveSyncOption', () => {
   });
 });
 
-describe('startSyncIfEnabled', () => {
+describe('sync startup', () => {
   test('should call startSync when sync is "live" or the object form', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
@@ -28,8 +29,8 @@ describe('startSyncIfEnabled', () => {
       syncHasActiveSubscriptions : false,
     });
 
-    await startSyncIfEnabled(agent, 'live');
-    await startSyncIfEnabled(agent, { interval: '90s' });
+    await startSyncAndWaitIfEnabled(agent, 'live');
+    await startSyncAndWaitIfEnabled(agent, { interval: '90s' });
 
     expect(startSyncCalls).toEqual([
       {},
@@ -43,7 +44,7 @@ describe('startSyncIfEnabled', () => {
       syncStartSync: async (params) => { startSyncCalls.push(params); },
     });
 
-    await startSyncIfEnabled(agent, 'off');
+    await startSyncAndWaitIfEnabled(agent, 'off');
 
     expect(startSyncCalls).toHaveLength(0);
   });
@@ -55,7 +56,7 @@ describe('startSyncIfEnabled', () => {
       syncHasActiveSubscriptions : false,
     });
 
-    await startSyncIfEnabled(agent, undefined);
+    await startSyncAndWaitIfEnabled(agent, undefined);
 
     expect(startSyncCalls).toHaveLength(1);
     expect(startSyncCalls[0]).toEqual({});
@@ -68,7 +69,7 @@ describe('startSyncIfEnabled', () => {
       syncHasActiveSubscriptions : false,
     });
 
-    await startSyncIfEnabled(agent, '30s');
+    await startSyncAndWaitIfEnabled(agent, '30s');
 
     expect(startSyncCalls).toHaveLength(1);
     expect(startSyncCalls[0]).toEqual({ interval: '30s' });
@@ -81,7 +82,7 @@ describe('startSyncIfEnabled', () => {
       syncHasActiveSubscriptions : true,
     });
 
-    await startSyncIfEnabled(agent, undefined);
+    await startSyncAndWaitIfEnabled(agent, undefined);
 
     expect(startSyncCalls).toHaveLength(0);
   });
@@ -93,9 +94,45 @@ describe('startSyncIfEnabled', () => {
       syncHasActiveSubscriptions : false,
     });
 
-    await startSyncIfEnabled(agent, '10s');
+    await startSyncAndWaitIfEnabled(agent, '10s');
 
     expect(startSyncCalls).toHaveLength(1);
     expect(startSyncCalls[0]).toEqual({ interval: '10s' });
+  });
+
+  test('should begin background sync without waiting for initial catch-up', async () => {
+    let finishCatchUp!: () => void;
+    const catchUp = new Promise<void>((resolve) => { finishCatchUp = resolve; });
+    const startSyncCalls: any[] = [];
+    const agent = createMockAgent({
+      syncStartSync: (params) => {
+        startSyncCalls.push(params);
+        return catchUp;
+      },
+    });
+
+    expect(startSyncInBackgroundIfEnabled(agent, undefined)).toBeUndefined();
+    expect(startSyncCalls).toEqual([{}]);
+
+    finishCatchUp();
+    await catchUp;
+  });
+
+  test('should report background sync failures without rejecting the auth caller', async () => {
+    const failure = new Error('initial catch-up failed');
+    const report = sinon.stub(console, 'error');
+    const agent = createMockAgent({
+      syncStartSync: async () => { throw failure; },
+    });
+
+    try {
+      expect(startSyncInBackgroundIfEnabled(agent, undefined)).toBeUndefined();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(report.calledOnceWithExactly('[@enbox/auth] Sync failed:', failure)).toBe(true);
+    } finally {
+      report.restore();
+    }
   });
 });

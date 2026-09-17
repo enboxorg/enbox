@@ -265,6 +265,24 @@ describe('restoreSession', () => {
     expect(syncCalls[0].interval).toBe('30s');
   });
 
+  test('restores the session before initial sync catch-up finishes', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    let finishCatchUp!: () => void;
+    const catchUp = new Promise<void>((resolve) => { finishCatchUp = resolve; });
+    const agent = createMockAgent({
+      firstLaunch   : async () => false,
+      syncStartSync : () => catchUp,
+    });
+
+    const session = await restoreSession({ userAgent: agent, emitter, storage });
+
+    expect(session).toBeDefined();
+    finishCatchUp();
+    await catchUp;
+  });
+
   test('skips sync when sync is off', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();

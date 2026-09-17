@@ -10,7 +10,7 @@ import type { FlowContext } from './lifecycle.js';
 import type { ImportFromPortableOptions } from '../types.js';
 
 import { registerWithDwnEndpoints } from '../registration.js';
-import { assertFlowActive, commitFlowSession, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, runFlowMutation, startSyncInBackgroundIfEnabled } from './lifecycle.js';
 
 /**
  * Import an identity from a PortableIdentity JSON object.
@@ -59,10 +59,8 @@ export async function importFromPortable(
       await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncProtocols });
     }
 
-    await startSyncIfEnabled(userAgent, sync);
-
     // Persist session info and build the AuthSession for the manager to publish.
-    return finalizeSession({
+    const session = await finalizeSession({
       userAgent,
       emitter,
       storage,
@@ -72,5 +70,8 @@ export async function importFromPortable(
       identityName         : identity.metadata.name,
       identityConnectedDid : identity.metadata.connectedDid,
     });
+
+    startSyncInBackgroundIfEnabled(userAgent, sync);
+    return session;
   });
 }
