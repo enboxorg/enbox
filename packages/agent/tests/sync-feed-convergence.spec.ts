@@ -124,6 +124,21 @@ describe('SyncEngineLevel durable feed convergence', () => {
     return (await syncEngine.getIdentitySyncStatus(tenantDid)).remotes;
   }
 
+  async function resetPersistedPushCheckpoint(): Promise<void> {
+    const internal = syncEngine as unknown as {
+      getSyncTargets(): Promise<any[]>;
+      getOrCreateReplicationLink(target: any): Promise<any>;
+      replicationLinkStore: { resetCheckpoint(link: any, direction: 'push'): Promise<void> };
+    };
+    const [target] = await internal.getSyncTargets();
+    const link = await internal.getOrCreateReplicationLink(target);
+    expect(link.push.contiguousAppliedToken).toBeDefined();
+    await internal.replicationLinkStore.resetCheckpoint(link, 'push');
+
+    const persistedLink = await internal.getOrCreateReplicationLink(target);
+    expect(persistedLink.push.contiguousAppliedToken).toBeUndefined();
+  }
+
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass       : TestAgent,
@@ -247,15 +262,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       const firstCid = await Message.getCid(first.message);
       const capturedCid = await Message.getCid(captured.message);
       if (pushPath === 'inventory-diff') {
-        const internal = syncEngine as unknown as {
-          getSyncTargets(): Promise<any[]>;
-          getOrCreateReplicationLink(target: any): Promise<any>;
-          replicationLinkStore: { persistCheckpoint(link: any, direction: 'push'): Promise<void> };
-        };
-        const [target] = await internal.getSyncTargets();
-        const link = await internal.getOrCreateReplicationLink(target);
-        link.push.contiguousAppliedToken = undefined;
-        await internal.replicationLinkStore.persistCheckpoint(link, 'push');
+        await resetPersistedPushCheckpoint();
       }
       const rpc = createLocalDwnRpc(remoteStores.dwn);
       const applyReplicatedMessage = rpc.applyReplicatedMessage.bind(rpc);
@@ -771,15 +778,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     // through the complete-entry diff path rather than the
     // incremental, message-bearing path exercised by the other recovery tests.
     await deleteLocalRecord(blockedWrite.message.recordId);
-    const internal = syncEngine as unknown as {
-      getSyncTargets(): Promise<any[]>;
-      getOrCreateReplicationLink(target: any): Promise<any>;
-      replicationLinkStore: { persistCheckpoint(link: any, direction: 'push'): Promise<void> };
-    };
-    const [target] = await internal.getSyncTargets();
-    const link = await internal.getOrCreateReplicationLink(target);
-    link.push.contiguousAppliedToken = undefined;
-    await internal.replicationLinkStore.persistCheckpoint(link, 'push');
+    await resetPersistedPushCheckpoint();
 
     // Quota is now available. The tombstone must still stage its retained
     // dataless initial ancestor so
