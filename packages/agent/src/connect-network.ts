@@ -46,18 +46,16 @@ async function settleConnectNetworkOperation<T>(
   operation: Promise<T>,
   description: string,
 ): Promise<T> {
-  const deadline = new AbortController();
-  const timeoutId = setTimeout((): void => {
-    deadline.abort(
-      new Error(
-        `${description} timed out after ${CONNECT_DID_RESOLUTION_TIMEOUT_MS}ms.`,
-      ),
-    );
-  }, CONNECT_DID_RESOLUTION_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(CONNECT_DID_RESOLUTION_TIMEOUT_MS);
 
   try {
-    return await executeUnlessAborted(operation, deadline.signal);
-  } finally {
-    clearTimeout(timeoutId);
+    return await executeUnlessAborted(operation, timeout);
+  } catch (error) {
+    if (timeout.aborted && error === timeout.reason) {
+      throw new Error(
+        `${description} timed out after ${CONNECT_DID_RESOLUTION_TIMEOUT_MS}ms.`,
+      );
+    }
+    throw error;
   }
 }

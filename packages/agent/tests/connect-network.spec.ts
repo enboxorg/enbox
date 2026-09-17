@@ -37,33 +37,36 @@ describe('connect network resolution', () => {
     await expect(resolveConnectDwnEndpointUrls(agent, 'did:example:alice')).rejects.toBe(resolutionError);
   });
 
-  it('should reject when endpoint resolution exceeds the interactive budget', async () => {
-    const clock = sinon.useFakeTimers();
-    const agent = {
+  it('should bound endpoint and requester-supplied delegate key resolution', async () => {
+    const endpointTimeout = new AbortController();
+    const delegateTimeout = new AbortController();
+    const timeoutStub = sinon.stub(AbortSignal, 'timeout');
+    timeoutStub.onFirstCall().returns(endpointTimeout.signal);
+    timeoutStub.onSecondCall().returns(delegateTimeout.signal);
+    const endpointAgent = {
       dwn: { getRemoteDwnEndpointUrls: sinon.stub().returns(new Promise<string[]>(() => {})) },
     } as unknown as EnboxPlatformAgent;
-
-    const resolution = resolveConnectDwnEndpointUrls(agent, 'did:example:alice');
-    const outcome = resolution.catch((error: unknown) => error);
-    await clock.tickAsync(CONNECT_DID_RESOLUTION_TIMEOUT_MS);
-
-    expect(await outcome).toEqual(new Error(
-      `Connect DWN endpoint resolution for 'did:example:alice' timed out after ${CONNECT_DID_RESOLUTION_TIMEOUT_MS}ms.`,
-    ));
-  });
-
-  it('should also bound requester-supplied delegate key resolution', async () => {
-    const clock = sinon.useFakeTimers();
-    const agent = {
+    const delegateAgent = {
       did: { resolve: sinon.stub().returns(new Promise(() => {})) },
     } as unknown as EnboxPlatformAgent;
 
-    const resolution = resolveConnectDelegateEncryptionKeyInfo(agent, 'did:dht:delegate');
-    const outcome = resolution.catch((error: unknown) => error);
-    await clock.tickAsync(CONNECT_DID_RESOLUTION_TIMEOUT_MS);
+    const outcomes = Promise.all([
+      resolveConnectDwnEndpointUrls(endpointAgent, 'did:example:alice')
+        .catch((error: unknown) => error),
+      resolveConnectDelegateEncryptionKeyInfo(delegateAgent, 'did:dht:delegate')
+        .catch((error: unknown) => error),
+    ]);
+    endpointTimeout.abort(new DOMException('The operation timed out', 'TimeoutError'));
+    delegateTimeout.abort(new DOMException('The operation timed out', 'TimeoutError'));
+    const [endpointError, delegateError] = await outcomes;
 
-    expect(await outcome).toEqual(new Error(
+    expect(endpointError).toEqual(new Error(
+      `Connect DWN endpoint resolution for 'did:example:alice' timed out after ${CONNECT_DID_RESOLUTION_TIMEOUT_MS}ms.`,
+    ));
+    expect(delegateError).toEqual(new Error(
       `Connect delegate encryption key resolution for 'did:dht:delegate' timed out after ${CONNECT_DID_RESOLUTION_TIMEOUT_MS}ms.`,
     ));
+    expect(timeoutStub.callCount).toBe(2);
+    expect(timeoutStub.alwaysCalledWith(CONNECT_DID_RESOLUTION_TIMEOUT_MS)).toBe(true);
   });
 });
