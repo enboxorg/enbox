@@ -83,7 +83,9 @@ export class WalletPostMessageTransport {
   private readonly _dappWindow: Window;
   private readonly _recipientPrivateKey: Jwk;
 
+  private _closed = false;
   private _requestReceived = false;
+  private _requestSettled = false;
   private readonly _timeoutId?: ReturnType<typeof setTimeout>;
   private _messageListener?: (event: MessageEvent) => void;
   private _resolveAck?: (acked: boolean) => void;
@@ -108,8 +110,7 @@ export class WalletPostMessageTransport {
     window.addEventListener('message', this._messageListener);
 
     this._timeoutId = setTimeout((): void => {
-      this.close();
-      this._rejectRequest(new Error('[@enbox/browser] Timed out waiting for the connect request from the dapp.'));
+      this.settleRequest(new Error('[@enbox/browser] Timed out waiting for the connect request from the dapp.'));
     }, params.timeoutMs);
   }
 
@@ -143,12 +144,17 @@ export class WalletPostMessageTransport {
       timeoutMs: options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     });
 
-    // The listener is registered, so the beacon cannot race the request.
-    dappWindow.postMessage({
-      type         : DWEB_CONNECT_LOADED_MESSAGE_TYPE,
-      walletEpk,
-      walletOrigin : globalThis.location.origin,
-    }, dappOrigin);
+    try {
+      // The listener is registered, so the beacon cannot race the request.
+      dappWindow.postMessage({
+        type         : DWEB_CONNECT_LOADED_MESSAGE_TYPE,
+        walletEpk,
+        walletOrigin : globalThis.location.origin,
+      }, dappOrigin);
+    } catch (error) {
+      transport.close();
+      throw error;
+    }
 
     return transport;
   }
@@ -177,11 +183,12 @@ export class WalletPostMessageTransport {
    * @param idToken - The sealed response JWE, or the literal deny token.
    */
   public sendResponse(idToken: string): void {
-    this._dappWindow.postMessage({
-      type    : DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
-      payload : idToken,
-    }, this._dappOrigin);
-    this.close();
+    this.assertOpen();
+    try {
+      this.postResponse(idToken);
+    } finally {
+      this.close();
+    }
   }
 
   /**
@@ -201,24 +208,28 @@ export class WalletPostMessageTransport {
    * @returns Whether the dapp acknowledged completion within the budget.
    */
   public async sendResponseAwaitingAck(idToken: string, options: { timeoutMs?: number } = {}): Promise<boolean> {
+    this.assertOpen();
+    if (this._resolveAck !== undefined) {
+      throw new Error('[@enbox/browser] A connect response is already awaiting acknowledgement.');
+    }
+
     const ackPromise = new Promise<boolean>((resolve): void => {
       this._resolveAck = resolve;
     });
 
-    this._dappWindow.postMessage({
-      type    : DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
-      payload : idToken,
-    }, this._dappOrigin);
+    let ackTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      this.postResponse(idToken);
 
-    const ackTimeoutId = setTimeout((): void => {
-      this._resolveAck?.(false);
-    }, options.timeoutMs ?? DEFAULT_ACK_TIMEOUT_MS);
+      ackTimeoutId = setTimeout((): void => {
+        this._resolveAck?.(false);
+      }, options.timeoutMs ?? DEFAULT_ACK_TIMEOUT_MS);
 
-    const acked = await ackPromise;
-    clearTimeout(ackTimeoutId);
-    this._resolveAck = undefined;
-    this.close();
-    return acked;
+      return await ackPromise;
+    } finally {
+      clearTimeout(ackTimeoutId);
+      this.close();
+    }
   }
 
   /** Posts the deny token back to the dapp — the user rejected the request. */
@@ -226,16 +237,30 @@ export class WalletPostMessageTransport {
     this.sendResponse(CONNECT_DENIED_TOKEN);
   }
 
-  /** Stops listening and releases the session's timers. Idempotent. */
+  /**
+   * Stops listening and releases the session's timers. A request or response
+   * acknowledgement still pending at close is settled immediately. Idempotent.
+   */
   public close(): void {
+    if (this._closed) { return; }
+    this._closed = true;
     clearTimeout(this._timeoutId);
     if (this._messageListener !== undefined) {
       window.removeEventListener('message', this._messageListener);
       this._messageListener = undefined;
     }
+
+    if (!this._requestSettled) {
+      this._requestSettled = true;
+      this._rejectRequest(new Error('[@enbox/browser] Wallet connect transport closed before receiving a request.'));
+    }
+    const resolveAck = this._resolveAck;
+    this._resolveAck = undefined;
+    resolveAck?.(false);
   }
 
   private onMessage(event: MessageEvent): void {
+    if (this._closed) { return; }
     const message = getTrustedMessage(event, this._dappOrigin, this._dappWindow);
     if (message === undefined) { return; }
 
@@ -278,6 +303,8 @@ export class WalletPostMessageTransport {
   }
 
   private settleRequest(outcome: ConnectRequest | Error): void {
+    if (this._requestSettled) { return; }
+    this._requestSettled = true;
     clearTimeout(this._timeoutId);
     if (outcome instanceof Error) {
       this.close();
@@ -285,6 +312,19 @@ export class WalletPostMessageTransport {
       return;
     }
     this._resolveRequest(outcome);
+  }
+
+  private assertOpen(): void {
+    if (this._closed) {
+      throw new Error('[@enbox/browser] Wallet connect transport is closed.');
+    }
+  }
+
+  private postResponse(idToken: string): void {
+    this._dappWindow.postMessage({
+      type    : DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
+      payload : idToken,
+    }, this._dappOrigin);
   }
 }
 

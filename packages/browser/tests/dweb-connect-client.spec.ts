@@ -253,6 +253,15 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
 
       expect(acked).toBe(false);
     });
+
+    it('should settle acknowledgement immediately when the wallet transport closes', async () => {
+      const walletTransport = await createWalletTransport();
+
+      const acked = walletTransport.sendResponseAwaitingAck('SEALED_RESPONSE_JWE', { timeoutMs: 10_000 });
+      walletTransport.close();
+
+      await expect(acked).resolves.toBe(false);
+    });
   });
 
   // ── Popup window placement ──────────────────────────────────
@@ -460,6 +469,21 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
   // ── Failure modes ───────────────────────────────────────────
 
   describe('failure modes', () => {
+    it('should preserve the request timeout error while closing the transport', async () => {
+      const walletTransport = await createWalletTransport({ timeoutMs: 20 });
+
+      await expect(walletTransport.awaitRequest()).rejects.toThrow('Timed out waiting for the connect request');
+    });
+
+    it('should reject a pending wallet request when the transport closes', async () => {
+      const walletTransport = await createWalletTransport({ timeoutMs: 10_000 });
+
+      const request = walletTransport.awaitRequest();
+      walletTransport.close();
+
+      await expect(request).rejects.toThrow('closed before receiving a request');
+    });
+
     it('should throw when the popup is blocked', async () => {
       windowOpenSpy.mockReturnValue(null);
 
