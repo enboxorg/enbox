@@ -124,6 +124,21 @@ describe('SyncEngineLevel durable feed convergence', () => {
     return (await syncEngine.getIdentitySyncStatus(tenantDid)).remotes;
   }
 
+  async function resetPersistedPushCheckpoint(): Promise<void> {
+    const internal = syncEngine as unknown as {
+      getSyncTargets(): Promise<any[]>;
+      getOrCreateReplicationLink(target: any): Promise<any>;
+      replicationLinkStore: { resetCheckpoint(link: any, direction: 'push'): Promise<void> };
+    };
+    const [target] = await internal.getSyncTargets();
+    const link = await internal.getOrCreateReplicationLink(target);
+    expect(link.push.contiguousAppliedToken).toBeDefined();
+    await internal.replicationLinkStore.resetCheckpoint(link, 'push');
+
+    const persistedLink = await internal.getOrCreateReplicationLink(target);
+    expect(persistedLink.push.contiguousAppliedToken).toBeUndefined();
+  }
+
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass       : TestAgent,
@@ -225,6 +240,241 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
     expect(await readRemoteRecordText(recordId)).toBe(localText);
     expect(await remoteFingerprint()).toBe(await localFingerprint());
+  });
+
+  it.each(['incremental', 'inventory-diff'] as const)(
+    'pushes the captured inline feed snapshot through the %s path when its record is updated behind an earlier apply',
+    async (pushPath) => {
+      await configureLocalProtocol(feedHarnessProtocolV1);
+      await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+      await syncEngine.sync('push');
+
+      const first = await writeLocalRecord({
+        data         : 'first record gates the captured page',
+        protocolPath : 'note',
+        schema       : feedHarnessProtocolV1.types.note.schema,
+      });
+      const captured = await writeLocalRecord({
+        data         : 'captured value before concurrent update',
+        protocolPath : 'note',
+        schema       : feedHarnessProtocolV1.types.note.schema,
+      });
+      const firstCid = await Message.getCid(first.message);
+      const capturedCid = await Message.getCid(captured.message);
+      if (pushPath === 'inventory-diff') {
+        await resetPersistedPushCheckpoint();
+      }
+      const rpc = createLocalDwnRpc(remoteStores.dwn);
+      const applyReplicatedMessage = rpc.applyReplicatedMessage.bind(rpc);
+      let releaseFirstApply!: () => void;
+      let resolveFirstApplyStarted!: () => void;
+      const firstApplyGate = new Promise<void>(resolve => { releaseFirstApply = resolve; });
+      const firstApplyStarted = new Promise<void>(resolve => { resolveFirstApplyStarted = resolve; });
+      rpc.applyReplicatedMessage = async (request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> => {
+        if (await Message.getCid(request.message as GenericMessage) === firstCid) {
+          resolveFirstApplyStarted();
+          await firstApplyGate;
+        }
+        return applyReplicatedMessage(request);
+      };
+      testHarness.agent.rpc = rpc;
+      const localRequest = sinon.spy(testHarness.agent.dwn, 'processRequest');
+      const remoteApply = sinon.spy(rpc, 'applyReplicatedMessage');
+
+      const push = syncEngine.sync('push');
+      await firstApplyStarted;
+      const updated = await updateLocalRecord(captured.message, 'value written while the page was in flight');
+      const updatedCid = await Message.getCid(updated.message);
+      releaseFirstApply();
+      await push;
+
+      expect(localRequest.withArgs(sinon.match({
+        messageParams : sinon.match({ messageCid: capturedCid }),
+        messageType   : DwnInterface.MessagesRead,
+      })).called).toBe(false);
+      const applyCids = await Promise.all(remoteApply.getCalls().map(async ({ args }): Promise<string> =>
+        Message.getCid(args[0].message as GenericMessage)));
+      expect(applyCids.filter(cid => cid === firstCid)).toHaveLength(1);
+      expect(applyCids.filter(cid => cid === capturedCid)).toHaveLength(1);
+      expect(applyCids.filter(cid => cid === updatedCid)).toHaveLength(0);
+      expect(await readRemoteRecordText(captured.message.recordId)).toBe('captured value before concurrent update');
+
+      await syncEngine.sync('push');
+
+      const recoveredApplyCids = await Promise.all(remoteApply.getCalls().map(async ({ args }): Promise<string> =>
+        Message.getCid(args[0].message as GenericMessage)));
+      expect(recoveredApplyCids.filter(cid => cid === capturedCid)).toHaveLength(1);
+      expect(recoveredApplyCids.filter(cid => cid === updatedCid)).toHaveLength(1);
+      expect(await readRemoteRecordText(captured.message.recordId)).toBe('value written while the page was in flight');
+      expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
+    },
+  );
+
+  it('holds the push checkpoint when a current feed payload read fails, then resumes with data', async () => {
+    await configureLocalProtocol(feedHarnessProtocolV1);
+    const payload = 'x'.repeat(1_048_577);
+    const write = await writeLocalRecord({
+      data         : payload,
+      protocolPath : 'note',
+      schema       : feedHarnessProtocolV1.types.note.schema,
+    });
+    const messageCid = await Message.getCid(write.message);
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+
+    const originalProcessRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
+    const processRequest = sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async (request: any) => {
+      if (
+        request.messageType === DwnInterface.MessagesRead &&
+        request.messageParams.messageCid === messageCid
+      ) {
+        return { reply: { status: { code: 503, detail: 'local payload temporarily unavailable' } } };
+      }
+      return originalProcessRequest(request);
+    });
+    const remoteApply = sinon.spy(testHarness.agent.rpc, 'applyReplicatedMessage');
+    sinon.stub(console, 'error');
+
+    await expect(syncEngine.sync('push')).rejects.toThrow('Sync operation failed');
+
+    expect(processRequest.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).called).toBe(true);
+    const firstAttemptCids = await Promise.all(remoteApply.getCalls().map(async (call): Promise<string> =>
+      Message.getCid(call.args[0].message)));
+    expect(firstAttemptCids).not.toContain(messageCid);
+    await expectRemoteRecordCount(write.message.recordId, 0);
+    expect(await remoteHarnessFingerprint()).not.toBe(await harnessFingerprint());
+
+    const localFeed = await queryLocalMessageFeed({
+      did      : tenantDid,
+      filters  : [{ protocol: feedHarnessProtocolV1.protocol }],
+      cidsOnly : true,
+      limit    : 100,
+      agent    : testHarness.agent,
+    });
+    const internal = syncEngine as unknown as {
+      getSyncTargets(): Promise<any[]>;
+      getOrCreateReplicationLink(target: any): Promise<any>;
+    };
+    const [target] = await internal.getSyncTargets();
+    const link = await internal.getOrCreateReplicationLink(target);
+    expect(link.push.contiguousAppliedToken).not.toEqual(localFeed.cursor);
+
+    processRequest.restore();
+    await syncEngine.sync('push');
+
+    const resumedLink = await internal.getOrCreateReplicationLink(target);
+    expect(resumedLink.push.contiguousAppliedToken).toEqual(localFeed.cursor);
+    expect(await readRemoteRecordText(write.message.recordId)).toBe(payload);
+    expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
+  });
+
+  it('persists the settled prefix when a shared-parent payload read rejects, then delivers it once', async () => {
+    await configureLocalProtocol(feedHarnessProtocolV1);
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.sync('push');
+
+    const parent = await writeLocalRecord({
+      data         : 'parent before remote quota recovery',
+      protocolPath : 'thread',
+      schema       : feedHarnessProtocolV1.types.thread.schema,
+    });
+    const parentCid = await Message.getCid(parent.message);
+    const gate = installRemoteApplyGate(parentCid);
+    await syncEngine.sync('push');
+    expect(gate.attempts()).toBe(1);
+
+    const firstSettled = await writeLocalRecord({
+      data         : 'settled before dependency read failure A',
+      protocolPath : 'note',
+      schema       : feedHarnessProtocolV1.types.note.schema,
+    });
+    const secondSettled = await writeLocalRecord({
+      data         : 'settled before dependency read failure B',
+      protocolPath : 'note',
+      schema       : feedHarnessProtocolV1.types.note.schema,
+    });
+    const child = await writeLocalRecord({
+      data            : 'child that discovers the shared parent',
+      parentContextId : parent.message.contextId,
+      protocolPath    : 'thread/reply',
+      schema          : feedHarnessProtocolV1.types.reply.schema,
+    });
+    const updatedParentData = 'p'.repeat(900_001);
+    const updatedParent = await updateLocalRecord(parent.message, updatedParentData);
+    const updatedParentCid = await Message.getCid(updatedParent.message);
+    const firstSettledCid = await Message.getCid(firstSettled.message);
+    const secondSettledCid = await Message.getCid(secondSettled.message);
+
+    const localFeed = await queryLocalMessageFeed({
+      did      : tenantDid,
+      filters  : [{ protocol: feedHarnessProtocolV1.protocol }],
+      cidsOnly : true,
+      limit    : 100,
+      agent    : testHarness.agent,
+    });
+    const secondSettledFeedEntry = localFeed.entries?.find(({ messageCid }) => messageCid === secondSettledCid);
+    expect(secondSettledFeedEntry).toBeDefined();
+    expect(localFeed.cursor).toBeDefined();
+
+    gate.allow();
+    const originalProcessRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
+    let rejectParentPayloadRead = true;
+    let parentPayloadReadAttempts = 0;
+    sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async (request: any) => {
+      if (
+        request.messageType === DwnInterface.MessagesRead &&
+        request.messageParams.messageCid === updatedParentCid
+      ) {
+        parentPayloadReadAttempts++;
+        if (rejectParentPayloadRead) {
+          throw new Error('local DWN connection lost while reading shared parent');
+        }
+      }
+      return originalProcessRequest(request);
+    });
+    const remoteApply = sinon.spy(testHarness.agent.rpc, 'applyReplicatedMessage');
+    sinon.stub(console, 'error');
+
+    await expect(syncEngine.sync('push')).rejects.toThrow('Sync operation failed');
+
+    expect(await readRemoteRecordText(firstSettled.message.recordId)).toBe('settled before dependency read failure A');
+    expect(await readRemoteRecordText(secondSettled.message.recordId)).toBe('settled before dependency read failure B');
+    await expectRemoteRecordCount(child.message.recordId, 0);
+
+    const internal = syncEngine as unknown as {
+      getSyncTargets(): Promise<any[]>;
+      getOrCreateReplicationLink(target: any): Promise<any>;
+    };
+    const [target] = await internal.getSyncTargets();
+    const failedLink = await internal.getOrCreateReplicationLink(target);
+    expect(failedLink.push.contiguousAppliedToken).toEqual({
+      epoch      : localFeed.cursor!.epoch,
+      messageCid : secondSettledCid,
+      position   : secondSettledFeedEntry!.seq,
+      streamId   : localFeed.cursor!.streamId,
+    });
+
+    rejectParentPayloadRead = false;
+    await syncEngine.sync('push');
+
+    expect(gate.attempts()).toBe(2);
+    expect(parentPayloadReadAttempts).toBe(2);
+
+    const applyCids = await Promise.all(remoteApply.getCalls().map(async ({ args }): Promise<string> =>
+      Message.getCid(args[0].message as GenericMessage)));
+    expect(applyCids.filter((cid) => cid === firstSettledCid)).toHaveLength(1);
+    expect(applyCids.filter((cid) => cid === secondSettledCid)).toHaveLength(1);
+
+    const updatedParentApplies: ReplicationApplyResult[] = [];
+    for (let index = 0; index < remoteApply.callCount; index++) {
+      const call = remoteApply.getCall(index);
+      if (applyCids[index] === updatedParentCid) {
+        updatedParentApplies.push(await call.returnValue);
+      }
+    }
+    expect(updatedParentApplies).toHaveLength(1);
+    expect(updatedParentApplies[0]).toMatchObject({ kind: 'Applied' });
+    expect(await readRemoteRecordText(parent.message.recordId)).toBe(updatedParentData);
+    expect(await readRemoteRecordText(child.message.recordId)).toBe('child that discovers the shared parent');
   });
 
   it('executes real local queries when an update push must discover its protocol and initial-write dependencies', async () => {
@@ -507,7 +757,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(status.quotaBlockedMessageCount).toBe(0);
   });
 
-  it('recovers a blocked-then-deleted record through the cidsOnly diff push path after a checkpoint reset', async () => {
+  it('recovers a blocked-then-deleted record through the complete-entry diff push path after a checkpoint reset', async () => {
     await configureLocalProtocol(feedHarnessProtocolV1);
     const blockedWrite = await writeLocalRecord({
       data         : 'initial data rejected while over quota, then deleted before recovery',
@@ -525,21 +775,13 @@ describe('SyncEngineLevel durable feed convergence', () => {
     // Delete the blocked record so its initial write is retained locally as
     // dataless ancestry, then clear the push checkpoint to simulate a
     // 410/history-compaction progress-gap reset. The next push must re-enumerate
-    // through the cidsOnly diff path (message-less feed entries) rather than the
+    // through the complete-entry diff path rather than the
     // incremental, message-bearing path exercised by the other recovery tests.
     await deleteLocalRecord(blockedWrite.message.recordId);
-    const internal = syncEngine as unknown as {
-      getSyncTargets(): Promise<any[]>;
-      getOrCreateReplicationLink(target: any): Promise<any>;
-      replicationLinkStore: { persistCheckpoint(link: any, direction: 'push'): Promise<void> };
-    };
-    const [target] = await internal.getSyncTargets();
-    const link = await internal.getOrCreateReplicationLink(target);
-    link.push.contiguousAppliedToken = undefined;
-    await internal.replicationLinkStore.persistCheckpoint(link, 'push');
+    await resetPersistedPushCheckpoint();
 
-    // Quota is now available. Even though the diff enumeration omits the message,
-    // the tombstone must still stage its retained dataless initial ancestor so
+    // Quota is now available. The tombstone must still stage its retained
+    // dataless initial ancestor so
     // both entries apply together and the record converges — otherwise the page
     // halts on the tombstone's unresolvable missing-initial dependency and every
     // newer record behind it is head-of-line blocked forever.

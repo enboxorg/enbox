@@ -151,11 +151,11 @@ would make one signal stand in for proof it does not carry.
 
 - Compare token positions only when both `streamId` and `epoch` match. A token
   from another domain is neither newer nor older.
-- Advance a direction checkpoint only after a durable-feed page has settled,
-  after a complete authenticated socket event has passed the same closure
-  admission policy, or when equal paired-subscription snapshots establish the
-  initial baseline. A lifecycle signal, EOSE, or unprocessed event is never
-  checkpoint evidence.
+- Advance a direction checkpoint only after a durable-feed page or its
+  contiguous prefix has settled, after a complete authenticated socket event
+  has passed the same closure admission policy, or when equal
+  paired-subscription snapshots establish the initial baseline. A lifecycle
+  signal, EOSE, or unprocessed event is never checkpoint evidence.
 - Filtered token positions are sparse, so an omitted matching event cannot be
   inferred from a numeric gap. The periodic fingerprint settle check remains
   the durable backstop (every five minutes by default).

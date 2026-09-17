@@ -617,11 +617,19 @@ jobs:
           echo "Shard ${{ matrix.shard }}/3 running ${#shard_specs[@]} of ${#all_specs[@]} spec files"
           bun test --timeout 10000 --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage "${shard_specs[@]}"
 
+      # Bun's LCOV reporter does not emit branch records. Run the two core
+      # sync unit suites once through Istanbul so Sonar receives the condition
+      # coverage those same tests exercise.
+      - name: Collect agent branch coverage
+        if: matrix.shard == 3
+        run: bun run --filter @enbox/agent test:node:branch-coverage
+
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/packages/agent/coverage-shard-${{ matrix.shard }}
+          mkdir -p coverage-staging/packages/agent/coverage-shard-${{ matrix.shard }} coverage-staging/packages/agent/coverage-branches
           cp packages/agent/coverage/lcov.info coverage-staging/packages/agent/coverage-shard-${{ matrix.shard }}/lcov.info 2>/dev/null || true
+          cp packages/agent/coverage-branches/lcov.info coverage-staging/packages/agent/coverage-branches/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()

@@ -11,6 +11,8 @@ const patterns = [
   // (e.g. the two-way agent split); each shard covers a subset of the same
   // package, merged here into one report.
   'packages/*/coverage-shard-*/lcov.info',
+  // Supplemental Istanbul runs provide branch records omitted by Bun's LCOV.
+  'packages/*/coverage-branches/lcov.info',
   'packages/*/coverage-browser/lcov.info',
   'packages/*/coverage-browser-*/lcov.info',
 ];

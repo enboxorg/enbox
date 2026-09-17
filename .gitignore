@@ -14,6 +14,7 @@ dist/
 
 # Coverage
 coverage/
+coverage-branches/
 coverage-browser/
 coverage-browser-*/
 *.lcov

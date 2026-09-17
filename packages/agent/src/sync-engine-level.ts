@@ -5,7 +5,7 @@ import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, Messa
 
 import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
-import { BroadcastChannelWakePublisher, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
+import { BroadcastChannelWakePublisher, DwnError, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
 import { parseDurationInMilliseconds, runSerializedByKey, runWithCrossContextLock, sleep } from '@enbox/common';
 import { RateLimitError, SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 
@@ -63,6 +63,7 @@ import { DwnInterface } from './types/dwn.js';
 import { fetchConnectionStatus } from './connect-status.js';
 import { FollowedSyncSourceStoreLevel } from './followed-sync-source-store-level.js';
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
+import { recordsWriteRequiresData } from './sync-fetch-helpers.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
 import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';
@@ -84,11 +85,11 @@ import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildCurrentLinkIdentityKey, buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, normalizeSyncProtocols, singleProtocolForSyncScope, syncEventScope } from './types/sync.js';
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
-import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor } from './sync-messages.js';
+import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, RemoteApplyPushContext, syncMessageDescriptor } from './sync-messages.js';
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
+import { isMissingRoleAuthorizationFailure, isNonRetryableSyncAuthorizationFailure, isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncRunCancelledError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from './sync-target-resolver.js';
 import { projectReplicationLinks, projectSyncStatus } from './sync-status-reporter.js';
@@ -100,6 +101,11 @@ export type SyncEngineLevelParams = {
 };
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
+
+type FeedPushEntryResult =
+  | { kind: 'aborted' }
+  | { kind: 'failed'; failures: PushFailure[] }
+  | { kind: 'processed' };
 
 type LivePullContext = {
   controller: SyncLinkController;
@@ -2380,7 +2386,7 @@ export class SyncEngineLevel implements SyncEngine {
       );
     }
     const refreshAuthority = error instanceof FollowedSourceRoleRecordMismatchError ||
-      SyncEngineLevel.isMissingRoleAuthorization(syncErrorMessage(error));
+      isMissingRoleAuthorizationFailure(syncErrorMessage(error));
     await this.transitionToPaused(this.getReplicationLinkKey(target, link), link, refreshAuthority);
   }
 
@@ -3594,7 +3600,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (await this.handleSyncAuthorizationFailure(roleAuthorization?.actorDid ?? context.did, context.link.delegateDid, errorCode)) {
       return;
     }
-    if (roleAuthorization !== undefined && SyncEngineLevel.isMissingRoleAuthorization(errorCode)) {
+    if (roleAuthorization !== undefined && isMissingRoleAuthorizationFailure(errorCode)) {
       console.warn(
         `SyncEngineLevel: role authorization for ${context.did} -> ${context.dwnUrl} is no longer active — ` +
         'pausing this endpoint link.',
@@ -4015,11 +4021,7 @@ export class SyncEngineLevel implements SyncEngine {
       return true;
     }
     const detail = syncErrorMessage(error);
-    return SyncEngineLevel.isMissingRoleAuthorization(detail) || isTerminalSyncAuthorizationFailure(detail);
-  }
-
-  private static isMissingRoleAuthorization(detail: string): boolean {
-    return detail.includes(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+    return isNonRetryableSyncAuthorizationFailure(detail);
   }
 
   private async verifyFeedConvergence(
@@ -4308,28 +4310,59 @@ export class SyncEngineLevel implements SyncEngine {
     entries: MessagesQueryReplyEntry[],
     shouldContinue?: () => boolean,
   ): Promise<FeedPushResult> {
+    const pushContext = this.createRemoteApplyPushContext(target);
     for (const entry of entries) {
       if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
         return { kind: 'aborted' };
       }
+      const failedEntry = { messageCid: entry.messageCid, seq: entry.seq };
 
-      const result = await this.pushLocalFeedEntry(target, entry, shouldContinue);
+      let result: FeedPushEntryResult;
+      try {
+        result = await this.pushLocalFeedEntry(target, entry, pushContext, shouldContinue);
+      } catch (error: unknown) {
+        return {
+          kind: 'error',
+          failedEntry,
+          error,
+        };
+      }
       if (result.kind === 'aborted') {
         return { kind: 'aborted' };
       }
       if (result.kind === 'failed') {
-        return { kind: 'failed', failures: result.failures };
+        return {
+          kind     : 'failed',
+          failedEntry,
+          failures : result.failures,
+        };
       }
     }
 
     return { kind: 'processed' };
   }
 
+  /** Create one acknowledgement and dependency cache for an ordered push page. */
+  private createRemoteApplyPushContext(target: SyncTarget): RemoteApplyPushContext {
+    return new RemoteApplyPushContext({
+      did                : target.did,
+      dwnUrl             : target.dwnUrl,
+      delegateDid        : target.delegateDid,
+      permissionGrantIds : target.permissionGrantIds,
+      agent              : this.agent,
+      permissionsApi     : this._permissionsApi,
+      onBeforeApply      : (messageCid): void => {
+        this._echoSuppressor.trackPushed(target.did, messageCid, target.dwnUrl);
+      },
+    });
+  }
+
   private async pushLocalFeedEntry(
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
+    pushContext: RemoteApplyPushContext,
     shouldContinue?: () => boolean,
-  ): Promise<FeedPushResult> {
+  ): Promise<FeedPushEntryResult> {
     if (await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
       return { kind: 'processed' };
     }
@@ -4346,13 +4379,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const quotaBlockedInitialCids = await this.getQuotaBlockedInitialCidsForFeedEntry(target, entry);
-    const result = await this.pushMessages({
-      did                : target.did,
-      dwnUrl             : target.dwnUrl,
-      delegateDid        : target.delegateDid,
-      permissionGrantIds : target.permissionGrantIds,
-      messageCids        : [...quotaBlockedInitialCids, entry.messageCid],
-    });
+    const result = await pushContext.pushFeedEntry(entry, quotaBlockedInitialCids);
     if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
       return { kind: 'aborted' };
     }
@@ -4427,7 +4454,7 @@ export class SyncEngineLevel implements SyncEngine {
       .filter(({ state }) => state.source !== 'permission-grant');
     if (dataBlocks.length === 0) { return []; }
 
-    const recordId = await this.resolveRecordIdForFeedEntry(target, entry);
+    const recordId = recordIdForRecordsMessage(entry.message);
     if (recordId === undefined) { return []; }
 
     const initialCids: string[] = [];
@@ -4444,25 +4471,6 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
     return initialCids;
-  }
-
-  /**
-   * The diff push path enumerates the local feed with `cidsOnly`, so
-   * `entry.message` is absent there. Resolve the record id from the entry when
-   * present, otherwise load the message from the local store by cid so blocked
-   * initial-write dependency replay behaves identically on the incremental and
-   * diff push paths (a tombstone enumerated without its message would otherwise
-   * never stage its retained dataless ancestor and could never converge).
-   */
-  private async resolveRecordIdForFeedEntry(
-    target: SyncTarget,
-    entry: MessagesQueryReplyEntry,
-  ): Promise<string | undefined> {
-    const fromEntry = recordIdForRecordsMessage(entry.message);
-    if (fromEntry !== undefined) { return fromEntry; }
-
-    const local = await this.getLocalMessageForTarget(target, entry.messageCid);
-    return recordIdForRecordsMessage(local?.message);
   }
 
   /**
@@ -4810,7 +4818,7 @@ export class SyncEngineLevel implements SyncEngine {
     const hasStoredData = local.dataStream !== undefined;
     await local.dataStream?.cancel();
     return entry.isLatestBaseState !== true ||
-      !SyncEngineLevel.recordsWriteRequiresRemoteData(local.message) ||
+      !recordsWriteRequiresData(local.message) ||
       hasStoredData;
   }
 
@@ -4850,7 +4858,7 @@ export class SyncEngineLevel implements SyncEngine {
       syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
     } else if (
       target.authorization.kind !== 'role' &&
-      SyncEngineLevel.recordsWriteRequiresRemoteData(message)
+      recordsWriteRequiresData(message)
     ) {
       syncEntry.dataStreamFactory = async (): Promise<ReadableStream<Uint8Array> | undefined> => {
         const fetched = await fetchRemoteMessages({
@@ -4959,14 +4967,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return descriptor.protocol;
-  }
-
-  private static recordsWriteRequiresRemoteData(message: GenericMessage): boolean {
-    const { descriptor } = message;
-    return descriptor.interface === DwnInterfaceName.Records &&
-      descriptor.method === DwnMethodName.Write &&
-      'dataCid' in descriptor &&
-      typeof descriptor.dataCid === 'string';
   }
 
   private static shouldAbortReconcile(shouldContinue?: () => boolean): boolean {
