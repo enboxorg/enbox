@@ -15,6 +15,7 @@ import type { SyncDeferredPullState } from './sync-deferred-pull-store-level.js'
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type { SyncFreshEntry } from './sync-admit-closure.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
+import type { SyncLinkRepairRetryOptions } from './sync-link-recovery-coordinator.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type {
   DeadLetterEntry,
@@ -2376,7 +2377,7 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     error: unknown,
   ): Promise<void> {
-    if (link.status === 'paused') {
+    if (link.status === 'paused' && !isRetryableSyncRecovery(link.recovery)) {
       return;
     }
     const supportFailure = error instanceof RoleReplicationSupportError;
@@ -3935,10 +3936,10 @@ export class SyncEngineLevel implements SyncEngine {
       return this.reconcileUnownedTarget(target, link, effectiveOptions, shouldContinue);
     }
 
-    const retriedRepair = await this.retryFailedRepairForTarget(target, controller, { shouldContinue });
+    const repairAttempted = await this.retryFailedRepairForTarget(target, controller, { shouldContinue });
     // A successful repair already ran a full durable pass. Only an explicit
-    // convergence check needs another pass; otherwise avoid duplicating it.
-    if (retriedRepair && (
+    // convergence check needs another pass; a failed attempt remains parked.
+    if (repairAttempted && (
       controller.link.status !== 'live' ||
       !controller.isReplicationReady ||
       effectiveOptions?.verifyConvergence !== true
@@ -5200,8 +5201,7 @@ export class SyncEngineLevel implements SyncEngine {
         const controller = this.getLinkController(linkKey);
         if (controller?.isActive === true) {
           await this.retryFailedRepairForTarget(target, controller, {
-            ignoreRetryDeadline : true,
-            resumePaused        : true,
+            ignoreRetryDeadline: true,
             shouldContinue,
           });
         } else if (isRetryableSyncRecovery(link.recovery) && shouldContinue()) {
@@ -5275,16 +5275,11 @@ export class SyncEngineLevel implements SyncEngine {
     controller: SyncLinkController,
     {
       ignoreRetryDeadline = false,
-      resumePaused = false,
       shouldContinue = (): boolean => true,
-    }: {
-      ignoreRetryDeadline?: boolean;
-      resumePaused?: boolean;
-      shouldContinue?: () => boolean;
-    } = {},
+    }: SyncLinkRepairRetryOptions = {},
   ): Promise<boolean> {
     if (
-      (controller.link.status !== 'repairing' && !(resumePaused && controller.link.status === 'paused')) ||
+      controller.link.status !== 'repairing' ||
       !shouldContinue() ||
       !await this.isTargetRunnable(target) ||
       !shouldContinue()
@@ -5293,7 +5288,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
     return this._linkRecoveryCoordinator.retryFailedRepair(
       controller,
-      { ignoreRetryDeadline, resumePaused, shouldContinue },
+      { ignoreRetryDeadline, shouldContinue },
     );
   }
 

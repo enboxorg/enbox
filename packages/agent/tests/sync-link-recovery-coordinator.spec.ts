@@ -14,9 +14,9 @@ import { buildLinkKey } from '../src/sync-link-key.js';
 import { SyncFeedConvergenceManager } from '../src/sync-feed-convergence-manager.js';
 import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncLinkRecoveryCoordinator } from '../src/sync-link-recovery-coordinator.js';
-import { SyncPushFailuresError } from '../src/sync-runtime-errors.js';
 import { SyncReplicationLinkStoreLevel } from '../src/sync-replication-link-store-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
+import { isRetryableSyncRecovery, SyncPushFailuresError } from '../src/sync-runtime-errors.js';
 
 import { deferred } from './utils/deferred.js';
 
@@ -91,7 +91,7 @@ function createFixture(options: {
     }),
     setStatus: sinon.stub().callsFake(async (state, status) => {
       state.status = status;
-      if (status === 'live') {
+      if (status === 'live' || (status === 'paused' && isRetryableSyncRecovery(state.recovery))) {
         delete state.recovery;
       }
     }),
@@ -351,12 +351,6 @@ describe('SyncLinkRecoveryCoordinator', () => {
       error    : 'offline',
       failedAt : '2026-09-11T12:00:00.000Z',
     };
-    fixture.operations.setStatus.callsFake(async (linkState, status) => {
-      linkState.status = status;
-      if (status === 'paused') {
-        delete linkState.recovery;
-      }
-    });
 
     await fixture.coordinator.transitionToPaused(LINK_KEY, state);
 
@@ -627,6 +621,45 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('closes subscriptions when a repair is cancelled after reopening them', async () => {
+    const fixture = createFixture();
+    const state = link('repairing');
+    state.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    };
+    const controller = activate(fixture, state);
+    const closePull = sinon.stub().resolves();
+    const closePush = sinon.stub().resolves();
+    const pushOpened = deferred<void>();
+    fixture.operations.openPullSubscription.callsFake(async (): Promise<boolean> => {
+      controller.setLiveSubscription({ close: closePull });
+      return true;
+    });
+    fixture.operations.openPushSubscription.callsFake(async (): Promise<boolean> => {
+      controller.setLocalSubscription({ close: closePush });
+      pushOpened.resolve();
+      return true;
+    });
+    let shouldContinue = true;
+
+    const retry = fixture.coordinator.retryFailedRepair(controller, {
+      shouldContinue: (): boolean => shouldContinue,
+    });
+    await pushOpened.promise;
+    // Let reopenSubscriptions perform its final cancellation check, then
+    // cancel in the continuation gap before completeRepair writes 'live'.
+    await Promise.resolve();
+    shouldContinue = false;
+    await retry;
+
+    expect(closePull.calledOnce).toBe(true);
+    expect(closePush.calledOnce).toBe(true);
+    expect(state.status).toBe('repairing');
+    expect(state.recovery).toMatchObject({ error: 'offline' });
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(false);
+  });
+
   it('does not overwrite a newer pause while closing subscriptions for cancellation rollback', async () => {
     const fixture = createFixture();
     const state = link('repairing');
@@ -710,7 +743,38 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.warn.calledWithMatch('Max repair attempts reached')).toBe(true);
   });
 
-  it('restarts exhausted repairs without reviving authorization pauses', async () => {
+  it('does not strand a terminal authorization failure when its caller cancels during persistence', async () => {
+    const fixture = createFixture();
+    const state = link('repairing');
+    state.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    };
+    const controller = activate(fixture, state);
+    const recoveryStarted = deferred<void>();
+    const releaseRecovery = deferred<void>();
+    fixture.operations.reconcileTarget.rejects(new Error('GrantAuthorizationGrantRevoked'));
+    fixture.operations.setRecovery.callsFake(async (linkState, recovery) => {
+      linkState.recovery = recovery;
+      recoveryStarted.resolve();
+      await releaseRecovery.promise;
+    });
+    let shouldContinue = true;
+
+    const retry = fixture.coordinator.retryFailedRepair(controller, {
+      shouldContinue: (): boolean => shouldContinue,
+    });
+    await recoveryStarted.promise;
+    shouldContinue = false;
+    releaseRecovery.resolve();
+    await retry;
+
+    expect(state.status).toBe('paused');
+    expect(state.recovery).toMatchObject({ error: 'GrantAuthorizationGrantRevoked' });
+    expect(fixture.operations.warn.calledWithMatch('authorization')).toBe(true);
+  });
+
+  it('restarts exhausted repairs without reviving paused links', async () => {
     const fixture = createFixture();
     const exhaustedState = link('repairing');
     exhaustedState.recovery = {
@@ -749,14 +813,17 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     expect(await fixture.coordinator.retryFailedRepair(legacyController)).toBe(false);
     expect(legacyState.status).toBe('paused');
-    expect(await fixture.coordinator.retryFailedRepair(legacyController, { resumePaused: true })).toBe(true);
-    expect(legacyState.status).toBe('live');
+    expect(await fixture.coordinator.retryFailedRepair(
+      legacyController,
+      { ignoreRetryDeadline: true },
+    )).toBe(false);
+    expect(legacyState.status).toBe('paused');
 
     const deliberateState = link('paused');
     const deliberateController = activate(fixture, deliberateState);
     expect(await fixture.coordinator.retryFailedRepair(
       deliberateController,
-      { ignoreRetryDeadline: true, resumePaused: true },
+      { ignoreRetryDeadline: true },
     )).toBe(false);
     expect(deliberateState.status).toBe('paused');
 
@@ -769,7 +836,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     expect(await fixture.coordinator.retryFailedRepair(
       authorizationController,
-      { ignoreRetryDeadline: true, resumePaused: true },
+      { ignoreRetryDeadline: true },
     )).toBe(false);
     expect(authorizationState.status).toBe('paused');
   });
@@ -1479,6 +1546,38 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const repairPasses = fixture.operations.reconcileTarget.getCalls()
       .filter((call) => call.args[2] === undefined);
     expect(repairPasses.length).toBe(2);
+  });
+
+  it('does not let an old caller cancellation consume a newer repair generation', async () => {
+    const fixture = createFixture();
+    const state = link('repairing');
+    state.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    };
+    const controller = activate(fixture, state);
+    const firstStatusStarted = deferred<void>();
+    const releaseFirstStatus = deferred<void>();
+    fixture.operations.setStatus.onFirstCall().callsFake(async (linkState, status) => {
+      linkState.status = status;
+      firstStatusStarted.resolve();
+      await releaseFirstStatus.promise;
+    });
+    let shouldContinue = true;
+
+    const oldRetry = fixture.coordinator.retryFailedRepair(controller, {
+      shouldContinue: (): boolean => shouldContinue,
+    });
+    await firstStatusStarted.promise;
+    shouldContinue = false;
+    await fixture.coordinator.transitionToRepairing(controller);
+    await waitForLastTask(fixture.taskRunner);
+    releaseFirstStatus.resolve();
+    await oldRetry;
+
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    expect(state.status).toBe('live');
+    expect(state.recovery).toBeUndefined();
   });
 
   it('hands a superseded pass failure to the trailing repair without burning the attempt budget', async () => {

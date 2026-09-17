@@ -27,6 +27,11 @@ import {
 
 export type SyncLinkRecoveryTarget = SyncTarget & { linkKey: string };
 
+export type SyncLinkRepairRetryOptions = {
+  ignoreRetryDeadline?: boolean;
+  shouldContinue?: () => boolean;
+};
+
 export interface SyncLinkRecoveryCoordinatorOperations {
   captureIdentityTaskRunner(tenantDid: string): SyncIdentityTaskRunner;
   emitEvent(event: SyncEvent): void;
@@ -106,20 +111,14 @@ export class SyncLinkRecoveryCoordinator {
 
   /**
    * Restart a failed repair batch without disturbing deliberate pauses.
-   * `resumePaused` exists only for explicit recovery of transient rows parked
-   * by older versions; a missing or non-retryable diagnostic remains paused.
+   * @returns Whether this call started and awaited a repair attempt.
    */
   public async retryFailedRepair(
     controller: SyncLinkController,
     {
       ignoreRetryDeadline = false,
-      resumePaused = false,
       shouldContinue = (): boolean => true,
-    }: {
-      ignoreRetryDeadline?: boolean;
-      resumePaused?: boolean;
-      shouldContinue?: () => boolean;
-    } = {},
+    }: SyncLinkRepairRetryOptions = {},
   ): Promise<boolean> {
     const { link } = controller;
     if (
@@ -129,19 +128,15 @@ export class SyncLinkRecoveryCoordinator {
       (!ignoreRetryDeadline && this._operations.getRuntime().hasTimer(
         SyncLinkRecoveryCoordinator.repairRetryTimerKey(controller.linkKey),
       )) ||
-      (link.status !== 'repairing' && !(resumePaused && link.status === 'paused')) ||
+      link.status !== 'repairing' ||
       !shouldContinue()
     ) {
       return false;
     }
 
-    // requestRepair publishes a priority mark synchronously before awaiting
-    // persistence. Store the caller fence first because an existing executor
-    // owner may consume that mark while this call is still awaiting.
-    this._repairShouldContinue.set(controller, shouldContinue);
     try {
       controller.clearRepairAttempts();
-      if (!await this.requestRepair(controller, resumePaused)) {
+      if (!await this.requestRepair(controller, shouldContinue)) {
         return false;
       }
       await this.runExecutor(controller);
@@ -156,10 +151,10 @@ export class SyncLinkRecoveryCoordinator {
   /** Publish a new repair request before either background or awaited supervision begins. */
   private async requestRepair(
     controller: SyncLinkController,
-    resumePaused = false,
+    shouldContinue?: () => boolean,
   ): Promise<boolean> {
     const { link } = controller;
-    if ((link.status === 'paused' && !resumePaused) || !controller.isActive) {
+    if (link.status === 'paused' || !controller.isActive) {
       return false;
     }
 
@@ -168,7 +163,13 @@ export class SyncLinkRecoveryCoordinator {
     // repairing status (setOfflineStatus writes it before its first await).
     // Whoever consumes the request afterwards, whether an already-executing
     // pass's trailing turn or the supervision below, observes the complete
-    // transition; only durability and supervision trail the block.
+    // transition; only durability and supervision trail the block. A newer
+    // request also supersedes any caller fence attached to the previous one.
+    if (shouldContinue === undefined) {
+      this._repairShouldContinue.delete(controller);
+    } else {
+      this._repairShouldContinue.set(controller, shouldContinue);
+    }
     this._operations.markPullPending(controller);
     this._operations.getRuntime().cancelTimer(
       SyncLinkRecoveryCoordinator.reconcileTimerKey(controller.linkKey),
@@ -193,7 +194,7 @@ export class SyncLinkRecoveryCoordinator {
    * serializing, the paused status is a cancellation fence: an in-flight
    * repair observes it at every checkpoint and abandons the link rather
    * than overwriting the pause.
-  */
+   */
   public async transitionToPaused(linkKey: string, link: ReplicationLinkState): Promise<void> {
     const controller = this._operations.getController(linkKey);
     if (controller !== undefined && controller.link !== link) {
@@ -500,33 +501,19 @@ export class SyncLinkRecoveryCoordinator {
     // callback from the freshly reopened subscription is enough. A
     // superseded pass must not clear progress, write the live status, or emit
     // completion.
+    const { link } = controller;
+    const recovery = link.recovery;
+    const repairGeneration = controller.replicationGeneration;
     if (this.isRepairSuperseded(controller, runtime)) {
+      await this.rollbackCancelledRepair(controller, repairGeneration, recovery);
       return;
     }
 
-    const { link } = controller;
-    const recovery = link.recovery;
     const previousConnectivity = link.connectivity;
-    const repairGeneration = controller.replicationGeneration;
     link.connectivity = 'online';
     await this._operations.setStatus(link, 'live');
     if (this.isRepairSuperseded(controller, runtime)) {
-      if (
-        this.isRepairCallerCancelled(controller) &&
-        controller.isReplicationGenerationCurrent(repairGeneration) &&
-        link.status === 'live'
-      ) {
-        await controller.closeSubscriptions();
-        if (!controller.isReplicationGenerationCurrent(repairGeneration) || link.status !== 'live') {
-          return;
-        }
-        link.connectivity = 'offline';
-        await this._operations.setStatus(link, 'repairing');
-        if (!controller.isReplicationGenerationCurrent(repairGeneration) || controller.link.status !== 'repairing') {
-          return;
-        }
-        await this._operations.setRecovery(link, recovery);
-      }
+      await this.rollbackCancelledRepair(controller, repairGeneration, recovery);
       return;
     }
 
@@ -568,6 +555,34 @@ export class SyncLinkRecoveryCoordinator {
     });
   }
 
+  /** Undo subscription/status effects when the caller cancels the repair it awaited. */
+  private async rollbackCancelledRepair(
+    controller: SyncLinkController,
+    repairGeneration: number,
+    recovery: SyncLinkRecoveryState | undefined,
+  ): Promise<void> {
+    const { link } = controller;
+    if (
+      !this.isRepairCallerCancelled(controller) ||
+      !controller.isReplicationGenerationCurrent(repairGeneration) ||
+      (link.status !== 'repairing' && link.status !== 'live')
+    ) {
+      return;
+    }
+
+    await controller.closeSubscriptions();
+    if (!controller.isReplicationGenerationCurrent(repairGeneration) || link.status !== 'live') {
+      return;
+    }
+
+    link.connectivity = 'offline';
+    await this._operations.setStatus(link, 'repairing');
+    if (!controller.isReplicationGenerationCurrent(repairGeneration) || controller.link.status !== 'repairing') {
+      return;
+    }
+    await this._operations.setRecovery(link, recovery);
+  }
+
   private async handleRepairFailure(
     controller: SyncLinkController,
     runtime: SyncRuntimeHandle,
@@ -588,11 +603,19 @@ export class SyncLinkRecoveryCoordinator {
     const terminal = isTerminalSyncAuthorizationFailure(errorMessage);
     const exhausted = attempts >= this._maxRepairAttempts;
     const retryDelayMs = terminal || exhausted ? undefined : this.repairRetryDelayMs(attempts);
+    const failureGeneration = controller.replicationGeneration;
     await this._operations.setRecovery(
       link,
       SyncLinkRecoveryCoordinator.recoveryState(errorMessage, retryDelayMs),
     );
-    if (this.isRepairSuperseded(controller, runtime)) {
+    const superseded = this.isRepairSuperseded(controller, runtime);
+    const canFinishTerminalPause = terminal &&
+      this.isRepairCallerCancelled(controller) &&
+      !this.isStale(controller, runtime) &&
+      controller.isReplicationGenerationCurrent(failureGeneration) &&
+      link.status === 'repairing' &&
+      !controller.executor.hasPending('repair');
+    if (superseded && !canFinishTerminalPause) {
       return;
     }
     const failedEvent: SyncEvent = {

@@ -205,19 +205,23 @@ export class SyncReplicationLinkStoreLevel {
   /**
    * Runtime state does not survive sessions; durable decisions do. A prior
    * session's connectivity must not make a freshly loaded link appear online
-   * before transport setup succeeds, and a persisted 'repairing' means a
-   * repair was in flight when that session ended — nothing re-kicks repair on
-   * load (subscription setup refuses 'repairing' links as a concurrent-
-   * transition guard), so a fresh initialization subsumes the interrupted
-   * repair. Older versions also converted exhausted transient repairs into
-   * pauses; their retryable recovery diagnostic distinguishes those rows from
-   * deliberate and authorization pauses. Current pause transitions clear a
-   * stale retryable diagnostic when they supersede it.
+   * before transport setup succeeds. A persisted 'repairing' normally means
+   * a repair was interrupted, so fresh initialization subsumes it; a terminal
+   * authorization diagnostic already proves that the link must stay paused.
+   * Older versions also converted exhausted transient repairs into pauses;
+   * their retryable diagnostic distinguishes those rows from deliberate and
+   * authorization pauses. Current pause transitions clear a stale retryable
+   * diagnostic when they supersede it.
    */
   private static normalizeResumedLink(existing: ReplicationLinkState): void {
     existing.connectivity = 'unknown';
-    if (existing.status === 'repairing' ||
-      (existing.status === 'paused' && isRetryableSyncRecovery(existing.recovery))) {
+    if (existing.status === 'repairing') {
+      if (existing.recovery !== undefined && !isRetryableSyncRecovery(existing.recovery)) {
+        SyncReplicationLinkStoreLevel.assignStatus(existing, 'paused');
+      } else {
+        existing.status = 'initializing';
+      }
+    } else if (existing.status === 'paused' && isRetryableSyncRecovery(existing.recovery)) {
       existing.status = 'initializing';
     }
   }

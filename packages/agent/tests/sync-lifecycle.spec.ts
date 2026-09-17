@@ -977,13 +977,13 @@ describe('SyncEngineLevel lifecycle', () => {
     const internal = engine as any;
     const tenantDid = 'did:example:parallel-retry';
     const remoteEndpoint = 'https://parallel-retry.example.com';
-    const targets: SyncTarget[] = ['projection-a', 'projection-b'].map((projectionId) => ({
+    const targets: SyncTarget[] = ['a', 'b'].map((suffix) => ({
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'owner-epoch',
       did                : tenantDid,
       dwnUrl             : remoteEndpoint,
-      projectionId,
-      scope              : { kind: 'full' },
+      projectionId       : `projection-${suffix}`,
+      scope              : { kind: 'protocolSet', protocols: [`https://example.com/protocol-${suffix}`] },
     }));
     sinon.stub(internal, 'getSyncTargets').resolves(targets);
     sinon.stub(internal, 'getOrCreateReplicationLink').callsFake(async (target: SyncTarget) => ({

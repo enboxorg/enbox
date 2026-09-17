@@ -527,6 +527,19 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(reloadedRepairing.status).toBe('initializing');
     expect(reloadedRepairing.connectivity).toBe('unknown');
 
+    // A crash can land after a terminal authorization diagnostic is durable
+    // but before the following paused status write. That terminal decision
+    // must remain fail-safe when the link is loaded again.
+    const authorizationRecovery = {
+      error    : 'GrantAuthorizationGrantRevoked',
+      failedAt : '2026-09-11T12:01:00.000Z',
+    };
+    await store.setStatus(reloadedRepairing, 'repairing');
+    await store.setRecovery(reloadedRepairing, authorizationRecovery);
+    const reloadedInterruptedAuthorization = await store.getOrCreateLink(params);
+    expect(reloadedInterruptedAuthorization.status).toBe('paused');
+    expect(reloadedInterruptedAuthorization.recovery).toEqual(authorizationRecovery);
+
     // Older versions parked exhausted transient repair batches as paused.
     // Their retryable diagnostic lets the next session resume initialization.
     const recovery = {
@@ -548,10 +561,6 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(reloadedDeliberatePause.status).toBe('paused');
     expect(reloadedDeliberatePause.recovery).toBeUndefined();
 
-    const authorizationRecovery = {
-      error    : 'GrantAuthorizationGrantRevoked',
-      failedAt : '2026-09-11T12:01:00.000Z',
-    };
     await store.setRecovery(reloadedDeliberatePause, authorizationRecovery);
     await store.setStatus(reloadedDeliberatePause, 'paused');
     const reloadedAuthorizationPause = await store.getOrCreateLink(params);

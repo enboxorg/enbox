@@ -1066,7 +1066,7 @@ export interface SyncEngine {
    * messages instead of waiting for their next scheduled checks. Runs
    * targeted, per-link work for `(tenantDid, remoteEndpoint)`, so a UI
    * "Retry now" button (or a freshly purchased quota) resumes without touching
-   * unrelated remotes. Deliberate authorization pauses remain parked. No-op
+   * unrelated remotes. Authorization and policy pauses remain parked. No-op
    * when nothing is retryable.
    */
   retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void>;
