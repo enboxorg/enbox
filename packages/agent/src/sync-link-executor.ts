@@ -4,6 +4,9 @@ export type SyncLinkWorkKind = 'pull' | 'push' | 'repair' | 'reconcile';
 /** Executes one coalesced link-work mark. */
 export type SyncLinkWorkHandler = (kind: SyncLinkWorkKind) => Promise<void>;
 
+/** Returns whether one retained work mark may run now. */
+type SyncLinkWorkEligibility = (kind: SyncLinkWorkKind) => boolean;
+
 type SyncLinkCall = {
   operation: () => Promise<unknown>;
   reject: (reason: unknown) => void;
@@ -134,11 +137,12 @@ export class SyncLinkExecutor {
   }
 
   /**
-   * Drain eligible entries through one executor owner. Concurrent drain
-   * callers join the owner and re-check afterward, so a request landing as
-   * the owner settles cannot become stranded.
+   * Drain eligible entries through one executor owner. An eligibility policy
+   * may retain selected marks while later eligible directions and calls run.
+   * Concurrent drain callers join the owner and re-check afterward, so a
+   * request landing as the owner settles cannot become stranded.
    */
-  public drain(handler: SyncLinkWorkHandler): Promise<void> {
+  public drain(handler: SyncLinkWorkHandler, isEligible: SyncLinkWorkEligibility = (): boolean => true): Promise<void> {
     if (!this._active) {
       return Promise.resolve();
     }
@@ -146,12 +150,12 @@ export class SyncLinkExecutor {
     const activeDrain = this._drain;
     if (activeDrain !== undefined) {
       return activeDrain.then(
-        (): Promise<void> => this.drain(handler),
-        (): Promise<void> => this.drain(handler),
+        (): Promise<void> => this.drain(handler, isEligible),
+        (): Promise<void> => this.drain(handler, isEligible),
       );
     }
 
-    const drain = this.drainOwned(handler);
+    const drain = this.drainOwned(handler, isEligible);
     this._drain = drain;
     const release = (): void => {
       if (this._drain === drain) {
@@ -175,10 +179,10 @@ export class SyncLinkExecutor {
     this._entries.splice(0);
   }
 
-  private async drainOwned(handler: SyncLinkWorkHandler): Promise<void> {
+  private async drainOwned(handler: SyncLinkWorkHandler, isEligible: SyncLinkWorkEligibility): Promise<void> {
     let workFailure: SyncLinkWorkFailure | undefined;
     while (this._active) {
-      const entry = this.takeNextEligibleEntry();
+      const entry = this.takeNextEligibleEntry(isEligible);
       if (entry === undefined) {
         break;
       }
@@ -236,7 +240,7 @@ export class SyncLinkExecutor {
     }
   }
 
-  private takeNextEligibleEntry(): SyncLinkExecutorEntry | undefined {
+  private takeNextEligibleEntry(isEligible: SyncLinkWorkEligibility): SyncLinkExecutorEntry | undefined {
     const repairIndex = this._entries.findIndex(
       (entry): boolean => entry.type === 'mark' && entry.kind === 'repair',
     );
@@ -244,7 +248,9 @@ export class SyncLinkExecutor {
     if (repairIndex >= 0) {
       index = repairIndex;
     } else if (this._ready) {
-      index = 0;
+      index = this._entries.findIndex(
+        (entry): boolean => entry.type === 'call' || isEligible(entry.kind),
+      );
     }
     if (index < 0) {
       return;

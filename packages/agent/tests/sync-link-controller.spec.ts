@@ -37,6 +37,16 @@ describe('SyncLinkController', () => {
     sinon.restore();
   });
 
+  it('should track retry eligibility independently by durable direction', () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    controller.setRetryNotBefore(['push'], 6_000);
+
+    expect(controller.getRetryDelayMs('pull', 1_000)).toBeUndefined();
+    expect(controller.getRetryDelayMs('push', 1_000)).toBe(5_000);
+    expect(controller.getRetryDelayMs('reconcile', 1_000)).toBe(5_000);
+    expect(controller.getRetryDelayMs('push', 6_000)).toBeUndefined();
+  });
+
   it('should own and close both link subscriptions even when one close fails', async () => {
     const controller = new SyncLinkController('link-key', createLink());
     const closeLive = sinon.stub().rejects(new Error('already closed'));

@@ -81,6 +81,30 @@ describe('SyncLinkExecutor', () => {
     expect(runs).toEqual(['pull', 'push', 'pull']);
   });
 
+  it('should retain ineligible work while allowing another direction and calls to proceed', async () => {
+    const executor = new SyncLinkExecutor();
+    const runs: string[] = [];
+    executor.markReady();
+    executor.request('push');
+    executor.request('pull');
+    const call = executor.enqueue(async (): Promise<string> => {
+      runs.push('call');
+      return 'done';
+    });
+
+    await executor.drain(
+      async (kind): Promise<void> => { runs.push(kind); },
+      (kind): boolean => kind !== 'push',
+    );
+
+    expect(await call).toBe('done');
+    expect(runs).toEqual(['pull', 'call']);
+    expect(executor.hasPending('push')).toBe(true);
+
+    await executor.drain(async (kind): Promise<void> => { runs.push(kind); });
+    expect(runs).toEqual(['pull', 'call', 'push']);
+  });
+
   it('should coalesce repeated reconnect waves without losing either durable direction', async () => {
     const executor = new SyncLinkExecutor();
     const firstPullStarted = deferred<void>();

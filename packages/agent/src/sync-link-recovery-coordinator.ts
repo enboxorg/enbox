@@ -57,6 +57,7 @@ const RECONCILE_RETRY_DELAY_MS = 5000;
 const DEFAULT_REPAIR_BACKOFF_MS = [1000, 3000, 10_000] as const;
 const RECONCILE_TIMER_PREFIX = 'syncReconcile:';
 const REPAIR_RETRY_TIMER_PREFIX = 'syncRepairRetry:';
+const ALL_SYNC_DIRECTIONS: readonly SyncDirection[] = ['pull', 'push'];
 
 /**
  * Coordinates per-link repair and durable reconciliation without depending on
@@ -101,6 +102,10 @@ export class SyncLinkRecoveryCoordinator {
     // pass's trailing turn or the supervision below, observes the complete
     // transition; only durability and supervision trail the block.
     this._operations.markPullPending(controller);
+    this._operations.getRuntime().cancelTimer(
+      SyncLinkRecoveryCoordinator.reconcileTimerKey(controller.linkKey),
+    );
+    controller.clearRetryNotBefore(ALL_SYNC_DIRECTIONS);
     controller.resetReplicationGeneration();
     controller.executor.request('repair');
     await this.setOfflineStatus(link, 'repairing');
@@ -160,6 +165,7 @@ export class SyncLinkRecoveryCoordinator {
     const runtime = this._operations.getRuntime();
     runtime.cancelTimer(SyncLinkRecoveryCoordinator.reconcileTimerKey(controller.linkKey));
     runtime.cancelTimer(SyncLinkRecoveryCoordinator.repairRetryTimerKey(controller.linkKey));
+    controller.clearRetryNotBefore(ALL_SYNC_DIRECTIONS);
   }
 
   /** Schedule a failed or superseded repair using the bounded per-link backoff ladder. */
@@ -231,6 +237,13 @@ export class SyncLinkRecoveryCoordinator {
       if (this.isStale(controller, runtime)) {
         return;
       }
+      // Collapse queued directions only when the full pass may actually run.
+      // An unrelated earlier timer must leave eligible directional work alone.
+      if (this.isWorkEligible(controller, 'reconcile')) {
+        controller.executor.consumePending('pull');
+        controller.executor.consumePending('push');
+        controller.executor.consumePending('reconcile');
+      }
       controller.executor.request('reconcile');
       void runIdentityTask(() => this.runExecutor(controller));
     }, normalizedDelay);
@@ -244,7 +257,23 @@ export class SyncLinkRecoveryCoordinator {
   private runExecutor(controller: SyncLinkController): Promise<void> {
     return controller.executor.drain(
       (kind): Promise<void> => this.executeWork(controller, kind),
+      (kind): boolean => this.isWorkEligible(controller, kind),
     );
+  }
+
+  /** Keep retained wakes parked until the failed direction's retry deadline. */
+  private isWorkEligible(controller: SyncLinkController, kind: SyncLinkWorkKind): boolean {
+    if (kind === 'repair') {
+      return true;
+    }
+
+    const retryDelayMs = controller.getRetryDelayMs(kind);
+    if (retryDelayMs === undefined) {
+      return true;
+    }
+
+    this.scheduleReconcile(controller, retryDelayMs);
+    return false;
   }
 
   private async executeWork(controller: SyncLinkController, kind: SyncLinkWorkKind): Promise<void> {
@@ -395,6 +424,7 @@ export class SyncLinkRecoveryCoordinator {
     }
 
     controller.clearRepairAttempts();
+    controller.clearRetryNotBefore(ALL_SYNC_DIRECTIONS);
     this._operations.getRuntime().cancelTimer(
       SyncLinkRecoveryCoordinator.repairRetryTimerKey(controller.linkKey),
     );
@@ -516,9 +546,17 @@ export class SyncLinkRecoveryCoordinator {
       if (outcome.aborted || !shouldContinue()) {
         return;
       }
+      controller.clearRetryNotBefore(ALL_SYNC_DIRECTIONS);
       await this.handleReconcileOutcome(controller, target, outcome, shouldContinue);
     } catch (error: unknown) {
-      await this.handleReconcileFailure(controller, error, 'Reconciliation', 'reconcile-failed', shouldContinue);
+      await this.handleReconcileFailure(
+        controller,
+        error,
+        'Reconciliation',
+        'reconcile-failed',
+        ALL_SYNC_DIRECTIONS,
+        shouldContinue,
+      );
     }
   }
 
@@ -596,6 +634,7 @@ export class SyncLinkRecoveryCoordinator {
       if (outcome.aborted || !shouldContinue()) {
         return;
       }
+      controller.clearRetryNotBefore([direction]);
       if (direction === 'push' && (outcome.pushFailures?.length ?? 0) > 0) {
         this.schedulePushRetry(controller);
       }
@@ -605,6 +644,7 @@ export class SyncLinkRecoveryCoordinator {
         error,
         `Durable ${direction} pass`,
         `${direction}-retryable`,
+        [direction],
         shouldContinue,
       );
     }
@@ -612,7 +652,8 @@ export class SyncLinkRecoveryCoordinator {
 
   /** A retryable push failure falls back to the verified reconciliation path. */
   private schedulePushRetry(controller: SyncLinkController): void {
-    this.scheduleLinkReconcileByKey(controller, 'push-retryable', RECONCILE_RETRY_DELAY_MS);
+    this.scheduleReconcileRetry(controller, ['push']);
+    this.emitReconcileNeeded(controller, 'push-retryable');
   }
 
   private async handleReconcileFailure(
@@ -620,6 +661,7 @@ export class SyncLinkRecoveryCoordinator {
     error: unknown,
     failureLabel: string,
     retryReason: string,
+    directions: readonly SyncDirection[],
     shouldContinue: () => boolean,
   ): Promise<void> {
     // A rejection landing after an external pause (or a repair transition)
@@ -635,23 +677,27 @@ export class SyncLinkRecoveryCoordinator {
       error,
     );
 
-    // A trailing pass subsumes the retry. Otherwise earliest-wins either arms
-    // this deadline or retains the earlier one already persisted on the link.
-    const recovery = SyncLinkRecoveryCoordinator.recoveryState(
-      syncErrorMessage(error),
-      RECONCILE_RETRY_DELAY_MS,
-    );
-    let nextRetryAt = recovery.nextRetryAt;
-    if (controller.executor.hasPending('reconcile')) {
-      nextRetryAt = undefined;
-    } else if (!this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS)) {
-      nextRetryAt = link.recovery?.nextRetryAt;
-    }
+    const nextRetryAt = this.scheduleReconcileRetry(controller, directions);
+    const recovery = SyncLinkRecoveryCoordinator.recoveryState(syncErrorMessage(error));
     await this._operations.setRecovery(link, { ...recovery, nextRetryAt });
     if (!shouldContinue()) {
       return;
     }
     this.emitReconcileNeeded(controller, retryReason);
+  }
+
+  /** Arm one authoritative retry deadline while retaining coalesced wake work. */
+  private scheduleReconcileRetry(
+    controller: SyncLinkController,
+    directions: readonly SyncDirection[],
+  ): string {
+    const now = Date.now();
+    const retryNotBefore = controller.setRetryNotBefore(
+      directions,
+      now + RECONCILE_RETRY_DELAY_MS,
+    );
+    this.scheduleReconcile(controller, retryNotBefore - now);
+    return new Date(retryNotBefore).toISOString();
   }
 
   private emitReconcileNeeded(controller: SyncLinkController, reason: string): void {
