@@ -655,12 +655,35 @@ describe('connect approval ceremony', () => {
       expect('delegateDecryptionKeys' in result).toBe(false);
     });
 
-    it('should report approval phases in order without letting an observer interrupt the ceremony', async () => {
+    it('should report approval phases in order', async () => {
       await stubApprovalDependencies();
+      const phases: ConnectApprovalProgressPhase[] = [];
+
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
+        request     : approvalRequest(),
+        onProgress  : ({ phase }) => {
+          phases.push(phase);
+        },
+      });
+
+      expect(phases).toEqual([
+        'delegate',
+        'protocols',
+        'permission-grants',
+        'grant-keys',
+        'revocations',
+      ]);
+    });
+
+    it('should isolate a throwing progress observer and still complete the approval', async () => {
+      const { revocationGrantStub } = await stubApprovalDependencies();
       const phases: ConnectApprovalProgressPhase[] = [];
       const logStub = sinon.stub(logger, 'error');
 
-      await executeConnectApproval({
+      const result = await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
         transport   : 'relay',
@@ -673,6 +696,8 @@ describe('connect approval ceremony', () => {
         },
       });
 
+      expect(result.delegateDid).toBe(delegateBearerDid.uri);
+      expect(revocationGrantStub.callCount).toBe(permissionGrants.length);
       expect(phases).toEqual([
         'delegate',
         'protocols',
