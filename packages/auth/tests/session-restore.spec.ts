@@ -1,3 +1,4 @@
+import sinon from 'sinon';
 import { describe, expect, test } from 'bun:test';
 
 import { DwnPermissionGrant } from '@enbox/agent';
@@ -422,7 +423,55 @@ describe('restoreSession', () => {
       expect(session).toBeDefined();
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].options.protocols).toContain('https://proto.example.com/notes');
-      expect(lifecycleOptions).toEqual([{ timeout: 10_000 }]);
+      expect(lifecycleOptions).toHaveLength(1);
+      expect(lifecycleOptions[0].timeout).toBeGreaterThan(0);
+      expect(lifecycleOptions[0].timeout).toBeLessThanOrEqual(10_000);
+    });
+
+    test('restores locally when delegated grant scope lookup exceeds its repair budget', async () => {
+      const clock = sinon.useFakeTimers();
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+      let markQueryStarted!: () => void;
+      const queryStarted = new Promise<void>((resolve) => { markQueryStarted = resolve; });
+      const unregisterCalls: Array<{ did: string; options: unknown }> = [];
+      const syncStartCalls: unknown[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        processDwnRequest         : () => {
+          markQueryStarted();
+          return new Promise(() => {});
+        },
+        syncRemoveIdentity: async (did, options) => {
+          unregisterCalls.push({ did, options });
+        },
+        syncStartSync: async (params) => { syncStartCalls.push(params); },
+      });
+
+      try {
+        const restore = restoreSession(
+          { userAgent: agent, emitter, storage, defaultSync: '15s' },
+        );
+        await queryStarted;
+        await clock.tickAsync(10_000);
+
+        const session = await restore;
+
+        expect(session).toBeDefined();
+        expect(unregisterCalls).toEqual([{
+          did     : 'did:dht:external',
+          options : { timeout: 0 },
+        }]);
+        expect(syncStartCalls).toHaveLength(0);
+      } finally {
+        clock.restore();
+      }
     });
 
     test('does not start sync when setIdentityOptions fails', async () => {

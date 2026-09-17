@@ -383,20 +383,40 @@ export function deriveSyncScopeFromGrants(grants: DwnPermissionGrant[]): 'all' |
  * and expired grants, and derive the sync protocol scope.
  *
  * Used by both `restoreSession()` and `switchIdentity()` to compute the
- * correct sync registration from persisted grant state.
+ * correct sync registration from persisted grant state. Callers may bound
+ * the read-only lookup; a timed-out query can finish in the background but
+ * cannot continue into sync-registration mutation.
  *
  * @internal
  */
 export async function deriveActiveSyncScope(
   userAgent: EnboxUserAgent,
   delegateDid: string,
+  timeout?: number,
 ): Promise<'all' | string[]> {
-  const grantEntries: PermissionGrantEntry[] = await userAgent.permissions.fetchGrants({
+  const grantQuery = userAgent.permissions.fetchGrants({
     author       : delegateDid,
     target       : delegateDid,
     grantee      : delegateDid,
     checkRevoked : true,
   });
+  const grantEntries: PermissionGrantEntry[] = timeout === undefined
+    ? await grantQuery
+    : await new Promise<PermissionGrantEntry[]>((resolve, reject) => {
+      const timeoutId = setTimeout((): void => {
+        reject(new Error(`[@enbox/auth] Sync scope query timed out after ${timeout} milliseconds.`));
+      }, timeout);
+      void grantQuery.then(
+        (entries): void => {
+          clearTimeout(timeoutId);
+          resolve(entries);
+        },
+        (error: unknown): void => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+      );
+    });
 
   return deriveSyncScopeFromGrants(grantEntries.map(({ grant }) => grant));
 }
@@ -463,16 +483,22 @@ export async function registerSyncScopeForIdentity(params: {
   lifecycleOptions?: SyncLifecycleOptions;
 }): Promise<void> {
   const { userAgent, connectedDid, delegateDid, identitySyncProtocols, lifecycleOptions } = params;
+  const repairStartedAt = Date.now();
+  const timeout = lifecycleOptions?.timeout;
   const scope = delegateDid === undefined
     ? identitySyncProtocols
-    : await deriveActiveSyncScope(userAgent, delegateDid);
+    : await deriveActiveSyncScope(userAgent, delegateDid, timeout);
+
+  const remainingLifecycleOptions = timeout === undefined
+    ? lifecycleOptions
+    : { timeout: Math.max(0, timeout - (Date.now() - repairStartedAt)) };
 
   await applyIdentitySyncScope({
     userAgent,
     connectedDid,
     delegateDid,
     scope,
-    lifecycleOptions,
+    lifecycleOptions: remainingLifecycleOptions,
   });
 }
 
