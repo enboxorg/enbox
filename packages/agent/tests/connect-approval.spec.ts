@@ -16,6 +16,7 @@ import { AgentPermissionsApi, DwnInterface, DwnPermissionGrant } from '../src/in
 import {
   CONNECT_SESSION_DEFAULT_TTL_SECONDS,
   CONNECT_SESSION_MAX_TTL_SECONDS,
+  type ConnectApprovalProgressPhase,
   type ConnectApprovalRequest,
   ConnectCeremony,
   createConnectSessionMetadata,
@@ -652,6 +653,61 @@ describe('connect approval ceremony', () => {
 
       // The approval output never carries in-band decryption keys.
       expect('delegateDecryptionKeys' in result).toBe(false);
+    });
+
+    it('should report approval phases in order', async () => {
+      await stubApprovalDependencies();
+      const phases: ConnectApprovalProgressPhase[] = [];
+
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
+        request     : approvalRequest(),
+        onProgress  : ({ phase }) => {
+          phases.push(phase);
+        },
+      });
+
+      expect(phases).toEqual([
+        'delegate',
+        'protocols',
+        'permission-grants',
+        'grant-keys',
+        'revocations',
+      ]);
+    });
+
+    it('should isolate a throwing progress observer and still complete the approval', async () => {
+      const { revocationGrantStub } = await stubApprovalDependencies();
+      const phases: ConnectApprovalProgressPhase[] = [];
+      const logStub = sinon.stub(logger, 'error');
+
+      const result = await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
+        request     : approvalRequest(),
+        onProgress  : ({ phase }) => {
+          phases.push(phase);
+          if (phase === 'protocols') {
+            throw new Error('observer failed');
+          }
+        },
+      });
+
+      expect(result.delegateDid).toBe(delegateBearerDid.uri);
+      expect(revocationGrantStub.callCount).toBe(permissionGrants.length);
+      expect(phases).toEqual([
+        'delegate',
+        'protocols',
+        'permission-grants',
+        'grant-keys',
+        'revocations',
+      ]);
+      expect(logStub.calledOnceWith(
+        'Connect approval progress observer failed during \'protocols\'.',
+      )).toBe(true);
     });
 
     it('should create contextId-scoped revocation grants for each session grant', async () => {
