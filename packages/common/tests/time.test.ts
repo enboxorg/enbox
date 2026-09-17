@@ -67,6 +67,20 @@ describe('sleep', () => {
     const result = await sleep(1);
     expect(result).toBeUndefined();
   });
+
+  it('rejects promptly and clears the timer when aborted', async () => {
+    const controller = new AbortController();
+    const reason = new Error('stop waiting');
+    const waiting = sleep(60_000, controller.signal);
+
+    controller.abort(reason);
+
+    await expect(waiting).rejects.toBe(reason);
+  });
+
+  it('rejects non-finite durations instead of arming an unsafe native timer', async () => {
+    await expect(sleep(Infinity)).rejects.toThrow('sleep duration must be finite');
+  });
 });
 
 describe('nowMs', () => {

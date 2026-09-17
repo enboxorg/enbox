@@ -54,7 +54,7 @@ export type HttpRetryOptions = {
   maxRetries?: number;
   /** Base delay in milliseconds for exponential backoff. Default: 500. */
   baseDelayMs?: number;
-  /** Maximum backoff delay in milliseconds. Default: 10 000. */
+  /** Maximum retry delay in milliseconds, including `Retry-After`. Default: 10 000. */
   maxDelayMs?: number;
 };
 
@@ -100,10 +100,13 @@ function parseRetryAfterMs(response: Response): number | undefined {
     return undefined;
   }
 
-  // Try as integer seconds first.
-  const seconds = Number(retryAfter);
-  if (!Number.isNaN(seconds) && seconds >= 0) {
-    return seconds * 1000;
+  // Delay-seconds is one or more decimal digits; fractions, signs, and
+  // non-finite numeric spellings are not valid Retry-After values.
+  if (/^\d+$/.test(retryAfter)) {
+    const delayMs = Number(retryAfter) * 1000;
+    if (Number.isFinite(delayMs)) {
+      return delayMs;
+    }
   }
 
   // Try as HTTP-date.
@@ -137,7 +140,12 @@ function getRetryDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: numbe
   const retryAfterMs = lastResponse !== undefined ? parseRetryAfterMs(lastResponse) : undefined;
   const backoffMs = computeBackoffDelay(attempt, baseDelayMs, maxDelayMs);
 
-  return retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs);
+  return Math.min(maxDelayMs, retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs));
+}
+
+function retryAfterSeconds(response: Response): number {
+  const retryAfterMs = parseRetryAfterMs(response);
+  return retryAfterMs === undefined ? 1 : Math.ceil(retryAfterMs / 1000);
 }
 
 /**
@@ -166,7 +174,7 @@ function advertisesHttpRpcBodyV1(serverInfo: ServerInfo): boolean {
  *
  * Supports automatic retry with exponential backoff and jitter for transient
  * network errors and retryable HTTP status codes (408, 429, 500, 502, 503, 504).
- * Respects the `Retry-After` response header when present.
+ * Respects a valid `Retry-After` response header up to the configured maximum delay.
  */
 export class HttpDwnRpcClient implements DwnRpc {
   private readonly serverInfoDiscoveryRetryAfter = new Map<string, number>();
@@ -210,8 +218,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     // Per-IP 429s return plain JSON (not a JSON-RPC envelope), so we must
     // check the status before attempting JSON-RPC parsing.
     if (resp.status === 429) {
-      const retryAfter = Number.parseInt(resp.headers.get('retry-after') ?? '1', 10);
-      throw new RateLimitError(retryAfter);
+      throw new RateLimitError(retryAfterSeconds(resp));
     }
 
     // When the server streams record data back, the JSON-RPC envelope is in the
@@ -264,8 +271,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       retryableRequestBody : isRequestBodyReplayable,
     });
     if (resp.status === 429) {
-      const retryAfter = Number.parseInt(resp.headers.get('retry-after') ?? '1', 10);
-      throw new RateLimitError(retryAfter);
+      throw new RateLimitError(retryAfterSeconds(resp));
     }
 
     const responseBody = await resp.text();
@@ -416,8 +422,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     try {
       const response = await this.fetchWithRetry(url.toString());
       if (response.status === 429) {
-        const retryAfter = Number.parseInt(response.headers.get('retry-after') ?? '1', 10);
-        throw new RateLimitError(retryAfter);
+        throw new RateLimitError(retryAfterSeconds(response));
       }
       if (response.ok) {
         const results = await response.json() as ServerInfo;
@@ -455,7 +460,7 @@ export class HttpDwnRpcClient implements DwnRpc {
   /**
    * Wrapper around `fetch()` that retries on transient network errors and
    * retryable HTTP status codes with exponential backoff and jitter.
-   * Honours the `Retry-After` response header when present.
+   * Honours a valid `Retry-After` response header up to the configured maximum delay.
    */
   private async fetchWithRetry(
     url: string,
@@ -467,9 +472,8 @@ export class HttpDwnRpcClient implements DwnRpc {
     const maxRetriesForRequest = options.retryableRequestBody === false ? 0 : maxRetries;
 
     let lastError: unknown;
-    let lastResponse: Response | undefined;
-
     for (let attempt = 0; attempt <= maxRetriesForRequest; attempt++) {
+      let retryResponse: Response | undefined;
       try {
         // Apply a per-attempt timeout to prevent hung connections / SSRF.
         // If the caller already supplied a signal, combine it with the timeout
@@ -480,7 +484,7 @@ export class HttpDwnRpcClient implements DwnRpc {
         }
 
         // Retryable status — back off and try again.
-        lastResponse = response;
+        retryResponse = response;
       } catch (error: unknown) {
         if (shouldRethrowFetchError(error, attempt, maxRetriesForRequest)) {
           throw error;
@@ -489,13 +493,13 @@ export class HttpDwnRpcClient implements DwnRpc {
       }
 
       // Compute the delay, preferring Retry-After when available.
-      await sleep(getRetryDelayMs(attempt, baseDelayMs, maxDelayMs, lastResponse));
+      await sleep(
+        getRetryDelayMs(attempt, baseDelayMs, maxDelayMs, retryResponse),
+        init?.signal ?? undefined,
+      );
     }
 
     // Should not reach here, but satisfy the compiler.
-    if (lastResponse) {
-      return lastResponse;
-    }
     throw lastError;
   }
 }

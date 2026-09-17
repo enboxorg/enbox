@@ -1106,6 +1106,75 @@ describe('HttpDwnRpcClient', () => {
       expect(fetchStub.callCount).toBe(2);
     });
 
+    it('should cap retry-after at the configured maximum delay', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.onFirstCall().resolves({
+        status  : 503,
+        headers : new Headers({ 'retry-after': '2' }),
+        text    : async (): Promise<string> => '',
+      } as Response);
+      fetchStub.onSecondCall().resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify({
+          id      : 'test',
+          jsonrpc : '2.0',
+          result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+        }),
+      } as Response);
+      const retryClient = new HttpDwnRpcClient(
+        legacyServerInfoCache,
+        { maxRetries: 1, baseDelayMs: 10, maxDelayMs: 25 },
+      );
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' },
+      });
+
+      const startedAt = Date.now();
+      await retryClient.sendDwnRequest({ dwnUrl: testDwnUrl, targetDid: alice.did, message });
+
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      expect(fetchStub.callCount).toBe(2);
+    });
+
+    it('should not reuse retry-after after a later network failure', async () => {
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' },
+      });
+      const clock = sinon.useFakeTimers();
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.onFirstCall().resolves({
+        status  : 503,
+        headers : new Headers({ 'retry-after': '2' }),
+        text    : async (): Promise<string> => '',
+      } as Response);
+      fetchStub.onSecondCall().rejects(new TypeError('connection reset'));
+      fetchStub.onThirdCall().resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify({
+          id      : 'test',
+          jsonrpc : '2.0',
+          result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+        }),
+      } as Response);
+      const retryClient = new HttpDwnRpcClient(
+        legacyServerInfoCache,
+        { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 2_000 },
+      );
+
+      const request = retryClient.sendDwnRequest({ dwnUrl: testDwnUrl, targetDid: alice.did, message });
+      await clock.tickAsync(2_000);
+      expect(fetchStub.callCount).toBe(2);
+      await clock.tickAsync(50);
+
+      expect(fetchStub.callCount).toBe(3);
+      await request;
+      clock.restore();
+    });
+
     it('should not retry when maxRetries is 0', async () => {
       sinon.stub(globalThis, 'fetch').rejects(new TypeError('Failed to fetch'));
 
@@ -1285,6 +1354,33 @@ describe('HttpDwnRpcClient', () => {
 
       await expect(sendPromise).rejects.toThrow();
       // One attempt only — AbortError must NOT be treated as retryable.
+      expect(fetchStub.callCount).toBe(1);
+    });
+
+    it('should abort while waiting for retry backoff', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves({
+        status  : 503,
+        headers : new Headers({ 'retry-after': '60' }),
+        text    : async (): Promise<string> => '',
+      } as Response);
+      const client = new HttpDwnRpcClient(
+        legacyServerInfoCache,
+        { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 60_000 },
+      );
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' },
+      });
+
+      const startedAt = Date.now();
+      await expect(client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+        signal    : AbortSignal.timeout(20),
+      })).rejects.toThrow();
+
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
       expect(fetchStub.callCount).toBe(1);
     });
   });

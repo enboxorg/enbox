@@ -28,4 +28,12 @@ describe('RateLimitError', () => {
       expect((e as RateLimitError).retryAfterSec).toBe(10);
     }
   });
+
+  it('should normalize unsafe retry delays', () => {
+    expect(new RateLimitError(Infinity).retryAfterSec).toBe(1);
+    expect(new RateLimitError(Number.NaN).retryAfterSec).toBe(1);
+    expect(new RateLimitError(-1).retryAfterSec).toBe(1);
+    expect(new RateLimitError(1.1).retryAfterSec).toBe(2);
+    expect(new RateLimitError(Number.MAX_SAFE_INTEGER).retryAfterSec).toBe(2_147_483);
+  });
 });
