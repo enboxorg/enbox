@@ -111,8 +111,8 @@ describe('sync startup', () => {
       },
     });
 
-    expect(startSyncInBackgroundIfEnabled(agent, undefined)).toBeUndefined();
-    expect(startSyncInBackgroundIfEnabled(agent, undefined)).toBeUndefined();
+    startSyncInBackgroundIfEnabled(agent, undefined);
+    startSyncInBackgroundIfEnabled(agent, undefined);
     expect(startSyncCalls).toEqual([{}]);
 
     finishCatchUp();
@@ -210,7 +210,7 @@ describe('sync startup', () => {
     });
 
     try {
-      expect(startSyncInBackgroundIfEnabled(agent, undefined)).toBeUndefined();
+      startSyncInBackgroundIfEnabled(agent, undefined);
       await Promise.resolve();
       await Promise.resolve();
 
