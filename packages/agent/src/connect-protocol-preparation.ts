@@ -397,7 +397,7 @@ export async function inspectConnectProtocol({
 async function queryReachableProtocolEndpoints(
   selectedDid: string,
   agent: EnboxPlatformAgent,
-  dwnEndpointUrls: string[],
+  dwnEndpointUrls: readonly string[],
   queryMessage: ProtocolsQueryMessage,
   protocolUri: string,
 ): Promise<Array<{ dwnUrl: string; reply: ProtocolQueryReply }>> {
@@ -535,11 +535,14 @@ async function verifyEndpointsConverged(
  *         endpoint rejecting the protocol query, zero reachable endpoints
  *         when any resolve, a failed local configure, or endpoints that do
  *         not converge to the requested definition after fan-out.
+ * @param resolvedDwnEndpointUrls - Optional approval-wide endpoint snapshot;
+ *        omitted by standalone callers that need this helper to resolve it.
  */
 export async function prepareProtocol(
   selectedDid: string,
   agent: EnboxPlatformAgent,
   protocolDefinition: DwnProtocolDefinition,
+  resolvedDwnEndpointUrls?: readonly string[],
 ): Promise<void> {
   const {
     queryResult,
@@ -551,7 +554,8 @@ export async function prepareProtocol(
     throw new Error(getProtocolSetupConflictMessage(installedDefinition, protocolDefinition));
   }
 
-  const dwnEndpointUrls = await resolveConnectDwnEndpointUrls(agent, selectedDid);
+  const dwnEndpointUrls = resolvedDwnEndpointUrls
+    ?? await resolveConnectDwnEndpointUrls(agent, selectedDid);
   if (queryResult.message === undefined) {
     throw new Error('Could not query protocol: no signed query message was returned.');
   }
