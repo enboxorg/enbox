@@ -1,5 +1,16 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.27
+
+### Patch Changes
+
+- [#1704](https://github.com/enboxorg/enbox/pull/1704) [`7093953`](https://github.com/enboxorg/enbox/commit/70939538b13844bb892939d45b47f19daafb5093) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Bound remote DWN endpoint and requester delegate-key discovery during connect approval, and reuse one endpoint snapshot across every phase, so slow DID resolution cannot leave wallets authorizing indefinitely. Reused and hardened the shared abort fence for HTTP capability discovery instead of maintaining a second implementation.
+
+- Updated dependencies [[`73dff1d`](https://github.com/enboxorg/enbox/commit/73dff1dfba71ca1b0cce76aa9649323d7455a89f)]:
+  - @enbox/common@0.1.8
+  - @enbox/crypto@0.1.11
+  - @enbox/dids@0.1.12
+
 ## 0.4.26
 
 ### Patch Changes
