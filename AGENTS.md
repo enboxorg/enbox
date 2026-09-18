@@ -698,3 +698,50 @@ Build/dev commands, MDX content layout, Fumadocs theming, and Cloudflare Pages d
 - **Pkarr / DHT gateway** for `did:dht` tests: `docker-compose.test.yaml` (see [`docs/TESTING.md`](docs/TESTING.md)).
 - **Hosted DWN** (AWS): operational material lives in the private `enboxorg/enbox-internal` repository.
 - **dwn-relay** is a **separate** repository (`enboxorg/dwn-relay`), not this monorepo.
+
+## Dapp-contract landmines (verified 2026-09, imagesd incident week)
+
+These are the consumer-facing behaviors dapp authors keep rediscovering the
+expensive way. Keep examples, docs-site content, and package READMEs in sync
+with them; treat any mismatch as a docs bug, and reconsider whether the
+behavior itself deserves a guard on our side:
+
+1. **Never spread a record handle.** Address fields are non-enumerable
+   accessors; `{ ...row.record }` is `{}`. Downstream ids silently become
+   `undefined` and scoped lookups widen instead of failing. Copy fields
+   explicitly or normalize at one adapter seam.
+2. **Missing/empty `within` on a nested protocol path is not an error** — it
+   is tenant-wide, and `read()` answers with the newest match. Dapps must
+   enforce non-empty exact parent contexts themselves.
+3. **Composite `contextId` (`<parent>/<self>`) is the addressing truth.** No
+   `parentContextId` metadata exists on records; `parentContextId` is accepted
+   on create. Apps must round-trip the node's `contextId`, never rebuild it.
+4. **`create()` result shape has drifted across preview releases** (bare
+   handle vs `{ record, value }`). Dapps should tolerate both at the seam;
+   docs snippets must not imply the shape is pinned.
+5. **Materialized `query()`/`observe()` requires `pagination.limit`.** Rows
+   are `{ record: handle, value }` — and the record inside is still a handle
+   (see #1).
+6. **Delegate grants expire after one hour by default** (approval-side
+   `CONNECT_SESSION_DEFAULT_TTL_SECONDS`, 90-day wallet cap). Dapps need
+   `monitor: { autoRefresh: {} }`; don't "fix" hourly disconnects app-side,
+   and don't change the default without weighing wallet UX.
+7. **`protocols.ensureReady()` publishes by default for owners.** A DID
+   without a hosted `#dwn` service must retry with `publish: false`; apps
+   match on error classes, never on message prose, and report the first
+   error, not the fallback's.
+8. **The in-process test context is owner-only.** Delegate and shared-tenant
+   flows need the hosted helper; dapps that only unit-test against a fake
+   ship broken sharing.
+9. **App-level fakes of this surface must fail what the real SDK fails**:
+   getter handles that survive no spread, strict nested scoping, composite
+   contextIds. A lenient fake is how a data-integrity bug shipped to a real
+   tenant.
+10. **WebSocket first for liveness, service worker in browsers.** Sync,
+    `subscribe()`, and remote-view currency ride WebSocket transports; poll
+    loops are the wrong shape for what we already push. Browser dapps must
+    register a service worker that calls `activatePolyfills()`
+    (`@enbox/browser`) — without it every DRL fails as a plain network error
+    with zero SDK signal — and should keep the live stack worker-hosted where
+    background tabs matter. Verify `activated` + `controller`, not just that
+    the file is served.

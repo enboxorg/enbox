@@ -70,6 +70,26 @@ Closing fences typed record operations and session-scoped resources. It does
 not revoke the shared `agent` or `did` surfaces, or a raw `dwn` reference
 obtained before close; their lifecycle remains with their owner.
 
+### Delegated grant lifetime (plan for it)
+
+Wallet connect approvals stamp delegate grants with a **one-hour default TTL**
+(`CONNECT_SESSION_DEFAULT_TTL_SECONDS` in `@enbox/agent`; wallets cap grants at
+90 days and apps cannot request longer). Configure `monitor: { autoRefresh: {} }`
+on `createConnectionStore()` or every delegated session dies an hour after
+approval. Two fail-closed states both mean "re-approval required":
+
+- `snapshot.walletReapprovalRequired: true` — the wallet's protocol config
+  drifted or the session was revoked; the next `connect()` requests fresh
+  approval.
+- `ManifestSyncRegistrationCoverageError` — the delegate's sync registration no
+  longer covers every read protocol in the manifest. The store publishes
+  `phase: 'disconnected'` with `walletReapprovalRequired: true`, keeps the
+  underlying auth session, and the next `store.connect()` repairs approval
+  through refresh.
+
+Ship user-facing copy for both states. The raw `[@enbox/api] …did:jwk…` message
+text is debug material; render it to the console, not to your UI.
+
 ## Observable Connection and Sync State
 
 `createConnectionStore()` publishes connection and selected-identity sync state
@@ -109,6 +129,23 @@ During sign-out, `phase` becomes
 `'disconnecting'` and session fields clear immediately; call `store.disconnect()`
 so the store can expose that transition. Call `unsubscribe()` when the consumer
 is released and `store.dispose()` at shutdown.
+
+### Live transport: WebSocket first
+
+Enbox's live paths — the agent sync engine, `records.subscribe()` feeds, and
+remote view currency — run over WebSocket transports (`@enbox/dwn-clients`),
+with HTTP as the request/response fallback. Dapps should therefore treat
+`observe()` and `subscribe()` as the default way to stay current, not periodic
+re-querying: a poll loop multiplies quota, latency, and battery cost to
+emulate a push channel the platform already has.
+
+In browsers, keep that live stack inside a **service worker** where the app
+needs to stay current outside a focused tab: page-context timers and
+connections are throttled or discarded, while a registered worker keeps
+handling DRLs and network duties. `activatePolyfills()` is mandatory for every
+browser dapp regardless — see [packages/browser/README.md](../browser/README.md#activate-polyfills-required-for-every-browser-dapp)
+for the zero-config and own-worker wirings, and verify the worker reaches
+`activated` and controls the page, not just that it ships.
 
 ## Typed Protocols
 
@@ -330,6 +367,14 @@ removes their temporary files; protocol configurations, grants, revocations,
 and records already sent to the hosted DWN remain there. Use a disposable or
 resettable test endpoint when test isolation requires remote cleanup.
 
+Note the coverage boundary: `createEnboxTestContext` is **owner-only** and
+in-process — delegate, role-grant, and cross-tenant flows are invisible to it.
+Application-level fakes of this API must model handles as non-spreadable
+getter objects (see [Records](#records)) and reject empty `within` on nested
+paths, so a unit suite fails exactly where production would; and every
+multi-record addressing flow deserves at least one real-context smoke test
+before shipping, because a lenient fake proves nothing.
+
 ## Records
 
 ```ts
@@ -416,6 +461,41 @@ function reportWriteError(error: unknown) {
 ```
 
 Other non-success replies throw `DwnResponseError` with the same `status`.
+
+### Record handles are live objects — never spread them
+
+Every record that crosses the API boundary (`create()` results, query and
+observe rows, read results) is a `Record`/`TypedRecord` **instance** whose
+address fields (`id`, `contextId`, `protocolPath`, …) are non-enumerable
+accessors:
+
+```ts
+const row = ...;                     // { record: TypedRecord, value: T }
+const snapshot = { ...row.record };  // {} — every field silently undefined
+```
+
+Copy fields explicitly or pass the handle itself through. Spreading fails
+silently: downstream ids become `undefined`, scoped selectors widen instead of
+erroring, and applications corrupt their own display state. Materialized
+`query()`/`observe()` rows require `pagination.limit`; the decoded application
+value rides beside the handle, not inside it.
+
+> [!WARNING]
+> **`within` is not validated for absence.** On a nested protocol path, a
+> missing or empty-string `within` is treated as *unscoped*: the query matches
+> the whole tenant, and `read()` — which must return one record — answers with
+> the **newest match**. Applications must enforce a non-empty exact parent
+> context before every nested read or query; the SDK will not throw.
+>
+> Nested records report composite `contextId`s (`<parentCtx>/<ownId>`; root
+> records carry their bare own id), and there is no `parentContextId` metadata
+> field — lineage is the composite prefix. `parentContextId` is accepted on
+> create. Round-trip the node's `contextId` verbatim; never reconstruct it.
+>
+> `create()`'s resolved shape has varied across preview releases between a
+> bare handle and a `{ record, value }` wrapper. Normalize both shapes at one
+> adapter seam and check against your installed dist rather than any doc
+> snippet, including this one.
 
 ### Delta history compaction
 
@@ -547,6 +627,12 @@ The agent's browser storage remains Level-backed through `level` resolving to
 `browser-level` over IndexedDB. Do not replace it with an in-memory store for
 multi-tab or service-worker use; IndexedDB is the storage layer that safely
 coordinates writes across browser contexts.
+
+Browser dapps are WebSocket-first for liveness (see
+[Live transport](#live-transport-websocket-first)) and must ship a registered
+service worker that calls `activatePolyfills()` from `@enbox/browser` — that
+worker is the DWeb network handler, and every DRL otherwise fails as an
+ordinary network error with no SDK-level signal.
 
 ## Exports
 
