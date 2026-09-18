@@ -2649,20 +2649,36 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async getOrCreateReplicationLink(target: SyncTarget): Promise<ReplicationLinkState> {
+    return this.loadReplicationLink(target, true);
+  }
+
+  private async getExistingReplicationLink(target: SyncTarget): Promise<ReplicationLinkState | undefined> {
+    return this.loadReplicationLink(target, false);
+  }
+
+  private loadReplicationLink(target: SyncTarget, createIfMissing: true): Promise<ReplicationLinkState>;
+  private loadReplicationLink(target: SyncTarget, createIfMissing: false): Promise<ReplicationLinkState | undefined>;
+  private async loadReplicationLink(
+    target: SyncTarget,
+    createIfMissing: boolean,
+  ): Promise<ReplicationLinkState | undefined> {
     const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
     const activeLink = this.getLinkController(linkKey);
     if (activeLink?.isActive === true) {
       return activeLink.link;
     }
 
-    const link = await this.replicationLinkStore.getOrCreateLink({
+    const params = {
       tenantDid          : target.did,
       remoteEndpoint     : target.dwnUrl,
       scope              : target.scope,
       authorization      : target.authorization,
       authorizationEpoch : target.authorizationEpoch,
       delegateDid        : target.delegateDid,
-    });
+    };
+    const link = createIfMissing
+      ? await this.replicationLinkStore.getOrCreateLink(params)
+      : await this.replicationLinkStore.getExistingLink(params);
 
     // Initialization can install the active owner while the store read is in
     // flight. Prefer that exact object so no caller starts mutating a detached
@@ -5204,16 +5220,17 @@ export class SyncEngineLevel implements SyncEngine {
             target.projectionId,
             target.authorizationEpoch,
           );
-          const link = await this.getOrCreateReplicationLink(target);
+          const link = await this.getExistingReplicationLink(target);
           const controller = this.getLinkController(linkKey);
-          const canRetryUnownedLink = isRetryableSyncRecovery(link.recovery) ||
-            this.replicationLinkStore.isInterruptedRepair(link);
           if (controller?.isActive === true) {
             await this.retryFailedRepairForTarget(target, controller, {
               ignoreRetryDeadline: true,
               shouldContinue,
             });
-          } else if (canRetryUnownedLink && shouldContinue()) {
+          } else if (link !== undefined && (
+            isRetryableSyncRecovery(link.recovery) ||
+            this.replicationLinkStore.isInterruptedRepair(link)
+          ) && shouldContinue()) {
             const result = await this.reconcileTarget(target, undefined, shouldContinue);
             const pushFailures = result.pushFailures ?? [];
             if (pushFailures.length > 0) {

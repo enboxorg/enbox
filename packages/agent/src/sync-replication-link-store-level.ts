@@ -71,7 +71,27 @@ export class SyncReplicationLinkStoreLevel {
     return links;
   }
 
-  public async getOrCreateLink(params: SyncReplicationLinkCreateParams): Promise<ReplicationLinkState> {
+  /** Load and resume an existing link without creating a missing durable record. */
+  public getExistingLink(params: SyncReplicationLinkCreateParams): Promise<ReplicationLinkState | undefined> {
+    return this.loadLink(params, false);
+  }
+
+  public getOrCreateLink(params: SyncReplicationLinkCreateParams): Promise<ReplicationLinkState> {
+    return this.loadLink(params, true);
+  }
+
+  private loadLink(
+    params: SyncReplicationLinkCreateParams,
+    createIfMissing: true,
+  ): Promise<ReplicationLinkState>;
+  private loadLink(
+    params: SyncReplicationLinkCreateParams,
+    createIfMissing: false,
+  ): Promise<ReplicationLinkState | undefined>;
+  private async loadLink(
+    params: SyncReplicationLinkCreateParams,
+    createIfMissing: boolean,
+  ): Promise<ReplicationLinkState | undefined> {
     const scope = canonicalizeSyncScope(params.scope);
     const projectionId = await computeProjectionId(params.tenantDid, scope);
     const key = SyncReplicationLinkStoreLevel.buildKey(
@@ -81,7 +101,7 @@ export class SyncReplicationLinkStoreLevel {
       params.authorizationEpoch,
     );
 
-    return this.runForLink(key, async (): Promise<ReplicationLinkState> => {
+    return this.runForLink(key, async (): Promise<ReplicationLinkState | undefined> => {
       const existing = await this.getLink(key);
       if (existing !== undefined) {
         const interruptedRepair = existing.status === 'repairing' && existing.recovery === undefined;
@@ -104,6 +124,9 @@ export class SyncReplicationLinkStoreLevel {
           this._interruptedRepairs.add(existing);
         }
         return existing;
+      }
+      if (!createIfMissing) {
+        return undefined;
       }
 
       const link: ReplicationLinkState = {

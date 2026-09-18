@@ -10,6 +10,7 @@ import { runWithCrossContextLock } from '@enbox/common';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
+import { computeProjectionId } from '../src/types/sync.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 import { SyncPushFailuresError, SyncRunCancelledError } from '../src/sync-runtime-errors.js';
@@ -787,6 +788,29 @@ describe('SyncEngineLevel lifecycle', () => {
     await engine.close();
   });
 
+  it('should not create a replication link when an endpoint has nothing to retry', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const tenantDid = 'did:example:no-retry';
+    const scope = { kind: 'full' } as const;
+    const target: SyncTarget = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      did                : tenantDid,
+      dwnUrl             : 'https://no-retry.example.com',
+      projectionId       : await computeProjectionId(tenantDid, scope),
+      scope,
+    };
+    sinon.stub(internal, 'getSyncTargets').resolves([target]);
+
+    await engine.retryRemoteNow(target.did, target.dwnUrl);
+
+    expect((await internal.replicationLinkStore.getAllLinks()).filter(
+      (link: ReplicationLinkState) => link.tenantDid === target.did,
+    )).toEqual([]);
+    await engine.close();
+  });
+
   it('should resume retryable legacy pauses without a live controller', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
@@ -1074,7 +1098,7 @@ describe('SyncEngineLevel lifecycle', () => {
       scope              : { kind: 'protocolSet', protocols: [`https://example.com/protocol-${suffix}`] },
     }));
     sinon.stub(internal, 'getSyncTargets').resolves(targets);
-    sinon.stub(internal, 'getOrCreateReplicationLink').callsFake(async (target: SyncTarget) => ({
+    sinon.stub(internal, 'getExistingReplicationLink').callsFake(async (target: SyncTarget) => ({
       authorization      : target.authorization,
       authorizationEpoch : target.authorizationEpoch,
       connectivity       : 'unknown',
