@@ -82,17 +82,19 @@ export class SyncReplicationLinkStoreLevel {
       const existing = await this.getLink(key);
       if (existing !== undefined) {
         let changed = false;
+        const persistedConnectivity = existing.connectivity;
+        const persistedStatus = existing.status;
         if (params.authorization.kind === 'role' && existing.delegateDid !== params.delegateDid) {
           existing.delegateDid = params.delegateDid;
           changed = true;
         }
-        const previousStatus = existing.status;
-        SyncReplicationLinkStoreLevel.normalizeResumedLink(existing);
-        if (existing.status !== previousStatus) {
-          changed = true;
-        }
+        const persistNormalizedDecision = SyncReplicationLinkStoreLevel.normalizeResumedLink(existing);
+        changed ||= persistNormalizedDecision;
         if (changed) {
-          await this._links.put(key, JSON.stringify(existing));
+          const durable = persistNormalizedDecision
+            ? existing
+            : { ...existing, connectivity: persistedConnectivity, status: persistedStatus };
+          await this._links.put(key, JSON.stringify(durable));
         }
         return existing;
       }
@@ -182,6 +184,44 @@ export class SyncReplicationLinkStoreLevel {
     }, false);
   }
 
+  /**
+   * Commit a successful controller-less recovery only while its captured
+   * failure still owns the link. Legacy pauses/repairs become initializing;
+   * an already completed live baseline remains live.
+   */
+  public async completeRecovery(
+    link: ReplicationLinkState,
+    expectedRecovery: SyncLinkRecoveryState,
+  ): Promise<boolean> {
+    const key = SyncReplicationLinkStoreLevel.buildKeyForLink(link);
+    const completedStatus = await this.runForLink(key, async (): Promise<LinkStatus | undefined> => {
+      const persistedLink = await this.getLink(key);
+      if (
+        persistedLink === undefined ||
+        !SyncReplicationLinkStoreLevel.sameRecovery(persistedLink.recovery, expectedRecovery) ||
+        !isRetryableSyncRecovery(persistedLink.recovery)
+      ) {
+        return undefined;
+      }
+
+      const status = persistedLink.status === 'paused' || persistedLink.status === 'repairing'
+        ? 'initializing'
+        : persistedLink.status;
+      SyncReplicationLinkStoreLevel.assignStatus(persistedLink, status);
+      persistedLink.connectivity = link.connectivity;
+      SyncReplicationLinkStoreLevel.assignRecovery(persistedLink, undefined);
+      await this._links.put(key, JSON.stringify(persistedLink));
+      return status;
+    });
+
+    if (completedStatus === undefined) {
+      return false;
+    }
+    SyncReplicationLinkStoreLevel.assignStatus(link, completedStatus);
+    SyncReplicationLinkStoreLevel.assignRecovery(link, undefined);
+    return true;
+  }
+
   private static buildKey(
     tenantDid: string,
     remoteEndpoint: string,
@@ -211,19 +251,33 @@ export class SyncReplicationLinkStoreLevel {
    * Older versions also converted exhausted transient repairs into pauses;
    * their retryable diagnostic distinguishes those rows from deliberate and
    * authorization pauses. Current pause transitions clear a stale retryable
-   * diagnostic when they supersede it.
+   * diagnostic when they supersede it. Transient normalization changes only
+   * this caller's runtime view; successful initialization or controller-less
+   * reconciliation later commits the resulting durable state.
+   * @returns Whether a terminal authorization decision must be persisted.
    */
-  private static normalizeResumedLink(existing: ReplicationLinkState): void {
+  private static normalizeResumedLink(existing: ReplicationLinkState): boolean {
     existing.connectivity = 'unknown';
     if (existing.status === 'repairing') {
       if (existing.recovery !== undefined && !isRetryableSyncRecovery(existing.recovery)) {
         SyncReplicationLinkStoreLevel.assignStatus(existing, 'paused');
+        return true;
       } else {
         existing.status = 'initializing';
       }
     } else if (existing.status === 'paused' && isRetryableSyncRecovery(existing.recovery)) {
       existing.status = 'initializing';
     }
+    return false;
+  }
+
+  private static sameRecovery(
+    recovery: SyncLinkRecoveryState | undefined,
+    expected: SyncLinkRecoveryState,
+  ): boolean {
+    return recovery?.error === expected.error &&
+      recovery.failedAt === expected.failedAt &&
+      recovery.nextRetryAt === expected.nextRetryAt;
   }
 
   private static cloneCheckpoint(checkpoint: DirectionCheckpoint): DirectionCheckpoint {

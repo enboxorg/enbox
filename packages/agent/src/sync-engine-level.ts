@@ -4051,7 +4051,7 @@ export class SyncEngineLevel implements SyncEngine {
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
-    const recovering = isRetryableSyncRecovery(link.recovery);
+    const recovery = isRetryableSyncRecovery(link.recovery) ? { ...link.recovery } : undefined;
     const result = await this.reconcileDurableTarget(target, link, options, shouldContinue);
     const hasRetryablePushFailures = result.pushFailures?.some(
       (failure): boolean => !isTerminalPushFailure(failure),
@@ -4061,8 +4061,8 @@ export class SyncEngineLevel implements SyncEngine {
       result.deferredPull === undefined &&
       !hasRetryablePushFailures &&
       (shouldContinue?.() ?? true);
-    if (recovering && recovered) {
-      await this.replicationLinkStore.setRecovery(link, undefined);
+    if (recovery !== undefined && recovered) {
+      await this.replicationLinkStore.completeRecovery(link, recovery);
     }
     return result;
   }
@@ -5191,32 +5191,46 @@ export class SyncEngineLevel implements SyncEngine {
       const retryResults = await Promise.allSettled(targets.map(async (target) => {
         const shouldContinue = (): boolean =>
           transitionFence() && this._targetPlanner.topologyGeneration === topologyGeneration;
-        const linkKey = buildLinkKey(
-          target.did,
-          target.dwnUrl,
-          target.projectionId,
-          target.authorizationEpoch,
-        );
-        const link = await this.getOrCreateReplicationLink(target);
-        const controller = this.getLinkController(linkKey);
-        if (controller?.isActive === true) {
-          await this.retryFailedRepairForTarget(target, controller, {
-            ignoreRetryDeadline: true,
-            shouldContinue,
-          });
-        } else if (isRetryableSyncRecovery(link.recovery) && shouldContinue()) {
-          const result = await this.reconcileTarget(target, undefined, shouldContinue);
-          const pushFailures = result.pushFailures ?? [];
-          if (pushFailures.length > 0) {
-            await handleSyncPushFailures(
-              target,
-              pushFailures,
-              (pushTarget, failures): Promise<PushFailure[]> =>
-                this.recordTerminalPushFailures(pushTarget, failures),
-            );
+        // Retry-now has two independent responsibilities. A failed link pass
+        // must not suppress the quota probes this API already promised.
+        let linkRetryFailure: { reason: unknown } | undefined;
+        try {
+          const linkKey = buildLinkKey(
+            target.did,
+            target.dwnUrl,
+            target.projectionId,
+            target.authorizationEpoch,
+          );
+          const link = await this.getOrCreateReplicationLink(target);
+          const controller = this.getLinkController(linkKey);
+          if (controller?.isActive === true) {
+            await this.retryFailedRepairForTarget(target, controller, {
+              ignoreRetryDeadline: true,
+              shouldContinue,
+            });
+          } else if (isRetryableSyncRecovery(link.recovery) && shouldContinue()) {
+            const result = await this.reconcileTarget(target, undefined, shouldContinue);
+            const pushFailures = result.pushFailures ?? [];
+            if (pushFailures.length > 0) {
+              await handleSyncPushFailures(
+                target,
+                pushFailures,
+                (pushTarget, failures): Promise<PushFailure[]> =>
+                  this.recordTerminalPushFailures(pushTarget, failures),
+              );
+            }
           }
+        } catch (reason: unknown) {
+          linkRetryFailure = { reason };
         }
-        await this.retryQuotaBlocksForTarget(target, transitionFence, topologyGeneration);
+        try {
+          await this.retryQuotaBlocksForTarget(target, transitionFence, topologyGeneration);
+        } catch (reason: unknown) {
+          linkRetryFailure ??= { reason };
+        }
+        if (linkRetryFailure !== undefined) {
+          throw linkRetryFailure.reason;
+        }
       }));
       const failedRetry = retryResults.find((result) => result.status === 'rejected');
       if (failedRetry?.status === 'rejected') {

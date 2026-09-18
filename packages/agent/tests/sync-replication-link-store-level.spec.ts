@@ -71,7 +71,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(JSON.parse(raw)).toEqual(link);
   });
 
-  it('should refresh the current delegate on an existing role link', async () => {
+  it('should refresh a role delegate without persisting transient resume state', async () => {
     const params = {
       tenantDid      : 'did:example:owner',
       remoteEndpoint : 'https://dwn.example.com',
@@ -93,6 +93,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
     const original = await store.getOrCreateLink(params);
     original.pull.contiguousAppliedToken = token(4);
     await store.persistCheckpoint(original, 'pull');
+    original.connectivity = 'offline';
+    await store.setStatus(original, 'repairing');
 
     const resumed = await store.getOrCreateLink({
       ...params,
@@ -100,8 +102,14 @@ describe('SyncReplicationLinkStoreLevel', () => {
     });
 
     expect(resumed.delegateDid).toBe('did:example:new-delegate');
+    expect(resumed.status).toBe('initializing');
+    expect(resumed.connectivity).toBe('unknown');
     expect(resumed.pull.contiguousAppliedToken).toEqual(token(4));
-    expect((await store.getAllLinks())).toMatchObject([{ delegateDid: 'did:example:new-delegate' }]);
+    expect((await store.getAllLinks())).toMatchObject([{
+      connectivity : 'offline',
+      delegateDid  : 'did:example:new-delegate',
+      status       : 'repairing',
+    }]);
   });
 
   it('should preserve pull and push progress from concurrent stale snapshots', async () => {
@@ -220,6 +228,52 @@ describe('SyncReplicationLinkStoreLevel', () => {
     const [persisted] = await store.getAllLinks();
     expect(persisted.recovery).toMatchObject({ error: 'remote query failed' });
     expect(persisted.pull).toEqual(checkpointLink.pull);
+  });
+
+  it('should complete recovery only while its captured failure still owns the link', async () => {
+    const link = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const firstRecovery = {
+      error    : 'offline',
+      failedAt : '2026-09-11T12:00:00.000Z',
+    };
+    await store.setStatus(link, 'paused');
+    await store.setRecovery(link, firstRecovery);
+    const resumed = await store.getOrCreateLink({
+      tenantDid      : link.tenantDid,
+      remoteEndpoint : link.remoteEndpoint,
+      scope          : link.scope,
+      ...ownerAuthorization,
+    });
+    expect(resumed.status).toBe('initializing');
+
+    const newerRecovery = {
+      error    : 'remote query failed again',
+      failedAt : '2026-09-11T12:01:00.000Z',
+    };
+    await store.setRecovery(resumed, newerRecovery);
+
+    expect(await store.completeRecovery(resumed, firstRecovery)).toBe(false);
+    expect(await store.getAllLinks()).toMatchObject([{
+      status   : 'paused',
+      recovery : newerRecovery,
+    }]);
+
+    await store.setStatus(resumed, 'paused');
+    expect(await store.completeRecovery(resumed, newerRecovery)).toBe(false);
+    expect(await store.getAllLinks()).toMatchObject([{ status: 'paused' }]);
+    expect((await store.getAllLinks())[0].recovery).toBeUndefined();
+
+    // Recreate the legacy transient-pause shape and complete the exact
+    // recovery captured by its successful controller-less pass.
+    await store.setRecovery(resumed, newerRecovery);
+    expect(await store.completeRecovery(resumed, newerRecovery)).toBe(true);
+    expect(await store.getAllLinks()).toMatchObject([{ status: 'initializing' }]);
+    expect((await store.getAllLinks())[0].recovery).toBeUndefined();
   });
 
   it('should serialize same-link read-merge-write operations across store instances', async () => {
@@ -526,6 +580,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
     const reloadedRepairing = await store.getOrCreateLink(params);
     expect(reloadedRepairing.status).toBe('initializing');
     expect(reloadedRepairing.connectivity).toBe('unknown');
+    expect((await store.getAllLinks())[0].status).toBe('repairing');
 
     // A crash can land after a terminal authorization diagnostic is durable
     // but before the following paused status write. That terminal decision
@@ -551,6 +606,10 @@ describe('SyncReplicationLinkStoreLevel', () => {
     const reloadedPaused = await store.getOrCreateLink(params);
     expect(reloadedPaused.status).toBe('initializing');
     expect(reloadedPaused.recovery).toEqual(recovery);
+    expect((await store.getAllLinks())[0]).toMatchObject({
+      status: 'paused',
+      recovery,
+    });
 
     // A current deliberate pause supersedes a transient diagnostic left by
     // earlier failed work; loading it must not reinterpret that pause as an

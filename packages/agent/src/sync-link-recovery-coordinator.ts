@@ -511,7 +511,12 @@ export class SyncLinkRecoveryCoordinator {
 
     const previousConnectivity = link.connectivity;
     link.connectivity = 'online';
-    await this._operations.setStatus(link, 'live');
+    try {
+      await this._operations.setStatus(link, 'live');
+    } catch (error: unknown) {
+      await this.rollbackRepairCompletion(controller, repairGeneration, recovery);
+      throw error;
+    }
     if (this.isRepairSuperseded(controller, runtime)) {
       await this.rollbackCancelledRepair(controller, repairGeneration, recovery);
       return;
@@ -561,9 +566,20 @@ export class SyncLinkRecoveryCoordinator {
     repairGeneration: number,
     recovery: SyncLinkRecoveryState | undefined,
   ): Promise<void> {
+    if (!this.isRepairCallerCancelled(controller)) {
+      return;
+    }
+    await this.rollbackRepairCompletion(controller, repairGeneration, recovery);
+  }
+
+  /** Close tentative subscriptions and restore the repair state after completion fails. */
+  private async rollbackRepairCompletion(
+    controller: SyncLinkController,
+    repairGeneration: number,
+    recovery: SyncLinkRecoveryState | undefined,
+  ): Promise<void> {
     const { link } = controller;
     if (
-      !this.isRepairCallerCancelled(controller) ||
       !controller.isReplicationGenerationCurrent(repairGeneration) ||
       (link.status !== 'repairing' && link.status !== 'live')
     ) {

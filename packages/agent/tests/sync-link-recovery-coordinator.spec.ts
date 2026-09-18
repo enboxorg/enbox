@@ -621,6 +621,47 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('keeps a repair retryable when persisting its live status fails', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const state = link('repairing');
+    state.recovery = {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    };
+    const controller = activate(fixture, state);
+    const closePull = sinon.stub().resolves();
+    const closePush = sinon.stub().resolves();
+    fixture.operations.openPullSubscription.callsFake(async (): Promise<boolean> => {
+      controller.setLiveSubscription({ close: closePull });
+      return true;
+    });
+    fixture.operations.openPushSubscription.callsFake(async (): Promise<boolean> => {
+      controller.setLocalSubscription({ close: closePush });
+      return true;
+    });
+    const storageFailure = new Error('link storage unavailable');
+    fixture.operations.setStatus.callsFake(async (linkState, status) => {
+      linkState.status = status;
+      if (status === 'live') {
+        delete linkState.recovery;
+        throw storageFailure;
+      }
+    });
+
+    expect(await fixture.coordinator.retryFailedRepair(controller)).toBe(true);
+
+    expect(closePull.calledOnce).toBe(true);
+    expect(closePush.calledOnce).toBe(true);
+    expect(state.status).toBe('repairing');
+    expect(state.recovery).toMatchObject({ error: storageFailure.message });
+    expect(controller.isReplicationReady).toBe(false);
+    expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(true);
+
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
   it('closes subscriptions when a repair is cancelled after reopening them', async () => {
     const fixture = createFixture();
     const state = link('repairing');

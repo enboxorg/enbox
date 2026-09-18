@@ -834,6 +834,22 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     expect((await getStoredLink())?.recovery).toBeUndefined();
 
+    // A stopped session can also leave a live link with a retryable durable
+    // reconciliation diagnostic. A successful one-shot pass clears only that
+    // diagnostic; the last completed live baseline remains valid.
+    pull.resetHistory();
+    push.resetHistory();
+    await internal.replicationLinkStore.setStatus(link, 'live');
+    await internal.replicationLinkStore.setRecovery(link, {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:01:00.000Z',
+    });
+    await engine.sync();
+    expect(pull.calledOnce).toBe(true);
+    expect(push.calledOnce).toBe(true);
+    expect(await getStoredLink()).toMatchObject({ status: 'live' });
+    expect((await getStoredLink())?.recovery).toBeUndefined();
+
     pull.resetHistory();
     push.resetHistory();
     await parkWith('offline');
@@ -887,6 +903,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
     sinon.stub(internal, 'getSyncTargets').resolves([target]);
+    const retryQuotaBlocks = sinon.stub(internal, 'retryQuotaBlocksForTarget').resolves();
     const pull = sinon.stub(internal._durableFeedReconciler, 'pull').resolves({ pullDrained: true });
     const push = sinon.stub(internal._durableFeedReconciler, 'push').resolves({});
     push.onFirstCall().resolves({
@@ -894,10 +911,15 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     await expect(engine.retryRemoteNow(tenantDid, remoteEndpoint)).rejects.toBeInstanceOf(SyncPushFailuresError);
-    expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
+    expect(retryQuotaBlocks.calledOnce).toBe(true);
+    expect(await getStoredLink()).toMatchObject({
+      status   : 'paused',
+      recovery : { error: 'offline' },
+    });
 
     await engine.retryRemoteNow(tenantDid, remoteEndpoint);
     expect(push.callCount).toBe(2);
+    expect(await getStoredLink()).toMatchObject({ status: 'initializing' });
     expect((await getStoredLink())?.recovery).toBeUndefined();
 
     // A dependency deferral is also incomplete recovery. Keep the explicit
@@ -911,10 +933,14 @@ describe('SyncEngineLevel lifecycle', () => {
       deferredPull: { messageCid: 'deferred-cid', detail: 'dependency unavailable' },
     });
     await engine.retryRemoteNow(tenantDid, remoteEndpoint);
-    expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
+    expect(await getStoredLink()).toMatchObject({
+      status   : 'paused',
+      recovery : { error: 'offline' },
+    });
 
     await engine.retryRemoteNow(tenantDid, remoteEndpoint);
     expect(push.callCount).toBe(4);
+    expect(await getStoredLink()).toMatchObject({ status: 'initializing' });
     expect((await getStoredLink())?.recovery).toBeUndefined();
 
     await engine.close();
