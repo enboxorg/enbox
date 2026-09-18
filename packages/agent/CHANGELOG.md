@@ -1,5 +1,33 @@
 # @enbox/agent
 
+## 0.8.47
+
+### Patch Changes
+
+- [#1707](https://github.com/enboxorg/enbox/pull/1707) [`cbda9fb`](https://github.com/enboxorg/enbox/commit/cbda9fbe9a5470bba9414cf0c96daa06626425d4) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Carry explicitly ancestry-only initial record writes over pooled WebSocket replication connections, fall back to HTTP when older servers explicitly reject that transport, and reject unmarked missing payloads.
+
+- [#1692](https://github.com/enboxorg/enbox/pull/1692) [`4d29472`](https://github.com/enboxorg/enbox/commit/4d29472f14bce382c9bf7f1a1c5dd1032deaf4f7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Reuse complete local feed snapshots and acknowledged page progress so a later retryable push does not replay the settled prefix to the same remote. Keep current RecordsWrite payload-read failures retryable and release unused streams when acknowledged entries are skipped.
+
+- [#1697](https://github.com/enboxorg/enbox/pull/1697) [`968f418`](https://github.com/enboxorg/enbox/commit/968f41864548327a96a34712e5d16a572a9fc2c3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose connect approval phase progress and split protocol, permission grant, and grant-key performance timings so wallet UIs can show where a long approval is spending time.
+
+- [#1704](https://github.com/enboxorg/enbox/pull/1704) [`7093953`](https://github.com/enboxorg/enbox/commit/70939538b13844bb892939d45b47f19daafb5093) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Bound remote DWN endpoint and requester delegate-key discovery during connect approval, and reuse one endpoint snapshot across every phase, so slow DID resolution cannot leave wallets authorizing indefinitely. Reused and hardened the shared abort fence for HTTP capability discovery instead of maintaining a second implementation.
+
+- [#1709](https://github.com/enboxorg/enbox/pull/1709) [`325c2f1`](https://github.com/enboxorg/enbox/commit/325c2f1133d669c55e808890d833d49eb1908898) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Classify data replays against the receiver's committed winner before quota, preserve root-versus-dependency push-failure context, and log reconciliation failures once at their workflow owner without interrupting unrelated link recovery.
+
+- [#1711](https://github.com/enboxorg/enbox/pull/1711) [`1e0e963`](https://github.com/enboxorg/enbox/commit/1e0e963675ad9bc7d88d724c852d2a034cbcf0bc) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Resume exhausted and interrupted transient link repairs during later sync checks and explicit endpoint retries, preserve cancellation and push retry eligibility through recovery, keep followed links pull-only, and recover legacy controller-less pauses without reviving deliberate or authorization pauses.
+
+- [#1706](https://github.com/enboxorg/enbox/pull/1706) [`73dff1d`](https://github.com/enboxorg/enbox/commit/73dff1dfba71ca1b0cce76aa9649323d7455a89f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: make HTTP retry backoff abortable and bound untrusted retry delays
+
+- [#1708](https://github.com/enboxorg/enbox/pull/1708) [`a5250c4`](https://github.com/enboxorg/enbox/commit/a5250c45129a91f345a5c38bbbc1186ce198e32e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: keep durable sync wakes behind per-direction retry deadlines
+
+- Updated dependencies [[`cbda9fb`](https://github.com/enboxorg/enbox/commit/cbda9fbe9a5470bba9414cf0c96daa06626425d4), [`7093953`](https://github.com/enboxorg/enbox/commit/70939538b13844bb892939d45b47f19daafb5093), [`73dff1d`](https://github.com/enboxorg/enbox/commit/73dff1dfba71ca1b0cce76aa9649323d7455a89f)]:
+  - @enbox/dwn-clients@0.4.35
+  - @enbox/dwn-sdk-js@0.4.27
+  - @enbox/common@0.1.8
+  - @enbox/connect@0.1.23
+  - @enbox/crypto@0.1.11
+  - @enbox/dids@0.1.12
+
 ## 0.8.46
 
 ### Patch Changes

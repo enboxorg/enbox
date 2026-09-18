@@ -1,5 +1,21 @@
 # @enbox/dwn-server
 
+## 0.1.43
+
+### Patch Changes
+
+- [#1707](https://github.com/enboxorg/enbox/pull/1707) [`cbda9fb`](https://github.com/enboxorg/enbox/commit/cbda9fbe9a5470bba9414cf0c96daa06626425d4) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Carry explicitly ancestry-only initial record writes over pooled WebSocket replication connections, fall back to HTTP when older servers explicitly reject that transport, and reject unmarked missing payloads.
+
+- [#1709](https://github.com/enboxorg/enbox/pull/1709) [`325c2f1`](https://github.com/enboxorg/enbox/commit/325c2f1133d669c55e808890d833d49eb1908898) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Classify data replays against the receiver's committed winner before quota, preserve root-versus-dependency push-failure context, and log reconciliation failures once at their workflow owner without interrupting unrelated link recovery.
+
+- Updated dependencies [[`cbda9fb`](https://github.com/enboxorg/enbox/commit/cbda9fbe9a5470bba9414cf0c96daa06626425d4), [`7093953`](https://github.com/enboxorg/enbox/commit/70939538b13844bb892939d45b47f19daafb5093), [`73dff1d`](https://github.com/enboxorg/enbox/commit/73dff1dfba71ca1b0cce76aa9649323d7455a89f)]:
+  - @enbox/dwn-clients@0.4.35
+  - @enbox/dwn-sdk-js@0.4.27
+  - @enbox/common@0.1.8
+  - @enbox/dwn-sql-store@0.0.52
+  - @enbox/crypto@0.1.11
+  - @enbox/dids@0.1.12
+
 ## 0.1.42
 
 ### Patch Changes

@@ -1,5 +1,24 @@
 # @enbox/auth
 
+## 0.6.93
+
+### Patch Changes
+
+- [#1702](https://github.com/enboxorg/enbox/pull/1702) [`39408a9`](https://github.com/enboxorg/enbox/commit/39408a970038382e52691be69549799917857d9a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Start initial sync catch-up in the background after auth session state is committed so slow or unavailable DWNs do not delay session restore, vault setup, portable import, delegated connect finalization, or identity switching. Background startup is session-owned so a later lock still stops a startup that outlives its session.
+
+- [#1700](https://github.com/enboxorg/enbox/pull/1700) [`ca7fa4d`](https://github.com/enboxorg/enbox/commit/ca7fa4de2e6c0086fb669b84598d73279201a634) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Bound sync-registration repair waits during session restore so stale sync lifecycle work cannot leave interactive unlocks pending indefinitely.
+
+- [#1699](https://github.com/enboxorg/enbox/pull/1699) [`8156aa2`](https://github.com/enboxorg/enbox/commit/8156aa22db89acd0db16538c95096bf9fe354ab6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Make password-provider fallback explicit so cancellation and real authorization failures stop instead of being hidden by another provider.
+
+- Updated dependencies [[`cbda9fb`](https://github.com/enboxorg/enbox/commit/cbda9fbe9a5470bba9414cf0c96daa06626425d4), [`4d29472`](https://github.com/enboxorg/enbox/commit/4d29472f14bce382c9bf7f1a1c5dd1032deaf4f7), [`968f418`](https://github.com/enboxorg/enbox/commit/968f41864548327a96a34712e5d16a572a9fc2c3), [`7093953`](https://github.com/enboxorg/enbox/commit/70939538b13844bb892939d45b47f19daafb5093), [`325c2f1`](https://github.com/enboxorg/enbox/commit/325c2f1133d669c55e808890d833d49eb1908898), [`1e0e963`](https://github.com/enboxorg/enbox/commit/1e0e963675ad9bc7d88d724c852d2a034cbcf0bc), [`73dff1d`](https://github.com/enboxorg/enbox/commit/73dff1dfba71ca1b0cce76aa9649323d7455a89f), [`a5250c4`](https://github.com/enboxorg/enbox/commit/a5250c45129a91f345a5c38bbbc1186ce198e32e)]:
+  - @enbox/agent@0.8.47
+  - @enbox/dwn-clients@0.4.35
+  - @enbox/dwn-sdk-js@0.4.27
+  - @enbox/common@0.1.8
+  - @enbox/connect@0.1.23
+  - @enbox/crypto@0.1.11
+  - @enbox/dids@0.1.12
+
 ## 0.6.92
 
 ### Patch Changes

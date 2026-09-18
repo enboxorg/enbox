@@ -1,5 +1,11 @@
 # @enbox/common
 
+## 0.1.8
+
+### Patch Changes
+
+- [#1706](https://github.com/enboxorg/enbox/pull/1706) [`73dff1d`](https://github.com/enboxorg/enbox/commit/73dff1dfba71ca1b0cce76aa9649323d7455a89f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: make HTTP retry backoff abortable and bound untrusted retry delays
+
 ## 0.1.7
 
 ### Patch Changes

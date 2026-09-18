@@ -1,5 +1,20 @@
 # @enbox/dwn-clients
 
+## 0.4.35
+
+### Patch Changes
+
+- [#1707](https://github.com/enboxorg/enbox/pull/1707) [`cbda9fb`](https://github.com/enboxorg/enbox/commit/cbda9fbe9a5470bba9414cf0c96daa06626425d4) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Carry explicitly ancestry-only initial record writes over pooled WebSocket replication connections, fall back to HTTP when older servers explicitly reject that transport, and reject unmarked missing payloads.
+
+- [#1704](https://github.com/enboxorg/enbox/pull/1704) [`7093953`](https://github.com/enboxorg/enbox/commit/70939538b13844bb892939d45b47f19daafb5093) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Bound remote DWN endpoint and requester delegate-key discovery during connect approval, and reuse one endpoint snapshot across every phase, so slow DID resolution cannot leave wallets authorizing indefinitely. Reused and hardened the shared abort fence for HTTP capability discovery instead of maintaining a second implementation.
+
+- [#1706](https://github.com/enboxorg/enbox/pull/1706) [`73dff1d`](https://github.com/enboxorg/enbox/commit/73dff1dfba71ca1b0cce76aa9649323d7455a89f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: make HTTP retry backoff abortable and bound untrusted retry delays
+
+- Updated dependencies [[`7093953`](https://github.com/enboxorg/enbox/commit/70939538b13844bb892939d45b47f19daafb5093), [`73dff1d`](https://github.com/enboxorg/enbox/commit/73dff1dfba71ca1b0cce76aa9649323d7455a89f)]:
+  - @enbox/dwn-sdk-js@0.4.27
+  - @enbox/common@0.1.8
+  - @enbox/crypto@0.1.11
+
 ## 0.4.34
 
 ### Patch Changes
