@@ -111,8 +111,12 @@ export function parseTxtDataToString(txtData: TxtData): string {
  */
 export function parseTxtDataToObject(txtData: TxtData): Record<string, string> {
   return parseTxtDataToString(txtData).split(PROPERTY_SEPARATOR).reduce((acc: Record<string, string>, pair: string): Record<string, string> => {
-    const [key, value] = pair.split('=');
-    acc[key] = value;
+    // Split on the first '=' only, so values containing '=' (e.g. URL query strings or padded
+    // base64) are not truncated. A pair without '=' yields an undefined value, as before.
+    const separatorIndex = pair.indexOf('=');
+    const key = separatorIndex === -1 ? pair : pair.slice(0, separatorIndex);
+    const value = separatorIndex === -1 ? undefined : pair.slice(separatorIndex + 1);
+    acc[key] = value as string;
     return acc;
   }, {} as Record<string, string>);
 }
@@ -401,9 +405,11 @@ function applyVerificationRelationshipsRecord(didDocument: DidDocument, answer: 
  * @param params - The parameters to use when converting a DID document to a DNS packet.
  * @param params.didDocument - The DID document to convert to a DNS packet.
  * @param params.didMetadata - The DID metadata to include in the DNS packet.
- * @param params.authoritativeGatewayUris - The URIs of the Authoritative Gateways to generate NS records from.
+ * @param params.authoritativeGatewayUris - The URIs of the Authoritative Gateways to generate NS records from. Each
+ * gateway's host is emitted in FQDN form; IP-literal gateways produce no NS record.
  * @param params.previousDidProof - The signature proof that this DID is linked to the given previous DID.
  * @returns A promise that resolves to a DNS packet.
+ * @throws {@link DidError} with {@link DidErrorCode.InvalidGatewayUri} if an authoritative gateway URI is malformed or has no host.
  */
 export async function toDnsPacket({ didDocument, didMetadata, authoritativeGatewayUris, previousDidProof }: {
   didDocument: DidDocument;
@@ -510,14 +516,18 @@ export async function toDnsPacket({ didDocument, didMetadata, authoritativeGatew
     data : rootRecord.join(PROPERTY_SEPARATOR)
   });
 
-  // Add an NS record for each authoritative gateway URI.
+  // Add an NS record for each authoritative gateway URI, using the gateway's host in FQDN form
+  // as the record data. IP-literal gateways carry no NS metadata and are omitted.
   for (const gatewayUri of authoritativeGatewayUris || []) {
-    nsRecords.push({
-      type : 'NS',
-      name : '_did.' + getUniqueDidSuffix(didDocument.id) + '.', // name of an NS record a authoritative gateway MUST end in `<ID>.`
-      ttl  : DNS_RECORD_TTL,
-      data : gatewayUri + '.'
-    });
+    const nsTarget = getGatewayNsTarget(gatewayUri);
+    if (nsTarget !== undefined) {
+      nsRecords.push({
+        type : 'NS',
+        name : '_did.' + getUniqueDidSuffix(didDocument.id) + '.', // name of an NS record a authoritative gateway MUST end in `<ID>.`
+        ttl  : DNS_RECORD_TTL,
+        data : nsTarget
+      });
+    }
   }
 
   // Create a DNS response packet with the authoritative answer flag set.
@@ -668,4 +678,47 @@ function appendVerificationRelationshipToRootRecord(
  */
 function getUniqueDidSuffix(did: string): string {
   return did.split(':')[2];
+}
+
+/**
+ * Matches an IPv4 address literal. Used to distinguish IP-literal gateway hosts from DNS names;
+ * post-URL-parsing the hostname is already normalized, so the plain dotted-quad form suffices.
+ */
+const IPV4_ADDRESS_REGEX = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+/**
+ * Extracts the NS record target for an authoritative gateway URI: the gateway's hostname as a
+ * fully qualified domain name (with trailing dot), as the DID DHT specification requires for
+ * authoritative gateway NS records.
+ *
+ * Gateway URIs may be full URIs (`https://gateway.example:8443/some/path`) or bare hosts
+ * (`gateway.example`, as used by the DID DHT specification test vectors). IP-literal gateways
+ * (e.g. `http://127.0.0.1:7527`) carry no NS metadata, so `undefined` is returned and no NS
+ * record should be emitted for them.
+ *
+ * @param gatewayUri - The gateway URI to normalize.
+ * @returns The FQDN form of the gateway host, or `undefined` for IP-literal gateways.
+ * @throws {@link DidError} with {@link DidErrorCode.InvalidGatewayUri} if the URI is malformed or has no host.
+ */
+function getGatewayNsTarget(gatewayUri: string): string | undefined {
+  // Accept both full URIs and bare hosts; a dummy scheme lets bare hosts parse.
+  let url: URL;
+  try {
+    url = new URL(gatewayUri.includes('://') ? gatewayUri : `https://${gatewayUri}`);
+  } catch {
+    throw new DidError(DidErrorCode.InvalidGatewayUri, `Invalid gateway URI: ${gatewayUri}`);
+  }
+
+  const { hostname } = url;
+  if (hostname === '') {
+    throw new DidError(DidErrorCode.InvalidGatewayUri, `Invalid gateway URI: ${gatewayUri}`);
+  }
+
+  // An NS record names a host; IP literals carry no NS metadata. `URL.hostname` includes the
+  // brackets for IPv6 literals.
+  if (IPV4_ADDRESS_REGEX.test(hostname) || hostname.startsWith('[')) {
+    return undefined;
+  }
+
+  return `${hostname}.`;
 }

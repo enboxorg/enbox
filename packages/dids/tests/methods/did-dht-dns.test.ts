@@ -1,6 +1,13 @@
-import type { Packet, TxtAnswer } from '@dnsquery/dns-packet';
+import type { Packet, StringAnswer, TxtAnswer } from '@dnsquery/dns-packet';
 
-import { chunkDataIfNeeded, parseTxtDataToString, TXT_SEGMENT_MAX_BYTES } from '../../src/methods/did-dht-dns.js';
+import { DidErrorCode } from '../../src/did-error.js';
+import {
+  chunkDataIfNeeded,
+  parseTxtDataToObject,
+  parseTxtDataToString,
+  toDnsPacket,
+  TXT_SEGMENT_MAX_BYTES,
+} from '../../src/methods/did-dht-dns.js';
 import { describe, expect, it } from 'bun:test';
 import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
 
@@ -65,5 +72,69 @@ describe('chunkDataIfNeeded()', () => {
 
     expect(decodedData).toBe(data);
     expect(decodedData).not.toContain('\uFFFD');
+  });
+});
+
+describe('parseTxtDataToObject()', () => {
+  it('splits pairs on the first = only, preserving values that contain =', () => {
+    // Previously split on every '=', truncating values such as URL query strings or padded
+    // base64 after the second '='.
+    expect(parseTxtDataToObject('se=https://example.com/dwn?foo=bar')).toEqual({
+      se: 'https://example.com/dwn?foo=bar'
+    });
+    expect(parseTxtDataToObject('k=YWJjZA==')).toEqual({ k: 'YWJjZA==' });
+    expect(parseTxtDataToObject('a=1;b=x=y;v=0')).toEqual({ a: '1', b: 'x=y', v: '0' });
+  });
+
+  it('parses key/value pairs separated by property separators', () => {
+    expect(parseTxtDataToObject('id=0;t=0;k=amty')).toEqual({ id: '0', t: '0', k: 'amty' });
+  });
+
+  it('keeps pairs without a separator as keys with undefined values', () => {
+    const parsed = parseTxtDataToObject('v=0;orphan');
+    expect(parsed.v).toBe('0');
+    expect('orphan' in parsed).toBe(true);
+    expect(parsed.orphan).toBeUndefined();
+  });
+});
+
+describe('toDnsPacket() — authoritative gateway NS records', () => {
+  const didUri = 'did:dht:5cahcfh3zh8bqd5cn3y6inoea1b3d6kh85rjksne9e5dcyrc1ery';
+
+  const toPacket = (authoritativeGatewayUris?: string[]): Promise<Packet> => toDnsPacket({
+    didDocument : { id: didUri },
+    didMetadata : { published: false },
+    authoritativeGatewayUris,
+  });
+
+  const nsTargets = (packet: Packet): string[] => (packet.answers ?? [])
+    .filter((answer): answer is StringAnswer => answer.type === 'NS')
+    .map((answer) => answer.data);
+
+  it('emits the gateway host in FQDN form, dropping scheme, port, path, query, and fragment', async () => {
+    const packet = await toPacket(['https://gateway.example:8443/some/path?q=1#frag']);
+    expect(nsTargets(packet)).toEqual(['gateway.example.']);
+  });
+
+  it('accepts bare hosts, as used by the DID DHT specification test vectors', async () => {
+    const packet = await toPacket(['gateway1.example-did-dht-gateway.com']);
+    expect(nsTargets(packet)).toEqual(['gateway1.example-did-dht-gateway.com.']);
+  });
+
+  it('omits NS records for IP-literal gateways, which carry no NS metadata', async () => {
+    const packet = await toPacket(['http://127.0.0.1:7527', 'http://[::1]:8080']);
+    expect(nsTargets(packet)).toEqual([]);
+  });
+
+  it('emits no NS records when no authoritative gateways are given', async () => {
+    expect(nsTargets(await toPacket(undefined))).toEqual([]);
+    expect(nsTargets(await toPacket([]))).toEqual([]);
+  });
+
+  it('throws InvalidGatewayUri for malformed or host-less gateway URIs', async () => {
+    // Malformed: fails URL parsing in any WHATWG URL implementation.
+    await expect(toPacket(['https://'])).rejects.toThrow(DidErrorCode.InvalidGatewayUri);
+    // Parses, but has no host to name in an NS record.
+    await expect(toPacket(['file:///etc/hosts'])).rejects.toThrow(DidErrorCode.InvalidGatewayUri);
   });
 });
