@@ -12,6 +12,8 @@ import { DidDhtRegisteredDidType, DidDhtRegisteredKeyType, DidDhtVerificationRel
 import { DidError, DidErrorCode } from '../did-error.js';
 import { keyConverter, validatePreviousDidProof } from './did-dht-utils.js';
 
+const textEncoder = new TextEncoder();
+
 /**
  * The version of the DID DHT specification that is implemented by this library.
  */
@@ -110,21 +112,39 @@ export function parseTxtDataToObject(txtData: TxtData): Record<string, string> {
 }
 
 /**
- * Splits a string into chunks of length 255 if the string exceeds length 255.
+ * Splits a string into chunks of at most 255 UTF-8 bytes each if the string exceeds 255 bytes.
+ *
+ * DNS TXT record segments (`character-string`s) are limited to 255 bytes each, so chunking is
+ * done on UTF-8 byte length rather than UTF-16 code-unit count. Splits occur only at code
+ * point boundaries so multibyte characters are never split across segments, which would decode
+ * as U+FFFD replacement characters.
  *
  * @param data - The string to split into chunks.
- * @returns The original string if its length is less than or equal to 255, otherwise an array of chunked strings.
+ * @returns The original string if its UTF-8 byte length is at most 255, otherwise an array of chunked strings.
  */
 export function chunkDataIfNeeded(data: string): string | string[] {
-  if (data.length <= 255) {
+  if (textEncoder.encode(data).length <= 255) {
     return data;
   }
 
-  // Split the data into chunks of 255 characters.
+  // Accumulate whole code points into segments of at most 255 UTF-8 bytes. `for...of` iterates
+  // by code point, so surrogate pairs (4-byte UTF-8 characters) are kept intact.
   const chunks: string[] = [];
-  for (let i = 0; i < data.length; i += 255) {
-    chunks.push(data.slice(i, i + 255)); // end index is ignored if it exceeds the length of the string
+  let currentChunk = '';
+  let currentChunkBytes = 0;
+
+  for (const char of data) {
+    const charBytes = textEncoder.encode(char).length;
+    if (currentChunkBytes + charBytes > 255) {
+      chunks.push(currentChunk);
+      currentChunk = char;
+      currentChunkBytes = charBytes;
+    } else {
+      currentChunk += char;
+      currentChunkBytes += charBytes;
+    }
   }
+  chunks.push(currentChunk);
 
   return chunks;
 }

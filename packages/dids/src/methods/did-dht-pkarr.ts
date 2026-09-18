@@ -237,12 +237,14 @@ export async function createBep44PutMessage({ dnsPacket, publicKeyBytes, signer 
   // Encode the DNS packet into a byte array containing a UDP payload.
   const encodedDnsPacket = dnsPacketEncode(dnsPacket);
 
+  // BEP44 limits the value `v` to 1000 bytes. The limit applies to the value alone, not to
+  // the signing payload, which is always longer by the `3:seqi<seq>e1:v<len>:` prefix.
+  if (encodedDnsPacket.length > 1000) {
+    throw new DidError(DidErrorCode.InvalidDidDocumentLength, `DNS packet exceeds the 1000 byte maximum size: ${encodedDnsPacket.length} bytes`);
+  }
+
   // Encode the sequence and DNS byte array to the BEP44 signing payload.
   const signingPayload = encodeBep44SigningPayload({ sequenceNumber, value: encodedDnsPacket });
-
-  if (signingPayload.length > 1000) {
-    throw new DidError(DidErrorCode.InvalidDidDocumentLength, `DNS packet exceeds the 1000 byte maximum size: ${signingPayload.length} bytes`);
-  }
 
   // Sign the BEP44 message.
   const signature = await signer.sign({ data: signingPayload });
