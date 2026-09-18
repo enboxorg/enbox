@@ -36,6 +36,8 @@ export type SyncReplicationLinkCreateParams = {
 export class SyncReplicationLinkStoreLevel {
   private readonly _links: AbstractLevel<LevelKey, string, string>;
   private readonly _lockNamespace: string;
+  /** Loaded link objects whose durable repair ended before recording a failure. */
+  private _interruptedRepairs = new WeakSet<ReplicationLinkState>();
   private readonly _pendingLinkOperations = new Map<string, Promise<void>>();
 
   constructor(db: AbstractLevel<LevelKey>, lockNamespace = 'default') {
@@ -46,6 +48,7 @@ export class SyncReplicationLinkStoreLevel {
   public async clear(): Promise<void> {
     await this.waitForPendingLinkOperations();
     await this._links.clear();
+    this._interruptedRepairs = new WeakSet<ReplicationLinkState>();
   }
 
   public async deleteLink(
@@ -81,6 +84,7 @@ export class SyncReplicationLinkStoreLevel {
     return this.runForLink(key, async (): Promise<ReplicationLinkState> => {
       const existing = await this.getLink(key);
       if (existing !== undefined) {
+        const interruptedRepair = existing.status === 'repairing' && existing.recovery === undefined;
         let changed = false;
         const persistedConnectivity = existing.connectivity;
         const persistedStatus = existing.status;
@@ -95,6 +99,9 @@ export class SyncReplicationLinkStoreLevel {
             ? existing
             : { ...existing, connectivity: persistedConnectivity, status: persistedStatus };
           await this._links.put(key, JSON.stringify(durable));
+        }
+        if (interruptedRepair) {
+          this._interruptedRepairs.add(existing);
         }
         return existing;
       }
@@ -184,23 +191,38 @@ export class SyncReplicationLinkStoreLevel {
     }, false);
   }
 
+  /** Whether this loaded link represents a repair interrupted before its first diagnostic. */
+  public isInterruptedRepair(link: ReplicationLinkState): boolean {
+    return this._interruptedRepairs.has(link);
+  }
+
   /**
-   * Commit a successful controller-less recovery only while its captured
-   * failure still owns the link. Legacy pauses/repairs become initializing;
-   * an already completed live baseline remains live.
+   * Commit successful controller-less recovery only while its captured
+   * failure, or an interrupted repair without one, still owns the link.
+   * Legacy pauses/repairs become initializing; an already completed live
+   * baseline remains live.
    */
   public async completeRecovery(
     link: ReplicationLinkState,
-    expectedRecovery: SyncLinkRecoveryState,
+    expectedRecovery?: SyncLinkRecoveryState,
   ): Promise<boolean> {
+    const expectedInterruptedRepair = expectedRecovery === undefined && this._interruptedRepairs.has(link);
+    if (expectedRecovery === undefined && !expectedInterruptedRepair) {
+      return false;
+    }
     const key = SyncReplicationLinkStoreLevel.buildKeyForLink(link);
     const completedStatus = await this.runForLink(key, async (): Promise<LinkStatus | undefined> => {
       const persistedLink = await this.getLink(key);
-      if (
-        persistedLink === undefined ||
-        !SyncReplicationLinkStoreLevel.sameRecovery(persistedLink.recovery, expectedRecovery) ||
-        !isRetryableSyncRecovery(persistedLink.recovery)
-      ) {
+      if (persistedLink === undefined) {
+        return undefined;
+      }
+      const interruptedRepair = expectedInterruptedRepair &&
+        persistedLink.status === 'repairing' &&
+        persistedLink.recovery === undefined;
+      const diagnosedRecovery = expectedRecovery !== undefined &&
+        SyncReplicationLinkStoreLevel.sameRecovery(persistedLink.recovery, expectedRecovery) &&
+        isRetryableSyncRecovery(persistedLink.recovery);
+      if (!interruptedRepair && !diagnosedRecovery) {
         return undefined;
       }
 
@@ -213,6 +235,9 @@ export class SyncReplicationLinkStoreLevel {
       await this._links.put(key, JSON.stringify(persistedLink));
       return status;
     });
+    if (expectedInterruptedRepair) {
+      this._interruptedRepairs.delete(link);
+    }
 
     if (completedStatus === undefined) {
       return false;

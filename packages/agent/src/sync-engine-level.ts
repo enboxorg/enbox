@@ -4053,15 +4053,18 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<SyncReconcileResult> {
     const recovery = isRetryableSyncRecovery(link.recovery) ? { ...link.recovery } : undefined;
     const result = await this.reconcileDurableTarget(target, link, options, shouldContinue);
+    const coveredAllLinkDirections = options?.direction === undefined ||
+      (target.authorization.kind === 'role' && options.direction === 'pull');
     const hasRetryablePushFailures = result.pushFailures?.some(
       (failure): boolean => !isTerminalPushFailure(failure),
     ) === true;
-    const recovered = result.aborted !== true &&
+    const recovered = coveredAllLinkDirections &&
+      result.aborted !== true &&
       result.paused !== true &&
       result.deferredPull === undefined &&
       !hasRetryablePushFailures &&
       (shouldContinue?.() ?? true);
-    if (recovery !== undefined && recovered) {
+    if (recovered) {
       await this.replicationLinkStore.completeRecovery(link, recovery);
     }
     return result;
@@ -5203,12 +5206,14 @@ export class SyncEngineLevel implements SyncEngine {
           );
           const link = await this.getOrCreateReplicationLink(target);
           const controller = this.getLinkController(linkKey);
+          const canRetryUnownedLink = isRetryableSyncRecovery(link.recovery) ||
+            this.replicationLinkStore.isInterruptedRepair(link);
           if (controller?.isActive === true) {
             await this.retryFailedRepairForTarget(target, controller, {
               ignoreRetryDeadline: true,
               shouldContinue,
             });
-          } else if (isRetryableSyncRecovery(link.recovery) && shouldContinue()) {
+          } else if (canRetryUnownedLink && shouldContinue()) {
             const result = await this.reconcileTarget(target, undefined, shouldContinue);
             const pushFailures = result.pushFailures ?? [];
             if (pushFailures.length > 0) {

@@ -825,6 +825,27 @@ describe('SyncEngineLevel lifecycle', () => {
       });
     };
 
+    // A session can stop after publishing 'repairing' but before its first
+    // failure diagnostic. Successful one-shot work must retire that stale
+    // runtime status just as it retires a diagnosed repair.
+    await internal.replicationLinkStore.setStatus(link, 'repairing');
+    await engine.sync();
+    expect(pull.callCount).toBe(1);
+    expect(push.callCount).toBe(1);
+    expect(await getStoredLink()).toMatchObject({ status: 'initializing' });
+
+    // Explicit recovery uses the same successful completion path, while
+    // still recognizing the interrupted repair as eligible work.
+    pull.resetHistory();
+    push.resetHistory();
+    await internal.replicationLinkStore.setStatus(link, 'repairing');
+    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
+    expect(pull.callCount).toBe(1);
+    expect(push.callCount).toBe(1);
+    expect(await getStoredLink()).toMatchObject({ status: 'initializing' });
+
+    pull.resetHistory();
+    push.resetHistory();
     await parkWith('offline');
     await engine.sync();
     expect(pull.calledOnce).toBe(true);
@@ -903,7 +924,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
     sinon.stub(internal, 'getSyncTargets').resolves([target]);
-    const retryQuotaBlocks = sinon.stub(internal, 'retryQuotaBlocksForTarget').resolves();
+    const getActiveQuotaBlocks = sinon.spy(internal._quotaManager, 'getActiveBlocksForTarget');
     const pull = sinon.stub(internal._durableFeedReconciler, 'pull').resolves({ pullDrained: true });
     const push = sinon.stub(internal._durableFeedReconciler, 'push').resolves({});
     push.onFirstCall().resolves({
@@ -912,7 +933,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
     await expect(engine.retryRemoteNow(tenantDid, remoteEndpoint)).rejects.toBeInstanceOf(SyncPushFailuresError);
     // The link rejection must not suppress Retry-now's existing quota work.
-    expect(retryQuotaBlocks.calledOnce).toBe(true);
+    expect(getActiveQuotaBlocks.calledOnce).toBe(true);
     expect(await getStoredLink()).toMatchObject({
       status   : 'paused',
       recovery : { error: 'offline' },
@@ -942,6 +963,46 @@ describe('SyncEngineLevel lifecycle', () => {
     await engine.retryRemoteNow(tenantDid, remoteEndpoint);
     expect(push.callCount).toBe(4);
     expect(await getStoredLink()).toMatchObject({ status: 'initializing' });
+    expect((await getStoredLink())?.recovery).toBeUndefined();
+
+    // A pull failure and an independent successful quota push can occur in
+    // one Retry-now call. The push-only pass must not retire the link-wide
+    // recovery needed to retry the unresolved pull.
+    await internal.replicationLinkStore.setStatus(link, 'paused');
+    await internal.replicationLinkStore.setRecovery(link, {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:02:00.000Z',
+    });
+    pull.reset();
+    push.reset();
+    getActiveQuotaBlocks.resetHistory();
+    await internal._quotaManager.recordBlock(target, 'quota-cid', undefined, 'quota exceeded');
+    const pullFailure = new Error('pull endpoint unavailable');
+    let fullPullAttempts = 0;
+    pull.callsFake(async (_target, _link, options) => {
+      if (options?.direction === 'push') {
+        return {};
+      }
+      fullPullAttempts++;
+      if (fullPullAttempts === 1) {
+        throw pullFailure;
+      }
+      return { pullDrained: true };
+    });
+    push.callsFake(async (_target, _link, options) => {
+      if (options?.direction === 'push') {
+        await internal._quotaManager.clearBlock(target, 'quota-cid');
+      }
+      return {};
+    });
+
+    await expect(engine.retryRemoteNow(tenantDid, remoteEndpoint)).rejects.toBe(pullFailure);
+    expect(push.calledOnce).toBe(true);
+    expect(await internal._quotaManager.getState(target, 'quota-cid')).toBeUndefined();
+    expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
+
+    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
+    expect(fullPullAttempts).toBe(2);
     expect((await getStoredLink())?.recovery).toBeUndefined();
 
     await engine.close();

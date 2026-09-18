@@ -230,25 +230,21 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(persisted.pull).toEqual(checkpointLink.pull);
   });
 
-  it('should complete recovery only while its captured failure still owns the link', async () => {
-    const link = await store.getOrCreateLink({
+  it('should complete recovery only while its captured state still owns the link', async () => {
+    const params = {
       tenantDid      : 'did:example:alice',
       remoteEndpoint : 'https://dwn.example.com',
       scope          : { kind: 'full' },
       ...ownerAuthorization,
-    });
+    } as const;
+    const link = await store.getOrCreateLink(params);
     const firstRecovery = {
       error    : 'offline',
       failedAt : '2026-09-11T12:00:00.000Z',
     };
     await store.setStatus(link, 'paused');
     await store.setRecovery(link, firstRecovery);
-    const resumed = await store.getOrCreateLink({
-      tenantDid      : link.tenantDid,
-      remoteEndpoint : link.remoteEndpoint,
-      scope          : link.scope,
-      ...ownerAuthorization,
-    });
+    const resumed = await store.getOrCreateLink(params);
     expect(resumed.status).toBe('initializing');
 
     const newerRecovery = {
@@ -274,6 +270,16 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(await store.completeRecovery(resumed, newerRecovery)).toBe(true);
     expect(await store.getAllLinks()).toMatchObject([{ status: 'initializing' }]);
     expect((await store.getAllLinks())[0].recovery).toBeUndefined();
+
+    await store.setStatus(resumed, 'repairing');
+    const interrupted = await store.getOrCreateLink(params);
+    await store.setStatus(interrupted, 'paused');
+    expect(await store.completeRecovery(interrupted)).toBe(false);
+
+    await store.setStatus(interrupted, 'repairing');
+    const resumedInterrupted = await store.getOrCreateLink(params);
+    expect(await store.completeRecovery(resumedInterrupted)).toBe(true);
+    expect(await store.getAllLinks()).toMatchObject([{ status: 'initializing' }]);
   });
 
   it('should serialize same-link read-merge-write operations across store instances', async () => {
