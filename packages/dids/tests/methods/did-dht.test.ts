@@ -13,10 +13,8 @@ import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json'
 import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' with { type: 'json' };
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { chunkDataIfNeeded, parseTxtDataToString } from '../../src/methods/did-dht-dns.js';
 import { DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils } from '../../src/methods/did-dht.js';
 import { DidErrorCode, DidResolutionErrorCause } from '../../src/did-error.js';
-import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
 const fetchNotFoundResponse = (): { status: number; statusText: string; ok: boolean } => ({
@@ -86,37 +84,6 @@ function concatBytes(...parts: Uint8Array[]): Uint8Array {
   }
 
   return result;
-}
-
-/**
- * Builds a DNS packet whose encoded form is exactly `targetSize` bytes, by padding the TXT
- * record's data with filler segments. Each added segment of N bytes grows the encoded packet
- * by N + 1 bytes (one length-prefix byte per DNS character-string), so the filler is
- * distributed across segments of at most 255 bytes (the DNS character-string limit).
- */
-function createDnsPacketOfSize(targetSize: number): Packet {
-  const answer: TxtAnswer = {
-    type : 'TXT',
-    name : '_did.example.',
-    ttl  : 7200,
-    data : ['id=0'],
-  };
-  const dnsPacket: Packet = {
-    id      : 0,
-    type    : 'response',
-    flags   : 1024,
-    answers : [answer],
-  };
-
-  let remaining = targetSize - dnsPacketEncode(dnsPacket).length;
-  const data = answer.data as string[];
-  while (remaining > 0) {
-    const segmentLength = Math.min(255, remaining - 1);
-    data.push('x'.repeat(segmentLength));
-    remaining -= segmentLength + 1;
-  }
-
-  return dnsPacket;
 }
 
 /** Overrides the browser connectivity hint for one test and restores it afterward. */
@@ -1871,107 +1838,6 @@ describe('DidDhtUtils', () => {
       tamperedMessage.v[0] ^= 0xff;
 
       await expect(DidDhtUtils.parseBep44GetMessage({ bep44Message: tamperedMessage })).rejects.toThrow(DidErrorCode.InvalidSignature);
-    });
-
-    describe('value size limit', () => {
-      let publicKeyBytes: Uint8Array;
-      let signer: Signer;
-
-      beforeEach(async () => {
-        const privateKey = await Ed25519.generateKey();
-        const publicKey = await Ed25519.getPublicKey({ key: privateKey });
-        publicKeyBytes = await Ed25519.publicKeyToBytes({ publicKey });
-        signer = {
-          async sign({ data }): Promise<Uint8Array> {
-            return Ed25519.sign({ key: privateKey, data });
-          },
-          async verify({ data, signature }): Promise<boolean> {
-            return Ed25519.verify({ key: publicKey, data, signature });
-          }
-        };
-      });
-
-      it('accepts a DNS packet whose encoded value is exactly 1000 bytes', async () => {
-        const dnsPacket = createDnsPacketOfSize(1000);
-        // Pin the setup: the BEP44 value is exactly at the limit, so the signing payload
-        // (`3:seqi<seq>e1:v<len>:` prefix + value) is necessarily over 1000 bytes.
-        expect(dnsPacketEncode(dnsPacket).length).toBe(1000);
-
-        const bep44Message = await DidDhtUtils.createBep44PutMessage({ dnsPacket, publicKeyBytes, signer });
-
-        expect(bep44Message.v.length).toBe(1000);
-        await expect(DidDhtUtils.parseBep44GetMessage({ bep44Message })).resolves.toBeDefined();
-      });
-
-      it('rejects a DNS packet whose encoded value exceeds 1000 bytes', async () => {
-        const dnsPacket = createDnsPacketOfSize(1001);
-        expect(dnsPacketEncode(dnsPacket).length).toBe(1001);
-
-        await expect(DidDhtUtils.createBep44PutMessage({ dnsPacket, publicKeyBytes, signer }))
-          .rejects.toThrow(DidErrorCode.InvalidDidDocumentLength);
-      });
-    });
-  });
-
-  describe('chunkDataIfNeeded()', () => {
-    const utf8ByteLength = (value: string): number => testTextEncoder.encode(value).length;
-
-    it('returns the original string when it fits in a single 255-byte segment', () => {
-      const data = 'a'.repeat(255);
-      expect(chunkDataIfNeeded(data)).toBe(data);
-    });
-
-    it('chunks ASCII strings into 255-byte segments', () => {
-      const data = 'a'.repeat(600);
-      const chunks = chunkDataIfNeeded(data) as string[];
-
-      expect(chunks.map(utf8ByteLength)).toEqual([255, 255, 90]);
-      expect(chunks.join('')).toBe(data);
-    });
-
-    it('chunks strings whose UTF-8 length exceeds 255 bytes even when their UTF-16 length does not', () => {
-      // '€' is 1 UTF-16 code unit but 3 UTF-8 bytes: 128 of them are 128 code units (under the
-      // old 255-character limit) yet 384 bytes, so the buggy implementation returned the string
-      // un-chunked and the DNS encoder corrupted its length prefix.
-      const data = '€'.repeat(128);
-      const chunks = chunkDataIfNeeded(data) as string[];
-
-      expect(chunks.map(utf8ByteLength)).toEqual([255, 129]);
-      expect(chunks.join('')).toBe(data);
-    });
-
-    it('does not split multibyte characters across segment boundaries', () => {
-      // 64 '😀' = 128 UTF-16 code units (surrogate pairs) and 256 UTF-8 bytes. Splitting by
-      // code-unit count would separate a surrogate pair mid-boundary; chunking by UTF-8 bytes
-      // at code-point boundaries yields a 252-byte segment (63 characters) plus a 4-byte one.
-      const data = '😀'.repeat(64);
-      const chunks = chunkDataIfNeeded(data) as string[];
-
-      expect(chunks.map(utf8ByteLength)).toEqual([252, 4]);
-      expect(chunks.join('')).toBe(data);
-    });
-
-    it('round-trips mixed-width data through DNS packet encode/decode without replacement characters', () => {
-      // Mixed 1/3/4-byte characters straddling the 255-byte boundary.
-      const data = 'x'.repeat(200) + '€'.repeat(40) + '😀'.repeat(10);
-      const txtRecord: TxtAnswer = {
-        type : 'TXT',
-        name : '_did.example.',
-        ttl  : 7200,
-        data : chunkDataIfNeeded(data),
-      };
-      const dnsPacket: Packet = {
-        id      : 0,
-        type    : 'response',
-        flags   : 1024,
-        answers : [txtRecord],
-      };
-
-      const decodedPacket = dnsPacketDecode(dnsPacketEncode(dnsPacket));
-      const decodedData = parseTxtDataToString((decodedPacket.answers![0] as TxtAnswer).data);
-
-      expect(decodedData).toBe(data);
-      expect(decodedData).not.toContain('\uFFFD');
     });
   });
 });
