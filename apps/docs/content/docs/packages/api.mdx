@@ -176,8 +176,9 @@ const notebooks = snapshot.enbox.using(NotebookProtocol);
 ```
 
 Browser apps must also register a service worker that calls
-`activatePolyfills()` so DRL-backed data resolves. See
-[Browser & bundlers](/docs/guides/browser-bundlers) for the required wiring.
+`activatePolyfills()` so DRL-backed data resolves. See [Build a browser
+dapp](/docs/guides/browser-dapp) for the required boot, worker, live-view, and
+hosting wiring.
 
 The manifest is the canonical list of protocols and delegated permissions.
 The store restores sessions, requests the required grants, installs protocols
@@ -332,6 +333,11 @@ read/rebase/write sequence with a bounded retry count. Never blindly retry the
 rejected snapshot.
 
 ### Query, observe, or subscribe?
+
+This choice is the same in browsers, desktop shells, CLI applications, and
+long-running services. The live paths use WebSocket transports, and durable
+feed reconciliation repairs missed notifications after a disconnect. Do not
+put a one-shot `query()` on a timer to keep primary application state current.
 
 | Need | API |
 |---|---|

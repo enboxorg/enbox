@@ -196,7 +196,7 @@ Most packages expose a `build:browser` script, but it means different things:
 
 Browser storage rule: do not replace the browser Level stack with SQLite or in-memory stores. In browsers, `level` resolves to `browser-level` over IndexedDB, which is required for concurrent writes from tabs, workers, and service workers on the same origin.
 
-Browser service-worker rule: **every Enbox browser dapp MUST register a service worker that calls `activatePolyfills()`** (from `@enbox/browser`). It is the DWeb network stack — DRLs (DWN-addressed URLs: avatars, attachments, `dweb` links) do not resolve without it, and the failure is silent: no build, type-check, test, or happy-path demo catches the omission; DRL fetches just die as ordinary network errors. It is not optional PWA tooling, despite the API name and the usual delivery vehicle (`vite-plugin-pwa`). Wiring patterns, build traps (worker format, precache cap, `process` shim), header pitfalls (COOP silently breaks the wallet popup ceremony), and the scaffold checklist live in [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md).
+Browser service-worker rule: **every Enbox browser dapp MUST register a service worker that calls `activatePolyfills()`** (from `@enbox/browser`). It is the DWeb network stack — DRLs (DWN-addressed URLs: avatars, attachments, `dweb` links) do not resolve without it, and the failure is silent: no build, type-check, test, or happy-path demo catches the omission; DRL fetches just die as ordinary network errors. It is not optional PWA tooling, despite the API name and the usual delivery vehicle (`vite-plugin-pwa`). Boot ordering, precaching, live-view ownership, header pitfalls (COOP silently breaks the wallet popup ceremony), and the scaffold checklist live in [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md).
 
 ### Key directories
 
@@ -673,9 +673,42 @@ stores with custom payload loading override `readStoredObject()`.
 
 The **agent DID** (`agent.agentDid`) is the agent's own identity. The **tenant DID** is the context for store operations. Multi-tenancy is resolved via `getDataStoreTenant()` with priority: explicit tenant > agent DID > DID URI parameter. Store keys use `TENANT_SEPARATOR` (`^`).
 
+## Live application architecture
+
+Across browser, desktop, CLI, and server runtimes, build application state on
+the live APIs. Use `records.observe()` for bounded collection truth and
+`records.subscribe()` for incremental histories; use one-shot `query()` calls
+for searches and snapshots. Do not add timers that repeatedly query for
+current state. The agent sync engine and record subscriptions use WebSocket
+transports, while durable-feed reconciliation repairs gaps after disconnects or
+suspension.
+
 ## Browser dapp architecture
 
-What a browser app on `@enbox/browser` must ship — the **required** service worker (`activatePolyfills()` / DRL resolution) and how to verify it actually runs, the bundler shims, the IndexedDB storage rule, and the two hosting headers that silently break Enbox flows — lives in [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md). Read it before scaffolding a new browser dapp or reviewing one; the checklist at the end is the scaffold gate. The most common failure it exists to prevent: shipping without the service worker because it was miscategorized as optional PWA tooling.
+Read [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md)
+before scaffolding or reviewing a browser dapp, and use the public
+[`Build a browser dapp`](apps/docs/content/docs/guides/browser-dapp.mdx) guide
+as the implementation recipe. A new browser dapp defaults to this shape:
+
+- import the application surface from `@enbox/browser` and keep one
+  `ConnectionStore` for the application lifetime;
+- use `BrowserConnectHandler` for delegated wallet auth and configure
+  `monitor: { autoRefresh: {} }` so the default one-hour grants renew;
+- derive UI collections from `records.observe()` and incremental histories
+  from `records.subscribe()`; do not add app polling around the WebSocket-first
+  sync and subscription paths;
+- register and await a service worker that calls `activatePolyfills()` before
+  rendering the app. The worker owns DRL fetches and the offline app shell;
+  the page owns the connection store, live views, and sockets;
+- keep the browser Level/IndexedDB storage stack and recreate session-bound
+  views whenever the store publishes a replacement `enbox` facade;
+- verify a production build with wallet connect, live updates, reconnect,
+  offline local reads, and a real DRL fetch. A build passing does not prove the
+  worker installed or controls the page.
+
+Do not copy old app workarounds into a new scaffold. Current browser-conditioned
+packages do not need Enbox-specific Node-global shims, a worker `process` shim,
+or compatibility code for historical API result shapes.
 
 ## Sync engine vocabulary
 
@@ -698,50 +731,3 @@ Build/dev commands, MDX content layout, Fumadocs theming, and Cloudflare Pages d
 - **Pkarr / DHT gateway** for `did:dht` tests: `docker-compose.test.yaml` (see [`docs/TESTING.md`](docs/TESTING.md)).
 - **Hosted DWN** (AWS): operational material lives in the private `enboxorg/enbox-internal` repository.
 - **dwn-relay** is a **separate** repository (`enboxorg/dwn-relay`), not this monorepo.
-
-## Dapp-contract landmines (verified 2026-09, imagesd incident week)
-
-These are the consumer-facing behaviors dapp authors keep rediscovering the
-expensive way. Keep examples, docs-site content, and package READMEs in sync
-with them; treat any mismatch as a docs bug, and reconsider whether the
-behavior itself deserves a guard on our side:
-
-1. **Never spread a record handle.** Address fields are non-enumerable
-   accessors; `{ ...row.record }` is `{}`. Downstream ids silently become
-   `undefined` and scoped lookups widen instead of failing. Copy fields
-   explicitly or normalize at one adapter seam.
-2. **Missing/empty `within` on a nested protocol path is not an error** — it
-   is tenant-wide, and `read()` answers with the newest match. Dapps must
-   enforce non-empty exact parent contexts themselves.
-3. **Composite `contextId` (`<parent>/<self>`) is the addressing truth.** No
-   `parentContextId` metadata exists on records; `parentContextId` is accepted
-   on create. Apps must round-trip the node's `contextId`, never rebuild it.
-4. **`create()` result shape has drifted across preview releases** (bare
-   handle vs `{ record, value }`). Dapps should tolerate both at the seam;
-   docs snippets must not imply the shape is pinned.
-5. **Materialized `query()`/`observe()` requires `pagination.limit`.** Rows
-   are `{ record: handle, value }` — and the record inside is still a handle
-   (see #1).
-6. **Delegate grants expire after one hour by default** (approval-side
-   `CONNECT_SESSION_DEFAULT_TTL_SECONDS`, 90-day wallet cap). Dapps need
-   `monitor: { autoRefresh: {} }`; don't "fix" hourly disconnects app-side,
-   and don't change the default without weighing wallet UX.
-7. **`protocols.ensureReady()` publishes by default for owners.** A DID
-   without a hosted `#dwn` service must retry with `publish: false`; apps
-   match on error classes, never on message prose, and report the first
-   error, not the fallback's.
-8. **The in-process test context is owner-only.** Delegate and shared-tenant
-   flows need the hosted helper; dapps that only unit-test against a fake
-   ship broken sharing.
-9. **App-level fakes of this surface must fail what the real SDK fails**:
-   getter handles that survive no spread, strict nested scoping, composite
-   contextIds. A lenient fake is how a data-integrity bug shipped to a real
-   tenant.
-10. **WebSocket first for liveness, service worker in browsers.** Sync,
-    `subscribe()`, and remote-view currency ride WebSocket transports; poll
-    loops are the wrong shape for what we already push. Browser dapps must
-    register a service worker that calls `activatePolyfills()`
-    (`@enbox/browser`) — without it every DRL fails as a plain network error
-    with zero SDK signal — and should keep the live stack worker-hosted where
-    background tabs matter. Verify `activated` + `controller`, not just that
-    the file is served.

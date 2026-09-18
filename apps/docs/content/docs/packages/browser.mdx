@@ -28,6 +28,7 @@ const application = defineApplicationManifest({
 const store = createConnectionStore({
   application,
   connectHandler: BrowserConnectHandler({ appName: 'Notes' }),
+  monitor: { autoRefresh: {} },
 });
 
 let snapshot = await store.initialize();
@@ -50,7 +51,8 @@ await store.dispose();
 This is the delegated wallet flow. To create a local owner identity, omit
 `connectHandler` and call `store.connectVault({ createIdentity: true })`. The
 manifest-backed store owns restoration, refresh, facade replacement, and
-teardown; see the [`@enbox/api` guide](/docs/packages/api).
+teardown. See [Build a browser dapp](/docs/guides/browser-dapp) for the complete
+service-worker, live-view, and hosting setup.
 
 ## Browser entrypoint
 
@@ -58,8 +60,8 @@ The package root has a browser condition that resolves to `dist/browser.mjs`.
 Apps and service-worker builds can use the bare `@enbox/browser` import without
 adding Enbox-specific Node global shims.
 
-See [Browser & bundlers](/docs/guides/browser-bundlers) for bundler and storage
-details.
+See [Browser packages and storage](/docs/guides/browser-bundlers) for lower-level
+bundler and storage details.
 
 ## Key exports
 

@@ -1,6 +1,7 @@
 {
   "title": "Guides",
   "pages": [
+    "browser-dapp",
     "auth",
     "browser-bundlers",
     "hosting",

@@ -53,6 +53,7 @@ const application = defineApplicationManifest({
 const store = createConnectionStore({
   application,
   connectHandler: BrowserConnectHandler({ appName: 'Notes' }),
+  monitor: { autoRefresh: {} },
 });
 
 let snapshot = await store.initialize();
@@ -75,6 +76,9 @@ await store.dispose();
 This is the delegated wallet flow. To create a local owner identity, omit
 `connectHandler` and call `store.connectVault({ createIdentity: true })`. The
 store owns session restoration, refresh, facade replacement, and teardown.
+Wallet approvals use one-hour grants by default, so delegated dapps should opt
+into `monitor.autoRefresh` and render a reconnect action when the store reports
+`walletReapprovalRequired`.
 
 ## Bundlers and Service Workers
 
@@ -87,6 +91,11 @@ adding Node global shims for `process`, `process.env`, `process.browser`,
 `activatePolyfills()` is unrelated to Node-global shims. Every Enbox browser app
 must register a service worker that calls it so DRL requests reach the DWeb
 network stack; it is not a compatibility shim for the SDK package graph.
+
+Use an application-owned worker and register it before rendering the app. The
+page owns the connection store, record views, sync engine, and WebSockets; the
+worker owns DRL fetches and the offline shell. A service worker is event-driven
+and must not host the long-lived Enbox session.
 
 ## Storage Model
 
@@ -111,19 +120,18 @@ the SDK boundary, nothing in the console pointing at a missing subsystem, and
 everything else (connect, records, sync) keeps working. Treat it like the
 bundler configuration above: required scaffolding for a browser dapp.
 
-Two ways to wire it:
+Call `activatePolyfills()` inside an application-owned `sw.ts` and let the build
+tool bundle it with the offline shell. With Vite, use `vite-plugin-pwa` and its
+`injectManifest` strategy. Register and await that worker before rendering so a
+first-visit DRL cannot race worker activation. Call
+`activatePolyfills({ serviceWorker: false })` once in the page when the app also
+wants DRL-aware anchor handling and loading UI.
 
-- **Zero-config:** import and run `activatePolyfills()` at your page
-  entrypoint; in a page context it registers itself as a root service worker
-  (pass `path` explicitly under a strict CSP).
-- **Own service worker (recommended for production):** call
-  `activatePolyfills()` inside your `sw.ts` and let your build tool (e.g.
-  `vite-plugin-pwa` with `injectManifest`) register it alongside precaching.
-
-Verify it behaviorally, not just at build time: the worker must be registered,
-reach `activated`, and control the page (`navigator.serviceWorker.controller`
-non-null after a reload). A served-but-never-evaluated worker passes every
-build. Full wiring guidance, build traps, and hosting-header pitfalls:
+Verify behavior, not just output: the worker must reach `activated`, control the
+page (`navigator.serviceWorker.controller` is non-null), and render a real DRL.
+A served worker that never evaluates passes an ordinary build. The copyable
+Vite/React setup lives in the [browser dapp guide][browser-dapp-guide-link]; the
+runtime contract and review checklist live in
 [`docs/architecture/browser-dapps.md`][browser-dapps-link].
 
 ## Project Resources
@@ -148,5 +156,6 @@ build. Full wiring guidance, build traps, and hosting-header pitfalls:
 [browser-unpkg-link]: https://unpkg.com/@enbox/browser
 [browser-unpkg-browser]: https://unpkg.com/@enbox/browser/dist/browser.mjs
 [browser-dapps-link]: https://github.com/enboxorg/enbox/blob/main/docs/architecture/browser-dapps.md
+[browser-dapp-guide-link]: https://enbox-docs.pages.dev/docs/guides/browser-dapp
 [agents-link]: https://github.com/enboxorg/enbox/blob/main/AGENTS.md
 [license-link]: https://github.com/enboxorg/enbox/blob/main/LICENSE

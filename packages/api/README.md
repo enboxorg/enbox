@@ -70,13 +70,15 @@ Closing fences typed record operations and session-scoped resources. It does
 not revoke the shared `agent` or `did` surfaces, or a raw `dwn` reference
 obtained before close; their lifecycle remains with their owner.
 
-### Delegated grant lifetime (plan for it)
+### Delegated grant lifetime
 
 Wallet connect approvals stamp delegate grants with a **one-hour default TTL**
 (`CONNECT_SESSION_DEFAULT_TTL_SECONDS` in `@enbox/agent`; wallets cap grants at
-90 days and apps cannot request longer). Configure `monitor: { autoRefresh: {} }`
-on `createConnectionStore()` or every delegated session dies an hour after
-approval. Two fail-closed states both mean "re-approval required":
+90 days and apps cannot request longer). Configure
+`monitor: { autoRefresh: {} }` on `createConnectionStore()` so the store renews
+an expiring session from the same application manifest. Without automatic
+refresh, operations stop succeeding when the grants expire. Two fail-closed
+states require wallet approval:
 
 - `snapshot.walletReapprovalRequired: true` — the wallet's protocol config
   drifted or the session was revoked; the next `connect()` requests fresh
@@ -87,8 +89,8 @@ approval. Two fail-closed states both mean "re-approval required":
   underlying auth session, and the next `store.connect()` repairs approval
   through refresh.
 
-Ship user-facing copy for both states. The raw `[@enbox/api] …did:jwk…` message
-text is debug material; render it to the console, not to your UI.
+Ship user-facing copy for both states. Treat SDK message text as debug material,
+not user-facing or machine-readable state.
 
 ## Observable Connection and Sync State
 
@@ -133,19 +135,18 @@ is released and `store.dispose()` at shutdown.
 ### Live transport: WebSocket first
 
 Enbox's live paths — the agent sync engine, `records.subscribe()` feeds, and
-remote view currency — run over WebSocket transports (`@enbox/dwn-clients`),
-with HTTP as the request/response fallback. Dapps should therefore treat
-`observe()` and `subscribe()` as the default way to stay current, not periodic
-re-querying: a poll loop multiplies quota, latency, and battery cost to
-emulate a push channel the platform already has.
+remote-view currency — use WebSocket transports (`@enbox/dwn-clients`), with
+HTTP for request/response and larger transfers. The periodic durable-feed
+settle pass repairs missed notifications; it is not an application polling
+API. Use `observe()` and `subscribe()` to keep application state current rather
+than periodically re-querying.
 
-In browsers, keep that live stack inside a **service worker** where the app
-needs to stay current outside a focused tab: page-context timers and
-connections are throttled or discarded, while a registered worker keeps
-handling DRLs and network duties. `activatePolyfills()` is mandatory for every
-browser dapp regardless — see [packages/browser/README.md](../browser/README.md#activate-polyfills-required-for-every-browser-dapp)
-for the zero-config and own-worker wirings, and verify the worker reaches
-`activated` and controls the page, not just that it ships.
+In a browser, the page owns the connection store, record views, sync engine,
+and sockets. A required service worker calls `activatePolyfills()` to own DRL
+fetches and the offline application shell. Do not host permanent sockets in
+the worker: browsers may terminate it between events. See the
+[browser dapp guide](https://enbox-docs.pages.dev/docs/guides/browser-dapp) for
+the complete runtime and build wiring.
 
 ## Typed Protocols
 
@@ -462,40 +463,33 @@ function reportWriteError(error: unknown) {
 
 Other non-success replies throw `DwnResponseError` with the same `status`.
 
-### Record handles are live objects — never spread them
+### Record handles are live objects
 
 Every record that crosses the API boundary (`create()` results, query and
-observe rows, read results) is a `Record`/`TypedRecord` **instance** whose
-address fields (`id`, `contextId`, `protocolPath`, …) are non-enumerable
-accessors:
+observe rows, read results) is a `Record`/`TypedRecord` instance. Its public
+address fields (`id`, `contextId`, `protocolPath`, and others) are prototype
+accessors rather than enumerable own properties:
 
 ```ts
 const row = ...;                     // { record: TypedRecord, value: T }
-const snapshot = { ...row.record };  // {} — every field silently undefined
+const snapshot = { ...row.record };  // not a public record snapshot
 ```
 
-Copy fields explicitly or pass the handle itself through. Spreading fails
-silently: downstream ids become `undefined`, scoped selectors widen instead of
-erroring, and applications corrupt their own display state. Materialized
-`query()`/`observe()` rows require `pagination.limit`; the decoded application
-value rides beside the handle, not inside it.
+Pass the handle itself through, call `record.toJSON()` for its public metadata,
+or copy the exact public fields an application model needs. Object spread can
+omit address fields and expose implementation fields. An observed view always
+requires `pagination.limit`; a materialized query requires the same bound. The
+decoded application value rides beside the handle, not inside it.
 
 > [!WARNING]
-> **`within` is not validated for absence.** On a nested protocol path, a
-> missing or empty-string `within` is treated as *unscoped*: the query matches
-> the whole tenant, and `read()` — which must return one record — answers with
-> the **newest match**. Applications must enforce a non-empty exact parent
-> context before every nested read or query; the SDK will not throw.
+> Typed reads, queries, and views reject a missing or malformed `within` for a
+> nested protocol path. Pass the exact parent context instead of weakening a
+> failed scoped operation into a tenant-wide query.
 >
 > Nested records report composite `contextId`s (`<parentCtx>/<ownId>`; root
 > records carry their bare own id), and there is no `parentContextId` metadata
 > field — lineage is the composite prefix. `parentContextId` is accepted on
 > create. Round-trip the node's `contextId` verbatim; never reconstruct it.
->
-> `create()`'s resolved shape has varied across preview releases between a
-> bare handle and a `{ record, value }` wrapper. Normalize both shapes at one
-> adapter seam and check against your installed dist rather than any doc
-> snippet, including this one.
 
 ### Delta history compaction
 
@@ -628,11 +622,12 @@ The agent's browser storage remains Level-backed through `level` resolving to
 multi-tab or service-worker use; IndexedDB is the storage layer that safely
 coordinates writes across browser contexts.
 
-Browser dapps are WebSocket-first for liveness (see
+Browser dapps are WebSocket first for liveness (see
 [Live transport](#live-transport-websocket-first)) and must ship a registered
-service worker that calls `activatePolyfills()` from `@enbox/browser` — that
-worker is the DWeb network handler, and every DRL otherwise fails as an
-ordinary network error with no SDK-level signal.
+service worker that calls `activatePolyfills()` from `@enbox/browser`. The
+worker is the DWeb fetch handler; every DRL otherwise fails as an ordinary
+network request with no SDK-level signal. The complete scaffold is in the
+[browser dapp guide](https://enbox-docs.pages.dev/docs/guides/browser-dapp).
 
 ## Exports
 

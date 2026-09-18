@@ -29,7 +29,11 @@ API facade:
 import { createConnectionStore, defineApplicationManifest } from '@enbox/browser';
 
 const application = defineApplicationManifest({ protocols: [AppProtocol] } as const);
-const store = createConnectionStore({ application, password: userPassword });
+const store = createConnectionStore({
+  application,
+  password: userPassword,
+  monitor: { autoRefresh: {} },
+});
 let snapshot = await store.initialize();
 if (snapshot.phase === 'disconnected') {
   snapshot = await store.connectVault({ createIdentity: true });
@@ -110,7 +114,12 @@ to the same delegate DID; it does not replace the delegate's local keys. Pass
 the protocols your app still needs. Revocation status is best-effort and
 reflects revocations that have reached the local agent.
 
-For proactive UX, opt in to polling. Automatic refresh can prompt for consent
+Most applications should configure
+`createConnectionStore({ monitor: { autoRefresh: {} } })` and let the store
+derive refresh permissions from its manifest. Direct `AuthManager` consumers
+can start the low-frequency grant-lifecycle monitor below. This timer checks
+expiry and revocation state; application data still arrives through live sync
+and subscriptions rather than polling. Automatic refresh can prompt for consent
 when a session is expiring or expired, but never for a revoked session:
 
 ```ts

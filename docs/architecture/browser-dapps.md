@@ -1,182 +1,165 @@
-# Browser dapp architecture — what an Enbox web app must ship
+# Browser dapp architecture
 
-Every Enbox browser app that has shipped so far — the web wallet and every
-downstream dapp — has converged on the same runtime shape, and most of them
-got one part of it wrong on their first deploy: the service worker. This note
-exists so the next app doesn't. It names the moving parts, says which are
-**required** (and what silently breaks without them), and ends with the
-checklist a new dapp should be scaffolded against.
+This is the runtime contract for an Enbox browser dapp. The public
+[`Build a browser dapp`](../../apps/docs/content/docs/guides/browser-dapp.mdx)
+guide contains the copyable Vite and React implementation.
 
-The audience is anyone — human or agent — building a browser app on
-`@enbox/browser`. If you read nothing else, read [the service worker
-section](#the-service-worker-is-the-dweb-network-stack-required): it covers
-the one omission that never shows up in a build, a test run, or a demo of the
-happy path.
+## Runtime ownership
 
-## The runtime shape
-
-A browser dapp is three cooperating execution contexts over one origin:
+An Enbox dapp has two browser execution contexts with different lifetimes:
 
 ```text
-┌─ page ────────────────────────────────────────────────────────┐
-│ app UI                                                        │
-│ @enbox/browser: Enbox/agent, connect ceremony, sync engine    │
-│ storage: level -> browser-level -> IndexedDB                  │
-└──────────────┬────────────────────────────────────────────────┘
-               │ fetch()/<img src> of DWN-addressed URLs (DRLs)
-┌─ service worker ─────────────────────────────────────────────┐
-│ activatePolyfills(): DRL fetch interception                  │
-│ DID doc -> DWN endpoints -> record -> Response (+ TTL cache) │
-└──────────────┬────────────────────────────────────────────────┘
-               │ HTTPS / WebSocket
-┌─ network ────────────────────────────────────────────────────┐
-│ DWN servers (JSON-RPC over @enbox/dwn-clients), did:dht      │
-│ resolution, optional ephemeral relays                        │
-└──────────────────────────────────────────────────────────────┘
+page
+  UI
+  one ConnectionStore
+  AuthManager + Enbox facade
+  records.observe() / records.subscribe()
+  live WebSocket sync and subscriptions
+           │
+           │ ordinary fetch / <img src> for DRLs
+           ▼
+service worker
+  precached application shell
+  activatePolyfills() DRL fetch interception and cache
+           │
+           │ HTTPS and WebSocket
+           ▼
+DWN servers, wallet connect, and DID resolution
 ```
 
-The page owns identity, records, and sync. The service worker owns **DWeb
-addressing** — it is the app's network stack for DWN-addressed resources, not
-an offline nicety. The two communicate through nothing but the fetch boundary,
-which is exactly why a missing worker degrades silently instead of erroring.
+The page owns identity, session state, typed APIs, live record views, and the
+WebSocket-backed sync engine. The service worker owns the fetch boundary: it
+serves the offline application shell and resolves Decentralized Resource
+Locators (DRLs) into ordinary responses.
 
-## The service worker is the DWeb network stack (required)
+Do not move the connection store or its sockets into a service worker. Browsers
+may terminate a worker between events, so it is not a durable host for an open
+WebSocket. When a page is suspended, the SDK reconnects and reconciles its
+durable feeds when it resumes.
 
-`activatePolyfills()` (`packages/browser/src/web-features.ts`) is misleadingly
-named: it is not a compatibility shim. Called **inside a service worker**, it
-installs a fetch interceptor for DRLs — Decentralized Resource Locators, URLs
-that address a record through a DID:
+## WebSocket first and local first
+
+Omit the connection store's `sync` option for the normal live mode. Enbox uses
+pooled WebSocket transports for live sync and subscriptions, with HTTP where a
+request/response or larger transfer is a better fit. Its periodic durable-feed
+settle pass is recovery for dropped notifications, not an application polling
+API.
+
+Application state should follow the same model:
+
+- Use `records.observe()` for a bounded collection that must stay correct as
+  records enter, change, or leave a filter.
+- Use `records.subscribe()` for an incremental or append-only event stream.
+- Use `ConnectionStore.subscribe()` for auth, replacement facades, sync
+  currentness, connectivity, and wallet reapproval state.
+- Use a one-shot `query()` for searches and snapshots, not on a timer to keep
+  the main UI current.
+
+Observed local replicas remain usable while offline. Their `current` field is
+separate from `status`: a view can be `ready` with cached or locally written
+records while `current` is `false`. Render the data and show its freshness;
+do not replace the view with an app-level refresh loop.
+
+A refreshed delegated session replaces the `ConnectionStore`'s `enbox`
+facade. Bind every view and subscription to that facade's lifetime and recreate
+them when the snapshot publishes a different facade.
+
+## The service worker is required
+
+`activatePolyfills()` from `@enbox/browser` installs the DWeb fetch handler
+inside a service worker. A DRL addresses a record through a DID, for example:
 
 ```text
-https://<origin>/https/dweb/did:dht:abc…/read/protocols/<base64-protocol>/avatar
+http://dweb/did:dht:abc.../protocols/read/<encoded-protocol>/avatar
 ```
 
-The interceptor resolves the DID document, finds the `DecentralizedWebNode`
-service endpoints, fetches the record from the tenant's DWN, and returns it as
-an ordinary `Response`, with an optional TTL'd Cache API layer in front
-(`onCacheCheck`). That is what lets a plain `<img src>`, `<video src>`, or
-`fetch()` address a record on *someone else's* DWN with zero app-level
-plumbing — the mechanism avatars, attachments, and shared media ride. Called
-**from a page**, the same function registers the worker and additionally wires
-DRL-aware link handling and loading-overlay styles.
+The handler resolves the DID's `DecentralizedWebNode` endpoints, fetches the
+record, and returns an ordinary `Response`. This lets `<img>`, `<video>`, and
+`fetch()` consume DWN resources without application plumbing. Its optional
+cache can return a previously fetched resource while offline.
 
-### What breaks without it — and why nothing tells you
+Without the worker, the browser sends a DRL as an ordinary network request and
+it fails outside the SDK. Connect, typed records, and sync can continue to work,
+so a build or CRUD smoke test does not expose the omission.
 
-Without a registered worker, every DRL fetch leaves the app as a request for a
-URL no server can answer and dies as an **ordinary network error**. Nothing
-throws at the SDK boundary, nothing logs a missing subsystem, and everything
-else — connect ceremony, record CRUD, sync, queries — works perfectly. The
-symptom is "broken images" or "the link 404s", which reads like a content bug,
-not like a missing network stack.
+Register the worker before rendering the application, wait for
+`navigator.serviceWorker.ready`, and wait until it controls the page. The
+worker's call to `activatePolyfills()` uses `skipWaiting()` and `clients.claim()`
+so a first visit can become controlled without asking the user to reload.
 
-This is worth stating because the omission is now a *pattern*: apps keep
-shipping their first build without the worker. The causes are consistent:
+Use an application-owned worker built with `vite-plugin-pwa` `injectManifest`.
+It combines Workbox precaching with the Enbox DRL handler and gives the app one
+explicit update lifecycle. The current browser-conditioned `@enbox/*` bundles
+work in both the page and the worker; do not add Enbox-specific `process`,
+`global`, Node standard-library, dynamic-import, or IIFE workarounds.
 
-- the API is named "polyfills", which reads as optional legacy shims;
-- the worker is typically delivered via `vite-plugin-pwa`, which frames it as
-  PWA/offline tooling — the first thing an MVP cuts;
-- no build, type-check, or test gate fails when it's missing, so nothing
-  pushes back on the cut.
+## Authentication and session lifetime
 
-Treat the service worker exactly like the Node-globals bundler shims below:
-foundation, not enhancement. **A browser dapp without it is not a working
-Enbox app; it is an app that hasn't hit a DRL yet.**
+A dapp delegates authentication to a wallet:
 
-### Wiring it
+1. Define every typed protocol in one application manifest.
+2. Create one `ConnectionStore` with `BrowserConnectHandler`.
+3. Call `initialize()` once to restore a saved session.
+4. Call `connect()` from a user action when no usable session exists.
+5. Read the active API only from the current snapshot's `enbox` property.
+6. Call `disconnect()` on sign-out and `dispose()` only when the application
+   store is permanently released.
 
-Two supported patterns:
+Wallet approvals issue one-hour grants by default. Configure
+`monitor: { autoRefresh: {} }`; the store derives the refresh request from the
+same manifest. If a grant is revoked, protocol coverage changes, or silent
+refresh cannot complete, render a reconnect action when
+`walletReapprovalRequired` is true. Do not match SDK error-message text.
 
-**Zero-config (prototypes):** call `activatePolyfills()` at your page
-entrypoint. In a page context it self-registers as a root worker (it locates
-its own script via `document.currentScript.src` / `import.meta.url`; pass
-`path` explicitly under a strict CSP). Fastest path to working DRLs; you give
-up control of precaching and update lifecycle.
+The ecosystem wallet is an identity and consent provider, so its internal
+`AuthManager` ownership is intentionally more involved than a dapp's. New
+dapps should copy the connection-store boundary used by `notesd`, not the
+wallet's provider internals.
 
-**Own worker + `injectManifest` (what every production app does):** write a
-small `src/sw.ts` that calls `activatePolyfills()` in worker scope, and let
-`vite-plugin-pwa` build and register it alongside a Workbox precache. This is
-the wallet's pattern and the pattern of every known downstream dapp. Four
-build traps come with it, all previously shipped as bugs:
+## Storage
 
-1. **Worker format must be `iife`, not `es`.** The plugin's `registerSW.js`
-   registers a *classic* worker; the default ES output leaves `import.meta` in
-   the bundle, which is a parse error in a classic script — the worker is
-   served but never evaluates, and registration fails after the fact.
-2. **Raise the precache size cap** (`maximumFileSizeToCacheInBytes`, e.g.
-   8 MiB). The agent bundle alone exceeds Workbox's 2 MiB default; here the
-   large file *is* the app.
-3. **Shim `process` in the worker bundle.** The page gets Node globals from
-   the bundler plugin; the worker bundle does not. Prepend
-   `if(typeof process==="undefined"){self.process={env:{},browser:true,emitWarning:function(){}};}`
-   via a `renderChunk` plugin, or the worker throws at evaluation.
-4. **Disable the plugin in dev** (`devOptions.enabled: false`). A worker that
-   precaches during `vite dev` serves yesterday's bundle over today's HMR.
-   Test DRL behavior against `vite build && vite preview`.
+In browsers, `level` resolves to `browser-level` over IndexedDB. Keep that
+default. It coordinates concurrent writes from same-origin tabs and workers and
+persists the local replica that makes the app useful offline. In-memory stores
+lose that behavior, and the server-side SQL store is not a browser substitute.
 
-### Verifying it
+Use one stable `dataPath` and one connection store for an application. Separate
+stores targeting the same path do not coordinate lifecycle actions or
+snapshots.
 
-A service worker can be served, and even registered, without ever running —
-that failure mode has shipped green through complete CI runs. Verify
-**behaviorally**, in a real browser: the registration exists, the worker
-reaches `activated`, and `navigator.serviceWorker.controller` is non-null
-after one reload. A DRL `<img>` rendering is the end-to-end proof.
+## Hosting
 
-## Bundler shims (required)
+The application is an SPA with a root-scoped worker:
 
-`@enbox/dwn-sdk-js` reaches for Node built-ins in the browser. A Vite app
-needs both of these, and fails at **import time** without them (which looks
-like a bundler bug, not a missing shim):
+- serve navigation fallbacks from the precached application shell;
+- serve `/sw.js` with `Cache-Control: no-cache, no-store, must-revalidate`;
+- keep hashed assets immutable;
+- allow the app's HTTPS and WSS endpoints in `connect-src`;
+- use `Referrer-Policy: strict-origin-when-cross-origin` so the wallet can
+  identify the requesting origin without receiving a path;
+- do not set `Cross-Origin-Opener-Policy: same-origin`, which severs the
+  cross-origin popup's opener and breaks the wallet `postMessage` return path.
+  If cross-origin isolation is required, start from `same-origin-allow-popups`
+  and test the whole connect ceremony.
 
-```ts
-// vite.config.ts
-import nodePolyfills from "vite-plugin-node-stdlib-browser";
-export default defineConfig({
-  define: { global: "globalThis" },
-  plugins: [nodePolyfills(), /* … */],
-});
-```
+Service workers require HTTPS, except on localhost.
 
-## Storage (required, do not substitute)
+## Verification gate
 
-In browsers, `level` resolves to `browser-level` over IndexedDB. This is a
-requirement, not a default: IndexedDB is what makes concurrent writes safe
-across tabs, workers, and the service worker on one origin. Do not swap in
-SQLite-WASM or in-memory stores (see the browser storage rule in
-[AGENTS.md](../../AGENTS.md)).
+Run the checks against a production build and preview server. A new dapp is not
+complete until all of these work:
 
-## Hosting headers — two that break the app silently
-
-The client holds keys and decrypts in the page, so hardening headers are
-right — but two obvious ones break Enbox flows with **no error anywhere**:
-
-- **Never set `Cross-Origin-Opener-Policy: same-origin`.** The wallet connect
-  ceremony is popup + `postMessage`; COOP severs the opener relationship for a
-  cross-origin popup, so the wallet gets `window.opener === null` and its
-  approval can never come back. The popup opens; the request never arrives.
-  If you later need cross-origin isolation, it must be
-  `same-origin-allow-popups`, re-tested by hand against the ceremony.
-- **`Referrer-Policy: no-referrer` is also wrong.** The wallet's consent
-  screen identifies the requesting site by origin;
-  `strict-origin-when-cross-origin` (origin only, never the path) is the
-  tightest policy the ceremony works under.
-
-And one for the worker itself: serve `/sw.js` with
-`Cache-Control: no-cache, no-store, must-revalidate`. A cached worker serves
-stale code indefinitely and makes "I redeployed and nothing changed" an
-unfalsifiable bug report. Hashed assets stay `immutable`; the HTML shell and
-the worker never are.
-
-## The checklist
-
-A new Enbox browser dapp ships, from its first commit:
-
-- [ ] a service worker calling `activatePolyfills()` (own `sw.ts` +
-      `injectManifest` for anything beyond a prototype), with the four build
-      traps handled;
-- [ ] a behavioral service-worker check (registered → activated → controls
-      the page) somewhere in its verification path;
-- [ ] `vite-plugin-node-stdlib-browser` + `define: { global: "globalThis" }`;
-- [ ] the browser Level/IndexedDB stack, untouched;
-- [ ] headers: no COOP `same-origin`, referrer `strict-origin-when-cross-origin`,
-      `/sw.js` never cached;
-- [ ] `@enbox/browser` pinned, owning the transitive `@enbox/*` graph.
+- the worker reaches `activated` and
+  `navigator.serviceWorker.controller` is non-null on the first visit;
+- a real DRL renders through the worker, and a cached DRL remains readable
+  offline;
+- a wallet connection approves the manifest and survives a page reload;
+- `monitor: { autoRefresh: {} }` is enabled and the UI has a reconnect state;
+- a write appears in an observed collection without a polling timer or manual
+  refresh;
+- a change from another connected tab or device arrives over the live path;
+- existing local data renders offline, an offline write remains visible, and
+  reconnect eventually makes the view current;
+- every view and subscription closes on sign-out or facade replacement;
+- the deployed headers preserve the popup relationship and prevent `/sw.js`
+  caching.
