@@ -1,5 +1,14 @@
 # @enbox/auth
 
+## 0.6.94
+
+### Patch Changes
+
+- [#1712](https://github.com/enboxorg/enbox/pull/1712) [`aebf4da`](https://github.com/enboxorg/enbox/commit/aebf4dab5d00039b4f28c44cd90aa7f9f9b5e66e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(auth): report when recovery durably commits the replacement vault password
+
+- Updated dependencies [[`7a2a6f1`](https://github.com/enboxorg/enbox/commit/7a2a6f19e8910b2c71ae5f3f3827f012484f4f5d), [`cd8d78d`](https://github.com/enboxorg/enbox/commit/cd8d78d79116d4ec6bd1472e031f62e61345d30d)]:
+  - @enbox/agent@0.8.48
+
 ## 0.6.93
 
 ### Patch Changes

@@ -1,5 +1,15 @@
 # @enbox/browser
 
+## 0.3.79
+
+### Patch Changes
+
+- Updated dependencies [[`aebf4da`](https://github.com/enboxorg/enbox/commit/aebf4dab5d00039b4f28c44cd90aa7f9f9b5e66e), [`7a2a6f1`](https://github.com/enboxorg/enbox/commit/7a2a6f19e8910b2c71ae5f3f3827f012484f4f5d), [`cd8d78d`](https://github.com/enboxorg/enbox/commit/cd8d78d79116d4ec6bd1472e031f62e61345d30d)]:
+  - @enbox/auth@0.6.94
+  - @enbox/agent@0.8.48
+  - @enbox/api@0.6.87
+  - @enbox/protocols@0.2.114
+
 ## 0.3.78
 
 ### Patch Changes
