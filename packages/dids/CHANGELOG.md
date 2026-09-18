@@ -1,5 +1,16 @@
 # @enbox/dids
 
+## 0.1.13
+
+### Patch Changes
+
+- [#1714](https://github.com/enboxorg/enbox/pull/1714) [`05b4177`](https://github.com/enboxorg/enbox/commit/05b41776e92bd1f42462726d7a7d4bb2a0fcb9de) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: four `did:dht` wire-format correctness fixes, aligned with the Rust implementation
+
+  - enforce the BEP44 1000-byte limit on the value `v` instead of the signing preimage
+  - chunk DNS TXT record data on UTF-8 byte length at code-point boundaries so multibyte characters are never split across segments
+  - split TXT record property pairs on the first `=` only, so values containing `=` (e.g. URL query strings, padded base64) are not truncated
+  - emit authoritative-gateway NS records as the gateway host in FQDN form instead of the full URI, omitting NS records for IP-literal gateways
+
 ## 0.1.12
 
 ### Patch Changes
