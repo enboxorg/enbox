@@ -11,13 +11,14 @@
  * 2. Compares the locally installed definition against the requested one
  *    (ignoring wallet-managed encryption metadata) and verifies every
  *    installed `$keyAgreement` public key against the provider's key deriver
- *    by JWK thumbprint. A mismatch is a conflict and aborts the approval; a
+ *    by JWK thumbprint. A mismatch is a conflict and aborts the approval; an
+ *    owner-approved authored-definition mismatch can be replaced, while a
  *    policy-identical install that is missing keys is an encryption upgrade.
  * 3. Installs or upgrades locally (`ProtocolsConfigure` with encryption
  *    derivation when any type declares `encryptionRequired: true`).
  * 4. Verifies every reachable owner DWN endpoint: a reachable endpoint that
- *    rejects the protocol query, a remote definition/key conflict, or zero
- *    reachable endpoints (when any resolve) abort the approval.
+ *    rejects the protocol query, an unapproved definition conflict, a key
+ *    conflict, or zero reachable endpoints (when any resolve) aborts approval.
  * 5. Propagates out-of-batch `uses` dependencies (from the provider's local
  *    installs, depth-first) to endpoints that are missing the dependent —
  *    the DWN rejects a composed `ProtocolsConfigure` when a `uses` target is
@@ -76,6 +77,14 @@ export type InspectConnectProtocolParams = {
 };
 
 type ConnectProtocolInspectionAgent = Pick<EnboxPlatformAgent, 'dwn' | 'processDwnRequest'>;
+
+type PrepareProtocolOptions = {
+  /** Allow replacement only when the authored protocol definition differs. */
+  allowDefinitionOverride?: boolean;
+
+  /** Approval-wide endpoint snapshot, avoiding repeated DID resolution. */
+  resolvedDwnEndpointUrls?: readonly string[];
+};
 
 type ProtocolQueryReply = {
   status: { code: number; detail: string };
@@ -318,6 +327,37 @@ function getProtocolSetupConflictMessage(
   return `Protocol '${requestedDefinition.protocol}' has encryption keys that do not match this wallet owner.`;
 }
 
+/** Whether explicit owner consent may replace this conflict safely. */
+async function isReplaceableAuthoredDefinitionConflict(
+  installedDefinition: DwnProtocolDefinition | undefined,
+  requestedDefinition: DwnProtocolDefinition,
+  selectedDid: string,
+  agent: ConnectProtocolInspectionAgent,
+): Promise<boolean> {
+  if (
+    installedDefinition === undefined
+    || !isNormalizedProtocolUri(requestedDefinition.protocol)
+    || containsRequesterManagedEncryptionKeys(requestedDefinition)
+    || authoredProtocolDefinitionsEqual(installedDefinition, requestedDefinition)
+  ) {
+    return false;
+  }
+
+  // An authored-definition mismatch short-circuits the normal setup-status
+  // check before it inspects encryption keys. Verify the installed definition
+  // independently so definition consent cannot also authorize replacing keys
+  // derived by a different wallet owner.
+  if (!hasEncryptedProtocolTypes(installedDefinition)) {
+    return true;
+  }
+  const keyDeriver = await agent.dwn.getEncryptionKeyDeriver(selectedDid);
+  return await getInstalledEncryptionKeyState(
+    installedDefinition,
+    installedDefinition,
+    keyDeriver,
+  ) !== 'conflict';
+}
+
 function getProtocolDefinitionFromEntry(
   entry: ProtocolConfigureEntry | undefined,
 ): DwnProtocolDefinition | undefined {
@@ -442,16 +482,26 @@ async function getRemoteProtocolStates(
   protocolDefinition: DwnProtocolDefinition,
   selectedDid: string,
   agent: EnboxPlatformAgent,
+  allowDefinitionOverride: boolean,
 ): Promise<Array<{ dwnUrl: string; setupStatus: ProtocolSetupStatus }>> {
   const remoteStates: Array<{ dwnUrl: string; setupStatus: ProtocolSetupStatus }> = [];
   for (const { dwnUrl, reply } of reachableReplies) {
+    const installedDefinition = getProtocolDefinitionFromEntry(reply.entries?.[0]);
     const remoteStatus = await getVerifiedProtocolSetupStatus(
-      getProtocolDefinitionFromEntry(reply.entries?.[0]),
+      installedDefinition,
       protocolDefinition,
       selectedDid,
       agent,
     );
-    if (remoteStatus === 'conflict') {
+    if (remoteStatus === 'conflict' && !(
+      allowDefinitionOverride
+      && await isReplaceableAuthoredDefinitionConflict(
+        installedDefinition,
+        protocolDefinition,
+        selectedDid,
+        agent,
+      )
+    )) {
       throw new Error(
         `Protocol '${protocolDefinition.protocol}' conflicts with the latest definition or encryption keys on ${dwnUrl}.`,
       );
@@ -531,18 +581,17 @@ async function verifyEndpointsConverged(
  * Prepares one requested protocol on the provider's DWNs for the approval
  * ceremony. See the module JSDoc for the full contract.
  *
- * @throws Error on a local or remote definition/key conflict, a reachable
- *         endpoint rejecting the protocol query, zero reachable endpoints
- *         when any resolve, a failed local configure, or endpoints that do
- *         not converge to the requested definition after fan-out.
- * @param resolvedDwnEndpointUrls - Optional approval-wide endpoint snapshot;
- *        omitted by standalone callers that need this helper to resolve it.
+ * @throws Error on an unapproved definition conflict, any key conflict, a
+ *         reachable endpoint rejecting the protocol query, zero reachable
+ *         endpoints when any resolve, a failed local configure, or endpoints
+ *         that do not converge to the requested definition after fan-out.
+ * @param options - Preparation policy and optional approval-wide endpoint snapshot.
  */
 export async function prepareProtocol(
   selectedDid: string,
   agent: EnboxPlatformAgent,
   protocolDefinition: DwnProtocolDefinition,
-  resolvedDwnEndpointUrls?: readonly string[],
+  options: PrepareProtocolOptions = {},
 ): Promise<void> {
   const {
     queryResult,
@@ -550,11 +599,19 @@ export async function prepareProtocol(
     installedDefinition,
     setupStatus,
   } = await queryLocalProtocolStatus(selectedDid, agent, protocolDefinition);
-  if (setupStatus === 'conflict') {
+  const overridesLocalDefinition = setupStatus === 'conflict'
+    && options.allowDefinitionOverride === true
+    && await isReplaceableAuthoredDefinitionConflict(
+      installedDefinition,
+      protocolDefinition,
+      selectedDid,
+      agent,
+    );
+  if (setupStatus === 'conflict' && !overridesLocalDefinition) {
     throw new Error(getProtocolSetupConflictMessage(installedDefinition, protocolDefinition));
   }
 
-  const dwnEndpointUrls = resolvedDwnEndpointUrls
+  const dwnEndpointUrls = options.resolvedDwnEndpointUrls
     ?? await resolveConnectDwnEndpointUrls(agent, selectedDid);
   if (queryResult.message === undefined) {
     throw new Error('Could not query protocol: no signed query message was returned.');
@@ -571,12 +628,18 @@ export async function prepareProtocol(
     protocolDefinition.protocol,
   );
 
-  const remoteStates = await getRemoteProtocolStates(reachableReplies, protocolDefinition, selectedDid, agent);
+  const remoteStates = await getRemoteProtocolStates(
+    reachableReplies,
+    protocolDefinition,
+    selectedDid,
+    agent,
+    options.allowDefinitionOverride === true,
+  );
 
   // Install or upgrade locally, then reuse the freshly signed configure for
   // the fan-out; when local state is already current, fan out the stored
   // configure entry instead of re-signing an identical one.
-  const configureMessage = setupStatus === 'install' || setupStatus === 'upgrade'
+  const configureMessage = setupStatus === 'install' || setupStatus === 'upgrade' || overridesLocalDefinition
     ? await configureProtocolLocally(selectedDid, agent, protocolDefinition)
     : existingEntry;
 

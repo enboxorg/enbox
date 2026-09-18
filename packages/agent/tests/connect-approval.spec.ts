@@ -715,6 +715,58 @@ describe('connect approval ceremony', () => {
       expect(createGrantsStub.firstCall.args[5]).toEqual(['https://dwn.example/']);
     });
 
+    it('should execute an explicitly approved protocol definition replacement inside the ceremony', async () => {
+      const { createGrantsStub } = stubApprovalCeremony();
+      const olderDefinition = {
+        ...protocolDefinition,
+        types: { note: { schema: 'https://example.com/old-note' } },
+      } as DwnProtocolDefinition;
+      const signedConfigure = {
+        descriptor: {
+          interface  : 'Protocols',
+          method     : 'Configure',
+          definition : protocolDefinition,
+        },
+      };
+      const processDwnRequest = sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any) => {
+        if (request.messageType === DwnInterface.ProtocolsConfigure) {
+          return {
+            messageCid : '',
+            reply      : { status: { code: 202, detail: 'Accepted' } },
+            message    : signedConfigure,
+          } as any;
+        }
+        return {
+          messageCid : '',
+          reply      : protocolQueryReply(olderDefinition),
+          message    : signedProtocolQuery,
+        } as any;
+      });
+      sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls').resolves(['https://dwn.example/']);
+      let remoteQueryCount = 0;
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async (request: any) => {
+        if (request.message === signedProtocolQuery) {
+          remoteQueryCount++;
+          return protocolQueryReply(remoteQueryCount === 1 ? olderDefinition : protocolDefinition) as any;
+        }
+        return { status: { code: 202, detail: 'Accepted' } } as any;
+      });
+
+      await executeConnectApproval({
+        agent                     : testHarness.agent,
+        providerDid               : providerIdentity.did.uri,
+        transport                 : 'relay',
+        request                   : approvalRequest(),
+        approvedProtocolOverrides : [protocolDefinition.protocol],
+      });
+
+      expect(processDwnRequest.getCalls().filter(
+        (call) => call.args[0].messageType === DwnInterface.ProtocolsConfigure,
+      )).toHaveLength(1);
+      expect(remoteQueryCount).toBe(2);
+      expect(createGrantsStub.calledOnce).toBe(true);
+    });
+
     it('should isolate a throwing progress observer and still complete the approval', async () => {
       const { revocationGrantStub } = await stubApprovalDependencies();
       const phases: ConnectApprovalProgressPhase[] = [];
