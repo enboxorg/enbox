@@ -1,0 +1,366 @@
+---
+title: Build a browser dapp
+description: Scaffold a wallet-connected, offline-capable Enbox dapp with live records and the required DWeb service worker.
+---
+
+This guide is the default starting point for a browser dapp. It produces the
+same runtime boundaries used by Enbox applications such as Notesd: wallet-owned
+identity, a local IndexedDB replica, WebSocket-first sync, observable records,
+and a service worker for the offline shell and DWeb resources.
+
+## Create the project
+
+The example uses React and Vite, but the Enbox pieces are framework-neutral.
+
+```bash
+bun create vite my-dapp --template react-ts
+cd my-dapp
+bun install
+bun add @enbox/browser
+bun add --dev vite-plugin-pwa workbox-precaching workbox-routing
+```
+
+Use `@enbox/browser` as the only Enbox dependency unless the application needs
+a lower-level API that it does not re-export. Its browser-conditioned entrypoint
+contains the high-level API, auth lifecycle, wallet connect handler, and DWeb
+helpers. Current releases do not need Node-global or standard-library shims.
+
+## Define the application boundary
+
+Give the protocol and schema stable HTTPS identifiers owned by the application.
+Changing them later creates a different data model.
+
+```ts title="src/enbox/application.ts"
+import {
+  BrowserConnectHandler,
+  createConnectionStore,
+  defineApplicationManifest,
+  defineProtocol,
+  recordCodecs,
+} from '@enbox/browser';
+
+export type Note = {
+  body: string;
+  title: string;
+};
+
+export const NotesProtocol = defineProtocol({
+  protocol  : 'https://notes.example/protocols/notes/v1',
+  published : false,
+  types     : {
+    note: {
+      schema             : 'https://notes.example/schemas/note/v1',
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+    },
+  },
+  structure: {
+    note: {},
+  },
+} as const, {
+  note: recordCodecs.json<Note>(),
+});
+
+export const application = defineApplicationManifest({
+  protocols: [NotesProtocol],
+} as const);
+
+export const connectionStore = createConnectionStore({
+  application,
+  connectHandler : BrowserConnectHandler({
+    appName : 'Notes',
+    appIcon : `${window.location.origin}/icon.svg`,
+  }),
+  monitor: { autoRefresh: {} },
+});
+```
+
+The manifest is the source for protocol installation, delegated permissions,
+sync registration, and grant refresh. Keep one connection store for the
+application lifetime. `monitor.autoRefresh` matters: wallet approvals issue
+one-hour grants by default, and the store uses the manifest to renew them.
+
+On startup, initialize the store once. In React, consume its frozen snapshot
+with `useSyncExternalStore`:
+
+```tsx
+import { useSyncExternalStore } from 'react';
+import { connectionStore } from './enbox/application.js';
+
+export function Connection(): JSX.Element {
+  const snapshot = useSyncExternalStore(
+    connectionStore.subscribe,
+    connectionStore.getSnapshot,
+    connectionStore.getSnapshot,
+  );
+
+  if (snapshot.phase === 'initializing' || snapshot.phase === 'connecting') {
+    return <p>Connecting…</p>;
+  }
+
+  if (snapshot.phase !== 'connected') {
+    return (
+      <main>
+        {snapshot.error && <p role="alert">Connection failed. Try again.</p>}
+        <button onClick={() => void connectionStore.connect()}>
+          {snapshot.walletReapprovalRequired ? 'Reconnect wallet' : 'Connect wallet'}
+        </button>
+      </main>
+    );
+  }
+
+  return <Notes enbox={snapshot.enbox} sync={snapshot.sync} />;
+}
+```
+
+`connect()` drives the browser popup or phone handoff and asks the wallet for
+the manifest's permissions. It publishes denials and other flow errors in the
+returned snapshot, so the UI reads state instead of parsing error messages.
+Call `connectionStore.disconnect()` for sign-out.
+
+If automatic refresh or a protocol-coverage repair replaces
+`snapshot.enbox`, recreate all views and subscriptions bound to the previous
+facade. A React effect whose dependency is `snapshot.enbox` has the right
+lifetime.
+
+## Install the DWeb service worker
+
+The service worker is required even if installable-PWA UI is out of scope. It
+does two jobs:
+
+1. Workbox precaches the application shell so the local replica remains usable
+   without a network.
+2. `activatePolyfills()` intercepts DRLs, resolves their DIDs and DWN endpoints,
+   and returns records to ordinary `<img>`, `<video>`, and `fetch()` consumers.
+
+Configure Vite to compile one application-owned worker:
+
+```ts title="vite.config.ts"
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
+
+export default defineConfig({
+  plugins: [
+    react(),
+    VitePWA({
+      strategies     : 'injectManifest',
+      srcDir         : 'src',
+      filename       : 'sw.ts',
+      injectRegister : false,
+      manifest       : false,
+      injectManifest : {
+        maximumFileSizeToCacheInBytes : 8_000_000,
+        globPatterns                  : ['**/*.{js,css,html,json,svg,png,ico}'],
+      },
+      devOptions: {
+        enabled : true,
+        type    : 'module',
+      },
+    }),
+  ],
+});
+```
+
+The larger precache limit accounts for the browser SDK in the application
+bundle. The worker uses bare package imports; do not add a `process` shim,
+dynamic import wrapper, or special IIFE output for Enbox.
+
+```ts title="src/sw.ts"
+/// <reference lib="webworker" />
+
+import { activatePolyfills } from '@enbox/browser';
+import {
+  cleanupOutdatedCaches,
+  createHandlerBoundToURL,
+  precacheAndRoute,
+} from 'workbox-precaching';
+import { NavigationRoute, registerRoute } from 'workbox-routing';
+
+declare let self: ServiceWorkerGlobalScope;
+
+precacheAndRoute(self.__WB_MANIFEST);
+cleanupOutdatedCaches();
+registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
+
+activatePolyfills({
+  onCacheCheck: () => ({ ttl: 30_000 }),
+});
+```
+
+Register and await the worker before initializing Enbox or rendering the app.
+This prevents the first screen from issuing DRLs before a worker controls the
+page. The second `activatePolyfills()` call below runs in the page only; it adds
+DRL-aware link handling and loading UI without registering another worker.
+
+```tsx title="src/main.tsx"
+import { activatePolyfills } from '@enbox/browser';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+
+import { Connection } from './Connection.js';
+import { connectionStore } from './enbox/application.js';
+
+async function activateDweb(): Promise<void> {
+  if (!('serviceWorker' in navigator)) {
+    throw new Error('This browser does not support the DWeb service worker.');
+  }
+
+  await navigator.serviceWorker.register('/sw.js', { type: 'module' });
+  await navigator.serviceWorker.ready;
+
+  if (navigator.serviceWorker.controller === null) {
+    await new Promise<void>((resolve) => {
+      navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), {
+        once: true,
+      });
+    });
+  }
+
+  activatePolyfills({ serviceWorker: false });
+}
+
+async function main(): Promise<void> {
+  await activateDweb();
+  await connectionStore.initialize();
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <Connection />
+    </StrictMode>,
+  );
+}
+
+void main().catch((error: unknown) => {
+  console.error('Application startup failed:', error);
+  document.getElementById('root')!.textContent = 'Application startup failed.';
+});
+```
+
+The page owns the connection store and WebSockets. The service worker owns
+fetch interception and precaching; browsers may terminate it between events,
+so it must not host the long-lived Enbox session.
+
+## Make records drive the UI
+
+The default sync mode is live and WebSocket first. Do not set `sync` on the
+connection store and do not add a refresh timer. Use an observed collection for
+the UI:
+
+```ts
+const notes = snapshot.enbox.using(NotesProtocol);
+const lifetime = new AbortController();
+const view = await notes.records.observe('note', {
+  materialize : true,
+  pagination  : { limit: 100 },
+  signal      : lifetime.signal,
+});
+
+function render(): void {
+  const state = view.getSnapshot();
+  if (state.status === 'error') {
+    showError(state.error);
+    return;
+  }
+
+  showNotes(state.records, {
+    caughtUp : state.current,
+    loading  : state.status === 'loading',
+  });
+}
+
+const unsubscribe = view.subscribe(render);
+render();
+
+const created = await notes.records.create('note', {
+  data: { title: 'First note', body: 'Hello from Enbox.' },
+});
+console.log(created.id, await created.value());
+
+// When the component unmounts or snapshot.enbox changes:
+unsubscribe();
+lifetime.abort();
+await view.close();
+```
+
+`ready` means the local result can render. `current` means the relevant remote
+replicas have caught up. Keep usable local data on screen while offline and
+show freshness separately. Use `records.subscribe()` for an incremental,
+append-only history; use `query()` for a one-time search. With
+`materialize: true`, every row is `{ record, value }`: the decoded note value
+sits beside its live record handle.
+
+Record handles are live class instances. Pass them through or copy fields such
+as `id` and `contextId` explicitly; spreading a handle does not serialize its
+accessor properties. Nested paths must always receive the exact parent
+`contextId` through `parentContextId` on create and `within` on reads or views.
+
+## Add multi-party data
+
+Model collaboration in the protocol instead of copying each record into every
+user's tenant. Use a `recipient` rule for one record addressed to one DID. Use
+a shared context when several related records need roles such as editor and
+viewer.
+
+A shared context remains authoritative in its owner's DWN. The owner assigns a
+role record whose recipient is another identity, then sends an invitation for
+discovery. Acceptance verifies that role and starts an exact-context replica;
+both sides then use the same context-bound records API and live views. The
+invitation is not the permission, and a local replica is not a second owner.
+
+See [Shared contexts](/docs/packages/api#shared-contexts) for one complete
+protocol policy and workflow: role paths, member/viewer actions, owner role
+assignment and invitation, recipient acceptance, live access lists, role
+changes, revocation, and offline behavior. Use `contexts`, `members`, and
+`context.records` from that guide instead of manually threading `from`,
+`protocolRole`, or a root `within` through dapp code.
+
+## Hosting requirements
+
+Serve the SPA over HTTPS and route application paths to `index.html`. Apply
+these headers at minimum:
+
+```text
+/*
+  Referrer-Policy: strict-origin-when-cross-origin
+
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+```
+
+Do not set `Cross-Origin-Opener-Policy: same-origin`; it disconnects the wallet
+popup from `window.opener` and prevents the approval result from returning. If
+the app requires cross-origin isolation, use `same-origin-allow-popups` and test
+the complete wallet ceremony. A Content Security Policy must allow the app's
+HTTPS and WSS DWN endpoints in `connect-src` and the root worker in
+`worker-src`.
+
+## End-to-end gate
+
+Build and serve the production output:
+
+```bash
+bun run build
+bun run preview
+```
+
+Before calling the dapp complete, verify all of these in a real browser:
+
+- the first visit reaches an activated worker and
+  `navigator.serviceWorker.controller` is non-null;
+- wallet approval connects, a reload restores the session, and the UI can ask
+  for reapproval;
+- creating or changing a record updates an `observe()` view without a timer or
+  refresh button;
+- a change from another connected tab or device arrives through the live path;
+- for a collaborative protocol, two distinct identities prove that an editor
+  can mutate, a viewer cannot, role changes take effect, and revocation retires
+  retained member handles;
+- existing records and the application shell render offline, an offline write
+  stays visible, and reconnect eventually makes the view current;
+- a real DRL renders and a previously cached DRL remains readable offline;
+- sign-out and facade replacement close the old views and subscriptions;
+- the deployed `/sw.js`, referrer, popup, CSP, SPA-fallback, and HTTPS settings
+  match the requirements above.
+
+For the underlying runtime design, see
+[Browser dapp architecture](https://github.com/enboxorg/enbox/blob/main/docs/architecture/browser-dapps.md).

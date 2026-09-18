@@ -17,8 +17,13 @@ The SDK handles:
 ## Installation
 
 ```bash
-bun add @enbox/api
+bun add @enbox/browser
 ```
+
+For a browser application, start with [Build a browser
+dapp](/docs/guides/browser-dapp). It includes wallet auth, the required DWeb
+service worker, offline storage, live views, deployment headers, and an
+end-to-end gate. Non-browser runtimes can install `@enbox/api` directly.
 
 ## Quick start
 
@@ -27,7 +32,7 @@ bun add @enbox/api
 A protocol describes the data your app works with — its schema, structure, and access rules.
 
 ```ts
-import { defineProtocol, recordCodecs } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/browser';
 
 const TaskDefinition = {
   protocol:  'https://example.com/tasks',
@@ -51,19 +56,27 @@ const TaskProtocol = defineProtocol(TaskDefinition, {
 ### 2. Connect and use
 
 ```ts
-import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
+import {
+  BrowserConnectHandler,
+  createConnectionStore,
+  defineApplicationManifest,
+} from '@enbox/browser';
 
 const application = defineApplicationManifest({
   protocols: [TaskProtocol],
 } as const);
-const store = createConnectionStore({ application });
+const store = createConnectionStore({
+  application,
+  connectHandler: BrowserConnectHandler({ appName: 'Tasks' }),
+  monitor: { autoRefresh: {} },
+});
 
-let snapshot = await store.initialize();
-if (snapshot.phase === 'disconnected') {
-  snapshot = await store.connectVault({ createIdentity: true });
-}
+await store.initialize();
+
+// After the connection UI reports a connected snapshot:
+const snapshot = store.getSnapshot();
 if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
+  throw new Error('Connect the wallet first.');
 }
 
 const tasks = snapshot.enbox.using(TaskProtocol);
@@ -72,7 +85,10 @@ const tasks = snapshot.enbox.using(TaskProtocol);
 The connection store owns session restore, connection, protocol readiness, and
 facade replacement for common apps. Read the active API from `snapshot.enbox`.
 Create one store for the application/data path and keep it for the application
-lifetime; separate stores intentionally do not coordinate.
+lifetime. If no session is restored, render a connect button and call
+`store.connect()` directly from its click handler so the wallet popup keeps the
+browser's user gesture. The browser-dapp guide contains the complete component
+and required service-worker startup.
 
 ### 3. CRUD operations
 

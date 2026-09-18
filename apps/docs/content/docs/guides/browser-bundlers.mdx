@@ -1,65 +1,37 @@
 ---
-title: Browser & bundlers
-description: How to consume Enbox in browser apps, service workers, and secondary bundler passes.
+title: Browser package behavior
+description: Browser entrypoint resolution, lower-level auth imports, and persistent storage.
 ---
 
-Browser apps should import from `@enbox/browser`:
+Start new applications with [Build a browser dapp](/docs/guides/browser-dapp).
+That guide is the canonical source for service-worker, Vite, startup, hosting,
+and verification instructions.
 
-```ts
-import { BrowserConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enbox/browser';
-```
+## Entrypoints
 
-`@enbox/browser`, `@enbox/api`, and `@enbox/agent` publish browser-conditioned
-root entries. Browser-aware bundlers resolve those bare specifiers to
-`dist/browser.mjs`, so app and service-worker builds do not need Enbox-specific
-Node global shims for `process`, `process.env`, `process.browser`,
-`process.emitWarning`, `global`, or the Node `events` builtin.
+Import the application surface from `@enbox/browser`. It re-exports the
+high-level API, auth lifecycle, wallet connect handler, and DWeb helpers.
 
-Apps that need auth directly in a browser should use the browser subpath:
+`@enbox/browser`, `@enbox/api`, `@enbox/auth`, and `@enbox/agent` publish
+browser-conditioned entrypoints. Browser-aware bundlers resolve their bare
+package imports to browser bundles in both page and service-worker builds.
+Current releases do not need Enbox-specific `process`, `global`, Node
+standard-library, dynamic-import, or IIFE workarounds.
+
+Applications that deliberately own the lower-level auth lifecycle can import
+its browser surface:
 
 ```ts
 import { AuthManager, PasswordProvider } from '@enbox/auth/browser';
 ```
 
-The Node-only password helpers remain on the Node root entry.
+Most dapps should use `createConnectionStore()` from `@enbox/browser` so one
+owner handles restoration, readiness, monitoring, facade replacement, and
+teardown.
 
-## Service workers
+## Storage
 
-Secondary build passes, such as VitePWA service-worker builds, should use the
-same bare package imports as the main app:
-
-```ts
-import { activatePolyfills } from '@enbox/browser';
-
-activatePolyfills();
-```
-
-Do not add a separate `process` shim or IIFE wrapper just for Enbox. If your
-application has other dependencies that need Node compatibility shims, keep that
-configuration scoped to those dependencies.
-
-## Storage model
-
-The browser agent stores data through `level`, which resolves to
-`browser-level` over IndexedDB in browser builds. This is intentional. IndexedDB
-supports concurrent access from multiple same-origin contexts, so two tabs and a
-service worker can write the same Enbox stores while the browser arbitrates the
-transactions.
-
-SQLite over OPFS is not a replacement for this path in browser apps. It does not
-provide the same cross-tab and service-worker write model, and `@enbox/dwn-sql-store`
-is for server-side DWN deployments.
-
-## DWeb polyfills
-
-`activatePolyfills()` from `@enbox/browser` enables browser DWeb behavior such
-as DRL service-worker handling. Every Enbox browser app must register a service
-worker that calls it; without that worker, DRL fetches fail as ordinary network
-requests. It is not a Node-global shim and is not required merely to import the
-SDK package graph.
-
-```ts
-import { activatePolyfills } from '@enbox/browser';
-
-activatePolyfills();
-```
+The browser agent stores its local replica through `level`, which resolves to
+`browser-level` over IndexedDB. Keep this default: IndexedDB persists offline
+data and coordinates concurrent access from same-origin tabs and workers.
+In-memory storage and `@enbox/dwn-sql-store` do not provide that browser model.

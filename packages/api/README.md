@@ -70,6 +70,28 @@ Closing fences typed record operations and session-scoped resources. It does
 not revoke the shared `agent` or `did` surfaces, or a raw `dwn` reference
 obtained before close; their lifecycle remains with their owner.
 
+### Delegated grant lifetime
+
+Wallet connect approvals stamp delegate grants with a **one-hour default TTL**
+(`CONNECT_SESSION_DEFAULT_TTL_SECONDS` in `@enbox/agent`; wallets cap grants at
+90 days and apps cannot request longer). Configure
+`monitor: { autoRefresh: {} }` on `createConnectionStore()` so the store renews
+an expiring session from the same application manifest. Without automatic
+refresh, operations stop succeeding when the grants expire. Two fail-closed
+states require wallet approval:
+
+- `snapshot.walletReapprovalRequired: true` — the wallet's protocol config
+  drifted or the session was revoked; the next `connect()` requests fresh
+  approval.
+- `ManifestSyncRegistrationCoverageError` — the delegate's sync registration no
+  longer covers every read protocol in the manifest. The store publishes
+  `phase: 'disconnected'` with `walletReapprovalRequired: true`, keeps the
+  underlying auth session, and the next `store.connect()` repairs approval
+  through refresh.
+
+Ship user-facing copy for both states. Treat SDK message text as debug material,
+not user-facing or machine-readable state.
+
 ## Observable Connection and Sync State
 
 `createConnectionStore()` publishes connection and selected-identity sync state
@@ -109,6 +131,15 @@ During sign-out, `phase` becomes
 `'disconnecting'` and session fields clear immediately; call `store.disconnect()`
 so the store can expose that transition. Call `unsubscribe()` when the consumer
 is released and `store.dispose()` at shutdown.
+
+### Live transport: WebSocket first
+
+Enbox's live paths — the agent sync engine, `records.subscribe()` feeds, and
+remote-view currency — use WebSocket transports (`@enbox/dwn-clients`), with
+HTTP for request/response and larger transfers. The periodic durable-feed
+settle pass repairs missed notifications; it is not an application polling
+API. Use `observe()` and `subscribe()` to keep application state current rather
+than periodically re-querying.
 
 ## Typed Protocols
 
@@ -205,13 +236,7 @@ const store = createConnectionStore({
   connectHandler,
   monitor: { autoRefresh: {} },
 });
-let snapshot = await store.initialize(); // restored sessions are readied before publication
-if (snapshot.phase !== 'connected') {
-  snapshot = await store.connect();
-}
-if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
-}
+await store.initialize(); // restored sessions are readied before publication
 ```
 
 The connection store treats the manifest as the canonical protocol source. It
@@ -238,9 +263,10 @@ approval. A delegated sync registration that is missing, belongs to another
 delegate, or omits any manifest protocol with read permission also fails closed:
 the store closes and hides the public facade, stops its monitor, and preserves
 the underlying auth session so the next `store.connect()` repairs approval
-through refresh. On a connection store, `connect()` is delegated and a
-per-call `password` unlocks the delegate vault; use `connectVault()` for an
-owner.
+through refresh. When no session was restored, call `connect()` from the
+platform's connection action. In browsers, invoke it directly from a user
+gesture so the wallet popup is not blocked. A per-call `password` unlocks the
+delegate vault; use `connectVault()` for an owner.
 
 Advanced integrations that own auth directly must project and ready the
 manifest explicitly, and separately close both the session facade and manager:
@@ -330,6 +356,14 @@ removes their temporary files; protocol configurations, grants, revocations,
 and records already sent to the hosted DWN remain there. Use a disposable or
 resettable test endpoint when test isolation requires remote cleanup.
 
+Note the coverage boundary: `createEnboxTestContext` is **owner-only** and
+in-process — delegate, role-grant, and cross-tenant flows are invisible to it.
+Application-level fakes of this API must model handles as non-spreadable
+getter objects (see [Records](#records)) and reject empty `within` on nested
+paths, so a unit suite fails exactly where production would; and every
+multi-record addressing flow deserves at least one real-context smoke test
+before shipping, because a lenient fake proves nothing.
+
 ## Records
 
 ```ts
@@ -417,6 +451,37 @@ function reportWriteError(error: unknown) {
 
 Other non-success replies throw `DwnResponseError` with the same `status`.
 
+### Record handles are live objects
+
+Every record that crosses the API boundary (`create()` results, query and
+observe rows, read results) is a `Record`/`TypedRecord` instance. Its public
+address fields (`id`, `contextId`, `protocolPath`, and others) are prototype
+accessors rather than enumerable own properties:
+
+```ts
+const row = ...;                     // { record: TypedRecord, value: T }
+const snapshot = { ...row.record };  // not a public record snapshot
+```
+
+Pass the handle itself through, call `record.toJSON()` for its public metadata,
+or copy the exact public fields an application model needs. Object spread can
+omit address fields and expose implementation fields. An observed view always
+requires `pagination.limit`; a materialized query requires the same bound. The
+decoded application value rides beside the handle, not inside it.
+
+> [!WARNING]
+> Unbound typed queries and views reject a missing or malformed `within` for a
+> nested protocol path. An unbound typed read rejects a malformed `within`, but an
+> omitted value currently searches that path across the tenant and can return
+> a sibling from another context. Pass the exact parent context on every nested
+> read. A context-bound records handle supplies its root scope automatically;
+> deeper entity subtrees still need their exact context.
+>
+> Nested records report composite `contextId`s (`<parentCtx>/<ownId>`; root
+> records carry their bare own id), and there is no `parentContextId` metadata
+> field — lineage is the composite prefix. `parentContextId` is accepted on
+> create. Round-trip the node's `contextId` verbatim; never reconstruct it.
+
 ### Delta history compaction
 
 The typed records API exposes the timestamp and `squash` primitives needed by
@@ -487,8 +552,8 @@ cursors remain internal.
 Each context exposes its `rootRecordId` and a collision-safe `key` equivalent
 to `protocolContextKey(context.ownerDid, context.id)`.
 
-The complete owner/member workflow and current limitations live in the
-canonical [API guide](https://enbox-docs.pages.dev/docs/packages/api).
+The complete owner/member workflow and current limitations live in
+[Shared contexts](https://enbox-docs.pages.dev/docs/packages/api#shared-contexts).
 
 ## Anonymous Reads
 
@@ -528,25 +593,12 @@ Permission request, grant, and revocation administration remains available at
 High-level typed mutations persist automatically. Use the raw agent request
 methods only when an advanced workflow must preserve an exact signed message.
 
-## Browser Builds
+## Browser applications
 
-Browser apps typically use `@enbox/browser`, which re-exports the main app APIs
-and adds browser-specific connect helpers:
-
-```ts
-import { Enbox, BrowserConnectHandler, defineProtocol, recordCodecs } from '@enbox/browser';
-```
-
-The root `@enbox/api` entry also declares a browser condition that resolves to
-the prebuilt `dist/browser.mjs` bundle in browser-aware bundlers. Apps and
-service-worker builds should not need Enbox-specific Node global shims for
-`process`, `process.env`, `process.browser`, `process.emitWarning`, `global`,
-or the Node `events` builtin.
-
-The agent's browser storage remains Level-backed through `level` resolving to
-`browser-level` over IndexedDB. Do not replace it with an in-memory store for
-multi-tab or service-worker use; IndexedDB is the storage layer that safely
-coordinates writes across browser contexts.
+Use `@enbox/browser`, which re-exports this API with browser auth, wallet
+connect, and DWeb helpers. The canonical
+[browser dapp guide](https://enbox-docs.pages.dev/docs/guides/browser-dapp)
+covers its service worker, persistent storage, and build setup.
 
 ## Exports
 

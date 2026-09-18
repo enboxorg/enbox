@@ -16,9 +16,12 @@ description: How authentication works in Enbox — connect, lock, disconnect, an
 ## Installation
 
 ```bash
-npm install @enbox/auth @enbox/agent
-npm install @enbox/browser # for browser wallet-connect handlers
+bun add @enbox/api
 ```
+
+Install `@enbox/auth` only when the application owns `AuthManager` directly.
+Browser wallet connections should use `@enbox/browser`, which includes the
+application API and browser connect handler.
 
 ## Basic usage
 
@@ -26,10 +29,13 @@ Most applications should let a connection store own auth and its session-bound
 API facade:
 
 ```ts
-import { createConnectionStore, defineApplicationManifest } from '@enbox/browser';
+import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
 
 const application = defineApplicationManifest({ protocols: [AppProtocol] } as const);
-const store = createConnectionStore({ application, password: userPassword });
+const store = createConnectionStore({
+  application,
+  password: userPassword,
+});
 let snapshot = await store.initialize();
 if (snapshot.phase === 'disconnected') {
   snapshot = await store.connectVault({ createIdentity: true });
@@ -69,14 +75,18 @@ permission-scope UX (e.g. via a browser overlay) and returns a delegate
 session bound to the connecting wallet.
 
 ```ts
-import { AuthManager } from '@enbox/auth/browser';
-import { BrowserConnectHandler } from '@enbox/browser';
+import type { AuthSession } from '@enbox/browser';
+
+import { AuthManager, BrowserConnectHandler } from '@enbox/browser';
 
 const walletAuth = await AuthManager.create({
   connectHandler: BrowserConnectHandler({ appName: 'Notes App' }),
 });
 
-const session = await walletAuth.connect({ protocols: [NotesProtocol] });
+// Bind this function directly to the connection button in browser UIs.
+function connectFromUserAction(): Promise<AuthSession> {
+  return walletAuth.connect({ protocols: [NotesProtocol] });
+}
 ```
 
 ### 4. Grant expiry and refresh
@@ -86,7 +96,7 @@ newest complete approval before an operation, or recognize an expired/revoked
 grant after a DWN request fails:
 
 ```ts
-import { isSessionInvalidError } from '@enbox/auth/browser';
+import { isSessionInvalidError } from '@enbox/browser';
 
 const status = await walletAuth.getConnectionStatus();
 
@@ -110,7 +120,12 @@ to the same delegate DID; it does not replace the delegate's local keys. Pass
 the protocols your app still needs. Revocation status is best-effort and
 reflects revocations that have reached the local agent.
 
-For proactive UX, opt in to polling. Automatic refresh can prompt for consent
+Most applications should configure
+`createConnectionStore({ monitor: { autoRefresh: {} } })` and let the store
+derive refresh permissions from its manifest. Direct `AuthManager` consumers
+can start the low-frequency grant-lifecycle monitor below. This timer checks
+expiry and revocation state; application data still arrives through live sync
+and subscriptions rather than polling. Automatic refresh can prompt for consent
 when a session is expiring or expired, but never for a revoked session:
 
 ```ts

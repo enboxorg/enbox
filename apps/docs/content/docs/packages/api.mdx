@@ -163,21 +163,13 @@ const store = createConnectionStore({
   connectHandler: BrowserConnectHandler({ appName: 'Notebook' }),
   monitor: { autoRefresh: {} },
 });
-
-let snapshot = await store.initialize();
-if (snapshot.phase !== 'connected') {
-  snapshot = await store.connect();
-}
-if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
-}
-
-const notebooks = snapshot.enbox.using(NotebookProtocol);
 ```
 
-Browser apps must also register a service worker that calls
-`activatePolyfills()` so DRL-backed data resolves. See
-[Browser & bundlers](/docs/guides/browser-bundlers) for the required wiring.
+See [Build a browser dapp](/docs/guides/browser-dapp) for the canonical startup
+flow. It initializes the store before rendering, calls `connect()` directly
+from a user action when needed, and registers the required DWeb service worker.
+Once connected, select the typed API with
+`snapshot.enbox.using(NotebookProtocol)`.
 
 The manifest is the canonical list of protocols and delegated permissions.
 The store restores sessions, requests the required grants, installs protocols
@@ -201,6 +193,9 @@ owner/vault flow. Hosted protocol publication is opt-in through
 the app locally. Invitation receiving does require the protocol to have been
 installed on the recipient's hosted DWN, so apps should perform hosted
 readiness when enabling receiving and surface delivery failures for retry.
+Lower-level owner lifecycles call `enbox.protocols.ensureReady()` with
+`publish: false` when the DID has no hosted `#dwn`; omitting that option attempts
+hosted publication by default.
 
 ## Typed records
 
@@ -218,8 +213,11 @@ const pageRecord = await notebooks.records.create('notebook/page', {
   parentContextId : notebook.contextId,
 });
 
-// Read
-const found = await notebooks.records.read('notebook/page', pageRecord.id);
+// Read a nested record inside its exact parent context
+const found = await notebooks.records.read('notebook/page', {
+  within : notebook.contextId,
+  filter : { recordId: pageRecord.id },
+});
 if (found !== undefined) {
   console.log((await found.value()).summary);
 }
@@ -273,6 +271,51 @@ already-absent record or a canonical tombstone conflict as complete.
 Context-bound deletion is stricter: its initial authority miss requires an
 authorized tombstone because the ID may identify a record outside that context.
 An exact same-protocol missing-parent write throws `RecordParentNotFoundError`.
+
+<Callout type="warn" title="Scope every unbound nested read">
+Unbound nested queries and views reject a missing or malformed `within`. An
+unbound `typed.records.read()` rejects a malformed value but currently accepts an
+omitted one, which searches that protocol path across the tenant and can return
+a sibling from another context. Pass the exact `within` value on every nested
+read. A `context.records` handle supplies its shared root automatically, but a
+deeper entity subtree still needs the entity's exact context.
+</Callout>
+
+### Nested entity trees
+
+Use a returned `contextId` as the address of a mid-tree UI entity. For example,
+an album can contain photos with sibling renditions beneath each photo:
+
+```ts
+const photo = await photos.records.create('library/album/photo', {
+  data,
+  parentContextId: album.contextId,
+});
+
+await photos.records.create('library/album/photo/thumbnail', {
+  data: thumbnail,
+  parentContextId: photo.contextId,
+});
+
+const found = await photos.records.read('library/album/photo/thumbnail', {
+  within : photo.contextId,
+  filter : {},
+});
+
+await photos.records.delete('library/album/photo', {
+  recordId : photo.id,
+  within   : album.contextId,
+  prune    : true,
+});
+```
+
+Create preview and original siblings with the same `parentContextId`. Round-trip
+`photo.contextId`; never rebuild its composite segments. Path plus `within`
+addresses one record only when the app enforces one current child per path and
+context, so include `recordId` when multiples are allowed. `prune: true` removes
+the entity and its descendants and cleans up partially failed multi-record
+creates. For materialized rows, project `row.record.id` and
+`row.record.contextId` explicitly; never spread the live record handle.
 
 ### Compact a delta history
 
@@ -332,6 +375,11 @@ read/rebase/write sequence with a bounded retry count. Never blindly retry the
 rejected snapshot.
 
 ### Query, observe, or subscribe?
+
+This choice is the same in browsers, desktop shells, CLI applications, and
+long-running services. The live paths use WebSocket transports, and durable
+feed reconciliation repairs missed notifications after a disconnect. Do not
+put a one-shot `query()` on a timer to keep primary application state current.
 
 | Need | API |
 |---|---|
@@ -414,18 +462,45 @@ stream if setup or the async listener fails.
 
 ## Shared contexts
 
-A context binds the existing records API to one owner, protocol root, and
-context ID. Owner and member handles expose the same `context.records` verbs;
-app code does not pass `from`, `protocolRole`, grants, or root `within` values.
-Every handle also exposes its root record ID and the collision-safe
-`protocolContextKey(ownerDid, id)` as `rootRecordId` and `key`.
+A protocol recipient rule plus `recipient` on create is enough when one record
+is addressed to one DID. Use a shared context when a role should govern a
+related record hierarchy: a document and its changes, a project and its tasks,
+or a page and its attachments.
+
+The data is not copied into every member's tenant. One DID owns the
+authoritative context in its DWN; accepted members replicate only that context
+and send authorized mutations back to the owner. Owner and member handles expose
+the same `context.records` verbs, with the tenant, role, and root scope already
+bound.
+The root record's exact `contextId` is the share boundary for its descendants;
+round-trip it rather than reconstructing it.
+
+The `NotebookProtocol` above contains the complete access policy:
+
+1. Paths marked `$role: true` represent membership. The role record's
+   `recipient` is the member DID.
+2. `$actions` on each data path grant member or viewer capabilities. They are
+   the authorization policy.
+3. `roleGroups` lists mutually exclusive roles from strongest to weakest. It
+   lets `members().set()` change roles and lets recipients follow the best
+   valid assignment without handling role records directly.
+4. The owner establishes membership, then sends an invitation. The invitation
+   is discovery only; `accept()` independently proves the owner, role, context,
+   and audience key before following anything.
+5. Record and membership views stay live through the normal observe/sync path.
+
+Cross-identity encrypted sharing requires `published: true` on the protocol so
+other identities can discover its definition and key-agreement paths. This does
+not publish any application record. A context is identified by both owner DID
+and context ID; use its collision-safe `key` for UI state. Each handle also
+exposes `ownerDid`, `id`, `rootRecordId`, and `access`.
 
 ### Owner workflow
 
 ```ts
 const page = await notebooks.contexts.open(
   'notebook/page',
-  pageRecord.contextId!,
+  pageRecord.contextId,
 );
 
 await page.records.set('notebook/page/title', {
@@ -458,6 +533,12 @@ if (alice.delivery.state === 'delivered') {
 audience key, attempts key delivery, and returns queryable delivery state.
 `get()`, `list()`, `observe()`, `remove()`, and `retryDelivery()` use DIDs and
 typed role data; role-record IDs and duplicate cleanup remain internal.
+Repeat `set()` for each participant. Calling it for the same DID with another
+role changes that member's access. Use `members().observe()` to drive an access
+list instead of polling it.
+
+`delivery.state === 'delivered'` means the recipient DWN accepted the key
+delivery write; it is not a receipt proving that the recipient decrypted it.
 
 Removing membership prevents future authorization but does not erase plaintext
 already learned by a former member. Forward-secure removal still requires
@@ -484,44 +565,45 @@ const shared = await invitation.accept();
 // completeness-sensitive work.
 await shared.refresh();
 
-const title = await shared.records.read('notebook/page/title', titleRecordId);
-await shared.records.create('notebook/page/change', {
-  data: { body: 'Reviewed by Alice' },
+const changes = await shared.records.observe('notebook/page/change', {
+  materialize : true,
+  pagination  : { limit: 100 },
 });
+const unsubscribeChanges = changes.subscribe(renderChanges);
+renderChanges(changes.getSnapshot());
+
+if (shared.role === 'notebook/page/member') {
+  await shared.records.create('notebook/page/change', {
+    data: { body: 'Reviewed by Alice' },
+  });
+}
 
 unsubscribeInbox();
+unsubscribeChanges();
 await inbox.close();
+await changes.close();
 ```
+
+Use `shared.role` to choose UI affordances, while relying on the owner's DWN to
+enforce the protocol. A viewer mutation still fails even if a client exposes an
+edit control.
 
 Invitation preview fields are untrusted display text. Acceptance does not trust
 the invitation as membership proof: it resolves the owner-hosted role record,
 protocol, context root, and audience key before admitting the context. A failed
 accept remains retryable. `dismiss()` removes only the inbox item.
 
-Invitation discovery is a bounded newest-first query: it reads 50 raw inbox
-records by default and accepts limits up to 100. Malformed, duplicate, or
-unsolicited records consume that bound and can crowd out older valid
-invitations. Pagination continuation and automatic junk cleanup are not
-available yet. Apps that receive the owner DID, context ID, and group through
-another channel can bypass inbox discovery with
-`contexts.follow({ ownerDid, id, group })`; following still proves current
-membership before accepting the context.
+Apps that already receive the owner DID, context ID, and group through another
+channel can bypass inbox discovery with
+`contexts.follow({ ownerDid, id, group })`. Following performs the same current
+membership proof.
 
 <Callout type="warn" title="The invitation inbox is an open write endpoint">
-A protocol that declares any encrypted type carries a reserved
-`enboxContextInvitation` path that any DID may write to — that is what lets a
-stranger offer you a context. Records are capped at 8 KB and are immutable, but
-their number is not capped, so an attacker who knows your DID and has the
-protocol installed on your DWN can consume storage and crowd the discovery bound
-indefinitely. Fresh DIDs are cheap, so per-author limits alone would not close
-it, and a global `$recordLimit` would let an attacker fill the cap and block
-real invitations. There is no mitigation in Enbox today.
-
-Apps that do not need open discovery should not call
-`contexts.invitations`; distribute the owner DID, context ID, and group over a
-channel you control and accept with `contexts.follow()` instead. Apps that do
-need it should treat inbox growth as untrusted input: prune dismissed and
-malformed records, and consider rate limiting at the hosted DWN.
+Any DID may submit a bounded invitation so strangers can offer a context.
+Treat previews and inbox volume as untrusted. The newest-first discovery query
+is bounded, so junk can crowd out older offers. Prefer an authenticated product
+channel plus `contexts.follow()` when open discovery is unnecessary; otherwise
+prune dismissed and malformed records and rate-limit at the hosted DWN.
 </Callout>
 
 `refresh()` performs one scoped pull from the endpoint accepted by `follow()`
@@ -532,25 +614,26 @@ Once records have replicated, member reads, queries, and views remain available
 offline. Member mutations are sent to the context owner's DWN and therefore
 require it to be reachable; Enbox does not queue those mutations offline.
 
+The followed-source catalog survives restarts only in the same agent storage.
+A fresh browser, device, or cleared profile starts with no accepted follows,
+and the accepted invitation may already be gone. For cross-device “shared with
+me,” add an encrypted root record such as `shareBookmark` to the application
+protocol and store `{ ownerDid, contextId, group }` after acceptance. On
+startup, observe those bookmarks and call
+`contexts.follow({ ownerDid, id: contextId, group })` for any missing catalog
+entry. Treat the owner's role record as authority: keep a bookmark after a
+transient follow failure, while a confirmed revocation should retire it.
+
 ### One owned-and-shared catalog
 
 ```ts
-// Read once:
-const all = await notebooks.contexts.list();
-
-for (const context of all) {
-  if (context.access === 'owner') {
-    showOwnerControls(context.members());
-  } else {
-    showMemberRole(context.role);
-  }
-}
-
-// Or keep the same catalog live:
 const catalog = await notebooks.contexts.observe();
 const renderCatalog = ({ status, contexts, error }) => {
   if (status === 'error') report(error);
-  else renderNotebooks(contexts);
+  else renderNotebooks(contexts, (context) => ({
+    key  : context.key,
+    role : context.access === 'member' ? context.role : 'owner',
+  }));
 };
 const unsubscribeCatalog = catalog.subscribe(renderCatalog);
 renderCatalog(catalog.getSnapshot());
@@ -560,8 +643,9 @@ unsubscribeCatalog();
 await catalog.close();
 ```
 
-Observe accepted member contexts with their decoded root records when a catalog
-needs root metadata such as a title:
+`contexts.list()` returns the same owner-and-member catalog once. When a member
+list also needs decoded root metadata such as a title, ask the live catalog to
+materialize each root:
 
 ```ts
 const catalog = await notebooks.contexts.observe({
@@ -569,42 +653,24 @@ const catalog = await notebooks.contexts.observe({
   materializeRoot: true,
   signal,
 });
-
-const render = ({ contexts, error, status }) => {
-  if (status === 'error') reportCatalog(error);
-  for (const { context, root } of contexts) {
-    if (root.status === 'loading') renderLoading(context);
-    else if (root.status === 'error') reportRoot(context, root.error);
-    else renderNotebook(context, root.records[0]?.value, root.current);
-  }
-};
-
-const unsubscribe = catalog.subscribe(render);
-render(await catalog.ready());
-
-// When the screen closes:
-unsubscribe();
-await catalog.close();
 ```
 
-Each row exposes the immutable `RecordViewState` of one exact root. Rows become
-usable independently, keep their last records when a refresh fails, and receive
-cross-tab local-store updates through their context-bound record views. Root
-views open with at most four in flight. A current, ready row with no records
-means the root is missing; when `current` is false, replication is still behind.
+Each `{ context, root }` row has the root's immutable `RecordViewState`. Check
+its `status` and `current` exactly as for any other observed collection.
 
 By default, `contexts.list()` and `contexts.observe()` include both declared
 collaboration roots owned by the connected identity and accepted member
 contexts. If the same `(ownerDid, contextId)` appears through both routes,
 owner access wins.
 Owned roots are discovered from local records at roots named by `roleGroups`;
-accepted member contexts come from the durable followed-source catalog.
+accepted member contexts come from the durable, agent-local followed-source
+catalog.
 `contexts.open()` remains available for binding any non-role context path, but
 only declared collaboration roots are automatically enumerated.
 
 The catalog's `ready` state means its first local materialization completed.
-Record views expose `current`, and member contexts expose `refresh()`, when an
-operation needs replication freshness.
+Use record-view `current` or member-context `refresh()` when an operation needs
+replication freshness.
 
 ### Membership lifecycle and errors
 
@@ -622,15 +688,8 @@ operation needs replication freshness.
 - Other `follow()` failures use a sanitized message but preserve the original
   error as `cause` for diagnostics.
 
-Accepted contexts survive restart in the current agent. Acceptance does not yet
-replicate between a user's devices.
-The verified endpoint and role group remain pinned until an explicit re-follow
-selects replacements. When a role link pauses, Enbox checks the group's roles strongest
-first at that endpoint and replaces or removes the catalog entry only from that
-authoritative result. If the endpoint is unavailable, refresh and remote
-mutations fail without silently removing the catalog row. Enbox replicates only
-the readable context paths and keeps tenant DIDs, grants, progress cursors, and
-encryption envelopes out of the dapp surface.
+A failed refresh or remote mutation does not silently remove the existing
+catalog row.
 
 For wallet-delegated member sessions, a foreign owner's DWN can enforce the
 embedded grant's expiry but does not receive revocations stored only on the
