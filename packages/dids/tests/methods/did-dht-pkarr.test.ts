@@ -62,17 +62,17 @@ describe('createBep44PutMessage()', () => {
       const dnsPacket = createDnsPacketOfSize(BEP44_VALUE_MAX_BYTES);
       // Pin the setup: the BEP44 value is exactly at the limit, so the signing payload
       // (`3:seqi<seq>e1:v<len>:` prefix + value) is necessarily over 1000 bytes.
-      expect(dnsPacketEncode(dnsPacket).length).toBe(BEP44_VALUE_MAX_BYTES);
+      expect(dnsPacketEncode(dnsPacket)).toHaveLength(BEP44_VALUE_MAX_BYTES);
 
       const bep44Message = await createBep44PutMessage({ dnsPacket, publicKeyBytes, signer });
 
-      expect(bep44Message.v.length).toBe(BEP44_VALUE_MAX_BYTES);
+      expect(bep44Message.v).toHaveLength(BEP44_VALUE_MAX_BYTES);
       await expect(parseBep44GetMessage({ bep44Message })).resolves.toBeDefined();
     });
 
     it('rejects a DNS packet whose encoded value exceeds 1000 bytes', async () => {
       const dnsPacket = createDnsPacketOfSize(BEP44_VALUE_MAX_BYTES + 1);
-      expect(dnsPacketEncode(dnsPacket).length).toBe(BEP44_VALUE_MAX_BYTES + 1);
+      expect(dnsPacketEncode(dnsPacket)).toHaveLength(BEP44_VALUE_MAX_BYTES + 1);
 
       await expect(createBep44PutMessage({ dnsPacket, publicKeyBytes, signer }))
         .rejects.toThrow(DidErrorCode.InvalidDidDocumentLength);
