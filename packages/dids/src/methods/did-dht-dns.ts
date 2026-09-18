@@ -12,6 +12,14 @@ import { DidDhtRegisteredDidType, DidDhtRegisteredKeyType, DidDhtVerificationRel
 import { DidError, DidErrorCode } from '../did-error.js';
 import { keyConverter, validatePreviousDidProof } from './did-dht-utils.js';
 
+const textEncoder = new TextEncoder();
+
+/**
+ * Maximum byte length of a single DNS TXT record segment (`character-string`), per RFC 1035.
+ * Longer data must be split across multiple segments.
+ */
+export const TXT_SEGMENT_MAX_BYTES = 255;
+
 /**
  * The version of the DID DHT specification that is implemented by this library.
  */
@@ -103,28 +111,46 @@ export function parseTxtDataToString(txtData: TxtData): string {
  */
 export function parseTxtDataToObject(txtData: TxtData): Record<string, string> {
   return parseTxtDataToString(txtData).split(PROPERTY_SEPARATOR).reduce((acc: Record<string, string>, pair: string): Record<string, string> => {
-    const [key, value] = pair.split('=');
-    acc[key] = value;
+    // Split on the first '=' only, so values containing '=' (e.g. URL query strings or padded
+    // base64) are not truncated. A pair without '=' yields an undefined value, as before.
+    const separatorIndex = pair.indexOf('=');
+    const key = separatorIndex === -1 ? pair : pair.slice(0, separatorIndex);
+    const value = separatorIndex === -1 ? undefined : pair.slice(separatorIndex + 1);
+    acc[key] = value as string;
     return acc;
   }, {} as Record<string, string>);
 }
 
 /**
- * Splits a string into chunks of length 255 if the string exceeds length 255.
+ * Splits a string into chunks of at most {@link TXT_SEGMENT_MAX_BYTES} UTF-8 bytes each if the
+ * string exceeds that limit.
+ *
+ * DNS TXT record segments (`character-string`s) are limited to 255 bytes each, so chunking is
+ * done on UTF-8 byte length rather than UTF-16 code-unit count. Splits occur only at code
+ * point boundaries so multibyte characters are never split across segments, which would decode
+ * as U+FFFD replacement characters.
  *
  * @param data - The string to split into chunks.
- * @returns The original string if its length is less than or equal to 255, otherwise an array of chunked strings.
+ * @returns The original string if its UTF-8 byte length is at most 255, otherwise an array of chunked strings.
  */
 export function chunkDataIfNeeded(data: string): string | string[] {
-  if (data.length <= 255) {
+  if (textEncoder.encode(data).length <= TXT_SEGMENT_MAX_BYTES) {
     return data;
   }
 
-  // Split the data into chunks of 255 characters.
+  // Accumulate whole code points into segments of at most 255 UTF-8 bytes. `for...of` iterates
+  // by code point, so surrogate pairs (4-byte UTF-8 characters) are kept intact.
   const chunks: string[] = [];
-  for (let i = 0; i < data.length; i += 255) {
-    chunks.push(data.slice(i, i + 255)); // end index is ignored if it exceeds the length of the string
+  let chunk = '';
+
+  for (const char of data) {
+    if (textEncoder.encode(chunk + char).length > TXT_SEGMENT_MAX_BYTES) {
+      chunks.push(chunk);
+      chunk = '';
+    }
+    chunk += char;
   }
+  chunks.push(chunk);
 
   return chunks;
 }
@@ -374,7 +400,8 @@ function applyVerificationRelationshipsRecord(didDocument: DidDocument, answer: 
  * @param params - The parameters to use when converting a DID document to a DNS packet.
  * @param params.didDocument - The DID document to convert to a DNS packet.
  * @param params.didMetadata - The DID metadata to include in the DNS packet.
- * @param params.authoritativeGatewayUris - The URIs of the Authoritative Gateways to generate NS records from.
+ * @param params.authoritativeGatewayUris - The URIs of the Authoritative Gateways to generate NS records from. Each
+ * gateway's host is emitted in FQDN form; IP-literal gateways produce no NS record.
  * @param params.previousDidProof - The signature proof that this DID is linked to the given previous DID.
  * @returns A promise that resolves to a DNS packet.
  */
@@ -483,14 +510,18 @@ export async function toDnsPacket({ didDocument, didMetadata, authoritativeGatew
     data : rootRecord.join(PROPERTY_SEPARATOR)
   });
 
-  // Add an NS record for each authoritative gateway URI.
+  // Add an NS record for each authoritative gateway URI, using the gateway's host in FQDN form
+  // as the record data. IP-literal gateways carry no NS metadata and are omitted.
   for (const gatewayUri of authoritativeGatewayUris || []) {
-    nsRecords.push({
-      type : 'NS',
-      name : '_did.' + getUniqueDidSuffix(didDocument.id) + '.', // name of an NS record a authoritative gateway MUST end in `<ID>.`
-      ttl  : DNS_RECORD_TTL,
-      data : gatewayUri + '.'
-    });
+    const nsTarget = getGatewayNsTarget(gatewayUri);
+    if (nsTarget !== undefined) {
+      nsRecords.push({
+        type : 'NS',
+        name : '_did.' + getUniqueDidSuffix(didDocument.id) + '.', // name of an NS record a authoritative gateway MUST end in `<ID>.`
+        ttl  : DNS_RECORD_TTL,
+        data : nsTarget
+      });
+    }
   }
 
   // Create a DNS response packet with the authoritative answer flag set.
@@ -573,8 +604,8 @@ async function processVerificationMethodForDnsPacket({ index, verificationMethod
 }
 
 /**
- * Converts a single service to its DNS TXT record, chunking the data if it exceeds the 255
- * character DNS TXT record segment limit, and pushes it onto `txtRecords`.
+ * Converts a single service to its DNS TXT record, chunking the data if it exceeds the 255-byte
+ * DNS TXT record segment limit, and pushes it onto `txtRecords`.
  *
  * @param service - The service to convert.
  * @param index - The service's index within `didDocument.service`.
@@ -641,4 +672,49 @@ function appendVerificationRelationshipToRootRecord(
  */
 function getUniqueDidSuffix(did: string): string {
   return did.split(':')[2];
+}
+
+/**
+ * Matches an IPv4 address literal. Used to distinguish IP-literal gateway hosts from DNS names;
+ * post-URL-parsing the hostname is already normalized, so the plain dotted-quad form suffices.
+ */
+const IPV4_ADDRESS_REGEX = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+/**
+ * Extracts the NS record target for an authoritative gateway URI: the gateway's hostname as a
+ * fully qualified domain name (with trailing dot), as the DID DHT specification requires for
+ * authoritative gateway NS records.
+ *
+ * Gateway URIs may be full URIs (`https://gateway.example:8443/some/path`) or bare hosts
+ * (`gateway.example`, as used by the DID DHT specification test vectors). IP-literal gateways
+ * (e.g. `http://127.0.0.1:7527`) carry no NS metadata, so `undefined` is returned and no NS
+ * record should be emitted for them. URIs that cannot be parsed or have no host are passed
+ * through unchanged (in FQDN form), preserving the historical behavior for such inputs.
+ *
+ * @param gatewayUri - The gateway URI to normalize.
+ * @returns The FQDN form of the gateway host, or `undefined` for IP-literal gateways.
+ */
+function getGatewayNsTarget(gatewayUri: string): string | undefined {
+  // Accept both full URIs and bare hosts; a dummy scheme lets bare hosts parse. Malformed URIs
+  // and host-less ones (e.g. `file:`) both end up with an empty hostname here.
+  let hostname: string;
+  try {
+    hostname = new URL(gatewayUri.includes('://') ? gatewayUri : `https://${gatewayUri}`).hostname;
+  } catch {
+    hostname = '';
+  }
+
+  // Legacy passthrough: emit the URI as-is rather than rejecting inputs that older versions
+  // accepted. See https://github.com/enboxorg/enbox/issues/1718.
+  if (hostname === '') {
+    return `${gatewayUri}.`;
+  }
+
+  // An NS record names a host; IP literals carry no NS metadata. `URL.hostname` includes the
+  // brackets for IPv6 literals.
+  if (IPV4_ADDRESS_REGEX.test(hostname) || hostname.startsWith('[')) {
+    return undefined;
+  }
+
+  return `${hostname}.`;
 }

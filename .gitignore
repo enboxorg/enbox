@@ -181,6 +181,7 @@ coverage/
 test-results/
 playwright-report/
 __screenshots__/
+.vitest-attachments/
 
 .notes/
 TEST-COMPOUND-INDEX/

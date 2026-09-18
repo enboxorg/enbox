@@ -1,7 +1,7 @@
 import type { DidDocument } from '../../src/index.js';
 import type { PortableDid } from '../../src/types/portable-did.js';
 import type { Signer } from '@enbox/crypto';
-import type { Answer, Packet } from '@dnsquery/dns-packet';
+import type { Answer, Packet, TxtAnswer } from '@dnsquery/dns-packet';
 
 import { Convert } from '@enbox/common';
 import { DidResolverCacheMemory } from '../../src/resolver/resolver-cache-memory.js';
@@ -13,7 +13,7 @@ import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json'
 import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' with { type: 'json' };
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils } from '../../src/methods/did-dht.js';
+import { DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils, TXT_SEGMENT_MAX_BYTES } from '../../src/methods/did-dht.js';
 import { DidErrorCode, DidResolutionErrorCause } from '../../src/did-error.js';
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
@@ -1667,6 +1667,54 @@ describe('DidDhtDocument', () => {
       const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
       const encMethod = didResolutionResult.didDocument?.verificationMethod?.find(vm => vm.id.endsWith('#enc'));
       expect(encMethod?.publicKeyJwk?.alg).toBe('ECDH-ES+A256KW');
+    });
+
+    it('round-trips a multibyte service endpoint that exceeds the 255-byte TXT segment limit', async () => {
+      const didUri = 'did:dht:5cahcfh3zh8bqd5cn3y6inoea1b3d6kh85rjksne9e5dcyrc1ery';
+      // '€' is 3 UTF-8 bytes: this endpoint is under 255 UTF-16 code units but over 255 UTF-8
+      // bytes, so the `_s0` TXT record must be chunked at code-point boundaries.
+      const serviceEndpoint = `https://example.com/${'€'.repeat(100)}`;
+      const dnsPacket = await DidDhtDocument.toDnsPacket({
+        didDocument: {
+          id                 : didUri,
+          verificationMethod : [
+            {
+              id           : `${didUri}#0`,
+              type         : 'JsonWebKey',
+              controller   : didUri,
+              publicKeyJwk : {
+                crv : 'Ed25519',
+                kty : 'OKP',
+                x   : '2zHGF5m_DhcPbBZB6ooIxIOR-Vw-yJVYSPo2NgCMkgg',
+                kid : 'KDT9PKj4_z7gPk2s279Y-OGlMtt_L93oJzIaiVrrySU',
+                alg : 'EdDSA',
+              },
+            },
+          ],
+          service: [
+            {
+              id   : `${didUri}#dwn`,
+              type : 'DecentralizedWebNode',
+              serviceEndpoint,
+            },
+          ],
+        },
+        didMetadata: {
+          published: false,
+        }
+      });
+
+      const serviceRecord = dnsPacket.answers!.find((record: Answer): boolean => record.name.startsWith('_s0')) as TxtAnswer;
+      const segments = Array.isArray(serviceRecord.data) ? serviceRecord.data : [serviceRecord.data];
+      expect(segments.length).toBeGreaterThan(1);
+      for (const segment of segments) {
+        expect(testTextEncoder.encode(segment as string).length).toBeLessThanOrEqual(TXT_SEGMENT_MAX_BYTES);
+      }
+
+      const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
+
+      expect(didResolutionResult.didDocument!.service).toHaveLength(1);
+      expect(didResolutionResult.didDocument!.service![0].serviceEndpoint).toEqual([serviceEndpoint]);
     });
   });
 

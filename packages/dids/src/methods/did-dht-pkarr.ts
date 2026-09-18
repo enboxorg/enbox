@@ -11,6 +11,23 @@ import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/
 const textEncoder = new TextEncoder();
 
 /**
+ * Maximum byte length of the value `v` in a BEP44 mutable item, per the BEP44 specification.
+ */
+export const BEP44_VALUE_MAX_BYTES = 1000;
+
+/** Byte length of the Ed25519 signature in a BEP44 message. */
+const BEP44_SIGNATURE_BYTES = 64;
+
+/** Byte length of the big-endian sequence number in a BEP44 message. */
+const BEP44_SEQUENCE_BYTES = 8;
+
+/**
+ * Byte length of the fixed overhead in a Pkarr relay message (signature + sequence number),
+ * prepended to the BEP44 value.
+ */
+export const BEP44_MESSAGE_OVERHEAD_BYTES = BEP44_SIGNATURE_BYTES + BEP44_SEQUENCE_BYTES;
+
+/**
  * Encodes the BEP44 signing payload for a mutable item.
  *
  * BEP44 signs the dictionary body for `{ seq, v }`, without the surrounding `d` and `e` dictionary
@@ -147,20 +164,20 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGateway
     throw new DidError(DidErrorCode.NotFound, `Pkarr record not found for: ${identifier}`);
   }
 
-  if (messageBytes.byteLength < 72) {
+  if (messageBytes.byteLength < BEP44_MESSAGE_OVERHEAD_BYTES) {
     throw new DidError(DidErrorCode.InvalidDidDocumentLength, `Pkarr response must be at least 72 bytes but got: ${messageBytes.byteLength}`);
   }
 
-  if (messageBytes.byteLength > 1072) {
+  if (messageBytes.byteLength > BEP44_MESSAGE_OVERHEAD_BYTES + BEP44_VALUE_MAX_BYTES) {
     throw new DidError(DidErrorCode.InvalidDidDocumentLength, `Pkarr response exceeds 1000 byte limit: ${messageBytes.byteLength}`);
   }
 
   // Decode the BEP44 message from the byte array.
   const bep44Message: Bep44Message = {
     k   : publicKeyBytes,
-    seq : Number(new DataView(messageBytes).getBigUint64(64)),
-    sig : new Uint8Array(messageBytes, 0, 64),
-    v   : new Uint8Array(messageBytes, 72)
+    seq : Number(new DataView(messageBytes).getBigUint64(BEP44_SIGNATURE_BYTES)),
+    sig : new Uint8Array(messageBytes, 0, BEP44_SIGNATURE_BYTES),
+    v   : new Uint8Array(messageBytes, BEP44_MESSAGE_OVERHEAD_BYTES)
   };
 
   return bep44Message;
@@ -188,10 +205,10 @@ export async function pkarrPut({ gatewayUri, bep44Message, allowPrivateGatewayUr
   const url = pkarrUrl(bep44Message.k, gatewayUri);
 
   // Construct the body of the request according to the Pkarr relay specification.
-  const body = new Uint8Array(bep44Message.v.length + 72);
+  const body = new Uint8Array(bep44Message.v.length + BEP44_MESSAGE_OVERHEAD_BYTES);
   body.set(bep44Message.sig, 0);
-  new DataView(body.buffer).setBigUint64(bep44Message.sig.length, BigInt(bep44Message.seq));
-  body.set(bep44Message.v, bep44Message.sig.length + 8);
+  new DataView(body.buffer).setBigUint64(BEP44_SIGNATURE_BYTES, BigInt(bep44Message.seq));
+  body.set(bep44Message.v, BEP44_MESSAGE_OVERHEAD_BYTES);
 
   // Transmit the Put request to the Pkarr relay and get the response. Redirects are followed
   // manually so each `Location` is re-validated.
@@ -237,12 +254,14 @@ export async function createBep44PutMessage({ dnsPacket, publicKeyBytes, signer 
   // Encode the DNS packet into a byte array containing a UDP payload.
   const encodedDnsPacket = dnsPacketEncode(dnsPacket);
 
+  // BEP44 limits the value `v` to 1000 bytes. The limit applies to the value alone, not to
+  // the signing payload, which is always longer by the `3:seqi<seq>e1:v<len>:` prefix.
+  if (encodedDnsPacket.length > BEP44_VALUE_MAX_BYTES) {
+    throw new DidError(DidErrorCode.InvalidDidDocumentLength, `DNS packet exceeds the 1000 byte maximum size: ${encodedDnsPacket.length} bytes`);
+  }
+
   // Encode the sequence and DNS byte array to the BEP44 signing payload.
   const signingPayload = encodeBep44SigningPayload({ sequenceNumber, value: encodedDnsPacket });
-
-  if (signingPayload.length > 1000) {
-    throw new DidError(DidErrorCode.InvalidDidDocumentLength, `DNS packet exceeds the 1000 byte maximum size: ${signingPayload.length} bytes`);
-  }
 
   // Sign the BEP44 message.
   const signature = await signer.sign({ data: signingPayload });
