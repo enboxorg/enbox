@@ -911,6 +911,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     await expect(engine.retryRemoteNow(tenantDid, remoteEndpoint)).rejects.toBeInstanceOf(SyncPushFailuresError);
+    // The link rejection must not suppress Retry-now's existing quota work.
     expect(retryQuotaBlocks.calledOnce).toBe(true);
     expect(await getStoredLink()).toMatchObject({
       status   : 'paused',

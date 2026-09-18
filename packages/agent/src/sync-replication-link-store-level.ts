@@ -254,6 +254,7 @@ export class SyncReplicationLinkStoreLevel {
    * diagnostic when they supersede it. Transient normalization changes only
    * this caller's runtime view; successful initialization or controller-less
    * reconciliation later commits the resulting durable state.
+   *
    * @returns Whether a terminal authorization decision must be persisted.
    */
   private static normalizeResumedLink(existing: ReplicationLinkState): boolean {

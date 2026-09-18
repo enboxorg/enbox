@@ -5193,7 +5193,7 @@ export class SyncEngineLevel implements SyncEngine {
           transitionFence() && this._targetPlanner.topologyGeneration === topologyGeneration;
         // Retry-now has two independent responsibilities. A failed link pass
         // must not suppress the quota probes this API already promised.
-        let linkRetryFailure: { reason: unknown } | undefined;
+        let firstFailure: { reason: unknown } | undefined;
         try {
           const linkKey = buildLinkKey(
             target.did,
@@ -5221,15 +5221,15 @@ export class SyncEngineLevel implements SyncEngine {
             }
           }
         } catch (reason: unknown) {
-          linkRetryFailure = { reason };
+          firstFailure = { reason };
         }
         try {
           await this.retryQuotaBlocksForTarget(target, transitionFence, topologyGeneration);
         } catch (reason: unknown) {
-          linkRetryFailure ??= { reason };
+          firstFailure ??= { reason };
         }
-        if (linkRetryFailure !== undefined) {
-          throw linkRetryFailure.reason;
+        if (firstFailure !== undefined) {
+          throw firstFailure.reason;
         }
       }));
       const failedRetry = retryResults.find((result) => result.status === 'rejected');
