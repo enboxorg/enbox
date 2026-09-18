@@ -227,22 +227,43 @@ describe('connect protocol preparation', () => {
       });
     });
 
-    it('should return structured definition conflicts for wallet policy', async () => {
+    it('should identify owner-derived definition conflicts as override-eligible', async () => {
       const installedDefinition = {
-        ...notesProtocol,
-        types: { note: { schema: 'old-note' } },
+        ...installedEncryptedProtocol,
+        types: { ...installedEncryptedProtocol.types, legacy: { schema: 'legacy' } },
       } as DwnProtocolDefinition;
       const { agent } = stubAgent({ installed: installedDefinition });
 
       await expect(inspectConnectProtocol({
         agent      : agent,
         ownerDid   : 'did:example:owner',
-        definition : notesProtocol,
+        definition : encryptedProtocol,
+      })).resolves.toEqual({
+        status                     : 'conflict',
+        installedDefinition        : installedDefinition,
+        definitionOverrideEligible : true,
+        conflictReason             : `Protocol '${encryptedProtocol.protocol}' is already installed with a different definition. `
+          + 'Replacement requires explicit owner approval and owner-derived encryption keys.',
+      });
+    });
+
+    it('should not advertise an override when a definition conflict also has foreign owner keys', async () => {
+      const installedDefinition = {
+        ...installedEncryptedProtocol,
+        types         : { ...installedEncryptedProtocol.types, legacy: { schema: 'legacy' } },
+        $keyAgreement : { publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'foreign-key' } },
+      } as DwnProtocolDefinition;
+      const { agent } = stubAgent({ installed: installedDefinition });
+
+      await expect(inspectConnectProtocol({
+        agent      : agent,
+        ownerDid   : 'did:example:owner',
+        definition : encryptedProtocol,
       })).resolves.toEqual({
         status              : 'conflict',
         installedDefinition : installedDefinition,
-        conflictReason      : `Protocol '${notesProtocol.protocol}' is already installed with a different definition. `
-          + 'A connection request cannot replace an owner protocol definition.',
+        conflictReason      : `Protocol '${encryptedProtocol.protocol}' is already installed with a different definition. `
+          + 'Replacement requires explicit owner approval and owner-derived encryption keys.',
       });
     });
 

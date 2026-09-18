@@ -67,6 +67,8 @@ export type ConnectProtocolInspection = Readonly<{
   status: ProtocolSetupStatus;
   installedDefinition?: DwnProtocolDefinition;
   conflictReason?: string;
+  /** `true` when explicit owner consent may safely replace the installed authored definition. */
+  definitionOverrideEligible?: true;
 }>;
 
 /** Parameters for {@link inspectConnectProtocol}. */
@@ -320,8 +322,8 @@ function getProtocolSetupConflictMessage(
     installedDefinition !== undefined &&
     !authoredProtocolDefinitionsEqual(installedDefinition, requestedDefinition)
   ) {
-    return `Protocol '${requestedDefinition.protocol}' is already installed with a different definition. `
-      + 'A connection request cannot replace an owner protocol definition.';
+    const replacementRequirement = 'Replacement requires explicit owner approval and owner-derived encryption keys.';
+    return `Protocol '${requestedDefinition.protocol}' is already installed with a different definition. ${replacementRequirement}`;
   }
 
   return `Protocol '${requestedDefinition.protocol}' has encryption keys that do not match this wallet owner.`;
@@ -421,11 +423,14 @@ export async function inspectConnectProtocol({
   const conflictReason = setupStatus === 'conflict'
     ? getProtocolSetupConflictMessage(installedDefinition, definition)
     : undefined;
+  const definitionOverrideEligible = setupStatus === 'conflict'
+    && await isReplaceableAuthoredDefinitionConflict(installedDefinition, definition, ownerDid, agent);
 
   return {
     status: setupStatus,
     ...(installedDefinition === undefined ? {} : { installedDefinition }),
     ...(conflictReason === undefined ? {} : { conflictReason }),
+    ...(definitionOverrideEligible ? { definitionOverrideEligible: true } : {}),
   };
 }
 
