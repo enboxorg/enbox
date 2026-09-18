@@ -164,6 +164,13 @@ export type ExecuteConnectApprovalParams = {
   approvedSessionTtlSeconds?: number;
 
   /**
+   * Requested protocol URIs whose authored definitions the owner explicitly
+   * approved replacing. Unsafe URI, requester-key, and owner-key conflicts
+   * remain fail-closed.
+   */
+  approvedProtocolOverrides?: readonly string[];
+
+  /**
    * Synchronous observer notified as the ceremony enters each major phase.
    * Observer failures are isolated and cannot fail or interrupt approval.
    */
@@ -713,9 +720,9 @@ function reportConnectApprovalProgress(
  * 2. Uses a requester-supplied delegate DID, or mints one (did:jwk with the
  *    derived X25519 private key appended) when omitted.
  * 3. Applies the provider-approved session TTL and builds the session metadata.
- * 4. Prepares each requested protocol on the owner's DWNs: install or
- *    encryption upgrade with fail-closed conflict detection and remote
- *    convergence verification.
+ * 4. Prepares each requested protocol on the owner's DWNs: install,
+ *    encryption upgrade, or explicit owner-approved definition replacement,
+ *    with fail-closed key validation and remote convergence verification.
  * 5. Creates permission grants (scope guards enforced) and delivers them to
  *    every owner DWN endpoint.
  * 6. Creates and fans out durable grantKey records for encrypted read scopes.
@@ -729,6 +736,7 @@ function reportConnectApprovalProgress(
 export async function executeConnectApproval(params: ExecuteConnectApprovalParams): Promise<ConnectApprovalResult> {
   const { agent, providerDid, request } = params;
   assertExpectedProviderDid(request, providerDid);
+  const approvedProtocolOverrides = new Set(params.approvedProtocolOverrides);
 
   const approvalStart = nowMs();
   const numProtocols = request.permissionRequests.length;
@@ -814,7 +822,10 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
               providerDid,
               agent,
               protocolDefinition,
-              dwnEndpointUrls,
+              {
+                allowDefinitionOverride : approvedProtocolOverrides.has(protocolDefinition.protocol),
+                resolvedDwnEndpointUrls : dwnEndpointUrls,
+              },
             )
           ));
         }

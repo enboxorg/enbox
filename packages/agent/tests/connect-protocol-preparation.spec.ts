@@ -338,6 +338,75 @@ describe('connect protocol preparation', () => {
       expect(sendDwnRequest.callCount).toBe(0);
     });
 
+    it('should replace an owner-approved authored-definition conflict locally and remotely', async () => {
+      const olderInstalled = {
+        ...notesProtocol,
+        types: { note: { schema: 'old-note' } },
+      } as DwnProtocolDefinition;
+      const { agent, processDwnRequest, sendDwnRequest } = stubAgent({
+        installed    : olderInstalled,
+        remoteBefore : olderInstalled,
+        remoteAfter  : notesProtocol,
+      });
+
+      await prepareProtocol('did:example:owner', agent, notesProtocol, {
+        allowDefinitionOverride: true,
+      });
+
+      expect(configureCalls(processDwnRequest)).toHaveLength(1);
+      expect(remoteConfigureSends(sendDwnRequest)).toHaveLength(1);
+    });
+
+    it('should replace an owner-approved remote definition without reconfiguring current local state', async () => {
+      const olderRemote = {
+        ...notesProtocol,
+        types: { note: { schema: 'old-note' } },
+      } as DwnProtocolDefinition;
+      const { agent, processDwnRequest, sendDwnRequest } = stubAgent({
+        installed    : notesProtocol,
+        remoteBefore : olderRemote,
+        remoteAfter  : notesProtocol,
+      });
+
+      await prepareProtocol('did:example:owner', agent, notesProtocol, {
+        allowDefinitionOverride: true,
+      });
+
+      expect(configureCalls(processDwnRequest)).toHaveLength(0);
+      expect(remoteConfigureSends(sendDwnRequest)).toHaveLength(1);
+    });
+
+    it('should keep owner-key conflicts fail-closed when definition replacement is approved', async () => {
+      const installedWithForeignKeys = {
+        ...installedEncryptedProtocol,
+        types         : { ...installedEncryptedProtocol.types, legacy: { schema: 'legacy' } },
+        $keyAgreement : { publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'foreign-key' } },
+      } as DwnProtocolDefinition;
+      const { agent, processDwnRequest, sendDwnRequest } = stubAgent({ installed: installedWithForeignKeys });
+
+      await expect(prepareProtocol('did:example:owner', agent, encryptedProtocol, {
+        allowDefinitionOverride: true,
+      })).rejects.toThrow('already installed with a different definition');
+
+      expect(configureCalls(processDwnRequest)).toHaveLength(0);
+      expect(sendDwnRequest.callCount).toBe(0);
+    });
+
+    it('should keep requester-managed encryption metadata fail-closed when replacement is approved', async () => {
+      const requestedWithKeys = {
+        ...notesProtocol,
+        $keyAgreement: { publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'requester-key' } },
+      } as DwnProtocolDefinition;
+      const { agent, processDwnRequest, sendDwnRequest } = stubAgent({ installed: notesProtocol });
+
+      await expect(prepareProtocol('did:example:owner', agent, requestedWithKeys, {
+        allowDefinitionOverride: true,
+      })).rejects.toThrow('contains wallet-managed encryption keys');
+
+      expect(configureCalls(processDwnRequest)).toHaveLength(0);
+      expect(sendDwnRequest.callCount).toBe(0);
+    });
+
     it('should throw when installed encryption keys are not derived from the wallet owner', async () => {
       const poisonedInstall = {
         ...installedEncryptedProtocol,
