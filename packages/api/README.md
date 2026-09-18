@@ -549,8 +549,8 @@ cursors remain internal.
 Each context exposes its `rootRecordId` and a collision-safe `key` equivalent
 to `protocolContextKey(context.ownerDid, context.id)`.
 
-The complete owner/member workflow and current limitations live in the
-canonical [API guide](https://enbox-docs.pages.dev/docs/packages/api).
+The complete owner/member workflow and current limitations live in
+[Shared contexts](https://enbox-docs.pages.dev/docs/packages/api#shared-contexts).
 
 ## Anonymous Reads
 

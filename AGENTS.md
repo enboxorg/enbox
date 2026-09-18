@@ -690,6 +690,10 @@ application-owned service worker that calls `activatePolyfills()` before
 rendering. The page owns the session, views, and sockets; the worker owns DRL
 fetches and the offline shell.
 
+For multi-party data, use the typed shared-context surface instead of manually
+routing foreign-tenant operations. The canonical role, invitation, owner, and
+recipient workflow is [Shared contexts](apps/docs/content/docs/packages/api.mdx#shared-contexts).
+
 Do not copy Node-global shims, worker `process`/IIFE workarounds, historical API
 result compatibility, or worker-hosted session patterns from older apps.
 

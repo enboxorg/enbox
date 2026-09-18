@@ -294,6 +294,26 @@ as `id` and `contextId` explicitly; spreading a handle does not serialize its
 accessor properties. Nested paths must always receive the exact parent
 `contextId` through `parentContextId` on create and `within` on reads or views.
 
+## Add multi-party data
+
+Model collaboration in the protocol instead of copying each record into every
+user's tenant. Use a `recipient` rule for one record addressed to one DID. Use
+a shared context when several related records need roles such as editor and
+viewer.
+
+A shared context remains authoritative in its owner's DWN. The owner assigns a
+role record whose recipient is another identity, then sends an invitation for
+discovery. Acceptance verifies that role and starts an exact-context replica;
+both sides then use the same context-bound records API and live views. The
+invitation is not the permission, and a local replica is not a second owner.
+
+See [Shared contexts](/docs/packages/api#shared-contexts) for one complete
+protocol policy and workflow: role paths, member/viewer actions, owner role
+assignment and invitation, recipient acceptance, live access lists, role
+changes, revocation, and offline behavior. Use `contexts`, `members`, and
+`context.records` from that guide instead of manually threading `from`,
+`protocolRole`, or a root `within` through dapp code.
+
 ## Hosting requirements
 
 Serve the SPA over HTTPS and route application paths to `index.html`. Apply
@@ -332,6 +352,9 @@ Before calling the dapp complete, verify all of these in a real browser:
 - creating or changing a record updates an `observe()` view without a timer or
   refresh button;
 - a change from another connected tab or device arrives through the live path;
+- for a collaborative protocol, two distinct identities prove that an editor
+  can mutate, a viewer cannot, role changes take effect, and revocation retires
+  retained member handles;
 - existing records and the application shell render offline, an offline write
   stays visible, and reconnect eventually makes the view current;
 - a real DRL renders and a previously cached DRL remains readable offline;
