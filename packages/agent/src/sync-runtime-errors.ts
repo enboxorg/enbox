@@ -1,6 +1,6 @@
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 
-import type { PushFailure, SyncAuthorization } from './types/sync.js';
+import type { PushFailure, SyncAuthorization, SyncLinkRecoveryState } from './types/sync.js';
 
 /**
  * A queued `sync()` follow-up was invalidated by an engine runtime transition
@@ -78,6 +78,11 @@ export function isMissingRoleAuthorizationFailure(detail: string | undefined): b
 export function isNonRetryableSyncAuthorizationFailure(detail: string | undefined): boolean {
   return isTerminalSyncAuthorizationFailure(detail) ||
     isMissingRoleAuthorizationFailure(detail);
+}
+
+/** Whether a durable recovery diagnostic represents work that may be retried. */
+export function isRetryableSyncRecovery(recovery: SyncLinkRecoveryState | undefined): recovery is SyncLinkRecoveryState {
+  return recovery !== undefined && !isNonRetryableSyncAuthorizationFailure(recovery.error);
 }
 
 /** Stable conversion for event diagnostics. */

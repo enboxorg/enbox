@@ -1256,6 +1256,35 @@ describe('SyncEngineLevel — followed sources', () => {
     await controller.dispose();
   });
 
+  it('should let an invalid-support pause supersede legacy transient recovery', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const followed = source();
+    const target = targetFor(followed);
+    const link = await createRoleLink(engine, target);
+    // Emulate the durable shape written by older versions after exhausting a
+    // transient repair. A later policy failure deliberately pauses this link.
+    await internal.replicationLinkStore.setStatus(link, 'paused');
+    await internal.replicationLinkStore.setRecovery(link, {
+      error    : 'offline',
+      failedAt : '2026-09-17T12:00:00.000Z',
+    });
+    sinon.stub(console, 'error');
+
+    await internal.pauseRoleLinkForError(
+      target,
+      link,
+      new RoleReplicationSupportError('unrelated support entry'),
+    );
+
+    const [paused] = await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID);
+    expect(paused).toMatchObject({ status: 'paused' });
+    expect(paused.recovery).toBeUndefined();
+    const reloaded = await createRoleLink(engine, target);
+    expect(reloaded.status).toBe('paused');
+    expect(reloaded.recovery).toBeUndefined();
+  });
+
   it('should retain an aged deferred role-feed entry for a later retry', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
