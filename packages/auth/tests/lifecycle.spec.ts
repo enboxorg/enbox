@@ -101,6 +101,45 @@ function buildUnscopedGrantEntry(
 }
 
 describe('ensureVaultReady', () => {
+  test('reports a recovered password commit before starting the agent', async () => {
+    const operations: string[] = [];
+    const agent = createMockAgent({
+      start                                : async () => { operations.push('start'); },
+      vaultResetPasswordWithRecoveryPhrase : async () => { operations.push('reset'); },
+    });
+
+    await ensureVaultReady({
+      userAgent                : agent,
+      emitter                  : new AuthEventEmitter(),
+      password                 : 'replacement-password',
+      isFirstLaunch            : false,
+      recoveryPhrase           : 'word '.repeat(12).trim(),
+      onVaultPasswordCommitted : () => { operations.push('committed'); },
+    });
+
+    expect(operations).toEqual(['reset', 'committed', 'start']);
+  });
+
+  test('does not report a recovered password commit when reset fails', async () => {
+    let commitReported = false;
+    const agent = createMockAgent({
+      vaultResetPasswordWithRecoveryPhrase: async () => {
+        throw new Error('vault store unavailable');
+      },
+    });
+
+    await expect(ensureVaultReady({
+      userAgent                : agent,
+      emitter                  : new AuthEventEmitter(),
+      password                 : 'replacement-password',
+      isFirstLaunch            : false,
+      recoveryPhrase           : 'word '.repeat(12).trim(),
+      onVaultPasswordCommitted : () => { commitReported = true; },
+    })).rejects.toThrow('vault store unavailable');
+
+    expect(commitReported).toBe(false);
+  });
+
   test('translates HD vault recovery phrase mismatch errors', async () => {
     const emitter = new AuthEventEmitter();
     let startCalled = false;

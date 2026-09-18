@@ -481,6 +481,16 @@ export interface RestoreFromPhraseOptions extends Omit<VaultConnectOptions, 'dwn
 
   /** Deliberately replace owned DID endpoints after recovery; omitted to preserve advertised endpoints. */
   dwnEndpoints?: string[];
+
+  /**
+   * Called after the recovered vault has durably adopted `password`, before
+   * remote identity recovery and session finalization continue.
+   *
+   * Credential providers can use this boundary to distinguish a failure that
+   * left the previous vault password intact from one that happened after the
+   * new password committed.
+   */
+  onVaultPasswordCommitted?: () => void;
 }
 
 // ─── DWeb Connect ────────────────────────────────────────────────
