@@ -470,9 +470,12 @@ requires `pagination.limit`; a materialized query requires the same bound. The
 decoded application value rides beside the handle, not inside it.
 
 > [!WARNING]
-> Typed reads, queries, and views reject a missing or malformed `within` for a
-> nested protocol path. Pass the exact parent context instead of weakening a
-> failed scoped operation into a tenant-wide query.
+> Unbound typed queries and views reject a missing or malformed `within` for a
+> nested protocol path. An unbound typed read rejects a malformed `within`, but an
+> omitted value currently searches that path across the tenant and can return
+> a sibling from another context. Pass the exact parent context on every nested
+> read. A context-bound records handle supplies its root scope automatically;
+> deeper entity subtrees still need their exact context.
 >
 > Nested records report composite `contextId`s (`<parentCtx>/<ownId>`; root
 > records carry their bare own id), and there is no `parentContextId` metadata

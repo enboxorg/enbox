@@ -193,6 +193,9 @@ owner/vault flow. Hosted protocol publication is opt-in through
 the app locally. Invitation receiving does require the protocol to have been
 installed on the recipient's hosted DWN, so apps should perform hosted
 readiness when enabling receiving and surface delivery failures for retry.
+Lower-level owner lifecycles call `enbox.protocols.ensureReady()` with
+`publish: false` when the DID has no hosted `#dwn`; omitting that option attempts
+hosted publication by default.
 
 ## Typed records
 
@@ -210,8 +213,11 @@ const pageRecord = await notebooks.records.create('notebook/page', {
   parentContextId : notebook.contextId,
 });
 
-// Read
-const found = await notebooks.records.read('notebook/page', pageRecord.id);
+// Read a nested record inside its exact parent context
+const found = await notebooks.records.read('notebook/page', {
+  within : notebook.contextId,
+  filter : { recordId: pageRecord.id },
+});
 if (found !== undefined) {
   console.log((await found.value()).summary);
 }
@@ -265,6 +271,51 @@ already-absent record or a canonical tombstone conflict as complete.
 Context-bound deletion is stricter: its initial authority miss requires an
 authorized tombstone because the ID may identify a record outside that context.
 An exact same-protocol missing-parent write throws `RecordParentNotFoundError`.
+
+<Callout type="warn" title="Scope every unbound nested read">
+Unbound nested queries and views reject a missing or malformed `within`. An
+unbound `typed.records.read()` rejects a malformed value but currently accepts an
+omitted one, which searches that protocol path across the tenant and can return
+a sibling from another context. Pass the exact `within` value on every nested
+read. A `context.records` handle supplies its shared root automatically, but a
+deeper entity subtree still needs the entity's exact context.
+</Callout>
+
+### Nested entity trees
+
+Use a returned `contextId` as the address of a mid-tree UI entity. For example,
+an album can contain photos with sibling renditions beneath each photo:
+
+```ts
+const photo = await photos.records.create('library/album/photo', {
+  data,
+  parentContextId: album.contextId,
+});
+
+await photos.records.create('library/album/photo/thumbnail', {
+  data: thumbnail,
+  parentContextId: photo.contextId,
+});
+
+const found = await photos.records.read('library/album/photo/thumbnail', {
+  within : photo.contextId,
+  filter : {},
+});
+
+await photos.records.delete('library/album/photo', {
+  recordId : photo.id,
+  within   : album.contextId,
+  prune    : true,
+});
+```
+
+Create preview and original siblings with the same `parentContextId`. Round-trip
+`photo.contextId`; never rebuild its composite segments. Path plus `within`
+addresses one record only when the app enforces one current child per path and
+context, so include `recordId` when multiples are allowed. `prune: true` removes
+the entity and its descendants and cleans up partially failed multi-record
+creates. For materialized rows, project `row.record.id` and
+`row.record.contextId` explicitly; never spread the live record handle.
 
 ### Compact a delta history
 
@@ -563,6 +614,16 @@ Once records have replicated, member reads, queries, and views remain available
 offline. Member mutations are sent to the context owner's DWN and therefore
 require it to be reachable; Enbox does not queue those mutations offline.
 
+The followed-source catalog survives restarts only in the same agent storage.
+A fresh browser, device, or cleared profile starts with no accepted follows,
+and the accepted invitation may already be gone. For cross-device “shared with
+me,” add an encrypted root record such as `shareBookmark` to the application
+protocol and store `{ ownerDid, contextId, group }` after acceptance. On
+startup, observe those bookmarks and call
+`contexts.follow({ ownerDid, id: contextId, group })` for any missing catalog
+entry. Treat the owner's role record as authority: keep a bookmark after a
+transient follow failure, while a confirmed revocation should retire it.
+
 ### One owned-and-shared catalog
 
 ```ts
@@ -602,7 +663,8 @@ collaboration roots owned by the connected identity and accepted member
 contexts. If the same `(ownerDid, contextId)` appears through both routes,
 owner access wins.
 Owned roots are discovered from local records at roots named by `roleGroups`;
-accepted member contexts come from the durable followed-source catalog.
+accepted member contexts come from the durable, agent-local followed-source
+catalog.
 `contexts.open()` remains available for binding any non-role context path, but
 only declared collaboration roots are automatically enumerated.
 
@@ -626,11 +688,8 @@ replication freshness.
 - Other `follow()` failures use a sanitized message but preserve the original
   error as `cause` for diagnostics.
 
-Accepted contexts survive restart in the current agent. Acceptance does not yet
-replicate between a user's devices.
-If a product needs cross-device “shared with me,” store an app-owned encrypted
-bookmark and re-follow it on a new agent. A failed refresh or remote mutation
-does not silently remove the existing catalog row.
+A failed refresh or remote mutation does not silently remove the existing
+catalog row.
 
 For wallet-delegated member sessions, a foreign owner's DWN can enforce the
 embedded grant's expiry but does not receive revocations stored only on the

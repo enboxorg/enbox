@@ -64,8 +64,8 @@ renewal.
 A refresh can publish a replacement `enbox` facade. Bind views and
 subscriptions to the current facade and recreate them when it changes. The
 ecosystem wallet has provider responsibilities that require lower-level auth
-ownership; ordinary dapps should copy Notesd's connection-store boundary, not
-the wallet's internals.
+ownership; ordinary dapps should follow the connection-store boundary in
+[`Build a browser dapp`](../../apps/docs/content/docs/guides/browser-dapp.mdx).
 
 Keep the browser Level stack, which resolves to `browser-level` over IndexedDB.
 It persists the local replica and coordinates same-origin access across tabs
