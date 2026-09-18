@@ -113,6 +113,9 @@ export async function vaultConnect(
 
   const suppliedRecoveryPhrase = 'recoveryPhrase' in options ? options.recoveryPhrase : undefined;
   const isRecovery = suppliedRecoveryPhrase !== undefined;
+  const onVaultPasswordCommitted = isRecovery && 'onVaultPasswordCommitted' in options
+    ? options.onVaultPasswordCommitted
+    : undefined;
   const explicitDwnEndpoints = options.dwnEndpoints === undefined
     ? undefined
     : normalizeDwnEndpoints(options.dwnEndpoints);
@@ -139,6 +142,7 @@ export async function vaultConnect(
     isFirstLaunch,
     recoveryPhrase: suppliedRecoveryPhrase,
     dwnEndpoints,
+    onVaultPasswordCommitted,
   }));
 
   // Apply a stored local-node pairing when the agent was created in local mode.

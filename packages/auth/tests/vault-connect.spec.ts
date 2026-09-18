@@ -231,6 +231,32 @@ describe('vaultConnect', () => {
     expect(createCalls).toHaveLength(0);
   });
 
+  test('reports an existing-vault password commit before later recovery failure', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const operations: string[] = [];
+    const agent = createMockAgent({
+      firstLaunch  : async () => false,
+      identityList : async () => [],
+      syncSync     : async () => {
+        operations.push('recover');
+        throw new Error('remote unavailable');
+      },
+      vaultResetPasswordWithRecoveryPhrase: async () => { operations.push('reset'); },
+    });
+
+    await expect(vaultConnect(
+      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      {
+        recoveryPhrase           : 'existing recovery phrase',
+        password                 : 'replacement-password',
+        onVaultPasswordCommitted : () => { operations.push('committed'); },
+      },
+    )).rejects.toThrow('remote unavailable');
+
+    expect(operations).toEqual(['reset', 'committed', 'recover']);
+  });
+
   test('registers the newly created identity tenant when registration options are provided', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();

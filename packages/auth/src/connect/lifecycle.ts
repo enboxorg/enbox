@@ -166,6 +166,7 @@ export async function ensureVaultReady(params: {
   isFirstLaunch: boolean;
   recoveryPhrase?: string;
   dwnEndpoints?: string[];
+  onVaultPasswordCommitted?: () => void;
 }): Promise<string | undefined> {
   const { userAgent, emitter, password, isFirstLaunch } = params;
   let recoveryPhrase: string | undefined;
@@ -192,6 +193,10 @@ export async function ensureVaultReady(params: {
       }
       throw error;
     }
+  }
+
+  if (params.recoveryPhrase !== undefined) {
+    params.onVaultPasswordCommitted?.();
   }
 
   await userAgent.start({ password });
