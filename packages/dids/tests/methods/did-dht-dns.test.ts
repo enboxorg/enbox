@@ -1,6 +1,5 @@
 import type { Packet, StringAnswer, TxtAnswer } from '@dnsquery/dns-packet';
 
-import { DidErrorCode } from '../../src/did-error.js';
 import {
   chunkDataIfNeeded,
   parseTxtDataToObject,
@@ -131,10 +130,10 @@ describe('toDnsPacket() — authoritative gateway NS records', () => {
     expect(nsTargets(await toPacket([]))).toEqual([]);
   });
 
-  it('throws InvalidGatewayUri for malformed or host-less gateway URIs', async () => {
-    // Malformed: fails URL parsing in any WHATWG URL implementation.
-    await expect(toPacket(['https://'])).rejects.toThrow(DidErrorCode.InvalidGatewayUri);
-    // Parses, but has no host to name in an NS record.
-    await expect(toPacket(['file:///etc/hosts'])).rejects.toThrow(DidErrorCode.InvalidGatewayUri);
+  it('passes malformed or host-less gateway URIs through unchanged, as older versions did', async () => {
+    // Legacy behavior is preserved rather than rejecting such inputs; whether to validate
+    // strictly instead is an open question (https://github.com/enboxorg/enbox/issues/1718).
+    const packet = await toPacket(['https://', 'file:///etc/hosts']);
+    expect(nsTargets(packet)).toEqual(['https://.', 'file:///etc/hosts.']);
   });
 });

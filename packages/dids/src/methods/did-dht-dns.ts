@@ -404,7 +404,6 @@ function applyVerificationRelationshipsRecord(didDocument: DidDocument, answer: 
  * gateway's host is emitted in FQDN form; IP-literal gateways produce no NS record.
  * @param params.previousDidProof - The signature proof that this DID is linked to the given previous DID.
  * @returns A promise that resolves to a DNS packet.
- * @throws {@link DidError} with {@link DidErrorCode.InvalidGatewayUri} if an authoritative gateway URI is malformed or has no host.
  */
 export async function toDnsPacket({ didDocument, didMetadata, authoritativeGatewayUris, previousDidProof }: {
   didDocument: DidDocument;
@@ -689,11 +688,11 @@ const IPV4_ADDRESS_REGEX = /^\d{1,3}(\.\d{1,3}){3}$/;
  * Gateway URIs may be full URIs (`https://gateway.example:8443/some/path`) or bare hosts
  * (`gateway.example`, as used by the DID DHT specification test vectors). IP-literal gateways
  * (e.g. `http://127.0.0.1:7527`) carry no NS metadata, so `undefined` is returned and no NS
- * record should be emitted for them.
+ * record should be emitted for them. URIs that cannot be parsed or have no host are passed
+ * through unchanged (in FQDN form), preserving the historical behavior for such inputs.
  *
  * @param gatewayUri - The gateway URI to normalize.
  * @returns The FQDN form of the gateway host, or `undefined` for IP-literal gateways.
- * @throws {@link DidError} with {@link DidErrorCode.InvalidGatewayUri} if the URI is malformed or has no host.
  */
 function getGatewayNsTarget(gatewayUri: string): string | undefined {
   // Accept both full URIs and bare hosts; a dummy scheme lets bare hosts parse. Malformed URIs
@@ -705,8 +704,10 @@ function getGatewayNsTarget(gatewayUri: string): string | undefined {
     hostname = '';
   }
 
+  // Legacy passthrough: emit the URI as-is rather than rejecting inputs that older versions
+  // accepted. See https://github.com/enboxorg/enbox/issues/1718.
   if (hostname === '') {
-    throw new DidError(DidErrorCode.InvalidGatewayUri, `Invalid gateway URI: ${gatewayUri}`);
+    return `${gatewayUri}.`;
   }
 
   // An NS record names a host; IP literals carry no NS metadata. `URL.hostname` includes the
