@@ -1,78 +1,33 @@
 ---
 title: "@enbox/browser"
-description: Browser-first Enbox entrypoint for app APIs, auth, wallet connect, and DWeb helpers.
+description: Browser entrypoint for app APIs, auth, wallet connect, and DWeb helpers.
 ---
 
-`@enbox/browser` is the browser-first package for Enbox apps. It re-exports the
-main app API from `@enbox/api`, auth/session helpers from `@enbox/auth`, and
-browser-only connect and DWeb utilities.
-
-## Installation
+`@enbox/browser` is the package entrypoint for browser dapps. It re-exports the
+application API from `@enbox/api`, the browser-safe auth surface, and the wallet
+connect and DWeb utilities.
 
 ```bash
 bun add @enbox/browser
 ```
 
-## Usage
+Follow [Build a browser dapp](/docs/guides/browser-dapp) for the complete
+application scaffold. It is the canonical source for connection-store usage,
+the required service worker, live records, offline behavior, and deployment.
 
-```ts
-import {
-  BrowserConnectHandler,
-  createConnectionStore,
-  defineApplicationManifest,
-} from '@enbox/browser';
-
-const application = defineApplicationManifest({
-  protocols: [NotesProtocol],
-} as const);
-const store = createConnectionStore({
-  application,
-  connectHandler: BrowserConnectHandler({ appName: 'Notes' }),
-  monitor: { autoRefresh: {} },
-});
-
-let snapshot = await store.initialize();
-if (snapshot.phase === 'disconnected') {
-  snapshot = await store.connect();
-}
-if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
-}
-
-const enbox = snapshot.enbox;
-
-// ...use enbox...
-
-// On sign-out and application shutdown:
-await store.disconnect();
-await store.dispose();
-```
-
-This is the delegated wallet flow. To create a local owner identity, omit
-`connectHandler` and call `store.connectVault({ createIdentity: true })`. The
-manifest-backed store owns restoration, refresh, facade replacement, and
-teardown. See [Build a browser dapp](/docs/guides/browser-dapp) for the complete
-service-worker, live-view, and hosting setup.
-
-## Browser entrypoint
-
-The package root has a browser condition that resolves to `dist/browser.mjs`.
-Apps and service-worker builds can use the bare `@enbox/browser` import without
-adding Enbox-specific Node global shims.
-
-See [Browser packages and storage](/docs/guides/browser-bundlers) for lower-level
-bundler and storage details.
+[Browser package behavior](/docs/guides/browser-bundlers) documents conditional
+exports, lower-level imports, and persistent storage.
 
 ## Key exports
 
 | Export | Description |
 |---|---|
-| `Enbox` | High-level app API from `@enbox/api` |
+| `Enbox` | High-level application API from `@enbox/api` |
 | `createConnectionStore()` | Application connection lifecycle and observable snapshots |
-| `defineProtocol()` | Type-safe protocol definition helper |
+| `defineProtocol()` | Typed protocol definition helper |
 | `recordCodecs` | JSON, text, bytes, Blob, and private-file envelope codecs |
-| `AuthManager` | Auth/session lifecycle from `@enbox/auth` |
-| `BrowserConnectHandler` | Browser wallet/connect handler |
+| `AuthManager` | Lower-level auth/session lifecycle |
+| `BrowserConnectHandler` | Browser wallet connect handler |
 | `connectViaPopup()` | Low-level DWeb Connect popup handshake |
 | `activatePolyfills()` | DRL and DWeb browser feature activation |
 | `runConnectModal()` | Built-in wallet/connect method selector |

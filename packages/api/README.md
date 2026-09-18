@@ -141,13 +141,6 @@ settle pass repairs missed notifications; it is not an application polling
 API. Use `observe()` and `subscribe()` to keep application state current rather
 than periodically re-querying.
 
-In a browser, the page owns the connection store, record views, sync engine,
-and sockets. A required service worker calls `activatePolyfills()` to own DRL
-fetches and the offline application shell. Do not host permanent sockets in
-the worker: browsers may terminate it between events. See the
-[browser dapp guide](https://enbox-docs.pages.dev/docs/guides/browser-dapp) for
-the complete runtime and build wiring.
-
 ## Typed Protocols
 
 ```ts
@@ -243,13 +236,7 @@ const store = createConnectionStore({
   connectHandler,
   monitor: { autoRefresh: {} },
 });
-let snapshot = await store.initialize(); // restored sessions are readied before publication
-if (snapshot.phase !== 'connected') {
-  snapshot = await store.connect();
-}
-if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
-}
+await store.initialize(); // restored sessions are readied before publication
 ```
 
 The connection store treats the manifest as the canonical protocol source. It
@@ -276,9 +263,10 @@ approval. A delegated sync registration that is missing, belongs to another
 delegate, or omits any manifest protocol with read permission also fails closed:
 the store closes and hides the public facade, stops its monitor, and preserves
 the underlying auth session so the next `store.connect()` repairs approval
-through refresh. On a connection store, `connect()` is delegated and a
-per-call `password` unlocks the delegate vault; use `connectVault()` for an
-owner.
+through refresh. When no session was restored, call `connect()` from the
+platform's connection action. In browsers, invoke it directly from a user
+gesture so the wallet popup is not blocked. A per-call `password` unlocks the
+delegate vault; use `connectVault()` for an owner.
 
 Advanced integrations that own auth directly must project and ready the
 manifest explicitly, and separately close both the session facade and manager:
@@ -602,32 +590,12 @@ Permission request, grant, and revocation administration remains available at
 High-level typed mutations persist automatically. Use the raw agent request
 methods only when an advanced workflow must preserve an exact signed message.
 
-## Browser Builds
+## Browser applications
 
-Browser apps typically use `@enbox/browser`, which re-exports the main app APIs
-and adds browser-specific connect helpers:
-
-```ts
-import { Enbox, BrowserConnectHandler, defineProtocol, recordCodecs } from '@enbox/browser';
-```
-
-The root `@enbox/api` entry also declares a browser condition that resolves to
-the prebuilt `dist/browser.mjs` bundle in browser-aware bundlers. Apps and
-service-worker builds should not need Enbox-specific Node global shims for
-`process`, `process.env`, `process.browser`, `process.emitWarning`, `global`,
-or the Node `events` builtin.
-
-The agent's browser storage remains Level-backed through `level` resolving to
-`browser-level` over IndexedDB. Do not replace it with an in-memory store for
-multi-tab or service-worker use; IndexedDB is the storage layer that safely
-coordinates writes across browser contexts.
-
-Browser dapps are WebSocket first for liveness (see
-[Live transport](#live-transport-websocket-first)) and must ship a registered
-service worker that calls `activatePolyfills()` from `@enbox/browser`. The
-worker is the DWeb fetch handler; every DRL otherwise fails as an ordinary
-network request with no SDK-level signal. The complete scaffold is in the
-[browser dapp guide](https://enbox-docs.pages.dev/docs/guides/browser-dapp).
+Use `@enbox/browser`, which re-exports this API with browser auth, wallet
+connect, and DWeb helpers. The canonical
+[browser dapp guide](https://enbox-docs.pages.dev/docs/guides/browser-dapp)
+covers its service worker, persistent storage, and build setup.
 
 ## Exports
 

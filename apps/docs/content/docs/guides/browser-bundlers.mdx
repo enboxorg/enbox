@@ -1,30 +1,22 @@
 ---
-title: Browser packages and storage
-description: Browser package resolution, lower-level auth imports, and the IndexedDB storage contract.
+title: Browser package behavior
+description: Browser entrypoint resolution, lower-level auth imports, and persistent storage.
 ---
 
-Start a new application with the complete [browser dapp
-guide](/docs/guides/browser-dapp). This page documents the package and storage
-rules behind that scaffold.
+Start new applications with [Build a browser dapp](/docs/guides/browser-dapp).
+That guide is the canonical source for service-worker, Vite, startup, hosting,
+and verification instructions.
 
-## Browser entrypoints
+## Entrypoints
 
-Import the application surface from `@enbox/browser`:
+Import the application surface from `@enbox/browser`. It re-exports the
+high-level API, auth lifecycle, wallet connect handler, and DWeb helpers.
 
-```ts
-import {
-  BrowserConnectHandler,
-  createConnectionStore,
-  defineProtocol,
-  recordCodecs,
-} from '@enbox/browser';
-```
-
-`@enbox/browser`, `@enbox/api`, `@enbox/auth`, and `@enbox/agent`
-publish browser-conditioned root entries. Browser-aware bundlers resolve the
-bare specifiers to prebuilt browser bundles. A page or service-worker build does
-not need Enbox-specific shims for `process`, `global`, Node's `events`
-module, or other Node standard-library globals.
+`@enbox/browser`, `@enbox/api`, `@enbox/auth`, and `@enbox/agent` publish
+browser-conditioned entrypoints. Browser-aware bundlers resolve their bare
+package imports to browser bundles in both page and service-worker builds.
+Current releases do not need Enbox-specific `process`, `global`, Node
+standard-library, dynamic-import, or IIFE workarounds.
 
 Applications that deliberately own the lower-level auth lifecycle can import
 its browser surface:
@@ -33,33 +25,13 @@ its browser surface:
 import { AuthManager, PasswordProvider } from '@enbox/auth/browser';
 ```
 
-Most dapps should use `createConnectionStore()` from `@enbox/browser`
-instead. The store owns session restoration, protocol readiness, facade
-replacement, monitoring, and teardown as one lifecycle.
+Most dapps should use `createConnectionStore()` from `@enbox/browser` so one
+owner handles restoration, readiness, monitoring, facade replacement, and
+teardown.
 
-## Service-worker build
-
-An `injectManifest` build is a second browser bundler pass. Use the same bare
-import in the worker:
-
-```ts
-import { activatePolyfills } from '@enbox/browser';
-
-activatePolyfills();
-```
-
-Do not wrap the import dynamically, prepend a `process` shim, or force an IIFE
-for Enbox. Register the compiled worker as a module and wait until it controls
-the page before rendering. The full Vite configuration, worker source, and boot
-gate are in [Build a browser dapp](/docs/guides/browser-dapp).
-
-## Storage model
+## Storage
 
 The browser agent stores its local replica through `level`, which resolves to
-`browser-level` over IndexedDB. This is intentional. IndexedDB arbitrates
-concurrent access from same-origin tabs and workers and preserves data for
-offline use.
-
-Do not replace this path with an in-memory store or SQLite over OPFS.
-`@enbox/dwn-sql-store` is for server-side DWN deployments and does not provide
-the browser stack's cross-context write model.
+`browser-level` over IndexedDB. Keep this default: IndexedDB persists offline
+data and coordinates concurrent access from same-origin tabs and workers.
+In-memory storage and `@enbox/dwn-sql-store` do not provide that browser model.

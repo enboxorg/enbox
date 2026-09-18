@@ -1,8 +1,9 @@
 # Browser dapp architecture
 
-This is the runtime contract for an Enbox browser dapp. The public
+This document defines the browser runtime boundary. Keep copyable setup,
+deployment, and verification instructions in the public
 [`Build a browser dapp`](../../apps/docs/content/docs/guides/browser-dapp.mdx)
-guide contains the copyable Vite and React implementation.
+guide so developers have one implementation recipe.
 
 ## Runtime ownership
 
@@ -12,154 +13,77 @@ An Enbox dapp has two browser execution contexts with different lifetimes:
 page
   UI
   one ConnectionStore
-  AuthManager + Enbox facade
-  records.observe() / records.subscribe()
+  Enbox facade and observable record views
   live WebSocket sync and subscriptions
            │
            │ ordinary fetch / <img src> for DRLs
            ▼
 service worker
   precached application shell
-  activatePolyfills() DRL fetch interception and cache
+  activatePolyfills() DRL fetch interception
            │
-           │ HTTPS and WebSocket
            ▼
 DWN servers, wallet connect, and DID resolution
 ```
 
-The page owns identity, session state, typed APIs, live record views, and the
-WebSocket-backed sync engine. The service worker owns the fetch boundary: it
-serves the offline application shell and resolves Decentralized Resource
-Locators (DRLs) into ordinary responses.
+The page owns the session, typed APIs, live views, and sockets. The service
+worker owns the fetch boundary for Decentralized Resource Locators (DRLs) and
+the offline application shell. Browsers may terminate a worker between events,
+so it cannot host a durable application session or open WebSocket.
 
-Do not move the connection store or its sockets into a service worker. Browsers
-may terminate a worker between events, so it is not a durable host for an open
-WebSocket. When a page is suspended, the SDK reconnects and reconciles its
-durable feeds when it resumes.
+When a page resumes after suspension, the SDK reconnects and reconciles its
+durable feeds. Moving the live runtime into a worker does not improve that
+behavior and makes session lifetime depend on an execution context the browser
+can discard.
 
-## WebSocket first and local first
+## Live and local state
 
 Omit the connection store's `sync` option for the normal live mode. Enbox uses
-pooled WebSocket transports for live sync and subscriptions, with HTTP where a
-request/response or larger transfer is a better fit. Its periodic durable-feed
-settle pass is recovery for dropped notifications, not an application polling
-API.
+WebSocket transports for live sync and subscriptions and a periodic durable
+settle pass to repair missed notifications.
 
-Application state should follow the same model:
-
-- Use `records.observe()` for a bounded collection that must stay correct as
-  records enter, change, or leave a filter.
+- Use `records.observe()` for a bounded collection that must remain correct as
+  records enter, change, or leave its filter.
 - Use `records.subscribe()` for an incremental or append-only event stream.
-- Use `ConnectionStore.subscribe()` for auth, replacement facades, sync
-  currentness, connectivity, and wallet reapproval state.
-- Use a one-shot `query()` for searches and snapshots, not on a timer to keep
-  the main UI current.
+- Use a one-shot `query()` for searches and snapshots.
+- Use `ConnectionStore.subscribe()` for auth, sync, connectivity, facade
+  replacement, and wallet-reapproval state.
 
-Observed local replicas remain usable while offline. Their `current` field is
-separate from `status`: a view can be `ready` with cached or locally written
-records while `current` is `false`. Render the data and show its freshness;
-do not replace the view with an app-level refresh loop.
+An observed view can be `ready` with useful local records while `current` is
+`false`. Render the local data and show its freshness instead of replacing the
+live path with application polling.
 
-A refreshed delegated session replaces the `ConnectionStore`'s `enbox`
-facade. Bind every view and subscription to that facade's lifetime and recreate
-them when the snapshot publishes a different facade.
+## Session and storage lifetime
 
-## The service worker is required
+Create one manifest-backed `ConnectionStore` for the application and keep it
+for the application lifetime. Use `BrowserConnectHandler`, call `initialize()`
+once at startup, and invoke `connect()` directly from a user action when a
+wallet is needed. Configure `monitor: { autoRefresh: {} }` for delegated grant
+renewal.
 
-`activatePolyfills()` from `@enbox/browser` installs the DWeb fetch handler
-inside a service worker. A DRL addresses a record through a DID, for example:
+A refresh can publish a replacement `enbox` facade. Bind views and
+subscriptions to the current facade and recreate them when it changes. The
+ecosystem wallet has provider responsibilities that require lower-level auth
+ownership; ordinary dapps should copy Notesd's connection-store boundary, not
+the wallet's internals.
 
-```text
-http://dweb/did:dht:abc.../protocols/read/<encoded-protocol>/avatar
-```
+Keep the browser Level stack, which resolves to `browser-level` over IndexedDB.
+It persists the local replica and coordinates same-origin access across tabs
+and workers. In-memory and server SQL stores do not provide that browser
+lifecycle.
 
-The handler resolves the DID's `DecentralizedWebNode` endpoints, fetches the
-record, and returns an ordinary `Response`. This lets `<img>`, `<video>`, and
-`fetch()` consume DWN resources without application plumbing. Its optional
-cache can return a previously fetched resource while offline.
+## DWeb fetch boundary
 
-Without the worker, the browser sends a DRL as an ordinary network request and
-it fails outside the SDK. Connect, typed records, and sync can continue to work,
-so a build or CRUD smoke test does not expose the omission.
+Every browser dapp must register a service worker that calls
+`activatePolyfills()`. The handler resolves a DRL's DID and DWN endpoint and
+returns the addressed record as an ordinary `Response`. Without it, DRL-backed
+images, media, links, and `fetch()` calls fail as ordinary network requests
+while the rest of the SDK can appear healthy.
 
-Register the worker before rendering the application, wait for
-`navigator.serviceWorker.ready`, and wait until it controls the page. The
-worker's call to `activatePolyfills()` uses `skipWaiting()` and `clients.claim()`
-so a first visit can become controlled without asking the user to reload.
+Use one application-owned worker for DRL interception and application-shell
+precaching, and make it control the page before rendering. Current
+browser-conditioned Enbox packages work in page and worker builds without
+Enbox-specific Node-global, `process`, dynamic-import, or IIFE workarounds.
 
-Use an application-owned worker built with `vite-plugin-pwa` `injectManifest`.
-It combines Workbox precaching with the Enbox DRL handler and gives the app one
-explicit update lifecycle. The current browser-conditioned `@enbox/*` bundles
-work in both the page and the worker; do not add Enbox-specific `process`,
-`global`, Node standard-library, dynamic-import, or IIFE workarounds.
-
-## Authentication and session lifetime
-
-A dapp delegates authentication to a wallet:
-
-1. Define every typed protocol in one application manifest.
-2. Create one `ConnectionStore` with `BrowserConnectHandler`.
-3. Call `initialize()` once to restore a saved session.
-4. Call `connect()` from a user action when no usable session exists.
-5. Read the active API only from the current snapshot's `enbox` property.
-6. Call `disconnect()` on sign-out and `dispose()` only when the application
-   store is permanently released.
-
-Wallet approvals issue one-hour grants by default. Configure
-`monitor: { autoRefresh: {} }`; the store derives the refresh request from the
-same manifest. If a grant is revoked, protocol coverage changes, or silent
-refresh cannot complete, render a reconnect action when
-`walletReapprovalRequired` is true. Do not match SDK error-message text.
-
-The ecosystem wallet is an identity and consent provider, so its internal
-`AuthManager` ownership is intentionally more involved than a dapp's. New
-dapps should copy the connection-store boundary used by `notesd`, not the
-wallet's provider internals.
-
-## Storage
-
-In browsers, `level` resolves to `browser-level` over IndexedDB. Keep that
-default. It coordinates concurrent writes from same-origin tabs and workers and
-persists the local replica that makes the app useful offline. In-memory stores
-lose that behavior, and the server-side SQL store is not a browser substitute.
-
-Use one stable `dataPath` and one connection store for an application. Separate
-stores targeting the same path do not coordinate lifecycle actions or
-snapshots.
-
-## Hosting
-
-The application is an SPA with a root-scoped worker:
-
-- serve navigation fallbacks from the precached application shell;
-- serve `/sw.js` with `Cache-Control: no-cache, no-store, must-revalidate`;
-- keep hashed assets immutable;
-- allow the app's HTTPS and WSS endpoints in `connect-src`;
-- use `Referrer-Policy: strict-origin-when-cross-origin` so the wallet can
-  identify the requesting origin without receiving a path;
-- do not set `Cross-Origin-Opener-Policy: same-origin`, which severs the
-  cross-origin popup's opener and breaks the wallet `postMessage` return path.
-  If cross-origin isolation is required, start from `same-origin-allow-popups`
-  and test the whole connect ceremony.
-
-Service workers require HTTPS, except on localhost.
-
-## Verification gate
-
-Run the checks against a production build and preview server. A new dapp is not
-complete until all of these work:
-
-- the worker reaches `activated` and
-  `navigator.serviceWorker.controller` is non-null on the first visit;
-- a real DRL renders through the worker, and a cached DRL remains readable
-  offline;
-- a wallet connection approves the manifest and survives a page reload;
-- `monitor: { autoRefresh: {} }` is enabled and the UI has a reconnect state;
-- a write appears in an observed collection without a polling timer or manual
-  refresh;
-- a change from another connected tab or device arrives over the live path;
-- existing local data renders offline, an offline write remains visible, and
-  reconnect eventually makes the view current;
-- every view and subscription closes on sign-out or facade replacement;
-- the deployed headers preserve the popup relationship and prevent `/sw.js`
-  caching.
+The canonical guide owns the exact Vite configuration, boot order, hosting
+headers, and end-to-end completion gate.

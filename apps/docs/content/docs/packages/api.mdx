@@ -163,22 +163,13 @@ const store = createConnectionStore({
   connectHandler: BrowserConnectHandler({ appName: 'Notebook' }),
   monitor: { autoRefresh: {} },
 });
-
-let snapshot = await store.initialize();
-if (snapshot.phase !== 'connected') {
-  snapshot = await store.connect();
-}
-if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
-}
-
-const notebooks = snapshot.enbox.using(NotebookProtocol);
 ```
 
-Browser apps must also register a service worker that calls
-`activatePolyfills()` so DRL-backed data resolves. See [Build a browser
-dapp](/docs/guides/browser-dapp) for the required boot, worker, live-view, and
-hosting wiring.
+See [Build a browser dapp](/docs/guides/browser-dapp) for the canonical startup
+flow. It initializes the store before rendering, calls `connect()` directly
+from a user action when needed, and registers the required DWeb service worker.
+Once connected, select the typed API with
+`snapshot.enbox.using(NotebookProtocol)`.
 
 The manifest is the canonical list of protocols and delegated permissions.
 The store restores sessions, requests the required grants, installs protocols

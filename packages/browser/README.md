@@ -2,31 +2,14 @@
 
 > **Research Preview** — Enbox is under active development. APIs may change without notice.
 
-| Browser-specific tools and features for building decentralized web applications |
-| ------------------------------------------------------------------------------ |
+| Browser entrypoint for Enbox application APIs, auth, wallet connect, and DWeb features |
+| ------------------------------------------------------------------------------------- |
 
 [![NPM Package][browser-npm-badge]][browser-npm-link]
 [![NPM Downloads][browser-downloads-badge]][browser-npm-link]
-
 [![Build Status][browser-build-badge]][browser-build-link]
 [![Open Issues][browser-issues-badge]][browser-issues-link]
 [![Code Coverage][browser-coverage-badge]][browser-coverage-link]
-
----
-
-- [Enbox Browser](#enbox-browser)
-  - [Install](#install)
-  - [Usage](#usage)
-  - [Bundlers and Service Workers](#bundlers-and-service-workers)
-  - [Storage Model](#storage-model)
-  - [Activate Polyfills](#activate-polyfills)
-  - [Project Resources](#project-resources)
-
----
-
-<a id="introduction"></a>
-
-This package contains browser-specific helpers for building DWAs (Decentralized Web Apps) with the Enbox toolkit.
 
 ## Install
 
@@ -36,9 +19,8 @@ bun add @enbox/browser
 
 ## Usage
 
-Use the bare package entrypoint in browser apps. It re-exports the high-level
-API from `@enbox/api`, auth/session helpers from `@enbox/auth`, and
-browser-specific connect utilities.
+`@enbox/browser` re-exports the high-level API, browser-safe auth surface,
+wallet connect handler, and DWeb helpers:
 
 ```ts
 import {
@@ -56,90 +38,43 @@ const store = createConnectionStore({
   monitor: { autoRefresh: {} },
 });
 
-let snapshot = await store.initialize();
-if (snapshot.phase === 'disconnected') {
-  snapshot = await store.connect();
+await store.initialize();
+
+// Invoke directly from a click or other user action so the wallet popup opens.
+async function connect(): Promise<void> {
+  const snapshot = await store.connect();
+  if (snapshot.phase !== 'connected') {
+    throw snapshot.error ?? new Error('Connection was not established.');
+  }
+  const enbox = snapshot.enbox;
+  // ...use enbox...
 }
-if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
-}
-
-const enbox = snapshot.enbox;
-
-// ...use enbox...
-
-// On sign-out and application shutdown:
-await store.disconnect();
-await store.dispose();
 ```
 
-This is the delegated wallet flow. To create a local owner identity, omit
-`connectHandler` and call `store.connectVault({ createIdentity: true })`. The
-store owns session restoration, refresh, facade replacement, and teardown.
-Wallet approvals use one-hour grants by default, so delegated dapps should opt
-into `monitor.autoRefresh` and render a reconnect action when the store reports
-`walletReapprovalRequired`.
+Create one store for the application lifetime. It owns session restoration,
+protocol readiness, grant refresh, facade replacement, and teardown. Call
+`disconnect()` on sign-out and `dispose()` when the store is permanently
+released.
 
-## Bundlers and Service Workers
+## Browser runtime
 
-`@enbox/browser` declares a browser-conditioned root export that resolves to the
-prebuilt `dist/browser.mjs` bundle. Browser-aware bundlers, including secondary
-Vite passes used for service workers, can import `@enbox/browser` without
-adding Node global shims for `process`, `process.env`, `process.browser`,
-`process.emitWarning`, `global`, or the Node `events` builtin.
+Every browser dapp must register an application-owned service worker that calls
+`activatePolyfills()`. The page owns the connection store, record views, and
+WebSockets; the worker owns DRL fetch interception and the offline shell. Keep
+the default Level/IndexedDB storage stack.
 
-`activatePolyfills()` is unrelated to Node-global shims. Every Enbox browser app
-must register a service worker that calls it so DRL requests reach the DWeb
-network stack; it is not a compatibility shim for the SDK package graph.
+Current browser-conditioned packages work in page and worker builds without
+Enbox-specific Node-global, `process`, or IIFE shims. Follow the
+[browser dapp guide][browser-dapp-guide-link] for the canonical Vite, worker,
+startup, live-data, hosting, and verification setup. The rationale lives in
+[Browser dapp architecture][browser-dapps-link].
 
-Use an application-owned worker and register it before rendering the app. The
-page owns the connection store, record views, sync engine, and WebSockets; the
-worker owns DRL fetches and the offline shell. A service worker is event-driven
-and must not host the long-lived Enbox session.
+## Project resources
 
-## Storage Model
-
-The default browser agent storage remains Level-backed. The `level` package
-resolves to `browser-level`, which stores data in IndexedDB so tabs, workers,
-and service workers on the same origin can safely write concurrently. SQLite
-over OPFS is not a drop-in browser replacement for this usage because it does
-not provide the same cross-context write behavior.
-
-### Activate Polyfills (required for every browser dapp)
-
-`activatePolyfills()` installs the **DWeb network stack**: a service worker
-fetch handler that resolves DRLs — DWN-addressed URLs such as
-`http://dweb/did:dht:abc123/protocols/read/aHR0cHM6Ly9hcmV3ZXdlYjV5ZXQuY29tL3NjaGVtYXMvcHJvdG9jb2xz/avatar`
-— by resolving the DID to its DWN endpoints and returning the record as an
-ordinary `Response` (with an optional TTL cache via `onCacheCheck`). This is
-what lets a plain `<img src>` or `fetch()` address a record on any DWN.
-
-Despite the name, this is not an optional compatibility shim. **Without it,
-every DRL in your app fails as an ordinary network error** — no exception at
-the SDK boundary, nothing in the console pointing at a missing subsystem, and
-everything else (connect, records, sync) keeps working. Treat it like the
-bundler configuration above: required scaffolding for a browser dapp.
-
-Call `activatePolyfills()` inside an application-owned `sw.ts` and let the build
-tool bundle it with the offline shell. With Vite, use `vite-plugin-pwa` and its
-`injectManifest` strategy. Register and await that worker before rendering so a
-first-visit DRL cannot race worker activation. Call
-`activatePolyfills({ serviceWorker: false })` once in the page when the app also
-wants DRL-aware anchor handling and loading UI.
-
-Verify behavior, not just output: the worker must reach `activated`, control the
-page (`navigator.serviceWorker.controller` is non-null), and render a real DRL.
-A served worker that never evaluates passes an ordinary build. The copyable
-Vite/React setup lives in the [browser dapp guide][browser-dapp-guide-link]; the
-runtime contract and review checklist live in
-[`docs/architecture/browser-dapps.md`][browser-dapps-link].
-
-## Project Resources
-
-| Resource                                | Description                                                                   |
-| --------------------------------------- | ----------------------------------------------------------------------------- |
-| [AGENTS.md][agents-link] | Contributor workflow, style, testing, and release rules |
-| [LICENSE][license-link]  | Apache License, Version 2.0                             |
+| Resource | Description |
+|---|---|
+| [AGENTS.md][agents-link] | Contributor workflow and repository rules |
+| [License][license-link] | Apache License, Version 2.0 |
 
 [browser-npm-badge]: https://img.shields.io/npm/v/@enbox/browser.svg?style=flat&color=blue&santize=true
 [browser-npm-link]: https://www.npmjs.com/package/@enbox/browser
@@ -150,11 +85,6 @@ runtime contract and review checklist live in
 [browser-coverage-link]: https://github.com/enboxorg/enbox/actions/workflows/ci.yml
 [browser-issues-badge]: https://img.shields.io/github/issues/enboxorg/enbox/package:%20browser?label=issues
 [browser-issues-link]: https://github.com/enboxorg/enbox/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+browser"
-[browser-repo-link]: https://github.com/enboxorg/enbox/tree/main/packages/browser
-[browser-jsdelivr-link]: https://www.jsdelivr.com/package/npm/@enbox/browser
-[browser-jsdelivr-browser]: https://cdn.jsdelivr.net/npm/@enbox/browser/dist/browser.mjs
-[browser-unpkg-link]: https://unpkg.com/@enbox/browser
-[browser-unpkg-browser]: https://unpkg.com/@enbox/browser/dist/browser.mjs
 [browser-dapps-link]: https://github.com/enboxorg/enbox/blob/main/docs/architecture/browser-dapps.md
 [browser-dapp-guide-link]: https://enbox-docs.pages.dev/docs/guides/browser-dapp
 [agents-link]: https://github.com/enboxorg/enbox/blob/main/AGENTS.md

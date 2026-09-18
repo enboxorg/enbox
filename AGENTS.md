@@ -194,9 +194,7 @@ Most packages expose a `build:browser` script, but it means different things:
 - **`@enbox/dwn-sdk-js`** emits `dist/browser.mjs` via its `bundle` script, not a `build:browser` script.
 - **`@enbox/cli`**, **`@enbox/connect`**, **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/local-node`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
 
-Browser storage rule: do not replace the browser Level stack with SQLite or in-memory stores. In browsers, `level` resolves to `browser-level` over IndexedDB, which is required for concurrent writes from tabs, workers, and service workers on the same origin.
-
-Browser service-worker rule: **every Enbox browser dapp MUST register a service worker that calls `activatePolyfills()`** (from `@enbox/browser`). It is the DWeb network stack — DRLs (DWN-addressed URLs: avatars, attachments, `dweb` links) do not resolve without it, and the failure is silent: no build, type-check, test, or happy-path demo catches the omission; DRL fetches just die as ordinary network errors. It is not optional PWA tooling, despite the API name and the usual delivery vehicle (`vite-plugin-pwa`). Boot ordering, precaching, live-view ownership, header pitfalls (COOP silently breaks the wallet popup ceremony), and the scaffold checklist live in [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md).
+Browser application rules are centralized under [Application architecture](#application-architecture) below. Do not infer a new scaffold from older downstream app configuration.
 
 ### Key directories
 
@@ -673,7 +671,7 @@ stores with custom payload loading override `readStoredObject()`.
 
 The **agent DID** (`agent.agentDid`) is the agent's own identity. The **tenant DID** is the context for store operations. Multi-tenancy is resolved via `getDataStoreTenant()` with priority: explicit tenant > agent DID > DID URI parameter. Store keys use `TENANT_SEPARATOR` (`^`).
 
-## Live application architecture
+## Application architecture
 
 Across browser, desktop, CLI, and server runtimes, build application state on
 the live APIs. Use `records.observe()` for bounded collection truth and
@@ -683,32 +681,17 @@ current state. The agent sync engine and record subscriptions use WebSocket
 transports, while durable-feed reconciliation repairs gaps after disconnects or
 suspension.
 
-## Browser dapp architecture
+For browser dapps, [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md)
+defines the runtime boundary and [`Build a browser dapp`](apps/docs/content/docs/guides/browser-dapp.mdx)
+is the only implementation recipe. Use `@enbox/browser`, one
+manifest-backed `ConnectionStore`, `BrowserConnectHandler`, delegated grant
+auto-refresh, and the browser Level/IndexedDB stack. Register and await an
+application-owned service worker that calls `activatePolyfills()` before
+rendering. The page owns the session, views, and sockets; the worker owns DRL
+fetches and the offline shell.
 
-Read [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md)
-before scaffolding or reviewing a browser dapp, and use the public
-[`Build a browser dapp`](apps/docs/content/docs/guides/browser-dapp.mdx) guide
-as the implementation recipe. A new browser dapp defaults to this shape:
-
-- import the application surface from `@enbox/browser` and keep one
-  `ConnectionStore` for the application lifetime;
-- use `BrowserConnectHandler` for delegated wallet auth and configure
-  `monitor: { autoRefresh: {} }` so the default one-hour grants renew;
-- derive UI collections from `records.observe()` and incremental histories
-  from `records.subscribe()`; do not add app polling around the WebSocket-first
-  sync and subscription paths;
-- register and await a service worker that calls `activatePolyfills()` before
-  rendering the app. The worker owns DRL fetches and the offline app shell;
-  the page owns the connection store, live views, and sockets;
-- keep the browser Level/IndexedDB storage stack and recreate session-bound
-  views whenever the store publishes a replacement `enbox` facade;
-- verify a production build with wallet connect, live updates, reconnect,
-  offline local reads, and a real DRL fetch. A build passing does not prove the
-  worker installed or controls the page.
-
-Do not copy old app workarounds into a new scaffold. Current browser-conditioned
-packages do not need Enbox-specific Node-global shims, a worker `process` shim,
-or compatibility code for historical API result shapes.
+Do not copy Node-global shims, worker `process`/IIFE workarounds, historical API
+result compatibility, or worker-hosted session patterns from older apps.
 
 ## Sync engine vocabulary
 

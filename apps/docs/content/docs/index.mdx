@@ -71,12 +71,12 @@ const store = createConnectionStore({
   monitor: { autoRefresh: {} },
 });
 
-let snapshot = await store.initialize();
-if (snapshot.phase === 'disconnected') {
-  snapshot = await store.connect();
-}
+await store.initialize();
+
+// After the connection UI reports a connected snapshot:
+const snapshot = store.getSnapshot();
 if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
+  throw new Error('Connect the wallet first.');
 }
 
 const tasks = snapshot.enbox.using(TaskProtocol);
@@ -85,8 +85,10 @@ const tasks = snapshot.enbox.using(TaskProtocol);
 The connection store owns session restore, connection, protocol readiness, and
 facade replacement for common apps. Read the active API from `snapshot.enbox`.
 Create one store for the application/data path and keep it for the application
-lifetime; separate stores intentionally do not coordinate. Browser apps must
-also register the service worker from the browser-dapp guide before rendering.
+lifetime. If no session is restored, render a connect button and call
+`store.connect()` directly from its click handler so the wallet popup keeps the
+browser's user gesture. The browser-dapp guide contains the complete component
+and required service-worker startup.
 
 ### 3. CRUD operations
 
