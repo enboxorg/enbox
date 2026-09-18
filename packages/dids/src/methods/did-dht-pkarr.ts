@@ -15,11 +15,17 @@ const textEncoder = new TextEncoder();
  */
 export const BEP44_VALUE_MAX_BYTES = 1000;
 
+/** Byte length of the Ed25519 signature in a BEP44 message. */
+const BEP44_SIGNATURE_BYTES = 64;
+
+/** Byte length of the big-endian sequence number in a BEP44 message. */
+const BEP44_SEQUENCE_BYTES = 8;
+
 /**
- * Byte length of the fixed overhead in a Pkarr relay message: a 64-byte Ed25519 signature
- * followed by an 8-byte big-endian sequence number, prepended to the BEP44 value.
+ * Byte length of the fixed overhead in a Pkarr relay message (signature + sequence number),
+ * prepended to the BEP44 value.
  */
-export const BEP44_MESSAGE_OVERHEAD_BYTES = 72;
+export const BEP44_MESSAGE_OVERHEAD_BYTES = BEP44_SIGNATURE_BYTES + BEP44_SEQUENCE_BYTES;
 
 /**
  * Encodes the BEP44 signing payload for a mutable item.
@@ -169,8 +175,8 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGateway
   // Decode the BEP44 message from the byte array.
   const bep44Message: Bep44Message = {
     k   : publicKeyBytes,
-    seq : Number(new DataView(messageBytes).getBigUint64(64)),
-    sig : new Uint8Array(messageBytes, 0, 64),
+    seq : Number(new DataView(messageBytes).getBigUint64(BEP44_SIGNATURE_BYTES)),
+    sig : new Uint8Array(messageBytes, 0, BEP44_SIGNATURE_BYTES),
     v   : new Uint8Array(messageBytes, BEP44_MESSAGE_OVERHEAD_BYTES)
   };
 
@@ -201,8 +207,8 @@ export async function pkarrPut({ gatewayUri, bep44Message, allowPrivateGatewayUr
   // Construct the body of the request according to the Pkarr relay specification.
   const body = new Uint8Array(bep44Message.v.length + BEP44_MESSAGE_OVERHEAD_BYTES);
   body.set(bep44Message.sig, 0);
-  new DataView(body.buffer).setBigUint64(bep44Message.sig.length, BigInt(bep44Message.seq));
-  body.set(bep44Message.v, bep44Message.sig.length + 8);
+  new DataView(body.buffer).setBigUint64(BEP44_SIGNATURE_BYTES, BigInt(bep44Message.seq));
+  body.set(bep44Message.v, BEP44_MESSAGE_OVERHEAD_BYTES);
 
   // Transmit the Put request to the Pkarr relay and get the response. Redirects are followed
   // manually so each `Location` is re-validated.
