@@ -1,6 +1,6 @@
 import type { Packet, TxtAnswer } from '@dnsquery/dns-packet';
 
-import { chunkDataIfNeeded, parseTxtDataToString } from '../../src/methods/did-dht-dns.js';
+import { chunkDataIfNeeded, parseTxtDataToString, TXT_SEGMENT_MAX_BYTES } from '../../src/methods/did-dht-dns.js';
 import { describe, expect, it } from 'bun:test';
 import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
 
@@ -10,7 +10,7 @@ const utf8ByteLength = (value: string): number => textEncoder.encode(value).leng
 
 describe('chunkDataIfNeeded()', () => {
   it('returns the original string when it fits in a single 255-byte segment', () => {
-    const data = 'a'.repeat(255);
+    const data = 'a'.repeat(TXT_SEGMENT_MAX_BYTES);
     expect(chunkDataIfNeeded(data)).toBe(data);
   });
 
@@ -18,7 +18,7 @@ describe('chunkDataIfNeeded()', () => {
     const data = 'a'.repeat(600);
     const chunks = chunkDataIfNeeded(data) as string[];
 
-    expect(chunks.map(utf8ByteLength)).toEqual([255, 255, 90]);
+    expect(chunks.map(utf8ByteLength)).toEqual([TXT_SEGMENT_MAX_BYTES, TXT_SEGMENT_MAX_BYTES, 90]);
     expect(chunks.join('')).toBe(data);
   });
 
@@ -29,7 +29,7 @@ describe('chunkDataIfNeeded()', () => {
     const data = '€'.repeat(128);
     const chunks = chunkDataIfNeeded(data) as string[];
 
-    expect(chunks.map(utf8ByteLength)).toEqual([255, 129]);
+    expect(chunks.map(utf8ByteLength)).toEqual([TXT_SEGMENT_MAX_BYTES, 129]);
     expect(chunks.join('')).toBe(data);
   });
 

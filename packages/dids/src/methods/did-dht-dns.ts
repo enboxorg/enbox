@@ -15,6 +15,12 @@ import { keyConverter, validatePreviousDidProof } from './did-dht-utils.js';
 const textEncoder = new TextEncoder();
 
 /**
+ * Maximum byte length of a single DNS TXT record segment (`character-string`), per RFC 1035.
+ * Longer data must be split across multiple segments.
+ */
+export const TXT_SEGMENT_MAX_BYTES = 255;
+
+/**
  * The version of the DID DHT specification that is implemented by this library.
  */
 export const DID_DHT_SPECIFICATION_VERSION = 0;
@@ -112,7 +118,8 @@ export function parseTxtDataToObject(txtData: TxtData): Record<string, string> {
 }
 
 /**
- * Splits a string into chunks of at most 255 UTF-8 bytes each if the string exceeds 255 bytes.
+ * Splits a string into chunks of at most {@link TXT_SEGMENT_MAX_BYTES} UTF-8 bytes each if the
+ * string exceeds that limit.
  *
  * DNS TXT record segments (`character-string`s) are limited to 255 bytes each, so chunking is
  * done on UTF-8 byte length rather than UTF-16 code-unit count. Splits occur only at code
@@ -123,7 +130,7 @@ export function parseTxtDataToObject(txtData: TxtData): Record<string, string> {
  * @returns The original string if its UTF-8 byte length is at most 255, otherwise an array of chunked strings.
  */
 export function chunkDataIfNeeded(data: string): string | string[] {
-  if (textEncoder.encode(data).length <= 255) {
+  if (textEncoder.encode(data).length <= TXT_SEGMENT_MAX_BYTES) {
     return data;
   }
 
@@ -135,7 +142,7 @@ export function chunkDataIfNeeded(data: string): string | string[] {
 
   for (const char of data) {
     const charBytes = textEncoder.encode(char).length;
-    if (currentChunkBytes + charBytes > 255) {
+    if (currentChunkBytes + charBytes > TXT_SEGMENT_MAX_BYTES) {
       chunks.push(currentChunk);
       currentChunk = char;
       currentChunkBytes = charBytes;
@@ -593,8 +600,8 @@ async function processVerificationMethodForDnsPacket({ index, verificationMethod
 }
 
 /**
- * Converts a single service to its DNS TXT record, chunking the data if it exceeds the 255
- * character DNS TXT record segment limit, and pushes it onto `txtRecords`.
+ * Converts a single service to its DNS TXT record, chunking the data if it exceeds the 255-byte
+ * DNS TXT record segment limit, and pushes it onto `txtRecords`.
  *
  * @param service - The service to convert.
  * @param index - The service's index within `didDocument.service`.

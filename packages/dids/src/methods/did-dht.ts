@@ -32,6 +32,8 @@ export * from './did-dht-types.js';
 
 // Re-export standalone functions from extracted modules.
 export {
+  BEP44_MESSAGE_OVERHEAD_BYTES,
+  BEP44_VALUE_MAX_BYTES,
   pkarrGet,
   pkarrPut,
   createBep44PutMessage,
@@ -50,6 +52,7 @@ export {
   parseTxtDataToString,
   PROPERTY_SEPARATOR,
   toDnsPacket,
+  TXT_SEGMENT_MAX_BYTES,
   VALUE_SEPARATOR,
 } from './did-dht-dns.js';
 

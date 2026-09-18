@@ -4,8 +4,9 @@ import type { Packet, TxtAnswer } from '@dnsquery/dns-packet';
 import { DidErrorCode } from '../../src/did-error.js';
 import { encode as dnsPacketEncode } from '@dnsquery/dns-packet';
 import { Ed25519 } from '@enbox/crypto';
+import { TXT_SEGMENT_MAX_BYTES } from '../../src/methods/did-dht-dns.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { createBep44PutMessage, parseBep44GetMessage } from '../../src/methods/did-dht-pkarr.js';
+import { BEP44_VALUE_MAX_BYTES, createBep44PutMessage, parseBep44GetMessage } from '../../src/methods/did-dht-pkarr.js';
 
 /**
  * Builds a DNS packet whose encoded form is exactly `targetSize` bytes, by padding the TXT
@@ -30,7 +31,7 @@ function createDnsPacketOfSize(targetSize: number): Packet {
   let remaining = targetSize - dnsPacketEncode(dnsPacket).length;
   const data = answer.data as string[];
   while (remaining > 0) {
-    const segmentLength = Math.min(255, remaining - 1);
+    const segmentLength = Math.min(TXT_SEGMENT_MAX_BYTES, remaining - 1);
     data.push('x'.repeat(segmentLength));
     remaining -= segmentLength + 1;
   }
@@ -58,20 +59,20 @@ describe('createBep44PutMessage()', () => {
     });
 
     it('accepts a DNS packet whose encoded value is exactly 1000 bytes', async () => {
-      const dnsPacket = createDnsPacketOfSize(1000);
+      const dnsPacket = createDnsPacketOfSize(BEP44_VALUE_MAX_BYTES);
       // Pin the setup: the BEP44 value is exactly at the limit, so the signing payload
       // (`3:seqi<seq>e1:v<len>:` prefix + value) is necessarily over 1000 bytes.
-      expect(dnsPacketEncode(dnsPacket).length).toBe(1000);
+      expect(dnsPacketEncode(dnsPacket).length).toBe(BEP44_VALUE_MAX_BYTES);
 
       const bep44Message = await createBep44PutMessage({ dnsPacket, publicKeyBytes, signer });
 
-      expect(bep44Message.v.length).toBe(1000);
+      expect(bep44Message.v.length).toBe(BEP44_VALUE_MAX_BYTES);
       await expect(parseBep44GetMessage({ bep44Message })).resolves.toBeDefined();
     });
 
     it('rejects a DNS packet whose encoded value exceeds 1000 bytes', async () => {
-      const dnsPacket = createDnsPacketOfSize(1001);
-      expect(dnsPacketEncode(dnsPacket).length).toBe(1001);
+      const dnsPacket = createDnsPacketOfSize(BEP44_VALUE_MAX_BYTES + 1);
+      expect(dnsPacketEncode(dnsPacket).length).toBe(BEP44_VALUE_MAX_BYTES + 1);
 
       await expect(createBep44PutMessage({ dnsPacket, publicKeyBytes, signer }))
         .rejects.toThrow(DidErrorCode.InvalidDidDocumentLength);

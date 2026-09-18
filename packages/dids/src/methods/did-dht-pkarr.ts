@@ -11,6 +11,17 @@ import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/
 const textEncoder = new TextEncoder();
 
 /**
+ * Maximum byte length of the value `v` in a BEP44 mutable item, per the BEP44 specification.
+ */
+export const BEP44_VALUE_MAX_BYTES = 1000;
+
+/**
+ * Byte length of the fixed overhead in a Pkarr relay message: a 64-byte Ed25519 signature
+ * followed by an 8-byte big-endian sequence number, prepended to the BEP44 value.
+ */
+export const BEP44_MESSAGE_OVERHEAD_BYTES = 72;
+
+/**
  * Encodes the BEP44 signing payload for a mutable item.
  *
  * BEP44 signs the dictionary body for `{ seq, v }`, without the surrounding `d` and `e` dictionary
@@ -147,11 +158,11 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGateway
     throw new DidError(DidErrorCode.NotFound, `Pkarr record not found for: ${identifier}`);
   }
 
-  if (messageBytes.byteLength < 72) {
+  if (messageBytes.byteLength < BEP44_MESSAGE_OVERHEAD_BYTES) {
     throw new DidError(DidErrorCode.InvalidDidDocumentLength, `Pkarr response must be at least 72 bytes but got: ${messageBytes.byteLength}`);
   }
 
-  if (messageBytes.byteLength > 1072) {
+  if (messageBytes.byteLength > BEP44_MESSAGE_OVERHEAD_BYTES + BEP44_VALUE_MAX_BYTES) {
     throw new DidError(DidErrorCode.InvalidDidDocumentLength, `Pkarr response exceeds 1000 byte limit: ${messageBytes.byteLength}`);
   }
 
@@ -160,7 +171,7 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGateway
     k   : publicKeyBytes,
     seq : Number(new DataView(messageBytes).getBigUint64(64)),
     sig : new Uint8Array(messageBytes, 0, 64),
-    v   : new Uint8Array(messageBytes, 72)
+    v   : new Uint8Array(messageBytes, BEP44_MESSAGE_OVERHEAD_BYTES)
   };
 
   return bep44Message;
@@ -188,7 +199,7 @@ export async function pkarrPut({ gatewayUri, bep44Message, allowPrivateGatewayUr
   const url = pkarrUrl(bep44Message.k, gatewayUri);
 
   // Construct the body of the request according to the Pkarr relay specification.
-  const body = new Uint8Array(bep44Message.v.length + 72);
+  const body = new Uint8Array(bep44Message.v.length + BEP44_MESSAGE_OVERHEAD_BYTES);
   body.set(bep44Message.sig, 0);
   new DataView(body.buffer).setBigUint64(bep44Message.sig.length, BigInt(bep44Message.seq));
   body.set(bep44Message.v, bep44Message.sig.length + 8);
@@ -239,7 +250,7 @@ export async function createBep44PutMessage({ dnsPacket, publicKeyBytes, signer 
 
   // BEP44 limits the value `v` to 1000 bytes. The limit applies to the value alone, not to
   // the signing payload, which is always longer by the `3:seqi<seq>e1:v<len>:` prefix.
-  if (encodedDnsPacket.length > 1000) {
+  if (encodedDnsPacket.length > BEP44_VALUE_MAX_BYTES) {
     throw new DidError(DidErrorCode.InvalidDidDocumentLength, `DNS packet exceeds the 1000 byte maximum size: ${encodedDnsPacket.length} bytes`);
   }
 

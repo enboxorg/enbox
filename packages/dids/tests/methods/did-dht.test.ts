@@ -13,7 +13,7 @@ import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json'
 import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' with { type: 'json' };
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils } from '../../src/methods/did-dht.js';
+import { DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils, TXT_SEGMENT_MAX_BYTES } from '../../src/methods/did-dht.js';
 import { DidErrorCode, DidResolutionErrorCause } from '../../src/did-error.js';
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
@@ -1708,7 +1708,7 @@ describe('DidDhtDocument', () => {
       const segments = Array.isArray(serviceRecord.data) ? serviceRecord.data : [serviceRecord.data];
       expect(segments.length).toBeGreaterThan(1);
       for (const segment of segments) {
-        expect(testTextEncoder.encode(segment as string).length).toBeLessThanOrEqual(255);
+        expect(testTextEncoder.encode(segment as string).length).toBeLessThanOrEqual(TXT_SEGMENT_MAX_BYTES);
       }
 
       const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
