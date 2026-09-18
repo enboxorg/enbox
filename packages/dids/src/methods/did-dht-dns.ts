@@ -141,21 +141,16 @@ export function chunkDataIfNeeded(data: string): string | string[] {
   // Accumulate whole code points into segments of at most 255 UTF-8 bytes. `for...of` iterates
   // by code point, so surrogate pairs (4-byte UTF-8 characters) are kept intact.
   const chunks: string[] = [];
-  let currentChunk = '';
-  let currentChunkBytes = 0;
+  let chunk = '';
 
   for (const char of data) {
-    const charBytes = textEncoder.encode(char).length;
-    if (currentChunkBytes + charBytes > TXT_SEGMENT_MAX_BYTES) {
-      chunks.push(currentChunk);
-      currentChunk = char;
-      currentChunkBytes = charBytes;
-    } else {
-      currentChunk += char;
-      currentChunkBytes += charBytes;
+    if (textEncoder.encode(chunk + char).length > TXT_SEGMENT_MAX_BYTES) {
+      chunks.push(chunk);
+      chunk = '';
     }
+    chunk += char;
   }
-  chunks.push(currentChunk);
+  chunks.push(chunk);
 
   return chunks;
 }
@@ -701,15 +696,15 @@ const IPV4_ADDRESS_REGEX = /^\d{1,3}(\.\d{1,3}){3}$/;
  * @throws {@link DidError} with {@link DidErrorCode.InvalidGatewayUri} if the URI is malformed or has no host.
  */
 function getGatewayNsTarget(gatewayUri: string): string | undefined {
-  // Accept both full URIs and bare hosts; a dummy scheme lets bare hosts parse.
-  let url: URL;
+  // Accept both full URIs and bare hosts; a dummy scheme lets bare hosts parse. Malformed URIs
+  // and host-less ones (e.g. `file:`) both end up with an empty hostname here.
+  let hostname: string;
   try {
-    url = new URL(gatewayUri.includes('://') ? gatewayUri : `https://${gatewayUri}`);
+    hostname = new URL(gatewayUri.includes('://') ? gatewayUri : `https://${gatewayUri}`).hostname;
   } catch {
-    throw new DidError(DidErrorCode.InvalidGatewayUri, `Invalid gateway URI: ${gatewayUri}`);
+    hostname = '';
   }
 
-  const { hostname } = url;
   if (hostname === '') {
     throw new DidError(DidErrorCode.InvalidGatewayUri, `Invalid gateway URI: ${gatewayUri}`);
   }
