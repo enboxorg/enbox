@@ -1,5 +1,13 @@
 # @enbox/agent
 
+## 0.8.48
+
+### Patch Changes
+
+- [#1716](https://github.com/enboxorg/enbox/pull/1716) [`7a2a6f1`](https://github.com/enboxorg/enbox/commit/7a2a6f19e8910b2c71ae5f3f3827f012484f4f5d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(agent): expose whether a connect protocol conflict is eligible for owner-approved replacement
+
+- [#1713](https://github.com/enboxorg/enbox/pull/1713) [`cd8d78d`](https://github.com/enboxorg/enbox/commit/cd8d78d79116d4ec6bd1472e031f62e61345d30d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(agent): execute owner-approved protocol definition replacements inside connect approval
+
 ## 0.8.47
 
 ### Patch Changes
