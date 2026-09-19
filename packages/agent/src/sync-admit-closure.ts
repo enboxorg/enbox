@@ -203,6 +203,12 @@ class AdmitClosureContext {
       if (support !== undefined) {
         return { kind: 'retry', entries: support };
       }
+      if (entry.dataStreamFactory !== undefined) {
+        return {
+          kind    : 'done',
+          outcome : { kind: 'deferred', rootCid, detail: 'latest records write data fetch returned no data' },
+        };
+      }
       return {
         kind    : 'done',
         outcome : this.deps.fetchReplicationSupport === undefined

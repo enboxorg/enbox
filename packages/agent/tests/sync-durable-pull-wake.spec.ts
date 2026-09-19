@@ -224,6 +224,17 @@ describe('SyncEngineLevel durable pull admission', () => {
     expect(trackApplied.calledOnceWithExactly(['cid-root', 'cid-dependency'], syncTarget)).toBe(true);
   });
 
+  it('does not attach a payload fetcher to retained non-latest writes', async () => {
+    const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
+    const [entry] = await (engine as any).syncEntriesFromFeedEntry(target(), {
+      message           : recordsWriteMessage(),
+      messageCid        : 'cid-ancestor',
+      isLatestBaseState : false,
+    });
+    expect(entry.dataStreamFactory).toBeUndefined();
+    expect(entry.bufferedData).toBeUndefined();
+  });
+
   it('does not emit delivery events for duplicate or superseded admissions', async () => {
     const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
     const internal = engine as any;
