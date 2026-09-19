@@ -2,7 +2,8 @@ import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js'
 
 import sinon from 'sinon';
 
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { JsonRpcSocket } from '@enbox/dwn-clients';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, DwnConstant } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../../src/types/dwn.js';
@@ -19,7 +20,7 @@ const protocol: ProtocolDefinition = {
   structure : { note: {} },
 };
 
-describe('E2E: populated catch-up HTTP request budget', () => {
+describe('E2E: populated catch-up transport request budgets', () => {
   let harness: PlatformAgentTestHarness;
 
   beforeAll(async () => {
@@ -29,18 +30,28 @@ describe('E2E: populated catch-up HTTP request budget', () => {
       agentStores      : 'dwn',
       testDataLocation : '__TESTDATA__/e2e-sync-catchup-traffic',
     });
+  });
+
+  beforeEach(async () => {
+    // The socket pool is process-wide; the HTTP case must not inherit a
+    // connection left by another end-to-end fixture.
+    await harness.agent.rpc.close();
     await harness.clearStorage();
     await harness.createAgentDid();
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     sinon.restore();
     await harness?.agent.sync.stopSync();
+    await harness?.agent.rpc.close();
+  });
+
+  afterAll(async () => {
     await harness?.clearStorage();
     await harness?.closeStorage();
   });
 
-  it('catches up 579 retained messages within 10 HTTP requests, including streamed data and deletes', async () => {
+  it.each(['http', 'websocket'] as const)('bounds 579-message %s catch-up traffic, including streamed data and deletes', async (transport) => {
     const identity = await harness.createIdentity({ name: 'Catch-up traffic', testDwnUrls: [testDwnUrl] });
     const did = identity.did.uri;
     const config = await harness.agent.dwn.processRequest({
@@ -84,9 +95,29 @@ describe('E2E: populated catch-up HTTP request budget', () => {
     }
 
     await harness.agent.sync.setIdentityOptions({ did, options: { protocols: [protocol.protocol] } });
+    if (transport === 'websocket') {
+      // Live sync establishes a subscription socket before reconciling its
+      // durable baseline. Exercise the same pooled transport with real data.
+      const subscribe = await harness.agent.dwn.processRequest({
+        author        : did,
+        target        : did,
+        messageType   : DwnInterface.MessagesSubscribe,
+        messageParams : { filters: [{ protocol: protocol.protocol }] },
+        store         : false,
+      });
+      const reply = await harness.agent.rpc.sendDwnRequest({
+        dwnUrl       : testDwnUrl,
+        targetDid    : did,
+        message      : subscribe.message!,
+        subscription : { handler: (): void => {} },
+      });
+      expect(reply.status.code).toBe(200);
+      expect(reply.subscription).toBeDefined();
+    }
     // Observe actual fetch calls, including transport retries. No RPC stubs.
     const http = sinon.spy(globalThis, 'fetch');
     const rpc = sinon.spy(harness.agent.rpc, 'sendDwnRequest');
+    const socket = sinon.spy(JsonRpcSocket.prototype, 'request');
     const countDwnPosts = (): number => http.args.filter(([input, init]) =>
       new URL(String(input)).origin === new URL(testDwnUrl).origin && init?.method === 'POST',
     ).length;
@@ -95,8 +126,18 @@ describe('E2E: populated catch-up HTTP request budget', () => {
     await harness.agent.sync.sync('pull');
 
     expect(countDwnPosts()).toBeGreaterThan(0);
-    expect(countDwnPosts()).toBeLessThanOrEqual(10);
+    expect(countDwnPosts()).toBeLessThanOrEqual(transport === 'websocket' ? 1 : 10);
     expect(countReads()).toBe(1);
+    if (transport === 'websocket') {
+      const queries = socket.args.filter(([request]) =>
+        request.method === 'dwn.processMessage' && request.params?.message?.descriptor?.method === 'Query');
+      expect(queries.length).toBeGreaterThan(0);
+      expect(queries.length).toBeLessThanOrEqual(8);
+      expect(queries.some(([request]) => request.params?.message?.descriptor?.cidsOnly === false)).toBe(true);
+      expect(socket.args.some(([request]) => request.params?.message?.descriptor?.method === 'Read')).toBe(false);
+    } else {
+      expect(socket.callCount).toBe(0);
+    }
     for (const [recordId, expected] of [
       [writes[487].recordId, 'record-487'],
       [writes[488].recordId, largeText],
@@ -124,7 +165,7 @@ describe('E2E: populated catch-up HTTP request budget', () => {
     http.resetHistory();
     rpc.resetHistory();
     await harness.agent.sync.sync('pull');
-    expect(countDwnPosts()).toBeLessThanOrEqual(2);
+    expect(countDwnPosts()).toBeLessThanOrEqual(transport === 'websocket' ? 0 : 2);
     expect(countReads()).toBe(0);
   }, 120_000);
 });
