@@ -495,6 +495,86 @@ describe('SyncDurableFeedReconciler', () => {
     expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(2));
   });
 
+  it('should fetch a dense missing page inline and commit the refreshed page rather than its stale inventory', async () => {
+    const fixture = createReconciler();
+    fixture.queryFeed.callsFake(async ({ cidsOnly, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+      if (source === 'local') {
+        return reply({ entries: [{ messageCid: 'known' }] });
+      }
+      return cidsOnly
+        ? reply({ cursor: token(3), entries: [{ messageCid: 'old-a' }, { messageCid: 'old-b' }] })
+        : reply({ cursor: token(4), entries: [{ messageCid: 'current-a' }, { messageCid: 'current-b' }] });
+    });
+
+    await fixture.reconciler.pull(target(), fixture.link);
+
+    const remoteQueries = fixture.queryFeed.args.map(([query]) => query).filter(query => query.source === 'remote');
+    expect(remoteQueries).toHaveLength(2);
+    expect(remoteQueries.every(query => query.cursor === undefined)).toBe(true);
+    expect(fixture.operations.admitRemotePage.calledOnce).toBe(true);
+    expect(fixture.operations.admitRemotePage.firstCall.args[1]).toEqual([
+      { messageCid: 'current-a' }, { messageCid: 'current-b' },
+    ]);
+    expect(fixture.operations.commitCheckpoint.calledOnce).toBe(true);
+    expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(4));
+  });
+
+  it('should retain lightweight inventories when only one message per page is missing', async () => {
+    const fixture = createReconciler();
+    fixture.queryFeed.callsFake(async ({ cidsOnly, cursor, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+      expect(cidsOnly).toBe(true);
+      if (source === 'local') {
+        return reply({ entries: [{ messageCid: 'known-a' }, { messageCid: 'known-b' }] });
+      }
+      return cursor === undefined
+        ? reply({ cursor: token(2), drained: false, entries: [{ messageCid: 'known-a' }, { messageCid: 'missing-a' }] })
+        : reply({ cursor: token(4), entries: [{ messageCid: 'known-b' }, { messageCid: 'missing-b' }] });
+    });
+
+    await fixture.reconciler.pull(target(), fixture.link);
+
+    expect(fixture.queryFeed.callCount).toBe(3);
+    expect(fixture.operations.admitRemotePage.args.map(([, entries]) => entries)).toEqual([
+      [{ messageCid: 'missing-a' }], [{ messageCid: 'missing-b' }],
+    ]);
+    expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(4));
+  });
+
+  it('should leave progress uncommitted when cancelled between inventory and inline retrieval', async () => {
+    const fixture = createReconciler();
+    let current = true;
+    fixture.queryFeed.callsFake(async ({ source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+      if (source === 'local') {
+        return reply({ entries: [{ messageCid: 'known' }] });
+      }
+      current = false;
+      return reply({ cursor: token(2), entries: [{ messageCid: 'missing-a' }, { messageCid: 'missing-b' }] });
+    });
+
+    const result = await fixture.reconciler.pull(target(), fixture.link, undefined, (): boolean => current);
+
+    expect(result).toEqual({ aborted: true });
+    expect(fixture.queryFeed.callCount).toBe(2);
+    expect(fixture.operations.admitRemotePage.notCalled).toBe(true);
+    expect(fixture.operations.commitCheckpoint.notCalled).toBe(true);
+  });
+
+  it('should recover a progress gap between inventory and inline retrieval without committing the discarded inventory', async () => {
+    const fixture = createReconciler();
+    fixture.queryFeed.onCall(0).resolves(reply({ entries: [{ messageCid: 'known' }] }));
+    fixture.queryFeed.onCall(1).resolves(reply({ cursor: token(2), entries: [{ messageCid: 'old-a' }, { messageCid: 'old-b' }] }));
+    fixture.queryFeed.onCall(2).resolves(reply({ status: 410 }));
+    const restartedCursor = { ...token(1), epoch: 'replacement-epoch' };
+    fixture.queryFeed.onCall(3).resolves(reply({ cursor: restartedCursor, entries: [{ messageCid: 'replacement' }] }));
+
+    await fixture.reconciler.pull(target(), fixture.link);
+
+    expect(fixture.resetCheckpoint.calledOnceWithExactly(fixture.link, 'pull')).toBe(true);
+    expect(fixture.operations.admitRemotePage.calledOnce).toBe(true);
+    expect(fixture.operations.admitRemotePage.firstCall.args[1]).toEqual([{ messageCid: 'replacement' }]);
+    expect(fixture.link.pull.contiguousAppliedToken).toEqual(restartedCursor);
+  });
+
   it('should reject a non-advancing cursor before persisting or emitting progress', async () => {
     const fixture = createReconciler();
     fixture.link.pull.contiguousAppliedToken = token(1);

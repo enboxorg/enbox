@@ -405,13 +405,20 @@ export class SyncDurableFeedReconciler {
   ): Promise<SyncDurableFeedReconcileResult> {
     let cursor: ProgressToken | undefined;
     let resetAfterProgressGap = false;
+    let cidsOnly = true;
 
     while (true) {
       if (SyncDurableFeedReconciler.shouldAbort(shouldContinue)) {
         return { aborted: true };
       }
 
-      const reply = await this.queryCidsPage(target, 'remote', cursor);
+      const reply = await this._operations.queryFeed({
+        cidsOnly,
+        cursor,
+        limit  : SyncDurableFeedReconciler.PAGE_LIMIT,
+        source : 'remote',
+        target,
+      });
       if (await this.resetAfterProgressGap(reply, link, 'pull', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
@@ -420,6 +427,13 @@ export class SyncDurableFeedReconciler {
 
       SyncDurableFeedReconciler.assertQuerySucceeded(reply, target, 'pull');
       const missingEntries = SyncDurableFeedReconciler.entriesMissingFrom(localCids, reply.entries ?? []);
+      if (cidsOnly && missingEntries.length > 1) {
+        // One complete page costs less than a MessagesRead for every missing
+        // CID. Re-read from the same cursor and commit only the complete
+        // page's own progress; the inventory may have changed meanwhile.
+        cidsOnly = false;
+        continue;
+      }
       const result = await this.processPullPage({
         target,
         cursor,
@@ -433,6 +447,9 @@ export class SyncDurableFeedReconciler {
         return result.result;
       }
       cursor = result.nextCursor;
+      // Keep dense catch-up on inline pages, but return to lightweight
+      // inventory comparisons once this remote is mostly present locally.
+      cidsOnly = missingEntries.length <= 1;
     }
   }
 
