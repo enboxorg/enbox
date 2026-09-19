@@ -3,7 +3,7 @@ import type { AdmitOutcome } from '../src/sync-admit-closure.js';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../src/sync-admit-closure.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -65,9 +65,8 @@ describe('admitClosure', () => {
     const protocol = 'https://example.com/protocol';
     const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
     const update = await TestDataGenerator.generateFromRecordsWrite({
-      author           : initial.author,
-      existingWrite    : initial.recordsWrite,
-      messageTimestamp : Time.createOffsetTimestamp({ seconds: 1 }),
+      author        : initial.author,
+      existingWrite : initial.recordsWrite,
     });
     const rootCid = await Message.getCid(update.message);
     const agent = createMockAgent();
@@ -690,6 +689,35 @@ describe('admitClosure', () => {
       reason  : 'terminal',
       detail  : 'latest records write data is unavailable',
     });
+    expect(agent.dwn.applyReplicatedMessage.called).toBe(false);
+  });
+
+  it('defers a source-latest RecordsWrite when its retryable data fetch is temporarily unavailable', async () => {
+    const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+      data     : new Uint8Array([1, 2, 3]),
+      protocol : 'https://example.com/protocol',
+    });
+    const rootCid = await Message.getCid(recordsWrite.message);
+    const agent = createMockAgent();
+    const dataStreamFactory = sinon.stub().resolves(undefined);
+
+    const outcome = await admitClosure(rootCid, {
+      did        : 'did:example:alice',
+      dwnUrl     : 'https://dwn.example.com',
+      agent,
+      prefetched : [{
+        dataStreamFactory,
+        message           : recordsWrite.message,
+        isLatestBaseState : true,
+      }],
+    });
+
+    expect(outcome).toEqual({
+      kind   : 'deferred',
+      rootCid,
+      detail : 'latest records write data fetch returned no data',
+    });
+    expect(dataStreamFactory.calledOnce).toBe(true);
     expect(agent.dwn.applyReplicatedMessage.called).toBe(false);
   });
 

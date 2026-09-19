@@ -428,9 +428,9 @@ export class SyncDurableFeedReconciler {
       SyncDurableFeedReconciler.assertQuerySucceeded(reply, target, 'pull');
       const missingEntries = SyncDurableFeedReconciler.entriesMissingFrom(localCids, reply.entries ?? []);
       if (cidsOnly && missingEntries.length > 1) {
-        // One complete page costs less than a MessagesRead for every missing
-        // CID. Re-read from the same cursor and commit only the complete
-        // page's own progress; the inventory may have changed meanwhile.
+        // Avoid issuing one MessagesRead per missing CID. Re-read from the
+        // same cursor and commit only the complete page's own progress; the
+        // inventory may have changed meanwhile.
         cidsOnly = false;
         continue;
       }

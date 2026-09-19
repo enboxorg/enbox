@@ -8,7 +8,6 @@ import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
-import { deferred } from './utils/deferred.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 const DID = 'did:example:alice';
@@ -113,7 +112,7 @@ describe('SyncEngineLevel durable pull admission', () => {
       messageCid,
     });
 
-    expect(result).toEqual({ kind: 'admitted', appliedCids: [messageCid], freshEntries: [] });
+    expect(result).toEqual({ kind: 'echo' });
     expect(hydrate.notCalled).toBe(true);
   });
 
@@ -131,10 +130,11 @@ describe('SyncEngineLevel durable pull admission', () => {
     })).rejects.toThrow('continued to durable admission');
   });
 
-  it('does not reuse a latest local write that has lost its stored data', async () => {
+  it('does not advance from an echo hint when a latest local write has lost its stored data', async () => {
     const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
     const internal = engine as any;
     const messageCid = 'cid-missing-local-data';
+    internal._echoSuppressor.trackPushed(DID, messageCid, REMOTE);
     sinon.stub(internal, 'getLocalMessageForTarget').resolves({ message: recordsWriteMessage() });
     sinon.stub(internal, 'syncEntriesFromFeedEntry').rejects(new Error('continued to durable admission'));
 
@@ -144,10 +144,11 @@ describe('SyncEngineLevel durable pull admission', () => {
     })).rejects.toThrow('continued to durable admission');
   });
 
-  it('reuses a latest local RecordsWrite with stored data even without an endpoint echo hint', async () => {
+  it('skips a latest RecordsWrite echo only when its local stored data is durable', async () => {
     const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
     const internal = engine as any;
     const messageCid = 'cid-local-data';
+    internal._echoSuppressor.trackPushed(DID, messageCid, REMOTE);
     const dataStream = new Blob(['stored data']).stream();
     sinon.stub(internal, 'getLocalMessageForTarget').resolves({
       dataStream,
@@ -160,7 +161,7 @@ describe('SyncEngineLevel durable pull admission', () => {
       messageCid,
     });
 
-    expect(result).toEqual({ kind: 'admitted', appliedCids: [messageCid], freshEntries: [] });
+    expect(result).toEqual({ kind: 'echo' });
     expect(hydrate.notCalled).toBe(true);
   });
 
@@ -177,7 +178,7 @@ describe('SyncEngineLevel durable pull admission', () => {
       messageCid,
     });
 
-    expect(result).toEqual({ kind: 'admitted', appliedCids: [messageCid], freshEntries: [] });
+    expect(result).toEqual({ kind: 'echo' });
     expect(hydrate.notCalled).toBe(true);
   });
 
@@ -221,95 +222,6 @@ describe('SyncEngineLevel durable pull admission', () => {
       }),
     ]);
     expect(trackApplied.calledOnceWithExactly(['cid-root', 'cid-dependency'], syncTarget)).toBe(true);
-  });
-
-  it('rechecks durable state after another remote admits the same owned message', async () => {
-    const message = protocolMessage('2026-07-21T00:00:00.000000Z');
-    const messageCid = await Message.getCid(message);
-    const applying = deferred();
-    const release = deferred();
-    let stored = false;
-    const applyReplicatedMessage = sinon.stub().callsFake(async () => {
-      applying.resolve();
-      await release.promise;
-      stored = true;
-      return { kind: 'Applied' };
-    });
-    const engine = new SyncEngineLevel({
-      agent : { dwn: { applyReplicatedMessage, isRemoteMode: false } } as never,
-      db    : {} as never,
-    });
-    const internal = engine as any;
-    sinon.stub(internal, 'hasDeadLetter').resolves(false);
-    const trackApplied = sinon.stub(internal, 'trackRemoteFeedAppliedCids').resolves();
-    const localRead = sinon.stub(internal, 'getLocalMessageForTarget').callsFake(async () => stored ? { message } : undefined);
-    const entries = [{ message, messageCid, isLatestBaseState: true }];
-    const primary = internal.admitRemoteFeedPage(target(), entries);
-    await applying.promise;
-    const secondary = internal.admitRemoteFeedPage({ ...target(), dwnUrl: 'https://second.example' }, entries);
-    try {
-      await Promise.resolve();
-      expect(applyReplicatedMessage.calledOnce).toBe(true);
-      expect(localRead.calledOnce).toBe(true);
-    } finally {
-      release.resolve();
-    }
-    const results = await Promise.all([primary, secondary]);
-    expect(results).toEqual([
-      { kind: 'processed', admittedCids: [messageCid] },
-      { kind: 'processed', admittedCids: [messageCid] },
-    ]);
-    expect(applyReplicatedMessage.calledOnce).toBe(true);
-    expect(localRead.calledTwice).toBe(true);
-    expect(trackApplied.calledTwice).toBe(true);
-    expect(internal._pullAdmissions.size).toBe(0);
-  });
-
-  it('retries admission from another remote after a queued attempt fails', async () => {
-    const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
-    const internal = engine as any;
-    const entered = deferred();
-    const release = deferred();
-    sinon.stub(internal, 'hasDeadLetter').resolves(false);
-    sinon.stub(internal, 'trackRemoteFeedAppliedCids').resolves();
-    const admit = sinon.stub(internal, 'admitRemoteFeedEntry');
-    admit.onFirstCall().callsFake(async () => {
-      entered.resolve();
-      await release.promise;
-      throw new Error('remote unavailable');
-    });
-    admit.onSecondCall().resolves({ kind: 'admitted', appliedCids: ['cid-root'], freshEntries: [] });
-    const primary = internal.admitRemoteFeedPage(target(), [{ messageCid: 'cid-root' }]);
-    const failed = primary.catch((error: Error): Error => error);
-    await entered.promise;
-    const secondary = internal.admitRemoteFeedPage({ ...target(), dwnUrl: 'https://second.example' }, [{ messageCid: 'cid-root' }]);
-    release.resolve();
-    expect(await failed).toEqual(new Error('remote unavailable'));
-    expect(await secondary).toEqual({ kind: 'processed', admittedCids: ['cid-root'] });
-    expect(admit.calledTwice).toBe(true);
-    expect(internal._pullAdmissions.size).toBe(0);
-  });
-
-  it('aborts when the generation changes during the durable local check', async () => {
-    const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
-    const internal = engine as any;
-    let current = true;
-    sinon.stub(internal, 'getLocalMessageForTarget').callsFake(async () => {
-      current = false;
-      return { message: protocolMessage('2026-07-21T00:00:00.000000Z') };
-    });
-    const hydrate = sinon.stub(internal, 'syncEntriesFromFeedEntry');
-    expect(await internal.admitRemoteFeedEntry(target(), { messageCid: 'cid-root' }, () => current)).toEqual({ kind: 'aborted' });
-    expect(hydrate.notCalled).toBe(true);
-  });
-
-  it('does not reuse a foreign role source without its endpoint-local echo hint', async () => {
-    const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
-    const internal = engine as any;
-    const localRead = sinon.stub(internal, 'getLocalMessageForTarget').rejects(new Error('must not read owner state'));
-    const result = await internal.hasLocalFeedEntry(roleTarget(), { messageCid: 'cid-root' });
-    expect(result).toBe(false);
-    expect(localRead.notCalled).toBe(true);
   });
 
   it('does not attach a payload fetcher to retained non-latest writes', async () => {
@@ -359,7 +271,6 @@ describe('SyncEngineLevel durable pull admission', () => {
     });
     const internal = engine as any;
     const recordDeadLetter = sinon.stub(internal, 'recordDeadLetter').resolves();
-    sinon.stub(internal, 'getLocalMessageForTarget').resolves(undefined);
 
     const result = await internal.admitRemoteFeedEntry(target(), {
       isLatestBaseState: true,
@@ -388,7 +299,6 @@ describe('SyncEngineLevel durable pull admission', () => {
     });
     const internal = engine as any;
     const recordDeadLetter = sinon.stub(internal, 'recordDeadLetter').resolves();
-    sinon.stub(internal, 'getLocalMessageForTarget').resolves(undefined);
 
     const result = await internal.admitRemoteFeedEntry(target(), {
       isLatestBaseState: true,

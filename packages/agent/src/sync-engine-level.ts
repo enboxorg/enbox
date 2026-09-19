@@ -264,9 +264,6 @@ export class SyncEngineLevel implements SyncEngine {
   /** In-flight Retry-now target reconciliations, keyed by complete replication link. */
   private readonly _quotaRetryInFlight: Map<string, Promise<void>> = new Map();
 
-  /** Serialize admission of the same owned message across concurrent remotes. */
-  private readonly _pullAdmissions: Map<string, Promise<void>> = new Map();
-
   /** One coalesced refresh of durable followed-context catalog changes. */
   private _followedSourceRefresh?: Promise<void>;
   private _followedSourceRefreshPending = false;
@@ -4577,14 +4574,7 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
 
-      const outcome = target.authorization.kind === 'role'
-        ? await this.admitRemoteFeedEntry(target, entry, shouldContinue)
-        : await runSerializedByKey(
-          this._pullAdmissions,
-          JSON.stringify([target.did, entry.messageCid]),
-          (): ReturnType<SyncEngineLevel['admitRemoteFeedEntry']> =>
-            this.admitRemoteFeedEntry(target, entry, shouldContinue),
-        );
+      const outcome = await this.admitRemoteFeedEntry(target, entry, shouldContinue);
       if (outcome.kind === 'aborted') {
         return { kind: 'aborted' };
       }
@@ -4833,12 +4823,8 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'echo' };
     }
 
-    const localEntryPresent = await this.hasLocalFeedEntry(target, entry);
-    if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-      return { kind: 'aborted' };
-    }
-    if (localEntryPresent) {
-      return { kind: 'admitted', appliedCids: [entry.messageCid], freshEntries: [] };
+    if (await this.hasDurableLocalPullEcho(target, entry)) {
+      return { kind: 'echo' };
     }
 
     const prefetched = await this.syncEntriesFromFeedEntry(target, entry);
@@ -4886,17 +4872,16 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Reuse durable local state, including a message just pulled from another
-   * remote. A latest RecordsWrite also needs its stored data; a dataless
-   * ancestor is insufficient. Foreign role sources keep their endpoint-local
-   * echo rule and do not share owner/delegate admission work.
+   * Verify a recent-push hint against durable local state before skipping its
+   * remote echo. The in-memory hint narrows the check but is never checkpoint
+   * evidence by itself. A latest RecordsWrite also needs its local stored data;
+   * retaining only a dataless message is not equivalent to the remote record.
    */
-  private async hasLocalFeedEntry(
+  private async hasDurableLocalPullEcho(
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
   ): Promise<boolean> {
-    if (target.authorization.kind === 'role' &&
-        !this._echoSuppressor.hasRecentlyPushed(target.did, entry.messageCid, target.dwnUrl)) {
+    if (!this._echoSuppressor.hasRecentlyPushed(target.did, entry.messageCid, target.dwnUrl)) {
       return false;
     }
 

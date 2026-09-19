@@ -51,7 +51,7 @@ describe('E2E: populated catch-up transport request budgets', () => {
     await harness?.closeStorage();
   });
 
-  it.each(['http', 'websocket'] as const)('bounds 579-message %s catch-up traffic, including streamed data and deletes', async (transport) => {
+  it.each(['http', 'websocket'] as const)('bounds populated %s catch-up traffic, including streamed data and deletes', async (transport) => {
     const identity = await harness.createIdentity({ name: 'Catch-up traffic', testDwnUrls: [testDwnUrl] });
     const did = identity.did.uri;
     const config = await harness.agent.dwn.processRequest({
@@ -69,22 +69,22 @@ describe('E2E: populated catch-up transport request budgets', () => {
     });
     expect(remoteConfig.reply.status.code).toBe(202);
 
-    // Match the reported inventory size: config + 489 writes + 89 deletes.
-    // The local protocol makes this the populated-inventory catch-up path.
+    // Exercise current writes, retained history, and a streamed payload. The
+    // local protocol selects populated catch-up; paging is covered separately.
     const writes: RecordsWriteMessage[] = [];
     const largeText = 'x'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
-    for (let index = 0; index < 489; index++) {
+    for (let index = 0; index < 12; index++) {
       const write = await harness.agent.dwn.sendRequest({
         author        : did,
         target        : did,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : { protocol: protocol.protocol, protocolPath: 'note', dataFormat: 'text/plain' },
-        dataStream    : new Blob([index === 488 ? largeText : `record-${index}`]),
+        dataStream    : new Blob([index === 11 ? largeText : `record-${index}`]),
       });
       expect(write.reply.status.code).toBe(202);
       writes.push(write.message!);
     }
-    for (const write of writes.slice(0, 89)) {
+    for (const write of writes.slice(0, 2)) {
       const deletion = await harness.agent.dwn.sendRequest({
         author        : did,
         target        : did,
@@ -139,8 +139,8 @@ describe('E2E: populated catch-up transport request budgets', () => {
       expect(socket.callCount).toBe(0);
     }
     for (const [recordId, expected] of [
-      [writes[487].recordId, 'record-487'],
-      [writes[488].recordId, largeText],
+      [writes[10].recordId, 'record-10'],
+      [writes[11].recordId, largeText],
     ]) {
       const result = await harness.agent.dwn.processRequest({
         author        : did,
