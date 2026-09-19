@@ -42,6 +42,10 @@ and deployment requirements live in the public
 [`Build a browser dapp`](../../apps/docs/content/docs/guides/browser-dapp.mdx)
 guide.
 
+For the proposed simplified application SDK (a `createApp` entrypoint, React
+bindings, and the lifecycle contract), see the
+[TODO app API proposal](todo-app-api.md).
+
 For local test infrastructure, see [Testing](../TESTING.md). For public server
 hosting options and environment variables, see [Hosting](../HOSTING.md) and the
 [`@enbox/dwn-server` README](../../packages/dwn-server/README.md).
