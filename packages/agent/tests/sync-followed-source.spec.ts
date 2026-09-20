@@ -191,8 +191,8 @@ describe('SyncEngineLevel — followed sources', () => {
       try {
         await engine['runSettleCheck'](engine['_runtime']);
         expect(grants.callCount).toBe(1);
-        expect(probe.callCount).toBe(scenario === 'planning' ? 0 : 3);
-        expect(query.callCount).toBe(scenario === 'planning' ? 0 : 6);
+        expect(probe.callCount).toBe(scenario === 'planning' ? 0 : 4);
+        expect(query.callCount).toBe(scenario === 'planning' ? 0 : 8);
         expect(initialize.notCalled).toBe(true);
         expect(refresh.notCalled).toBe(true);
         expect(warn.notCalled).toBe(true);
@@ -1139,6 +1139,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
   it('should pause the accepted endpoint when a query reports a replacement role record', async () => {
     const engine = new SyncEngineLevel({ db });
+    sinon.stub(engine as never, 'scheduleFollowedSourceRefresh');
     const followed = source();
     const target = targetFor(followed);
     await (engine as any)._followedSourceStore.replace(followed);
@@ -1285,46 +1286,38 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(reloaded.recovery).toBeUndefined();
   });
 
-  it('should retain an aged deferred role-feed entry for a later retry', async () => {
+  it('should retain incomplete role-feed work while advancing feed currentness', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const target = targetFor(followed);
-    const messageCid = 'cid-aged-deferred';
-    const previousCheckpoint = { epoch: 'epoch', position: '1', streamId: 'stream', messageCid: 'cid-before' };
+    const messageCid = 'cid-pending-role';
     await (engine as any)._followedSourceStore.replace(followed);
     const link = await createRoleLink(engine, target);
-    link.pull.contiguousAppliedToken = previousCheckpoint;
-    await (engine as any).replicationLinkStore.persistCheckpoint(link, 'pull');
-    const agedAt = new Date(Date.now() - (25 * 60 * 60 * 1000)).toISOString();
-    await (engine as any)._deferredPullStore.put(target.did, messageCid, target.dwnUrl, {
-      attempts        : 1,
-      detail          : 'waiting for dependency',
-      firstDeferredAt : agedAt,
-      lastDeferredAt  : agedAt,
-    });
-    stubRemoteQuery(engine, {
-      status       : { code: 200 },
-      entries      : [{ messageCid, protocol: PROTOCOL }],
-      cursor       : { epoch: 'epoch', position: '2', streamId: 'stream', messageCid },
-      drained      : true,
-      roleRecordId : followed.id,
-    });
-    sinon.stub(engine as any, 'admitRemoteFeedEntry').resolves({
-      kind   : 'deferred',
-      detail : 'waiting for dependency',
+    const checkpoint = { epoch: 'epoch', position: '2', streamId: 'stream', messageCid };
+    await (engine as any).replicationLinkStore.commitPullPage(link, {
+      checkpoint,
+      deadLetters : [],
+      pending     : [{
+        entry: {
+          isLatestBaseState : true,
+          messageCid,
+          protocol          : PROTOCOL,
+          seq               : '2',
+        },
+        outcome : { kind: 'Deferred', detail: 'waiting for dependency', reason: 'dependency' },
+        source  : checkpoint,
+      }],
+      settledMessageCids: [],
     });
 
-    await expect((engine as any).reconcileTarget(target, { direction: 'pull' })).resolves.toMatchObject({
-      deferredPull: { detail: 'waiting for dependency', messageCid },
-    });
-
-    expect(await (engine as any)._deadLetterStore.get(target.did, messageCid, target.dwnUrl)).toBeUndefined();
-    expect(await (engine as any)._deferredPullStore.get(target.did, messageCid, target.dwnUrl)).toMatchObject({
-      attempts        : 2,
-      firstDeferredAt : agedAt,
-    });
+    expect(await engine.getDeadLetters(target.did)).toEqual([]);
+    expect(await (engine as any).replicationLinkStore.getPendingPullsForLink(link)).toMatchObject([{
+      attempts : 1,
+      messageCid,
+      outcome  : { detail: 'waiting for dependency' },
+    }]);
     expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
-      pull   : { contiguousAppliedToken: previousCheckpoint },
+      pull   : { contiguousAppliedToken: checkpoint, version: 2 },
       status : 'initializing',
     }]);
   });
@@ -1526,8 +1519,16 @@ describe('SyncEngineLevel — followed sources', () => {
     await internal._followedSourceStore.replace(followed);
     const link = await createRoleLink(engine, target);
     const checkpoint = { epoch: 'epoch', position: '11', streamId: 'stream', messageCid: 'cid-11' };
-    link.pull.contiguousAppliedToken = checkpoint;
-    await internal.replicationLinkStore.persistCheckpoint(link, 'pull');
+    await internal.replicationLinkStore.commitPullPage(link, {
+      checkpoint,
+      deadLetters : [],
+      pending     : [{
+        entry   : { isLatestBaseState: true, messageCid: 'role-pending', protocol: PROTOCOL, seq: '11' },
+        outcome : { kind: 'Deferred', reason: 'dependency' },
+        source  : { ...checkpoint, messageCid: 'role-pending' },
+      }],
+      settledMessageCids: [],
+    });
 
     await engine.removeIdentity(SOURCE_DID);
 
@@ -1536,25 +1537,41 @@ describe('SyncEngineLevel — followed sources', () => {
       authorization : { actorDid: followed.actorDid, kind: 'role' },
       pull          : { contiguousAppliedToken: checkpoint },
     }]);
+    expect(await internal.replicationLinkStore.getPendingPullsForLink(link)).toMatchObject([{
+      authorizationKind : 'role',
+      messageCid        : 'role-pending',
+    }]);
   });
 
-  it('should retain deferred role-feed work while the followed source is current', async () => {
+  it('should retain pending role-feed work across another retry attempt', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const target = targetFor(followed);
     await (engine as any)._followedSourceStore.replace(followed);
+    const link = await createRoleLink(engine, target);
+    const messageCid = 'pending-role-message';
+    const entry = { isLatestBaseState: true, messageCid, protocol: PROTOCOL, seq: '3' };
+    const sourceToken = { epoch: 'epoch', messageCid, position: '3', streamId: 'stream' };
+    await (engine as any).replicationLinkStore.commitPullPage(link, {
+      checkpoint  : sourceToken,
+      deadLetters : [],
+      pending     : [{
+        entry,
+        outcome : { kind: 'Deferred', detail: 'waiting for role support', reason: 'dependency' },
+        source  : sourceToken,
+      }],
+      settledMessageCids: [],
+    });
+    await (engine as any).replicationLinkStore.updatePendingPull(link, {
+      entry,
+      outcome : { kind: 'Deferred', detail: 'still waiting', reason: 'dependency' },
+      source  : sourceToken,
+    });
 
-    const retired = await (engine as any).tryRetireDeferredPull(target, {
-      messageCid : 'deferred-role-message',
-      protocol   : PROTOCOL,
-    }, 'waiting for role support');
-
-    expect(retired).toBe(false);
-    expect(await (engine as any)._deferredPullStore.get(
-      target.did,
-      'deferred-role-message',
-      target.dwnUrl,
-    )).toMatchObject({ attempts: 1, detail: 'waiting for role support' });
+    expect(await (engine as any).replicationLinkStore.getPendingPullsForLink(link)).toMatchObject([{
+      attempts : 2,
+      outcome  : { detail: 'still waiting' },
+    }]);
   });
 
   it('should retain a role feed delete initialWrite as a non-latest dependency', async () => {
@@ -1615,6 +1632,19 @@ describe('SyncEngineLevel — followed sources', () => {
     const targetB = targetFor(sourceB);
     const linkA = await createRoleLink(engine, targetA);
     const linkB = await createRoleLink(engine, targetB);
+    for (const [link, messageCid] of [[linkA, 'pending-a'], [linkB, 'pending-b']] as const) {
+      const checkpoint = { epoch: 'epoch', messageCid, position: '1', streamId: 'stream' };
+      await (engine as any).replicationLinkStore.commitPullPage(link, {
+        checkpoint,
+        deadLetters : [],
+        pending     : [{
+          entry   : { isLatestBaseState: true, messageCid, protocol: PROTOCOL, seq: '1' },
+          outcome : { kind: 'Deferred', reason: 'dependency' },
+          source  : checkpoint,
+        }],
+        settledMessageCids: [],
+      });
+    }
     targetA.projectionId = linkA.projectionId;
     targetB.projectionId = linkB.projectionId;
     sinon.stub((engine as any).targetResolver, 'buildTargetForSource').callsFake(
@@ -1647,6 +1677,10 @@ describe('SyncEngineLevel — followed sources', () => {
     expect((await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).map(
       (link: ReplicationLinkState) => link.authorization.kind === 'role' && link.authorization.roleRecordId,
     )).toEqual(['role-b']);
+    expect(await (engine as any).replicationLinkStore.getPendingPullsForLink(linkA)).toEqual([]);
+    expect(await (engine as any).replicationLinkStore.getPendingPullsForLink(linkB)).toMatchObject([{
+      messageCid: 'pending-b',
+    }]);
 
     (engine as any)._runtime.dispose();
     await controllerB.dispose();

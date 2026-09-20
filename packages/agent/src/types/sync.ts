@@ -301,6 +301,12 @@ export type DirectionCheckpoint = {
   contiguousAppliedToken?: ProgressToken;
 };
 
+/** Versioned pull checkpoint whose token means durably handled, not necessarily materialized. */
+export type PullCheckpoint = DirectionCheckpoint & {
+  /** Absent only on a legacy row that must be reset and rebuilt before use. */
+  version?: 2;
+};
+
 /** Direction of replication relative to the local DWN. */
 export type SyncDirection = 'push' | 'pull';
 
@@ -389,8 +395,8 @@ export type ReplicationLinkState = {
   /** Latest recovery failure. Cleared after the failed operation succeeds. */
   recovery?: SyncLinkRecoveryState;
 
-  /** Pull-direction replication checkpoint (remote → local). */
-  readonly pull: DirectionCheckpoint;
+  /** Pull-direction feed-handling checkpoint (remote → local). */
+  readonly pull: PullCheckpoint;
 
   /** Push-direction replication checkpoint (local → remote). */
   readonly push: DirectionCheckpoint;
@@ -447,6 +453,8 @@ export type PushFailure = {
   remoteResult?: Extract<ReplicationApplyResult, { kind: PushFailureKind }>;
   /** Human-readable diagnostic detail. */
   detail?: string;
+  /** Exact local feed position that produced this delivery failure. */
+  source?: ProgressToken;
 };
 
 /** How a remote DWN acknowledged a successfully pushed message. */
@@ -690,6 +698,12 @@ export type DeadLetterEntry = {
   errorDetail: string;
   /** ISO-8601 timestamp of when the failure was recorded. */
   failedAt: string;
+  /** Direction and exact link metadata are present on precise v2 rows. */
+  direction?: SyncDirection;
+  projectionId?: string;
+  authorizationEpoch?: string;
+  source?: ProgressToken;
+  version?: 2;
 };
 
 /**
@@ -714,9 +728,11 @@ export type SyncHealthSummary = {
    * for tenant storage/message quota. These are re-probed on a backoff and
    * self-heal when quota grows, another device delivers the CID, or local
    * history retires it. They are user-actionable state, not a dead letter.
-   */
+  */
   quotaBlockedMessageCount: number;
-  /** True only when there are no failed messages, quota blocks, or degraded links. */
+  /** Remote pull entries durably retained but not yet materialized locally. */
+  pendingPullCount: number;
+  /** True only when there are no failed messages, pending pulls, quota blocks, or degraded links. */
   syncHealthy: boolean;
 };
 
@@ -740,6 +756,8 @@ export type RemoteSyncStatus = {
   connectivity: SyncConnectivityState;
   /** Messages currently deferred against this remote for quota. */
   quotaBlockedMessageCount: number;
+  /** Pull entries handled in the feed but still awaiting local materialization. */
+  pendingPullCount: number;
   /** Dead-lettered (terminal) messages for this remote. */
   failedMessageCount: number;
   /** ISO-8601 time of the soonest quota re-probe across this remote's blocked messages, if any. */
@@ -778,6 +796,8 @@ export type ReplicationLinkSnapshot = {
   connectivity: SyncConnectivityState;
   /** Whether all accepted remote pull work is settled. */
   isPullCurrent: boolean;
+  /** Durable pull entries still awaiting local materialization. */
+  pendingPullCount: number;
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;
   /** Role-record ID represented by this role-authorized link. */

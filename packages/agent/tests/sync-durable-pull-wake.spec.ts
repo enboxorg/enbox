@@ -196,16 +196,23 @@ describe('SyncEngineLevel durable pull admission', () => {
         { message: dependency, messageCid: 'cid-dependency' },
       ],
     });
-    sinon.stub(internal, 'hasDeadLetter').resolves(false);
     const trackApplied = sinon.stub(internal, 'trackRemoteFeedAppliedCids').resolves();
     const events: unknown[] = [];
     engine.on((event): void => { events.push(event); });
 
-    const result = await internal.admitRemoteFeedPage(syncTarget, [{ messageCid: 'cid-root' }]);
+    const result = await internal.admitRemoteFeedPage(syncTarget, [{
+      isLatestBaseState : true,
+      message           : root,
+      messageCid        : 'cid-root',
+      seq               : '1',
+    }]);
 
     expect(result).toEqual({
-      kind         : 'processed',
-      admittedCids : ['cid-root', 'cid-dependency'],
+      kind               : 'processed',
+      admittedCids       : ['cid-root', 'cid-dependency'],
+      deadLetters        : [],
+      pending            : [],
+      settledMessageCids : ['cid-root', 'cid-dependency'],
     });
     expect(events).toEqual([
       expect.objectContaining({
@@ -244,22 +251,30 @@ describe('SyncEngineLevel durable pull admission', () => {
       appliedCids  : ['cid-existing'],
       freshEntries : [],
     });
-    sinon.stub(internal, 'hasDeadLetter').resolves(false);
     const trackApplied = sinon.stub(internal, 'trackRemoteFeedAppliedCids').resolves();
     const events: unknown[] = [];
     engine.on((event): void => { events.push(event); });
 
-    const result = await internal.admitRemoteFeedPage(syncTarget, [{ messageCid: 'cid-existing' }]);
+    const duplicate = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const result = await internal.admitRemoteFeedPage(syncTarget, [{
+      isLatestBaseState : true,
+      message           : duplicate,
+      messageCid        : 'cid-existing',
+      seq               : '1',
+    }]);
 
     expect(result).toEqual({
-      kind         : 'processed',
-      admittedCids : ['cid-existing'],
+      kind               : 'processed',
+      admittedCids       : ['cid-existing'],
+      deadLetters        : [],
+      pending            : [],
+      settledMessageCids : ['cid-existing'],
     });
     expect(trackApplied.calledOnceWithExactly(['cid-existing'], syncTarget)).toBe(true);
     expect(events.filter((event: any) => event.type === 'delivery:applied')).toEqual([]);
   });
 
-  it('records a terminal admission failure as a dead letter at the engine seam', async () => {
+  it('returns a terminal admission candidate for the atomic page commit', async () => {
     const message = protocolMessage('2026-07-21T00:00:00.000000Z');
     const messageCid = await Message.getCid(message);
     const applyReplicatedMessage = sinon.stub().resolves({ kind: 'Invalid', reason: 'bad signature' });
@@ -278,14 +293,15 @@ describe('SyncEngineLevel durable pull admission', () => {
       messageCid,
     });
 
-    expect(result).toEqual({ kind: 'dead-lettered' });
-    expect(recordDeadLetter.calledOnceWithMatch({
-      errorCode      : 'invalid',
-      errorDetail    : 'bad signature',
-      messageCid,
-      remoteEndpoint : REMOTE,
-      tenantDid      : DID,
-    })).toBe(true);
+    expect(result).toMatchObject({
+      kind       : 'dead-lettered',
+      deadLetter : {
+        entry       : { messageCid },
+        errorCode   : 'invalid',
+        errorDetail : 'bad signature',
+      },
+    });
+    expect(recordDeadLetter.notCalled).toBe(true);
   });
 
   it('settles a pruned-parent rejection without recording a dead letter', async () => {

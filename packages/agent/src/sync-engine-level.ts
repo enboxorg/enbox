@@ -11,7 +11,6 @@ import { RateLimitError, SubscriptionHandlerTerminalError } from '@enbox/dwn-cli
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { SyncDeferredPullState } from './sync-deferred-pull-store-level.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type { SyncFreshEntry } from './sync-admit-closure.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
@@ -43,12 +42,14 @@ import type {
   SyncDurableFeedPagePushResult as FeedPushResult,
   SyncDurableFeedPermissionGrantBootstrapResult as PermissionGrantBootstrapResult,
   SyncDurableFeedQuery,
+  SyncPullDeadLetterCandidate,
   SyncDurableFeedReconcileOptions as SyncReconcileOptions,
   SyncDurableFeedReconcileResult as SyncReconcileResult,
 } from './sync-durable-feed-reconciler.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput, FollowedSyncSourceStore } from './followed-sync-source.js';
 import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.js';
 import type { SyncIdentityTaskRunner, SyncLifecycleDeadline } from './sync-lifecycle-coordinator.js';
+import type { SyncPendingPullCandidate, SyncPendingPullOutcome, SyncPendingPullState } from './sync-pending-pull-store-level.js';
 import type {
   SyncScopeClosureGrantQuery,
   SyncScopeClosureGrantResolution,
@@ -67,7 +68,6 @@ import { isDidResolutionUnavailableError } from './did-resolution-error.js';
 import { recordsWriteRequiresData } from './sync-fetch-helpers.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
-import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';
 import { SyncDrainCoordinator } from './sync-drain-coordinator.js';
 import { SyncDurableFeedReconciler } from './sync-durable-feed-reconciler.js';
 import { SyncEchoSuppressor } from './sync-echo-suppressor.js';
@@ -192,7 +192,6 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
   private readonly _connectivityManager: SyncConnectivityManager;
   private readonly _deadLetterStore: SyncDeadLetterStoreLevel;
-  private readonly _deferredPullStore: SyncDeferredPullStoreLevel;
   private readonly _drainCoordinator: SyncDrainCoordinator;
   private readonly _echoSuppressor = new SyncEchoSuppressor();
   private readonly _endpointStore: SyncEndpointStore;
@@ -298,6 +297,7 @@ export class SyncEngineLevel implements SyncEngine {
    * identity the remote DWN has not finished registering as a tenant.
    */
   private static readonly TRANSIENT_INIT_RETRY_BACKOFF_MS = [2000, 4000, 8000];
+  private static readonly MAX_PENDING_PULL_RETRIES_PER_TURN = 25;
 
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
@@ -308,7 +308,6 @@ export class SyncEngineLevel implements SyncEngine {
     // Durable stores. Every collaborator below reads through one of these,
     // so they must exist first.
     this._deadLetterStore = new SyncDeadLetterStoreLevel(this._db);
-    this._deferredPullStore = new SyncDeferredPullStoreLevel(this._db);
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._followedSourceStore = new FollowedSyncSourceStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
@@ -408,7 +407,7 @@ export class SyncEngineLevel implements SyncEngine {
       store      : new SyncQuotaStoreLevel(this._db),
       operations : {
         clearDeadLetterForTenant: (target, messageCid): Promise<void> =>
-          this.clearDeadLetterForTenant(target.did, messageCid, target.dwnUrl),
+          this.clearPushDeadLetter(target, messageCid),
         collectFeedCids: (target, source): Promise<Set<string> | undefined> =>
           this._durableFeedReconciler.collectFeedCids(target, source),
         getLocalMessage: (target, messageCid): Promise<SyncMessageEntry | undefined> =>
@@ -490,14 +489,18 @@ export class SyncEngineLevel implements SyncEngine {
           forceQuotaProbe,
         ): Promise<PermissionGrantBootstrapResult> =>
           this.bootstrapRemotePermissionGrants(target, shouldContinue, forceQuotaProbe),
+        commitPullPage: (link, checkpoint, deadLetters, pending, settledMessageCids): Promise<boolean> =>
+          this.commitPullPage(link, checkpoint, deadLetters, pending, settledMessageCids),
         commitCheckpoint: (link, direction): Promise<void> =>
           this.commitReconciledCheckpoint(link, direction),
         probeQuotaBlocks: (target, force, forceProbeCids, shouldContinue): Promise<void> =>
           this.probeQuotaBlocksForTarget(target, force, forceProbeCids, shouldContinue),
         pushLocalPage: (target, entries, shouldContinue): Promise<FeedPushResult> =>
           this.pushLocalFeedPage(target, entries, shouldContinue),
-        queryFeed       : (query): Promise<MessagesQueryReply> => this.queryDurableFeed(query),
-        resetCheckpoint : (link, direction): Promise<void> => this.replicationLinkStore.resetCheckpoint(link, direction),
+        queryFeed         : (query): Promise<MessagesQueryReply> => this.queryDurableFeed(query),
+        resetCheckpoint   : (link, direction): Promise<void> => this.replicationLinkStore.resetCheckpoint(link, direction),
+        retryPendingPulls : (target, link, shouldContinue): Promise<{ aborted?: true; pendingCount: number }> =>
+          this.retryPendingPulls(target, link, shouldContinue),
       },
     });
   }
@@ -526,7 +529,8 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private async getLinksForStatusReporting(): Promise<SyncStatusLink[]> {
     const links = await this.replicationLinkStore.getAllLinks();
-    return links.map((link): SyncStatusLink => {
+    return Promise.all(links.map(async (link): Promise<SyncStatusLink> => {
+      const pendingPullCount = (await this.replicationLinkStore.getPendingPullsForLink(link)).length;
       const linkKey = buildLinkKey(
         link.tenantDid,
         link.remoteEndpoint,
@@ -535,7 +539,7 @@ export class SyncEngineLevel implements SyncEngine {
       );
       const controller = this.getLinkController(linkKey);
       if (controller?.isActive !== true) {
-        return { ...link, connectivity: 'unknown', isPullCurrent: false };
+        return { ...link, connectivity: 'unknown', isPullCurrent: false, pendingPullCount };
       }
 
       const activeLink = controller.link;
@@ -546,9 +550,10 @@ export class SyncEngineLevel implements SyncEngine {
         ...link,
         connectivity  : activeLink.connectivity,
         isPullCurrent : controller.isPullCurrent,
+        pendingPullCount,
         status,
       };
-    });
+    }));
   }
 
   /** Wire SyncLinkRecoveryCoordinator to this engine. */
@@ -641,7 +646,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async clearSyncDb(): Promise<void> {
     await this._deadLetterStore.clear();
-    await this._deferredPullStore.clear();
     await this._quotaManager.clear();
     await this._identityStore.clear();
     await this.replicationLinkStore.clear();
@@ -1159,12 +1163,10 @@ export class SyncEngineLevel implements SyncEngine {
     // silently disable live replication.
     await this._quotaManager.clearTenant(did);
     await this.pruneSupersededDurableLinksForIdentity(did, new Set());
-    await this.runDeferredPullLifecycle(did, async (): Promise<void> => {
-      await this._deadLetterStore.deleteForTenant(did);
-      await this._deferredPullStore.deleteForTenant(did);
-      await this._identityStore.delete(did);
-      this._pausedIdentities.delete(did);
-    });
+    await this._deadLetterStore.deleteForTenant(did);
+    await this.replicationLinkStore.deleteOwnedPendingPullsForTenant(did);
+    await this._identityStore.delete(did);
+    this._pausedIdentities.delete(did);
     this.invalidateSyncTargetsCache();
     this.emitIdentityRegistrationChange(did, undefined, true);
   }
@@ -1624,6 +1626,17 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async removeFollowedSourceLink(target: SyncTarget): Promise<void> {
     this.deactivateFollowedSourceLink(target);
+    const link = await this.replicationLinkStore.getExistingLink({
+      tenantDid          : target.did,
+      remoteEndpoint     : target.dwnUrl,
+      scope              : target.scope,
+      authorizationEpoch : target.authorizationEpoch,
+      authorization      : target.authorization,
+      delegateDid        : target.delegateDid,
+    });
+    if (link !== undefined) {
+      await this.replicationLinkStore.deletePendingPullsForLink(link);
+    }
     await this.replicationLinkStore.deleteLink(
       target.did,
       target.dwnUrl,
@@ -2357,9 +2370,6 @@ export class SyncEngineLevel implements SyncEngine {
   // Per-link repair orchestration
   // ---------------------------------------------------------------------------
 
-  /** Maximum age for a repeatedly deferred pull entry before it is dead-lettered and skipped. */
-  private static readonly DEFERRED_PULL_DEAD_LETTER_AFTER_MS = 24 * 60 * 60 * 1000;
-
   private async transitionToPaused(
     linkKey: string,
     link: ReplicationLinkState,
@@ -2387,8 +2397,9 @@ export class SyncEngineLevel implements SyncEngine {
         error,
       );
     }
-    const refreshAuthority = error instanceof FollowedSourceRoleRecordMismatchError ||
-      isMissingRoleAuthorizationFailure(syncErrorMessage(error));
+    // A missing-role status disables only this binding. It is not signed
+    // revocation evidence for the logical followed acceptance.
+    const refreshAuthority = error instanceof FollowedSourceRoleRecordMismatchError;
     await this.transitionToPaused(this.getReplicationLinkKey(target, link), link, refreshAuthority);
   }
 
@@ -3431,12 +3442,13 @@ export class SyncEngineLevel implements SyncEngine {
     // Repair resets executor readiness, which resolves the running call as
     // stale. Retain its error so the transport still receives a terminal failure.
     let admissionFailure: { error: unknown } | undefined;
+    let locallyComplete = false;
     try {
       const result = await this._linkRecoveryCoordinator.execute(
         context.controller,
-        async (): Promise<true> => {
+        async (): Promise<boolean> => {
           try {
-            await this.admitLivePullEvent(context, message, generation);
+            locallyComplete = await this.admitLivePullEvent(context, message, generation);
           } catch (error: unknown) {
             // Fence every queued successor before this failed call releases
             // the executor; otherwise a later event could skip this cursor.
@@ -3444,7 +3456,7 @@ export class SyncEngineLevel implements SyncEngine {
             await this.failLivePullAdmission(context, error);
             throw error;
           }
-          return true;
+          return locallyComplete;
         },
       );
       if (admissionFailure !== undefined) {
@@ -3461,7 +3473,17 @@ export class SyncEngineLevel implements SyncEngine {
       context.controller.endLivePullDelivery(generation);
     }
 
-    this.markPullCurrent(context.controller, generation);
+    if (locallyComplete) {
+      this.markPullCurrent(context.controller, generation);
+    } else {
+      context.controller.executor.request('pull');
+      void this._linkRecoveryCoordinator.resume(context.controller).catch((error: unknown): void => {
+        console.error(
+          `SyncEngineLevel: pending live pull retry failed for ${context.did} -> ${context.dwnUrl}`,
+          error,
+        );
+      });
+    }
   }
 
   /** Fence a failed socket delivery before the ordered executor releases its successors. */
@@ -3532,9 +3554,9 @@ export class SyncEngineLevel implements SyncEngine {
     context: LivePullContext,
     message: SubscriptionEvent,
     expectedReplicationGeneration: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (context.isStale() || !context.controller.isReplicationGenerationCurrent(expectedReplicationGeneration)) {
-      return;
+      return false;
     }
     if (!isValidProgressToken(message.cursor) || !SyncCheckpoint.validateTokenDomain(context.link.pull, message.cursor)) {
       throw new Error(`SyncEngineLevel: live pull token domain mismatch for ${context.did} -> ${context.dwnUrl}`);
@@ -3552,7 +3574,7 @@ export class SyncEngineLevel implements SyncEngine {
       currentCursor !== undefined &&
       SyncCheckpoint.comparePosition(message.cursor, currentCursor) <= 0
     ) {
-      return;
+      return (await this.replicationLinkStore.getPendingPullsForLink(context.link)).length === 0;
     }
 
     const isLatestBaseState = message.isLatestBaseState;
@@ -3575,40 +3597,18 @@ export class SyncEngineLevel implements SyncEngine {
       [entry],
       (): boolean => !context.isStale() && context.controller.isReplicationGenerationCurrent(expectedReplicationGeneration),
     );
-    if (outcome.kind === 'aborted') { return; }
-    if (outcome.kind === 'deferred') {
-      // A deferred root blocks contiguous ACK progress. End this binding so
-      // durable repair can replay it without wedging the socket flow window.
-      const detail = outcome.detail === undefined ? '' : `: ${outcome.detail}`;
-      console.warn(
-        `SyncEngineLevel: live pull delivery ${messageCid} deferred for ${context.did} -> ${context.dwnUrl}; ` +
-        `ending the subscription binding for durable recovery${detail}`,
-      );
-      throw new Error(outcome.detail ?? `live pull message ${messageCid} is waiting for replication support`);
+    if (outcome.kind === 'aborted') { return false; }
+    const committed = await this.commitPullPage(
+      context.link,
+      message.cursor,
+      outcome.deadLetters,
+      outcome.pending,
+      outcome.settledMessageCids,
+    );
+    if (!committed || context.isStale()) {
+      return false;
     }
-    await this.commitLivePullCursor(context, message.cursor);
-  }
-
-  /** Persist one socket cursor only after its message reached a settled outcome. */
-  private async commitLivePullCursor(context: LivePullContext, cursor: ProgressToken): Promise<void> {
-    if (context.isStale()) { return; }
-    if (!isValidProgressToken(cursor) || !SyncCheckpoint.validateTokenDomain(context.link.pull, cursor)) {
-      throw new Error(`SyncEngineLevel: live pull token domain mismatch for ${context.did} -> ${context.dwnUrl}`);
-    }
-    const previous = context.link.pull.contiguousAppliedToken;
-    if (previous !== undefined && SyncCheckpoint.comparePosition(cursor, previous) <= 0) {
-      return;
-    }
-    SyncCheckpoint.commitContiguousToken(context.link.pull, cursor);
-    try {
-      await this.replicationLinkStore.persistCheckpoint(context.link, 'pull');
-    } catch (error: unknown) {
-      SyncCheckpoint.reset(context.link.pull, previous);
-      throw error;
-    }
-    if (!context.isStale()) {
-      this.emitCheckpointAdvance(context.link, 'pull');
-    }
+    return (await this.replicationLinkStore.getPendingPullsForLink(context.link)).length === 0;
   }
 
   private async handleLivePullError(context: LivePullContext, errorCode: string): Promise<void> {
@@ -3721,6 +3721,54 @@ export class SyncEngineLevel implements SyncEngine {
         ? { type: 'checkpoint:pull-advance', ...base }
         : { type: 'checkpoint:push-advance', ...base },
     );
+  }
+
+  /** Atomically commit one page's pending/dead-letter outcomes and handled-through token. */
+  private async commitPullPage(
+    link: ReplicationLinkState,
+    checkpoint: ProgressToken,
+    deadLetters: SyncPullDeadLetterCandidate[],
+    pending: SyncPendingPullCandidate[],
+    settledMessageCids: string[],
+  ): Promise<boolean> {
+    const sourceFor = (entry: MessagesQueryReplyEntry): ProgressToken => ({
+      epoch      : checkpoint.epoch,
+      messageCid : entry.messageCid,
+      position   : entry.seq,
+      streamId   : checkpoint.streamId,
+    });
+    const committed = await this.replicationLinkStore.commitPullPage(link, {
+      checkpoint,
+      deadLetters: deadLetters.map(({ entry, errorCode, errorDetail, protocol }): DeadLetterEntry => ({
+        authorizationEpoch : link.authorizationEpoch,
+        direction          : 'pull',
+        errorCode,
+        errorDetail,
+        failedAt           : new Date().toISOString(),
+        messageCid         : entry.messageCid,
+        projectionId       : link.projectionId,
+        protocol,
+        remoteEndpoint     : link.remoteEndpoint,
+        source             : sourceFor(entry),
+        tenantDid          : link.tenantDid,
+        version            : 2,
+      })),
+      pending: pending.map(({ entry, outcome }) => ({ entry, outcome, source: sourceFor(entry) })),
+      settledMessageCids,
+    });
+    if (!committed) {
+      return false;
+    }
+
+    this.emitCheckpointAdvance(link, 'pull');
+    if (deadLetters.length > 0) {
+      this.emitEvent({
+        type           : 'dead-letter:change',
+        tenantDid      : link.tenantDid,
+        remoteEndpoint : link.remoteEndpoint,
+      });
+    }
+    return true;
   }
 
   /** Persist and announce one reconciler page's ordered checkpoint advance. */
@@ -3890,7 +3938,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async recordTerminalPushFailure(target: SyncTarget, failure: PushFailure): Promise<void> {
     try {
-      if (await this.hasDeadLetter(target.did, target.dwnUrl, failure.cid)) {
+      if (await this.hasPushDeadLetter(target, failure.cid)) {
         return;
       }
     } catch (error: unknown) {
@@ -3902,12 +3950,17 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     await this.recordDeadLetter({
-      messageCid     : failure.cid,
-      tenantDid      : target.did,
-      remoteEndpoint : target.dwnUrl,
-      protocol       : failure.protocol ?? singleProtocolForSyncScope(target.scope),
-      errorCode      : failure.kind ?? 'Invalid',
-      errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
+      authorizationEpoch : target.authorizationEpoch,
+      direction          : 'push',
+      messageCid         : failure.cid,
+      tenantDid          : target.did,
+      remoteEndpoint     : target.dwnUrl,
+      projectionId       : target.projectionId,
+      protocol           : failure.protocol ?? singleProtocolForSyncScope(target.scope),
+      errorCode          : failure.kind ?? 'Invalid',
+      errorDetail        : failure.detail ?? 'push rejected during sync reconciliation',
+      source             : failure.source,
+      version            : 2,
     });
     console.error('SyncEngineLevel: Terminal reconciliation push failed', new SyncPushFailuresError({
       authorization  : target.authorization,
@@ -4016,6 +4069,7 @@ export class SyncEngineLevel implements SyncEngine {
       includesPull &&
       controller.link.status === 'live' &&
       result.pullDrained === true &&
+      result.pullLocallyComplete === true &&
       isCurrent()
     ) {
       this.markPullCurrent(controller, replicationGeneration);
@@ -4077,7 +4131,7 @@ export class SyncEngineLevel implements SyncEngine {
     const recovered = coveredAllLinkDirections &&
       result.aborted !== true &&
       result.paused !== true &&
-      result.deferredPull === undefined &&
+      result.pullLocallyComplete !== false &&
       !hasRetryablePushFailures &&
       (shouldContinue?.() ?? true);
     if (recovered) {
@@ -4119,7 +4173,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
     if (target.authorization.kind === 'role') {
       const result = await this.reconcileTarget(target);
-      return result.pullDrained === true ? { ...result, converged: true } : result;
+      return result.pullDrained === true && result.pullLocallyComplete === true
+        ? { ...result, converged: true }
+        : result;
     }
     await this.getOrCreateReplicationLink(target);
     const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
@@ -4438,7 +4494,7 @@ export class SyncEngineLevel implements SyncEngine {
     pushContext: RemoteApplyPushContext,
     shouldContinue?: () => boolean,
   ): Promise<FeedPushEntryResult> {
-    if (await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
+    if (await this.hasPushDeadLetter(target, entry.messageCid)) {
       return { kind: 'processed' };
     }
 
@@ -4548,52 +4604,56 @@ export class SyncEngineLevel implements SyncEngine {
     return initialCids;
   }
 
-  /**
-   * Admit one page of remote feed entries, in feed order.
-   *
-   * A deferred entry STOPS the page: its dependencies are not local yet, and
-   * later entries in feed order may depend on it, so the caller holds the
-   * checkpoint at that CID and the next pass retries. The one exception is a
-   * deferred entry that has aged past
-   * {@link DEFERRED_PULL_DEAD_LETTER_AFTER_MS}: it is dead-lettered and the
-   * page continues for ordinary links, so a single permanently unresolvable
-   * message cannot wedge the link forever. Role links retain deferred work
-   * because pull drainage is their only currentness proof and the dependency
-   * may become available later.
-   */
-  private async admitRemoteFeedPage(
+  /** Retry a bounded pending-pull tail after new feed pages have been retained. */
+  private async retryPendingPulls(
     target: SyncTarget,
-    entries: MessagesQueryReplyEntry[],
+    link: ReplicationLinkState,
     shouldContinue?: () => boolean,
-  ): Promise<FeedPageAdmissionResult> {
-    const admittedCids: string[] = [];
-
-    for (const entry of entries) {
-      if (target.authorization.kind !== 'role' &&
-          await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
-        continue;
+  ): Promise<{ aborted?: true; pendingCount: number }> {
+    const queued = await this.replicationLinkStore.getPendingPullsForLink(link);
+    for (const state of queued.slice(0, SyncEngineLevel.MAX_PENDING_PULL_RETRIES_PER_TURN)) {
+      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+        return { aborted: true, pendingCount: queued.length };
       }
 
-      const outcome = await this.admitRemoteFeedEntry(target, entry, shouldContinue);
+      const outcome = await this.admitRemoteFeedEntry(target, state.entry, shouldContinue, {
+        verifyLocalCompletion: true,
+      });
       if (outcome.kind === 'aborted') {
-        return { kind: 'aborted' };
+        return { aborted: true, pendingCount: queued.length };
       }
-
       if (outcome.kind === 'deferred') {
-        if (!await this.tryRetireDeferredPull(target, entry, outcome.detail)) {
-          return { kind: 'deferred', admittedCids, detail: outcome.detail, messageCid: entry.messageCid };
+        const retained = await this.replicationLinkStore.updatePendingPull(link, {
+          entry   : state.entry,
+          outcome : outcome.outcome,
+          source  : state.source,
+        });
+        if (!retained) {
+          return {
+            aborted      : true,
+            pendingCount : (await this.replicationLinkStore.getPendingPullsForLink(link)).length,
+          };
         }
         continue;
       }
-      if (outcome.kind === 'echo') {
-        continue;
-      }
-      if (outcome.kind === 'dead-lettered') {
-        continue;
+
+      const deadLetter = outcome.kind === 'dead-lettered'
+        ? SyncEngineLevel.precisePullDeadLetter(link, state, outcome.deadLetter)
+        : undefined;
+      if (!await this.replicationLinkStore.settlePendingPull(link, state.messageCid, deadLetter)) {
+        return {
+          aborted      : true,
+          pendingCount : (await this.replicationLinkStore.getPendingPullsForLink(link)).length,
+        };
       }
 
-      if (outcome.kind === 'admitted') {
-        admittedCids.push(...outcome.appliedCids);
+      if (outcome.kind === 'dead-lettered') {
+        this.emitEvent({
+          type           : 'dead-letter:change',
+          tenantDid      : link.tenantDid,
+          remoteEndpoint : link.remoteEndpoint,
+        });
+      } else if (outcome.kind === 'admitted') {
         await this.trackRemoteFeedAppliedCids(outcome.appliedCids, target);
         for (const freshEntry of outcome.freshEntries) {
           this.emitDeliveryApplied(target, freshEntry.messageCid, freshEntry.message);
@@ -4601,16 +4661,108 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    return { kind: 'processed', admittedCids };
+    return {
+      pendingCount: (await this.replicationLinkStore.getPendingPullsForLink(link)).length,
+    };
+  }
+
+  private static precisePullDeadLetter(
+    link: ReplicationLinkState,
+    state: SyncPendingPullState,
+    candidate: SyncPullDeadLetterCandidate,
+  ): DeadLetterEntry {
+    return {
+      authorizationEpoch : link.authorizationEpoch,
+      direction          : 'pull',
+      errorCode          : candidate.errorCode,
+      errorDetail        : candidate.errorDetail,
+      failedAt           : new Date().toISOString(),
+      messageCid         : state.messageCid,
+      projectionId       : link.projectionId,
+      protocol           : candidate.protocol,
+      remoteEndpoint     : link.remoteEndpoint,
+      source             : state.source,
+      tenantDid          : link.tenantDid,
+      version            : 2,
+    };
+  }
+
+  /** Admit each root independently using support already carried by the page. */
+  private async admitRemoteFeedPage(
+    target: SyncTarget,
+    entries: MessagesQueryReplyEntry[],
+    shouldContinue?: () => boolean,
+  ): Promise<FeedPageAdmissionResult> {
+    const admittedCids: string[] = [];
+    const deadLetters: SyncPullDeadLetterCandidate[] = [];
+    const freshEntries: SyncFreshEntry[] = [];
+    const pending: SyncPendingPullCandidate[] = [];
+    const settledMessageCids: string[] = [];
+    const pagePrefetched: SyncMessageEntry[] = [];
+
+    for (const entry of entries) {
+      if (entry.message === undefined) {
+        throw new Error(
+          `SyncEngineLevel: complete remote feed page omitted message '${entry.messageCid}' for ${target.did} -> ${target.dwnUrl}.`,
+        );
+      }
+      pagePrefetched.push(...await this.syncEntriesFromFeedEntry(target, entry, true));
+    }
+
+    for (const entry of entries) {
+      const outcome = await this.admitRemoteFeedEntry(target, entry, shouldContinue, {
+        deferNonInlineData : true,
+        prefetched         : pagePrefetched,
+      });
+      if (outcome.kind === 'aborted') {
+        return { kind: 'aborted' };
+      }
+
+      if (outcome.kind === 'deferred') {
+        pending.push({ entry, outcome: outcome.outcome });
+        continue;
+      }
+      if (outcome.kind === 'echo') {
+        settledMessageCids.push(entry.messageCid);
+        continue;
+      }
+      if (outcome.kind === 'dead-lettered') {
+        deadLetters.push(outcome.deadLetter);
+        continue;
+      }
+
+      if (outcome.kind === 'admitted') {
+        admittedCids.push(...outcome.appliedCids);
+        settledMessageCids.push(entry.messageCid, ...outcome.appliedCids);
+        freshEntries.push(...outcome.freshEntries);
+      }
+    }
+
+    const uniqueAdmittedCids = [...new Set(admittedCids)];
+    await this.trackRemoteFeedAppliedCids(uniqueAdmittedCids, target);
+    for (const freshEntry of freshEntries) {
+      this.emitDeliveryApplied(target, freshEntry.messageCid, freshEntry.message);
+    }
+
+    return {
+      kind               : 'processed',
+      admittedCids       : uniqueAdmittedCids,
+      deadLetters,
+      pending,
+      settledMessageCids : [...new Set(settledMessageCids)],
+    };
   }
 
   private async trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void> {
+    if (messageCids.length === 0) {
+      return;
+    }
+    if (target.authorization.kind !== 'role') {
+      const link = await this.getOrCreateReplicationLink(target);
+      await this.replicationLinkStore.settlePendingPullsForLogicalTarget(link, messageCids);
+    }
     for (const cid of messageCids) {
       this._echoSuppressor.trackPulled(target.did, cid, target.dwnUrl);
-      await this.runDeferredPullLifecycle(target.did, async (): Promise<void> => {
-        await this.clearDeferredPull(target.did, target.dwnUrl, cid);
-        await this.clearDeadLetterForTenant(target.did, cid, target.dwnUrl);
-      });
       // A pull admission only proves that the signed message exists remotely.
       // The remote may retain a RecordsWrite CID as dataless ancestry, while
       // the local admission reports Duplicate because it already has the full
@@ -4618,76 +4770,6 @@ export class SyncEngineLevel implements SyncEngine {
       // payload and clear an exact-CID quota block.
       await this._quotaManager.resolveBlocksSupersededByAcknowledgement(target, cid);
     }
-  }
-
-  /**
-   * Retire a deferred pull entry if it can no longer make progress.
-   *
-   * @returns `true` when the caller should SKIP this entry and continue the
-   *   page — either because an ordinary link aged past
-   *   {@link DEFERRED_PULL_DEAD_LETTER_AFTER_MS} and was dead-lettered, or
-   *   because the tenant was unregistered underneath us (in which case
-   *   nothing is dead-lettered and the deferred work is simply abandoned).
-   *   `false` means the page must stop on it. Role-feed entries remain
-   *   deferred regardless of age because they cannot be skipped safely.
-   */
-  private async tryRetireDeferredPull(
-    target: SyncTarget,
-    entry: MessagesQueryReplyEntry,
-    detail: string | undefined,
-  ): Promise<boolean> {
-    return this.runDeferredPullLifecycle(target.did, async (): Promise<boolean> => {
-      // Foreign role sources are registered independently from owned/delegated
-      // identities. Fence each kind against the registration that owns it.
-      const isCurrent = target.authorization.kind === 'role'
-        ? await this.isFollowedTargetCurrent(target)
-        : await this.getIdentityOptions(target.did) !== undefined;
-      if (!isCurrent) {
-        return true;
-      }
-
-      const state = await this.recordDeferredPull(target, entry.messageCid, detail);
-      if (target.authorization.kind === 'role') {
-        return false;
-      }
-      const firstDeferredAt = Date.parse(state.firstDeferredAt);
-      if (!Number.isFinite(firstDeferredAt) || Date.now() - firstDeferredAt < SyncEngineLevel.DEFERRED_PULL_DEAD_LETTER_AFTER_MS) {
-        return false;
-      }
-
-      await this.recordDeadLetter({
-        messageCid     : entry.messageCid,
-        tenantDid      : target.did,
-        remoteEndpoint : target.dwnUrl,
-        protocol       : entry.protocol ?? SyncEngineLevel.protocolFromDescriptor(entry.message?.descriptor),
-        errorCode      : 'Deferred',
-        errorDetail    : detail ?? 'pull admission deferred beyond retry window',
-      });
-      await this.clearDeferredPull(target.did, target.dwnUrl, entry.messageCid);
-      return true;
-    });
-  }
-
-  private async recordDeferredPull(
-    target: SyncTarget,
-    messageCid: string,
-    detail: string | undefined,
-  ): Promise<SyncDeferredPullState> {
-    const now = new Date().toISOString();
-    const previous = await this._deferredPullStore.get(target.did, messageCid, target.dwnUrl);
-
-    const state: SyncDeferredPullState = {
-      attempts        : (previous?.attempts ?? 0) + 1,
-      detail,
-      firstDeferredAt : previous?.firstDeferredAt ?? now,
-      lastDeferredAt  : now,
-    };
-    await this._deferredPullStore.put(target.did, messageCid, target.dwnUrl, state);
-    return state;
-  }
-
-  private async clearDeferredPull(tenantDid: string, dwnUrl: string, messageCid: string): Promise<void> {
-    await this._deferredPullStore.delete(tenantDid, messageCid, dwnUrl);
   }
 
   /**
@@ -4742,19 +4824,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  /**
-   * Serialize the deferred/dead-letter lifecycle per tenant across contexts.
-   * Every participant — admission-state deletion, expiry promotion, and unregister's
-   * tenant sweep — runs its read-decide-write section under this lock, which
-   * is the single mechanism making those sections atomic with each other.
-   */
-  private async runDeferredPullLifecycle<T>(
-    tenantDid: string,
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    return runWithCrossContextLock(`enbox:sync-deferred-pull:${this._lockNamespace}:${tenantDid}`, operation);
-  }
-
   private getLocalMessageForTarget(target: SyncTarget, messageCid: string): Promise<SyncMessageEntry | undefined> {
     return getLocalMessage({
       author             : target.did,
@@ -4800,11 +4869,12 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
     shouldContinue?: () => boolean,
+    options?: { deferNonInlineData?: boolean; prefetched?: SyncMessageEntry[]; verifyLocalCompletion?: boolean },
   ): Promise<
     | { kind: 'aborted' }
     | { kind: 'admitted'; appliedCids: string[]; freshEntries: SyncFreshEntry[] }
-    | { kind: 'dead-lettered' }
-    | { kind: 'deferred'; detail?: string }
+    | { kind: 'dead-lettered'; deadLetter: SyncPullDeadLetterCandidate }
+    | { kind: 'deferred'; outcome: SyncPendingPullOutcome }
     | { kind: 'echo' }
   > {
     if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
@@ -4826,8 +4896,11 @@ export class SyncEngineLevel implements SyncEngine {
     if (await this.hasDurableLocalPullEcho(target, entry)) {
       return { kind: 'echo' };
     }
+    if (options?.verifyLocalCompletion === true && await this.isPullEntryLocallyComplete(target, entry)) {
+      return { kind: 'echo' };
+    }
 
-    const prefetched = await this.syncEntriesFromFeedEntry(target, entry);
+    const prefetched = options?.prefetched ?? await this.syncEntriesFromFeedEntry(target, entry);
     const fetchReplicationSupport = target.authorization.kind === 'role'
       ? (root: SyncMessageEntry): Promise<{ dependencies: SyncMessageEntry[]; root: SyncMessageEntry }> =>
         this.readRoleReplicationSupport(target, root, entry.initialWrite, shouldContinue)
@@ -4842,9 +4915,10 @@ export class SyncEngineLevel implements SyncEngine {
       onBeforeApply      : (messageCid): void => {
         this._echoSuppressor.trackPulled(target.did, messageCid, target.dwnUrl);
       },
-      permissionsApi: this._permissionsApi,
+      permissionsApi     : this._permissionsApi,
       prefetched,
       fetchReplicationSupport,
+      deferNonInlineData : options?.deferNonInlineData,
       shouldContinue,
     });
 
@@ -4853,22 +4927,30 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     if (outcome.kind === 'deferred') {
-      return { kind: 'deferred', detail: outcome.detail };
+      return {
+        kind    : 'deferred',
+        outcome : {
+          kind: 'Deferred',
+          ...(outcome.detail === undefined ? {} : { detail: outcome.detail }),
+          ...(outcome.missing === undefined ? {} : { missing: outcome.missing }),
+          ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
+        },
+      };
     }
 
     if (target.authorization.kind === 'role') {
       throw new RoleFeedAdmissionError(entry.messageCid);
     }
 
-    await this.recordDeadLetter({
-      messageCid     : entry.messageCid,
-      tenantDid      : target.did,
-      remoteEndpoint : target.dwnUrl,
-      protocol       : SyncEngineLevel.protocolFromFeedEntry(entry, prefetched),
-      errorCode      : outcome.reason,
-      errorDetail    : outcome.detail ?? 'replicated message admission failed',
-    });
-    return { kind: 'dead-lettered' };
+    return {
+      kind       : 'dead-lettered',
+      deadLetter : {
+        entry,
+        protocol    : SyncEngineLevel.protocolFromFeedEntry(entry, prefetched),
+        errorCode   : outcome.reason,
+        errorDetail : outcome.detail ?? 'replicated message admission failed',
+      },
+    };
   }
 
   /**
@@ -4885,6 +4967,14 @@ export class SyncEngineLevel implements SyncEngine {
       return false;
     }
 
+    return this.isPullEntryLocallyComplete(target, entry);
+  }
+
+  /** Verify exact local message and payload durability before settling retained pull work. */
+  private async isPullEntryLocallyComplete(
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+  ): Promise<boolean> {
     const local = await this.getLocalMessageForTarget(target, entry.messageCid);
     if (local === undefined) {
       return false;
@@ -4900,6 +4990,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async syncEntriesFromFeedEntry(
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
+    deferNonInlineData = false,
   ): Promise<SyncMessageEntry[]> {
     if (entry.message === undefined) {
       if (target.authorization.kind === 'role') {
@@ -4932,6 +5023,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (encodedData !== undefined) {
       syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
     } else if (
+      !deferNonInlineData &&
       target.authorization.kind !== 'role' &&
       entry.isLatestBaseState !== false &&
       recordsWriteRequiresData(message)
@@ -5077,12 +5169,17 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   public async recordDeadLetter(params: {
+    authorizationEpoch? : string;
+    direction? : SyncDirection;
     messageCid : string;
+    projectionId? : string;
     tenantDid : string;
     remoteEndpoint : string;
     protocol? : string;
     errorCode? : string;
     errorDetail : string;
+    source? : ProgressToken;
+    version? : 2;
   }): Promise<void> {
     const entry: DeadLetterEntry = {
       ...params,
@@ -5103,13 +5200,20 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async hasDeadLetter(
-    tenantDid: string,
-    remoteEndpoint: string,
-    messageCid: string,
-  ): Promise<boolean> {
-    const entry = await this._deadLetterStore.get(tenantDid, messageCid, remoteEndpoint);
-    return entry?.tenantDid === tenantDid;
+  private async hasPushDeadLetter(target: SyncTarget, messageCid: string): Promise<boolean> {
+    const precise = await this._deadLetterStore.getPrecise({
+      authorizationEpoch : target.authorizationEpoch,
+      direction          : 'push',
+      messageCid,
+      projectionId       : target.projectionId,
+      remoteEndpoint     : target.dwnUrl,
+      tenantDid          : target.did,
+    });
+    if (precise !== undefined) {
+      return true;
+    }
+    const legacy = await this._deadLetterStore.get(target.did, messageCid, target.dwnUrl);
+    return legacy?.tenantDid === target.did;
   }
 
   public async getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]> {
@@ -5130,6 +5234,29 @@ export class SyncEngineLevel implements SyncEngine {
       this.emitEvent({ type: 'dead-letter:change', tenantDid, remoteEndpoint });
     } catch (error) {
       // A late live callback may race orderly storage closure.
+      if (!SyncEngineLevel.isDatabaseNotOpenError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  private async clearPushDeadLetter(target: SyncTarget, messageCid: string): Promise<void> {
+    try {
+      const [legacyDeleted, preciseDeleted] = await Promise.all([
+        this._deadLetterStore.deleteExact(target.did, messageCid, target.dwnUrl),
+        this._deadLetterStore.deletePrecise({
+          authorizationEpoch : target.authorizationEpoch,
+          direction          : 'push',
+          messageCid,
+          projectionId       : target.projectionId,
+          remoteEndpoint     : target.dwnUrl,
+          tenantDid          : target.did,
+        }),
+      ]);
+      if (legacyDeleted || preciseDeleted) {
+        this.emitEvent({ type: 'dead-letter:change', tenantDid: target.did, remoteEndpoint: target.dwnUrl });
+      }
+    } catch (error: unknown) {
       if (!SyncEngineLevel.isDatabaseNotOpenError(error)) {
         throw error;
       }

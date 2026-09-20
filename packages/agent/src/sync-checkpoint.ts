@@ -36,7 +36,11 @@ export class SyncCheckpoint {
 
   /** Reset a checkpoint and optionally establish a new baseline. */
   public static reset(checkpoint: DirectionCheckpoint, token?: ProgressToken): void {
-    checkpoint.contiguousAppliedToken = token;
+    if (token === undefined) {
+      delete checkpoint.contiguousAppliedToken;
+    } else {
+      checkpoint.contiguousAppliedToken = token;
+    }
   }
 
   /** Check whether a token matches a checkpoint's established stream and epoch. */

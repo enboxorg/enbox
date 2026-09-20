@@ -98,6 +98,34 @@ describe('admitClosure', () => {
     expect(agent.dwn.applyReplicatedMessage.thirdCall.args[1]).toEqual(update.message);
   });
 
+  it('reuses an exact dependency carried by the page before issuing a remote query', async () => {
+    const protocol = 'https://example.com/protocol';
+    const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const update = await TestDataGenerator.generateFromRecordsWrite({
+      author        : initial.author,
+      existingWrite : initial.recordsWrite,
+    });
+    const rootCid = await Message.getCid(update.message);
+    const agent = createMockAgent();
+    agent.dwn.applyReplicatedMessage
+      .onFirstCall().resolves({
+        kind    : 'Incomplete',
+        missing : [{ type: 'InitialWrite', recordId: initial.message.recordId, protocol }],
+      })
+      .onSecondCall().resolves({ kind: 'Applied' })
+      .onThirdCall().resolves({ kind: 'Applied' });
+
+    const outcome = await admitClosure(rootCid, {
+      did        : 'did:example:alice',
+      dwnUrl     : 'https://dwn.example.com',
+      agent,
+      prefetched : [{ message: initial.message }, { message: update.message }],
+    });
+
+    expect(outcome.kind).toBe('admitted');
+    expect(agent.rpc.sendDwnRequest.notCalled).toBe(true);
+  });
+
   it('reports duplicate and superseded applies as admitted but not fresh', async () => {
     const write = await TestDataGenerator.generateRecordsWrite({ protocol: 'https://example.com/protocol' });
     const rootCid = await Message.getCid(write.message);
@@ -198,7 +226,12 @@ describe('admitClosure', () => {
       agent,
     });
 
-    expect(outcome).toEqual({ kind: 'deferred', rootCid: 'missing-cid', detail: 'root message not available' });
+    expect(outcome).toEqual({
+      kind    : 'deferred',
+      rootCid : 'missing-cid',
+      detail  : 'root message not available',
+      reason  : 'dependency',
+    });
     expect(agent.dwn.applyReplicatedMessage.called).toBe(false);
   });
 
@@ -713,12 +746,80 @@ describe('admitClosure', () => {
     });
 
     expect(outcome).toEqual({
-      kind   : 'deferred',
+      kind    : 'deferred',
       rootCid,
-      detail : 'latest records write data fetch returned no data',
+      detail  : 'latest records write data fetch returned no data',
+      missing : [{
+        type     : 'RecordData',
+        dataCid  : recordsWrite.message.descriptor.dataCid,
+        protocol : recordsWrite.message.descriptor.protocol,
+        recordId : recordsWrite.message.recordId,
+      }],
+      reason: 'data',
     });
     expect(dataStreamFactory.calledOnce).toBe(true);
     expect(agent.dwn.applyReplicatedMessage.called).toBe(false);
+  });
+
+  it('retains a non-inline latest RecordsWrite during page intake without starting its body fetch', async () => {
+    const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+      data     : new Uint8Array([1, 2, 3]),
+      protocol : 'https://example.com/protocol',
+    });
+    const rootCid = await Message.getCid(recordsWrite.message);
+    const agent = createMockAgent();
+    const dataStreamFactory = sinon.stub().resolves(streamFromBytes(recordsWrite.dataBytes));
+
+    const outcome = await admitClosure(rootCid, {
+      did                : 'did:example:alice',
+      dwnUrl             : 'https://dwn.example.com',
+      agent,
+      deferNonInlineData : true,
+      prefetched         : [{
+        dataStreamFactory,
+        message           : recordsWrite.message,
+        isLatestBaseState : true,
+      }],
+    });
+
+    expect(outcome).toMatchObject({
+      kind   : 'deferred',
+      rootCid,
+      reason : 'data',
+    });
+    expect(dataStreamFactory.notCalled).toBe(true);
+    expect(agent.dwn.applyReplicatedMessage.notCalled).toBe(true);
+  });
+
+  it('retains a missing record-data dependency during page intake without issuing RecordsRead', async () => {
+    const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+      data     : new Uint8Array([1, 2, 3]),
+      protocol : 'https://example.com/protocol',
+    });
+    const rootCid = await Message.getCid(recordsWrite.message);
+    const missing = [{
+      type     : 'RecordData' as const,
+      dataCid  : recordsWrite.message.descriptor.dataCid,
+      protocol : recordsWrite.message.descriptor.protocol,
+      recordId : recordsWrite.message.recordId,
+    }];
+    const agent = createMockAgent();
+    agent.dwn.applyReplicatedMessage.resolves({ kind: 'Incomplete', missing });
+
+    const outcome = await admitClosure(rootCid, {
+      did                : 'did:example:alice',
+      dwnUrl             : 'https://dwn.example.com',
+      agent,
+      deferNonInlineData : true,
+      prefetched         : [{
+        bufferedData      : recordsWrite.dataBytes,
+        isLatestBaseState : true,
+        message           : recordsWrite.message,
+      }],
+    });
+
+    expect(outcome).toMatchObject({ kind: 'deferred', missing, reason: 'data', rootCid });
+    expect(agent.rpc.sendDwnRequest.notCalled).toBe(true);
   });
 
   it('hydrates a role root through the replication-support hook instead of an owner-shaped fetch', async () => {

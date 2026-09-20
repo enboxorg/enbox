@@ -1,5 +1,6 @@
 import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
 
+import type { SyncPendingPullCandidate } from './sync-pending-pull-store-level.js';
 import type { SyncQuotaManager } from './sync-quota-manager.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, ReplicationLinkState, SyncDirection } from './types/sync.js';
@@ -30,12 +31,10 @@ export type SyncDurableFeedReconcileResult = {
   localFingerprint?: string;
   /** The pull direction reached the remote-feed head captured by its final query. */
   pullDrained?: true;
-  /**
-   * The first remote root whose dependencies are not yet available. Its page
-   * and checkpoint remain unsettled; a later wake or settle pass retries from
-   * the same durable checkpoint.
-   */
-  deferredPull?: { messageCid: string; detail?: string };
+  /** Number of retained pull roots that still need local materialization. */
+  pendingPullCount?: number;
+  /** Whether every pull root handled through the captured feed position is locally materialized. */
+  pullLocallyComplete?: boolean;
   /**
    * The link was parked, so the cycle returned without reconciling anything.
    * Distinct from converged and from divergent: nothing was compared.
@@ -49,8 +48,25 @@ export type SyncDurableFeedReconcileResult = {
 /** Result of applying one remote feed page through engine-owned admission policy. */
 export type SyncDurableFeedPageAdmissionResult =
   | { kind: 'aborted' }
-  | { kind: 'deferred'; admittedCids: string[]; detail?: string; messageCid: string }
-  | { kind: 'processed'; admittedCids: string[] };
+  | {
+    kind: 'processed';
+    admittedCids: string[];
+    deadLetters: SyncPullDeadLetterCandidate[];
+    pending: SyncPendingPullCandidate[];
+    settledMessageCids: string[];
+  };
+
+export type SyncPullDeadLetterCandidate = {
+  entry: MessagesQueryReplyEntry;
+  errorCode: string;
+  errorDetail: string;
+  protocol?: string;
+};
+
+export type SyncPendingPullRetryResult = {
+  aborted?: true;
+  pendingCount: number;
+};
 
 /** Result of pushing one local feed page through engine-owned push policy. */
 export type SyncDurableFeedPagePushResult =
@@ -95,7 +111,16 @@ export interface SyncDurableFeedReconcilerOperations {
     forceQuotaProbe?: boolean,
   ): Promise<SyncDurableFeedPermissionGrantBootstrapResult>;
 
-  /** Persist one ordered checkpoint advance. */
+  /** Atomically retain unresolved roots and persist one handled-through pull checkpoint. */
+  commitPullPage(
+    link: ReplicationLinkState,
+    checkpoint: ProgressToken,
+    deadLetters: SyncPullDeadLetterCandidate[],
+    pending: SyncPendingPullCandidate[],
+    settledMessageCids: string[],
+  ): Promise<boolean>;
+
+  /** Persist one ordered push checkpoint advance. */
   commitCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 
   probeQuotaBlocks(
@@ -112,6 +137,12 @@ export interface SyncDurableFeedReconcilerOperations {
   ): Promise<SyncDurableFeedPagePushResult>;
 
   queryFeed(query: SyncDurableFeedQuery): Promise<MessagesQueryReply>;
+
+  retryPendingPulls(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncPendingPullRetryResult>;
 
   resetCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 }
@@ -195,7 +226,18 @@ export class SyncDurableFeedReconciler {
     }
 
     await this.resetInvalidCheckpoint(link, 'pull');
-    return this.pullRemotePages(target, link, shouldContinue);
+    const intake = await this.pullRemotePages(target, link, shouldContinue);
+    if (intake.aborted === true) {
+      return intake;
+    }
+
+    const retry = await this._operations.retryPendingPulls(target, link, shouldContinue);
+    return {
+      ...intake,
+      ...(retry.aborted === true ? { aborted: true } : {}),
+      pendingPullCount    : retry.pendingCount,
+      pullLocallyComplete : retry.pendingCount === 0,
+    };
   }
 
   /** Push every missing local feed entry and persist contiguous progress. */
@@ -301,11 +343,9 @@ export class SyncDurableFeedReconciler {
       return { ...result, aborted: true };
     }
 
-    // A deferred pull is durable blocked work, not feed divergence. Keep the
-    // checkpoint below it and let the next wake or settle pass retry. The push
-    // direction above remains independent, but convergence cannot be claimed
-    // until the blocked pull page settles.
-    if (result.deferredPull !== undefined) {
+    // Feed progress can be current while retained roots still await local
+    // materialization. Fingerprint equality must not claim local completeness.
+    if (result.pullLocallyComplete === false) {
       delete result.converged;
       return result;
     }
@@ -427,10 +467,11 @@ export class SyncDurableFeedReconciler {
 
       SyncDurableFeedReconciler.assertQuerySucceeded(reply, target, 'pull');
       const missingEntries = SyncDurableFeedReconciler.entriesMissingFrom(localCids, reply.entries ?? []);
-      if (cidsOnly && missingEntries.length > 1) {
-        // Avoid issuing one MessagesRead per missing CID. Re-read from the
-        // same cursor and commit only the complete page's own progress; the
-        // inventory may have changed meanwhile.
+      if (cidsOnly && missingEntries.length > 0) {
+        // A pending pull row must retain the signed message and source
+        // position. Re-read the same page with messages inline instead of
+        // issuing a point read for each missing CID, then commit only that
+        // complete page's own progress because the inventory may change.
         cidsOnly = false;
         continue;
       }
@@ -447,9 +488,8 @@ export class SyncDurableFeedReconciler {
         return result.result;
       }
       cursor = result.nextCursor;
-      // Keep dense catch-up on inline pages, but return to lightweight
-      // inventory comparisons once this remote is mostly present locally.
-      cidsOnly = missingEntries.length <= 1;
+      // Return to lightweight inventory comparisons after every complete page.
+      cidsOnly = true;
     }
   }
 
@@ -634,6 +674,7 @@ export class SyncDurableFeedReconciler {
     shouldContinue,
     target,
   }: ProcessFeedPageParams): Promise<ProcessFeedPageResult> {
+    const cursorAdvance = SyncDurableFeedReconciler.nextPageCursor(link, 'pull', cursor, reply, target);
     const pageResult = await this._operations.admitRemotePage(target, entries, shouldContinue);
     if (pageResult.kind === 'aborted') {
       return { result: { aborted: true } };
@@ -645,18 +686,18 @@ export class SyncDurableFeedReconciler {
       }
     }
 
-    if (pageResult.kind === 'deferred') {
-      return {
-        result: {
-          deferredPull: {
-            detail     : pageResult.detail,
-            messageCid : pageResult.messageCid,
-          },
-        },
-      };
+    if (cursorAdvance.cursor !== undefined) {
+      const committed = await this._operations.commitPullPage(
+        link,
+        cursorAdvance.cursor,
+        pageResult.deadLetters,
+        pageResult.pending,
+        pageResult.settledMessageCids,
+      );
+      if (!committed) {
+        return { result: { aborted: true } };
+      }
     }
-
-    const cursorAdvance = await this.commitPageProgress(link, 'pull', cursor, reply, target);
     if (cursorAdvance.drained) {
       return {
         result: {
@@ -664,6 +705,11 @@ export class SyncDurableFeedReconciler {
           remoteFingerprint : reply.fingerprint,
         },
       };
+    }
+    if (cursorAdvance.cursor === undefined) {
+      throw new Error(
+        `SyncDurableFeedReconciler: MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
+      );
     }
     return { nextCursor: cursorAdvance.cursor };
   }
@@ -678,6 +724,7 @@ export class SyncDurableFeedReconciler {
     shouldContinue,
     target,
   }: ProcessFeedPageParams): Promise<ProcessFeedPageResult> {
+    const validatedPage = SyncDurableFeedReconciler.nextPageCursor(link, 'push', cursor, reply, target);
     const pageResult = await this._operations.pushLocalPage(target, entries, shouldContinue);
     if (pageResult.kind === 'aborted') {
       return { result: { aborted: true } };
@@ -688,7 +735,19 @@ export class SyncDurableFeedReconciler {
       if (pageResult.kind === 'error') {
         throw pageResult.error;
       }
-      return { result: { pushFailures: pageResult.failures } };
+      const checkpoint = validatedPage.cursor;
+      if (checkpoint === undefined) {
+        throw new Error(
+          `SyncDurableFeedReconciler: local MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no failure cursor`,
+        );
+      }
+      const source: ProgressToken = {
+        epoch      : checkpoint.epoch,
+        messageCid : pageResult.failedEntry.messageCid,
+        position   : pageResult.failedEntry.seq,
+        streamId   : checkpoint.streamId,
+      };
+      return { result: { pushFailures: pageResult.failures.map(failure => ({ ...failure, source })) } };
     }
 
     if (knownCids !== undefined) {
@@ -735,6 +794,36 @@ export class SyncDurableFeedReconciler {
     await this._operations.commitCheckpoint(link, direction);
 
     return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
+  }
+
+  /** Validate one page's next cursor without mutating in-memory or durable state. */
+  private static nextPageCursor(
+    link: ReplicationLinkState,
+    direction: SyncDirection,
+    previousCursor: ProgressToken | undefined,
+    reply: MessagesQueryReply,
+    target: SyncTarget,
+  ): { cursor?: ProgressToken; drained: boolean } {
+    const drained = reply.drained === true;
+    if (reply.cursor === undefined) {
+      if (drained && (reply.entries?.length ?? 0) === 0) {
+        return { drained: true };
+      }
+      const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
+      throw new Error(
+        `SyncDurableFeedReconciler: ${label} for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
+      );
+    }
+
+    SyncDurableFeedReconciler.assertCursorProgress(
+      link,
+      previousCursor,
+      reply.cursor,
+      drained,
+      target.dwnUrl,
+      direction,
+    );
+    return { cursor: reply.cursor, drained };
   }
 
   /** Persist the contiguous local-feed prefix preceding one failed push root. */
@@ -890,9 +979,8 @@ export class SyncDurableFeedReconciler {
   ): void {
     target.aborted ||= source.aborted;
     target.pushFailures?.push(...(source.pushFailures ?? []));
-    if (source.deferredPull !== undefined) {
-      target.deferredPull = source.deferredPull;
-    }
+    target.pendingPullCount = source.pendingPullCount ?? target.pendingPullCount;
+    target.pullLocallyComplete = source.pullLocallyComplete ?? target.pullLocallyComplete;
     target.quotaBlocked ||= source.quotaBlocked === true;
     target.localFingerprint = source.localFingerprint ?? target.localFingerprint;
     target.pullDrained ||= source.pullDrained;

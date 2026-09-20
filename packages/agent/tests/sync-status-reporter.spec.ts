@@ -99,6 +99,7 @@ describe('sync status projection', () => {
       connectivity             : 'online',
       degradedLinkCount        : 0,
       failedMessageCount       : 0,
+      pendingPullCount         : 0,
       quotaBlockedMessageCount : 0,
       syncHealthy              : true,
     });
@@ -134,6 +135,7 @@ describe('sync status projection', () => {
       connectivity             : 'offline',
       degradedLinkCount        : 1,
       failedMessageCount       : 2,
+      pendingPullCount         : 0,
       quotaBlockedMessageCount : 1,
       syncHealthy              : false,
     });
@@ -167,6 +169,7 @@ describe('sync status projection', () => {
       failedMessageCount       : 0,
       lastError                : 'over quota',
       nextProbeAt              : timestamp(6),
+      pendingPullCount         : 0,
       quotaBlockedMessageCount : 1,
       remoteEndpoint           : REMOTE_A,
       state                    : 'quota-blocked',
@@ -183,6 +186,7 @@ describe('sync status projection', () => {
       connectivity             : 'unknown',
       failedMessageCount       : 1,
       lastError                : 'terminal failure',
+      pendingPullCount         : 0,
       quotaBlockedMessageCount : 0,
       remoteEndpoint           : REMOTE_B,
       state                    : 'degraded',
@@ -259,6 +263,7 @@ describe('sync status projection', () => {
       failedMessageCount       : 0,
       lastError                : 'over quota',
       nextProbeAt              : timestamp(6),
+      pendingPullCount         : 0,
       quotaBlockedMessageCount : 1,
       remoteEndpoint           : REMOTE_A,
       state                    : 'quota-blocked',
@@ -278,6 +283,22 @@ describe('sync status projection', () => {
         status        : 'live',
       }),
     ]);
+  });
+
+  it('reports feed-current but locally incomplete links through durable pending counts', () => {
+    const projection = createProjection({
+      links: [link({ isPullCurrent: false, pendingPullCount: 2 })],
+    });
+
+    expect(projection.getHealth()).toMatchObject({ pendingPullCount: 2, syncHealthy: false });
+    expect(projection.getReplicationLinks()).toMatchObject([{
+      isPullCurrent    : false,
+      pendingPullCount : 2,
+    }]);
+    expect(projection.getRemoteStatus()).toMatchObject([{
+      pendingPullCount : 2,
+      state            : 'degraded',
+    }]);
   });
 
   it('projects durable link recovery into per-link, remote, and health status', () => {
@@ -339,6 +360,7 @@ function link(overrides: Partial<SyncStatusLink> = {}): SyncStatusLink {
     authorizationEpoch : 'owner-epoch',
     connectivity       : 'online',
     isPullCurrent      : true,
+    pendingPullCount   : 0,
     projectionId       : 'projection',
     pull               : {},
     push               : {},
@@ -438,23 +460,25 @@ describe('projectReplicationLinks', () => {
 
     expect(snapshots).toEqual([
       {
-        tenantDid      : ALICE,
-        remoteEndpoint : REMOTE_A,
-        scope          : { kind: 'full' },
-        status         : 'live',
-        connectivity   : 'online',
-        isPullCurrent  : true,
+        tenantDid        : ALICE,
+        remoteEndpoint   : REMOTE_A,
+        scope            : { kind: 'full' },
+        status           : 'live',
+        connectivity     : 'online',
+        isPullCurrent    : true,
+        pendingPullCount : 0,
       },
       {
-        tenantDid      : BOB,
-        remoteEndpoint : REMOTE_B,
-        scope          : { kind: 'full' },
-        status         : 'initializing',
-        connectivity   : 'online',
-        isPullCurrent  : true,
-        delegateDid    : 'did:example:device',
-        pullPosition   : '00042',
-        lastActivityAt : timestamp(4),
+        tenantDid        : BOB,
+        remoteEndpoint   : REMOTE_B,
+        scope            : { kind: 'full' },
+        status           : 'initializing',
+        connectivity     : 'online',
+        isPullCurrent    : true,
+        pendingPullCount : 0,
+        delegateDid      : 'did:example:device',
+        pullPosition     : '00042',
+        lastActivityAt   : timestamp(4),
       },
     ]);
   });

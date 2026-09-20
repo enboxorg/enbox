@@ -448,16 +448,22 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       streamId : 'event-stream',
     };
     const admitRemoteFeedPage = sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
-      admittedCids : [messageCid],
-      kind         : 'processed',
+      admittedCids       : [messageCid],
+      deadLetters        : [],
+      kind               : 'processed',
+      pending            : [],
+      settledMessageCids : [messageCid],
     });
     const persistStarted = deferred();
     const releasePersist = deferred();
-    const persistCheckpoint = sinon.stub().callsFake(async (): Promise<void> => {
+    const commitPullPage = sinon.stub().callsFake(async (link, commit): Promise<boolean> => {
       persistStarted.resolve();
       await releasePersist.promise;
+      link.pull.contiguousAppliedToken = commit.checkpoint;
+      return true;
     });
-    (engine as any)._replicationLinkStore = { persistCheckpoint };
+    const getPendingPullsForLink = sinon.stub().resolves([]);
+    (engine as any)._replicationLinkStore = { commitPullPage, getPendingPullsForLink };
 
     const event = {
       type              : 'event',
@@ -490,10 +496,12 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     expect(settled).toBe(true);
     expect(controller.isPullCurrent).toBe(true);
     expect(controller.link.pull.contiguousAppliedToken).toEqual(cursor);
-    expect(persistCheckpoint.calledOnceWithExactly(controller.link, 'pull')).toBe(true);
+    expect(commitPullPage.calledOnce).toBe(true);
+    expect(commitPullPage.firstCall.args[0]).toBe(controller.link);
+    expect(commitPullPage.firstCall.args[1].checkpoint).toEqual(cursor);
 
     admitRemoteFeedPage.resetHistory();
-    persistCheckpoint.resetHistory();
+    commitPullPage.resetHistory();
     const transitions: boolean[] = [];
     const unsubscribe = engine.on((syncEvent): void => {
       if (syncEvent.type === 'pull:currentness-change') {
@@ -503,7 +511,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await fixture.handlers[0](event);
 
     expect(admitRemoteFeedPage.notCalled).toBe(true);
-    expect(persistCheckpoint.notCalled).toBe(true);
+    expect(commitPullPage.notCalled).toBe(true);
     expect(fixture.resume.notCalled).toBe(true);
     expect(fixture.repairing.notCalled).toBe(true);
     expect(controller.isPullCurrent).toBe(true);
@@ -512,12 +520,9 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await controller.dispose();
   });
 
-  it('should end a live subscription when an event is deferred', async () => {
+  it('should retain and acknowledge a deferred live event without repairing the link', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
-    fixture.repairing.callsFake(async (activeController: SyncLinkController): Promise<void> => {
-      activeController.resetReplicationGeneration();
-    });
     expect(await openSubscription(fixture)).toBe(true);
     controller.markReplicationReady();
     controller.markPullCurrent(controller.replicationGeneration);
@@ -538,33 +543,34 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     };
     sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
       admittedCids : [],
-      detail       : 'waiting for replication support',
-      kind         : 'deferred',
-      messageCid,
+      deadLetters  : [],
+      kind         : 'processed',
+      pending      : [{
+        entry   : { isLatestBaseState: true, message, messageCid, seq: '10' },
+        outcome : { kind: 'Deferred', detail: 'waiting for replication support' },
+      }],
+      settledMessageCids: [],
     });
-    const persistCheckpoint = sinon.stub().resolves();
-    (engine as any)._replicationLinkStore = { persistCheckpoint };
-    const warn = sinon.stub(console, 'warn');
+    const pending = [{ messageCid }];
+    const commitPullPage = sinon.stub().callsFake(async (link, commit): Promise<boolean> => {
+      link.pull.contiguousAppliedToken = commit.checkpoint;
+      return true;
+    });
+    const getPendingPullsForLink = sinon.stub().resolves(pending);
+    (engine as any)._replicationLinkStore = { commitPullPage, getPendingPullsForLink };
 
-    const handledError = await fixture.handlers[0]({
+    await fixture.handlers[0]({
       type              : 'event',
       cursor,
       event             : { message },
       isLatestBaseState : true,
       messageCid,
-    }).then(
-      (): undefined => undefined,
-      (error: unknown): unknown => error,
-    );
+    });
 
-    expect(handledError).toBeInstanceOf(SubscriptionHandlerTerminalError);
-    expect((handledError as Error).message).toContain('waiting for replication support');
-    expect(warn.calledOnce).toBe(true);
-    expect(warn.firstCall.args[0]).toContain('live pull delivery');
-    expect(warn.firstCall.args[0]).toContain('deferred');
-    expect(persistCheckpoint.notCalled).toBe(true);
-    expect(controller.link.pull.contiguousAppliedToken).toBeUndefined();
-    expect(fixture.repairing.calledOnceWithExactly(controller)).toBe(true);
+    expect(commitPullPage.calledOnce).toBe(true);
+    expect(controller.link.pull.contiguousAppliedToken).toEqual(cursor);
+    expect(fixture.repairing.notCalled).toBe(true);
+    expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.isPullCurrent).toBe(false);
     await controller.dispose();
   });
@@ -622,11 +628,17 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       position : '10',
       streamId : 'event-stream',
     };
-    sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({ admittedCids: [], kind: 'processed' });
+    sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
+      admittedCids       : [],
+      deadLetters        : [],
+      kind               : 'processed',
+      pending            : [],
+      settledMessageCids : [],
+    });
     const persistStarted = deferred();
     const rejectPersist = deferred();
     (engine as any)._replicationLinkStore = {
-      persistCheckpoint: sinon.stub().callsFake(async (): Promise<void> => {
+      commitPullPage: sinon.stub().callsFake(async (): Promise<boolean> => {
         persistStarted.resolve();
         await rejectPersist.promise;
         throw new Error('storage unavailable');
@@ -764,11 +776,18 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       streamId : 'event-stream',
     };
     const admitRemoteFeedPage = sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
-      admittedCids : [messageCid],
-      kind         : 'processed',
+      admittedCids       : [messageCid],
+      deadLetters        : [],
+      kind               : 'processed',
+      pending            : [],
+      settledMessageCids : [messageCid],
     });
-    const persistCheckpoint = sinon.stub().resolves();
-    (engine as any)._replicationLinkStore = { persistCheckpoint };
+    const commitPullPage = sinon.stub().callsFake(async (link, commit): Promise<boolean> => {
+      link.pull.contiguousAppliedToken = commit.checkpoint;
+      return true;
+    });
+    const getPendingPullsForLink = sinon.stub().resolves([]);
+    (engine as any)._replicationLinkStore = { commitPullPage, getPendingPullsForLink };
 
     await (engine as any).handleLivePullMessage({
       controller,

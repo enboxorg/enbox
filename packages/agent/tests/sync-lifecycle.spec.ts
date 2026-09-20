@@ -549,7 +549,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const durableFeedReconciler = engine['_durableFeedReconciler'];
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
     sinon.stub(durableFeedReconciler, 'pull').resolves({});
-    sinon.stub(engine as never, 'hasDeadLetter').resolves(false);
+    sinon.stub(engine as never, 'hasPushDeadLetter').resolves(false);
     sinon.stub(engine['_quotaManager'], 'getState').resolves(undefined);
     sinon.stub(engine as never, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
     const pushContext = {
@@ -976,7 +976,9 @@ describe('SyncEngineLevel lifecycle', () => {
       failedAt : '2026-09-17T12:01:00.000Z',
     });
     pull.onThirdCall().resolves({
-      deferredPull: { messageCid: 'deferred-cid', detail: 'dependency unavailable' },
+      pendingPullCount    : 1,
+      pullDrained         : true,
+      pullLocallyComplete : false,
     });
     await engine.retryRemoteNow(tenantDid, remoteEndpoint);
     expect(await getStoredLink()).toMatchObject({

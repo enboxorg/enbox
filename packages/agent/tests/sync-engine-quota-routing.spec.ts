@@ -23,8 +23,21 @@ describe('SyncEngineLevel quota routing', () => {
       scope              : { kind: 'full' },
     };
     const admittedCids = ['dependency-cid', 'successor-cid'];
-    sinon.stub(internal, 'clearDeadLetterForTenant').resolves();
-    sinon.stub(internal, 'clearDeferredPull').resolves();
+    const link = {
+      authorization      : target.authorization,
+      authorizationEpoch : target.authorizationEpoch,
+      connectivity       : 'online',
+      projectionId       : target.projectionId,
+      pull               : { version: 2 },
+      push               : {},
+      remoteEndpoint     : target.dwnUrl,
+      scope              : target.scope,
+      status             : 'live',
+      tenantDid          : target.did,
+    };
+    sinon.stub(internal, 'getOrCreateReplicationLink').resolves(link);
+    const settlePendingPullsForLogicalTarget = sinon.stub().resolves();
+    internal._replicationLinkStore = { settlePendingPullsForLogicalTarget };
     const resolveSuperseded = sinon.stub(
       internal._quotaManager,
       'resolveBlocksSupersededByAcknowledgement',
@@ -36,6 +49,7 @@ describe('SyncEngineLevel quota routing', () => {
     expect(resolveSuperseded.callCount).toBe(admittedCids.length);
     expect(resolveSuperseded.firstCall.calledWithExactly(target, admittedCids[0])).toBe(true);
     expect(resolveSuperseded.secondCall.calledWithExactly(target, admittedCids[1])).toBe(true);
+    expect(settlePendingPullsForLogicalTarget.calledOnceWithExactly(link, admittedCids)).toBe(true);
     expect(clearBlock.notCalled).toBe(true);
   });
 });

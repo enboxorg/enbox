@@ -18,7 +18,7 @@ import { lexicographicalCompare, projectReplicationCurrentness } from './types/s
 export type SyncStatusCurrentKeySet = ReadonlySet<string> | undefined;
 
 /** Durable link row with current replication-session facts overlaid by the engine. */
-export type SyncStatusLink = ReplicationLinkState & { isPullCurrent: boolean };
+export type SyncStatusLink = ReplicationLinkState & { isPullCurrent: boolean; pendingPullCount: number };
 
 /** Combined projections produced from one set of durable status reads. */
 export type SyncStatusSnapshot = {
@@ -56,6 +56,7 @@ type RemoteStatusAccumulator = {
   lastErrorAt?: string;
   nextProbeAt?: string;
   nextRetryAt?: string;
+  pendingPullCount: number;
   quotaBlockedMessageCount: number;
   remoteEndpoint: string;
   tenantDid: string;
@@ -87,6 +88,7 @@ export function projectSyncStatus({
 
   const degradedLinkCount = links.filter((link): boolean => isUnhealthyLink(link)).length;
   const failedMessageCount = deadLetters.length;
+  const pendingPullCount = links.reduce((count, link): number => count + link.pendingPullCount, 0);
   const quotaBlockedMessageCount = quotaBlocks.length;
   const health: SyncHealthSummary = {
     connectivity: tenantDid === undefined
@@ -94,8 +96,10 @@ export function projectSyncStatus({
       : resolveSyncConnectivityState(links.map((link): SyncConnectivityState => link.connectivity)),
     failedMessageCount,
     degradedLinkCount,
+    pendingPullCount,
     quotaBlockedMessageCount,
-    syncHealthy: failedMessageCount === 0 && degradedLinkCount === 0 && quotaBlockedMessageCount === 0,
+    syncHealthy: failedMessageCount === 0 && degradedLinkCount === 0 &&
+      pendingPullCount === 0 && quotaBlockedMessageCount === 0,
   };
   const linkSnapshots = links.map((link): ReplicationLinkSnapshot => linkSnapshotFrom(link));
   const remotes = [...rows.values()].map((row): RemoteSyncStatus => remoteStatusFromRow(row));
@@ -144,12 +148,13 @@ function linkSnapshotFrom(link: SyncStatusLink): ReplicationLinkSnapshot {
   const pullPosition = link.pull.contiguousAppliedToken?.position;
   const pushPosition = link.push.contiguousAppliedToken?.position;
   return {
-    tenantDid      : link.tenantDid,
-    remoteEndpoint : link.remoteEndpoint,
-    scope          : link.scope,
-    status         : link.status,
-    connectivity   : link.connectivity,
-    isPullCurrent  : link.isPullCurrent,
+    tenantDid        : link.tenantDid,
+    remoteEndpoint   : link.remoteEndpoint,
+    scope            : link.scope,
+    status           : link.status,
+    connectivity     : link.connectivity,
+    isPullCurrent    : link.isPullCurrent,
+    pendingPullCount : link.pendingPullCount,
     ...(link.recovery === undefined ? {} : { recovery: { ...link.recovery } }),
     ...(link.delegateDid === undefined ? {} : { delegateDid: link.delegateDid }),
     ...(link.authorization.kind === 'role' ? { followedSourceId: link.authorization.roleRecordId } : {}),
@@ -177,6 +182,7 @@ function accumulateLinkStatus(
     if (link.lastActivityAt !== undefined) {
       row.lastActivityAt = latestTimestamp(row.lastActivityAt, link.lastActivityAt);
     }
+    row.pendingPullCount += link.pendingPullCount;
   }
 }
 
@@ -273,6 +279,7 @@ function remoteStatusRowFor(
       connectivity             : 'unknown',
       degraded                 : false,
       failedMessageCount       : 0,
+      pendingPullCount         : 0,
       quotaBlockedMessageCount : 0,
       remoteEndpoint           : remote,
       tenantDid                : did,
@@ -299,6 +306,7 @@ function remoteStatusFromRow(row: RemoteStatusAccumulator): RemoteSyncStatus {
     remoteEndpoint           : row.remoteEndpoint,
     state                    : rollUpRemoteState(row),
     connectivity             : row.connectivity,
+    pendingPullCount         : row.pendingPullCount,
     quotaBlockedMessageCount : row.quotaBlockedMessageCount,
     failedMessageCount       : row.failedMessageCount,
     ...(row.nextProbeAt === undefined ? {} : { nextProbeAt: row.nextProbeAt }),
@@ -311,7 +319,7 @@ function remoteStatusFromRow(row: RemoteStatusAccumulator): RemoteSyncStatus {
 function rollUpRemoteState(row: RemoteStatusAccumulator): RemoteSyncState {
   if (row.connectivity === 'offline') { return 'offline'; }
   if (row.quotaBlockedMessageCount > 0) { return 'quota-blocked'; }
-  if (row.degraded || row.failedMessageCount > 0) { return 'degraded'; }
+  if (row.degraded || row.failedMessageCount > 0 || row.pendingPullCount > 0) { return 'degraded'; }
   return 'healthy';
 }
 

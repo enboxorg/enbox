@@ -232,7 +232,7 @@ describe('SyncEngineLevel', () => {
       let releaseFirst!: (result: SyncDurableFeedReconcileResult) => void;
       const reconcile = sinon.stub(internal._durableFeedReconciler, 'reconcile');
       reconcile.onFirstCall().returns(new Promise((resolve) => { releaseFirst = resolve; }));
-      reconcile.onSecondCall().resolves({ pullDrained: true });
+      reconcile.onSecondCall().resolves({ pullDrained: true, pullLocallyComplete: true });
       const transitions: boolean[] = [];
       const unsubscribe = syncEngine.on((event): void => {
         if (event.type === 'pull:currentness-change') {
@@ -244,7 +244,7 @@ describe('SyncEngineLevel', () => {
       expect(controller.isPullCurrent).toBe(false);
       expect(transitions).toEqual([false]);
       controller.executor.request('pull');
-      releaseFirst({ pullDrained: true });
+      releaseFirst({ pullDrained: true, pullLocallyComplete: true });
       await first;
       expect(controller.isPullCurrent).toBe(false);
       expect(transitions).toEqual([false]);
@@ -283,7 +283,10 @@ describe('SyncEngineLevel', () => {
         projectionId       : link.projectionId,
         scope              : link.scope,
       };
-      sinon.stub(internal._durableFeedReconciler, 'reconcile').resolves({ pullDrained: true });
+      sinon.stub(internal._durableFeedReconciler, 'reconcile').resolves({
+        pullDrained         : true,
+        pullLocallyComplete : true,
+      });
       const transitions: boolean[] = [];
       const unsubscribe = syncEngine.on((event): void => {
         if (event.type === 'pull:currentness-change') {
@@ -437,12 +440,13 @@ describe('SyncEngineLevel', () => {
           structuredClone(durableLive),
           structuredClone(durablePaused),
         ]),
+        getPendingPullsForLink: sinon.stub().resolves([]),
       };
 
       const inactive = await internal.getLinksForStatusReporting();
       expect(inactive).toEqual([
-        { ...durableLive, connectivity: 'unknown', isPullCurrent: false },
-        { ...durablePaused, connectivity: 'unknown', isPullCurrent: false },
+        { ...durableLive, connectivity: 'unknown', isPullCurrent: false, pendingPullCount: 0 },
+        { ...durablePaused, connectivity: 'unknown', isPullCurrent: false, pendingPullCount: 0 },
       ]);
 
       const activeLink = structuredClone(durableLive);
@@ -587,7 +591,7 @@ describe('SyncEngineLevel', () => {
       const pushGate = new Promise<void>((resolve) => { releasePush = resolve; });
       const pushStarted = new Promise<void>((resolve) => { resolvePushStarted = resolve; });
 
-      sinon.stub(internal, 'hasDeadLetter').resolves(false);
+      sinon.stub(internal, 'hasPushDeadLetter').resolves(false);
       sinon.stub(internal._quotaManager, 'getState').resolves(undefined);
       sinon.stub(internal, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
       const pushFeedEntry = sinon.stub().callsFake(async () => {
@@ -627,7 +631,7 @@ describe('SyncEngineLevel', () => {
         .onFirstCall().resolves({ acknowledged: [], succeeded: ['cid-1'], failed: [] })
         .onSecondCall().rejects(originalError);
       sinon.stub(internal, 'createRemoteApplyPushContext').returns({ pushFeedEntry });
-      sinon.stub(internal, 'hasDeadLetter').resolves(false);
+      sinon.stub(internal, 'hasPushDeadLetter').resolves(false);
       sinon.stub(internal._quotaManager, 'getState').resolves(undefined);
       sinon.stub(internal, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
       sinon.stub(internal._quotaManager, 'applyPushResult').resolves({ retryableFailures: [] });
@@ -3787,8 +3791,8 @@ describe('SyncEngineLevel', () => {
       });
     });
 
-    describe('errored set behavior', () => {
-      it('should skip subsequent targets for the same DWN URL after a failure', async () => {
+    describe('same-service target isolation', () => {
+      it('should continue subsequent targets for the same DWN URL after a failure', async () => {
         // Create two identities that share the same DWN URL.
         const alice2 = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
         const bob2 = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
@@ -3806,12 +3810,9 @@ describe('SyncEngineLevel', () => {
         // The error should have been logged.
         expect(consoleErrorStub.called).toBe(true);
 
-        // Since both identities share the same DWN URL, the first failure should
-        // add it to the errored set, and the second identity's sync for that URL
-        // should be skipped (no additional error for it).
-        // We can verify by checking the number of feed-pull calls:
-        // only 1 call (the first target), not 2.
-        expect(pullRemoteFeedStub.callCount).toBe(1);
+        // A target-specific failure must not skip a later healthy tenant that
+        // happens to share the same service URL.
+        expect(pullRemoteFeedStub.callCount).toBe(2);
 
         pullRemoteFeedStub.restore();
         consoleErrorStub.restore();

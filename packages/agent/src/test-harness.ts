@@ -187,7 +187,9 @@ export class PlatformAgentTestHarness {
   private async clearSyncStore(): Promise<void> {
     const sublevelNames = [
       'deadLetters',
+      'deadLettersV2',
       'deferredPulls',
+      'pendingPullsV2',
       'registeredIdentities',
       'replicationLinks',
     ];

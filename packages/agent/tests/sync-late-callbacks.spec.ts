@@ -153,26 +153,36 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     const link = makeLink();
     const persistStarted = createDeferred();
     const releasePersist = createDeferred();
-    const persistCheckpoint = sinon.stub().callsFake(async (): Promise<void> => {
+    const commitPullPage = sinon.stub().callsFake(async (linkState, commit): Promise<boolean> => {
       persistStarted.resolve();
       await releasePersist.promise;
+      linkState.pull.contiguousAppliedToken = commit.checkpoint;
+      return true;
     });
 
     sinon.stub(engine, 'sync').resolves();
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
     Object.assign(engine, {
       _replicationLinkStore: {
-        getOrCreateLink    : sinon.stub().resolves(link),
-        persistCheckpoint,
-        persistCheckpoints : sinon.stub().resolves(),
-        setStatus          : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
+        getOrCreateLink        : sinon.stub().resolves(link),
+        commitPullPage,
+        getPendingPullsForLink : sinon.stub().resolves([]),
+        persistCheckpoint      : sinon.stub().resolves(),
+        persistCheckpoints     : sinon.stub().resolves(),
+        setStatus              : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
           linkState.status = status;
         }),
       },
     });
 
     await engine.startSync({ interval: '30s' });
-    sinon.stub(engine as never, 'admitRemoteFeedPage').resolves({ admittedCids: [], kind: 'processed' });
+    sinon.stub(engine as never, 'admitRemoteFeedPage').resolves({
+      admittedCids       : [],
+      deadLetters        : [],
+      kind               : 'processed',
+      pending            : [],
+      settledMessageCids : [],
+    });
 
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();
@@ -205,7 +215,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     await stopPromise;
 
     expect(stopCompleted).toBe(true);
-    expect(persistCheckpoint.calledOnce).toBe(true);
+    expect(commitPullPage.calledOnce).toBe(true);
   });
 
   it('should not enqueue push work when a late local callback fires after stopSync()', async () => {

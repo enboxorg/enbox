@@ -62,7 +62,13 @@ export type AdmitOutcome =
        */
       freshEntries: SyncFreshEntry[];
     }
-  | { kind: 'deferred'; rootCid: string; detail?: string }
+  | {
+      kind: 'deferred';
+      rootCid: string;
+      detail?: string;
+      missing?: DependencyRef[];
+      reason?: 'data' | 'dependency' | 'resolver-unavailable' | 'storage' | 'tenant-inactive';
+    }
   | { kind: 'failed'; rootCid: string; reason: 'invalid' | 'terminal'; detail?: string };
 
 export type AdmitClosureDeps = {
@@ -75,6 +81,8 @@ export type AdmitClosureDeps = {
   onBeforeApply?: (messageCid: string) => void;
   permissionsApi?: PermissionsApi;
   prefetched?: SyncMessageEntry[];
+  /** Page intake retains a non-inline body for later instead of fetching it synchronously. */
+  deferNonInlineData?: boolean;
   /** Role-authorized one-shot hydration used instead of owner/grant dependency fetches. */
   fetchReplicationSupport?: (root: SyncMessageEntry) => Promise<{
     dependencies: SyncMessageEntry[];
@@ -130,7 +138,7 @@ class AdmitClosureContext {
     const appliedCids: string[] = [];
     const freshEntries: SyncFreshEntry[] = [];
     if (pending.length === 0) {
-      return { kind: 'deferred', rootCid, detail: 'root message not available' };
+      return { kind: 'deferred', rootCid, detail: 'root message not available', reason: 'dependency' };
     }
 
     for (let pass = 0; pass < MAX_ADMISSION_PASSES && pending.length > 0; pass++) {
@@ -197,6 +205,24 @@ class AdmitClosureContext {
       };
     }
 
+    if (
+      this.deps.deferNonInlineData === true &&
+      entryRequiresDataBeforeApply(entry) &&
+      entry.bufferedData === undefined &&
+      entry.dataStream === undefined
+    ) {
+      return {
+        kind    : 'done',
+        outcome : {
+          kind    : 'deferred',
+          rootCid,
+          detail  : 'latest records write data is not inline',
+          missing : recordDataDependency(entry),
+          reason  : 'data',
+        },
+      };
+    }
+
     const dataStream = await replayableDataStream(entry);
     if (entryRequiresDataBeforeApply(entry) && dataStream === undefined) {
       const support = await this.fetchReplicationSupport(rootCid);
@@ -206,14 +232,26 @@ class AdmitClosureContext {
       if (entry.dataStreamFactory !== undefined) {
         return {
           kind    : 'done',
-          outcome : { kind: 'deferred', rootCid, detail: 'latest records write data fetch returned no data' },
+          outcome : {
+            kind    : 'deferred',
+            rootCid,
+            detail  : 'latest records write data fetch returned no data',
+            missing : recordDataDependency(entry),
+            reason  : 'data',
+          },
         };
       }
       return {
         kind    : 'done',
         outcome : this.deps.fetchReplicationSupport === undefined
           ? { kind: 'failed', rootCid, reason: 'terminal', detail: 'latest records write data is unavailable' }
-          : { kind: 'deferred', rootCid, detail: 'role replication support did not provide current record data' },
+          : {
+            kind    : 'deferred',
+            rootCid,
+            detail  : 'role replication support did not provide current record data',
+            missing : recordDataDependency(entry),
+            reason  : 'data',
+          },
       };
     }
 
@@ -245,7 +283,7 @@ class AdmitClosureContext {
       case 'Superseded':
         return { kind: 'applied', cid, fresh: false };
       case 'Deferred':
-        return { kind: 'done', outcome: { kind: 'deferred', rootCid, detail: result.reason } };
+        return { kind: 'done', outcome: { kind: 'deferred', rootCid, detail: result.reason, reason: result.reason } };
       case 'Invalid':
         return { kind: 'done', outcome: { kind: 'failed', rootCid, reason: 'invalid', detail: result.reason } };
       case 'Incomplete':
@@ -265,6 +303,23 @@ class AdmitClosureContext {
       };
     }
 
+    if (this.deps.deferNonInlineData === true && (
+      this.deps.fetchReplicationSupport !== undefined ||
+      missing.some((ref): boolean => ref.type === 'RecordData')
+    )) {
+      const waitsForData = missing.some((ref): boolean => ref.type === 'RecordData');
+      return {
+        kind    : 'done',
+        outcome : {
+          kind   : 'deferred',
+          rootCid,
+          detail : missingDependencyDetail(missing),
+          missing,
+          reason : waitsForData ? 'data' : 'dependency',
+        },
+      };
+    }
+
     const support = await this.fetchReplicationSupport(rootCid);
     if (support !== undefined) {
       return { kind: 'retry', entries: support };
@@ -272,13 +327,16 @@ class AdmitClosureContext {
     if (this.deps.fetchReplicationSupport !== undefined) {
       return {
         kind    : 'done',
-        outcome : { kind: 'deferred', rootCid, detail: missingDependencyDetail(missing) },
+        outcome : { kind: 'deferred', rootCid, detail: missingDependencyDetail(missing), missing, reason: 'dependency' },
       };
     }
 
     const dependencies = await this.fetchMissingDependencies(missing);
     if (dependencies.length === 0) {
-      return { kind: 'done', outcome: { kind: 'deferred', rootCid, detail: missingDependencyDetail(missing) } };
+      return {
+        kind    : 'done',
+        outcome : { kind: 'deferred', rootCid, detail: missingDependencyDetail(missing), missing, reason: 'dependency' },
+      };
     }
 
     return { kind: 'retry', entries: [...dependencies, entry] };
@@ -436,16 +494,30 @@ class AdmitClosureContext {
   }
 
   private async fetchMessageCids(messageCids: string[]): Promise<SyncMessageEntry[]> {
-    const entries = await fetchRemoteMessages({
+    const entries: SyncMessageEntry[] = [];
+    const missingCids: string[] = [];
+    for (const messageCid of messageCids) {
+      const existing = this.entriesByCid.get(messageCid);
+      if (existing === undefined) {
+        missingCids.push(messageCid);
+      } else {
+        entries.push(existing);
+      }
+    }
+    if (missingCids.length === 0) {
+      return entries;
+    }
+
+    const fetched = await fetchRemoteMessages({
       did                : this.deps.did,
       dwnUrl             : this.deps.dwnUrl,
       delegateDid        : this.deps.delegateDid,
       permissionGrantIds : this.deps.permissionGrantIds,
-      messageCids,
+      messageCids        : missingCids,
       agent              : this.deps.agent,
     });
-    await this.rememberEntries(entries);
-    return entries;
+    await this.rememberEntries(fetched);
+    return [...entries, ...fetched];
   }
 
   private async fetchInitialWriteDependency(
@@ -454,6 +526,18 @@ class AdmitClosureContext {
     const existing = this.findInitialWriteEntry(ref.recordId);
     if (existing !== undefined) {
       return [existing];
+    }
+
+    if (!this.deps.agent.dwn.isRemoteMode) {
+      const messageStore = this.deps.agent.dwn.node?.storage?.messageStore;
+      if (messageStore !== undefined) {
+        const local = await RecordsWrite.fetchInitialRecordsWriteMessage(messageStore, this.deps.did, ref.recordId);
+        if (local !== undefined) {
+          const entry = { message: local };
+          await this.rememberEntry(entry);
+          return [entry];
+        }
+      }
     }
 
     return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
@@ -626,6 +710,15 @@ class AdmitClosureContext {
   }
 
   private async fetchProtocol(protocol: string): Promise<ProtocolsConfigureMessage | undefined> {
+    const prefetched = newestProtocolConfig(
+      [...this.entriesByCid.values()]
+        .map(({ message }) => message)
+        .filter(isTenantProtocolConfig(this.deps.did, protocol)),
+    );
+    if (prefetched !== undefined) {
+      return prefetched;
+    }
+
     const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.ProtocolsQuery, protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
@@ -695,6 +788,26 @@ async function replayableDataStream(entry: SyncMessageEntry): Promise<ReadableSt
 
 function entryRequiresDataBeforeApply(entry: SyncMessageEntry): boolean {
   return entry.isLatestBaseState === true && recordsWriteRequiresData(entry.message);
+}
+
+function recordDataDependency(entry: SyncMessageEntry): DependencyRef[] | undefined {
+  if (
+    entry.message.descriptor.interface !== DwnInterfaceName.Records ||
+    entry.message.descriptor.method !== DwnMethodName.Write
+  ) {
+    return undefined;
+  }
+  const recordsWrite = entry.message as RecordsWriteMessage;
+  const { dataCid, protocol } = recordsWrite.descriptor;
+  if (dataCid === undefined) {
+    return undefined;
+  }
+  return [{
+    type     : 'RecordData',
+    dataCid,
+    recordId : recordsWrite.recordId,
+    ...(protocol === undefined ? {} : { protocol }),
+  }];
 }
 
 /**

@@ -2,6 +2,7 @@ import type { AbstractLevel } from 'abstract-level';
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
+import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import type { ReplicationLinkState } from '../src/types/sync.js';
@@ -30,7 +31,7 @@ function makeLink(): ReplicationLinkState {
     authorizationEpoch : ownerAuthorization.authorizationEpoch,
     connectivity       : 'unknown',
     projectionId       : 'projection-id',
-    pull               : {},
+    pull               : { version: 2 },
     push               : {},
     remoteEndpoint     : 'https://dwn.example.com',
     scope              : { kind: 'full' },
@@ -49,6 +50,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
   });
 
   afterEach(async () => {
+    sinon.restore();
     await db.clear();
   });
 
@@ -69,6 +71,114 @@ describe('SyncReplicationLinkStoreLevel', () => {
     );
 
     expect(JSON.parse(raw)).toEqual(link);
+  });
+
+  it('should atomically retain pending pull work with its handled-through checkpoint', async () => {
+    const link = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const checkpoint = token(7);
+
+    expect(await store.commitPullPage(link, {
+      checkpoint,
+      deadLetters : [],
+      pending     : [{
+        entry   : { isLatestBaseState: false, messageCid: 'pending-cid', seq: '6' },
+        outcome : { kind: 'Deferred', reason: 'dependency' },
+        source  : { ...checkpoint, messageCid: 'pending-cid', position: '6' },
+      }],
+      settledMessageCids: ['settled-cid'],
+    })).toBe(true);
+
+    const [persisted] = await store.getAllLinks();
+    expect(persisted.pull).toEqual({ contiguousAppliedToken: checkpoint, version: 2 });
+    expect(await store.getPendingPullsForLink(link)).toMatchObject([{
+      messageCid : 'pending-cid',
+      source     : { messageCid: 'pending-cid', position: '6' },
+      version    : 2,
+    }]);
+  });
+
+  it('should clear a materialized CID across endpoint and authorization bindings for one logical target', async () => {
+    const first = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://a.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const second = await store.getOrCreateLink({
+      tenantDid          : 'did:example:alice',
+      remoteEndpoint     : 'https://b.example.com',
+      scope              : { kind: 'full' },
+      authorization      : ownerAuthorization.authorization,
+      authorizationEpoch : 'replacement-owner-epoch',
+    });
+    for (const link of [first, second]) {
+      await store.commitPullPage(link, {
+        checkpoint  : token(4),
+        deadLetters : [],
+        pending     : [{
+          entry   : { isLatestBaseState: false, messageCid: 'shared-cid', seq: '4' },
+          outcome : { kind: 'Deferred', reason: 'dependency' },
+          source  : { ...token(4), messageCid: 'shared-cid' },
+        }],
+        settledMessageCids: [],
+      });
+    }
+
+    await store.settlePendingPullsForLogicalTarget(second, ['shared-cid']);
+
+    expect(await store.getPendingPullsForLink(first)).toEqual([]);
+    expect(await store.getPendingPullsForLink(second)).toEqual([]);
+  });
+
+  it('should expose neither checkpoint progress nor pending work when the atomic batch fails', async () => {
+    const link = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    sinon.stub(db, 'batch').rejects(new Error('injected batch failure'));
+
+    await expect(store.commitPullPage(link, {
+      checkpoint  : token(9),
+      deadLetters : [],
+      pending     : [{
+        entry   : { isLatestBaseState: false, messageCid: 'pending-cid', seq: '9' },
+        outcome : { kind: 'Deferred', reason: 'storage' },
+        source  : token(9, 'one'),
+      }],
+      settledMessageCids: [],
+    })).rejects.toThrow('injected batch failure');
+
+    expect(link.pull.contiguousAppliedToken).toBeUndefined();
+    expect(await store.getPendingPullsForLink(link)).toEqual([]);
+  });
+
+  it('should reset a legacy pull checkpoint once and rebuild under v2 semantics', async () => {
+    const created = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const legacy = { ...created, pull: { contiguousAppliedToken: token(23) } };
+    const key = `${created.tenantDid}^${created.remoteEndpoint}^${created.projectionId}^${created.authorizationEpoch}`;
+    await db.sublevel('replicationLinks').put(key, JSON.stringify(legacy));
+
+    const migrated = await store.getOrCreateLink({
+      tenantDid      : created.tenantDid,
+      remoteEndpoint : created.remoteEndpoint,
+      scope          : created.scope,
+      ...ownerAuthorization,
+    });
+
+    expect(migrated.pull).toEqual({ version: 2 });
+    expect((await store.getAllLinks())[0]?.pull).toEqual({ version: 2 });
   });
 
   it('should refresh a role delegate without persisting transient resume state', async () => {
@@ -403,7 +513,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
     await recoveringStore.persistCheckpoint(link, 'push');
 
     const persisted = JSON.parse(storedValue) as ReplicationLinkState;
-    expect(persisted.pull).toEqual({});
+    expect(persisted.pull).toEqual({ version: 2 });
     expect(persisted.push).toEqual(link.push);
   });
 
@@ -489,7 +599,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
     await store.resetCheckpoint(linkToReset, 'pull');
 
     const [persisted] = await store.getAllLinks();
-    expect(persisted.pull).toEqual({});
+    expect(persisted.pull).toEqual({ version: 2 });
     expect(persisted.push).toEqual(link.push);
   });
 
@@ -516,10 +626,10 @@ describe('SyncReplicationLinkStoreLevel', () => {
 
     await store.resetCheckpoints(link);
 
-    expect(link.pull).toEqual({});
+    expect(link.pull).toEqual({ version: 2 });
     expect(link.push).toEqual({});
     const [persisted] = await store.getAllLinks();
-    expect(persisted.pull).toEqual({});
+    expect(persisted.pull).toEqual({ version: 2 });
     expect(persisted.push).toEqual({});
     expect(persisted.status).toBe('repairing');
     expect(persisted.connectivity).toBe('offline');
@@ -740,6 +850,6 @@ describe('SyncReplicationLinkStoreLevel', () => {
     await store.resetCheckpoint(staleLink, 'pull');
 
     const [persisted] = await store.getAllLinks();
-    expect(persisted.pull).toEqual({});
+    expect(persisted.pull).toEqual({ version: 2 });
   });
 });

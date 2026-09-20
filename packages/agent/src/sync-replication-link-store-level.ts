@@ -1,7 +1,8 @@
-import type { AbstractLevel } from 'abstract-level';
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
+import type { AbstractBatchOperation, AbstractLevel, AbstractSublevel } from 'abstract-level';
 
 import type {
+  DeadLetterEntry,
   DirectionCheckpoint,
   LinkStatus,
   ReplicationLinkState,
@@ -11,13 +12,19 @@ import type {
   SyncScope,
 } from './types/sync.js';
 
+import type { SyncPendingPullInput, SyncPendingPullState } from './sync-pending-pull-store-level.js';
+
 import { runSerializedByKey, runWithCrossContextLock } from '@enbox/common';
 
+import { buildLinkKey } from './sync-link-key.js';
 import { isRetryableSyncRecovery } from './sync-runtime-errors.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
+import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
+import { SyncPendingPullStoreLevel } from './sync-pending-pull-store-level.js';
 import { canonicalizeSyncScope, computeProjectionId } from './types/sync.js';
 
 type LevelKey = string | Buffer | Uint8Array;
+type SyncLinkBatchOperation = AbstractBatchOperation<AbstractLevel<LevelKey>, string, string>;
 
 /** Separator used in compound LevelDB keys. */
 const KEY_SEP = '^';
@@ -32,22 +39,36 @@ export type SyncReplicationLinkCreateParams = {
   delegateDid? : string;
 };
 
+/** Durable state changes committed after one remote feed page has been examined. */
+export type SyncPullPageCommit = {
+  checkpoint: ProgressToken;
+  deadLetters: DeadLetterEntry[];
+  pending: SyncPendingPullInput[];
+  settledMessageCids: string[];
+};
+
 /** Level-backed persistence for durable replication links. */
 export class SyncReplicationLinkStoreLevel {
-  private readonly _links: AbstractLevel<LevelKey, string, string>;
+  private readonly _db: AbstractLevel<LevelKey>;
+  private readonly _deadLetterStore: SyncDeadLetterStoreLevel;
+  private readonly _links: AbstractSublevel<AbstractLevel<LevelKey>, LevelKey, string, string>;
   private readonly _lockNamespace: string;
+  private readonly _pendingPullStore: SyncPendingPullStoreLevel;
   /** Loaded link objects whose durable repair ended before recording a failure. */
   private _interruptedRepairs = new WeakSet<ReplicationLinkState>();
   private readonly _pendingLinkOperations = new Map<string, Promise<void>>();
 
   constructor(db: AbstractLevel<LevelKey>, lockNamespace = 'default') {
+    this._db = db;
+    this._deadLetterStore = new SyncDeadLetterStoreLevel(db);
     this._links = db.sublevel('replicationLinks');
     this._lockNamespace = lockNamespace;
+    this._pendingPullStore = new SyncPendingPullStoreLevel(db);
   }
 
   public async clear(): Promise<void> {
     await this.waitForPendingLinkOperations();
-    await this._links.clear();
+    await Promise.all([this._links.clear(), this._pendingPullStore.clear()]);
     this._interruptedRepairs = new WeakSet<ReplicationLinkState>();
   }
 
@@ -106,6 +127,11 @@ export class SyncReplicationLinkStoreLevel {
       if (existing !== undefined) {
         const interruptedRepair = existing.status === 'repairing' && existing.recovery === undefined;
         let changed = false;
+        if (existing.pull.version !== 2) {
+          SyncCheckpoint.reset(existing.pull);
+          existing.pull.version = 2;
+          changed = true;
+        }
         const persistedConnectivity = existing.connectivity;
         const persistedStatus = existing.status;
         if (params.authorization.kind === 'role' && existing.delegateDid !== params.delegateDid) {
@@ -138,7 +164,7 @@ export class SyncReplicationLinkStoreLevel {
         authorization      : params.authorization,
         status             : 'initializing',
         connectivity       : 'unknown',
-        pull               : {},
+        pull               : { version: 2 },
         push               : {},
         delegateDid        : params.delegateDid,
       };
@@ -157,6 +183,169 @@ export class SyncReplicationLinkStoreLevel {
       }
     }
     return links;
+  }
+
+  /** Atomically retain unresolved roots and advance the pull handled-through token. */
+  public async commitPullPage(link: ReplicationLinkState, commit: SyncPullPageCommit): Promise<boolean> {
+    const key = SyncReplicationLinkStoreLevel.buildKeyForLink(link);
+    return this.runForLink(key, async (): Promise<boolean> => {
+      const persistedLink = await this.getLink(key);
+      if (persistedLink === undefined) {
+        return false;
+      }
+
+      const pendingStates = await Promise.all(commit.pending.map(
+        (input): Promise<SyncPendingPullState> => this._pendingPullStore.nextState(link, input),
+      ));
+      const pendingCids = new Set(pendingStates.map(({ messageCid }) => messageCid));
+      const operations: SyncLinkBatchOperation[] = [];
+      for (const state of pendingStates) {
+        operations.push(this._pendingPullStore.putOperation(state));
+      }
+      for (const deadLetter of commit.deadLetters) {
+        operations.push(this._deadLetterStore.putOperation(deadLetter));
+        operations.push(this._deadLetterStore.deleteLegacyOperation(
+          link.tenantDid,
+          deadLetter.messageCid,
+          link.remoteEndpoint,
+        ));
+        operations.push(this._pendingPullStore.deleteOperation(link, deadLetter.messageCid));
+      }
+      for (const messageCid of new Set(commit.settledMessageCids)) {
+        if (!pendingCids.has(messageCid)) {
+          operations.push(this._pendingPullStore.deleteOperation(link, messageCid));
+        }
+        operations.push(this._deadLetterStore.deletePreciseOperation({
+          authorizationEpoch : link.authorizationEpoch,
+          direction          : 'pull',
+          messageCid,
+          projectionId       : link.projectionId,
+          remoteEndpoint     : link.remoteEndpoint,
+          tenantDid          : link.tenantDid,
+        }));
+        operations.push(this._deadLetterStore.deleteLegacyOperation(link.tenantDid, messageCid, link.remoteEndpoint));
+      }
+
+      const durableLink = structuredClone(persistedLink);
+      durableLink.pull.version = 2;
+      SyncCheckpoint.commitContiguousToken(durableLink.pull, commit.checkpoint);
+      const lastActivityAt = new Date().toISOString();
+      durableLink.lastActivityAt = lastActivityAt;
+      operations.push({
+        type     : 'put',
+        key,
+        value    : JSON.stringify(durableLink),
+        sublevel : this._links,
+      });
+
+      await this._db.batch(operations);
+      link.pull.version = 2;
+      SyncCheckpoint.commitContiguousToken(link.pull, commit.checkpoint);
+      link.lastActivityAt = lastActivityAt;
+      return true;
+    });
+  }
+
+  public getPendingPullsForLink(link: ReplicationLinkState): Promise<SyncPendingPullState[]> {
+    return this._pendingPullStore.getForLink(link);
+  }
+
+  /** Record another retry attempt without changing the remote feed checkpoint. */
+  public async updatePendingPull(
+    link: ReplicationLinkState,
+    input: SyncPendingPullInput,
+  ): Promise<boolean> {
+    const key = SyncReplicationLinkStoreLevel.buildKeyForLink(link);
+    return this.runForLink(key, async (): Promise<boolean> => {
+      const persistedLink = await this.getLink(key);
+      if (persistedLink === undefined) {
+        return false;
+      }
+      const state = await this._pendingPullStore.nextState(link, input);
+      await this._db.batch([this._pendingPullStore.putOperation(state)]);
+      return true;
+    });
+  }
+
+  public async settlePendingPull(
+    link: ReplicationLinkState,
+    messageCid: string,
+    deadLetter?: DeadLetterEntry,
+  ): Promise<boolean> {
+    const key = SyncReplicationLinkStoreLevel.buildKeyForLink(link);
+    return this.runForLink(key, async (): Promise<boolean> => {
+      if (await this.getLink(key) === undefined) {
+        return false;
+      }
+      const operations: SyncLinkBatchOperation[] = [this._pendingPullStore.deleteOperation(link, messageCid)];
+      operations.push(this._deadLetterStore.deleteLegacyOperation(link.tenantDid, messageCid, link.remoteEndpoint));
+      if (deadLetter === undefined) {
+        operations.push(this._deadLetterStore.deletePreciseOperation({
+          authorizationEpoch : link.authorizationEpoch,
+          direction          : 'pull',
+          messageCid,
+          projectionId       : link.projectionId,
+          remoteEndpoint     : link.remoteEndpoint,
+          tenantDid          : link.tenantDid,
+        }));
+      } else {
+        operations.push(this._deadLetterStore.putOperation(deadLetter));
+      }
+      await this._db.batch(operations);
+      return true;
+    });
+  }
+
+  /** Clear the same locally materialized CID from every owned/delegated endpoint link. */
+  public async settlePendingPullsForLogicalTarget(
+    link: ReplicationLinkState,
+    messageCids: readonly string[],
+  ): Promise<void> {
+    const states = await this._pendingPullStore.getForLogicalTarget(link, new Set(messageCids));
+    await Promise.all(states.map(async state => {
+      const key = buildLinkKey(
+        state.tenantDid,
+        state.remoteEndpoint,
+        state.projectionId,
+        state.authorizationEpoch,
+      );
+      await this.runForLink(key, async (): Promise<void> => {
+        const current = await this._pendingPullStore.get({
+          ...link,
+          tenantDid          : state.tenantDid,
+          remoteEndpoint     : state.remoteEndpoint,
+          projectionId       : state.projectionId,
+          authorizationEpoch : state.authorizationEpoch,
+        }, state.messageCid);
+        if (current === undefined) {
+          return;
+        }
+        await this._db.batch([
+          this._pendingPullStore.deleteStateOperation(current),
+          this._deadLetterStore.deleteLegacyOperation(state.tenantDid, state.messageCid, state.remoteEndpoint),
+          this._deadLetterStore.deletePreciseOperation({
+            authorizationEpoch : state.authorizationEpoch,
+            direction          : 'pull',
+            messageCid         : state.messageCid,
+            projectionId       : state.projectionId,
+            remoteEndpoint     : state.remoteEndpoint,
+            tenantDid          : state.tenantDid,
+          }),
+        ]);
+      });
+    }));
+  }
+
+  public clearPendingPulls(): Promise<void> {
+    return this._pendingPullStore.clear();
+  }
+
+  public deleteOwnedPendingPullsForTenant(tenantDid: string): Promise<void> {
+    return this._pendingPullStore.deleteOwnedForTenant(tenantDid);
+  }
+
+  public deletePendingPullsForLink(link: ReplicationLinkState): Promise<void> {
+    return this._pendingPullStore.deleteForLink(link);
   }
 
   public async persistCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void> {

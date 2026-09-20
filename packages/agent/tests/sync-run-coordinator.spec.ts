@@ -199,7 +199,7 @@ describe('SyncRunCoordinator', () => {
     expect(connectivityManager.recordSuccess.calledOnce).toBe(true);
   });
 
-  it('skips the rest of one failed endpoint while allowing another endpoint to succeed', async () => {
+  it('continues later targets at one failed endpoint while allowing another endpoint to succeed', async () => {
     const alice = ownerTarget('did:example:alice', 'https://a.example');
     const bob = ownerTarget('did:example:bob', 'https://a.example');
     const carol = ownerTarget('did:example:carol', 'https://b.example');
@@ -216,7 +216,7 @@ describe('SyncRunCoordinator', () => {
       'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s): https://a.example',
     );
 
-    expect(operations.reconcileTarget.calledWith(bob)).toBe(false);
+    expect(operations.reconcileTarget.calledWith(bob)).toBe(true);
     expect(operations.reconcileTarget.calledWith(carol)).toBe(true);
     expect(operations.reportError.calledOnceWithExactly(
       'SyncRunCoordinator: Error syncing did:example:alice with https://a.example',
@@ -365,7 +365,7 @@ describe('SyncRunCoordinator', () => {
     expect(feedConvergenceManager.clear.calledOnceWithExactly(target)).toBe(true);
   });
 
-  it('contains a settle probe error to its endpoint group', async () => {
+  it('continues later settle probes within an endpoint group after an error', async () => {
     const alice = ownerTarget('did:example:alice', 'https://a.example');
     const bob = ownerTarget('did:example:bob', 'https://a.example');
     const carol = ownerTarget('did:example:carol', 'https://b.example');
@@ -384,7 +384,7 @@ describe('SyncRunCoordinator', () => {
       'SyncRunCoordinator: Sync operation failed for 1 remote endpoint(s): https://a.example',
     );
 
-    expect(operations.probeFeedConvergence.calledWith(bob)).toBe(false);
+    expect(operations.probeFeedConvergence.calledWith(bob)).toBe(true);
     expect(operations.probeFeedConvergence.calledWith(carol)).toBe(true);
     expect(operations.reportError.calledOnceWithExactly(
       'SyncRunCoordinator: Error syncing did:example:alice with https://a.example',

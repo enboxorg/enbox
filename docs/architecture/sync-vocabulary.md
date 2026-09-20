@@ -41,7 +41,7 @@ the code, not an entry missing from this table.
 | Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | transport acknowledgement or an unprocessed subscription cursor |
 | Namespace in which progress-token positions can be compared | **token domain** — exact `(streamId, epoch)` pair | stream alone, epoch alone, or a globally ordered position |
 | Folding a push result into quota state | **push result outcome** — `applyPushResult`, `SyncQuotaPushResultOutcome` | `transitionPushResult`, push transition |
-| Temporarily unadmittable remote root that must hold the pull page | **deferred pull** — `SyncDeferredPullState`, `SyncDeferredPullStoreLevel` | dead letter, retryable push failure |
+| Temporarily unmaterialized remote root retained before the feed cursor advances | **pending pull** — `SyncPendingPullState`, `SyncPendingPullStoreLevel` | dead letter, retryable push failure, or a reason to hold unrelated feed entries |
 | Endpoint-local, bounded hint that prevents immediate transfer echoes | **echo suppression** — `SyncEchoSuppressor` | checkpoint evidence, durable acknowledgement |
 | Active durable record of a remote quota rejection | **quota block** — `SyncQuotaBlockState` without `supersededAt` | dead letter, generic retryable failure |
 | Direct retry of a due quota block, independent of feed progress | **quota probe** — `probeQuotaBlocksForTarget`, `probeBlocksForTarget`, `probeBlock` | repair pass |
@@ -139,7 +139,7 @@ would make one signal stand in for proof it does not carry.
 | Subsystem | Owns | Does not own |
 |---|---|---|
 | Quota | `SyncQuotaManager` owns durable per-link blocks, backoff, direct probes, and resolved-omission evidence; the engine owns lifecycle fencing and effects | General push retry, dead letters, or feed checkpoints |
-| Deferred pulls | Temporary pull-admission state; a root holds the page until it succeeds, disappears, or ages into a dead letter | Push failures or permanent admission rejection |
+| Pending pulls | Durable signed entry, source position, inline bytes, and typed incomplete outcome; retried after page intake without blocking unrelated roots | Push failures, age-based dead letters, or a second pull checkpoint |
 | Echo suppression | Short-lived `(tenant, CID, endpoint)` transfer hints | Durable progress; a cache hit never advances a checkpoint by itself |
 | Feed convergence | Verified inventory/fingerprint mismatch policy after reconciliation | Socket health or routine feed transfer |
 | Pull currentness | Ephemeral per-replication-session evidence that no accepted remote-feed wake remains uncovered | Durable checkpoint state, socket health, or equality of complete feed inventories |
@@ -151,10 +151,11 @@ would make one signal stand in for proof it does not carry.
 
 - Compare token positions only when both `streamId` and `epoch` match. A token
   from another domain is neither newer nor older.
-- Advance a direction checkpoint only after a durable-feed page or its
-  contiguous prefix has settled, after a complete authenticated socket event
-  has passed the same closure admission policy, or when equal
-  paired-subscription snapshots establish the initial baseline. A lifecycle
+- Advance a push checkpoint only after a durable-feed page or its contiguous
+  prefix has settled. Advance a pull checkpoint after every page entry has
+  either materialized, been retained as a pending pull, or reached a permanent
+  DWN outcome. A complete authenticated socket event follows the same rule;
+  equal paired-subscription snapshots establish the initial baseline. A lifecycle
   signal, EOSE, or unprocessed event is never checkpoint evidence.
 - Filtered token positions are sparse, so an omitted matching event cannot be
   inferred from a numeric gap. The periodic fingerprint settle check remains

@@ -222,21 +222,6 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(config.reply.status.code).toBe(202);
     expect((await remoteStores.dwn.processMessage(tenantDid, config.message!)).status.code).toBe(202);
 
-    const smallText = 'small inline record';
-    const smallWrite = await testHarness.agent.dwn.sendRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
-      },
-      dataStream: new Blob([smallText]),
-    });
-    expect(smallWrite.reply.status.code).toBe(202);
-
     const largeText = 'x'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
     const largeWrite = await testHarness.agent.dwn.sendRequest({
       author        : tenantDid,
@@ -251,6 +236,21 @@ describe('SyncEngineLevel durable feed convergence', () => {
       dataStream: new Blob([largeText]),
     });
     expect(largeWrite.reply.status.code).toBe(202);
+
+    const smallText = 'small inline record after the unavailable body';
+    const smallWrite = await testHarness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : notesProtocol.protocol,
+        protocolPath : 'note',
+        schema       : notesProtocol.types.note.schema,
+        dataFormat   : 'text/plain',
+      },
+      dataStream: new Blob([smallText]),
+    });
+    expect(smallWrite.reply.status.code).toBe(202);
 
     await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
     const rpc = testHarness.agent.rpc;
@@ -268,6 +268,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
     expect(failNextRead).toBe(false);
     await expectLocalRecordCount(largeWrite.message!.recordId, 0);
+    expect(await readLocalRecordText(smallWrite.message!.recordId)).toBe(smallText);
     expect(await syncEngine.getDeadLetters(tenantDid)).toHaveLength(0);
 
     await syncEngine.sync('pull');

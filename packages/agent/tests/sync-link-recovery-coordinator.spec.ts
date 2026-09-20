@@ -1113,11 +1113,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('leaves a deferred pull for the next wake or settle pass without arming a retry loop', async () => {
+  it('leaves pending pull work for the next wake or settle pass without arming a second retry loop', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);
     fixture.operations.reconcileTarget.resolves({
-      deferredPull: { messageCid: 'deferred-cid', detail: 'dependency unavailable' },
+      pendingPullCount    : 1,
+      pullDrained         : true,
+      pullLocallyComplete : false,
     });
 
     await runWake(fixture, controller, 'pull');
@@ -1127,11 +1129,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.emitEvent.calledWithMatch({ reason: 'pull-retryable' })).toBe(false);
   });
 
-  it('does not classify a deferred pull as verified feed divergence', async () => {
+  it('does not classify pending pull work as verified feed divergence', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);
     fixture.operations.reconcileTarget.resolves({
-      deferredPull: { messageCid: 'deferred-cid', detail: 'dependency unavailable' },
+      pendingPullCount    : 1,
+      pullDrained         : true,
+      pullLocallyComplete : false,
     });
 
     await runReconcile(fixture, controller);

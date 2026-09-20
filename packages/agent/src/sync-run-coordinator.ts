@@ -31,6 +31,7 @@ type SyncTargetGroupRunResult = {
   attempted: boolean;
   cause?: unknown;
   dwnUrl: string;
+  failed: boolean;
   failureReported: boolean;
   succeeded: boolean;
 };
@@ -157,21 +158,38 @@ export class SyncRunCoordinator {
     runTarget: SyncTargetRunner,
   ): Promise<Omit<SyncTargetGroupRunResult, 'dwnUrl'>> {
     let attempted = false;
+    let cause: unknown;
+    let failed = false;
+    let failureReported = true;
+    let succeeded = false;
     for (const target of targets) {
       try {
-        attempted = await runTarget(target) || attempted;
+        const targetSucceeded = await runTarget(target);
+        attempted = targetSucceeded || attempted;
+        succeeded = targetSucceeded || succeeded;
       } catch (error: unknown) {
-        const failureReported = !isDidResolutionUnavailableError(error);
-        if (failureReported) {
+        attempted = true;
+        failed = true;
+        const reported = !isDidResolutionUnavailableError(error);
+        if (!reported || cause === undefined) {
+          cause = error;
+        }
+        failureReported &&= reported;
+        if (reported) {
           this._operations.reportError(
             `SyncRunCoordinator: Error syncing ${target.did} with ${dwnUrl}`,
             error,
           );
         }
-        return { attempted: true, succeeded: false, cause: error, failureReported };
       }
     }
-    return { attempted, succeeded: true, failureReported: false };
+    return {
+      attempted,
+      cause,
+      failed,
+      failureReported: failed && failureReported,
+      succeeded,
+    };
   }
 
   private async runTarget(
@@ -246,17 +264,18 @@ export class SyncRunCoordinator {
     }
     if (result.value.succeeded) {
       summary.groupsSucceeded++;
-      return;
     }
-    summary.groupsFailed++;
-    summary.failedUrls.push(result.value.dwnUrl);
-    if (result.value.failureReported) {
-      summary.groupsReported++;
-    }
-    if (isDidResolutionUnavailableError(result.value.cause)) {
-      // Preserve the shared prerequisite even when another endpoint failed
-      // unexpectedly; that endpoint's detailed diagnostic was already reported.
-      summary.cause ??= result.value.cause;
+    if (result.value.failed) {
+      summary.groupsFailed++;
+      summary.failedUrls.push(result.value.dwnUrl);
+      if (result.value.failureReported) {
+        summary.groupsReported++;
+      }
+      if (isDidResolutionUnavailableError(result.value.cause)) {
+        // Preserve the shared prerequisite even when another endpoint failed
+        // unexpectedly; that endpoint's detailed diagnostic was already reported.
+        summary.cause ??= result.value.cause;
+      }
     }
   }
 
