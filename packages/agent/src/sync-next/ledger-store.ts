@@ -11,6 +11,7 @@ import type {
   SyncNextPushPageCommit,
   SyncNextQuarantineEntry,
   SyncNextQuarantineInput,
+  SyncNextQuarantineOutcome,
   SyncNextSettledSource,
   SyncNextSourceReceipt,
   SyncNextTerminalInput,
@@ -310,6 +311,37 @@ export class SyncNextLedgerStore {
         this.deleteOperation(this._terminal, syncNextTerminalKey(identity, 'pull', receipt)),
       ]);
     });
+  }
+
+  /** Update one retained receipt without requiring its original link to remain active. */
+  public async updateQuarantine(
+    entry: SyncNextQuarantineEntry,
+    outcome: SyncNextQuarantineOutcome,
+  ): Promise<void> {
+    const linkKey = syncNextLinkKey(entry);
+    await this.runForLink(linkKey, async (): Promise<void> => {
+      const key = syncNextReceiptKey(entry, entry);
+      const current = await this.getSparseValue<SyncNextQuarantineEntry>(this._quarantine, key);
+      if (current === undefined) {
+        return;
+      }
+      const updated: SyncNextQuarantineEntry = {
+        ...current,
+        attempts      : current.attempts + 1,
+        lastAttemptAt : new Date().toISOString(),
+        outcome       : structuredClone(outcome),
+      };
+      await this._quarantine.put(key, JSON.stringify(updated));
+    });
+  }
+
+  /** Settle every exact-source receipt satisfied by one verified local materialization. */
+  public async settleQuarantineForLogicalTarget(
+    logicalTargetId: string,
+    messageCid: string,
+  ): Promise<void> {
+    const entries = await this.getQuarantineForLogicalTarget(logicalTargetId, messageCid);
+    await Promise.all(entries.map((entry): Promise<void> => this.settleQuarantine(entry, entry)));
   }
 
   public async settleDelivery(
