@@ -4,6 +4,7 @@ import type { AbstractBatchOperation, AbstractLevel, AbstractSublevel } from 'ab
 import type {
   SyncNextDeliveryInput,
   SyncNextDeliveryObligation,
+  SyncNextDeliveryOutcome,
   SyncNextLink,
   SyncNextLinkCreate,
   SyncNextLinkIdentity,
@@ -354,6 +355,28 @@ export class SyncNextLedgerStore {
         this.deleteOperation(this._delivery, syncNextReceiptKey(identity, receipt)),
         this.deleteOperation(this._terminal, syncNextTerminalKey(identity, 'push', receipt)),
       ]);
+    });
+  }
+
+  /** Update one outbound retry outcome without changing local feed progress. */
+  public async updateDelivery(
+    entry: SyncNextDeliveryObligation,
+    outcome: SyncNextDeliveryOutcome,
+  ): Promise<void> {
+    const linkKey = syncNextLinkKey(entry);
+    await this.runForLink(linkKey, async (): Promise<void> => {
+      const key = syncNextReceiptKey(entry, entry);
+      const current = await this.getSparseValue<SyncNextDeliveryObligation>(this._delivery, key);
+      if (current === undefined) {
+        return;
+      }
+      const updated: SyncNextDeliveryObligation = {
+        ...current,
+        attempts      : current.attempts + 1,
+        lastAttemptAt : new Date().toISOString(),
+        outcome       : structuredClone(outcome),
+      };
+      await this._delivery.put(key, JSON.stringify(updated));
     });
   }
 
