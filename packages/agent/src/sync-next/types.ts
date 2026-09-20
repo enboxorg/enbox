@@ -85,6 +85,7 @@ export type SyncNextDeliveryReason =
   | 'dependency'
   | 'quota'
   | 'remote-incomplete'
+  | 'remote-rejected'
   | 'transport';
 
 /** Retry state for one endpoint-specific outbound obligation. */
