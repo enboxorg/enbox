@@ -1,5 +1,6 @@
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { BearerDid } from '@enbox/dids';
+import type { DidDhtNetworkConfig } from '@enbox/dids';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
@@ -26,7 +27,7 @@ import { DwnKeyStore } from './store-key.js';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { HdIdentityVault } from './hd-identity-vault.js';
 import { LocalKeyManager } from './local-key-manager.js';
-import { DidDht, DidJwk } from '@enbox/dids';
+import { createDidDhtMethod, DidDht, DidJwk } from '@enbox/dids';
 import { InMemorySecretStore, VaultBackedSecretStore } from './secret-store.js';
 
 /**
@@ -97,6 +98,12 @@ export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> =
 };
 
 export type CreateUserAgentParams = Partial<AgentParams> & {
+  /**
+   * Gateway configuration applied to every default `did:dht` create, resolve, and publish path.
+   * Ignored when a custom `didApi` is provided.
+   */
+  didDhtNetwork?: DidDhtNetworkConfig;
+
   localDwnStrategy?: LocalDwnStrategy;
 
   /**
@@ -166,11 +173,15 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
    */
   public static async create({
     dataPath = 'DATA/AGENT',
+    didDhtNetwork,
     localDwnStrategy,
     localDwnEndpoint,
     agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, secretsApi, syncApi
   }: CreateUserAgentParams = {}
   ): Promise<EnboxUserAgent> {
+    if (didDhtNetwork !== undefined && didApi !== undefined) {
+      throw new Error('EnboxUserAgent: didDhtNetwork cannot be combined with a custom didApi. Configure the DID API directly.');
+    }
 
     if (agentVault === undefined || secretsApi === undefined) {
       const { LevelStore } = await import('@enbox/common/level-store');
@@ -190,9 +201,10 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
 
     if (didApi === undefined) {
       const { AgentDidResolverCache } = await import('./agent-did-resolver-cache.js');
+      const didDht = didDhtNetwork === undefined ? DidDht : createDidDhtMethod(didDhtNetwork);
 
       didApi = new AgentDidApi({
-        didMethods    : [DidDht, DidJwk],
+        didMethods    : [didDht, DidJwk],
         resolverCache : new AgentDidResolverCache({ location: `${dataPath}/DID_RESOLVERCACHE` }),
         store         : new DwnDidStore()
       });

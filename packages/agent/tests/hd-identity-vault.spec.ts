@@ -352,12 +352,16 @@ describe('HdIdentityVault', () => {
         it('updates and pins a newly published vault DID resolution', async () => {
           const cacheResolution = sinon.stub().resolves();
           const pinResolution = sinon.stub().resolves();
+          const publish = sinon.stub().resolves({ didDocumentMetadata: {} });
           identityVault.didResolver = {
             cacheResolution,
             pinResolution,
+            publish,
             resolve: sinon.stub(),
           };
-          sinon.stub(DidDht, 'publish').resolves({ didDocumentMetadata: {} } as any);
+          const defaultPublish = sinon.stub(DidDht, 'publish').rejects(
+            new Error('default publisher must not be used')
+          );
 
           await identityVault.initialize({ password: 'test' });
 
@@ -370,6 +374,8 @@ describe('HdIdentityVault', () => {
           expect(cacheResolution.calledOnceWith(did.uri, expectedResolution)).toBe(true);
           expect(pinResolution.calledOnceWith(did.uri, expectedResolution)).toBe(true);
           expect(cacheResolution.calledBefore(pinResolution)).toBe(true);
+          expect(publish.calledOnce).toBe(true);
+          expect(defaultPublish.notCalled).toBe(true);
         });
 
         it('preserves resolved endpoints until recovery completes', async () => {

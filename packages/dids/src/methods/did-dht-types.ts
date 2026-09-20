@@ -184,6 +184,20 @@ export interface DidDhtCreateOptions<TKms> extends DidCreateOptions<TKms> {
 }
 
 /**
+ * Immutable network selection used by a configured `did:dht` method instance.
+ *
+ * Private, loopback, and link-local gateways remain blocked unless
+ * `allowPrivateGatewayUri` is explicitly set to `true`.
+ */
+export type DidDhtNetworkConfig = Readonly<{
+  /** The DID DHT Gateway or Pkarr relay used for every network operation. */
+  gatewayUri: string;
+
+  /** Explicitly allow a private, loopback, or link-local gateway URI. Defaults to `false`. */
+  allowPrivateGatewayUri?: boolean;
+}>;
+
+/**
  * Proof to used to construct the `_prv._did.` DNS record as described in https://did-dht.com/#rotation to link a DID to a previous DID.
  */
 export type PreviousDidProof = {

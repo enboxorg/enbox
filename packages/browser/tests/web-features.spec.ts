@@ -108,6 +108,32 @@ describe('web features', () => {
     it('should not throw with links disabled', () => {
       expect(() => activatePolyfills({ serviceWorker: false, links: false })).not.toThrow();
     });
+
+    it('configures the realm default DID DHT resolver', async () => {
+      const gatewayUri = 'http://127.0.0.1:17527';
+      const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+      activatePolyfills({
+        didDhtNetwork: {
+          gatewayUri,
+          allowPrivateGatewayUri: true,
+        },
+        serviceWorker : false,
+        injectStyles  : false,
+        links         : false,
+      });
+
+      await getDwnEndpoints('did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy');
+
+      expect(String(fetchSpy.mock.calls[0][0]).startsWith(`${gatewayUri}/`)).toBe(true);
+    });
+
+    it('rejects DID DHT network configuration with custom resolvers', () => {
+      expect(() => activatePolyfills({
+        didDhtNetwork : { gatewayUri: 'http://127.0.0.1:17527', allowPrivateGatewayUri: true },
+        didResolvers  : mockDidResolvers,
+        serviceWorker : false,
+      })).toThrow('didDhtNetwork cannot be combined with didResolvers');
+    });
   });
 
   // -----------------------------------------------------------------------

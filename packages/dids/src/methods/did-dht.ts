@@ -65,7 +65,7 @@ export {
 } from './did-dht-utils.js';
 
 // Import from extracted modules for use within this file.
-import type { Bep44Message, DidDhtCreateOptions, PreviousDidProof } from './did-dht-types.js';
+import type { Bep44Message, DidDhtCreateOptions, DidDhtNetworkConfig, PreviousDidProof } from './did-dht-types.js';
 
 import {
   createBep44PutMessage,
@@ -502,6 +502,63 @@ export class DidDht extends DidMethod {
       };
     }
   }
+}
+
+/** A `did:dht` method class bound to one immutable gateway configuration. */
+export type ConfiguredDidDht = typeof DidDht & {
+  readonly network: Readonly<Required<DidDhtNetworkConfig>>;
+};
+
+/**
+ * Creates a `did:dht` method implementation bound to one gateway.
+ *
+ * The returned class is compatible with `UniversalResolver` and `DidMethodApi`, while also
+ * applying the same gateway to DID creation and publication. Per-call gateway fields cannot
+ * override the configured network. This keeps concurrently running resolver instances isolated
+ * without changing process environment variables or mutating global defaults.
+ */
+export function createDidDhtMethod(config: DidDhtNetworkConfig): ConfiguredDidDht {
+  const network = Object.freeze({
+    gatewayUri             : config.gatewayUri,
+    allowPrivateGatewayUri : config.allowPrivateGatewayUri ?? false,
+  });
+
+  class ConfiguredDidDhtMethod extends DidDht {
+    public static readonly network = network;
+
+    public static override create<TKms extends KeyManager | undefined = undefined>({
+      keyManager,
+      options,
+    }: {
+      keyManager?: TKms;
+      options?: DidDhtCreateOptions<TKms>;
+    } = {}): Promise<BearerDid> {
+      return DidDht.create({
+        keyManager,
+        options: {
+          ...options,
+          ...network,
+        },
+      });
+    }
+
+    public static override publish({ did }: {
+      did: BearerDid;
+      gatewayUri?: string;
+      allowPrivateGatewayUri?: boolean;
+    }): Promise<DidRegistrationResult> {
+      return DidDht.publish({ did, ...network });
+    }
+
+    public static override resolve(
+      didUri: string,
+      options: DidResolutionOptions = {},
+    ): Promise<DidResolutionResult> {
+      return DidDht.resolve(didUri, { ...options, ...network });
+    }
+  }
+
+  return ConfiguredDidDhtMethod;
 }
 
 /**

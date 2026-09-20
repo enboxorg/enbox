@@ -216,6 +216,9 @@ export class AuthManager {
    * @returns A ready-to-use AuthManager instance.
    */
   static async create(options: AuthManagerOptions = {}): Promise<AuthManager> {
+    if (options.agent !== undefined && options.didDhtNetwork !== undefined) {
+      throw new Error('AuthManager: didDhtNetwork cannot be combined with a pre-built agent. Configure the agent directly.');
+    }
     const emitter = new AuthEventEmitter();
     const storage = options.storage ?? createDefaultStorage();
 
@@ -244,6 +247,7 @@ export class AuthManager {
     const userAgent = options.agent ?? await EnboxUserAgent.create({
       dataPath         : options.dataPath,
       agentVault       : options.agentVault,
+      didDhtNetwork    : options.didDhtNetwork,
       localDwnStrategy : options.localDwnStrategy,
       localDwnEndpoint,
       rpcClient        : localDwnEndpoint === undefined || localDwnPairing === undefined
