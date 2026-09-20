@@ -1,4 +1,4 @@
-import type { ProgressToken } from '@enbox/dwn-sdk-js';
+import type { DependencyRef, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { SyncAuthorization, SyncDirection, SyncScope } from '../types/sync.js';
 
@@ -47,6 +47,7 @@ export type SyncNextSourceReceipt = {
 
 /** Why received input is not materialized in the local DWN yet. */
 export type SyncNextQuarantineReason =
+  | 'admission-unresolved'
   | 'authorization-unresolved'
   | 'data'
   | 'dependency'
@@ -56,7 +57,7 @@ export type SyncNextQuarantineReason =
 /** Retry state retained with encrypted received input. */
 export type SyncNextQuarantineOutcome = {
   detail?: string;
-  missingReferences?: string[];
+  missingReferences?: DependencyRef[];
   reason: SyncNextQuarantineReason;
 };
 
