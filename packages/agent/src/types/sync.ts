@@ -322,8 +322,8 @@ export type SyncRunOptions = {
   did?: string;
 
   /**
-   * Verify cids-only feed convergence after reconciliation and schedule
-   * repair on divergence. Used by the engine's own settle checks.
+   * Verify cids-only feed convergence after reconciliation and rescan on
+   * divergence. Used by the engine's own settle checks.
    */
   verifyConvergence?: boolean;
 };
@@ -350,20 +350,9 @@ export type SyncLifecycleOptions = {
  * - `live` — the latest completed replication generation established its
  *   baseline. Inspect `connectivity` on a runtime snapshot to determine
  *   whether that link is currently attached to its remote transport.
- * - `repairing` — recovering from a retryable subscription failure or verified feed divergence.
  * - `paused` — link retries are stopped until the app updates registration or recreates the link.
  */
-export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'paused';
-
-/** Durable diagnostic state for the latest failed link recovery operation. */
-export type SyncLinkRecoveryState = Readonly<{
-  /** Human-readable failure detail. */
-  error: string;
-  /** ISO-8601 timestamp of the failure. */
-  failedAt: string;
-  /** ISO-8601 timestamp of the scheduled retry, when one is armed. */
-  nextRetryAt?: string;
-}>;
+export type LinkStatus = 'initializing' | 'live' | 'paused';
 
 /**
  * Durable state of a single replication link. Persisted to LevelDB and
@@ -391,9 +380,6 @@ export type ReplicationLinkState = {
 
   /** Current link status. */
   status: LinkStatus;
-
-  /** Latest recovery failure. Cleared after the failed operation succeeds. */
-  recovery?: SyncLinkRecoveryState;
 
   /** Pull-direction feed-handling checkpoint (remote → local). */
   readonly pull: PullCheckpoint;
@@ -502,7 +488,7 @@ export type StartSyncParams = {
   /**
    * The cadence of the periodic durable feed settle check — live sync's
    * degraded-network safety net. Each tick runs a convergence-verifying feed
-   * reconciliation that repairs anything the real-time subscriptions missed
+   * reconciliation that covers anything the real-time subscriptions missed
    * (dropped events, links waiting on a rate-limited subscription open,
    * long offline windows).
    *
@@ -666,11 +652,6 @@ export type SyncEvent =
    * change without querying. `Duplicate`/`Superseded` applies are silent.
    */
   | SyncEventBase & { type: 'delivery:applied'; messageCid: string; descriptor: SyncMessageDescriptor }
-  | SyncEventBase & { type: 'reconcile:needed'; reason: string }
-  | SyncEventBase & { type: 'reconcile:completed' }
-  | SyncEventBase & { type: 'repair:started'; attempt: number }
-  | SyncEventBase & { type: 'repair:completed' }
-  | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
   /** A push was rejected because the remote is out of storage/message quota for this tenant. Re-probing is deferred until `nextProbeAt`. */
   | SyncEventBase & { type: 'push:quota-blocked'; messageCid: string; detail?: string; nextProbeAt: string }
   /** A previously quota-blocked push was acknowledged or retired because it no longer exists locally. */
@@ -711,7 +692,7 @@ export type DeadLetterEntry = {
  *
  * `failedMessageCount` reflects messages that are currently failing — entries
  * are auto-cleared when the same CID later succeeds via push or pull, so the
- * count decreases as the engine self-heals through reconciliation and repair.
+ * count decreases as later reconciliation successfully delivers the same CID.
  */
 export type SyncHealthSummary = {
   /** Current connectivity state. */
@@ -721,7 +702,7 @@ export type SyncHealthSummary = {
    * the engine self-heals — entries are auto-cleared on later success.
    */
   failedMessageCount: number;
-  /** Number of current links with a recovery failure or `repairing`/`paused` status. */
+  /** Number of current links deliberately paused by an authorization decision. */
   degradedLinkCount: number;
   /**
    * Number of messages currently deferred because a remote rejected the push
@@ -762,9 +743,7 @@ export type RemoteSyncStatus = {
   failedMessageCount: number;
   /** ISO-8601 time of the soonest quota re-probe across this remote's blocked messages, if any. */
   nextProbeAt?: string;
-  /** ISO-8601 time of the soonest scheduled link-recovery retry, if any. */
-  nextRetryAt?: string;
-  /** Human-readable detail of the most recent recovery, quota, or terminal failure, if any. */
+  /** Human-readable detail of the most recent quota or terminal failure, if any. */
   lastError?: string;
   /** ISO-8601 timestamp of the latest successful activity across current links for this remote. */
   lastActivityAt?: string;
@@ -788,10 +767,8 @@ export type ReplicationLinkSnapshot = {
   remoteEndpoint: string;
   /** The scope definition this link covers. */
   scope: SyncScope;
-  /** Current link status (`initializing` | `live` | `repairing` | `paused`). */
+  /** Current link status (`initializing` | `live` | `paused`). */
   status: LinkStatus;
-  /** Latest durable recovery failure and scheduled retry, when present. */
-  recovery?: SyncLinkRecoveryState;
   /** Per-link connectivity state. */
   connectivity: SyncConnectivityState;
   /** Whether all accepted remote pull work is settled. */
@@ -1003,7 +980,7 @@ export interface SyncEngine {
    * Starts live sync: opens `MessagesSubscribe` WebSocket subscriptions to
    * remote DWNs for real-time pull, listens to the local EventLog for
    * immediate push, and runs a periodic durable feed settle check at
-   * `interval` to repair anything the subscriptions missed.
+   * `interval` to reconcile anything the subscriptions missed.
    *
    * Subsequent calls update the interval, disposing of the previous
    * runtime's resources before starting the new one.
@@ -1012,7 +989,8 @@ export interface SyncEngine {
    * and after link subscriptions have been opened for identities registered
    * before the call — so `await startSync(...)` is the "initially caught up"
    * signal for those identities, best-effort: individual link failures
-   * schedule repair rather than rejecting. Identities hot-added later report
+   * schedule direction-local pull or push retry rather than rejecting.
+   * Identities hot-added later report
    * their own catch-up through {@link SyncEngine.getReplicationLinks} (all
    * links `'live'`) and the `link:status-change` event.
    *
@@ -1034,7 +1012,7 @@ export interface SyncEngine {
   /**
    * Subscribe to sync engine events. Returns an unsubscribe function.
    * Events are emitted at key state transitions: checkpoint advancement,
-   * link status changes, repair, gap detection.
+   * link status/currentness/connectivity, delivery, and quota changes.
    */
   on(listener: SyncEventListener): () => void;
 
@@ -1082,12 +1060,11 @@ export interface SyncEngine {
   getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]>;
 
   /**
-   * Immediately retry a remote's recoverable link repairs and quota-blocked
-   * messages instead of waiting for their next scheduled checks. Runs
-   * targeted, per-link work for `(tenantDid, remoteEndpoint)`, so a UI
-   * "Retry now" button (or a freshly purchased quota) resumes without touching
-   * unrelated remotes. Authorization and policy pauses remain parked. No-op
-   * when nothing is retryable.
+   * Clears local exponential delay and runs the ordinary pull/push reconciler
+   * for current links at `(tenantDid, remoteEndpoint)`. Missing subscription
+   * bindings are reopened independently. Authorization pauses remain parked,
+   * and a server-provided quota Retry-After remains authoritative. No-op when
+   * the current target plan has no matching link.
    */
   retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void>;
 }

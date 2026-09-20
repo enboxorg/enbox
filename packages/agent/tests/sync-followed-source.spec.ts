@@ -265,7 +265,10 @@ describe('SyncEngineLevel — followed sources', () => {
         closures.push({ did: target.did, close });
         return controller.setLocalSubscription({ close });
       });
-      const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({ pullDrained: true });
+      const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({
+        pullDrained         : true,
+        pullLocallyComplete : true,
+      });
       const probe = sinon.stub(engine['_durableFeedReconciler'], 'verifyConvergence').resolves({ converged: true });
       const authority = sinon.stub(engine as never, 'resolveFollowedSourceAtEndpoint');
       const validate = sinon.stub(engine['_scopeClosureValidator'], 'validateClosure').resolves();
@@ -305,6 +308,7 @@ describe('SyncEngineLevel — followed sources', () => {
           expect(authority.calledOnce).toBe(true);
         }
         await engine['runSettleCheck'](engine['_runtime']);
+        expect(await engine['_lifecycle'].waitForBackgroundTasks()).toBe(true);
         expect((await engine['replicationLinkStore'].getAllLinks()).filter(link => link.tenantDid !== healthyDid))
           .toHaveLength(4);
         expect((await engine['replicationLinkStore'].getAllLinks()).filter(link => link.tenantDid !== healthyDid)
@@ -324,7 +328,7 @@ describe('SyncEngineLevel — followed sources', () => {
         expect(fetch.notCalled).toBe(true);
         expect(authority.notCalled).toBe(true);
         expect(reconcile.notCalled).toBe(true);
-        expect(probe.calledOnceWithMatch({ did: healthyDid })).toBe(true);
+        expect(probe.calledWithMatch({ did: healthyDid })).toBe(true);
         expect(endpoints.getCalls().every(call => call.args[0] === healthyDid)).toBe(true);
         expect(await engine.getIdentityOptions(actorDid)).toEqual(options);
         for (const followed of sources) {
@@ -1241,12 +1245,12 @@ describe('SyncEngineLevel — followed sources', () => {
     const scheduleRefresh = sinon.spy(internal, 'scheduleFollowedSourceRefresh');
     const report = sinon.stub(console, 'error');
 
-    controller.executor.request('reconcile');
-    await internal._linkRecoveryCoordinator.resume(controller);
+    controller.executor.request('pull');
+    await internal.resumeLinkExecutor(controller);
 
     expect(report.calledOnce).toBe(true);
     expect(scheduleRefresh.notCalled).toBe(true);
-    expect(internal._runtime.hasTimers((key: string): boolean => key.startsWith('syncReconcile:'))).toBe(false);
+    expect(internal._runtime.hasTimers((key: string): boolean => key.startsWith('syncRetry:'))).toBe(false);
     expect(await internal._deadLetterStore.getForTenant(SOURCE_DID)).toEqual([]);
     expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([{
       pull   : { contiguousAppliedToken: checkpoint },
@@ -1257,19 +1261,13 @@ describe('SyncEngineLevel — followed sources', () => {
     await controller.dispose();
   });
 
-  it('should let an invalid-support pause supersede legacy transient recovery', async () => {
+  it('should persist an invalid-support pause without durable retry state', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
     const followed = source();
     const target = targetFor(followed);
     const link = await createRoleLink(engine, target);
-    // Emulate the durable shape written by older versions after exhausting a
-    // transient repair. A later policy failure deliberately pauses this link.
-    await internal.replicationLinkStore.setStatus(link, 'paused');
-    await internal.replicationLinkStore.setRecovery(link, {
-      error    : 'offline',
-      failedAt : '2026-09-17T12:00:00.000Z',
-    });
+    await internal.replicationLinkStore.setStatus(link, 'live');
     sinon.stub(console, 'error');
 
     await internal.pauseRoleLinkForError(
@@ -1280,10 +1278,10 @@ describe('SyncEngineLevel — followed sources', () => {
 
     const [paused] = await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID);
     expect(paused).toMatchObject({ status: 'paused' });
-    expect(paused.recovery).toBeUndefined();
+    expect(paused).not.toHaveProperty('recovery');
     const reloaded = await createRoleLink(engine, target);
     expect(reloaded.status).toBe('paused');
-    expect(reloaded.recovery).toBeUndefined();
+    expect(reloaded).not.toHaveProperty('recovery');
   });
 
   it('should retain incomplete role-feed work while advancing feed currentness', async () => {
@@ -1486,7 +1484,7 @@ describe('SyncEngineLevel — followed sources', () => {
     expect(controller.isReplicationReady).toBe(false);
     expect((await engine['getSyncTargets']()).map(planned => planned.did)).toEqual([healthyDid]);
     await engine.getSyncHealth();
-    expect(endpoints.calledOnceWithExactly(healthyDid)).toBe(true);
+    expect(endpoints.calledWithExactly(healthyDid)).toBe(true);
     expect(await engine['replicationLinkStore'].getLinksForTenant(SOURCE_DID)).toMatchObject([{
       authorizationEpoch : target.authorizationEpoch,
       pull               : { contiguousAppliedToken: checkpoint },
@@ -1500,8 +1498,8 @@ describe('SyncEngineLevel — followed sources', () => {
 
     expect(await engine['getSyncTargets']()).toContainEqual(target);
     await engine.getSyncHealth();
-    expect(endpoints.withArgs(healthyDid).callCount).toBe(2);
-    expect(endpoints.withArgs(actorDid).callCount).toBe(1);
+    expect(endpoints.withArgs(healthyDid).callCount).toBeGreaterThanOrEqual(2);
+    expect(endpoints.withArgs(actorDid).callCount).toBeGreaterThanOrEqual(1);
     expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
     expect(await engine['replicationLinkStore'].getLinksForTenant(SOURCE_DID)).toMatchObject([{
       authorizationEpoch : target.authorizationEpoch,

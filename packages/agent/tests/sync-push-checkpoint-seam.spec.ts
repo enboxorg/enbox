@@ -152,7 +152,7 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     await restartedEngine.close();
   });
 
-  it('repairs a failed local subscription recovery and pauses terminal authorization failures', async () => {
+  it('reopens only a failed local subscription and pauses terminal authorization failures', async () => {
     const engine = new SyncEngineLevel({ db });
     const link = await (engine as any).replicationLinkStore.getOrCreateLink({
       authorization      : { kind: 'owner' },
@@ -165,7 +165,7 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     const linkKey = buildLinkKey(DID, REMOTE, link.projectionId, link.authorizationEpoch);
     const controller = (engine as any).activateLink(linkKey, link);
     controller.markReplicationReady();
-    const repair = sinon.stub(engine['_linkRecoveryCoordinator'], 'transitionToRepairing').resolves();
+    const reopen = sinon.stub(engine as any, 'handleLinkSubscriptionFailure').resolves();
     const pause = sinon.stub(engine as any, 'transitionToPaused').resolves();
     sinon.stub(console, 'warn');
 
@@ -174,7 +174,7 @@ describe('SyncEngineLevel — durable push replay seam', () => {
       error  : { code: 'SubscriptionRecoveryFailed', detail: 'socket recovery failed' },
       type   : 'error',
     });
-    expect(repair.calledOnceWithExactly(controller)).toBe(true);
+    expect(reopen.calledOnceWithExactly(controller, 'push')).toBe(true);
     expect(pause.notCalled).toBe(true);
 
     await (engine as any).handleLocalPushMessage(controller, (): boolean => false, {
@@ -183,7 +183,7 @@ describe('SyncEngineLevel — durable push replay seam', () => {
       type   : 'error',
     });
     expect(pause.calledOnceWithExactly(linkKey, link)).toBe(true);
-    expect(repair.calledOnce).toBe(true);
+    expect(reopen.calledOnce).toBe(true);
 
     await controller.dispose();
   });

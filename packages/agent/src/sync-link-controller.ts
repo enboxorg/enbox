@@ -20,7 +20,7 @@ export type SyncFeedSnapshot = {
  *
  * The controller is persistence- and transport-backend neutral. The enclosing
  * sync engine performs I/O while the controller provides one stable lifetime
- * boundary for subscriptions, link execution, repair, and reconciliation.
+ * boundary for subscriptions and serialized pull/push execution.
  * Runtime-owned link scheduling is held separately by `SyncRuntime` under the
  * controller's `linkKey`.
  * Captured callbacks use `isActive` to reject work belonging to a replaced or
@@ -30,15 +30,18 @@ export class SyncLinkController {
   private _active = true;
   public readonly executor = new SyncLinkExecutor();
   private _liveSubscription?: SyncLinkSubscription;
+  private _liveSubscriptionGeneration = 0;
   private _localSubscription?: SyncLinkSubscription;
+  private _localSubscriptionGeneration = 0;
   private _isPullCurrent = false;
   private _isDeactivating = false;
   private _pendingLivePullDeliveries = 0;
   private _pullSnapshot?: SyncFeedSnapshot;
   private _replicationGeneration = 0;
+  private readonly _retryAttempts = new Map<SyncDirection, number>();
   private _pushSnapshot?: SyncFeedSnapshot;
-  private _repairAttempts = 0;
   private readonly _retryNotBefore = new Map<SyncDirection, number>();
+  private readonly _subscriptionRetryAttempts = new Map<SyncDirection, number>();
 
   public constructor(
     public readonly linkKey: string,
@@ -157,16 +160,28 @@ export class SyncLinkController {
     return this._active && this._replicationGeneration === replicationGeneration;
   }
 
-  public get repairAttempts(): number {
-    return this._repairAttempts;
-  }
-
   public get hasLiveSubscription(): boolean {
     return this._liveSubscription !== undefined;
   }
 
   public get hasLocalSubscription(): boolean {
     return this._localSubscription !== undefined;
+  }
+
+  public get liveSubscriptionGeneration(): number {
+    return this._liveSubscriptionGeneration;
+  }
+
+  public get localSubscriptionGeneration(): number {
+    return this._localSubscriptionGeneration;
+  }
+
+  public isLiveSubscriptionGenerationCurrent(generation: number): boolean {
+    return this._active && generation === this._liveSubscriptionGeneration;
+  }
+
+  public isLocalSubscriptionGenerationCurrent(generation: number): boolean {
+    return this._active && generation === this._localSubscriptionGeneration;
   }
 
   /** Begin a fresh replication generation and fence caller-specific executor work. */
@@ -176,6 +191,8 @@ export class SyncLinkController {
     this._pendingLivePullDeliveries = 0;
     this._pullSnapshot = undefined;
     this._pushSnapshot = undefined;
+    this._liveSubscriptionGeneration++;
+    this._localSubscriptionGeneration++;
     this.executor.reset();
   }
 
@@ -191,11 +208,15 @@ export class SyncLinkController {
     subscription: SyncLinkSubscription,
     expectedReplicationGeneration?: number,
     snapshot?: SyncFeedSnapshot,
+    expectedSubscriptionGeneration?: number,
   ): boolean {
     if (!this._active || this._isDeactivating || this._liveSubscription !== undefined) {
       return false;
     }
     if (expectedReplicationGeneration !== undefined && expectedReplicationGeneration !== this._replicationGeneration) {
+      return false;
+    }
+    if (expectedSubscriptionGeneration !== undefined && expectedSubscriptionGeneration !== this._liveSubscriptionGeneration) {
       return false;
     }
     this._liveSubscription = subscription;
@@ -212,11 +233,15 @@ export class SyncLinkController {
     subscription: SyncLinkSubscription,
     expectedReplicationGeneration?: number,
     snapshot?: SyncFeedSnapshot,
+    expectedSubscriptionGeneration?: number,
   ): boolean {
     if (!this._active || this._isDeactivating || this._localSubscription !== undefined) {
       return false;
     }
     if (expectedReplicationGeneration !== undefined && expectedReplicationGeneration !== this._replicationGeneration) {
+      return false;
+    }
+    if (expectedSubscriptionGeneration !== undefined && expectedSubscriptionGeneration !== this._localSubscriptionGeneration) {
       return false;
     }
     this._localSubscription = subscription;
@@ -228,6 +253,7 @@ export class SyncLinkController {
   public async closeLiveSubscription(): Promise<void> {
     const subscription = this._liveSubscription;
     this._liveSubscription = undefined;
+    this._liveSubscriptionGeneration++;
     this._pullSnapshot = undefined;
     if (subscription === undefined) {
       return;
@@ -244,6 +270,7 @@ export class SyncLinkController {
   public async closeLocalSubscription(): Promise<void> {
     const subscription = this._localSubscription;
     this._localSubscription = undefined;
+    this._localSubscriptionGeneration++;
     this._pushSnapshot = undefined;
     if (subscription === undefined) {
       return;
@@ -264,20 +291,24 @@ export class SyncLinkController {
     ]);
   }
 
-  public incrementRepairAttempts(): number {
-    this._repairAttempts += 1;
-    return this._repairAttempts;
+  public incrementRetryAttempts(direction: SyncDirection): number {
+    const attempts = (this._retryAttempts.get(direction) ?? 0) + 1;
+    this._retryAttempts.set(direction, attempts);
+    return attempts;
   }
 
-  /** Retire an attempt superseded before the next executor repair starts. */
-  public retireRepairAttempt(attempt: number): void {
-    if (this._repairAttempts === attempt) {
-      this._repairAttempts = Math.max(0, attempt - 1);
-    }
+  public clearRetryAttempts(direction: SyncDirection): void {
+    this._retryAttempts.delete(direction);
   }
 
-  public clearRepairAttempts(): void {
-    this._repairAttempts = 0;
+  public incrementSubscriptionRetryAttempts(direction: SyncDirection): number {
+    const attempts = (this._subscriptionRetryAttempts.get(direction) ?? 0) + 1;
+    this._subscriptionRetryAttempts.set(direction, attempts);
+    return attempts;
+  }
+
+  public clearSubscriptionRetryAttempts(direction: SyncDirection): void {
+    this._subscriptionRetryAttempts.delete(direction);
   }
 
   /** Hold selected durable directions until their retry deadline. */
@@ -292,7 +323,7 @@ export class SyncLinkController {
     return effectiveRetryNotBefore;
   }
 
-  /** Clear retry eligibility after successful work or a superseding repair. */
+  /** Clear retry eligibility after successful or explicitly retried work. */
   public clearRetryNotBefore(directions: readonly SyncDirection[]): void {
     for (const direction of directions) {
       this._retryNotBefore.delete(direction);
@@ -300,20 +331,17 @@ export class SyncLinkController {
   }
 
   /** Remaining delay before a direction or full reconciliation may run. */
-  public getRetryDelayMs(work: SyncDirection | 'reconcile', now = Date.now()): number | undefined {
-    const directions: readonly SyncDirection[] = work === 'reconcile' ? ['pull', 'push'] : [work];
+  public getRetryDelayMs(direction: SyncDirection, now = Date.now()): number | undefined {
     let retryNotBefore = 0;
-    for (const direction of directions) {
-      const deadline = this._retryNotBefore.get(direction);
-      if (deadline === undefined) {
-        continue;
-      }
-      if (deadline <= now) {
-        this._retryNotBefore.delete(direction);
-        continue;
-      }
-      retryNotBefore = Math.max(retryNotBefore, deadline);
+    const deadline = this._retryNotBefore.get(direction);
+    if (deadline === undefined) {
+      return undefined;
     }
+    if (deadline <= now) {
+      this._retryNotBefore.delete(direction);
+      return undefined;
+    }
+    retryNotBefore = deadline;
 
     return retryNotBefore === 0 ? undefined : retryNotBefore - now;
   }
@@ -346,8 +374,9 @@ export class SyncLinkController {
     this._pullSnapshot = undefined;
     this._pushSnapshot = undefined;
     this.executor.dispose();
-    this._repairAttempts = 0;
+    this._retryAttempts.clear();
     this._retryNotBefore.clear();
+    this._subscriptionRetryAttempts.clear();
   }
 
   /** Deactivate the link and close its transport subscriptions. */

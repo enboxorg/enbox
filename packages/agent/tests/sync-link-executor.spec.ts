@@ -165,41 +165,6 @@ describe('SyncLinkExecutor', () => {
     expect(runs).toEqual(['push']);
   });
 
-  it('should prioritize repair while retaining ordinary work for the replacement baseline', async () => {
-    const executor = new SyncLinkExecutor();
-    const runs: SyncLinkWorkKind[] = [];
-    executor.request('pull');
-    executor.request('push');
-    executor.request('repair');
-
-    await executor.drain(async (kind): Promise<void> => {
-      runs.push(kind);
-      if (kind === 'repair') {
-        executor.markReady();
-      }
-    });
-
-    expect(runs).toEqual(['repair', 'pull', 'push']);
-  });
-
-  it('should coalesce a repair burst but retain a repair requested during the active pass', async () => {
-    const executor = new SyncLinkExecutor();
-    let runs = 0;
-    executor.request('repair');
-    executor.request('repair');
-
-    await executor.drain(async (kind): Promise<void> => {
-      expect(kind).toBe('repair');
-      runs++;
-      if (runs === 1) {
-        executor.request('repair');
-        executor.request('repair');
-      }
-    });
-
-    expect(runs).toBe(2);
-  });
-
   it('should serialize distinct awaited calls and surface their own results', async () => {
     const executor = new SyncLinkExecutor();
     const order: string[] = [];

@@ -116,10 +116,11 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
     Object.assign(engine, {
       _replicationLinkStore: {
-        getOrCreateLink    : sinon.stub().resolves(link),
-        persistCheckpoint  : persistCheckpointStub,
-        persistCheckpoints : sinon.stub().resolves(),
-        setStatus          : setStatusStub,
+        getOrCreateLink        : sinon.stub().resolves(link),
+        getPendingPullsForLink : sinon.stub().resolves([]),
+        persistCheckpoint      : persistCheckpointStub,
+        persistCheckpoints     : sinon.stub().resolves(),
+        setStatus              : setStatusStub,
       },
     });
 
@@ -240,10 +241,11 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     ));
     Object.assign(engine, {
       _replicationLinkStore: {
-        getOrCreateLink    : sinon.stub().resolves(link),
-        persistCheckpoint  : sinon.stub().resolves(),
-        persistCheckpoints : sinon.stub().resolves(),
-        setStatus          : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
+        getOrCreateLink        : sinon.stub().resolves(link),
+        getPendingPullsForLink : sinon.stub().resolves([]),
+        persistCheckpoint      : sinon.stub().resolves(),
+        persistCheckpoints     : sinon.stub().resolves(),
+        setStatus              : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
           linkState.status = status;
         }),
       },

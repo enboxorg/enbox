@@ -405,12 +405,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     expect(targets.calledOnce).toBe(true);
   });
 
-  it('retries a quota-blocked permission grant only through forced reconciliation', async () => {
-    await seedQuotaBlock({
-      cid         : 'grant-cid',
-      nextProbeAt : new Date(0).toISOString(),
-      source      : 'permission-grant',
-    });
+  it('keeps server Retry-After authoritative during Retry now', async () => {
+    const nextProbeAt = new Date(Date.now() + 60_000).toISOString();
+    await seedQuotaBlock({ cid: 'blocked-cid', nextProbeAt });
     const internal = syncEngine as any;
     const target = {
       did                : TENANT,
@@ -418,54 +415,19 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       scope              : { kind: 'full' },
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'owner',
-      permissionGrantIds : ['grant-cid'],
       projectionId,
     };
     sinon.stub(internal, 'getSyncTargets').resolves([target]);
-    const bootstrap = sinon.stub(internal, 'bootstrapRemotePermissionGrants').resolves({
-      kind         : 'processed',
-      failures     : [],
-      quotaBlocked : false,
-    });
-    const reconcile = sinon.stub(internal, 'reconcileTarget')
-      .callsFake(async (reconcileTarget: unknown, options: { forceQuotaProbe?: boolean }): Promise<unknown> => {
-        await bootstrap(reconcileTarget, undefined, options.forceQuotaProbe);
-        return {};
-      });
+    const reconcile = sinon.stub(internal, 'reconcileTarget').resolves({});
 
     await syncEngine.retryRemoteNow(TENANT, REMOTE);
 
     expect(reconcile.calledOnceWith(
       target,
-      { direction: 'push', forceQuotaProbe: true },
+      undefined,
       sinon.match.func,
     )).toBe(true);
-    expect(bootstrap.calledOnceWith(target, undefined, true)).toBe(true);
-  });
-
-  it('aborts an exact-target retry when registration topology changes in flight', async () => {
-    const internal = syncEngine as any;
-    const transitionFence = internal.captureTransitionFence() as () => boolean;
-    const topologyGeneration = internal._targetPlanner.topologyGeneration as number;
-    sinon.stub(internal._quotaManager, 'getActiveBlocksForTarget').callsFake(async () => {
-      internal._targetPlanner.invalidate();
-      return [{
-        messageCid : 'blocked-cid',
-        state      : { source: 'feed' },
-      }];
-    });
-    const reconcile = sinon.stub(internal, 'reconcileTarget');
-
-    await internal.retryQuotaBlocksForTarget({
-      did                : TENANT,
-      dwnUrl             : REMOTE,
-      scope              : { kind: 'full' },
-      authorization      : { kind: 'owner' },
-      authorizationEpoch : 'owner',
-      projectionId,
-    }, transitionFence, topologyGeneration);
-
-    expect(reconcile.called).toBe(false);
+    expect((await internal._quotaManager.getState(target, 'blocked-cid'))?.nextProbeAt).toBe(nextProbeAt);
   });
 
   it('composes a runtime-transition fence into every quota probe from any runtime state', async () => {

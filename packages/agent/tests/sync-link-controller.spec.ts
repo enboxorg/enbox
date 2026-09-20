@@ -43,7 +43,6 @@ describe('SyncLinkController', () => {
 
     expect(controller.getRetryDelayMs('pull', 1_000)).toBeUndefined();
     expect(controller.getRetryDelayMs('push', 1_000)).toBe(5_000);
-    expect(controller.getRetryDelayMs('reconcile', 1_000)).toBe(5_000);
     expect(controller.getRetryDelayMs('push', 6_000)).toBeUndefined();
   });
 
@@ -161,9 +160,28 @@ describe('SyncLinkController', () => {
     expect(closeOwned.calledOnce).toBe(true);
   });
 
-  it('should invalidate execution and clear repair attempts on deactivation', () => {
+  it('should fence one closed subscription without resetting the opposite binding', async () => {
     const controller = new SyncLinkController('link-key', createLink());
-    controller.incrementRepairAttempts();
+    const pullGeneration = controller.liveSubscriptionGeneration;
+    const pushGeneration = controller.localSubscriptionGeneration;
+    expect(controller.setLiveSubscription(
+      { close: sinon.stub().resolves() },
+      controller.replicationGeneration,
+      undefined,
+      pullGeneration,
+    )).toBe(true);
+
+    await controller.closeLiveSubscription();
+
+    expect(controller.isLiveSubscriptionGenerationCurrent(pullGeneration)).toBe(false);
+    expect(controller.isLocalSubscriptionGenerationCurrent(pushGeneration)).toBe(true);
+  });
+
+  it('should invalidate execution and clear retry state on deactivation', () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    controller.setRetryNotBefore(['pull'], 6_000);
+    controller.incrementRetryAttempts('pull');
+    controller.incrementSubscriptionRetryAttempts('pull');
     controller.markReplicationReady();
     controller.executor.request('pull');
 
@@ -171,7 +189,7 @@ describe('SyncLinkController', () => {
 
     expect(controller.isActive).toBe(false);
     expect(controller.isReplicationReady).toBe(false);
-    expect(controller.repairAttempts).toBe(0);
+    expect(controller.getRetryDelayMs('pull', 1_000)).toBeUndefined();
     expect(controller.executor.hasPendingWork).toBe(false);
   });
 });

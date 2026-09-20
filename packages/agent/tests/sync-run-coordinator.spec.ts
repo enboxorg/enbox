@@ -71,7 +71,6 @@ function createFixture(targets: SyncTarget[] = [
 ]): RunFixture {
   const connectivityManager = sinon.createStubInstance(SyncConnectivityManager);
   const feedConvergenceManager = sinon.createStubInstance(SyncFeedConvergenceManager);
-  feedConvergenceManager.clear.resolves();
   feedConvergenceManager.handleVerifiedDivergence.resolves(false);
   const operations = {
     getTargets           : sinon.stub().resolves(targets),
@@ -271,7 +270,6 @@ describe('SyncRunCoordinator', () => {
       pushFailures,
     )).toBe(true);
     expect(feedConvergenceManager.handleVerifiedDivergence.notCalled).toBe(true);
-    expect(feedConvergenceManager.clear.notCalled).toBe(true);
   });
 
   it('reports retryable push failures with coordinator-owned diagnostics', async () => {
@@ -300,10 +298,9 @@ describe('SyncRunCoordinator', () => {
       tenantDid      : 'did:example:owner',
     });
     expect(feedConvergenceManager.handleVerifiedDivergence.notCalled).toBe(true);
-    expect(feedConvergenceManager.clear.notCalled).toBe(true);
   });
 
-  it('records divergent and recovered convergence state only when verification is requested', async () => {
+  it('applies divergence policy only when verification is requested', async () => {
     const alice = ownerTarget('did:example:alice', 'https://a.example');
     const bob = ownerTarget('did:example:bob', 'https://a.example');
     const { coordinator, feedConvergenceManager, operations } = createFixture([alice, bob]);
@@ -317,7 +314,6 @@ describe('SyncRunCoordinator', () => {
       alice,
       sinon.match({ converged: false }),
     )).toBe(true);
-    expect(feedConvergenceManager.clear.calledOnceWithExactly(bob)).toBe(true);
     expect(operations.reconcileTarget.alwaysCalledWith(
       sinon.match.object,
       undefined,
@@ -327,20 +323,19 @@ describe('SyncRunCoordinator', () => {
 
   it('settles a converged target with a fingerprint probe and no reconciliation', async () => {
     const target = ownerTarget('did:example:alice', 'https://a.example');
-    const { connectivityManager, coordinator, feedConvergenceManager, operations } = createFixture([target]);
+    const { connectivityManager, coordinator, operations } = createFixture([target]);
 
     await coordinator.settle();
 
     expect(operations.probeFeedConvergence.calledOnceWithExactly(target)).toBe(true);
     expect(operations.reconcileTarget.notCalled).toBe(true);
-    expect(feedConvergenceManager.clear.calledOnceWithExactly(target)).toBe(true);
     expect(connectivityManager.recordSuccess.calledOnce).toBe(true);
   });
 
   it('leaves connectivity unchanged when every settle target is paused or superseded', async () => {
     const alice = ownerTarget('did:example:alice', 'https://a.example');
     const bob = ownerTarget('did:example:bob', 'https://b.example');
-    const { connectivityManager, coordinator, feedConvergenceManager, operations } = createFixture([alice, bob]);
+    const { connectivityManager, coordinator, operations } = createFixture([alice, bob]);
     operations.probeFeedConvergence.callsFake(
       async (target: SyncTarget): Promise<SyncDurableFeedReconcileResult> =>
         target === alice ? { paused: true } : { aborted: true },
@@ -349,20 +344,18 @@ describe('SyncRunCoordinator', () => {
     await coordinator.settle();
 
     expect(operations.reconcileTarget.notCalled).toBe(true);
-    expect(feedConvergenceManager.clear.notCalled).toBe(true);
     expect(connectivityManager.recordSuccess.notCalled).toBe(true);
     expect(connectivityManager.recordFailure.notCalled).toBe(true);
   });
 
   it('settles a fingerprint mismatch with one verified reconciliation', async () => {
     const target = ownerTarget('did:example:alice', 'https://a.example');
-    const { coordinator, feedConvergenceManager, operations } = createFixture([target]);
+    const { coordinator, operations } = createFixture([target]);
     operations.probeFeedConvergence.resolves(reconciled(false));
 
     await coordinator.settle();
 
     expect(operations.reconcileTarget.calledOnceWithExactly(target, undefined, true)).toBe(true);
-    expect(feedConvergenceManager.clear.calledOnceWithExactly(target)).toBe(true);
   });
 
   it('continues later settle probes within an endpoint group after an error', async () => {
@@ -473,7 +466,6 @@ describe('SyncRunCoordinator', () => {
     await coordinator.settle();
 
     expect(feedConvergenceManager.handleVerifiedDivergence.calledOnceWithExactly(target, divergent)).toBe(true);
-    expect(feedConvergenceManager.clear.notCalled).toBe(true);
   });
 
   it('applies retryable push-failure policy after a mismatched settle probe', async () => {

@@ -55,7 +55,6 @@ type RemoteStatusAccumulator = {
   lastError?: string;
   lastErrorAt?: string;
   nextProbeAt?: string;
-  nextRetryAt?: string;
   pendingPullCount: number;
   quotaBlockedMessageCount: number;
   remoteEndpoint: string;
@@ -155,7 +154,6 @@ function linkSnapshotFrom(link: SyncStatusLink): ReplicationLinkSnapshot {
     connectivity     : link.connectivity,
     isPullCurrent    : link.isPullCurrent,
     pendingPullCount : link.pendingPullCount,
-    ...(link.recovery === undefined ? {} : { recovery: { ...link.recovery } }),
     ...(link.delegateDid === undefined ? {} : { delegateDid: link.delegateDid }),
     ...(link.authorization.kind === 'role' ? { followedSourceId: link.authorization.roleRecordId } : {}),
     ...(pullPosition === undefined ? {} : { pullPosition }),
@@ -173,12 +171,6 @@ function accumulateLinkStatus(
     const row = remoteStatusRowFor(rows, link.tenantDid, link.remoteEndpoint);
     row.connectivity = mergeConnectivity(row.connectivity, link.connectivity);
     if (isUnhealthyLink(link)) { row.degraded = true; }
-    if (link.recovery !== undefined) {
-      if (link.recovery.nextRetryAt !== undefined) {
-        row.nextRetryAt = earliestTimestamp(row.nextRetryAt, link.recovery.nextRetryAt);
-      }
-      recordLatestError(row, link.recovery.failedAt, link.recovery.error);
-    }
     if (link.lastActivityAt !== undefined) {
       row.lastActivityAt = latestTimestamp(row.lastActivityAt, link.lastActivityAt);
     }
@@ -237,7 +229,7 @@ function isCurrentQuotaBlock(
 }
 
 function isUnhealthyLink(link: ReplicationLinkState): boolean {
-  return link.recovery !== undefined || link.status === 'repairing' || link.status === 'paused';
+  return link.status === 'paused';
 }
 
 function matchesTenant(candidateDid: string, tenantDid: string | undefined): boolean {
@@ -310,7 +302,6 @@ function remoteStatusFromRow(row: RemoteStatusAccumulator): RemoteSyncStatus {
     quotaBlockedMessageCount : row.quotaBlockedMessageCount,
     failedMessageCount       : row.failedMessageCount,
     ...(row.nextProbeAt === undefined ? {} : { nextProbeAt: row.nextProbeAt }),
-    ...(row.nextRetryAt === undefined ? {} : { nextRetryAt: row.nextRetryAt }),
     ...(row.lastError === undefined ? {} : { lastError: row.lastError }),
     ...(row.lastActivityAt === undefined ? {} : { lastActivityAt: row.lastActivityAt }),
   };

@@ -143,6 +143,13 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(persistedLink.push.contiguousAppliedToken).toBeUndefined();
   }
 
+  function advancePastQuotaRetryAfter(): void {
+    sinon.useFakeTimers({
+      now    : Date.now() + 31 * 60_000,
+      toFake : ['Date'],
+    });
+  }
+
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass       : TestAgent,
@@ -740,10 +747,11 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(gate.attempts()).toBe(1);
     expect((await syncEngine.getSyncHealth()).degradedLinkCount).toBe(0);
 
-    // Simulate newly purchased quota. The public retry API must perform a
-    // targeted RPC despite the feed checkpoint having advanced past the CID.
-    // Concurrent UI/poll callers share that same in-engine probe.
+    // Simulate newly purchased quota after the server's Retry-After. The public
+    // retry API must perform a targeted RPC despite the feed checkpoint having
+    // advanced past the CID. Concurrent UI/poll callers share that probe.
     gate.allow();
+    advancePastQuotaRetryAfter();
     await Promise.all([
       syncEngine.retryRemoteNow(tenantDid, remoteEndpoint),
       syncEngine.retryRemoteNow(tenantDid, remoteEndpoint),
@@ -945,6 +953,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(gate.attempts()).toBe(2);
 
     gate.allow();
+    advancePastQuotaRetryAfter();
     await syncEngine.retryRemoteNow(tenantDid, remoteEndpoint);
 
     // The direct initial probe is suppressed because its positive-size payload
@@ -1195,6 +1204,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
       const secondaryAttemptsBeforeRetry = gate.secondaryAttempts();
       gate.allow();
+      advancePastQuotaRetryAfter();
       await syncEngine.retryRemoteNow(tenantDid, remoteEndpoint);
 
       expect(gate.primaryAttempts()).toBe(2);
@@ -1231,6 +1241,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       expect(await testHarness.dwnMessageStore.get(tenantDid, blockedCid)).toBeDefined();
       await testHarness.dwnMessageStore.delete(tenantDid, blockedCid);
       expect(await testHarness.dwnMessageStore.get(tenantDid, blockedCid)).toBeUndefined();
+      advancePastQuotaRetryAfter();
       await syncEngine.retryRemoteNow(tenantDid, remoteEndpoint);
     } finally {
       unsubscribe();
@@ -1267,6 +1278,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
     const consoleError = sinon.stub(console, 'error');
     gate.rejectTerminally();
+    advancePastQuotaRetryAfter();
     await syncEngine.retryRemoteNow(tenantDid, remoteEndpoint);
 
     expect(gate.attempts()).toBe(2);

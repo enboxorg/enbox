@@ -96,7 +96,7 @@ describe('SyncEngineLevel', () => {
         }),
       };
       sinon.stub(internal._quotaManager, 'getNextProbeAtForTarget').resolves(undefined);
-      const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').resolves();
+      const resume = sinon.stub(internal, 'resumeLinkExecutor').resolves();
       let readyWhenLiveWasEmitted = false;
       const unsubscribe = syncEngine.on((event): void => {
         if (event.type === 'link:status-change' && event.to === 'live') {
@@ -142,7 +142,7 @@ describe('SyncEngineLevel', () => {
       controller.markPullCurrent(controller.replicationGeneration);
       const eventCursor = { epoch: 'event-epoch', position: '99', streamId: 'event-stream' };
       const admitRemoteFeedPage = sinon.stub(internal, 'admitRemoteFeedPage');
-      const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').callsFake(async (): Promise<void> => {
+      const resume = sinon.stub(internal, 'resumeLinkExecutor').callsFake(async (): Promise<void> => {
         controller.executor.consumePending('pull');
         link.pull.contiguousAppliedToken = eventCursor;
         internal.markPullCurrent(controller, controller.replicationGeneration);
@@ -174,7 +174,7 @@ describe('SyncEngineLevel', () => {
       expect(transitions).toEqual([false, true]);
       expect(resume.calledOnceWithExactly(controller)).toBe(true);
 
-      const repairing = sinon.stub(internal._linkRecoveryCoordinator, 'transitionToRepairing').resolves();
+      const handleFailure = sinon.stub(internal, 'handleLinkSubscriptionFailure').resolves();
       const missedCursor = { ...eventCursor, position: '100' };
       const handledError = await internal.handleLivePullMessage({
         controller,
@@ -195,7 +195,7 @@ describe('SyncEngineLevel', () => {
 
       expect(handledError).toBeInstanceOf(SubscriptionHandlerTerminalError);
       expect((handledError as Error).message).toContain('durable pull did not settle socket event');
-      expect(repairing.calledOnceWithExactly(controller)).toBe(true);
+      expect(handleFailure.calledOnceWithExactly(controller, 'pull')).toBe(true);
       expect(link.pull.contiguousAppliedToken).toEqual(eventCursor);
 
       unsubscribe();
@@ -258,7 +258,7 @@ describe('SyncEngineLevel', () => {
       await controller.dispose();
     });
 
-    it('keeps repair reconciliation non-current until the live gap-closing pass drains', async () => {
+    it('keeps initialization non-current until the live gap-closing pass drains', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
@@ -270,7 +270,7 @@ describe('SyncEngineLevel', () => {
         push               : {},
         remoteEndpoint     : 'https://dwn.example',
         scope              : { kind: 'full' },
-        status             : 'repairing',
+        status             : 'initializing',
         tenantDid          : 'did:example:alice',
       };
       const controller = internal.activateLink('link-key', link);
@@ -466,8 +466,8 @@ describe('SyncEngineLevel', () => {
       expect(initializing.isPullCurrent).toBe(false);
       expect(initializing.pull.contiguousAppliedToken?.position).toBe('7');
 
-      activeLink.status = 'repairing';
-      expect((await internal.getLinksForStatusReporting())[0].status).toBe('repairing');
+      activeLink.status = 'paused';
+      expect((await internal.getLinksForStatusReporting())[0].status).toBe('paused');
 
       activeLink.status = 'live';
       controller.markReplicationReady();
@@ -2789,7 +2789,7 @@ describe('SyncEngineLevel', () => {
           scope              : { kind: 'full' },
         });
 
-        // An ACTIVE controller means live/repair/pause ownership already
+        // An ACTIVE controller means live or paused ownership already
         // exists: the settle-pass re-init returns its current state instead
         // of clobbering the owned link.
         expect(result.status).toBe('active');
@@ -3890,7 +3890,7 @@ describe('SyncEngineLevel', () => {
         expect(probeStub.calledOnceWithExactly(linkKey, link, '2026-01-01T00:01:00.000Z')).toBe(true);
       });
 
-      it('should reset durable checkpoints and reconcile the live link until identical mismatches pause it', async () => {
+      it('should schedule one ordinary rescan for each distinct verified mismatch', async () => {
         const { link, linkKey, target } = await createConvergenceTarget(alice.did.uri);
         link.status = 'live';
         link.pull.contiguousAppliedToken = { epoch: 'epoch-1', messageCid: 'bafy-checkpoint', position: '5', streamId: 'pull-stream' };
@@ -3898,70 +3898,24 @@ describe('SyncEngineLevel', () => {
         syncEngine['activateLink'](linkKey, link);
 
         sinon.stub(syncEngine['_quotaManager'], 'reconcileAndExplainFeedDivergence').resolves(false);
-        const reconcileStub = sinon.stub(syncEngine as any, 'scheduleLinkReconcileByKey');
+        const scheduleStub = sinon.stub(syncEngine as any, 'scheduleLinkWorkByKey');
         const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
-        await syncEngine['_deadLetterStore'].put({
-          errorDetail    : 'admission failed',
-          failedAt       : '2026-01-01T00:00:00.000Z',
-          messageCid     : 'bafy-admit-failed',
-          remoteEndpoint : target.dwnUrl,
-          tenantDid      : target.did,
-        });
 
+        await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
         await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
         await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
 
         const persisted = await createConvergenceTarget(alice.did.uri);
         expect(link.pull.contiguousAppliedToken).toBeUndefined();
         expect(persisted.link.pull.contiguousAppliedToken).toBeUndefined();
-        expect(reconcileStub.calledTwice).toBe(true);
-        expect(reconcileStub.alwaysCalledWithExactly(linkKey, link, 'feed-fingerprint-mismatch', 0)).toBe(true);
+        expect(scheduleStub.calledOnce).toBe(true);
+        expect(scheduleStub.alwaysCalledWithExactly(linkKey, link, ['pull', 'push'], 0)).toBe(true);
         expect(pauseStub.notCalled).toBe(true);
 
-        // A new admission dead letter for this remote changes the failure
-        // signature, so the attempt count restarts instead of pausing.
-        await syncEngine['_deadLetterStore'].put({
-          errorDetail    : 'admission failed',
-          failedAt       : '2026-01-01T00:02:00.000Z',
-          messageCid     : 'bafy-admit-failed-2',
-          remoteEndpoint : target.dwnUrl,
-          tenantDid      : target.did,
-        });
+        await syncEngine['_feedConvergenceManager'].clear(target, { link, linkKey });
         await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
-        await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
+        expect(scheduleStub.calledTwice).toBe(true);
         expect(pauseStub.notCalled).toBe(true);
-
-        await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
-        expect(pauseStub.calledOnceWithExactly(linkKey, link)).toBe(true);
-        expect(reconcileStub.callCount).toBe(4);
-      });
-
-      it('should scope cleared mismatch state to the removed identity through engine link keys', async () => {
-        const aliceContext = await createConvergenceTarget(alice.did.uri);
-        const bobContext = await createConvergenceTarget('did:example:bob');
-        const manager = syncEngine['_feedConvergenceManager'];
-
-        sinon.stub(syncEngine['_quotaManager'], 'reconcileAndExplainFeedDivergence').resolves(false);
-        const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
-
-        await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());
-        await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());
-        await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
-        await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
-
-        syncEngine['discardIdentityLinkState'](alice.did.uri);
-
-        // Alice's attempt count restarted after identity removal; Bob's did not.
-        await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());
-        expect(pauseStub.notCalled).toBe(true);
-
-        await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
-        expect(pauseStub.calledOnce).toBe(true);
-        expect(pauseStub.firstCall.args[0]).toBe(bobContext.linkKey);
-
-        manager.clearLink(bobContext.linkKey);
-        await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
-        expect(pauseStub.calledOnce).toBe(true);
       });
     });
 
@@ -4029,10 +3983,10 @@ describe('SyncEngineLevel', () => {
       });
 
       // -----------------------------------------------------------------------
-      // Item 2: Same link key stale repair/reconcile isolation
+      // Item 2: Same link key stale controller isolation
       // -----------------------------------------------------------------------
 
-      describe('same link key — stale repair and reconcile isolation', () => {
+      describe('same link key — stale controller isolation', () => {
 
         it('should detect stale link via object identity after remove and re-add', async () => {
           const did = alice.did.uri;
@@ -4048,7 +4002,6 @@ describe('SyncEngineLevel', () => {
             ...ownerAuthorization,
           });
           const linkKey = linkKeyFor(did, testDwnUrls[0], originalLink);
-          originalLink.status = 'repairing';
           const originalController = syncEngine['activateLink'](linkKey, originalLink);
 
           // Reload from the replication-link store — same data, different object identity.

@@ -955,30 +955,25 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       engine['_runtime'] = new SyncRuntime(true);
       const linkKey = 'did:example:replacement^https://dwn.example.com^scope1';
-      const reconcileTimerKey = `syncReconcile:${linkKey}`;
-      const repairRetryTimerKey = `syncRepairRetry:${linkKey}`;
+      const pullRetryTimerKey = `syncRetry:pull:${linkKey}`;
+      const pushSubscriptionTimerKey = `syncSubscriptionRetry:push:${linkKey}`;
       const original = activateTestLink(engine, linkKey, 'did:example:replacement');
       const runtime = engine['_runtime'];
 
-      runtime.armTimeout(reconcileTimerKey, () => {}, 60_000);
-      runtime.armTimeout(repairRetryTimerKey, () => {}, 60_000);
+      runtime.armTimeout(pullRetryTimerKey, () => {}, 60_000);
+      runtime.armTimeout(pushSubscriptionTimerKey, () => {}, 60_000);
 
       const replacement = activateTestLink(engine, linkKey, 'did:example:replacement');
 
       expect(original.isActive).toBe(false);
       expect(replacement.isActive).toBe(true);
-      expect(runtime.hasTimer(reconcileTimerKey)).toBe(false);
-      expect(runtime.hasTimer(repairRetryTimerKey)).toBe(false);
+      expect(runtime.hasTimer(pullRetryTimerKey)).toBe(false);
+      expect(runtime.hasTimer(pushSubscriptionTimerKey)).toBe(false);
 
-      const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
-      expect(recoveryCoordinator.scheduleReconcile(replacement, 60_000)).toBe(true);
-      expect(runtime.hasTimer(reconcileTimerKey)).toBe(true);
-      runtime.cancelTimer(reconcileTimerKey);
-
-      replacement.link.status = 'repairing';
-      replacement.incrementRepairAttempts();
-      recoveryCoordinator['scheduleRepairRetry'](replacement);
-      expect(runtime.hasTimer(repairRetryTimerKey)).toBe(true);
+      (engine as any).scheduleLinkDirection(replacement, 'pull', 60_000);
+      expect(runtime.hasTimer(pullRetryTimerKey)).toBe(true);
+      (engine as any).scheduleSubscriptionReopen(replacement, 'push');
+      expect(runtime.hasTimer(pushSubscriptionTimerKey)).toBe(true);
 
       replacement.deactivate();
       runtime.dispose();
@@ -1227,35 +1222,34 @@ describe('SyncEngineLevel — identity management', () => {
       expect(bobController.executor.hasPending('push')).toBe(false);
     });
 
-    it('removeIdentityFromLiveSync should clear repair attempts and retry timers for the target DID', async () => {
+    it('removeIdentityFromLiveSync should clear directional retry state for the target DID', async () => {
       const engine = new SyncEngineLevel({ db });
       engine['_runtime'] = new SyncRuntime(true);
       const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com^scope1', 'did:example:alice');
       const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com^scope1', 'did:example:bob');
-      aliceController.incrementRepairAttempts();
-      aliceController.incrementRepairAttempts();
-      bobController.incrementRepairAttempts();
-      const aliceTimerKey = `syncRepairRetry:${aliceController.linkKey}`;
-      const bobTimerKey = `syncRepairRetry:${bobController.linkKey}`;
+      aliceController.setRetryNotBefore(['pull'], Date.now() + 60_000);
+      bobController.setRetryNotBefore(['pull'], Date.now() + 60_000);
+      const aliceTimerKey = `syncRetry:pull:${aliceController.linkKey}`;
+      const bobTimerKey = `syncRetry:pull:${bobController.linkKey}`;
       engine['_runtime'].armTimeout(aliceTimerKey, () => {}, 60_000);
       engine['_runtime'].armTimeout(bobTimerKey, () => {}, 60_000);
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
       expect(aliceController.isActive).toBe(false);
-      expect(bobController.repairAttempts).toBe(1);
+      expect(bobController.getRetryDelayMs('pull')).toBeGreaterThan(0);
       expect(engine['_runtime'].hasTimer(aliceTimerKey)).toBe(false);
       expect(engine['_runtime'].hasTimer(bobTimerKey)).toBe(true);
       engine['_runtime'].dispose();
     });
 
-    it('removeIdentityFromLiveSync should clear reconcile timers and in-flight ops for the target DID', async () => {
+    it('removeIdentityFromLiveSync should clear direction timers and in-flight ops for the target DID', async () => {
       const engine = new SyncEngineLevel({ db });
       engine['_runtime'] = new SyncRuntime(true);
       const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com^scope1', 'did:example:alice');
       const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com^scope1', 'did:example:bob');
-      const aliceTimerKey = `syncReconcile:${aliceController.linkKey}`;
-      const bobTimerKey = `syncReconcile:${bobController.linkKey}`;
+      const aliceTimerKey = `syncRetry:push:${aliceController.linkKey}`;
+      const bobTimerKey = `syncRetry:push:${bobController.linkKey}`;
       engine['_runtime'].armTimeout(aliceTimerKey, () => {}, 60_000);
       engine['_runtime'].armTimeout(bobTimerKey, () => {}, 60_000);
       let releaseBlocker!: () => void;
@@ -1719,10 +1713,10 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // removeIdentityFromLiveSync clears in-flight repair state
+  // removeIdentityFromLiveSync clears in-flight link execution
   // ---------------------------------------------------------------------------
 
-  describe('removeIdentityFromLiveSync — in-flight repair disposal', () => {
+  describe('removeIdentityFromLiveSync — in-flight executor disposal', () => {
     it('should discard the target DID controller without disturbing another link executor', async () => {
       const engine = new SyncEngineLevel({ db });
       const aliceKey = 'did:example:alice^https://dwn.example.com^scope1';
@@ -1734,14 +1728,14 @@ describe('SyncEngineLevel — identity management', () => {
       const aliceStartedGate = new Promise<void>((resolve) => { aliceStarted = resolve; });
       aliceController.markReplicationReady();
       bobController.markReplicationReady();
-      const aliceRepair = aliceController.executor.enqueue(async (): Promise<void> => {
+      const aliceWork = aliceController.executor.enqueue(async (): Promise<void> => {
         aliceStarted();
         await new Promise<void>((resolve) => { releaseAlice = resolve; });
       });
       let releaseBob!: () => void;
       let bobStarted!: () => void;
       const bobStartedGate = new Promise<void>((resolve) => { bobStarted = resolve; });
-      const bobRepair = bobController.executor.enqueue(async (): Promise<void> => {
+      const bobWork = bobController.executor.enqueue(async (): Promise<void> => {
         bobStarted();
         await new Promise<void>((resolve) => { releaseBob = resolve; });
       });
@@ -1758,7 +1752,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       releaseAlice();
       releaseBob();
-      await Promise.all([aliceRepair, bobRepair, aliceDrain, bobDrain, bobFollowUp]);
+      await Promise.all([aliceWork, bobWork, aliceDrain, bobDrain, bobFollowUp]);
       expect(joinedRan).toBe(true);
     });
 

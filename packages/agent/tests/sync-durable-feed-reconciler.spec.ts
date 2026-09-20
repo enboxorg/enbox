@@ -277,8 +277,8 @@ describe('SyncDurableFeedReconciler', () => {
     const result = await reconciler.reconcile(target(), link, { verifyConvergence: true });
 
     // Nothing ran, so nothing was compared. Convergence must be ABSENT —
-    // reporting `converged: true` here would let a post-repair verification
-    // emit reconcile:completed for a link it never checked.
+    // reporting `converged: true` here would make an unverified paused link
+    // appear healthy.
     expect(result.paused).toBe(true);
     expect(result.converged).toBeUndefined();
     expect(pull.called).toBe(false);

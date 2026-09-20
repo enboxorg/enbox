@@ -24,7 +24,7 @@ function getScopeClosureValidator(engine: SyncEngineLevel): SyncScopeClosureVali
 function activateAdministrativeLink(
   engine: SyncEngineLevel,
   did: string,
-  status: 'initializing' | 'repairing',
+  status: 'initializing',
 ): { controller: SyncLinkController; target: SyncTarget } {
   const target: SyncTarget = {
     did,
@@ -37,7 +37,7 @@ function activateAdministrativeLink(
   const link: ReplicationLinkState = {
     authorization      : target.authorization,
     authorizationEpoch : target.authorizationEpoch,
-    connectivity       : status === 'repairing' ? 'offline' : 'unknown',
+    connectivity       : 'unknown',
     projectionId       : target.projectionId,
     pull               : {},
     push               : {},
@@ -597,10 +597,10 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(db.status).toBe('closed');
   });
 
-  it('should wait for a fire-and-forget repair before closing storage', async () => {
+  it('should wait for fire-and-forget pull work before closing storage', async () => {
     const engine = new SyncEngineLevel({ db });
-    const repairStarted = createDeferred();
-    const releaseRepair = createDeferred();
+    const pullStarted = createDeferred();
+    const releasePull = createDeferred();
     const linkKey = 'did:example:alice^https://dwn.example.com^projection-1^authorization-1';
     const link = {
       authorization      : { kind: 'owner' },
@@ -611,22 +611,20 @@ describe('SyncEngineLevel lifecycle', () => {
       push               : {},
       remoteEndpoint     : 'https://dwn.example.com',
       scope              : { kind: 'full' },
-      status             : 'initializing',
+      status             : 'live',
       tenantDid          : 'did:example:alice',
     };
 
     const controller = engine['activateLink'](linkKey, link as never);
-    sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
-      link.status = 'repairing';
-    });
-    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ aborted: true }> => {
-      repairStarted.resolve();
-      await releaseRepair.promise;
-      return { aborted: true };
+    controller.markReplicationReady();
+    sinon.stub(engine as never, 'reconcileOwnedTarget').callsFake(async (): Promise<{ pullDrained: true; pullLocallyComplete: true }> => {
+      pullStarted.resolve();
+      await releasePull.promise;
+      return { pullDrained: true, pullLocallyComplete: true };
     });
 
-    await engine['_linkRecoveryCoordinator'].transitionToRepairing(controller);
-    await repairStarted.promise;
+    (engine as any).requestLinkDirection(controller, 'pull');
+    await pullStarted.promise;
 
     let closeCompleted = false;
     const closePromise = engine.close().then((): void => { closeCompleted = true; });
@@ -635,18 +633,18 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(closeCompleted).toBe(false);
     expect(db.status).toBe('open');
 
-    releaseRepair.resolve();
+    releasePull.resolve();
     await closePromise;
 
     expect(db.status).toBe('closed');
   });
 
-  it('should recover exhausted durable repairs through sync, settle, and explicit retry', async () => {
+  it('should retry only a failed direction and keep retry delay in memory', async () => {
     const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
-    const tenantDid = 'did:example:repair-retry';
-    const remoteEndpoint = 'https://repair.example.com';
+    const tenantDid = 'did:example:direction-retry';
+    const remoteEndpoint = 'https://direction-retry.example.com';
     const link = await internal.replicationLinkStore.getOrCreateLink({
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'owner-epoch',
@@ -654,274 +652,259 @@ describe('SyncEngineLevel lifecycle', () => {
       scope              : { kind: 'full' },
       tenantDid,
     });
-    const target: SyncTarget = {
-      authorization      : link.authorization,
-      authorizationEpoch : link.authorizationEpoch,
-      did                : link.tenantDid,
-      dwnUrl             : link.remoteEndpoint,
-      projectionId       : link.projectionId,
-      scope              : link.scope,
-    };
-    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    await internal.replicationLinkStore.setStatus(link, 'live');
+    const linkKey = buildLinkKey(tenantDid, remoteEndpoint, link.projectionId, link.authorizationEpoch);
     internal._runtime = new SyncRuntime(true);
     const controller = internal.activateLink(linkKey, link);
-    const getStoredLink = async (): Promise<ReplicationLinkState | undefined> =>
-      (await internal.replicationLinkStore.getAllLinks()).find(
-        (storedLink: ReplicationLinkState) => storedLink.tenantDid === tenantDid,
-      );
-    sinon.stub(internal, 'getSyncTargets').resolves([target]);
-    sinon.stub(internal, 'openLivePullSubscription').resolves(true);
-    sinon.stub(internal, 'openLocalPushSubscription').resolves(true);
-    sinon.stub(internal, 'verifyFeedConvergence').resolves({ converged: true });
-    const reconcile = sinon.stub(internal, 'reconcileOwnedTarget');
-    const offline = new Error('offline');
-    for (const call of [0, 1, 2, 4, 5, 6, 8, 9, 10]) {
-      reconcile.onCall(call).rejects(offline);
-    }
-    reconcile.onCall(3).resolves({ converged: true });
-    reconcile.onCall(7).resolves({ converged: true });
-    reconcile.onCall(11).resolves({ converged: true });
-    sinon.stub(console, 'error');
-    sinon.stub(console, 'warn');
-
-    const exhaustRepair = async (): Promise<void> => {
-      await internal._linkRecoveryCoordinator.transitionToRepairing(controller);
-      expect(await internal._lifecycle.waitForBackgroundTasks()).toBe(true);
-      await clock.tickAsync(1_000);
-      expect(await internal._lifecycle.waitForBackgroundTasks()).toBe(true);
-      await clock.tickAsync(3_000);
-      expect(await internal._lifecycle.waitForBackgroundTasks()).toBe(true);
-      expect(controller.link.status).toBe('repairing');
-      expect(controller.link.recovery).toMatchObject({ error: 'offline' });
-      expect(controller.link.recovery?.nextRetryAt).toBeUndefined();
-    };
-
-    await exhaustRepair();
-    expect(reconcile.callCount).toBe(3);
-    expect(await getStoredLink()).toMatchObject({
-      recovery : { error: 'offline' },
-      status   : 'repairing',
-    });
-
-    await engine.sync();
-    expect(reconcile.callCount).toBe(4);
-    expect(controller.link.status).toBe('live');
-    expect((await getStoredLink())?.recovery).toBeUndefined();
-
-    await exhaustRepair();
-    expect(reconcile.callCount).toBe(7);
-    await internal.runSettleCheck(internal._runtime);
-    expect(reconcile.callCount).toBe(8);
-    expect(controller.link.status).toBe('live');
-    expect((await getStoredLink())?.recovery).toBeUndefined();
-
-    await exhaustRepair();
-    expect(reconcile.callCount).toBe(11);
-    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
-    expect(reconcile.callCount).toBe(12);
-    expect(controller.link.status).toBe('live');
-    expect((await getStoredLink())?.recovery).toBeUndefined();
-
-    await engine.close();
-  });
-
-  it('should stop a drain-triggered repair before reopening subscriptions after cancellation', async () => {
-    const engine = new SyncEngineLevel({ db });
-    const internal = engine as any;
-    const tenantDid = 'did:example:cancel-repair';
-    const remoteEndpoint = 'https://cancel-repair.example.com';
-    const link = await internal.replicationLinkStore.getOrCreateLink({
-      authorization      : { kind: 'owner' },
-      authorizationEpoch : 'owner-epoch',
-      remoteEndpoint,
-      scope              : { kind: 'full' },
-      tenantDid,
-    });
-    await internal.replicationLinkStore.setRecovery(link, {
-      error    : 'offline',
-      failedAt : '2026-09-17T12:00:00.000Z',
-    });
-    await internal.replicationLinkStore.setStatus(link, 'repairing');
-    const target: SyncTarget = {
-      authorization      : link.authorization,
-      authorizationEpoch : link.authorizationEpoch,
-      did                : link.tenantDid,
-      dwnUrl             : link.remoteEndpoint,
-      projectionId       : link.projectionId,
-      scope              : link.scope,
-    };
-    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
-    internal._runtime = new SyncRuntime(true);
-    const controller = internal.activateLink(linkKey, link);
-    await internal._identityStore.set(tenantDid, { protocols: 'all' });
-    sinon.stub(internal.targetResolver, 'buildTargetsForEndpoint').resolves([target]);
-    const pullSubscription = sinon.stub(internal, 'openLivePullSubscription').resolves(true);
-    const pushSubscription = sinon.stub(internal, 'openLocalPushSubscription').resolves(true);
-    const queryStarted = createDeferred();
-    const releaseQuery = createDeferred();
-    let repairShouldContinue: (() => boolean) | undefined;
+    controller.markReplicationReady();
+    let pullAttempts = 0;
+    let pushAttempts = 0;
     sinon.stub(internal, 'reconcileOwnedTarget').callsFake(async (
       _controller: SyncLinkController,
       _target: SyncTarget,
-      _options: unknown,
-      shouldContinue: () => boolean,
-    ): Promise<{ aborted?: true; converged?: true }> => {
-      repairShouldContinue = shouldContinue;
-      queryStarted.resolve();
-      await releaseQuery.promise;
-      return shouldContinue() ? { converged: true } : { aborted: true };
+      options: { direction: 'pull' | 'push' },
+    ): Promise<Record<string, unknown>> => {
+      if (options.direction === 'pull') {
+        pullAttempts++;
+        if (pullAttempts === 1) {
+          throw new Error('offline');
+        }
+        return { pullDrained: true, pullLocallyComplete: true };
+      }
+      pushAttempts++;
+      return { pushFailures: [] };
     });
+    sinon.stub(console, 'error');
 
-    const abort = new AbortController();
-    const drain = engine.drainTo(remoteEndpoint, { signal: abort.signal });
-    await queryStarted.promise;
-    abort.abort();
-    expect(repairShouldContinue?.()).toBe(false);
-    releaseQuery.resolve();
-    const result = await drain;
+    internal.requestLinkDirection(controller, 'pull');
+    internal.requestLinkDirection(controller, 'push');
+    expect(await internal._lifecycle.waitForBackgroundTasks()).toBe(true);
 
-    expect(result.cancelled).toBe(true);
-    expect(pullSubscription.notCalled).toBe(true);
-    expect(pushSubscription.notCalled).toBe(true);
-    expect(controller.link.status).toBe('repairing');
+    expect(pullAttempts).toBe(1);
+    expect(pushAttempts).toBe(1);
+    expect(internal._runtime.hasTimer(`syncRetry:pull:${linkKey}`)).toBe(true);
+    expect(internal._runtime.hasTimer(`syncRetry:push:${linkKey}`)).toBe(false);
+    expect((await internal.replicationLinkStore.getAllLinks())[0]).not.toHaveProperty('recovery');
+
+    await clock.tickAsync(1_000);
+    expect(await internal._lifecycle.waitForBackgroundTasks()).toBe(true);
+
+    expect(pullAttempts).toBe(2);
+    expect(pushAttempts).toBe(1);
+    expect(internal._runtime.hasTimer(`syncRetry:pull:${linkKey}`)).toBe(false);
 
     await engine.close();
   });
 
-  it('should not create a replication link when an endpoint has nothing to retry', async () => {
+  it('should retain a coalesced wake when a caller-specific reconciliation aborts', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
-    const tenantDid = 'did:example:no-retry';
+    const target: SyncTarget = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      did                : 'did:example:aborted-call',
+      dwnUrl             : 'https://aborted-call.example.com',
+      projectionId       : 'projection-id',
+      scope              : { kind: 'full' },
+    };
+    const link: ReplicationLinkState = {
+      authorization      : target.authorization,
+      authorizationEpoch : target.authorizationEpoch,
+      connectivity       : 'online',
+      projectionId       : target.projectionId,
+      pull               : {},
+      push               : {},
+      remoteEndpoint     : target.dwnUrl,
+      scope              : target.scope,
+      status             : 'live',
+      tenantDid          : target.did,
+    };
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    internal._runtime = new SyncRuntime(true);
+    const controller = internal.activateLink(linkKey, link);
+    controller.markReplicationReady();
+    controller.setRetryNotBefore(['pull'], Date.now() + 60_000);
+    controller.executor.request('pull');
+    const reconcile = sinon.stub(internal, 'reconcileOwnedTarget').resolves({ aborted: true });
+    sinon.stub(internal, 'getOrCreateReplicationLink').resolves(link);
+
+    expect(await internal.reconcileTarget(target, { direction: 'pull' })).toEqual({ aborted: true });
+
+    expect(reconcile.calledOnce).toBe(true);
+    expect(controller.executor.hasPending('pull')).toBe(true);
+    expect(internal._runtime.hasTimer(`syncRetry:pull:${linkKey}`)).toBe(true);
+    await engine.close();
+  });
+
+  it('should preserve a quota-owned Retry-After timer across unrelated push success', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const target: SyncTarget = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      did                : 'did:example:quota-timer',
+      dwnUrl             : 'https://quota-timer.example.com',
+      projectionId       : 'projection-id',
+      scope              : { kind: 'full' },
+    };
+    const link: ReplicationLinkState = {
+      authorization      : target.authorization,
+      authorizationEpoch : target.authorizationEpoch,
+      connectivity       : 'online',
+      projectionId       : target.projectionId,
+      pull               : {},
+      push               : {},
+      remoteEndpoint     : target.dwnUrl,
+      scope              : target.scope,
+      status             : 'live',
+      tenantDid          : target.did,
+    };
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    const nextProbeAt = new Date(Date.now() + 60_000).toISOString();
+    internal._runtime = new SyncRuntime(true);
+    const controller = internal.activateLink(linkKey, link);
+    controller.markReplicationReady();
+    sinon.stub(internal._quotaManager, 'getNextProbeAtForTarget').resolves(nextProbeAt);
+    sinon.stub(internal, 'reconcileOwnedTarget').resolves({ pushFailures: [] });
+    internal.scheduleQuotaProbeForActiveLink(linkKey, link, nextProbeAt);
+
+    internal.requestLinkDirection(controller, 'push');
+    expect(await internal._lifecycle.waitForBackgroundTasks()).toBe(true);
+
+    expect(internal._runtime.hasTimer(`syncQuotaProbe:${linkKey}`)).toBe(true);
+    expect(internal._runtime.hasTimer(`syncRetry:push:${linkKey}`)).toBe(false);
+    await engine.close();
+  });
+
+  it('should close only the failed subscription direction', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const tenantDid = 'did:example:subscription-failure';
+    const remoteEndpoint = 'https://subscription-failure.example.com';
+    const link = await internal.replicationLinkStore.getOrCreateLink({
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      remoteEndpoint,
+      scope              : { kind: 'full' },
+      tenantDid,
+    });
+    await internal.replicationLinkStore.setStatus(link, 'live');
+    const linkKey = buildLinkKey(tenantDid, remoteEndpoint, link.projectionId, link.authorizationEpoch);
+    internal._runtime = new SyncRuntime(true);
+    const controller = internal.activateLink(linkKey, link);
+    const closeStarted = createDeferred();
+    const releaseClose = createDeferred();
+    const closePull = sinon.stub().callsFake(async (): Promise<void> => {
+      closeStarted.resolve();
+      await releaseClose.promise;
+    });
+    const closePush = sinon.stub().resolves();
+    controller.setLiveSubscription({ close: closePull });
+    controller.setLocalSubscription({ close: closePush });
+    const request = sinon.stub(internal, 'requestLinkDirection');
+    const reopen = sinon.stub(internal, 'scheduleSubscriptionReopen');
+
+    const failure = internal.handleLinkSubscriptionFailure(controller, 'pull');
+    await closeStarted.promise;
+
+    expect(closePull.calledOnce).toBe(true);
+    expect(closePush.notCalled).toBe(true);
+    expect(controller.hasLiveSubscription).toBe(false);
+    expect(controller.hasLocalSubscription).toBe(true);
+    expect(request.calledOnceWithExactly(controller, 'pull')).toBe(true);
+    expect(reopen.calledOnceWithExactly(controller, 'pull')).toBe(true);
+    expect(controller.link.status).toBe('live');
+    expect(controller.link.connectivity).toBe('offline');
+    releaseClose.resolve();
+    await failure;
+
+    await engine.close();
+  });
+
+  it('should run Retry now through the normal reconciler without a live controller', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const tenantDid = 'did:example:controllerless-retry';
     const scope = { kind: 'full' } as const;
     const target: SyncTarget = {
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'owner-epoch',
       did                : tenantDid,
-      dwnUrl             : 'https://no-retry.example.com',
+      dwnUrl             : 'https://controllerless-retry.example.com',
       projectionId       : await computeProjectionId(tenantDid, scope),
       scope,
     };
     sinon.stub(internal, 'getSyncTargets').resolves([target]);
+    const reconcile = sinon.stub(internal._durableFeedReconciler, 'reconcile').resolves({
+      pullDrained         : true,
+      pullLocallyComplete : true,
+      pushFailures        : [],
+    });
 
     await engine.retryRemoteNow(target.did, target.dwnUrl);
 
     expect((await internal.replicationLinkStore.getAllLinks()).filter(
       (link: ReplicationLinkState) => link.tenantDid === target.did,
-    )).toEqual([]);
+    )).toHaveLength(1);
+    expect(reconcile.calledOnceWithMatch(
+      target,
+      sinon.match({ tenantDid, remoteEndpoint: target.dwnUrl }),
+      undefined,
+    )).toBe(true);
     await engine.close();
   });
 
-  it('should resume retryable legacy pauses without a live controller', async () => {
+  it('should let Retry now subsume an existing delayed work mark', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
-    const tenantDid = 'did:example:legacy-pause';
-    const remoteEndpoint = 'https://legacy-pause.example.com';
-    const link = await internal.replicationLinkStore.getOrCreateLink({
+    const target: SyncTarget = {
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'owner-epoch',
-      remoteEndpoint,
+      did                : 'did:example:active-retry',
+      dwnUrl             : 'https://active-retry.example.com',
+      projectionId       : 'projection-id',
       scope              : { kind: 'full' },
-      tenantDid,
-    });
-    const target: SyncTarget = {
-      authorization      : link.authorization,
-      authorizationEpoch : link.authorizationEpoch,
-      did                : link.tenantDid,
-      dwnUrl             : link.remoteEndpoint,
-      projectionId       : link.projectionId,
-      scope              : link.scope,
     };
-    const pull = sinon.stub(internal._durableFeedReconciler, 'pull').resolves({ pullDrained: true });
-    const push = sinon.stub(internal._durableFeedReconciler, 'push').resolves({});
+    const link: ReplicationLinkState = {
+      authorization      : target.authorization,
+      authorizationEpoch : target.authorizationEpoch,
+      connectivity       : 'online',
+      projectionId       : target.projectionId,
+      pull               : {},
+      push               : {},
+      remoteEndpoint     : target.dwnUrl,
+      scope              : target.scope,
+      status             : 'live',
+      tenantDid          : target.did,
+    };
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    internal._runtime = new SyncRuntime(true);
+    const controller = internal.activateLink(linkKey, link);
+    controller.markReplicationReady();
+    controller.setLiveSubscription({ close: sinon.stub().resolves() });
+    controller.setLocalSubscription({ close: sinon.stub().resolves() });
+    controller.setRetryNotBefore(['pull'], Date.now() + 60_000);
+    controller.executor.request('pull');
     sinon.stub(internal, 'getSyncTargets').resolves([target]);
-    const getStoredLink = async (): Promise<ReplicationLinkState | undefined> =>
-      (await internal.replicationLinkStore.getAllLinks()).find(
-        (storedLink: ReplicationLinkState) => storedLink.tenantDid === tenantDid,
-      );
-
-    const parkWith = async (error: string): Promise<void> => {
-      // Emulate the durable shape written by older versions: current pause
-      // transitions deliberately supersede stale transient diagnostics.
-      await internal.replicationLinkStore.setStatus(link, 'paused');
-      await internal.replicationLinkStore.setRecovery(link, {
-        error,
-        failedAt: '2026-09-17T12:00:00.000Z',
-      });
-    };
-
-    // A session can stop after publishing 'repairing' but before its first
-    // failure diagnostic. Successful one-shot work must retire that stale
-    // runtime status just as it retires a diagnosed repair.
-    await internal.replicationLinkStore.setStatus(link, 'repairing');
-    await engine.sync();
-    expect(pull.callCount).toBe(1);
-    expect(push.callCount).toBe(1);
-    expect(await getStoredLink()).toMatchObject({ status: 'initializing' });
-
-    // Explicit recovery uses the same successful completion path, while
-    // still recognizing the interrupted repair as eligible work.
-    pull.resetHistory();
-    push.resetHistory();
-    await internal.replicationLinkStore.setStatus(link, 'repairing');
-    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
-    expect(pull.callCount).toBe(1);
-    expect(push.callCount).toBe(1);
-    expect(await getStoredLink()).toMatchObject({ status: 'initializing' });
-
-    pull.resetHistory();
-    push.resetHistory();
-    await parkWith('offline');
-    await engine.sync();
-    expect(pull.calledOnce).toBe(true);
-    expect(push.calledOnce).toBe(true);
-    expect(await getStoredLink()).toMatchObject({
-      status: 'initializing',
-    });
-    expect((await getStoredLink())?.recovery).toBeUndefined();
-
-    // A stopped session can also leave a live link with a retryable durable
-    // reconciliation diagnostic. A successful one-shot pass clears only that
-    // diagnostic; the last completed live baseline remains valid.
-    pull.resetHistory();
-    push.resetHistory();
-    await internal.replicationLinkStore.setStatus(link, 'live');
-    await internal.replicationLinkStore.setRecovery(link, {
-      error    : 'offline',
-      failedAt : '2026-09-17T12:01:00.000Z',
-    });
-    await engine.sync();
-    expect(pull.calledOnce).toBe(true);
-    expect(push.calledOnce).toBe(true);
-    expect(await getStoredLink()).toMatchObject({ status: 'live' });
-    expect((await getStoredLink())?.recovery).toBeUndefined();
-
-    pull.resetHistory();
-    push.resetHistory();
-    await parkWith('offline');
-    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
-    expect(pull.calledOnce).toBe(true);
-    expect(push.calledOnce).toBe(true);
-
-    pull.resetHistory();
-    push.resetHistory();
-    await parkWith('GrantAuthorizationGrantRevoked');
-    await engine.sync();
-    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
-    expect(pull.notCalled).toBe(true);
-    expect(push.notCalled).toBe(true);
-    expect(await getStoredLink()).toMatchObject({
-      status   : 'paused',
-      recovery : { error: 'GrantAuthorizationGrantRevoked' },
+    sinon.stub(internal, 'getOrCreateReplicationLink').resolves(link);
+    const reconcile = sinon.stub(internal, 'reconcileOwnedTarget').resolves({
+      pullDrained         : true,
+      pullLocallyComplete : true,
+      pushFailures        : [],
     });
 
+    await engine.retryRemoteNow(target.did, target.dwnUrl);
+
+    expect(reconcile.calledOnce).toBe(true);
+    expect(controller.executor.hasPending('pull')).toBe(false);
     await engine.close();
   });
 
-  it('should retain controller-less recovery until rejected or deferred work settles', async () => {
+  it('should not retry a durable authorization pause without new authority', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
-    const tenantDid = 'did:example:legacy-push-retry';
-    const remoteEndpoint = 'https://legacy-push-retry.example.com';
+    const tenantDid = 'did:example:paused-retry';
+    const remoteEndpoint = 'https://paused-retry.example.com';
     const link = await internal.replicationLinkStore.getOrCreateLink({
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'owner-epoch',
@@ -929,107 +912,69 @@ describe('SyncEngineLevel lifecycle', () => {
       scope              : { kind: 'full' },
       tenantDid,
     });
-    const target: SyncTarget = {
-      authorization      : link.authorization,
-      authorizationEpoch : link.authorizationEpoch,
-      did                : link.tenantDid,
-      dwnUrl             : link.remoteEndpoint,
-      projectionId       : link.projectionId,
-      scope              : link.scope,
-    };
-    const getStoredLink = async (): Promise<ReplicationLinkState | undefined> =>
-      (await internal.replicationLinkStore.getAllLinks()).find(
-        (storedLink: ReplicationLinkState) => storedLink.tenantDid === tenantDid,
-      );
     await internal.replicationLinkStore.setStatus(link, 'paused');
-    await internal.replicationLinkStore.setRecovery(link, {
-      error    : 'offline',
-      failedAt : '2026-09-17T12:00:00.000Z',
-    });
-    expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
+    const target: SyncTarget = {
+      authorization      : link.authorization,
+      authorizationEpoch : link.authorizationEpoch,
+      did                : link.tenantDid,
+      dwnUrl             : link.remoteEndpoint,
+      projectionId       : link.projectionId,
+      scope              : link.scope,
+    };
     sinon.stub(internal, 'getSyncTargets').resolves([target]);
-    const getActiveQuotaBlocks = sinon.spy(internal._quotaManager, 'getActiveBlocksForTarget');
-    const pull = sinon.stub(internal._durableFeedReconciler, 'pull').resolves({ pullDrained: true });
-    const push = sinon.stub(internal._durableFeedReconciler, 'push').resolves({});
-    push.onFirstCall().resolves({
-      pushFailures: [{ cid: 'rejected-cid', detail: 'remote unavailable' }],
+    const reconcile = sinon.stub(internal._durableFeedReconciler, 'reconcile').resolves({});
+
+    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
+
+    expect(reconcile.notCalled).toBe(true);
+    expect(link.status).toBe('paused');
+    await engine.close();
+  });
+
+  it('should retain controller-less push obligations after Retry now fails', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const internal = engine as any;
+    const tenantDid = 'did:example:push-retry';
+    const remoteEndpoint = 'https://push-retry.example.com';
+    const link = await internal.replicationLinkStore.getOrCreateLink({
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      remoteEndpoint,
+      scope              : { kind: 'full' },
+      tenantDid,
+    });
+    const target: SyncTarget = {
+      authorization      : link.authorization,
+      authorizationEpoch : link.authorizationEpoch,
+      did                : link.tenantDid,
+      dwnUrl             : link.remoteEndpoint,
+      projectionId       : link.projectionId,
+      scope              : link.scope,
+    };
+    sinon.stub(internal, 'getSyncTargets').resolves([target]);
+    const reconcile = sinon.stub(internal._durableFeedReconciler, 'reconcile');
+    reconcile.onFirstCall().resolves({
+      pullDrained         : true,
+      pullLocallyComplete : true,
+      pushFailures        : [{ cid: 'rejected-cid', detail: 'remote unavailable' }],
+    });
+    reconcile.onSecondCall().resolves({
+      pullDrained         : true,
+      pullLocallyComplete : true,
+      pushFailures        : [],
     });
 
     await expect(engine.retryRemoteNow(tenantDid, remoteEndpoint)).rejects.toBeInstanceOf(SyncPushFailuresError);
-    // The link rejection must not suppress Retry-now's existing quota work.
-    expect(getActiveQuotaBlocks.calledOnce).toBe(true);
-    expect(await getStoredLink()).toMatchObject({
-      status   : 'paused',
-      recovery : { error: 'offline' },
+    expect(reconcile.calledOnce).toBe(true);
+    expect((await internal.replicationLinkStore.getAllLinks()).find(
+      (storedLink: ReplicationLinkState) => storedLink.tenantDid === tenantDid,
+    )).toMatchObject({
+      push   : {},
+      status : 'initializing',
     });
 
     await engine.retryRemoteNow(tenantDid, remoteEndpoint);
-    expect(push.callCount).toBe(2);
-    expect(await getStoredLink()).toMatchObject({ status: 'initializing' });
-    expect((await getStoredLink())?.recovery).toBeUndefined();
-
-    // A dependency deferral is also incomplete recovery. Keep the explicit
-    // retry eligible until a later pass drains it.
-    await internal.replicationLinkStore.setStatus(link, 'paused');
-    await internal.replicationLinkStore.setRecovery(link, {
-      error    : 'offline',
-      failedAt : '2026-09-17T12:01:00.000Z',
-    });
-    pull.onThirdCall().resolves({
-      pendingPullCount    : 1,
-      pullDrained         : true,
-      pullLocallyComplete : false,
-    });
-    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
-    expect(await getStoredLink()).toMatchObject({
-      status   : 'paused',
-      recovery : { error: 'offline' },
-    });
-
-    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
-    expect(push.callCount).toBe(4);
-    expect(await getStoredLink()).toMatchObject({ status: 'initializing' });
-    expect((await getStoredLink())?.recovery).toBeUndefined();
-
-    // A pull failure and an independent successful quota push can occur in
-    // one Retry-now call. The push-only pass must not retire the link-wide
-    // recovery needed to retry the unresolved pull.
-    await internal.replicationLinkStore.setStatus(link, 'paused');
-    await internal.replicationLinkStore.setRecovery(link, {
-      error    : 'offline',
-      failedAt : '2026-09-17T12:02:00.000Z',
-    });
-    pull.reset();
-    push.reset();
-    getActiveQuotaBlocks.resetHistory();
-    await internal._quotaManager.recordBlock(target, 'quota-cid', undefined, 'quota exceeded');
-    const pullFailure = new Error('pull endpoint unavailable');
-    let fullPullAttempts = 0;
-    pull.callsFake(async (_target, _link, options) => {
-      if (options?.direction === 'push') {
-        return {};
-      }
-      fullPullAttempts++;
-      if (fullPullAttempts === 1) {
-        throw pullFailure;
-      }
-      return { pullDrained: true };
-    });
-    push.callsFake(async (_target, _link, options) => {
-      if (options?.direction === 'push') {
-        await internal._quotaManager.clearBlock(target, 'quota-cid');
-      }
-      return {};
-    });
-
-    await expect(engine.retryRemoteNow(tenantDid, remoteEndpoint)).rejects.toBe(pullFailure);
-    expect(push.calledOnce).toBe(true);
-    expect(await internal._quotaManager.getState(target, 'quota-cid')).toBeUndefined();
-    expect((await getStoredLink())?.recovery).toMatchObject({ error: 'offline' });
-
-    await engine.retryRemoteNow(tenantDid, remoteEndpoint);
-    expect(fullPullAttempts).toBe(2);
-    expect((await getStoredLink())?.recovery).toBeUndefined();
+    expect(reconcile.callCount).toBe(2);
 
     await engine.close();
   });
@@ -1064,15 +1009,6 @@ describe('SyncEngineLevel lifecycle', () => {
       projectionId       : link.projectionId,
       scope              : link.scope,
     };
-    const getStoredLink = async (): Promise<ReplicationLinkState | undefined> =>
-      (await internal.replicationLinkStore.getAllLinks()).find(
-        (storedLink: ReplicationLinkState) => storedLink.tenantDid === sourceDid,
-      );
-    await internal.replicationLinkStore.setStatus(link, 'paused');
-    await internal.replicationLinkStore.setRecovery(link, {
-      error    : 'offline',
-      failedAt : '2026-09-17T12:00:00.000Z',
-    });
     sinon.stub(internal, 'getSyncTargets').resolves([target]);
     const pull = sinon.stub(internal._durableFeedReconciler, 'pull').resolves({ pullDrained: true });
     const pushLocalPages = sinon.stub(internal._durableFeedReconciler, 'pushLocalPages').resolves({});
@@ -1081,7 +1017,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
     expect(pull.calledOnce).toBe(true);
     expect(pushLocalPages.notCalled).toBe(true);
-    expect((await getStoredLink())?.recovery).toBeUndefined();
 
     await engine.close();
   });
@@ -1107,7 +1042,6 @@ describe('SyncEngineLevel lifecycle', () => {
       projectionId       : target.projectionId,
       pull               : {},
       push               : {},
-      recovery           : { error: 'offline', failedAt: '2026-09-17T12:00:00.000Z' },
       remoteEndpoint     : target.dwnUrl,
       scope              : target.scope,
       status             : 'initializing',
@@ -1124,7 +1058,6 @@ describe('SyncEngineLevel lifecycle', () => {
       await releaseSecond.promise;
       return {};
     });
-    sinon.stub(internal, 'retryQuotaBlocksForTarget').resolves();
     let settled = false;
     let retryError: unknown;
 
@@ -1145,10 +1078,10 @@ describe('SyncEngineLevel lifecycle', () => {
     await engine.close();
   });
 
-  it('should wait for a scheduled reconcile before closing storage', async () => {
+  it('should wait for a scheduled pull before closing storage', async () => {
     const engine = new SyncEngineLevel({ db });
-    const reconcileStarted = createDeferred();
-    const releaseReconcile = createDeferred();
+    const pullStarted = createDeferred();
+    const releasePull = createDeferred();
     const linkKey = 'did:example:alice^https://dwn.example.com^projection-1^authorization-1';
     const link = {
       authorization      : { kind: 'owner' },
@@ -1165,16 +1098,14 @@ describe('SyncEngineLevel lifecycle', () => {
 
     const controller = engine['activateLink'](linkKey, link as never);
     controller.markReplicationReady();
-    const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
-    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ converged: true }> => {
-      reconcileStarted.resolve();
-      await releaseReconcile.promise;
-      return { converged: true };
+    sinon.stub(engine as never, 'reconcileOwnedTarget').callsFake(async (): Promise<{ pullDrained: true; pullLocallyComplete: true }> => {
+      pullStarted.resolve();
+      await releasePull.promise;
+      return { pullDrained: true, pullLocallyComplete: true };
     });
 
-    const scheduled = recoveryCoordinator.scheduleReconcile(controller, 0);
-    expect(scheduled).toBe(true);
-    await reconcileStarted.promise;
+    (engine as any).scheduleLinkDirection(controller, 'pull', 0);
+    await pullStarted.promise;
 
     let closeCompleted = false;
     const closePromise = engine.close().then((): void => { closeCompleted = true; });
@@ -1183,7 +1114,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(closeCompleted).toBe(false);
     expect(db.status).toBe('open');
 
-    releaseReconcile.resolve();
+    releasePull.resolve();
     await closePromise;
 
     expect(db.status).toBe('closed');
@@ -1216,7 +1147,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
     const runIdentityTask = (engine as any)._lifecycle.captureIdentityTaskRunner(did);
     controller.executor.request('push');
-    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].resume(controller));
+    const push = runIdentityTask(() => (engine as any).resumeLinkExecutor(controller));
     await pushStarted.promise;
 
     let closeCompleted = false;
@@ -1353,10 +1284,10 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(validateScope.calledOnce).toBe(true);
   });
 
-  it('should keep link state until an in-flight repair drains during unregister', async () => {
+  it('should keep link state until in-flight pull work drains during unregister', async () => {
     const engine = new SyncEngineLevel({ db });
-    const repairStarted = createDeferred();
-    const releaseRepair = createDeferred();
+    const pullStarted = createDeferred();
+    const releasePull = createDeferred();
     const removeStarted = createDeferred();
     const did = 'did:example:alice';
     const linkKey = `${did}^https://dwn.example.com^projection-1^authorization-1`;
@@ -1369,20 +1300,18 @@ describe('SyncEngineLevel lifecycle', () => {
       push               : {},
       remoteEndpoint     : 'https://dwn.example.com',
       scope              : { kind: 'full' },
-      status             : 'initializing',
+      status             : 'live',
       tenantDid          : did,
     };
 
     await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
-    engine['activateLink'](linkKey, link as never);
-    sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
-      link.status = 'repairing';
-    });
-    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ aborted: true }> => {
-      repairStarted.resolve();
-      await releaseRepair.promise;
-      return { aborted: true };
+    const controller = engine['activateLink'](linkKey, link as never);
+    controller.markReplicationReady();
+    sinon.stub(engine as never, 'reconcileOwnedTarget').callsFake(async (): Promise<{ pullDrained: true; pullLocallyComplete: true }> => {
+      pullStarted.resolve();
+      await releasePull.promise;
+      return { pullDrained: true, pullLocallyComplete: true };
     });
     const removeIdentity = engine['removeIdentityFromLiveSync'].bind(engine);
     sinon.stub(engine as never, 'removeIdentityFromLiveSync').callsFake(async (identityDid: string): Promise<void> => {
@@ -1391,10 +1320,8 @@ describe('SyncEngineLevel lifecycle', () => {
       await removal;
     });
 
-    await engine['_linkRecoveryCoordinator'].transitionToRepairing(
-      engine['_linkControllers'].get(linkKey)!,
-    );
-    await repairStarted.promise;
+    (engine as any).requestLinkDirection(controller, 'pull');
+    await pullStarted.promise;
 
     const unregisterPromise = engine.removeIdentity(did);
     await removeStarted.promise;
@@ -1403,7 +1330,7 @@ describe('SyncEngineLevel lifecycle', () => {
       expect(engine['_linkControllers'].has(linkKey)).toBe(true);
       expect(await engine.getIdentityOptions(did)).toBeDefined();
     } finally {
-      releaseRepair.resolve();
+      releasePull.resolve();
       await unregisterPromise;
     }
 
@@ -1413,8 +1340,8 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should not wait for another identity\'s in-flight work during hot-remove', async () => {
     const engine = new SyncEngineLevel({ db });
-    const repairStarted = createDeferred();
-    const releaseRepair = createDeferred();
+    const pullStarted = createDeferred();
+    const releasePull = createDeferred();
     const aliceDid = 'did:example:alice';
     const bobDid = 'did:example:bob';
     const aliceLinkKey = `${aliceDid}^https://dwn.example.com^projection-1^authorization-1`;
@@ -1431,23 +1358,19 @@ describe('SyncEngineLevel lifecycle', () => {
       status             : 'live',
       tenantDid          : aliceDid,
     };
-    const bobLink = { ...aliceLink, tenantDid: bobDid, status: 'initializing' };
+    const bobLink = { ...aliceLink, tenantDid: bobDid };
 
     engine['activateLink'](aliceLinkKey, aliceLink as never);
-    engine['activateLink'](bobLinkKey, bobLink as never);
-    sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
-      bobLink.status = 'repairing';
-    });
-    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ aborted: true }> => {
-      repairStarted.resolve();
-      await releaseRepair.promise;
-      return { aborted: true };
+    const bobController = engine['activateLink'](bobLinkKey, bobLink as never);
+    bobController.markReplicationReady();
+    sinon.stub(engine as never, 'reconcileOwnedTarget').callsFake(async (): Promise<{ pullDrained: true; pullLocallyComplete: true }> => {
+      pullStarted.resolve();
+      await releasePull.promise;
+      return { pullDrained: true, pullLocallyComplete: true };
     });
 
-    await engine['_linkRecoveryCoordinator'].transitionToRepairing(
-      engine['_linkControllers'].get(bobLinkKey)!,
-    );
-    await repairStarted.promise;
+    (engine as any).requestLinkDirection(bobController, 'pull');
+    await pullStarted.promise;
 
     const removal = (engine as unknown as {
       removeIdentityFromLiveSync(identityDid: string): Promise<void>;
@@ -1462,16 +1385,16 @@ describe('SyncEngineLevel lifecycle', () => {
       expect(engine['_linkControllers'].has(aliceLinkKey)).toBe(false);
       expect(engine['_linkControllers'].has(bobLinkKey)).toBe(true);
     } finally {
-      releaseRepair.resolve();
+      releasePull.resolve();
       await removal;
       await engine.stopSync();
     }
   });
 
-  it('should defer replacement links until an in-flight reconcile drains during update', async () => {
+  it('should defer replacement links until in-flight pull work drains during update', async () => {
     const engine = new SyncEngineLevel({ db });
-    const reconcileStarted = createDeferred();
-    const releaseReconcile = createDeferred();
+    const pullStarted = createDeferred();
+    const releasePull = createDeferred();
     const removeStarted = createDeferred();
     const did = 'did:example:alice';
     const linkKey = `${did}^https://dwn.example.com^projection-1^authorization-1`;
@@ -1492,11 +1415,10 @@ describe('SyncEngineLevel lifecycle', () => {
     engine['_runtime'] = new SyncRuntime(true);
     const controller = engine['activateLink'](linkKey, link as never);
     controller.markReplicationReady();
-    const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
-    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ converged: true }> => {
-      reconcileStarted.resolve();
-      await releaseReconcile.promise;
-      return { converged: true };
+    sinon.stub(engine as never, 'reconcileOwnedTarget').callsFake(async (): Promise<{ pullDrained: true; pullLocallyComplete: true }> => {
+      pullStarted.resolve();
+      await releasePull.promise;
+      return { pullDrained: true, pullLocallyComplete: true };
     });
     const clearQuotaBlocks = sinon.stub(engine['_quotaManager'], 'clearTenant').resolves();
     const addIdentity = sinon.stub(engine as never, 'addIdentityToLiveSync').resolves(new Set());
@@ -1507,9 +1429,8 @@ describe('SyncEngineLevel lifecycle', () => {
       await removal;
     });
 
-    const scheduled = recoveryCoordinator.scheduleReconcile(controller, 0);
-    expect(scheduled).toBe(true);
-    await reconcileStarted.promise;
+    (engine as any).requestLinkDirection(controller, 'pull');
+    await pullStarted.promise;
 
     const updatedOptions = { protocols: 'all' as const, delegateDid: 'did:example:delegate' };
     const updatePromise = engine.setIdentityOptions({ did, options: updatedOptions });
@@ -1520,7 +1441,7 @@ describe('SyncEngineLevel lifecycle', () => {
       expect(clearQuotaBlocks.called).toBe(false);
       expect(addIdentity.called).toBe(false);
     } finally {
-      releaseReconcile.resolve();
+      releasePull.resolve();
       await updatePromise;
     }
 
@@ -1567,7 +1488,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
     const runIdentityTask = (engine as any)._lifecycle.captureIdentityTaskRunner(did);
     controller.executor.request('push');
-    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].resume(controller));
+    const push = runIdentityTask(() => (engine as any).resumeLinkExecutor(controller));
     await pushStarted.promise;
 
     const unregisterPromise = engine.removeIdentity(did);
@@ -1622,50 +1543,6 @@ describe('SyncEngineLevel lifecycle', () => {
     }).runSettleCheck(staleRuntime);
 
     expect(sync.called).toBe(false);
-  });
-
-  it('should skip a repairing link without parking the settle pass behind reconciliation readiness', async () => {
-    const engine = new SyncEngineLevel({ db });
-    engine['_runtime'] = new SyncRuntime(true);
-    const { controller, target } = activateAdministrativeLink(engine, 'did:example:settle-repairing', 'repairing');
-    const repairRetryTimerKey = `syncRepairRetry:${controller.linkKey}`;
-    engine['_runtime'].armTimeout(repairRetryTimerKey, () => {}, 60_000);
-
-    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
-    sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
-    sinon.stub(engine as any, 'reinitializeOrphanedLinkTargets').resolves(true);
-    const verifyConvergence = sinon.stub(engine['_durableFeedReconciler'], 'verifyConvergence').resolves({
-      converged    : true,
-      pushFailures : [],
-    });
-    const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({
-      pushFailures: [],
-    });
-
-    try {
-      await (engine as unknown as {
-        runSettleCheck(runtime: SyncRuntime): Promise<void>;
-      }).runSettleCheck(engine['_runtime']);
-
-      expect(verifyConvergence.notCalled).toBe(true);
-      expect(reconcile.notCalled).toBe(true);
-      expect(engine['_runtime'].hasTimer(repairRetryTimerKey)).toBe(true);
-
-      // The settle pass released the engine-wide lock, and the link executor
-      // can still run the pending repair retry.
-      const acquiredSync = engine['_lifecycle'].tryAcquireSync();
-      if (acquiredSync) {
-        engine['_lifecycle'].releaseSync();
-      }
-      expect(acquiredSync).toBe(true);
-      const repairTurn = sinon.stub().resolves();
-      controller.executor.request('repair');
-      await controller.executor.drain(repairTurn);
-      expect(repairTurn.calledOnceWithExactly('repair')).toBe(true);
-    } finally {
-      engine['_runtime'].dispose();
-      await controller.dispose();
-    }
   });
 
   it('should let one-shot sync skip an initializing link while its baseline owns reconciliation', async () => {

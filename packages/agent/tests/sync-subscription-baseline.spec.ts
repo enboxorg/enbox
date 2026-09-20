@@ -58,8 +58,9 @@ function createBaselineFixture(db: Level<string, string>): BaselineFixture {
   const controller: SyncLinkController = (engine as any).activateLink(LINK_KEY, createLink());
   const persistCheckpoints = sinon.stub((engine as any).replicationLinkStore, 'persistCheckpoints').resolves();
   const reconcile = sinon.stub((engine as any)._durableFeedReconciler, 'reconcile').resolves({
-    converged   : true,
-    pullDrained : true,
+    converged           : true,
+    pullDrained         : true,
+    pullLocallyComplete : true,
   });
   const target = {
     authorization      : { kind: 'owner' as const },
@@ -135,7 +136,7 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
 
     const result = await establishBaseline(fixture);
 
-    expect(result).toEqual({ converged: true });
+    expect(result).toEqual({ converged: true, pendingPullCount: 0, pullLocallyComplete: true });
     expect(fixture.controller.link.pull.contiguousAppliedToken).toEqual(pullHead);
     expect(fixture.controller.link.push.contiguousAppliedToken).toEqual(pushHead);
     expect(fixture.persistCheckpoints.calledOnceWithExactly(fixture.controller.link)).toBe(true);
@@ -262,7 +263,11 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
     expect(fixture.controller.executor.hasPending('pull')).toBe(false);
     expect(fixture.controller.isPullCurrent).toBe(false);
 
-    expect(await establishBaseline(fixture)).toEqual({ converged: true, pullDrained: true });
+    expect(await establishBaseline(fixture)).toEqual({
+      converged           : true,
+      pullDrained         : true,
+      pullLocallyComplete : true,
+    });
 
     expect(fixture.reconcile.calledOnce).toBe(true);
     expect(fixture.controller.executor.hasPending('pull')).toBe(false);
@@ -318,7 +323,11 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
     expect(requests).toHaveLength(2);
     expect(requests[0].messageParams.cursor).toBeUndefined();
     expect(requests[1].messageParams.cursor).toBeUndefined();
-    expect(await establishBaseline(fixture)).toEqual({ converged: true });
+    expect(await establishBaseline(fixture)).toEqual({
+      converged           : true,
+      pendingPullCount    : 0,
+      pullLocallyComplete : true,
+    });
     expect(fixture.reconcile.notCalled).toBe(true);
     expect(fixture.persistCheckpoints.calledOnceWithExactly(fixture.controller.link)).toBe(true);
     expect(fixture.controller.link.pull.contiguousAppliedToken).toEqual(pullHead);
@@ -337,7 +346,11 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
       { fingerprint: 'local-feed', head: tokenIn('local-stream', 'local-epoch', '23') },
     );
 
-    expect(await establishBaseline(fixture)).toEqual({ converged: true, pullDrained: true });
+    expect(await establishBaseline(fixture)).toEqual({
+      converged           : true,
+      pullDrained         : true,
+      pullLocallyComplete : true,
+    });
     expect(fixture.reconcile.calledOnce).toBe(true);
     expect(fixture.persistCheckpoints.notCalled).toBe(true);
 

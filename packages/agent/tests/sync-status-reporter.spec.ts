@@ -122,7 +122,7 @@ describe('sync status projection', () => {
       links: [
         pausedLink,
         liveLink,
-        link({ projectionId: 'stale-repairing', status: 'repairing' }),
+        link({ projectionId: 'stale-initializing', status: 'initializing' }),
       ],
       quotaBlocks: [
         quotaBlock({ linkKey: 'quota-current', messageCid: 'blocked-current' }),
@@ -145,7 +145,7 @@ describe('sync status projection', () => {
     const projection = createProjection({
       currentLinkIdentityKeys : undefined,
       currentQuotaLinkKeys    : undefined,
-      links                   : [link({ status: 'repairing' }), link({ projectionId: 'other', status: 'paused' })],
+      links                   : [link({ status: 'initializing' }), link({ projectionId: 'other', status: 'paused' })],
       quotaBlocks             : [
         quotaBlock({ linkKey: 'first', messageCid: 'blocked-a' }),
         quotaBlock({ linkKey: 'second', messageCid: 'blocked-b', supersededAt: timestamp(4) }),
@@ -153,7 +153,7 @@ describe('sync status projection', () => {
     });
 
     expect(projection.getHealth()).toMatchObject({
-      degradedLinkCount        : 2,
+      degradedLinkCount        : 1,
       quotaBlockedMessageCount : 1,
       syncHealthy              : false,
     });
@@ -199,7 +199,7 @@ describe('sync status projection', () => {
       links: [
         link({ remoteEndpoint: REMOTE_D, connectivity: 'offline', lastActivityAt: timestamp(1) }),
         link({ remoteEndpoint: REMOTE_D, connectivity: 'online', lastActivityAt: timestamp(3) }),
-        link({ remoteEndpoint: REMOTE_B, status: 'repairing' }),
+        link({ remoteEndpoint: REMOTE_B, status: 'paused' }),
         link({ remoteEndpoint: REMOTE_C }),
       ],
       quotaBlocks: [
@@ -301,24 +301,6 @@ describe('sync status projection', () => {
     }]);
   });
 
-  it('projects durable link recovery into per-link, remote, and health status', () => {
-    const recovery = {
-      error       : 'authority endpoint unavailable',
-      failedAt    : timestamp(4),
-      nextRetryAt : timestamp(9),
-    };
-    const projection = createProjection({
-      links: [link({ isPullCurrent: false, recovery })],
-    });
-
-    expect(projection.getHealth()).toMatchObject({ degradedLinkCount: 1, syncHealthy: false });
-    expect(projection.getReplicationLinks()).toMatchObject([{ recovery }]);
-    expect(projection.getRemoteStatus()).toMatchObject([{
-      state       : 'degraded',
-      lastError   : 'authority endpoint unavailable',
-      nextRetryAt : timestamp(9),
-    }]);
-  });
 });
 
 function createProjection(overrides: Partial<SyncStatusProjectionState> = {}): SyncStatusProjection {

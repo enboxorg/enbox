@@ -1,5 +1,5 @@
 /** Work coalesced by one active replication link's executor. */
-export type SyncLinkWorkKind = 'pull' | 'push' | 'repair' | 'reconcile';
+export type SyncLinkWorkKind = 'pull' | 'push';
 
 /** Executes one coalesced link-work mark. */
 export type SyncLinkWorkHandler = (kind: SyncLinkWorkKind) => Promise<void>;
@@ -30,8 +30,7 @@ type SyncLinkWorkFailure = {
  *
  * Wake work is represented by one coalesced mark per kind. Awaited calls are
  * distinct entries because their options, cancellation fences, and results
- * are caller-specific. Repair is the only priority kind; all other eligible
- * entries retain arrival order.
+ * are caller-specific. Eligible entries retain arrival order.
  */
 export class SyncLinkExecutor {
   private _active = true;
@@ -241,17 +240,9 @@ export class SyncLinkExecutor {
   }
 
   private takeNextEligibleEntry(isEligible: SyncLinkWorkEligibility): SyncLinkExecutorEntry | undefined {
-    const repairIndex = this._entries.findIndex(
-      (entry): boolean => entry.type === 'mark' && entry.kind === 'repair',
-    );
-    let index = -1;
-    if (repairIndex >= 0) {
-      index = repairIndex;
-    } else if (this._ready) {
-      index = this._entries.findIndex(
-        (entry): boolean => entry.type === 'call' || isEligible(entry.kind),
-      );
-    }
+    const index = this._ready
+      ? this._entries.findIndex((entry): boolean => entry.type === 'call' || isEligible(entry.kind))
+      : -1;
     if (index < 0) {
       return;
     }

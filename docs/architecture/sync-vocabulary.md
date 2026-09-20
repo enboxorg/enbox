@@ -20,24 +20,25 @@ the code, not an entry missing from this table.
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
 | Identity proving that a durable link belongs to the current target plan | **`currentLinkIdentityKey`** — endpoint-specific for role-authorized foreign contexts, endpoint-independent for owned projections | using `durableLinkIdentityKey` as foreign-authority endpoint proof |
 | Durable replication-link store | **`replicationLinkStore`** | `getLinkStore`, `ledger` |
-| Authoritative in-engine owner of one active link object, both wake subscriptions, its link executor, replication generation, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
-| Per-link subscription and reconciliation fence — ONE generation for the subscription pair and link executor | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
+| Authoritative in-engine owner of one active link object, both wake subscriptions, its link executor, replication generation, and directional retry state | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
+| Per-link baseline and executor fence shared while the replication session remains active | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
+| Independent binding fence for one subscription direction | **`liveSubscriptionGeneration`** or **`localSubscriptionGeneration`** | resetting the healthy opposite subscription or the whole replication generation |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Deterministic identity of one tenant-and-scope projection, independent of endpoint and authorization | **`projectionId`** — `computeProjectionId` | endpoint identity, authorization identity |
 | One logical foreign context followed by an actor, independent of its current role | **followed context** — exact `(sourceDid, actorDid, protocol, contextId)` tuple | followed source |
 | Durable local catalog row for a followed context, combining its acceptance, exact hosted endpoint, active role authorization, and readable paths | **followed source** — `FollowedSyncSource` | source incarnation, role incarnation |
 | One local handle-fencing lifetime for a followed context | **acceptance** — `acceptanceId`; re-following after removal creates a new acceptance even when the role-record ID is unchanged | acceptance incarnation, source incarnation |
-| Mutually-exclusive candidate role authorizations for one context root, ordered strongest to weakest and declared once as `TypedProtocol.roleGroups`; follow and paused-link recovery try that order at one endpoint, persisting the verified active role | **role group** | unordered role set, every direct role under a root |
+| Mutually-exclusive candidate role authorizations for one context root, ordered strongest to weakest and declared once as `TypedProtocol.roleGroups`; follow and paused-link authority refresh try that order at one endpoint, persisting the verified active role | **role group** | unordered role set, every direct role under a root |
 | Sole serializer for work owned by one active replication session | **link executor** — `SyncLinkExecutor` | link mailbox, direction reconciliation queue, `enqueueDirection`, `enqueueShared` |
-| Runtime-owned scheduling for one active replication session | **link scheduler** — `SyncRuntime.armTimeout` / `armTimeoutIfEarlier`, keyed by `syncRepairRetry:<linkKey>` or `syncReconcile:<linkKey>` | controller timer handles, due-time fields, `set*Timer` / `consume*Timer` pairs |
+| Runtime-owned scheduling for one active replication session | **link scheduler** — `SyncRuntime.armTimeoutIfEarlier`, keyed by `syncRetry:<direction>:<linkKey>`, `syncSubscriptionRetry:<direction>:<linkKey>`, or quota-owned `syncQuotaProbe:<linkKey>` | controller timer handles, persisted transient deadlines, or a second scheduler |
 | Runtime-owned Retry-After scheduling before a replication session exists | **link initialization retry** — `scheduleLinkInitRetry`, keyed by `linkInitRetry:<linkKey>` | link scheduler, which requires an active replication session |
 | Coalesced notice that one durable wake pass is owed | **work mark** — `SyncLinkExecutor.request`, `hasPending` | event cursor, `requestPass`, `_requestedPasses` |
-| Distinct caller-specific operation serialized by the active replication session | **executor call** — `SyncLinkExecutor.enqueue`, `SyncLinkRecoveryCoordinator.execute` | work mark, shared operation |
-| Whether ordinary executor work may run for the current replication generation; wakes are retained while ineligible and calls fail fast | **executor eligibility** — `isReady`, `markReady`, `SyncLinkRecoveryCoordinator.resume`, surfaced as `isReplicationReady` / `markReplicationReady` | readiness promise, replication readiness barrier, parked administrative call |
+| Distinct caller-specific operation serialized by the active replication session | **executor call** — `SyncLinkExecutor.enqueue`, `executeLinkCall` | work mark, shared operation |
+| Whether ordinary executor work may run for the current replication generation; wakes are retained while ineligible and calls fail fast | **executor eligibility** — `isReady`, `markReady`, `resumeLinkExecutor`, surfaced as `isReplicationReady` / `markReplicationReady` | readiness promise, replication readiness barrier, parked administrative call |
 | Cursorless remote subscription whose complete events are normally admitted directly | **live pull subscription** — `openLivePullSubscription`, `LivePullContext` | a second live-pull processor or checkpoint owner |
-| A remote subscription event received before baseline, during recovery, or without complete admission metadata | **durable pull wake** — `executor.request('pull')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | the normal complete-event path |
+| A remote subscription event received before baseline, across a reconnect gap, or without complete admission metadata | **durable pull wake** — `requestLinkDirection(controller, 'pull')` when eligible | the normal complete-event path |
 | Whether the active replication session has established its pull baseline and all accepted remote pull work is settled | **pull currentness** — `isPullCurrent`, `markPullPending`, `markPullCurrent`, `pull:currentness-change` | transport connectivity, feed convergence, link status, or checkpoint progress |
-| A local subscription event or transport-reconnected notification that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `executor.request('push')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | per-event push job, delivery acknowledgement, or checkpoint evidence |
+| A local subscription event or transport-reconnected notification that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `requestLinkDirection(controller, 'push')` when eligible | per-event push job, delivery acknowledgement, or checkpoint evidence |
 | Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | transport acknowledgement or an unprocessed subscription cursor |
 | Namespace in which progress-token positions can be compared | **token domain** — exact `(streamId, epoch)` pair | stream alone, epoch alone, or a globally ordered position |
 | Folding a push result into quota state | **push result outcome** — `applyPushResult`, `SyncQuotaPushResultOutcome` | `transitionPushResult`, push transition |
@@ -108,7 +109,7 @@ downward (`shouldContinue` — `true` means *proceed*).
 |---|---|
 | One exact runtime key | `SyncRuntime.cancelTimer` |
 | A runtime key family selected by predicate | `SyncRuntime.cancelTimers` |
-| Reconciliation and repair scheduling for one `linkKey` | `SyncLinkRecoveryCoordinator.cancelScheduledWork` |
+| Pull/push and subscription-reopen scheduling for one active `linkKey` | `SyncEngineLevel.clearLinkScheduledWork` |
 | Active-session scheduling plus pre-session initialization retries for one identity | `SyncEngineLevel.cancelIdentityTimers` |
 | Every timer owned by one runtime | `SyncRuntime.dispose` |
 
@@ -122,7 +123,7 @@ One verb per kind of ending, because these had four overlapping spellings:
 | `deactivate` | An active owner's callback eligibility before resource disposal | `SyncLinkController.beginDeactivation`, `SyncLinkController.deactivate` |
 | `close` | One external resource | `closeLiveSubscription`, `SyncEngineLevel.close` |
 | `stop` | A restartable activity | `stopSync`, `stopLiveSync` |
-| `cancel*` | Runtime-owned scheduling at a named scope | `cancelTimer`, `cancelScheduledWork`, `cancelIdentityTimers` |
+| `cancel*` / `clear*ScheduledWork` | Runtime-owned scheduling at a named scope | `cancelTimer`, `clearLinkScheduledWork`, `cancelIdentityTimers` |
 | `clear` | Durable storage, wiped | `clear()`, `clearSyncDb` |
 | `remove` / `delete` | One entry in a registry or store | `removeLinkController` |
 | `prune` | A supersession sweep | `pruneStaleLinkBlocks` |
@@ -141,7 +142,7 @@ would make one signal stand in for proof it does not carry.
 | Quota | `SyncQuotaManager` owns durable per-link blocks, backoff, direct probes, and resolved-omission evidence; the engine owns lifecycle fencing and effects | General push retry, dead letters, or feed checkpoints |
 | Pending pulls | Durable signed entry, source position, inline bytes, and typed incomplete outcome; retried after page intake without blocking unrelated roots | Push failures, age-based dead letters, or a second pull checkpoint |
 | Echo suppression | Short-lived `(tenant, CID, endpoint)` transfer hints | Durable progress; a cache hit never advances a checkpoint by itself |
-| Feed convergence | Verified inventory/fingerprint mismatch policy after reconciliation | Socket health or routine feed transfer |
+| Feed convergence | Deduplicating a distinct verified inventory mismatch into one checkpoint reset and ordinary pull/push rescan | Socket health, a retry loop, a durable pause, or routine feed transfer |
 | Pull currentness | Ephemeral per-replication-session evidence that no accepted remote-feed wake remains uncovered | Durable checkpoint state, socket health, or equality of complete feed inventories |
 | Lifecycle coordination | Transition serialization, exclusive sync ownership, task intake, and waiting for supervised work | Timers and liveness, which belong to the current runtime |
 | Sync events | Metrics/UI-facing observations emitted by the engine | Transport subscription delivery or replication control flow |

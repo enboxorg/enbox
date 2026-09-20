@@ -317,9 +317,9 @@ export class SyncDurableFeedReconciler {
     if (link.status === 'paused') {
       // Parked: nothing is reconciled and no fingerprints are compared, so
       // convergence is UNKNOWN — report it as such rather than inheriting
-      // the optimistic seed. Claiming `converged: true` here let a
-      // post-repair verification emit `reconcile:completed` for a link it
-      // never checked. Built without options so no `converged` key exists.
+      // the optimistic seed. Claiming `converged: true` here would make an
+      // unverified paused link appear healthy. Built without options so no
+      // `converged` key exists.
       return { ...SyncDurableFeedReconciler.initialResult(), paused: true };
     }
 

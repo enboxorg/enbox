@@ -131,7 +131,6 @@ function createFixture({
   quotaManager.getActiveBlocksForTarget.resolves([]);
   const connectivityManager = sinon.createStubInstance(SyncConnectivityManager);
   const feedConvergenceManager = sinon.createStubInstance(SyncFeedConvergenceManager);
-  feedConvergenceManager.clear.resolves();
   feedConvergenceManager.handleVerifiedDivergence.resolves(false);
   const operations = {
     buildTargetsForEndpoint: sinon.stub().callsFake(
@@ -270,7 +269,7 @@ describe('SyncDrainCoordinator', () => {
       remoteFingerprint : 'stable-fingerprint',
     };
     const link = replicationLink();
-    const { connectivityManager, coordinator, feedConvergenceManager, operations } = createFixture({
+    const { connectivityManager, coordinator, operations } = createFixture({
       link,
       reconcileResult,
     });
@@ -293,7 +292,6 @@ describe('SyncDrainCoordinator', () => {
       verifyConvergence : true,
     });
     expect(operations.verifyConvergence.calledOnce).toBe(true);
-    expect(feedConvergenceManager.clear.calledOnce).toBe(true);
     expect(connectivityManager.recordSuccess.calledOnce).toBe(true);
   });
 
@@ -367,7 +365,6 @@ describe('SyncDrainCoordinator', () => {
     });
     expect(operations.verifyConvergence.notCalled).toBe(true);
     expect(feedConvergenceManager.handleVerifiedDivergence.notCalled).toBe(true);
-    expect(feedConvergenceManager.clear.notCalled).toBe(true);
     // An interrupted drain says nothing about reachability: it must record
     // neither a connectivity failure nor a success.
     expect(connectivityManager.recordFailure.notCalled).toBe(true);

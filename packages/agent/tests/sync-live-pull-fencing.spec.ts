@@ -26,7 +26,7 @@ type EngineFixture = {
   handlers: Array<(message: unknown) => Promise<void>>;
   processRequest: SinonStub;
   resume: SinonStub;
-  repairing: SinonStub;
+  handleFailure: SinonStub;
   sendDwnRequest: SinonStub;
   target: Record<string, unknown>;
 };
@@ -56,8 +56,8 @@ function createEngineFixture(db: Level<string, string>): EngineFixture {
     return { status: { code: 200 }, subscription: { close: sinon.stub().resolves() } };
   });
   (engine as any)._agent = { dwn: { processRequest }, rpc: { sendDwnRequest } };
-  const resume = sinon.stub((engine as any)._linkRecoveryCoordinator, 'resume').resolves();
-  const repairing = sinon.stub((engine as any)._linkRecoveryCoordinator, 'transitionToRepairing').resolves();
+  const resume = sinon.stub(engine as any, 'resumeLinkExecutor').resolves();
+  const handleFailure = sinon.stub(engine as any, 'handleLinkSubscriptionFailure').resolves();
   const target = {
     authorization      : { kind: 'owner' as const },
     authorizationEpoch : 'owner-epoch',
@@ -67,7 +67,7 @@ function createEngineFixture(db: Level<string, string>): EngineFixture {
     projectionId       : 'projection-id',
     scope              : { kind: 'full' as const },
   };
-  return { controller, engine, handlers, processRequest, repairing, resume, sendDwnRequest, target };
+  return { controller, engine, handleFailure, handlers, processRequest, resume, sendDwnRequest, target };
 }
 
 function openSubscription(fixture: EngineFixture): Promise<boolean> {
@@ -97,7 +97,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     expect(await openSubscription(fixture)).toBe(true);
     const staleHandler = fixture.handlers[0];
 
-    // A repair resets the replication generation and reopens the subscription.
+    // A full-lifetime replacement resets the replication generation and reopens the subscription.
     controller.resetReplicationGeneration();
     await controller.closeLiveSubscription();
     expect(await openSubscription(fixture)).toBe(true);
@@ -116,7 +116,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     };
 
     await staleHandler(event);
-    expect(fixture.repairing.notCalled).toBe(true);
+    expect(fixture.handleFailure.notCalled).toBe(true);
     expect(fixture.resume.notCalled).toBe(true);
 
     // The replacement subscription's callbacks flow normally.
@@ -141,7 +141,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
 
     const opening = openSubscription(fixture);
     await requestStarted.promise;
-    // A repair or pause resets the replication generation while the subscribe RPC is
+    // A replacement or pause resets the replication generation while the subscribe RPC is
     // pending: the eventual subscription belongs to a superseded replication generation
     // and must be closed, not installed as a permanently fenced slot that
     // blocks the replacement.
@@ -172,7 +172,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await subscribeStarted.promise;
     // A terminal authorization failure pauses the link while the local
     // subscribe is pending — the fail-safe must win over the installer.
-    await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
+    await (engine as any).transitionToPaused(LINK_KEY, controller.link);
     releaseSubscribe.resolve();
 
     expect(await opening).toBe(false);
@@ -205,7 +205,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     const markingLive = (engine as any).markLinkLive(fixture.target, controller, openingGeneration);
     await livePersistenceStarted.promise;
 
-    await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
+    await (engine as any).transitionToPaused(LINK_KEY, controller.link);
     controller.executor.request('pull');
     releaseLivePersistence.resolve();
     await markingLive;
@@ -247,7 +247,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     const { controller, engine } = fixture;
     const replacementClose = sinon.stub().resolves();
     sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<boolean> => {
-      // A repair supersedes the attempt and its replacement replication generation
+      // A replacement supersedes the attempt and its new replication generation
       // attaches a fresh pair before the old attempt resumes.
       controller.resetReplicationGeneration();
       controller.setLiveSubscription({ close: replacementClose });
@@ -298,7 +298,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<boolean> => {
       // A terminal callback queued at attachment pauses the link before the
       // caller resumes — the pause bumps the replication generation and closes the pair.
-      await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
+      await (engine as any).transitionToPaused(LINK_KEY, controller.link);
       return true;
     });
     const localOpen = sinon.spy(engine as any, 'openLocalPushSubscription');
@@ -324,7 +324,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     });
 
     expect(await (engine as any).openLocalPushSubscription(fixture.target, controller)).toBe(true);
-    // A repair resets the replication generation and reopens the local subscription.
+    // A full-lifetime replacement resets the replication generation and reopens the local subscription.
     controller.resetReplicationGeneration();
     await controller.closeLocalSubscription();
     expect(await (engine as any).openLocalPushSubscription(fixture.target, controller)).toBe(true);
@@ -359,7 +359,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
 
     const opening = (engine as any).openLocalPushSubscription(fixture.target, controller);
     await subscribeStarted.promise;
-    const pausing = (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
+    const pausing = (engine as any).transitionToPaused(LINK_KEY, controller.link);
     // The pause is blocked awaiting the pull subscription's close when the
     // pending local subscribe resolves: the attach must be refused by the
     // pause's already-published replication generation, not slip into the slot
@@ -388,7 +388,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     (engine as any)._linkControllers.delete(LINK_KEY);
     sinon.stub(engine as any, 'openLinkSubscriptions').callsFake(async (): Promise<string> => {
       // A terminal callback pauses the link while the pair is opening.
-      await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
+      await (engine as any).transitionToPaused(LINK_KEY, controller.link);
       return 'inactive';
     });
 
@@ -513,14 +513,14 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     expect(admitRemoteFeedPage.notCalled).toBe(true);
     expect(commitPullPage.notCalled).toBe(true);
     expect(fixture.resume.notCalled).toBe(true);
-    expect(fixture.repairing.notCalled).toBe(true);
+    expect(fixture.handleFailure.notCalled).toBe(true);
     expect(controller.isPullCurrent).toBe(true);
     expect(transitions).toEqual([]);
     unsubscribe();
     await controller.dispose();
   });
 
-  it('should retain and acknowledge a deferred live event without repairing the link', async () => {
+  it('should retain and acknowledge a deferred live event without closing the subscription', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
     expect(await openSubscription(fixture)).toBe(true);
@@ -569,7 +569,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
 
     expect(commitPullPage.calledOnce).toBe(true);
     expect(controller.link.pull.contiguousAppliedToken).toEqual(cursor);
-    expect(fixture.repairing.notCalled).toBe(true);
+    expect(fixture.handleFailure.notCalled).toBe(true);
     expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.isPullCurrent).toBe(false);
     await controller.dispose();
@@ -600,15 +600,15 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     expect((handledError as Error).message).toContain('durable pull did not settle socket event');
     expect(controller.link.pull.contiguousAppliedToken).toEqual(tokenIn('event-stream', 'event-epoch', '9'));
     expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
-    expect(fixture.repairing.calledOnceWithExactly(controller)).toBe(true);
+    expect(fixture.handleFailure.calledOnceWithExactly(controller, 'pull')).toBe(true);
     await controller.dispose();
   });
 
   it('should leave a failed socket event and its queued successor uncommitted', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
-    fixture.repairing.callsFake(async (activeController: SyncLinkController): Promise<void> => {
-      activeController.resetReplicationGeneration();
+    fixture.handleFailure.callsFake(async (activeController: SyncLinkController): Promise<void> => {
+      await activeController.closeLiveSubscription();
     });
     expect(await openSubscription(fixture)).toBe(true);
     controller.markReplicationReady();
@@ -670,7 +670,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await successor;
     expect(controller.link.pull.contiguousAppliedToken).toBeUndefined();
     expect((engine as any).admitRemoteFeedPage.calledOnce).toBe(true);
-    expect(fixture.repairing.calledOnceWithExactly(controller)).toBe(true);
+    expect(fixture.handleFailure.calledOnceWithExactly(controller, 'pull')).toBe(true);
     expect(controller.isPullCurrent).toBe(false);
     await controller.dispose();
   });
@@ -915,7 +915,7 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     expect(await openSubscription(fixture)).toBe(true);
     const staleHandler = fixture.handlers[0];
 
-    // A repair resets the replication generation and reopens the subscription.
+    // A full-lifetime replacement resets the replication generation and reopens the subscription.
     controller.resetReplicationGeneration();
     await controller.closeLiveSubscription();
     expect(await openSubscription(fixture)).toBe(true);
@@ -954,11 +954,11 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     });
 
     expect(fixture.controller.link.status).toBe('paused');
-    expect(fixture.repairing.notCalled).toBe(true);
+    expect(fixture.handleFailure.notCalled).toBe(true);
     await fixture.controller.dispose();
   });
 
-  it('should repair retryable subscription failures', async () => {
+  it('should handle retryable subscription failures directionally', async () => {
     const fixture = createEngineFixture(db);
     expect(await openSubscription(fixture)).toBe(true);
     await fixture.handlers[0]({
@@ -966,7 +966,7 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
       error : { code: 'SubscriptionRecoveryFailed' },
     });
 
-    expect(fixture.repairing.calledOnceWithExactly(fixture.controller)).toBe(true);
+    expect(fixture.handleFailure.calledOnceWithExactly(fixture.controller, 'pull')).toBe(true);
     await fixture.controller.dispose();
   });
 

@@ -8,7 +8,6 @@ import type {
   ReplicationLinkState,
   SyncAuthorization,
   SyncDirection,
-  SyncLinkRecoveryState,
   SyncScope,
 } from './types/sync.js';
 
@@ -54,8 +53,6 @@ export class SyncReplicationLinkStoreLevel {
   private readonly _links: AbstractSublevel<AbstractLevel<LevelKey>, LevelKey, string, string>;
   private readonly _lockNamespace: string;
   private readonly _pendingPullStore: SyncPendingPullStoreLevel;
-  /** Loaded link objects whose durable repair ended before recording a failure. */
-  private _interruptedRepairs = new WeakSet<ReplicationLinkState>();
   private readonly _pendingLinkOperations = new Map<string, Promise<void>>();
 
   constructor(db: AbstractLevel<LevelKey>, lockNamespace = 'default') {
@@ -69,7 +66,6 @@ export class SyncReplicationLinkStoreLevel {
   public async clear(): Promise<void> {
     await this.waitForPendingLinkOperations();
     await Promise.all([this._links.clear(), this._pendingPullStore.clear()]);
-    this._interruptedRepairs = new WeakSet<ReplicationLinkState>();
   }
 
   public async deleteLink(
@@ -85,11 +81,11 @@ export class SyncReplicationLinkStoreLevel {
   }
 
   public async getAllLinks(): Promise<ReplicationLinkState[]> {
-    const links: ReplicationLinkState[] = [];
-    for await (const [, value] of this._links.iterator()) {
-      links.push(JSON.parse(value) as ReplicationLinkState);
+    const keys: string[] = [];
+    for await (const [key] of this._links.iterator()) {
+      keys.push(key);
     }
-    return links;
+    return this.loadEnumeratedLinks(keys);
   }
 
   /** Load and resume an existing link without creating a missing durable record. */
@@ -125,13 +121,8 @@ export class SyncReplicationLinkStoreLevel {
     return this.runForLink(key, async (): Promise<ReplicationLinkState | undefined> => {
       const existing = await this.getLink(key);
       if (existing !== undefined) {
-        const interruptedRepair = existing.status === 'repairing' && existing.recovery === undefined;
         let changed = false;
-        if (existing.pull.version !== 2) {
-          SyncCheckpoint.reset(existing.pull);
-          existing.pull.version = 2;
-          changed = true;
-        }
+        changed ||= SyncReplicationLinkStoreLevel.migratePullCheckpoint(existing);
         const persistedConnectivity = existing.connectivity;
         const persistedStatus = existing.status;
         if (params.authorization.kind === 'role' && existing.delegateDid !== params.delegateDid) {
@@ -145,9 +136,6 @@ export class SyncReplicationLinkStoreLevel {
             ? existing
             : { ...existing, connectivity: persistedConnectivity, status: persistedStatus };
           await this._links.put(key, JSON.stringify(durable));
-        }
-        if (interruptedRepair) {
-          this._interruptedRepairs.add(existing);
         }
         return existing;
       }
@@ -176,13 +164,13 @@ export class SyncReplicationLinkStoreLevel {
 
   public async getLinksForTenant(tenantDid: string): Promise<ReplicationLinkState[]> {
     const prefix = `${tenantDid}${KEY_SEP}`;
-    const links: ReplicationLinkState[] = [];
-    for await (const [key, value] of this._links.iterator()) {
+    const keys: string[] = [];
+    for await (const [key] of this._links.iterator()) {
       if (key.startsWith(prefix)) {
-        links.push(JSON.parse(value) as ReplicationLinkState);
+        keys.push(key);
       }
     }
-    return links;
+    return this.loadEnumeratedLinks(keys);
   }
 
   /** Atomically retain unresolved roots and advance the pull handled-through token. */
@@ -392,73 +380,6 @@ export class SyncReplicationLinkStoreLevel {
     });
   }
 
-  /** Persist or clear the latest recovery diagnostic without claiming successful sync activity. */
-  public async setRecovery(
-    link: ReplicationLinkState,
-    recovery: SyncLinkRecoveryState | undefined,
-  ): Promise<void> {
-    SyncReplicationLinkStoreLevel.assignRecovery(link, recovery);
-    await this.updateLink(link, (persistedLink): void => {
-      SyncReplicationLinkStoreLevel.assignRecovery(persistedLink, recovery);
-    }, false);
-  }
-
-  /** Whether this loaded link represents a repair interrupted before its first diagnostic. */
-  public isInterruptedRepair(link: ReplicationLinkState): boolean {
-    return this._interruptedRepairs.has(link);
-  }
-
-  /**
-   * Commit successful controller-less recovery only while its captured
-   * failure, or an interrupted repair without one, still owns the link.
-   * Legacy pauses/repairs become initializing; an already completed live
-   * baseline remains live.
-   */
-  public async completeRecovery(
-    link: ReplicationLinkState,
-    expectedRecovery?: SyncLinkRecoveryState,
-  ): Promise<boolean> {
-    const expectedInterruptedRepair = expectedRecovery === undefined && this._interruptedRepairs.has(link);
-    if (expectedRecovery === undefined && !expectedInterruptedRepair) {
-      return false;
-    }
-    const key = SyncReplicationLinkStoreLevel.buildKeyForLink(link);
-    const completedStatus = await this.runForLink(key, async (): Promise<LinkStatus | undefined> => {
-      const persistedLink = await this.getLink(key);
-      if (persistedLink === undefined) {
-        return undefined;
-      }
-      const interruptedRepair = expectedInterruptedRepair &&
-        persistedLink.status === 'repairing' &&
-        persistedLink.recovery === undefined;
-      const diagnosedRecovery = expectedRecovery !== undefined &&
-        SyncReplicationLinkStoreLevel.sameRecovery(persistedLink.recovery, expectedRecovery) &&
-        isRetryableSyncRecovery(persistedLink.recovery);
-      if (!interruptedRepair && !diagnosedRecovery) {
-        return undefined;
-      }
-
-      const status = persistedLink.status === 'paused' || persistedLink.status === 'repairing'
-        ? 'initializing'
-        : persistedLink.status;
-      SyncReplicationLinkStoreLevel.assignStatus(persistedLink, status);
-      persistedLink.connectivity = link.connectivity;
-      SyncReplicationLinkStoreLevel.assignRecovery(persistedLink, undefined);
-      await this._links.put(key, JSON.stringify(persistedLink));
-      return status;
-    });
-    if (expectedInterruptedRepair) {
-      this._interruptedRepairs.delete(link);
-    }
-
-    if (completedStatus === undefined) {
-      return false;
-    }
-    SyncReplicationLinkStoreLevel.assignStatus(link, completedStatus);
-    SyncReplicationLinkStoreLevel.assignRecovery(link, undefined);
-    return true;
-  }
-
   private static buildKey(
     tenantDid: string,
     remoteEndpoint: string,
@@ -480,74 +401,69 @@ export class SyncReplicationLinkStoreLevel {
   }
 
   /**
-   * Runtime state does not survive sessions; durable decisions do. A prior
-   * session's connectivity must not make a freshly loaded link appear online
-   * before transport setup succeeds. A persisted 'repairing' normally means
-   * a repair was interrupted, so fresh initialization subsumes it; a terminal
-   * authorization diagnostic already proves that the link must stay paused.
-   * Older versions also converted exhausted transient repairs into pauses;
-   * their retryable diagnostic distinguishes those rows from deliberate and
-   * authorization pauses. Current pause transitions clear a stale retryable
-   * diagnostic when they supersede it. Transient normalization changes only
-   * this caller's runtime view; successful initialization or controller-less
-   * reconciliation later commits the resulting durable state.
+   * Runtime connectivity and retry state do not survive sessions. Migrate
+   * legacy repairing rows and transient pauses back to ordinary initialization;
+   * deliberate authorization pauses remain paused.
    *
-   * @returns Whether a terminal authorization decision must be persisted.
+   * @returns Whether the normalized legacy decision must be persisted.
    */
   private static normalizeResumedLink(existing: ReplicationLinkState): boolean {
     existing.connectivity = 'unknown';
-    if (existing.status === 'repairing') {
-      if (existing.recovery !== undefined && !isRetryableSyncRecovery(existing.recovery)) {
-        SyncReplicationLinkStoreLevel.assignStatus(existing, 'paused');
-        return true;
-      } else {
-        existing.status = 'initializing';
-      }
-    } else if (existing.status === 'paused' && isRetryableSyncRecovery(existing.recovery)) {
-      existing.status = 'initializing';
-    }
-    return false;
+    return SyncReplicationLinkStoreLevel.normalizeLegacyLink(existing);
   }
 
-  private static sameRecovery(
-    recovery: SyncLinkRecoveryState | undefined,
-    expected: SyncLinkRecoveryState,
-  ): boolean {
-    return recovery?.error === expected.error &&
-      recovery.failedAt === expected.failedAt &&
-      recovery.nextRetryAt === expected.nextRetryAt;
+  /** Remove retired runtime state from a durable row read through enumeration. */
+  private static normalizeLegacyLink(existing: ReplicationLinkState): boolean {
+    const legacy = existing as Omit<ReplicationLinkState, 'status'> & {
+      recovery?: { error: string; failedAt: string; nextRetryAt?: string };
+      status: LinkStatus | 'repairing';
+    };
+    let changed = legacy.recovery !== undefined;
+    if (legacy.status === 'repairing') {
+      legacy.status = legacy.recovery !== undefined && !isRetryableSyncRecovery(legacy.recovery)
+        ? 'paused'
+        : 'initializing';
+      changed = true;
+    } else if (legacy.status === 'paused' && isRetryableSyncRecovery(legacy.recovery)) {
+      existing.status = 'initializing';
+      changed = true;
+    }
+    delete legacy.recovery;
+    return changed;
+  }
+
+  private static migratePullCheckpoint(existing: ReplicationLinkState): boolean {
+    if (existing.pull.version === 2) {
+      return false;
+    }
+    SyncCheckpoint.reset(existing.pull);
+    existing.pull.version = 2;
+    return true;
+  }
+
+  private async loadEnumeratedLinks(keys: string[]): Promise<ReplicationLinkState[]> {
+    const links = await Promise.all(keys.map((key): Promise<ReplicationLinkState | undefined> =>
+      this.runForLink(key, async (): Promise<ReplicationLinkState | undefined> => {
+        const link = await this.getLink(key);
+        if (link !== undefined) {
+          const checkpointChanged = SyncReplicationLinkStoreLevel.migratePullCheckpoint(link);
+          const runtimeStateChanged = SyncReplicationLinkStoreLevel.normalizeLegacyLink(link);
+          if (checkpointChanged || runtimeStateChanged) {
+            await this._links.put(key, JSON.stringify(link));
+          }
+        }
+        return link;
+      })
+    ));
+    return links.filter((link): link is ReplicationLinkState => link !== undefined);
   }
 
   private static cloneCheckpoint(checkpoint: DirectionCheckpoint): DirectionCheckpoint {
     return structuredClone(checkpoint);
   }
 
-  private static assignRecovery(
-    link: ReplicationLinkState,
-    recovery: SyncLinkRecoveryState | undefined,
-  ): void {
-    if (recovery === undefined) {
-      delete link.recovery;
-    } else {
-      const assigned = { ...recovery };
-      if (link.status === 'paused') {
-        delete assigned.nextRetryAt;
-      }
-      link.recovery = assigned;
-    }
-  }
-
   private static assignStatus(link: ReplicationLinkState, status: LinkStatus): void {
     link.status = status;
-    if (status === 'live') {
-      delete link.recovery;
-    } else if (status === 'paused') {
-      if (isRetryableSyncRecovery(link.recovery)) {
-        delete link.recovery;
-      } else {
-        SyncReplicationLinkStoreLevel.assignRecovery(link, link.recovery);
-      }
-    }
   }
 
   /**
