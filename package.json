@@ -21,7 +21,6 @@
     "packages/dwn-server-admin-ui",
     "packages/local-node",
     "packages/electrobun-dwn",
-    "packages/lab",
     "apps/docs"
   ],
   "scripts": {
