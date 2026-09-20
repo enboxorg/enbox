@@ -398,9 +398,12 @@ describe('AgentIdentityApi', () => {
             didDocumentMetadata   : {},
             didResolutionMetadata : {},
           });
-          const publishSpy = sinon.stub(DidDht, 'publish').resolves({
+          const publishSpy = sinon.stub(testHarness.agent.did, 'publish').resolves({
             didDocumentMetadata: { published: true },
           } as any);
+          const defaultPublish = sinon.stub(DidDht, 'publish').rejects(
+            new Error('default publisher must not be used')
+          );
           // Announcement is best-effort and must not fail the authoritative DID update.
           processRequestStub.onSecondCall().resolves({
             reply: { status: { code: 500, detail: 'Unavailable' } },
@@ -427,6 +430,7 @@ describe('AgentIdentityApi', () => {
             type            : 'DecentralizedWebNode',
             serviceEndpoint : newEndpoints,
           }]);
+          expect(defaultPublish.notCalled).toBe(true);
           expect(processRequestStub.getCalls().map(call => call.args[0].messageType)).toEqual([
             DwnInterface.ProtocolsConfigure,
             DwnInterface.RecordsWrite,

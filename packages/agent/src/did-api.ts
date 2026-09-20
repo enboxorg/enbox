@@ -4,6 +4,7 @@ import type {
   DidJwkCreateOptions,
   DidMetadata,
   DidMethodApi,
+  DidRegistrationResult,
   DidResolutionOptions,
   DidResolutionResult,
   DidResolverCache,
@@ -12,7 +13,7 @@ import type {
   PortableDid,
 } from '@enbox/dids';
 
-import { BearerDid, Did, DidDht, DidResolverCacheMemory, UniversalResolver } from '@enbox/dids';
+import { BearerDid, Did, DidResolverCacheMemory, UniversalResolver } from '@enbox/dids';
 
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
@@ -20,6 +21,14 @@ import type { EnboxPlatformAgent, ResponseStatus } from './types/agent.js';
 
 import { canonicalize } from '@enbox/crypto';
 import { InMemoryDidStore } from './store-did.js';
+
+type PublishableDidMethod = DidMethodApi & {
+  publish(params: { did: BearerDid }): Promise<DidRegistrationResult>;
+};
+
+function isPublishableDidMethod(didMethod: DidMethodApi): didMethod is PublishableDidMethod {
+  return 'publish' in didMethod && typeof didMethod.publish === 'function';
+}
 
 export enum DidInterface {
   Create = 'Create',
@@ -301,6 +310,19 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     // TODO: Add support for deleting the keys no longer present in the document.
     const bearerDid = await BearerDid.import({ keyManager: this.agent.keyManager, portableDid });
 
+    if (publish) {
+      const parsedDid = Did.parse(bearerDid.uri);
+      // currently only supporting DHT as a publishable method.
+      // TODO: abstract this into the didMethod class so that other publishable methods can be supported.
+      if (parsedDid?.method === 'dht') {
+        const result = await this.publish({ did: bearerDid });
+        if (result.didDocumentMetadata.published === false) {
+          throw new Error(`AgentDidApi: Failed to publish updated DID '${bearerDid.uri}'.`);
+        }
+        bearerDid.metadata = result.didDocumentMetadata;
+      }
+    }
+
     // Only the DID URI, document, and metadata are stored in the Agent's DID store.
     const { uri, document, metadata } = bearerDid;
     const portableDidWithoutKeys: PortableDid = { uri, document, metadata };
@@ -317,16 +339,22 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
       useCache       : true
     });
 
-    if (publish) {
-      const parsedDid = Did.parse(uri);
-      // currently only supporting DHT as a publishable method.
-      // TODO: abstract this into the didMethod class so that other publishable methods can be supported.
-      if (parsedDid?.method === 'dht') {
-        await DidDht.publish({ did: bearerDid });
-      }
+    return bearerDid;
+  }
+
+  /** Publishes a DID through the method instance configured for this agent. */
+  public publish({ did }: { did: BearerDid }): Promise<DidRegistrationResult> {
+    const parsedDid = Did.parse(did.uri);
+    if (parsedDid === null) {
+      throw new Error(`AgentDidApi: Invalid DID URI: ${did.uri}`);
     }
 
-    return bearerDid;
+    const didMethod = this.getMethod(parsedDid.method);
+    if (!isPublishableDidMethod(didMethod)) {
+      throw new Error(`AgentDidApi: DID method does not support publication: ${parsedDid.method}`);
+    }
+
+    return didMethod.publish({ did });
   }
 
   public async import({ portableDid, tenant }: {

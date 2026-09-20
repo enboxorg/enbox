@@ -664,6 +664,23 @@ describe('Enbox.anonymous()', () => {
     expect(anonApi.dwn).toBeDefined();
   });
 
+  it('should accept a DID DHT network configuration', () => {
+    const anonApi = Enbox.anonymous({
+      didDhtNetwork: {
+        gatewayUri             : 'http://127.0.0.1:7527',
+        allowPrivateGatewayUri : true,
+      },
+    });
+    expect(anonApi.dwn).toBeDefined();
+  });
+
+  it('should reject a DID DHT network configuration with custom resolvers', () => {
+    expect(() => Enbox.anonymous({
+      didDhtNetwork : { gatewayUri: 'http://127.0.0.1:7527', allowPrivateGatewayUri: true },
+      didResolvers  : [],
+    })).toThrow('didDhtNetwork cannot be combined with didResolvers');
+  });
+
   it('should create separate instances on each call', () => {
     const a = Enbox.anonymous();
     const b = Enbox.anonymous();

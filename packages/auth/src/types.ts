@@ -3,9 +3,9 @@
  * Public types for the authentication and identity management SDK.
  */
 
-import type { PortableDid } from '@enbox/dids';
 import type { AgentSessionIdentity, ConnectionStatus, DwnProtocolDefinition, EnboxUserAgent, GetConnectionStatusOptions, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
 import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/connect';
+import type { DidDhtNetworkConfig, PortableDid } from '@enbox/dids';
 
 import type { PasswordProvider } from './password-provider.js';
 
@@ -302,6 +302,13 @@ export interface AuthManagerOptions {
    * Ignored when `agent` is provided.
    */
   agentVault?: HdIdentityVault;
+
+  /**
+   * Gateway configuration applied to every DID DHT operation of the default agent.
+   * Private gateways require an explicit `allowPrivateGatewayUri: true` opt-in.
+   * Cannot be combined with a pre-built `agent`; configure that agent directly.
+   */
+  didDhtNetwork?: DidDhtNetworkConfig;
 
   /**
    * Controls local DWN discovery behavior for remote-target DWN sends/sync.

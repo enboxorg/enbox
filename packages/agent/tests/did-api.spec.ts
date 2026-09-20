@@ -571,7 +571,12 @@ describe('AgentDidApi', () => {
         });
 
         it('updates a DID DHT and publishes it by default', async () => {
-          const publishSpy = sinon.spy(DidDht, 'publish');
+          const publishSpy = sinon.stub(testHarness.agent.did, 'publish').resolves({
+            didDocumentMetadata: { published: true },
+          } as any);
+          const defaultPublish = sinon.stub(DidDht, 'publish').rejects(
+            new Error('default publisher must not be used')
+          );
 
           const did = await testHarness.agent.did.create({ method: 'dht', tenant: testHarness.agent.agentDid.uri });
           const portableDid = await did.export();
@@ -599,7 +604,33 @@ describe('AgentDidApi', () => {
           expect(updatedDid!.document).toEqual(updateDid.document);
 
           // Verify publish was called
-          expect(publishSpy.called).toBe(true);
+          expect(publishSpy.calledOnce).toBe(true);
+          expect(defaultPublish.notCalled).toBe(true);
+        });
+
+        it('does not cache or store an update when publication fails', async () => {
+          const did = await testHarness.agent.did.create({ method: 'dht', tenant: testHarness.agent.agentDid.uri });
+          const originalDocument = structuredClone(did.document);
+          const portableDid = await did.export();
+          portableDid.document = {
+            ...portableDid.document,
+            service: [{ id: 'service1', type: 'example', serviceEndpoint: 'https://example.com' }],
+          };
+          sinon.stub(testHarness.agent.did, 'publish').rejects(new Error('publication rejected'));
+
+          await expect(testHarness.agent.did.update({
+            portableDid,
+            tenant: testHarness.agent.agentDid.uri,
+          })).rejects.toThrow('publication rejected');
+
+          const storedDid = await testHarness.agent.did.get({
+            didUri : did.uri,
+            tenant : testHarness.agent.agentDid.uri,
+          });
+          expect(storedDid?.document).toEqual(originalDocument);
+
+          const resolution = await testHarness.agent.did.resolve(did.uri);
+          expect(resolution.didDocument).toEqual(originalDocument);
         });
 
         it('updates a DID DHT and does not publish it if publish is false', async () => {
