@@ -1,4 +1,4 @@
-import type { EventLogEntry, ProgressGapInfo } from '../types/subscriptions.js';
+import type { EventLogEntry, EventLogReadResult, ProgressGapInfo } from '../types/subscriptions.js';
 import type { Filter, KeyValues } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesFilter, MessagesQueryMessage, MessagesQueryReply, MessagesQueryReplyEntry } from '../types/messages-types.js';
@@ -59,6 +59,7 @@ export class MessagesQueryHandler implements MethodHandler {
       );
       const result = await replicationFeedReader.logRead(tenant, {
         cursor : message.descriptor.cursor,
+        head   : message.descriptor.head,
         filters,
         limit  : message.descriptor.limit,
       });
@@ -74,6 +75,7 @@ export class MessagesQueryHandler implements MethodHandler {
           this.deps,
         ),
         cursor  : result.cursor,
+        head    : MessagesQueryHandler.publicHead(result.head),
         drained : result.drained,
       };
       if (authorization.roleRecordId !== undefined) {
@@ -97,6 +99,15 @@ export class MessagesQueryHandler implements MethodHandler {
 
       return messageReplyFromError(e, 500);
     }
+  }
+
+  /** Omit the row CID so a filtered query reveals no unrelated message identity. */
+  private static publicHead(head: EventLogReadResult['head']): EventLogReadResult['head'] {
+    return {
+      epoch    : head.epoch,
+      position : head.position,
+      streamId : head.streamId,
+    };
   }
 
   private async authorizeMessagesQuery(

@@ -621,15 +621,20 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
 
   public async logRead(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
     const db = this.requireDb('logRead');
-    const { cursor, limit, filters } = options;
+    const { cursor, head: requestedHead, limit, filters } = options;
     if (filters !== undefined) {
       assertValidSubtreeFilters(filters);
     }
 
-    const head = await this.getHead(db, tenant);
-    if (cursor !== undefined) {
-      await this.validateCursor(tenant, cursor, head);
+    const currentHead = await this.getHead(db, tenant);
+    if (requestedHead !== undefined) {
+      await this.validateCursor(tenant, requestedHead, currentHead);
     }
+    if (cursor !== undefined) {
+      await this.validateCursor(tenant, cursor, currentHead);
+    }
+    const head = requestedHead === undefined ? currentHead : BigInt(requestedHead.position);
+    const headToken = requestedHead ?? await this.buildToken(tenant, head);
 
     const startPosition = cursor === undefined ? 0n : BigInt(cursor.position);
 
@@ -637,16 +642,16 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       // A caller without a cursor still gets the position-zero anchor so an
       // empty log yields a checkpointable token instead of forcing a rescan
       // on every pass.
-      return { events: [], cursor: cursor ?? await this.buildToken(tenant, 0n), drained: true };
+      return { events: [], cursor: cursor ?? headToken, drained: true, head: headToken };
     }
 
     const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
     if (maxResults <= 0) {
-      return { events: [], cursor, drained: startPosition >= head };
+      return { events: [], cursor, drained: startPosition >= head, head: headToken };
     }
 
     if (startPosition >= head) {
-      return { events: [], cursor, drained: true };
+      return { events: [], cursor, drained: true, head: headToken };
     }
 
     const rows = await this.selectLogRows(db, tenant, startPosition, head, filters, maxResults);
@@ -660,8 +665,9 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
 
     return {
       events,
-      cursor: await this.buildToken(tenant, cursorPosition, cursorMessageCid),
+      cursor : await this.buildToken(tenant, cursorPosition, cursorMessageCid),
       drained,
+      head   : headToken,
     };
   }
 

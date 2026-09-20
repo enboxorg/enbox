@@ -270,6 +270,7 @@ export type GenerateMessagesQueryInput = {
   permissionGrantIds?: string[];
   protocolRole?: string;
   cursor?: ProgressToken;
+  head?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
 };
@@ -906,6 +907,7 @@ export class TestDataGenerator {
       permissionGrantIds : input?.permissionGrantIds,
       protocolRole       : input?.protocolRole,
       cursor             : input?.cursor,
+      head               : input?.head,
       limit              : input?.limit,
       cidsOnly           : input?.cidsOnly,
       signer,

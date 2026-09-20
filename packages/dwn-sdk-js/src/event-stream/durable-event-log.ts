@@ -262,6 +262,7 @@ export class DurableEventLog implements EventLog {
       const result = await this.read(subscription.tenant, {
         cursor  : readCursor,
         filters : subscription.filters,
+        head    : frozenCursor,
         limit   : this.readLimit,
       });
       const pageState = await this.deliverCatchUpPage(subscription, result.events, readCursor, frozenPosition);
@@ -334,6 +335,7 @@ export class DurableEventLog implements EventLog {
   }
 
   private async drainOnce(subscription: DurableSubscription): Promise<void> {
+    let head: ProgressToken | undefined;
     for (;;) {
       if (subscription.closed) {
         return;
@@ -342,8 +344,10 @@ export class DurableEventLog implements EventLog {
       const result = await this.read(subscription.tenant, {
         cursor  : subscription.cursor,
         filters : subscription.filters,
+        head,
         limit   : this.readLimit,
       });
+      head ??= result.head;
 
       for (const entry of result.events) {
         const cursor = await this.deliverEntry(subscription, entry);

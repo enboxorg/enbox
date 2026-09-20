@@ -71,6 +71,7 @@ class ScriptedFeedStore implements DurableEventLogStore {
   public async logRead(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
     this.assertTenant(tenant);
     await this.validateCursor(options.cursor);
+    await this.validateCursor(options.head);
 
     if (this.throwGapOnNextRead) {
       this.throwGapOnNextRead = false;
@@ -79,9 +80,10 @@ class ScriptedFeedStore implements DurableEventLogStore {
 
     const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
     const cursorPosition = options.cursor === undefined ? 0n : BigInt(options.cursor.position);
-    const headPosition = this.getHeadPosition();
+    const headPosition = options.head === undefined ? this.getHeadPosition() : BigInt(options.head.position);
+    const head = options.head ?? await this.createToken(headPosition.toString());
     if (limit <= 0) {
-      return { events: [], cursor: options.cursor, drained: cursorPosition >= headPosition };
+      return { events: [], cursor: options.cursor, drained: cursorPosition >= headPosition, head };
     }
 
     if (this.wakeDuringNextRead !== undefined) {
@@ -92,15 +94,18 @@ class ScriptedFeedStore implements DurableEventLogStore {
     }
 
     const events = this.entries
-      .filter(entry => BigInt(ScriptedFeedStore.getPosition(entry)) > cursorPosition)
+      .filter((entry): boolean => {
+        const position = BigInt(ScriptedFeedStore.getPosition(entry));
+        return position > cursorPosition && position <= headPosition;
+      })
       .slice(0, limit);
     const lastEvent = events.at(-1);
     const resultCursor = lastEvent === undefined
       ? options.cursor
       : await this.createToken(ScriptedFeedStore.getPosition(lastEvent), lastEvent.messageCid);
-    const drained = BigInt(resultCursor?.position ?? options.cursor?.position ?? '0') >= this.getHeadPosition();
+    const drained = BigInt(resultCursor?.position ?? options.cursor?.position ?? '0') >= headPosition;
 
-    return { events, cursor: resultCursor, drained };
+    return { events, cursor: resultCursor, drained, head };
   }
 
   public async createToken(position: string, messageCid?: string): Promise<ProgressToken> {

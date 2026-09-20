@@ -211,6 +211,9 @@ export type EventLogReadOptions = {
   /** Maximum number of events to return. */
   limit? : number;
 
+  /** Previously captured inclusive head that bounds this read. */
+  head?: ProgressToken;
+
   /** Optional filters evaluated server-side. Events must match at least one filter (OR semantics). */
   filters?: Filter[];
 };
@@ -224,6 +227,9 @@ export type EventLogReadResult = {
 
   /** High-water progress token for resuming subsequent reads or subscriptions. */
   cursor? : ProgressToken;
+
+  /** Inclusive tenant head that bounded this read. */
+  head: ProgressToken;
 
   /** True when the scan reached the captured tenant head. */
   drained : boolean;

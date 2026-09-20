@@ -161,10 +161,19 @@ export class MessagesSubscribeHandler implements MethodHandler {
       ? undefined
       : await feedReader.fingerprint(tenant, fingerprintScopes);
 
-    reply.head = head;
+    reply.head = MessagesSubscribeHandler.publicHead(head);
     if (fingerprint !== undefined) {
       reply.fingerprint = fingerprint;
     }
+  }
+
+  /** Keep filtered subscription snapshots from exposing an unrelated row CID. */
+  private static publicHead(head: ProgressToken): ProgressToken {
+    return {
+      epoch    : head.epoch,
+      position : head.position,
+      streamId : head.streamId,
+    };
   }
 
   /** Builds the position-zero anchor token for a tenant log with no events. */

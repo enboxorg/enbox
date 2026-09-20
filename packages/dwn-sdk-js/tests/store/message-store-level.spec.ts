@@ -228,10 +228,21 @@ describe('MessageStoreLevel Test Suite', () => {
       const firstPage = await messageStore.logRead(alice.did, { limit: 2 });
       expect(firstPage.drained).toBe(false);
       expect(firstPage.cursor!.position).toBe('2');
+      expect(firstPage.head.position).toBe('3');
 
-      const secondPage = await messageStore.logRead(alice.did, { cursor: firstPage.cursor });
+      const later = await generateStoredMessage();
+      await messageStore.put(alice.did, later.message, later.indexes);
+
+      const secondPage = await messageStore.logRead(alice.did, {
+        cursor : firstPage.cursor,
+        head   : firstPage.head,
+      });
       expect(secondPage.drained).toBe(true);
       expect(secondPage.cursor!.position).toBe('3');
+      expect(secondPage.head).toEqual(firstPage.head);
+
+      const trailing = await messageStore.logRead(alice.did, { cursor: secondPage.cursor });
+      expect(trailing.events.map((entry) => entry.messageCid)).toEqual([later.messageCid]);
     });
 
     it('should return the position-zero anchor cursor for an empty log and resume from it', async () => {

@@ -53,6 +53,9 @@
         "cursor": {
           "$ref": "https://identity.foundation/dwn/json-schemas/progress-token.json"
         },
+        "head": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/progress-token.json"
+        },
         "limit": {
           "type": "integer",
           "minimum": 0

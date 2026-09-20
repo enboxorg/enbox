@@ -140,17 +140,35 @@ export function testMessagesQueryHandler(): void {
       expect(firstReply.entries!.every(entry => entry.message === undefined && entry.encodedData === undefined)).toBe(true);
       expect(firstReply.drained).toBe(false);
       expect(firstReply.cursor).toBeDefined();
+      expect(firstReply.head).toBeDefined();
+      expect(firstReply.head?.messageCid).toBeUndefined();
+
+      const laterRecord = await TestDataGenerator.generateRecordsWrite({ author: alice });
+      expect((await dwn.processMessage(alice.did, laterRecord.message, { dataStream: laterRecord.dataStream })).status.code).toBe(202);
 
       const secondQuery = await TestDataGenerator.generateMessagesQuery({
         author   : alice,
         filters  : [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
         cursor   : firstReply.cursor,
+        head     : firstReply.head,
         cidsOnly : true,
       });
       const secondReply = await dwn.processMessage(alice.did, secondQuery.message);
       expect(secondReply.status.code).toBe(200);
       expect(secondReply.entries!.map(entry => entry.messageCid)).toEqual(expectedCids.slice(2));
       expect(secondReply.drained).toBe(true);
+      expect(secondReply.head).toEqual(firstReply.head);
+
+      const trailingQuery = await TestDataGenerator.generateMessagesQuery({
+        author   : alice,
+        filters  : [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
+        cursor   : secondReply.cursor,
+        cidsOnly : true,
+      });
+      const trailingReply = await dwn.processMessage(alice.did, trailingQuery.message);
+      expect(trailingReply.entries!.map(entry => entry.messageCid)).toEqual([
+        await Message.getCid(laterRecord.message),
+      ]);
     });
 
     it.skipIf(!supportsReplicationFeed)('includes fingerprints only for canonical sync scopes', async () => {

@@ -386,7 +386,7 @@ export function testMessagesSubscribeHandler(): void {
           const messagesSubscribe = await MessagesSubscribe.create({ signer: Jws.createSigner(alice) });
           const reply = await dwn.processMessage(alice.did, messagesSubscribe.message, { subscriptionHandler: (_) => {} });
           expect(reply.status.code).toBe(200);
-          expect(reply.head).toEqual(queryReply.cursor!);
+          expect(reply.head).toEqual(queryReply.head!);
           expect(reply.fingerprint).toBe(queryReply.fingerprint!);
 
           await reply.subscription!.close();
@@ -415,7 +415,12 @@ export function testMessagesSubscribeHandler(): void {
           ]));
 
           const bounds = await feedReader.logBounds(alice.did);
-          expect(reply.head).toEqual(bounds!.latest);
+          expect(reply.head).toEqual({
+            epoch    : bounds!.latest.epoch,
+            position : bounds!.latest.position,
+            streamId : bounds!.latest.streamId,
+          });
+          expect(reply.head?.messageCid).toBeUndefined();
 
           await reply.subscription!.close();
         });

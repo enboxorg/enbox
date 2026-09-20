@@ -17,6 +17,7 @@ export type MessagesQueryOptions = {
   filters?: MessagesFilter[];
   permissionGrantIds?: string[];
   cursor?: ProgressToken;
+  head?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
   protocolRole?: string;
@@ -56,6 +57,7 @@ export class MessagesQuery extends AbstractMessage<MessagesQueryMessage> {
       filters          : options.filters ?? [],
       messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
       cursor           : options.cursor,
+      head             : options.head,
       limit            : options.limit,
       cidsOnly         : options.cidsOnly,
       ...permissionGrantInvocation,

@@ -52,6 +52,8 @@ export type MessagesQueryDescriptor = {
   filters: MessagesFilter[];
   permissionGrantIds?: string[];
   cursor?: ProgressToken;
+  /** Inclusive feed head captured by the first page of one covering operation. */
+  head?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
 };
@@ -74,6 +76,8 @@ export type MessagesQueryReplyEntry = {
 export type MessagesQueryReply = GenericMessageReply & {
   entries?: MessagesQueryReplyEntry[];
   cursor?: ProgressToken;
+  /** Inclusive feed head that bounded this page. Absent on older servers. */
+  head?: ProgressToken;
   drained?: boolean;
   fingerprint?: string;
   /** Active role assignment used to authorize this feed, when role-authorized. */

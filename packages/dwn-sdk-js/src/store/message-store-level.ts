@@ -952,7 +952,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
   async logRead(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
     const partitions = await this.partitions();
-    const { cursor, limit, filters } = options;
+    const { cursor, head: requestedHead, limit, filters } = options;
     if (filters !== undefined) {
       assertValidSubtreeFilters(filters);
     }
@@ -961,10 +961,15 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     // observed head H is a visibility barrier — every position <= H is already committed when the
     // range scans below run, and anything committed afterward has a position > H and waits for
     // the next page.
-    const head = await this.getHead(partitions, tenant);
-    if (cursor !== undefined) {
-      await this.validateCursor(partitions, tenant, cursor, head);
+    const currentHead = await this.getHead(partitions, tenant);
+    if (requestedHead !== undefined) {
+      await this.validateCursor(partitions, tenant, requestedHead, currentHead);
     }
+    if (cursor !== undefined) {
+      await this.validateCursor(partitions, tenant, cursor, currentHead);
+    }
+    const head = requestedHead === undefined ? currentHead : BigInt(requestedHead.position);
+    const headToken = requestedHead ?? await this.buildToken(tenant, head);
 
     const startPosition = cursor === undefined ? 0n : BigInt(cursor.position);
 
@@ -972,17 +977,17 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       // Nothing to scan — caught up at the input position. A caller without a
       // cursor still gets the position-zero anchor so an empty log yields a
       // checkpointable token instead of forcing a rescan on every pass.
-      return { events: [], cursor: cursor ?? await this.buildToken(tenant, 0n), drained: true };
+      return { events: [], cursor: cursor ?? headToken, drained: true, head: headToken };
     }
 
     const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
     if (maxResults <= 0) {
-      return { events: [], cursor, drained: startPosition >= head };
+      return { events: [], cursor, drained: startPosition >= head, head: headToken };
     }
 
     if (startPosition >= head) {
       // Nothing to scan — caught up at the input position.
-      return { events: [], cursor, drained: true };
+      return { events: [], cursor, drained: true, head: headToken };
     }
 
     const tenantLog = await partitions.log.partition(tenant);
@@ -1023,7 +1028,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     const cursorMessageCid = lastDeliveredPosition === cursorPosition ? lastDeliveredMessageCid : undefined;
     const resultCursor = await this.buildToken(tenant, cursorPosition, cursorMessageCid);
 
-    return { events, cursor: resultCursor, drained };
+    return { events, cursor: resultCursor, drained, head: headToken };
   }
 
   private async readEventFromLogEntry(
