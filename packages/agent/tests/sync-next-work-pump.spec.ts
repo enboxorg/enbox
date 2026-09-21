@@ -55,6 +55,31 @@ describe('SyncNextWorkPump', () => {
     await first.waitForIdle();
   });
 
+  it('should preserve a delayed retry requested while an operation is running', async () => {
+    const clock = sinon.useFakeTimers();
+    const blocked = deferred();
+    const started = deferred();
+    let calls = 0;
+    const pump = new SyncNextWorkPump(async (): Promise<void> => {
+      calls++;
+      if (calls === 1) {
+        started.resolve();
+        await blocked.promise;
+      }
+    }, () => {});
+
+    pump.request();
+    await clock.tickAsync(0);
+    await started.promise;
+    pump.request(1_000);
+    blocked.resolve();
+    await Promise.resolve();
+    await clock.tickAsync(999);
+    expect(calls).toBe(1);
+    await clock.tickAsync(1);
+    expect(calls).toBe(2);
+  });
+
   it('should keep the earliest delayed request and cancel it on disposal', async () => {
     const clock = sinon.useFakeTimers();
     let calls = 0;

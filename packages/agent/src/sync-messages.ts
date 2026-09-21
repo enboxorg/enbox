@@ -55,6 +55,8 @@ const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
 /** Entry type for fetched messages with optional data stream and retry buffer. */
 export type SyncMessageEntry = {
   message: GenericMessage;
+  /** Pre-verified CID supplied by a page intake boundary to avoid repeated hashing. */
+  messageCid?: string;
   dataStream?: ReadableStream<Uint8Array>;
   dataStreamConsumed?: boolean;
   dataStreamFactory?: () => Promise<ReadableStream<Uint8Array> | undefined>;
@@ -115,10 +117,12 @@ type MessageFeedQuery = {
   head?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
+  signal?: AbortSignal;
+  timeoutMs?: number;
   agent: EnboxPlatformAgent;
 };
 
-type MessageFeedParams = Omit<MessageFeedQuery, 'authorDid' | 'did' | 'delegateDid' | 'agent'>;
+type MessageFeedParams = Omit<MessageFeedQuery, 'authorDid' | 'did' | 'delegateDid' | 'signal' | 'timeoutMs' | 'agent'>;
 
 type FetchLocalMessageResult =
   | { kind: 'found'; entry: SyncMessageEntry }
@@ -388,6 +392,8 @@ export async function queryRemoteMessageFeed({
   head,
   limit,
   cidsOnly,
+  signal,
+  timeoutMs,
   agent,
 }: MessageFeedQuery & { dwnUrl: string }): Promise<MessagesQueryReply> {
   const messagesQuery = await agent.processDwnRequest({
@@ -412,6 +418,8 @@ export async function queryRemoteMessageFeed({
     dwnUrl,
     targetDid : did,
     message   : messagesQuery.message,
+    signal,
+    timeoutMs,
   }) as MessagesQueryReply;
 }
 
@@ -455,12 +463,16 @@ export async function queryLocalMessageFeed({
 /**
  * Fetches messages from a remote DWN by their CIDs using MessagesRead.
  */
-export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent }: {
+export async function fetchRemoteMessages({
+  did, dwnUrl, delegateDid, permissionGrantIds, messageCids, signal, timeoutMs, agent,
+}: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
   permissionGrantIds?: string[];
   messageCids: string[];
+  signal?: AbortSignal;
+  timeoutMs?: number;
   agent: EnboxPlatformAgent;
 }): Promise<SyncMessageEntry[]> {
   const results: SyncMessageEntry[] = [];
@@ -491,8 +503,13 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permission
           dwnUrl,
           targetDid : did,
           message   : messagesRead.message,
+          signal,
+          timeoutMs,
         }) as MessagesReadReply;
       } catch (error: any) {
+        if (signal?.aborted === true) {
+          return undefined;
+        }
         console.error(`SyncMessages: pull - failed to read ${messageCid} from ${dwnUrl}:`, error.message ?? error);
         return undefined;
       }
@@ -538,6 +555,8 @@ export async function pushMessages({
   agent,
   permissionsApi,
   onBeforeApply,
+  signal,
+  timeoutMs,
 }: {
   did: string;
   dwnUrl: string;
@@ -547,6 +566,8 @@ export async function pushMessages({
   agent: EnboxPlatformAgent;
   permissionsApi?: PermissionsApi;
   onBeforeApply?: (messageCid: string) => void;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<PushResult> {
   const context = new RemoteApplyPushContext({
     did,
@@ -556,6 +577,8 @@ export async function pushMessages({
     agent,
     permissionsApi,
     onBeforeApply,
+    signal,
+    timeoutMs,
   });
   return context.push(messageCids);
 }
@@ -653,6 +676,8 @@ export class RemoteApplyPushContext {
     agent: EnboxPlatformAgent;
     permissionsApi?: PermissionsApi;
     onBeforeApply?: (messageCid: string) => void;
+    signal?: AbortSignal;
+    timeoutMs?: number;
   }) {}
 
   public async push(rootCids: string[]): Promise<PushResult> {
@@ -803,6 +828,8 @@ export class RemoteApplyPushContext {
         targetDid : this.deps.did,
         data,
         message   : entry.message,
+        signal    : this.deps.signal,
+        timeoutMs : this.deps.timeoutMs,
         ...(ancestryOnly ? { ancestryOnly: true } : {}),
       });
     } catch (error: any) {

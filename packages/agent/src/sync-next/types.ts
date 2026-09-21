@@ -1,4 +1,4 @@
-import type { DependencyRef, ProgressToken } from '@enbox/dwn-sdk-js';
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { SyncAuthorization, SyncDirection, SyncScope } from '../types/sync.js';
 
@@ -56,8 +56,6 @@ export type SyncNextQuarantineReason =
 
 /** Retry state retained with encrypted received input. */
 export type SyncNextQuarantineOutcome = {
-  detail?: string;
-  missingReferences?: DependencyRef[];
   reason: SyncNextQuarantineReason;
 };
 

@@ -525,6 +525,39 @@ describe('JsonRpcSocket', () => {
       expect(response.error!.code).toBe(JsonRpcErrorCodes.TransportError);
     });
 
+    it('should abort one request without closing the shared socket', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: false });
+      const controller = new AbortController();
+      const reason = new Error('caller cancelled');
+      const requestPromise = client.request({
+        jsonrpc : '2.0',
+        id      : 'cancelled-request',
+        method  : 'test.method',
+      }, { signal: controller.signal });
+
+      controller.abort(reason);
+
+      await expect(requestPromise).rejects.toBe(reason);
+      expect(client.isConnected).toBe(true);
+      expect(client['messageHandlers'].has('cancelled-request')).toBe(false);
+      client.close();
+    });
+
+    it('should time out one request without closing the shared socket', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: false });
+      client['send'] = (): void => {};
+      const requestPromise = client.request({
+        jsonrpc : '2.0',
+        id      : 'timed-out-request',
+        method  : 'test.method',
+      }, { timeoutMs: 10 });
+
+      await expect(requestPromise).rejects.toThrow('request timed out');
+      expect(client.isConnected).toBe(true);
+      expect(client['messageHandlers'].has('timed-out-request')).toBe(false);
+      client.close();
+    });
+
     it('should not reject subscription handlers on unexpected close', async () => {
       const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: false });
 

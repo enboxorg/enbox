@@ -2,6 +2,7 @@ import type {
   GenericMessage,
   MessagesQueryReply,
   MessagesQueryReplyEntry,
+  ProgressToken,
   RecordsWriteMessage,
 } from '@enbox/dwn-sdk-js';
 
@@ -255,6 +256,22 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
   });
 
+  it('should quarantine broad Invalid outcomes instead of inventing permanence', async () => {
+    const root = await feedEntry(protocolMessage('unauthorized'), 1);
+    const fixture = fakeAgent(page([root]));
+    fixture.apply.resolves({ kind: 'Invalid', reason: 'Unauthorized' });
+    await createLink();
+
+    await new SyncNextPullPage(fixture.agent, ledger).consume(target());
+
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toMatchObject([{
+      messageCid : root.messageCid,
+      outcome    : { reason: 'admission-unresolved' },
+    }]);
+    expect(await ledger.getTerminalForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+  });
+
   it('should reject a successful reply without a checkpoint cursor', async () => {
     const fixture = fakeAgent({
       drained : true,
@@ -267,4 +284,51 @@ describe('SyncNextPullPage', () => {
       .rejects.toThrow('returned no cursor');
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
   });
+
+  it('should reject a non-drained page whose cursor does not advance', async () => {
+    const root = await feedEntry(protocolMessage('stuck'), 1);
+    const fixture = fakeAgent(page([root], false));
+    await createLink();
+    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    await processor.consume(target());
+
+    await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+  });
+
+  it('should consume 579 roots in six page-scaled queries under one captured head', async () => {
+    const entries = await Promise.all(Array.from({ length: 579 }, (_, index) =>
+      feedEntry(protocolMessage(`page-scaled-${index}`), index + 1)
+    ));
+    const capturedHead = {
+      epoch    : 'remote-epoch',
+      position : '579',
+      streamId : 'remote-stream',
+    };
+    const fixture = fakeAgent(page([]));
+    for (let offset = 0, query = 0; offset < entries.length; offset += 100, query++) {
+      const chunk = entries.slice(offset, offset + 100);
+      fixture.send.onCall(query).resolves({
+        ...page(chunk, offset + chunk.length === entries.length),
+        head: capturedHead,
+      });
+    }
+    await createLink();
+    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    let headToken: ProgressToken | undefined;
+    let hasMore = true;
+
+    while (hasMore) {
+      const result = await processor.consume(target(), { head: headToken });
+      headToken = result.capturedHead;
+      hasMore = result.hasMore;
+    }
+
+    expect(fixture.send.callCount).toBe(6);
+    expect(fixture.apply.callCount).toBe(579);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('579');
+    expect((fixture.agent.processDwnRequest as sinon.SinonStub).callCount).toBe(6);
+    expect((fixture.agent.processDwnRequest as sinon.SinonStub).secondCall.args[0].messageParams.head)
+      .toEqual(capturedHead);
+  }, 30_000);
 });

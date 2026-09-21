@@ -1,3 +1,4 @@
+import type { JsonRpcSocketRequestOptions } from './json-rpc-socket.js';
 import type {
   DwnReplicationApplyRequest,
   DwnRpc,
@@ -283,7 +284,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       );
     }
 
-    return WebSocketDwnRpcClient.processMessage(connection, targetDid, message);
+    return WebSocketDwnRpcClient.processMessage(connection, targetDid, message, {
+      signal    : request.signal,
+      timeoutMs : request.timeoutMs,
+    });
   }
 
   /** Whether a message has complete non-streaming request and response parity over WebSocket. */
@@ -302,7 +306,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   public async sendDwnRequestIfConnected(
     request: DwnRpcRequest,
   ): Promise<{ reply: DwnRpcResponse } | undefined> {
-    if (request.data !== undefined || request.signal !== undefined || request.timeoutMs !== undefined) {
+    if (request.data !== undefined) {
       return undefined;
     }
 
@@ -328,6 +332,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       connection,
       request.targetDid,
       wireMessage as GenericMessage,
+      { signal: request.signal, timeoutMs: request.timeoutMs },
     );
     return { reply };
   }
@@ -346,6 +351,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       encodedData,
       maxPayloadBytes,
       wireRequest.ancestryOnly,
+      { signal: request.signal, timeoutMs: request.timeoutMs },
     );
   }
 
@@ -397,6 +403,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       encodedData,
       WS_JSON_RPC_ENVELOPE_BYTES,
       wireRequest.ancestryOnly,
+      { signal: request.signal, timeoutMs: request.timeoutMs },
     );
   }
 
@@ -552,13 +559,16 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private static async processMessage(
-    connection: SocketConnection, target: string, message: GenericMessage
+    connection: SocketConnection,
+    target: string,
+    message: GenericMessage,
+    requestOptions: JsonRpcSocketRequestOptions = {},
   ): Promise<DwnRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.processMessage', { target, message });
 
     const { socket } = connection;
-    const response = await socket.request(request);
+    const response = await socket.request(request, requestOptions);
 
     // Classify JSON-RPC errors exactly as the HTTP and subscription paths
     // do, so socket-routed requests keep rate-limit and terminal semantics.
@@ -580,6 +590,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     encodedData?: string,
     maxPayloadBytes: number = DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES,
     ancestryOnly?: true,
+    requestOptions: JsonRpcSocketRequestOptions = {},
   ): Promise<ReplicationApplyResult> {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
@@ -591,7 +602,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     WebSocketDwnRpcClient.assertPayloadFitsFrame(request, encodedData, maxPayloadBytes);
 
     const { socket } = connection;
-    const response = await socket.request(request);
+    const response = await socket.request(request, requestOptions);
 
     const { error, result } = response;
     if (error !== undefined) {

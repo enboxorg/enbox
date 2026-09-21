@@ -10,6 +10,7 @@ import type { SyncNextQuarantineRetry } from './quarantine-retry.js';
 import { SyncNextWorkPump } from './work-pump.js';
 
 const RETRY_DELAY_MS = 1_000;
+const MAX_RETRY_DELAY_MS = 60_000;
 
 type CoveringRun = {
   promise: Promise<void>;
@@ -30,14 +31,18 @@ export class SyncNextIncompleteError extends Error {
 export class SyncNextLinkSession {
   private readonly _abortController = new AbortController();
   private _deliveryIndex = 0;
+  private readonly _deliveryNotBefore = new Map<string, number>();
   private readonly _deliveryPump: SyncNextWorkPump;
   private _pullCover?: CoveringRun;
   private _pullCurrent = false;
   private _pullFeedDrained = false;
+  private _pullFailures = 0;
   private readonly _pullPagePump: SyncNextWorkPump;
   private _quarantineIndex = 0;
+  private readonly _quarantineNotBefore = new Map<string, number>();
   private readonly _quarantinePump: SyncNextWorkPump;
   private _pushCover?: CoveringRun;
+  private _pushFailures = 0;
   private readonly _pushPagePump: SyncNextWorkPump;
   private readonly _subscriptions = new Set<() => Promise<void>>();
   private _online = false;
@@ -74,8 +79,12 @@ export class SyncNextLinkSession {
     if (this._target.authorization.kind !== 'role') {
       this.requestPush();
     }
-    this._quarantinePump.request();
-    this._deliveryPump.request();
+    if (this._pullCover === undefined) {
+      this._quarantinePump.request();
+    }
+    if (this._pushCover === undefined) {
+      this._deliveryPump.request();
+    }
   }
 
   public get isPullCurrent(): boolean {
@@ -142,12 +151,20 @@ export class SyncNextLinkSession {
   private async consumePullPage(): Promise<void> {
     const result = await this._pullPage.consume(this._target, {
       head           : this._pullCover?.head,
+      signal         : this._abortController.signal,
       shouldContinue : (): boolean => !this._abortController.signal.aborted,
     });
     if (result.aborted === true) {
       return;
     }
+    this._pullFailures = 0;
     this._online = true;
+    for (const messageCid of result.materializedCids) {
+      await this._ledger.settleQuarantineForLogicalTarget(
+        `${this._target.did}^${this._target.projectionId}`,
+        messageCid,
+      );
+    }
     if (this._pullCover !== undefined) {
       this._pullCover.head ??= result.capturedHead;
       if (this._pullCover.head === undefined) {
@@ -160,20 +177,20 @@ export class SyncNextLinkSession {
       return;
     }
     this._pullFeedDrained = true;
-    this._pullCurrent = (await this._ledger.getQuarantineForLink(
-      SyncNextLinkSession.identity(this._target),
-    )).length === 0;
+    this._pullCurrent = (await this.getQuarantine()).length === 0;
     await this.finishCover('pull');
   }
 
   private async consumePushPage(): Promise<void> {
     const result = await this._pushPage.consume(this._target, {
       head           : this._pushCover?.head,
+      signal         : this._abortController.signal,
       shouldContinue : (): boolean => !this._abortController.signal.aborted,
     });
     if (result.aborted === true) {
       return;
     }
+    this._pushFailures = 0;
     this._online = true;
     if (this._pushCover !== undefined) {
       this._pushCover.head ??= result.capturedHead;
@@ -190,21 +207,34 @@ export class SyncNextLinkSession {
   }
 
   private async retryQuarantine(): Promise<void> {
-    const entries = await this._ledger.getQuarantineForLink(SyncNextLinkSession.identity(this._target));
+    const entries = await this.getQuarantine();
     if (entries.length === 0 || this._abortController.signal.aborted) {
       return;
     }
-    const entry = entries[this._quarantineIndex % entries.length];
-    this._quarantineIndex = (this._quarantineIndex + 1) % entries.length;
+    const selected = this.selectEligible(entries, this._quarantineNotBefore, this._quarantineIndex);
+    if (selected === undefined) {
+      this._quarantinePump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._quarantineNotBefore));
+      return;
+    }
+    const entry = entries[selected];
+    this._quarantineIndex = (selected + 1) % entries.length;
     const result = await this._quarantineRetry.retry(
       this._target,
       entry,
       (): boolean => !this._abortController.signal.aborted,
+      this._abortController.signal,
     );
     if (result.kind === 'pending') {
-      this._quarantinePump.request(RETRY_DELAY_MS);
-    } else if (entries.length > 1) {
-      this._quarantinePump.request();
+      this._quarantineNotBefore.set(
+        SyncNextLinkSession.receiptKey(entry),
+        Date.now() + SyncNextLinkSession.retryDelay(entry.attempts),
+      );
+      this._quarantinePump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._quarantineNotBefore));
+    } else {
+      this._quarantineNotBefore.delete(SyncNextLinkSession.receiptKey(entry));
+      if (entries.length > 1) {
+        this._quarantinePump.request();
+      }
     }
     if (result.kind === 'settled' && entries.length === 1 && this._pullFeedDrained) {
       this._pullCurrent = true;
@@ -216,17 +246,33 @@ export class SyncNextLinkSession {
     if (entries.length === 0 || this._abortController.signal.aborted) {
       return;
     }
-    const entry = entries[this._deliveryIndex % entries.length];
-    this._deliveryIndex = (this._deliveryIndex + 1) % entries.length;
+    const selected = this.selectEligible(entries, this._deliveryNotBefore, this._deliveryIndex);
+    if (selected === undefined) {
+      this._deliveryPump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._deliveryNotBefore));
+      return;
+    }
+    const entry = entries[selected];
+    this._deliveryIndex = (selected + 1) % entries.length;
     const result = await this._deliveryRetry.retry(
       this._target,
       entry,
       (): boolean => !this._abortController.signal.aborted,
+      this._abortController.signal,
     );
     if (result.kind === 'pending') {
-      this._deliveryPump.request(RETRY_DELAY_MS);
-    } else if (entries.length > 1) {
-      this._deliveryPump.request();
+      const retryAfter = entry.outcome.retryAfter === undefined ? undefined : Date.parse(entry.outcome.retryAfter);
+      this._deliveryNotBefore.set(
+        SyncNextLinkSession.receiptKey(entry),
+        retryAfter !== undefined && Number.isFinite(retryAfter) && retryAfter > Date.now()
+          ? retryAfter
+          : Date.now() + SyncNextLinkSession.retryDelay(entry.attempts),
+      );
+      this._deliveryPump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._deliveryNotBefore));
+    } else {
+      this._deliveryNotBefore.delete(SyncNextLinkSession.receiptKey(entry));
+      if (entries.length > 1) {
+        this._deliveryPump.request();
+      }
     }
   }
 
@@ -235,11 +281,38 @@ export class SyncNextLinkSession {
     if (cover === undefined) {
       return;
     }
-    const pending = direction === 'pull'
-      ? await this._ledger.getQuarantineForLink(SyncNextLinkSession.identity(this._target))
-      : await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target));
-    if (pending.length > 0) {
-      this.rejectCover(direction, new SyncNextIncompleteError(direction, pending.length));
+    let pendingCount: number;
+    if (direction === 'pull') {
+      for (const entry of await this.getQuarantine()) {
+        if (this._abortController.signal.aborted) {
+          return;
+        }
+        await this._quarantineRetry.retry(
+          this._target,
+          entry,
+          (): boolean => !this._abortController.signal.aborted,
+          this._abortController.signal,
+        );
+      }
+      pendingCount = (await this.getQuarantine()).length;
+    } else {
+      for (const entry of await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target))) {
+        if (this._abortController.signal.aborted) {
+          return;
+        }
+        await this._deliveryRetry.retry(
+          this._target,
+          entry,
+          (): boolean => !this._abortController.signal.aborted,
+          this._abortController.signal,
+        );
+      }
+      pendingCount = (await this._ledger.getDeliveryForLink(
+        SyncNextLinkSession.identity(this._target),
+      )).length;
+    }
+    if (pendingCount > 0) {
+      this.rejectCover(direction, new SyncNextIncompleteError(direction, pendingCount));
     } else {
       cover.resolve();
       this.clearCover(direction);
@@ -251,8 +324,50 @@ export class SyncNextLinkSession {
     this.rejectCover(direction, error);
     this._reportError(error);
     if (!this._abortController.signal.aborted) {
-      (direction === 'pull' ? this._pullPagePump : this._pushPagePump).request(RETRY_DELAY_MS);
+      const attempts = direction === 'pull' ? ++this._pullFailures : ++this._pushFailures;
+      (direction === 'pull' ? this._pullPagePump : this._pushPagePump)
+        .request(SyncNextLinkSession.retryDelay(attempts));
     }
+  }
+
+  private getQuarantine(): ReturnType<SyncNextLedgerStore['getQuarantineForLogicalTarget']> {
+    return this._ledger.getQuarantineForLogicalTarget(
+      `${this._target.did}^${this._target.projectionId}`,
+    );
+  }
+
+  private selectEligible<T extends { messageCid: string; source: ProgressToken }>(
+    entries: readonly T[],
+    notBefore: ReadonlyMap<string, number>,
+    start: number,
+  ): number | undefined {
+    const now = Date.now();
+    for (let offset = 0; offset < entries.length; offset++) {
+      const index = (start + offset) % entries.length;
+      if ((notBefore.get(SyncNextLinkSession.receiptKey(entries[index])) ?? 0) <= now) {
+        return index;
+      }
+    }
+  }
+
+  private static nextEligibilityDelay<T extends { messageCid: string; source: ProgressToken }>(
+    entries: readonly T[],
+    notBefore: ReadonlyMap<string, number>,
+  ): number {
+    const now = Date.now();
+    const next = Math.min(...entries.map(entry =>
+      notBefore.get(SyncNextLinkSession.receiptKey(entry)) ?? now
+    ));
+    return Math.max(0, next - now);
+  }
+
+  private static retryDelay(attempts: number): number {
+    const exponent = Math.min(Math.max(0, attempts - 1), 6);
+    return Math.min(RETRY_DELAY_MS * (2 ** exponent), MAX_RETRY_DELAY_MS);
+  }
+
+  private static receiptKey(entry: { messageCid: string; source: ProgressToken }): string {
+    return `${entry.source.streamId}\u0000${entry.source.epoch}\u0000${entry.source.position}\u0000${entry.messageCid}`;
   }
 
   private handleRetryError(direction: SyncDirection, error: unknown): void {

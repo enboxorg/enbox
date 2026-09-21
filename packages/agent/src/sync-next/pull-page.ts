@@ -1,4 +1,5 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
+import type { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { MessagesQueryReply, ProgressToken } from '@enbox/dwn-sdk-js';
@@ -9,7 +10,10 @@ import type {
   SyncNextSettledSource,
 } from './types.js';
 
+import { Message } from '@enbox/dwn-sdk-js';
+
 import { admitClosure } from '../sync-admit-closure.js';
+import { compareSyncNextPosition } from './ledger-key.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { queryRemoteMessageFeed } from '../sync-messages.js';
 import { sealSyncNextQuarantinePayload } from './quarantine-codec.js';
@@ -28,6 +32,7 @@ export type SyncNextPullPageResult = {
 
 export type SyncNextPullPageOptions = {
   head?: ProgressToken;
+  signal?: AbortSignal;
   shouldContinue?: () => boolean;
 };
 
@@ -36,6 +41,7 @@ export class SyncNextPullPage {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
+    private readonly _echoSuppressor?: SyncEchoSuppressor,
   ) {}
 
   public async consume(
@@ -49,7 +55,7 @@ export class SyncNextPullPage {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
 
-    const reply = await this.query(target, link.pullHandledThrough, options.head);
+    const reply = await this.query(target, link.pullHandledThrough, options.head, options.signal);
     if (!shouldContinue()) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
@@ -62,7 +68,13 @@ export class SyncNextPullPage {
         `SyncNextPullPage: ${target.did} -> ${target.dwnUrl} returned no cursor for a successful page.`,
       );
     }
+    SyncNextPullPage.assertCursorAdvanced(link.pullHandledThrough, handledThrough, reply.drained === true);
     const entries = reply.entries ?? [];
+    for (const entry of entries) {
+      if (entry.message === undefined || await Message.getCid(entry.message) !== entry.messageCid) {
+        throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} failed CID verification.`);
+      }
+    }
     const prefetched = syncEntriesFromFeedEntries(entries);
     const quarantine: SyncNextQuarantineInput[] = [];
     const settled: SyncNextSettledSource[] = [];
@@ -72,15 +84,15 @@ export class SyncNextPullPage {
       if (!shouldContinue()) {
         return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
       }
-      if (entry.message === undefined) {
-        throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} omitted its signed message.`);
-      }
       const source = sourceTokenFromFeedEntry(handledThrough, entry);
       const outcome = await admitClosure(entry.messageCid, {
-        agent              : this._agent,
-        did                : target.did,
-        dwnUrl             : target.dwnUrl,
-        delegateDid        : target.delegateDid,
+        agent         : this._agent,
+        did           : target.did,
+        dwnUrl        : target.dwnUrl,
+        delegateDid   : target.delegateDid,
+        onBeforeApply : (messageCid): void => {
+          this._echoSuppressor?.trackPulled(target.did, messageCid, target.dwnUrl);
+        },
         permissionGrantIds : target.permissionGrantIds,
         prefetched,
         remoteHydration    : 'defer',
@@ -111,10 +123,6 @@ export class SyncNextPullPage {
         encryptedPayload,
         messageCid : entry.messageCid,
         outcome    : {
-          ...(outcome.detail === undefined ? {} : { detail: outcome.detail }),
-          ...(outcome.kind === 'deferred' && outcome.missing !== undefined
-            ? { missingReferences: outcome.missing }
-            : {}),
           reason: SyncNextPullPage.quarantineReason(outcome),
         },
         source,
@@ -144,6 +152,7 @@ export class SyncNextPullPage {
     target: SyncTarget,
     cursor?: ProgressToken,
     head?: ProgressToken,
+    signal?: AbortSignal,
   ): Promise<MessagesQueryReply> {
     const role = target.authorization.kind === 'role' ? target.authorization : undefined;
     return queryRemoteMessageFeed({
@@ -159,6 +168,7 @@ export class SyncNextPullPage {
       limit              : PULL_PAGE_SIZE,
       permissionGrantIds : target.permissionGrantIds,
       protocolRole       : role?.protocolRole,
+      signal,
     });
   }
 
@@ -199,6 +209,22 @@ export class SyncNextPullPage {
       actual.position !== expected.position
     ) {
       throw new Error('SyncNextPullPage: remote changed the captured query head.');
+    }
+  }
+
+  private static assertCursorAdvanced(
+    previous: ProgressToken | undefined,
+    next: ProgressToken,
+    drained: boolean,
+  ): void {
+    if (
+      previous !== undefined &&
+      previous.streamId === next.streamId &&
+      previous.epoch === next.epoch &&
+      compareSyncNextPosition(next, previous) === 0 &&
+      !drained
+    ) {
+      throw new Error('SyncNextPullPage: non-drained query cursor did not advance.');
     }
   }
 

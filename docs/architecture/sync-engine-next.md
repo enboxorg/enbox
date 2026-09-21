@@ -208,3 +208,56 @@ Required fault scenarios include:
 - Do not introduce a repair mode, materializer service, dependency graph,
   persisted transient scheduler, or global transport scheduler.
 - Do not weaken DWN admission to make a test or partially received message pass.
+
+## Adversarial review record
+
+The first complete stack was reviewed against the execution model rather than
+its class names. The following defects were found and fixed before proposing a
+cutover:
+
+- requeued page handlers could retain one executor drain instead of yielding;
+- a retry requested during an operation lost its delay and became a hot loop;
+- pending work was initially eligible only after feed drain and could starve or
+  deadlock its own capacity limit;
+- covering runs rejected non-inline bodies without first giving their captured
+  sparse obligations one finite retry;
+- pull and push I/O shared one whole-link serializer;
+- pulled CIDs echoed back to their source endpoint;
+- established-socket requests carrying cancellation/deadlines fell back to
+  HTTP, and aborting one request could not remove only its response waiter;
+- non-drained replies could repeat a cursor forever;
+- sequential subscription establishment let one bad endpoint delay healthy
+  links;
+- incomplete discovery could have been mistaken for proof that an existing
+  link disappeared;
+- quarantine left by a retired endpoint was not serviced through another
+  authorized binding for the same logical target;
+- deleting sparse recovery state and resetting its checkpoint were separate
+  crash windows.
+
+Regression coverage now includes delayed retry ownership, continuous-feed
+pending fairness, concurrent same-link directions, non-advancing cursors,
+cross-endpoint quarantine settlement, atomic rebuild, pooled-socket request
+cancellation, broad `Invalid` outcomes remaining non-terminal, and replay after
+apply-before-ledger crashes.
+
+The real-transport matrix covers the four required dapp modes, wake-only live
+updates, non-inline bodies followed by independent tiny roots, one offline and
+one healthy exact link, and isolated legacy/next comparison. A 579-root unit
+fixture proves six remote page queries under one captured head without point
+reads.
+
+### Deliberate remaining boundaries
+
+- Legacy remains the default. `next` is opt-in until the stacked reviews and CI
+  complete.
+- Followed-source acceptance currently reuses the established catalog ceremony;
+  replica transfer and all next-engine checkpoints remain isolated. The
+  multi-binding/revocation redesign is still a separate security slice.
+- Owner-authorized historical import remains a separate security protocol and
+  is not hidden inside page classification.
+- Terminal classification is intentionally conservative: uncertain or broad
+  `Invalid` outcomes stay sparse/retryable until a typed allowlist proves
+  permanence.
+- Constructor-time selection prevents two engines in one agent. Cross-context
+  legacy-versus-next exclusion must be solved before changing the default.

@@ -30,9 +30,13 @@ export class SyncNextQuarantineRetry {
     target: SyncTarget,
     entry: SyncNextQuarantineEntry,
     shouldContinue: () => boolean = (): boolean => true,
+    signal?: AbortSignal,
   ): Promise<SyncNextQuarantineRetryResult> {
     if (!shouldContinue()) {
       return { aborted: true, kind: 'aborted' };
+    }
+    if (entry.logicalTargetId !== `${target.did}^${target.projectionId}`) {
+      throw new Error('SyncNextQuarantineRetry: target does not own this quarantined receipt.');
     }
     const sourceIdentity = SyncNextQuarantineRetry.identity(entry);
     const payload = await openSyncNextQuarantinePayload(this._agent.vault, {
@@ -48,7 +52,7 @@ export class SyncNextQuarantineRetry {
     const prefetched = syncEntriesFromFeedEntries(
       received,
       (feedEntry): (() => Promise<ReadableStream<Uint8Array> | undefined>) =>
-        (): Promise<ReadableStream<Uint8Array> | undefined> => this.fetchData(target, feedEntry),
+        (): Promise<ReadableStream<Uint8Array> | undefined> => this.fetchData(target, feedEntry, signal),
     );
     const outcome = await admitClosure(entry.messageCid, {
       agent              : this._agent,
@@ -70,10 +74,6 @@ export class SyncNextQuarantineRetry {
     }
 
     await this._ledger.updateQuarantine(entry, {
-      ...(outcome.detail === undefined ? {} : { detail: outcome.detail }),
-      ...(outcome.kind === 'deferred' && outcome.missing !== undefined
-        ? { missingReferences: outcome.missing }
-        : {}),
       reason: SyncNextQuarantineRetry.reason(outcome),
     });
     return { kind: 'pending' };
@@ -82,6 +82,7 @@ export class SyncNextQuarantineRetry {
   private async fetchData(
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
+    signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array> | undefined> {
     const [fetched] = await fetchRemoteMessages({
       agent              : this._agent,
@@ -90,6 +91,7 @@ export class SyncNextQuarantineRetry {
       dwnUrl             : target.dwnUrl,
       messageCids        : [entry.messageCid],
       permissionGrantIds : target.permissionGrantIds,
+      signal,
     });
     return fetched?.dataStream;
   }
