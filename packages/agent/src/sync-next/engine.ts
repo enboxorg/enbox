@@ -1,5 +1,6 @@
 import type { AbstractLevel } from 'abstract-level';
 import type { EnboxPlatformAgent } from '../types/agent.js';
+import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type {
   DeadLetterEntry,
@@ -9,6 +10,7 @@ import type {
   SyncDirection,
   SyncDrainOptions,
   SyncDrainResult,
+  SyncDrainTargetResult,
   SyncEngine,
   SyncEvent,
   SyncEventListener,
@@ -36,9 +38,15 @@ import { SyncNextPullPage } from './pull-page.js';
 import { SyncNextPushPage } from './push-page.js';
 import { SyncNextQuarantineRetry } from './quarantine-retry.js';
 import { SyncTargetPlanner } from '../sync-target-planner.js';
-import { SyncTargetResolver } from '../sync-target-resolver.js';
 import { MAX_TIMER_DELAY_MS, parseDurationInMilliseconds } from '@enbox/common';
-import { normalizeSyncProtocols, projectReplicationCurrentness } from '../types/sync.js';
+import {
+  messageFeedFiltersForSyncScope,
+  normalizeSyncProtocols,
+  projectReplicationCurrentness,
+  syncEventScope,
+} from '../types/sync.js';
+import { normalizeDwnEndpoint, SyncTargetResolver } from '../sync-target-resolver.js';
+import { queryLocalMessageFeed, queryRemoteMessageFeed, syncMessageDescriptor } from '../sync-messages.js';
 
 type LevelKey = string | Buffer | Uint8Array;
 
@@ -52,6 +60,24 @@ type ActiveSession = {
   subscribed: boolean;
   target: SyncTarget;
 };
+
+type MergedSyncRunRequest = {
+  direction?: SyncDirection;
+  directionConflict: boolean;
+  did?: string;
+  unscoped: boolean;
+  verifyConvergence: boolean;
+};
+
+type PendingSyncRun = {
+  cancelled: boolean;
+  merged: MergedSyncRunRequest;
+  promise: Promise<void>;
+};
+
+function isSignalAborted(signal?: AbortSignal): boolean {
+  return signal?.aborted === true;
+}
 
 /** Temporary selectable façade for the isolated next-engine implementation. */
 export class SyncEngineNext implements SyncEngine {
@@ -67,10 +93,14 @@ export class SyncEngineNext implements SyncEngine {
   private readonly _pausedIdentities = new Map<string, string>();
   private _permissionsApi?: AgentPermissionsApi;
   private readonly _planner: SyncTargetPlanner;
+  private _oneShotActive = false;
+  private _pendingSyncRun?: PendingSyncRun;
   private _resolver?: SyncTargetResolver;
+  private _runtimeGeneration = 0;
+  private _runtimeTransitionDepth = 0;
   private readonly _sessions = new Map<string, ActiveSession>();
   private readonly _sourceStore: FollowedSyncSourceStoreLevel;
-  private _syncTail: Promise<void> = Promise.resolve();
+  private _syncTail: Promise<unknown> = Promise.resolve();
   private _timer?: ReturnType<typeof setInterval>;
   private _transition: Promise<void> = Promise.resolve();
 
@@ -273,44 +303,34 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public sync(direction?: SyncDirection, options: SyncRunOptions = {}): Promise<void> {
-    const operation = this._syncTail.then((): Promise<void> => this.runCoveringSync(direction, options));
-    this._syncTail = operation.catch((): void => {});
-    return operation;
+    if (this._runtimeTransitionDepth > 0) {
+      return Promise.reject(new Error('SyncEngineNext: sync run cancelled by a runtime transition.'));
+    }
+    if (this._oneShotActive || this._pendingSyncRun !== undefined) {
+      return this.joinPendingSyncRun(direction, options);
+    }
+    return this.runOneShot((): Promise<void> => this.runCoveringSync(direction, options));
   }
 
   public async drainTo(endpoint: string, options: SyncDrainOptions = {}): Promise<SyncDrainResult> {
-    await this._endpointStore.set(endpoint);
-    this._planner.invalidate();
-    if (options.signal?.aborted === true) {
-      return { endpoint, completed: false, cancelled: true, topologyChanged: false, targets: [] };
-    }
-    try {
-      await this.sync();
-    } catch (error: unknown) {
+    const normalizedEndpoint = normalizeDwnEndpoint(endpoint);
+    if (isSignalAborted(options.signal)) {
       return {
-        endpoint,
+        endpoint        : normalizedEndpoint,
         completed       : false,
-        cancelled       : Boolean(options.signal?.aborted),
+        cancelled       : true,
         topologyChanged : false,
         targets         : [],
-        error           : error instanceof Error ? error.message : String(error),
+        error           : 'drain aborted',
       };
     }
-    const links = (await this.getReplicationLinks()).filter(link => link.remoteEndpoint === endpoint);
-    return {
-      endpoint,
-      completed       : links.length > 0 && links.every(link => link.isPullCurrent),
-      cancelled       : false,
-      topologyChanged : false,
-      targets         : links.map(link => ({
-        completed      : link.isPullCurrent,
-        converged      : link.isPullCurrent,
-        remoteEndpoint : link.remoteEndpoint,
-        scope          : link.scope,
-        tenantDid      : link.tenantDid,
-        cancelled      : false,
-      })),
-    };
+    if (this._runtimeTransitionDepth > 0) {
+      throw new Error('SyncEngineNext: drain cancelled by a runtime transition.');
+    }
+    if (this._oneShotActive || this._pendingSyncRun !== undefined) {
+      throw new Error('SyncEngineNext: Sync operation is already in progress.');
+    }
+    return this.runOneShot((): Promise<SyncDrainResult> => this.runDrain(normalizedEndpoint, options));
   }
 
   public async startSync(params: StartSyncParams = {}): Promise<void> {
@@ -318,7 +338,7 @@ export class SyncEngineNext implements SyncEngine {
       Math.max(parseDurationInMilliseconds(params.interval ?? '5m'), 1_000),
       MAX_TIMER_DELAY_MS,
     );
-    await this.runTransition(async (): Promise<void> => {
+    await this.runRuntimeTransition(async (): Promise<void> => {
       await this.stopRuntime();
       this._live = true;
       try {
@@ -342,7 +362,7 @@ export class SyncEngineNext implements SyncEngine {
       ));
     }
     return SyncEngineNext.withTimeout(
-      this.runTransition((): Promise<void> => this.stopRuntime()),
+      this.runRuntimeTransition((): Promise<void> => this.stopRuntime()),
       timeout,
       `SyncEngineNext: sync runtime did not stop within ${timeout} milliseconds.`,
     );
@@ -368,7 +388,8 @@ export class SyncEngineNext implements SyncEngine {
         messageCid     : entry.messageCid,
         remoteEndpoint : entry.remoteEndpoint,
         tenantDid      : entry.tenantDid,
-      }));
+      }))
+      .sort((a, b) => b.failedAt.localeCompare(a.failedAt));
   }
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
@@ -446,16 +467,21 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
+    const normalizedEndpoint = normalizeDwnEndpoint(remoteEndpoint);
     const targets = (await this._planner.getTargets()).filter(target =>
-      target.did === tenantDid && target.dwnUrl === remoteEndpoint
+      target.did === tenantDid && normalizeDwnEndpoint(target.dwnUrl) === normalizedEndpoint
     );
-    const active = await Promise.all(targets.map(target => this.ensureSession(target)));
-    const outcomes = [
-      ...await Promise.allSettled(active.map(({ session }) => session.cover('pull'))),
-      ...await Promise.allSettled(active.map(({ session }) => session.cover('push'))),
-    ];
-    if (!this._live) {
-      await Promise.all(targets.map(target => this.disposeSession(target)));
+    const outcomes: PromiseSettledResult<void>[] = [];
+    try {
+      const active = await Promise.all(targets.map(target => this.ensureSession(target)));
+      outcomes.push(
+        ...await this.settleCovers(active, 'pull'),
+        ...await this.settleCovers(active, 'push'),
+      );
+    } finally {
+      if (!this._live) {
+        await Promise.allSettled(targets.map(target => this.disposeSession(target)));
+      }
     }
     const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
     if (failures.length > 0) {
@@ -470,22 +496,275 @@ export class SyncEngineNext implements SyncEngine {
     return this._resolver;
   }
 
+  private async runDrain(endpoint: string, options: SyncDrainOptions): Promise<SyncDrainResult> {
+    const runtimeGeneration = this._runtimeGeneration;
+    await this._endpointStore.set(endpoint);
+    this._planner.invalidate();
+    const topologyGeneration = this._planner.topologyGeneration;
+    const planned = (await this._planner.getTargets()).filter(target =>
+      normalizeDwnEndpoint(target.dwnUrl) === endpoint
+    );
+    const planComplete = this._planner.lastResolutionComplete;
+
+    try {
+      const active = await Promise.all(planned.map(target => this.ensureSession(target)));
+      const shouldContinue = (): boolean => !isSignalAborted(options.signal) &&
+        runtimeGeneration === this._runtimeGeneration &&
+        topologyGeneration === this._planner.topologyGeneration;
+      const pullOutcomes = await this.settleCovers(active, 'pull', shouldContinue);
+      const stopAfterPull = isSignalAborted(options.signal) ||
+        topologyGeneration !== this._planner.topologyGeneration;
+      const pushOutcomes = stopAfterPull
+        ? SyncEngineNext.rejectedOutcomes(
+          active.length,
+          options.signal?.reason ?? new Error('SyncEngineNext: drain topology changed.'),
+        )
+        : await this.settleCovers(active, 'push', shouldContinue);
+      const targetOutcomes = await this.settleByEndpoint(
+        planned.map((target, index) => ({ index, target })),
+        ({ index, target }): Promise<SyncDrainTargetResult> => this.drainTarget(
+          target,
+          pullOutcomes[index],
+          pushOutcomes[index],
+          runtimeGeneration,
+          topologyGeneration,
+          options,
+        ),
+      );
+      const targets = targetOutcomes.map((outcome, index): SyncDrainTargetResult => outcome.status === 'fulfilled'
+        ? outcome.value
+        : {
+          cancelled      : isSignalAborted(options.signal),
+          completed      : false,
+          converged      : false,
+          error          : outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+          remoteEndpoint : planned[index].dwnUrl,
+          scope          : planned[index].scope,
+          tenantDid      : planned[index].did,
+        });
+      const cancelled = isSignalAborted(options.signal);
+      const runtimeChanged = runtimeGeneration !== this._runtimeGeneration;
+      const topologyChanged = topologyGeneration !== this._planner.topologyGeneration;
+      const completed = targets.length > 0 &&
+        targets.every(target => target.completed) &&
+        planComplete &&
+        !cancelled &&
+        !runtimeChanged &&
+        !topologyChanged;
+      const error = cancelled
+        ? 'drain aborted'
+        : runtimeChanged
+          ? 'sync runtime changed during drain'
+          : topologyChanged
+            ? 'sync topology changed during drain'
+            : !planComplete
+              ? 'sync target plan was incomplete during drain'
+              : targets.some(target => !target.completed)
+                ? 'one or more drain targets are incomplete'
+                : undefined;
+      return {
+        endpoint,
+        completed,
+        cancelled,
+        topologyChanged,
+        targets,
+        ...(error === undefined ? {} : { error }),
+      };
+    } finally {
+      if (!this._live) {
+        await Promise.allSettled(planned.map(target => this.disposeSession(target)));
+      }
+    }
+  }
+
+  private async drainTarget(
+    target: SyncTarget,
+    pullOutcome: PromiseSettledResult<void>,
+    pushOutcome: PromiseSettledResult<void>,
+    runtimeGeneration: number,
+    topologyGeneration: number,
+    options: SyncDrainOptions,
+  ): Promise<SyncDrainTargetResult> {
+    const link = await this._ledger.getLink({
+      authorizationEpoch : target.authorizationEpoch,
+      projectionId       : target.projectionId,
+      remoteEndpoint     : target.dwnUrl,
+      tenantDid          : target.did,
+    });
+    if (link === undefined) {
+      return {
+        cancelled      : isSignalAborted(options.signal),
+        completed      : false,
+        converged      : false,
+        error          : 'durable link disappeared during drain',
+        remoteEndpoint : target.dwnUrl,
+        scope          : target.scope,
+        tenantDid      : target.did,
+      };
+    }
+
+    let convergence: {
+      converged: boolean;
+      error?: string;
+      localFingerprint?: string;
+      remoteFingerprint?: string;
+    };
+    const transferError = [pullOutcome, pushOutcome]
+      .find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')?.reason;
+    try {
+      if (transferError !== undefined) {
+        throw transferError;
+      }
+      if (isSignalAborted(options.signal)) {
+        throw options.signal?.reason ?? new DOMException('Drain cancelled.', 'AbortError');
+      }
+      if (runtimeGeneration !== this._runtimeGeneration) {
+        throw new Error('SyncEngineNext: sync runtime changed during drain.');
+      }
+      if (topologyGeneration !== this._planner.topologyGeneration) {
+        throw new Error('SyncEngineNext: drain topology changed.');
+      }
+      convergence = await this.verifyStableConvergence(
+        target,
+        (): boolean => !isSignalAborted(options.signal) &&
+          runtimeGeneration === this._runtimeGeneration &&
+          topologyGeneration === this._planner.topologyGeneration,
+      );
+    } catch (error: unknown) {
+      convergence = { converged: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    const [delivery, quarantine] = await Promise.all([
+      this._ledger.getDeliveryForLink(link),
+      this._ledger.getQuarantineForLink(link),
+    ]);
+    const cancelled = isSignalAborted(options.signal);
+    const runtimeChanged = runtimeGeneration !== this._runtimeGeneration;
+    const topologyChanged = topologyGeneration !== this._planner.topologyGeneration;
+    const completed = convergence.converged &&
+      delivery.length === 0 &&
+      quarantine.length === 0 &&
+      !cancelled &&
+      !runtimeChanged &&
+      !topologyChanged;
+    return {
+      cancelled,
+      completed,
+      converged         : convergence.converged,
+      error             : convergence.error,
+      localFingerprint  : convergence.localFingerprint,
+      pushCheckpoint    : link.pushHandledThrough,
+      remoteEndpoint    : link.remoteEndpoint,
+      remoteFingerprint : convergence.remoteFingerprint,
+      scope             : link.scope,
+      tenantDid         : link.tenantDid,
+    };
+  }
+
+  private runOneShot<T>(operation: () => Promise<T>): Promise<T> {
+    this._oneShotActive = true;
+    const active = (async (): Promise<T> => {
+      try {
+        return await operation();
+      } finally {
+        this._oneShotActive = false;
+      }
+    })();
+    this._syncTail = active.catch((): void => {});
+    return active;
+  }
+
+  private joinPendingSyncRun(direction: SyncDirection | undefined, options: SyncRunOptions): Promise<void> {
+    if (this._pendingSyncRun !== undefined) {
+      SyncEngineNext.mergeSyncRunRequest(this._pendingSyncRun.merged, direction, options);
+      return this._pendingSyncRun.promise;
+    }
+
+    const merged: MergedSyncRunRequest = {
+      direction,
+      directionConflict : false,
+      did               : options.did,
+      unscoped          : options.did === undefined,
+      verifyConvergence : options.verifyConvergence === true,
+    };
+    const pending: PendingSyncRun = { cancelled: false, merged, promise: Promise.resolve() };
+    pending.promise = this._syncTail.then(async (): Promise<void> => {
+      if (this._pendingSyncRun === pending) {
+        this._pendingSyncRun = undefined;
+      }
+      if (pending.cancelled) {
+        throw new Error('SyncEngineNext: queued sync run was cancelled by a runtime transition.');
+      }
+      await this.runOneShot((): Promise<void> => this.runCoveringSync(
+        merged.directionConflict ? undefined : merged.direction,
+        {
+          ...(merged.unscoped || merged.did === undefined ? {} : { did: merged.did }),
+          ...(merged.verifyConvergence ? { verifyConvergence: true } : {}),
+        },
+      ));
+    });
+    this._pendingSyncRun = pending;
+    this._syncTail = pending.promise.catch((): void => {});
+    return pending.promise;
+  }
+
+  private static mergeSyncRunRequest(
+    merged: MergedSyncRunRequest,
+    direction: SyncDirection | undefined,
+    options: SyncRunOptions,
+  ): void {
+    if (merged.direction !== direction) {
+      merged.directionConflict = true;
+    }
+    if (options.did === undefined || (merged.did !== undefined && merged.did !== options.did)) {
+      merged.unscoped = true;
+    } else {
+      merged.did = options.did;
+    }
+    merged.verifyConvergence ||= options.verifyConvergence === true;
+  }
+
   private async runCoveringSync(direction: SyncDirection | undefined, options: SyncRunOptions): Promise<void> {
+    const runtimeGeneration = this._runtimeGeneration;
     if (options.did !== undefined && await this._identityStore.get(options.did) === undefined) {
       throw new Error(`SyncEngineNext: identity '${options.did}' is not registered.`);
     }
     const allTargets = await this._planner.getTargets();
+    const shouldContinue = (): boolean => runtimeGeneration === this._runtimeGeneration;
+    if (!shouldContinue()) {
+      throw new Error('SyncEngineNext: sync run cancelled by a runtime transition.');
+    }
     await this.pruneSupersededLinks(allTargets);
-    const targets = allTargets.filter(target => options.did === undefined || target.did === options.did);
-    const sessions = await Promise.all(targets.map(target => this.ensureSession(target)));
-    const outcomes = direction === undefined
-      ? [
-        ...await Promise.allSettled(sessions.map(({ session }) => session.cover('pull'))),
-        ...await Promise.allSettled(sessions.map(({ session }) => session.cover('push'))),
-      ]
-      : await Promise.allSettled(sessions.map(({ session }) => session.cover(direction)));
-    if (!this._live) {
-      await Promise.all(targets.map(target => this.disposeSession(target)));
+    const targets = allTargets.filter(target =>
+      options.did === undefined || SyncEngineNext.targetBelongsToIdentity(target, options.did)
+    );
+    const outcomes: PromiseSettledResult<void>[] = [];
+    try {
+      const sessions = await Promise.all(targets.map(target => this.ensureSession(target)));
+      outcomes.push(...direction === undefined
+        ? [
+          ...await this.settleCovers(sessions, 'pull', shouldContinue),
+          ...await this.settleCovers(sessions, 'push', shouldContinue),
+        ]
+        : await this.settleCovers(sessions, direction, shouldContinue));
+      const transferFailed = outcomes.some(outcome => outcome.status === 'rejected');
+      if (options.verifyConvergence === true && !transferFailed) {
+        outcomes.push(...await this.settleByEndpoint(
+          targets.map(target => ({ target })),
+          async ({ target }): Promise<void> => {
+            if (!shouldContinue()) {
+              throw new Error('SyncEngineNext: convergence proof cancelled by a runtime transition.');
+            }
+            const convergence = await this.verifyStableConvergence(target, shouldContinue);
+            if (!convergence.converged) {
+              throw new Error(convergence.error ?? 'SyncEngineNext: feed fingerprints did not converge.');
+            }
+          },
+        ));
+      }
+    } finally {
+      if (!this._live) {
+        await Promise.allSettled(targets.map(target => this.disposeSession(target)));
+      }
     }
     const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
     if (failures.length > 0) {
@@ -511,8 +790,8 @@ export class SyncEngineNext implements SyncEngine {
       }
     }));
     if (initialCover) {
-      await Promise.allSettled(active.map(({ session }) => session.cover('pull')));
-      await Promise.allSettled(active.map(({ session }) => session.cover('push')));
+      await this.settleCovers(active, 'pull');
+      await this.settleCovers(active, 'push');
     }
     for (const { session } of active) {
       session.start();
@@ -535,15 +814,42 @@ export class SyncEngineNext implements SyncEngine {
       scope              : target.scope,
       tenantDid          : target.did,
     });
-    const pullPage = new SyncNextPullPage(this.agent, this._ledger, this._echoSuppressor);
-    const pushPage = new SyncNextPushPage(this.agent, this._ledger, this._echoSuppressor);
+    const pullPage = new SyncNextPullPage(this.agent, this._ledger, this._echoSuppressor, {
+      onApplied    : (pullTarget, entries): void => this.emitApplied(pullTarget, entries),
+      onCheckpoint : (pullTarget, token): void => {
+        this.emit({
+          type           : 'checkpoint:pull-advance',
+          tenantDid      : pullTarget.did,
+          remoteEndpoint : pullTarget.dwnUrl,
+          ...syncEventScope(pullTarget.scope),
+          position       : token.position,
+          ...(token.messageCid === undefined ? {} : { messageCid: token.messageCid }),
+        });
+      },
+    });
+    const pushPage = new SyncNextPushPage(this.agent, this._ledger, this._echoSuppressor, {
+      onCheckpoint: (pushTarget, token): void => {
+        this.emit({
+          type           : 'checkpoint:push-advance',
+          tenantDid      : pushTarget.did,
+          remoteEndpoint : pushTarget.dwnUrl,
+          ...syncEventScope(pushTarget.scope),
+          position       : token.position,
+          ...(token.messageCid === undefined ? {} : { messageCid: token.messageCid }),
+        });
+      },
+    });
     const active: ActiveSession = {
       session: new SyncNextLinkSession(
         target,
         this._ledger,
         pullPage,
         pushPage,
-        new SyncNextQuarantineRetry(this.agent, this._ledger),
+        new SyncNextQuarantineRetry(
+          this.agent,
+          this._ledger,
+          (pullTarget, entries): void => this.emitApplied(pullTarget, entries),
+        ),
         new SyncNextDeliveryRetry(this.agent, this._ledger),
         (error): void => { console.error('SyncEngineNext: link work failed', error); },
       ),
@@ -552,6 +858,107 @@ export class SyncEngineNext implements SyncEngine {
     };
     this._sessions.set(key, active);
     return active;
+  }
+
+  private async verifyConvergence(target: SyncTarget): Promise<{
+    converged: boolean;
+    localFingerprint?: string;
+    remoteFingerprint?: string;
+  }> {
+    const current = await this.targetResolver.withCurrentRoleGrant(target);
+    const role = current.authorization.kind === 'role' ? current.authorization : undefined;
+    const params = {
+      agent              : this.agent,
+      authorDid          : role?.actorDid,
+      cidsOnly           : true,
+      delegateDid        : current.delegateDid,
+      delegatedGrant     : current.authorDelegatedGrant,
+      did                : current.did,
+      filters            : messageFeedFiltersForSyncScope(current.scope),
+      limit              : 1,
+      permissionGrantIds : current.permissionGrantIds,
+      protocolRole       : role?.protocolRole,
+    };
+    const [local, remote] = await Promise.all([
+      queryLocalMessageFeed(params),
+      queryRemoteMessageFeed({ ...params, dwnUrl: current.dwnUrl }),
+    ]);
+    if (local.status.code !== 200 || remote.status.code !== 200) {
+      throw new Error(
+        `SyncEngineNext: convergence query failed: local ${local.status.code}, remote ${remote.status.code}.`,
+      );
+    }
+    return {
+      converged         : local.fingerprint !== undefined && local.fingerprint === remote.fingerprint,
+      localFingerprint  : local.fingerprint,
+      remoteFingerprint : remote.fingerprint,
+    };
+  }
+
+  private async verifyStableConvergence(
+    target: SyncTarget,
+    shouldContinue: () => boolean = (): boolean => true,
+  ): Promise<{
+    converged: boolean;
+    error?: string;
+    localFingerprint?: string;
+    remoteFingerprint?: string;
+  }> {
+    const first = await this.verifyConvergence(target);
+    if (!first.converged) {
+      return { ...first, error: 'SyncEngineNext: feed fingerprints did not converge.' };
+    }
+    if (!shouldContinue()) {
+      return { ...first, converged: false, error: 'SyncEngineNext: convergence proof was interrupted.' };
+    }
+    const second = await this.verifyConvergence(target);
+    if (!shouldContinue()) {
+      return { ...second, converged: false, error: 'SyncEngineNext: convergence proof was interrupted.' };
+    }
+    const stable = second.converged &&
+      first.localFingerprint === second.localFingerprint &&
+      first.remoteFingerprint === second.remoteFingerprint;
+    return stable
+      ? second
+      : { ...second, converged: false, error: 'SyncEngineNext: feed head changed during convergence proof.' };
+  }
+
+  private settleCovers(
+    active: readonly ActiveSession[],
+    direction: SyncDirection,
+    shouldContinue: () => boolean = (): boolean => true,
+  ): Promise<PromiseSettledResult<void>[]> {
+    return this.settleByEndpoint(active, ({ session }) => {
+      if (!shouldContinue()) {
+        return Promise.reject(new Error('SyncEngineNext: covering work was interrupted.'));
+      }
+      return session.cover(direction, shouldContinue);
+    });
+  }
+
+  /** Keep independent endpoints concurrent while bounding one endpoint to one covering request stream. */
+  private async settleByEndpoint<T extends { target: SyncTarget }, TResult>(
+    items: readonly T[],
+    operation: (item: T) => Promise<TResult>,
+  ): Promise<PromiseSettledResult<TResult>[]> {
+    const outcomes = new Array<PromiseSettledResult<TResult>>(items.length);
+    const groups = new Map<string, number[]>();
+    for (let index = 0; index < items.length; index++) {
+      const endpoint = normalizeDwnEndpoint(items[index].target.dwnUrl);
+      const group = groups.get(endpoint) ?? [];
+      group.push(index);
+      groups.set(endpoint, group);
+    }
+    await Promise.all([...groups.values()].map(async (indexes): Promise<void> => {
+      for (const index of indexes) {
+        try {
+          outcomes[index] = { status: 'fulfilled', value: await operation(items[index]) };
+        } catch (reason: unknown) {
+          outcomes[index] = { status: 'rejected', reason };
+        }
+      }
+    }));
+    return outcomes;
   }
 
   private async pruneSupersededLinks(targets: readonly SyncTarget[]): Promise<void> {
@@ -601,15 +1008,44 @@ export class SyncEngineNext implements SyncEngine {
     await Promise.all(sessions.map(({ session }) => session.dispose()));
   }
 
+  private runRuntimeTransition(operation: () => Promise<void>): Promise<void> {
+    this._runtimeGeneration++;
+    this._runtimeTransitionDepth++;
+    if (this._pendingSyncRun !== undefined) {
+      this._pendingSyncRun.cancelled = true;
+      this._pendingSyncRun = undefined;
+    }
+    return this.runTransition(operation).finally((): void => {
+      this._runtimeTransitionDepth--;
+    });
+  }
+
   private runTransition(operation: () => Promise<void>): Promise<void> {
     const transition = this._transition.then(operation, operation);
     this._transition = transition.catch((): void => {});
     return transition;
   }
 
+  private emitApplied(target: SyncTarget, entries: readonly SyncFreshEntry[]): void {
+    for (const entry of entries) {
+      this.emit({
+        type           : 'delivery:applied',
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        ...syncEventScope(target.scope),
+        descriptor     : syncMessageDescriptor(entry.message),
+        messageCid     : entry.messageCid,
+      });
+    }
+  }
+
   private emit(event: SyncEvent): void {
-    for (const listener of this._eventListeners) {
-      listener(event);
+    for (const listener of Array.from(this._eventListeners)) {
+      try {
+        listener(event);
+      } catch {
+        // Observers cannot alter replication outcomes.
+      }
     }
   }
 
@@ -644,6 +1080,11 @@ export class SyncEngineNext implements SyncEngine {
     return buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
   }
 
+  private static targetBelongsToIdentity(target: SyncTarget, did: string): boolean {
+    return target.did === did ||
+      (target.authorization.kind === 'role' && target.authorization.actorDid === did);
+  }
+
   private static healthKey(link: {
     authorizationEpoch: string;
     projectionId: string;
@@ -673,4 +1114,7 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
+  private static rejectedOutcomes(count: number, reason: unknown): PromiseRejectedResult[] {
+    return Array.from({ length: count }, (): PromiseRejectedResult => ({ status: 'rejected', reason }));
+  }
 }
