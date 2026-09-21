@@ -14,6 +14,7 @@ import type { EnboxPlatformAgent } from '../src/types/agent.js';
 import type { SyncNextLinkIdentity } from '../src/sync-next/types.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
+import { SyncEchoSuppressor } from '../src/sync-echo-suppressor.js';
 import { SyncNextDeliveryRetry } from '../src/sync-next/delivery-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
@@ -203,6 +204,39 @@ describe('SyncNextPushPage', () => {
     expect(await ledger.getDeliveryForLink(linkIdentity())).toEqual([]);
   });
 
+  it('should retain broad Invalid outcomes instead of inventing endpoint permanence', async () => {
+    const root = await feedEntry(protocolMessage('unauthorized'), 1);
+    const fixture = fakeAgent(page([root]));
+    fixture.apply.resolves({ kind: 'Invalid', reason: 'Unauthorized' });
+    await createLink();
+
+    await new SyncNextPushPage(fixture.agent, ledger).consume(target());
+
+    expect(await ledger.getDeliveryForLink(linkIdentity())).toMatchObject([{
+      messageCid : root.messageCid,
+      outcome    : { detail: 'Unauthorized', reason: 'remote-rejected' },
+    }]);
+    expect(await ledger.getTerminalForLink(linkIdentity())).toEqual([]);
+  });
+
+  it('should replay exact local input after remote apply succeeds but the ledger batch fails', async () => {
+    const root = await feedEntry(protocolMessage('replay'), 1);
+    const fixture = fakeAgent(page([root]));
+    await createLink();
+    const commit = sinon.stub(ledger, 'commitPushPage');
+    commit.onFirstCall().rejects(new Error('injected batch failure'));
+    commit.callThrough();
+    const processor = new SyncNextPushPage(fixture.agent, ledger);
+
+    await expect(processor.consume(target())).rejects.toThrow('injected batch failure');
+    expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough).toBeUndefined();
+
+    fixture.apply.resolves({ kind: 'Duplicate' });
+    await expect(processor.consume(target())).resolves.toMatchObject({ delivered: 1 });
+    expect(fixture.apply.calledTwice).toBe(true);
+    expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
+  });
+
   it('should process exactly one non-drained local page', async () => {
     const root = await feedEntry(protocolMessage('one-page'), 1);
     const fixture = fakeAgent(page([root], false));
@@ -212,6 +246,20 @@ describe('SyncNextPushPage', () => {
 
     expect(result.hasMore).toBe(true);
     expect(fixture.process.calledOnce).toBe(true);
+    expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
+  });
+
+  it('should suppress only the source endpoint echo after a pull', async () => {
+    const root = await feedEntry(protocolMessage('pulled'), 1);
+    const fixture = fakeAgent(page([root]));
+    const suppressor = new SyncEchoSuppressor();
+    suppressor.trackPulled(target().did, root.messageCid, target().dwnUrl);
+    await createLink();
+
+    const result = await new SyncNextPushPage(fixture.agent, ledger, suppressor).consume(target());
+
+    expect(result).toMatchObject({ delivered: 1, retained: 0 });
+    expect(fixture.apply.notCalled).toBe(true);
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
   });
 
@@ -231,5 +279,16 @@ describe('SyncNextPushPage', () => {
 
     expect(result.aborted).toBe(true);
     expect(fixture.process.notCalled).toBe(true);
+  });
+
+  it('should reject a non-drained local page whose cursor does not advance', async () => {
+    const root = await feedEntry(protocolMessage('stuck'), 1);
+    const fixture = fakeAgent(page([root], false));
+    await createLink();
+    const processor = new SyncNextPushPage(fixture.agent, ledger);
+    await processor.consume(target());
+
+    await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
+    expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
   });
 });

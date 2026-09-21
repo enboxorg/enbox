@@ -25,6 +25,7 @@ import { buildLinkKey } from '../sync-link-key.js';
 import { FollowedSyncSourceStoreLevel } from '../followed-sync-source-store-level.js';
 import { Level } from 'level';
 import { openSyncNextSubscriptions } from './subscriptions.js';
+import { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from '../sync-endpoint-store-level.js';
 import { SyncEngineLevel } from '../sync-engine-level.js';
 import { SyncIdentityStoreLevel } from '../sync-identity-store-level.js';
@@ -57,6 +58,7 @@ export class SyncEngineNext implements SyncEngine {
   private _agent?: EnboxPlatformAgent;
   private readonly _control: SyncEngineLevel;
   private readonly _db: AbstractLevel<LevelKey>;
+  private readonly _echoSuppressor = new SyncEchoSuppressor();
   private readonly _endpointStore: SyncEndpointStoreLevel;
   private readonly _eventListeners = new Set<SyncEventListener>();
   private readonly _identityStore: SyncIdentityStoreLevel;
@@ -123,10 +125,10 @@ export class SyncEngineNext implements SyncEngine {
 
   public async setIdentityOptions(
     { did, options }: { did: string; options: SyncIdentityOptions },
-    _lifecycleOptions: SyncLifecycleOptions = {},
+    lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<void> {
     const normalized = SyncEngineNext.normalizeOptions(options);
-    await this._identityStore.set(did, normalized);
+    await this._control.setIdentityOptions({ did, options: normalized }, lifecycleOptions);
     this._pausedIdentities.delete(did);
     this._planner.invalidate();
     this.emit({ type: 'identity:registration-change', tenantDid: did, options: normalized });
@@ -137,22 +139,29 @@ export class SyncEngineNext implements SyncEngine {
     params: { did: string; options: SyncIdentityOptions },
     lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<boolean> {
-    const current = await this._identityStore.get(params.did);
     const normalized = SyncEngineNext.normalizeOptions(params.options);
-    if (current !== undefined && SyncEngineNext.optionsEqual(current, normalized)) {
+    const changed = await this._control.ensureIdentityOptions({
+      did     : params.did,
+      options : normalized,
+    }, lifecycleOptions);
+    if (!changed) {
       return false;
     }
-    await this.setIdentityOptions({ did: params.did, options: normalized }, lifecycleOptions);
+    this._pausedIdentities.delete(params.did);
+    this._planner.invalidate();
+    this.emit({ type: 'identity:registration-change', tenantDid: params.did, options: normalized });
+    await this.refreshLiveTargets();
     return true;
   }
 
   public async refreshIdentityRouting(
     did: string,
-    _lifecycleOptions: SyncLifecycleOptions = {},
+    lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<void> {
     if (await this._identityStore.get(did) === undefined) {
       return;
     }
+    await this._control.refreshIdentityRouting(did, lifecycleOptions);
     this._planner.invalidate();
     await this.refreshLiveTargets();
   }
@@ -179,9 +188,9 @@ export class SyncEngineNext implements SyncEngine {
 
   public async removeIdentity(
     did: string,
-    _lifecycleOptions: SyncLifecycleOptions = {},
+    lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<void> {
-    await this._identityStore.delete(did);
+    await this._control.removeIdentity(did, lifecycleOptions);
     this._pausedIdentities.delete(did);
     for (const [key, active] of this._sessions) {
       if (active.target.did === did) {
@@ -214,6 +223,15 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async deleteFollowedSource(source: FollowedSyncSource): Promise<void> {
+    const identity = await this._identityStore.get(source.actorDid);
+    const target = await this.targetResolver.buildTargetForSource(source, identity?.delegateDid);
+    await this.disposeSession(target);
+    await this._ledger.deleteLinkAndSparse({
+      authorizationEpoch : target.authorizationEpoch,
+      projectionId       : target.projectionId,
+      remoteEndpoint     : target.dwnUrl,
+      tenantDid          : target.did,
+    });
     await this._sourceStore.delete(source.id);
     this._planner.invalidate();
     await this.refreshLiveTargets();
@@ -295,25 +313,39 @@ export class SyncEngineNext implements SyncEngine {
     };
   }
 
-  public startSync(params: StartSyncParams = {}): Promise<void> {
-    return this.runTransition(async (): Promise<void> => {
+  public async startSync(params: StartSyncParams = {}): Promise<void> {
+    const interval = Math.min(
+      Math.max(parseDurationInMilliseconds(params.interval ?? '5m'), 1_000),
+      MAX_TIMER_DELAY_MS,
+    );
+    await this.runTransition(async (): Promise<void> => {
       await this.stopRuntime();
       this._live = true;
-      await this.refreshLiveTargets(true);
-      const interval = Math.min(
-        Math.max(parseDurationInMilliseconds(params.interval ?? '5m'), 1_000),
-        MAX_TIMER_DELAY_MS,
-      );
-      this._timer = setInterval((): void => {
-        for (const { session } of this._sessions.values()) {
-          session.start();
-        }
-      }, interval);
+      try {
+        await this.refreshLiveTargets(true);
+        this._timer = setInterval((): void => {
+          for (const { session } of this._sessions.values()) {
+            session.start();
+          }
+        }, interval);
+      } catch (error: unknown) {
+        await this.stopRuntime();
+        throw error;
+      }
     });
   }
 
-  public stopSync(_timeout = 2_000): Promise<void> {
-    return this.runTransition((): Promise<void> => this.stopRuntime());
+  public stopSync(timeout = 2_000): Promise<void> {
+    if (!Number.isFinite(timeout) || timeout < 0 || timeout > MAX_TIMER_DELAY_MS) {
+      return Promise.reject(new RangeError(
+        `SyncEngineNext: stop timeout must be between 0 and ${MAX_TIMER_DELAY_MS} milliseconds.`,
+      ));
+    }
+    return SyncEngineNext.withTimeout(
+      this.runTransition((): Promise<void> => this.stopRuntime()),
+      timeout,
+      `SyncEngineNext: sync runtime did not stop within ${timeout} milliseconds.`,
+    );
   }
 
   public on(listener: SyncEventListener): () => void {
@@ -321,8 +353,8 @@ export class SyncEngineNext implements SyncEngine {
     return (): void => { this._eventListeners.delete(listener); };
   }
 
-  public async close(_options: SyncLifecycleOptions = {}): Promise<void> {
-    await this.stopSync();
+  public async close(options: SyncLifecycleOptions = {}): Promise<void> {
+    await this.stopSync(options.timeout ?? 2_000);
     await this._control.close();
   }
 
@@ -340,36 +372,42 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
-    const [delivery, links, terminal] = await Promise.all([
-      this._ledger.getAllDelivery(),
-      this._ledger.getAllLinks(),
-      this._ledger.getAllTerminal(),
-    ]);
-    const quotaBlockedMessageCount = delivery.filter(entry => entry.outcome.reason === 'quota').length;
-    const degradedLinkCount = links.filter(link => link.status === 'authorization-paused').length;
-    return {
-      connectivity       : this.connectivityState,
-      degradedLinkCount,
-      failedMessageCount : terminal.length,
-      quotaBlockedMessageCount,
-      syncHealthy        : terminal.length === 0 && quotaBlockedMessageCount === 0 && degradedLinkCount === 0,
-    };
+    return this.readHealth();
   }
 
   public async getIdentitySyncStatus(tenantDid: string): Promise<SyncIdentityStatus> {
-    const [health, links, registration] = await Promise.all([
-      this.getSyncHealth(),
+    const [delivery, health, links, registration, terminal] = await Promise.all([
+      this._ledger.getAllDelivery(),
+      this.readHealth(tenantDid),
       this.getReplicationLinks(tenantDid),
       this.getIdentityOptions(tenantDid),
+      this._ledger.getAllTerminal(),
     ]);
-    const remotes = [...new Set(links.map(link => link.remoteEndpoint))].map(remoteEndpoint => ({
-      connectivity             : links.find(link => link.remoteEndpoint === remoteEndpoint)?.connectivity ?? 'unknown',
-      failedMessageCount       : 0,
-      quotaBlockedMessageCount : 0,
-      remoteEndpoint,
-      state                    : 'healthy' as const,
-      tenantDid,
-    }));
+    const remotes = [...new Set(links.map(link => link.remoteEndpoint))].map(remoteEndpoint => {
+      const remoteLinks = links.filter(link => link.remoteEndpoint === remoteEndpoint);
+      const failedMessageCount = terminal.filter(entry =>
+        entry.tenantDid === tenantDid && entry.remoteEndpoint === remoteEndpoint
+      ).length;
+      const quotaBlockedMessageCount = delivery.filter(entry =>
+        entry.tenantDid === tenantDid &&
+        entry.remoteEndpoint === remoteEndpoint &&
+        entry.outcome.reason === 'quota'
+      ).length;
+      const connectivity = remoteLinks.find(link => link.connectivity === 'online')?.connectivity ?? 'unknown';
+      const degraded = failedMessageCount > 0 || remoteLinks.some(link => link.status === 'paused');
+      return {
+        connectivity,
+        failedMessageCount,
+        quotaBlockedMessageCount,
+        remoteEndpoint,
+        state: connectivity === 'offline'
+          ? 'offline' as const
+          : quotaBlockedMessageCount > 0
+            ? 'quota-blocked' as const
+            : degraded ? 'degraded' as const : 'healthy' as const,
+        tenantDid,
+      };
+    });
     return {
       connectivity : links.some(link => link.connectivity === 'online') ? 'online' : this.connectivityState,
       currentness  : projectReplicationCurrentness(links),
@@ -392,7 +430,7 @@ export class SyncEngineNext implements SyncEngine {
         link.authorizationEpoch,
       ));
       return {
-        connectivity     : active?.session.isOnline === true ? 'online' : 'unknown',
+        connectivity     : active === undefined ? 'unknown' : active.session.isOnline ? 'online' : 'offline',
         delegateDid      : link.delegateDid,
         followedSourceId : link.authorization.kind === 'role' ? link.authorization.roleRecordId : undefined,
         isPullCurrent    : active?.session.isPullCurrent ?? false,
@@ -408,10 +446,20 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
-    for (const active of this._sessions.values()) {
-      if (active.target.did === tenantDid && active.target.dwnUrl === remoteEndpoint) {
-        active.session.start();
-      }
+    const targets = (await this._planner.getTargets()).filter(target =>
+      target.did === tenantDid && target.dwnUrl === remoteEndpoint
+    );
+    const active = await Promise.all(targets.map(target => this.ensureSession(target)));
+    const outcomes = [
+      ...await Promise.allSettled(active.map(({ session }) => session.cover('pull'))),
+      ...await Promise.allSettled(active.map(({ session }) => session.cover('push'))),
+    ];
+    if (!this._live) {
+      await Promise.all(targets.map(target => this.disposeSession(target)));
+    }
+    const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+    if (failures.length > 0) {
+      throw new AggregateError(failures.map(({ reason }) => reason), 'SyncEngineNext: retry failed.');
     }
   }
 
@@ -426,8 +474,9 @@ export class SyncEngineNext implements SyncEngine {
     if (options.did !== undefined && await this._identityStore.get(options.did) === undefined) {
       throw new Error(`SyncEngineNext: identity '${options.did}' is not registered.`);
     }
-    const targets = (await this._planner.getTargets())
-      .filter(target => options.did === undefined || target.did === options.did);
+    const allTargets = await this._planner.getTargets();
+    await this.pruneSupersededLinks(allTargets);
+    const targets = allTargets.filter(target => options.did === undefined || target.did === options.did);
     const sessions = await Promise.all(targets.map(target => this.ensureSession(target)));
     const outcomes = direction === undefined
       ? [
@@ -449,15 +498,9 @@ export class SyncEngineNext implements SyncEngine {
       return;
     }
     const targets = await this._planner.getTargets();
-    const currentKeys = new Set(targets.map(SyncEngineNext.targetKey));
-    for (const [key, active] of this._sessions) {
-      if (!currentKeys.has(key)) {
-        await active.session.dispose();
-        this._sessions.delete(key);
-      }
-    }
+    await this.pruneSupersededLinks(targets);
     const active = await Promise.all(targets.map(target => this.ensureSession(target)));
-    for (const item of active) {
+    await Promise.allSettled(active.map(async (item): Promise<void> => {
       if (!item.subscribed) {
         try {
           await openSyncNextSubscriptions(this.agent, this.targetResolver, item.target, item.session);
@@ -466,7 +509,7 @@ export class SyncEngineNext implements SyncEngine {
           console.error('SyncEngineNext: subscription establishment failed', error);
         }
       }
-    }
+    }));
     if (initialCover) {
       await Promise.allSettled(active.map(({ session }) => session.cover('pull')));
       await Promise.allSettled(active.map(({ session }) => session.cover('push')));
@@ -492,8 +535,8 @@ export class SyncEngineNext implements SyncEngine {
       scope              : target.scope,
       tenantDid          : target.did,
     });
-    const pullPage = new SyncNextPullPage(this.agent, this._ledger);
-    const pushPage = new SyncNextPushPage(this.agent, this._ledger);
+    const pullPage = new SyncNextPullPage(this.agent, this._ledger, this._echoSuppressor);
+    const pushPage = new SyncNextPushPage(this.agent, this._ledger, this._echoSuppressor);
     const active: ActiveSession = {
       session: new SyncNextLinkSession(
         target,
@@ -509,6 +552,25 @@ export class SyncEngineNext implements SyncEngine {
     };
     this._sessions.set(key, active);
     return active;
+  }
+
+  private async pruneSupersededLinks(targets: readonly SyncTarget[]): Promise<void> {
+    if (!this._planner.lastResolutionComplete) {
+      return;
+    }
+    const current = new Set(targets.map(SyncEngineNext.targetKey));
+    for (const link of await this._ledger.getAllLinks()) {
+      const key = buildLinkKey(
+        link.tenantDid,
+        link.remoteEndpoint,
+        link.projectionId,
+        link.authorizationEpoch,
+      );
+      if (!current.has(key)) {
+        await this.disposeSession(link);
+        await this._ledger.deleteLink(link);
+      }
+    }
   }
 
   private async disposeSession(target: SyncTarget | {
@@ -535,6 +597,7 @@ export class SyncEngineNext implements SyncEngine {
     }
     const sessions = [...this._sessions.values()];
     this._sessions.clear();
+    this._echoSuppressor.clear();
     await Promise.all(sessions.map(({ session }) => session.dispose()));
   }
 
@@ -550,8 +613,44 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
+  private async readHealth(tenantDid?: string): Promise<SyncHealthSummary> {
+    const [delivery, links, quarantine, terminal] = await Promise.all([
+      this._ledger.getAllDelivery(),
+      this._ledger.getAllLinks(),
+      this._ledger.getAllQuarantine(),
+      this._ledger.getAllTerminal(),
+    ]);
+    const currentLinks = links.filter(link => tenantDid === undefined || link.tenantDid === tenantDid);
+    const currentDelivery = delivery.filter(entry => tenantDid === undefined || entry.tenantDid === tenantDid);
+    const currentQuarantine = quarantine.filter(entry => tenantDid === undefined || entry.tenantDid === tenantDid);
+    const currentTerminal = terminal.filter(entry => tenantDid === undefined || entry.tenantDid === tenantDid);
+    const degradedKeys = new Set([
+      ...currentLinks.filter(link => link.status === 'authorization-paused').map(SyncEngineNext.healthKey),
+      ...currentDelivery.map(SyncEngineNext.healthKey),
+      ...currentQuarantine.map(SyncEngineNext.healthKey),
+      ...currentTerminal.map(SyncEngineNext.healthKey),
+    ]);
+    const quotaBlockedMessageCount = currentDelivery.filter(entry => entry.outcome.reason === 'quota').length;
+    return {
+      connectivity       : this.connectivityState,
+      degradedLinkCount  : degradedKeys.size,
+      failedMessageCount : currentTerminal.length,
+      quotaBlockedMessageCount,
+      syncHealthy        : degradedKeys.size === 0,
+    };
+  }
+
   private static targetKey(target: SyncTarget): string {
     return buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+  }
+
+  private static healthKey(link: {
+    authorizationEpoch: string;
+    projectionId: string;
+    remoteEndpoint: string;
+    tenantDid: string;
+  }): string {
+    return buildLinkKey(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
   }
 
   private static normalizeOptions(options: SyncIdentityOptions): SyncIdentityOptions {
@@ -560,11 +659,18 @@ export class SyncEngineNext implements SyncEngine {
       : { ...options, protocols: normalizeSyncProtocols(options.protocols) };
   }
 
-  private static optionsEqual(a: SyncIdentityOptions, b: SyncIdentityOptions): boolean {
-    return a.delegateDid === b.delegateDid &&
-      (a.protocols === 'all'
-        ? b.protocols === 'all'
-        : b.protocols !== 'all' && a.protocols.length === b.protocols.length &&
-          a.protocols.every((protocol, index) => protocol === b.protocols[index]));
+  private static async withTimeout<T>(operation: Promise<T>, timeout: number, message: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout((): void => { reject(new Error(message)); }, timeout);
+    });
+    try {
+      return await Promise.race([operation, expired]);
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    }
   }
+
 }

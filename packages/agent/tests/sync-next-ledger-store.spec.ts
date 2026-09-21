@@ -418,4 +418,38 @@ describe('SyncNextLedgerStore', () => {
     expect((await limited.getLink(identity(create)))?.pushHandledThrough).toEqual(token(1, 'push'));
     expect(await limited.getDeliveryForLink(identity(create))).toHaveLength(1);
   });
+
+  it('should atomically reset one direction and purge only its reconstructible sparse state', async () => {
+    const create = linkCreate();
+    await store.getOrCreateLink(create);
+    await store.commitPullPage(identity(create), {
+      handledThrough : token(2, 'pull'),
+      quarantine     : [{
+        encryptedPayload : 'encrypted',
+        messageCid       : 'pull-cid',
+        outcome          : { reason: 'data' },
+        source           : token(1, 'pull', 'pull-cid'),
+      }],
+      settled  : [],
+      terminal : [{ code: 'Rejected', messageCid: 'pull-terminal', source: token(2, 'pull', 'pull-terminal') }],
+    });
+    await store.commitPushPage(identity(create), {
+      delivery: [{
+        messageCid : 'push-cid',
+        outcome    : { reason: 'transport' },
+        source     : token(1, 'push', 'push-cid'),
+      }],
+      handledThrough : token(1, 'push'),
+      settled        : [],
+      terminal       : [],
+    });
+
+    expect(await store.rebuildDirection(identity(create), 'pull')).toBe(true);
+
+    expect((await store.getLink(identity(create)))?.pullHandledThrough).toBeUndefined();
+    expect((await store.getLink(identity(create)))?.pushHandledThrough).toEqual(token(1, 'push'));
+    expect(await store.getQuarantineForLink(identity(create))).toEqual([]);
+    expect(await store.getTerminalForLink(identity(create))).toEqual([]);
+    expect(await store.getDeliveryForLink(identity(create))).toHaveLength(1);
+  });
 });
