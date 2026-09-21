@@ -34,12 +34,17 @@ export type SyncNextPushPageOptions = {
   shouldContinue?: () => boolean;
 };
 
+export type SyncNextPushPageObserver = {
+  onCheckpoint?: (target: SyncTarget, token: ProgressToken) => void;
+};
+
 /** Consumes one local feed page without letting one delivery block its independent tail. */
 export class SyncNextPushPage {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _echoSuppressor?: SyncEchoSuppressor,
+    private readonly _observer: SyncNextPushPageObserver = {},
   ) {}
 
   public async consume(
@@ -132,9 +137,10 @@ export class SyncNextPushPage {
       settled,
       terminal: [],
     });
-    if (!committed || !shouldContinue()) {
+    if (!committed) {
       return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
     }
+    this._observer.onCheckpoint?.(target, handledThrough);
     return {
       capturedHead : reply.head ?? options.head,
       delivered    : settled.length,

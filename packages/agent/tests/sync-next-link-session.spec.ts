@@ -121,6 +121,26 @@ describe('SyncNextLinkSession', () => {
     await link.dispose();
   });
 
+  it('should stop a cancelled covering run before requesting its next page', async () => {
+    const parts = fixture();
+    let current = true;
+    parts.pullPage.consume.callsFake(async () => {
+      current = false;
+      return {
+        capturedHead     : head('5'),
+        handledThrough   : head('1'),
+        hasMore          : true,
+        materializedCids : [],
+        quarantined      : 0,
+      };
+    });
+    const link = session(parts);
+    await expect(link.cover('pull', (): boolean => current)).rejects.toThrow('Covering sync cancelled');
+
+    expect(parts.pullPage.consume.calledOnce).toBe(true);
+    await link.dispose();
+  });
+
   it('should let pull complete while the same link push is blocked', async () => {
     const clock = sinon.useFakeTimers();
     const parts = fixture();

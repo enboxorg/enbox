@@ -233,13 +233,25 @@ cutover:
 - quarantine left by a retired endpoint was not serviced through another
   authorized binding for the same logical target;
 - deleting sparse recovery state and resetting its checkpoint were separate
-  crash windows.
+  crash windows;
+- concurrent public `sync()` callers queued duplicate covering waves instead
+  of sharing one merged follow-up;
+- covering work and convergence probes were unbounded across logical targets
+  sharing one endpoint;
+- endpoint drain initially relied on one fingerprint observation, persisted a
+  pre-aborted endpoint, and could skip non-live session cleanup on failure;
+- observer exceptions could escape into replication, while messages admitted
+  later from quarantine had no delivery event.
 
 Regression coverage now includes delayed retry ownership, continuous-feed
 pending fairness, concurrent same-link directions, non-advancing cursors,
 cross-endpoint quarantine settlement, atomic rebuild, pooled-socket request
 cancellation, broad `Invalid` outcomes remaining non-terminal, and replay after
-apply-before-ledger crashes.
+apply-before-ledger crashes. Public one-shot callers now coalesce into at most
+one merged follow-up, independent endpoints remain concurrent, and covering
+work for one endpoint is serialized so target count cannot become an HTTP
+burst. Drain requires two unchanged fingerprint observations before success
+and rechecks cancellation or topology between phases.
 
 The real-transport matrix covers the four required dapp modes, wake-only live
 updates, non-inline bodies followed by independent tiny roots, one offline and
@@ -261,3 +273,16 @@ reads.
   permanence.
 - Constructor-time selection prevents two engines in one agent. Cross-context
   legacy-versus-next exclusion must be solved before changing the default.
+- Per-endpoint covering work is intentionally serialized. This removes a
+  target-count request burst, but one slow target can delay later targets at
+  that endpoint until its bounded request or finite covering attempt settles.
+  Raise this to a small fixed concurrency only from measured workloads, not by
+  returning to unbounded `Promise.all` fan-out.
+- Drain cancellation is cooperative between committed pages, exact-link runs,
+  and drain phases. Local admission and an in-flight request are never
+  preempted halfway through; the next page is not requested after cancellation.
+- The next engine currently emits registration, durable checkpoint, and fresh
+  delivery events used by application readiness/data refresh. The legacy
+  repair/quota lifecycle event vocabulary still needs a consumer audit before
+  next becomes the default; it must not be mechanically recreated as another
+  state machine without a demonstrated consumer.

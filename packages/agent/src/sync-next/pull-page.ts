@@ -1,5 +1,6 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
+import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { MessagesQueryReply, ProgressToken } from '@enbox/dwn-sdk-js';
@@ -36,12 +37,18 @@ export type SyncNextPullPageOptions = {
   shouldContinue?: () => boolean;
 };
 
+export type SyncNextPullPageObserver = {
+  onApplied?: (target: SyncTarget, entries: readonly SyncFreshEntry[]) => void;
+  onCheckpoint?: (target: SyncTarget, token: ProgressToken) => void;
+};
+
 /** Consumes exactly one remote feed page through normal local DWN admission. */
 export class SyncNextPullPage {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _echoSuppressor?: SyncEchoSuppressor,
+    private readonly _observer: SyncNextPullPageObserver = {},
   ) {}
 
   public async consume(
@@ -108,6 +115,9 @@ export class SyncNextPullPage {
         for (const messageCid of outcome.appliedCids) {
           materializedCids.add(messageCid);
         }
+        if (outcome.freshEntries.length > 0) {
+          this._observer.onApplied?.(target, outcome.freshEntries);
+        }
         continue;
       }
 
@@ -135,9 +145,10 @@ export class SyncNextPullPage {
       settled,
       terminal: [],
     });
-    if (!committed || !shouldContinue()) {
+    if (!committed) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
+    this._observer.onCheckpoint?.(target, handledThrough);
 
     return {
       capturedHead     : reply.head ?? options.head,

@@ -226,14 +226,17 @@ describe('SyncNextPushPage', () => {
     const commit = sinon.stub(ledger, 'commitPushPage');
     commit.onFirstCall().rejects(new Error('injected batch failure'));
     commit.callThrough();
-    const processor = new SyncNextPushPage(fixture.agent, ledger);
+    const onCheckpoint = sinon.stub();
+    const processor = new SyncNextPushPage(fixture.agent, ledger, undefined, { onCheckpoint });
 
     await expect(processor.consume(target())).rejects.toThrow('injected batch failure');
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough).toBeUndefined();
+    expect(onCheckpoint.notCalled).toBe(true);
 
     fixture.apply.resolves({ kind: 'Duplicate' });
     await expect(processor.consume(target())).resolves.toMatchObject({ delivered: 1 });
     expect(fixture.apply.calledTwice).toBe(true);
+    expect(onCheckpoint.calledOnce).toBe(true);
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
   });
 
@@ -247,6 +250,18 @@ describe('SyncNextPushPage', () => {
     expect(result.hasMore).toBe(true);
     expect(fixture.process.calledOnce).toBe(true);
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
+  });
+
+  it('should publish a push checkpoint observation only after the ledger commits', async () => {
+    const root = await feedEntry(protocolMessage('observed'), 1);
+    const fixture = fakeAgent(page([root]));
+    const onCheckpoint = sinon.stub();
+    await createLink();
+
+    await new SyncNextPushPage(fixture.agent, ledger, undefined, { onCheckpoint }).consume(target());
+
+    expect(onCheckpoint.calledOnce).toBe(true);
+    expect(onCheckpoint.firstCall.args[1].position).toBe('1');
   });
 
   it('should suppress only the source endpoint echo after a pull', async () => {
