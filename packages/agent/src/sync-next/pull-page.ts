@@ -19,10 +19,16 @@ const PULL_PAGE_SIZE = 100;
 
 export type SyncNextPullPageResult = {
   aborted?: true;
+  capturedHead?: ProgressToken;
   handledThrough?: ProgressToken;
   hasMore: boolean;
   materializedCids: string[];
   quarantined: number;
+};
+
+export type SyncNextPullPageOptions = {
+  head?: ProgressToken;
+  shouldContinue?: () => boolean;
 };
 
 /** Consumes exactly one remote feed page through normal local DWN admission. */
@@ -34,19 +40,21 @@ export class SyncNextPullPage {
 
   public async consume(
     target: SyncTarget,
-    shouldContinue: () => boolean = (): boolean => true,
+    options: SyncNextPullPageOptions = {},
   ): Promise<SyncNextPullPageResult> {
+    const shouldContinue = options.shouldContinue ?? ((): boolean => true);
     const identity = SyncNextPullPage.identity(target);
     const link = await this._ledger.getLink(identity);
     if (link === undefined || link.status !== 'active' || !shouldContinue()) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
 
-    const reply = await this.query(target, link.pullHandledThrough);
+    const reply = await this.query(target, link.pullHandledThrough, options.head);
     if (!shouldContinue()) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
     SyncNextPullPage.assertSuccessfulPage(reply, target);
+    SyncNextPullPage.assertHead(reply.head, options.head);
 
     const handledThrough = reply.cursor;
     if (handledThrough === undefined) {
@@ -124,6 +132,7 @@ export class SyncNextPullPage {
     }
 
     return {
+      capturedHead     : reply.head ?? options.head,
       handledThrough,
       hasMore          : reply.drained !== true,
       materializedCids : [...materializedCids],
@@ -131,7 +140,11 @@ export class SyncNextPullPage {
     };
   }
 
-  private query(target: SyncTarget, cursor?: ProgressToken): Promise<MessagesQueryReply> {
+  private query(
+    target: SyncTarget,
+    cursor?: ProgressToken,
+    head?: ProgressToken,
+  ): Promise<MessagesQueryReply> {
     const role = target.authorization.kind === 'role' ? target.authorization : undefined;
     return queryRemoteMessageFeed({
       agent              : this._agent,
@@ -142,6 +155,7 @@ export class SyncNextPullPage {
       did                : target.did,
       dwnUrl             : target.dwnUrl,
       filters            : messageFeedFiltersForSyncScope(target.scope),
+      head,
       limit              : PULL_PAGE_SIZE,
       permissionGrantIds : target.permissionGrantIds,
       protocolRole       : role?.protocolRole,
@@ -172,6 +186,19 @@ export class SyncNextPullPage {
         `SyncNextPullPage: role feed resolved ${reply.roleRecordId ?? 'no role'} instead of ` +
         `${target.authorization.roleRecordId}.`,
       );
+    }
+  }
+
+  private static assertHead(actual: ProgressToken | undefined, expected: ProgressToken | undefined): void {
+    if (actual === undefined || expected === undefined) {
+      return;
+    }
+    if (
+      actual.streamId !== expected.streamId ||
+      actual.epoch !== expected.epoch ||
+      actual.position !== expected.position
+    ) {
+      throw new Error('SyncNextPullPage: remote changed the captured query head.');
     }
   }
 
