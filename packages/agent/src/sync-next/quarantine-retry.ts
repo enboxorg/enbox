@@ -1,5 +1,6 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { MessagesQueryReplyEntry } from '@enbox/dwn-sdk-js';
+import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type {
@@ -24,6 +25,7 @@ export class SyncNextQuarantineRetry {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
+    private readonly _onApplied?: (target: SyncTarget, entries: readonly SyncFreshEntry[]) => void,
   ) {}
 
   public async retry(
@@ -69,6 +71,9 @@ export class SyncNextQuarantineRetry {
     }
 
     if (outcome.kind === 'admitted') {
+      if (outcome.freshEntries.length > 0) {
+        this._onApplied?.(target, outcome.freshEntries);
+      }
       await this._ledger.settleQuarantineForLogicalTarget(entry.logicalTargetId, entry.messageCid);
       return { kind: 'settled', materializedCids: outcome.appliedCids };
     }

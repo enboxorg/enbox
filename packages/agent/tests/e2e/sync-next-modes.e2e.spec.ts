@@ -169,13 +169,22 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
 
   it('catches a new local dapp up from an existing remote protocol', async () => {
     const alice = await identity('Sync next remote history');
+    const events: string[] = [];
+    const unsubscribe = sync.on(event => {
+      if ('tenantDid' in event && event.tenantDid === alice.did.uri) {
+        events.push(event.type);
+      }
+    });
     await configureRemote(alice.did.uri);
     await writeRemote(alice.did.uri, 'remote-existing');
     await register(alice.did.uri);
 
     await sync.sync('pull');
+    unsubscribe();
 
     expect((await queryLocal(alice.did.uri)).entries).toHaveLength(1);
+    expect(events).toContain('delivery:applied');
+    expect(events).toContain('checkpoint:pull-advance');
   }, 120_000);
 
   it('pulls remote changes and publishes local changes for an existing dapp', async () => {
@@ -246,5 +255,21 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
     await expect(sync.sync('pull')).rejects.toThrow('covering sync failed');
 
     expect((await queryLocal(alice.did.uri)).entries).toHaveLength(1);
+  }, 120_000);
+
+  it('drains a selected endpoint only after sparse work and fingerprints converge', async () => {
+    const alice = await identity('Sync next drain');
+    await configureLocal(alice.did.uri);
+    await writeLocal(alice.did.uri, 'drained-local-history');
+    await register(alice.did.uri);
+
+    const result = await sync.drainTo(testDwnUrl);
+
+    expect(result.completed).toBe(true);
+    expect(result.cancelled).toBe(false);
+    expect(result.topologyChanged).toBe(false);
+    const target = result.targets.find(candidate => candidate.tenantDid === alice.did.uri);
+    expect(target).toMatchObject({ completed: true, converged: true });
+    expect(target?.localFingerprint).toBe(target?.remoteFingerprint);
   }, 120_000);
 });
