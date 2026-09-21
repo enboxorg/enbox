@@ -281,12 +281,35 @@ export class SyncNextLedgerStore {
     return this.readValues(this._quarantine.iterator(syncNextLinkRange(identity)));
   }
 
+  public async getAllQuarantine(): Promise<SyncNextQuarantineEntry[]> {
+    return this.readValues(this._quarantine.iterator());
+  }
+
   public async getDeliveryForLink(identity: SyncNextLinkIdentity): Promise<SyncNextDeliveryObligation[]> {
     return this.readValues(this._delivery.iterator(syncNextLinkRange(identity)));
   }
 
+  public async getAllDelivery(): Promise<SyncNextDeliveryObligation[]> {
+    return this.readValues(this._delivery.iterator());
+  }
+
   public async getTerminalForLink(identity: SyncNextLinkIdentity): Promise<SyncNextTerminalOutcome[]> {
     return this.readValues(this._terminal.iterator(syncNextLinkRange(identity)));
+  }
+
+  public async getAllTerminal(): Promise<SyncNextTerminalOutcome[]> {
+    return this.readValues(this._terminal.iterator());
+  }
+
+  /** Explicit identity removal owns all next-engine state for that tenant. */
+  public async deleteForTenant(tenantDid: string): Promise<void> {
+    const range = syncNextTenantRange(tenantDid);
+    await Promise.all([
+      this._delivery.clear(range),
+      this._links.clear(range),
+      this._quarantine.clear(range),
+      this._terminal.clear(range),
+    ]);
   }
 
   /** Sparse scan used after one CID materializes locally to settle duplicate source receipts. */

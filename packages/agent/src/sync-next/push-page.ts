@@ -19,10 +19,16 @@ const PUSH_PAGE_SIZE = 100;
 
 export type SyncNextPushPageResult = {
   aborted?: true;
+  capturedHead?: ProgressToken;
   delivered: number;
   handledThrough?: ProgressToken;
   hasMore: boolean;
   retained: number;
+};
+
+export type SyncNextPushPageOptions = {
+  head?: ProgressToken;
+  shouldContinue?: () => boolean;
 };
 
 /** Consumes one local feed page without letting one delivery block its independent tail. */
@@ -34,8 +40,9 @@ export class SyncNextPushPage {
 
   public async consume(
     target: SyncTarget,
-    shouldContinue: () => boolean = (): boolean => true,
+    options: SyncNextPushPageOptions = {},
   ): Promise<SyncNextPushPageResult> {
+    const shouldContinue = options.shouldContinue ?? ((): boolean => true);
     if (target.authorization.kind === 'role') {
       return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
     }
@@ -45,11 +52,12 @@ export class SyncNextPushPage {
       return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
     }
 
-    const reply = await this.query(target, link.pushHandledThrough);
+    const reply = await this.query(target, link.pushHandledThrough, options.head);
     if (!shouldContinue()) {
       return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
     }
     SyncNextPushPage.assertSuccessfulPage(reply, target);
+    SyncNextPushPage.assertHead(reply.head, options.head);
     const handledThrough = reply.cursor;
     if (handledThrough === undefined) {
       throw new Error(
@@ -115,14 +123,19 @@ export class SyncNextPushPage {
       return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
     }
     return {
-      delivered : settled.length,
+      capturedHead : reply.head ?? options.head,
+      delivered    : settled.length,
       handledThrough,
-      hasMore   : reply.drained !== true,
-      retained  : delivery.length,
+      hasMore      : reply.drained !== true,
+      retained     : delivery.length,
     };
   }
 
-  private query(target: SyncTarget, cursor?: ProgressToken): Promise<MessagesQueryReply> {
+  private query(
+    target: SyncTarget,
+    cursor?: ProgressToken,
+    head?: ProgressToken,
+  ): Promise<MessagesQueryReply> {
     return queryLocalMessageFeed({
       agent              : this._agent,
       cursor,
@@ -130,6 +143,7 @@ export class SyncNextPushPage {
       delegatedGrant     : target.authorDelegatedGrant,
       did                : target.did,
       filters            : messageFeedFiltersForSyncScope(target.scope),
+      head,
       limit              : PUSH_PAGE_SIZE,
       permissionGrantIds : target.permissionGrantIds,
     });
@@ -173,6 +187,19 @@ export class SyncNextPushPage {
         `SyncNextPushPage: local query failed for ${target.did}: ` +
         `${reply.status.code} ${reply.status.detail}`,
       );
+    }
+  }
+
+  private static assertHead(actual: ProgressToken | undefined, expected: ProgressToken | undefined): void {
+    if (actual === undefined || expected === undefined) {
+      return;
+    }
+    if (
+      actual.streamId !== expected.streamId ||
+      actual.epoch !== expected.epoch ||
+      actual.position !== expected.position
+    ) {
+      throw new Error('SyncNextPushPage: local feed changed the captured query head.');
     }
   }
 
