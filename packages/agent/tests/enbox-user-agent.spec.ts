@@ -10,6 +10,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { SyncEngineNext } from '../src/sync-next/engine.js';
 import { testDwnUrl } from './utils/test-config.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
@@ -44,6 +45,17 @@ describe('EnboxUserAgent', () => {
       expect(userAgent.rpc).toBeDefined();
       expect(userAgent.sync).toBeDefined();
       expect(userAgent.vault).toBeDefined();
+    });
+
+    it('should select the isolated next sync engine only when explicitly requested', async () => {
+      const userAgent = await EnboxUserAgent.create({
+        dataPath   : '__TESTDATA__/USERAGENT-NEXT',
+        syncEngine : 'next',
+      });
+
+      expect(userAgent.sync).toBeInstanceOf(SyncEngineNext);
+      await userAgent.sync.close();
+      await userAgent.rpc.close();
     });
   });
 
