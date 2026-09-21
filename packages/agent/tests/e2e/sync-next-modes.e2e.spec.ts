@@ -30,6 +30,7 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
       testDataLocation : '__TESTDATA__/e2e-sync-next-modes',
     });
     await harness.clearStorage();
+    await harness.agent.vault.initialize({ password: 'sync-next-e2e-password' });
     await harness.createAgentDid();
     sync = new SyncEngineNext({ db: harness.syncStore });
     sync.agent = harness.agent;
@@ -213,5 +214,37 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
     await writeLocal(alice.did.uri, 'local-live');
     await waitForCount(() => queryRemote(alice.did.uri), 2);
     await sync.stopSync();
+  }, 120_000);
+
+  it('finishes covering pull and push through quarantined non-inline bodies', async () => {
+    const alice = await identity('Sync next streamed bodies');
+    const largeRemote = 'r'.repeat(30_001);
+    const largeLocal = 'l'.repeat(30_001);
+    await configureBoth(alice.did.uri);
+    await writeRemote(alice.did.uri, largeRemote);
+    await writeRemote(alice.did.uri, 'tiny-after-remote-large');
+    await register(alice.did.uri);
+
+    await sync.sync('pull');
+    expect((await queryLocal(alice.did.uri)).entries).toHaveLength(2);
+
+    await writeLocal(alice.did.uri, largeLocal);
+    await writeLocal(alice.did.uri, 'tiny-after-large');
+    await sync.sync('push');
+    expect((await queryRemote(alice.did.uri)).entries).toHaveLength(4);
+  }, 120_000);
+
+  it('lets a healthy remote progress when another exact link is offline', async () => {
+    const alice = await harness.createIdentity({
+      name        : 'Sync next independent remotes',
+      testDwnUrls : [testDwnUrl, 'http://127.0.0.1:9'],
+    });
+    await configureRemote(alice.did.uri);
+    await writeRemote(alice.did.uri, 'healthy-remote');
+    await register(alice.did.uri);
+
+    await expect(sync.sync('pull')).rejects.toThrow('covering sync failed');
+
+    expect((await queryLocal(alice.did.uri)).entries).toHaveLength(1);
   }, 120_000);
 });

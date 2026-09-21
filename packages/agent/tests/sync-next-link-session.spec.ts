@@ -35,7 +35,8 @@ function fixture(overrides: {
   deliveryRetry: { retry: sinon.SinonStub };
   ledger: {
     getDeliveryForLink: sinon.SinonStub;
-    getQuarantineForLink: sinon.SinonStub;
+    getQuarantineForLogicalTarget: sinon.SinonStub;
+    settleQuarantineForLogicalTarget: sinon.SinonStub;
   };
   pullPage: { consume: sinon.SinonStub };
   pushPage: { consume: sinon.SinonStub };
@@ -45,8 +46,9 @@ function fixture(overrides: {
   return {
     deliveryRetry : { retry: sinon.stub().resolves({ kind: 'settled' }) },
     ledger        : {
-      getDeliveryForLink   : sinon.stub().resolves(overrides.delivery ?? []),
-      getQuarantineForLink : sinon.stub().resolves(overrides.quarantine ?? []),
+      getDeliveryForLink               : sinon.stub().resolves(overrides.delivery ?? []),
+      getQuarantineForLogicalTarget    : sinon.stub().resolves(overrides.quarantine ?? []),
+      settleQuarantineForLogicalTarget : sinon.stub().resolves(),
     },
     pullPage: {
       consume: sinon.stub().resolves({
@@ -156,9 +158,9 @@ describe('SyncNextLinkSession', () => {
     const link = session(parts);
 
     link.start();
-    await clock.tickAsync(0);
+    await clock.tickAsync(1);
 
-    expect(parts.pullPage.consume.calledOnce).toBe(true);
+    expect(parts.pullPage.consume.called).toBe(true);
     expect(parts.pushPage.consume.calledOnce).toBe(true);
     blocked.resolve();
     await clock.tickAsync(0);
@@ -166,8 +168,7 @@ describe('SyncNextLinkSession', () => {
   });
 
   it('should service quarantine while fresh pull pages continue', async () => {
-    const clock = sinon.useFakeTimers();
-    const pending = { messageCid: 'pending' };
+    const pending = { attempts: 1, messageCid: 'pending', source: token('1') };
     const parts = fixture({ quarantine: [pending] });
     parts.pullPage.consume.resolves({
       handledThrough   : token('1'),
@@ -178,10 +179,10 @@ describe('SyncNextLinkSession', () => {
     const link = session(parts);
 
     link.start();
-    await clock.tickAsync(0);
+    await new Promise(resolve => setTimeout(resolve, 10));
 
-    expect(parts.pullPage.consume.calledOnce).toBe(true);
-    expect(parts.quarantineRetry.retry.calledOnce).toBe(true);
+    expect(parts.pullPage.consume.called).toBe(true);
+    expect(parts.quarantineRetry.retry.called).toBe(true);
     await link.dispose();
   });
 
@@ -190,6 +191,59 @@ describe('SyncNextLinkSession', () => {
     const link = session(parts);
 
     await expect(link.cover('pull')).rejects.toBeInstanceOf(SyncNextIncompleteError);
+    await link.dispose();
+  });
+
+  it('should give retained sparse obligations one finite retry before declaring incomplete', async () => {
+    const pending = { attempts: 1, messageCid: 'pending', source: token('1') };
+    const parts = fixture({ quarantine: [pending] });
+    parts.ledger.getQuarantineForLogicalTarget.onFirstCall().resolves([pending]);
+    parts.ledger.getQuarantineForLogicalTarget.onSecondCall().resolves([pending]);
+    parts.ledger.getQuarantineForLogicalTarget.onThirdCall().resolves([]);
+    const link = session(parts);
+
+    await expect(link.cover('pull')).resolves.toBeUndefined();
+
+    expect(parts.quarantineRetry.retry.calledOnce).toBe(true);
+    await link.dispose();
+  });
+
+  it('should settle duplicate exact-source quarantine when another link materializes the CID', async () => {
+    const parts = fixture();
+    parts.pullPage.consume.resolves({
+      handledThrough   : token(),
+      hasMore          : false,
+      materializedCids : ['shared-cid'],
+      quarantined      : 0,
+    });
+    const link = session(parts);
+
+    await expect(link.cover('pull')).resolves.toBeUndefined();
+
+    expect(parts.ledger.settleQuarantineForLogicalTarget.calledOnceWithExactly(
+      'did:example:alice^projection',
+      'shared-cid',
+    )).toBe(true);
+    await link.dispose();
+  });
+
+  it('should not retry one poison quarantine row on every continuous feed page', async () => {
+    const pending = { attempts: 1, messageCid: 'pending', source: token('1') };
+    const parts = fixture({ quarantine: [pending] });
+    parts.pullPage.consume.resolves({
+      handledThrough   : token('1'),
+      hasMore          : true,
+      materializedCids : [],
+      quarantined      : 0,
+    });
+    parts.quarantineRetry.retry.resolves({ kind: 'pending' });
+    const link = session(parts);
+
+    link.start();
+    await new Promise(resolve => setTimeout(resolve, 25));
+
+    expect(parts.pullPage.consume.callCount).toBeGreaterThan(1);
+    expect(parts.quarantineRetry.retry.callCount).toBe(1);
     await link.dispose();
   });
 });

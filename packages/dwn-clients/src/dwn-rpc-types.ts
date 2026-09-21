@@ -138,15 +138,15 @@ export type DwnRpcRequest = {
    * the retry loop — `AbortError` is treated as non-retryable, so the
    * request fails fast rather than burning the full retry budget.
    *
-   * Currently honoured by `HttpDwnRpcClient`. WebSocket transport ignores
-   * this field (subscription cancellation is handled separately).
+   * Honoured by HTTP and by one-shot requests on an established WebSocket.
+   * Aborting a socket request removes only that response waiter; it never
+   * closes the shared connection or its subscriptions.
    */
   signal?: AbortSignal;
 
   /**
-   * Optional HTTP per-attempt timeout in milliseconds. When supplied, this
-   * replaces the transport default timeout; use this for legitimate large
-   * uploads that need more than the default budget.
+   * Optional response timeout in milliseconds. It replaces the HTTP
+   * per-attempt timeout or the established socket's default response deadline.
    */
   timeoutMs?: number;
 
@@ -189,13 +189,13 @@ export type DwnReplicationApplyRequest = {
   /** The DID of the target tenant to which the message is addressed. */
   targetDid: string;
 
-  /** Optional caller-provided abort signal. Honoured by the HTTP transport. */
+  /** Optional caller-provided abort signal. Honoured by HTTP and established WebSockets. */
   signal?: AbortSignal;
 
   /**
-   * Optional HTTP per-attempt timeout in milliseconds. When omitted, HTTP
-   * replicated apply uses a larger default for data-bearing RecordsWrite
-   * messages so large sync uploads are not aborted by the normal short budget.
+   * Optional response timeout in milliseconds. When omitted, HTTP replicated
+   * apply uses a larger default for data-bearing RecordsWrite messages; an
+   * established socket uses its configured response deadline.
    */
   timeoutMs?: number;
 };

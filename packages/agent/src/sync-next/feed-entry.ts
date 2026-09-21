@@ -25,6 +25,7 @@ export function syncEntriesFromFeedEntries(
     }
     const current: SyncMessageEntry = {
       message           : entry.message,
+      messageCid        : entry.messageCid,
       isLatestBaseState : entry.isLatestBaseState,
     };
     if (entry.encodedData !== undefined) {

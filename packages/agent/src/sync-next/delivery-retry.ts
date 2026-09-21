@@ -22,9 +22,18 @@ export class SyncNextDeliveryRetry {
     target: SyncTarget,
     obligation: SyncNextDeliveryObligation,
     shouldContinue: () => boolean = (): boolean => true,
+    signal?: AbortSignal,
   ): Promise<SyncNextDeliveryRetryResult> {
     if (target.authorization.kind === 'role' || !shouldContinue()) {
       return { aborted: true, kind: 'aborted' };
+    }
+    if (
+      obligation.tenantDid !== target.did ||
+      obligation.remoteEndpoint !== target.dwnUrl ||
+      obligation.projectionId !== target.projectionId ||
+      obligation.authorizationEpoch !== target.authorizationEpoch
+    ) {
+      throw new Error('SyncNextDeliveryRetry: target does not own this delivery obligation.');
     }
     const context = new RemoteApplyPushContext({
       agent              : this._agent,
@@ -33,6 +42,7 @@ export class SyncNextDeliveryRetry {
       delegateDid        : target.delegateDid,
       permissionGrantIds : target.permissionGrantIds,
       permissionsApi     : this._agent.permissions,
+      signal,
     });
     const result = await context.push([obligation.messageCid]);
     if (!shouldContinue()) {

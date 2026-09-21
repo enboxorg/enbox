@@ -156,6 +156,27 @@ export class SyncNextLedgerStore {
     });
   }
 
+  /** Explicit acceptance removal deletes one link and every sparse outcome it owns. */
+  public async deleteLinkAndSparse(identity: SyncNextLinkIdentity): Promise<void> {
+    const key = syncNextLinkKey(identity);
+    await this.runForLink(key, async (): Promise<void> => {
+      const operations: SyncNextBatchOperation[] = [this.deleteOperation(this._links, key)];
+      for (const entry of await this.getQuarantineForLink(identity)) {
+        operations.push(this.deleteOperation(this._quarantine, syncNextReceiptKey(identity, entry)));
+      }
+      for (const entry of await this.getDeliveryForLink(identity)) {
+        operations.push(this.deleteOperation(this._delivery, syncNextReceiptKey(identity, entry)));
+      }
+      for (const entry of await this.getTerminalForLink(identity)) {
+        operations.push(this.deleteOperation(
+          this._terminal,
+          syncNextTerminalKey(identity, entry.direction, entry),
+        ));
+      }
+      await this._db.batch(operations);
+    });
+  }
+
   public async setLinkStatus(
     identity: SyncNextLinkIdentity,
     status: SyncNextLink['status'],
@@ -426,6 +447,53 @@ export class SyncNextLedgerStore {
       }
       updated.updatedAt = new Date().toISOString();
       await this._links.put(key, JSON.stringify(updated));
+      return true;
+    });
+  }
+
+  /** Atomically discard reconstructible sparse state and reset one source for replay. */
+  public async rebuildDirection(
+    identity: SyncNextLinkIdentity,
+    direction: 'pull' | 'push',
+    token?: ProgressToken,
+  ): Promise<boolean> {
+    if (token !== undefined) {
+      SyncNextLedgerStore.assertValidToken(token, `${direction} rebuild token`);
+    }
+    const key = syncNextLinkKey(identity);
+    return this.runForLink(key, async (): Promise<boolean> => {
+      const link = await this.getStoredLink(key);
+      if (link === undefined) {
+        return false;
+      }
+      const operations: SyncNextBatchOperation[] = [];
+      const sparse = direction === 'pull'
+        ? await this.getQuarantineForLink(identity)
+        : await this.getDeliveryForLink(identity);
+      for (const entry of sparse) {
+        operations.push(this.deleteOperation(
+          direction === 'pull' ? this._quarantine : this._delivery,
+          syncNextReceiptKey(identity, entry),
+        ));
+      }
+      for (const entry of await this.getTerminalForLink(identity)) {
+        if (entry.direction === direction) {
+          operations.push(this.deleteOperation(
+            this._terminal,
+            syncNextTerminalKey(identity, direction, entry),
+          ));
+        }
+      }
+
+      const updated = structuredClone(link);
+      if (direction === 'pull') {
+        updated.pullHandledThrough = token;
+      } else {
+        updated.pushHandledThrough = token;
+      }
+      updated.updatedAt = new Date().toISOString();
+      operations.push(this.putOperation(this._links, key, updated));
+      await this._db.batch(operations);
       return true;
     });
   }
