@@ -254,7 +254,7 @@ export class SyncNextCatalog {
     if (unresolved !== undefined) {
       throw unresolved;
     }
-    throw new FollowedSourceNotReadyError('none of the requested roles is available yet');
+    throw new FollowedSourceRoleAbsentError('none of the requested roles is available');
   }
 
   private async resolveFollowedSourceAtEndpoint(

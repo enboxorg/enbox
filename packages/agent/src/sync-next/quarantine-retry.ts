@@ -1,4 +1,5 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
+import type { RoleReplicationSupportBatch } from '../sync-role-replication-support.js';
 import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
@@ -8,6 +9,8 @@ import type {
   SyncNextQuarantineEntry,
   SyncNextQuarantineReason,
 } from './types.js';
+
+import { Encoder, Records } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../sync-admit-closure.js';
 import { fetchRemoteMessages } from '../sync-messages.js';
@@ -107,18 +110,24 @@ export class SyncNextQuarantineRetry {
       return { aborted: true, kind: 'aborted' };
     }
 
-    const prefetched = current.authorization.kind === 'role'
-      ? await this.fetchRoleSupport(current, payload.entry.message, shouldContinue)
-      : syncEntriesFromFeedEntries(
+    const roleSupport = current.authorization.kind === 'role'
+      ? await this.fetchRoleSupport(current, payload.entry, shouldContinue)
+      : undefined;
+    const prefetched = roleSupport === undefined
+      ? syncEntriesFromFeedEntries(
         [payload.entry],
         (feedEntry): (() => Promise<ReadableStream<Uint8Array> | undefined>) =>
           (): Promise<ReadableStream<Uint8Array> | undefined> => this.fetchData(current, feedEntry, signal),
-      );
+      )
+      : [roleSupport.root, ...roleSupport.dependencies];
     const outcome = await admitClosure(entry.messageCid, {
-      agent              : this._agent,
-      did                : current.did,
-      dwnUrl             : current.dwnUrl,
-      delegateDid        : current.delegateDid,
+      agent       : this._agent,
+      did         : current.did,
+      dwnUrl      : current.dwnUrl,
+      delegateDid : current.delegateDid,
+      ...(roleSupport === undefined
+        ? {}
+        : { fetchReplicationSupport: async (): Promise<RoleReplicationSupportBatch> => roleSupport }),
       permissionGrantIds : current.permissionGrantIds,
       prefetched,
       scope              : current.scope,
@@ -161,26 +170,47 @@ export class SyncNextQuarantineRetry {
 
   private async fetchRoleSupport(
     target: Extract<SyncTarget, { authorization: { kind: 'role' } }> | SyncTarget,
-    expectedRoot: MessagesQueryReplyEntry['message'],
+    entry: MessagesQueryReplyEntry,
     shouldContinue: () => boolean,
-  ): Promise<ReturnType<typeof syncEntriesFromFeedEntries>> {
+  ): Promise<RoleReplicationSupportBatch> {
+    const expectedRoot = entry.message;
+    const isWrite = expectedRoot !== undefined && Records.isRecordsWrite(expectedRoot);
+    const isDelete = expectedRoot?.descriptor.interface === 'Records' &&
+      expectedRoot.descriptor.method === 'Delete';
     if (
       target.authorization.kind !== 'role' ||
       target.scope.kind !== 'context' ||
       expectedRoot === undefined ||
-      expectedRoot.descriptor.interface !== 'Records' ||
-      (expectedRoot.descriptor.method !== 'Write' && expectedRoot.descriptor.method !== 'Delete')
+      (!isWrite && !isDelete)
     ) {
       throw new Error('SyncNextQuarantineRetry: role quarantine requires an exact context root.');
     }
-    const protocolPath = (expectedRoot.descriptor as { protocolPath?: string }).protocolPath;
-    if (protocolPath === undefined || !target.scope.protocolPaths.includes(protocolPath)) {
+    const rootRecordId = isWrite
+      ? expectedRoot.recordId
+      : (expectedRoot as RecordsDeleteMessage).descriptor.recordId;
+    const contextualWrite = isWrite ? expectedRoot : entry.initialWrite;
+    if (
+      contextualWrite === undefined ||
+      !Records.isRecordsWrite(contextualWrite) ||
+      contextualWrite.recordId !== rootRecordId
+    ) {
+      throw new Error('SyncNextQuarantineRetry: role delete is missing its initial write.');
+    }
+    const { contextId, recordId } = contextualWrite;
+    const { protocol, protocolPath } = contextualWrite.descriptor;
+    if (
+      contextId === undefined ||
+      recordId === undefined ||
+      protocol !== target.scope.protocol ||
+      protocolPath === undefined ||
+      !target.scope.protocolPaths.includes(protocolPath)
+    ) {
       throw new Error('SyncNextQuarantineRetry: role quarantine root is outside the accepted paths.');
     }
     const support = await readRoleReplicationSupport({
       actorDid       : target.authorization.actorDid,
       agent          : this._agent,
-      contextId      : target.scope.contextId,
+      contextId,
       delegateDid    : target.delegateDid,
       dwnUrl         : target.dwnUrl,
       expectedRoot   : expectedRoot as RecordsDeleteMessage | RecordsWriteMessage,
@@ -188,10 +218,16 @@ export class SyncNextQuarantineRetry {
       protocol       : target.scope.protocol,
       protocolPath,
       protocolRole   : target.authorization.protocolRole,
+      ...(entry.encodedData === undefined
+        ? {}
+        : { rootData: Encoder.base64UrlToBytes(entry.encodedData) }),
       shouldContinue,
-      sourceDid      : target.did,
+      sourceDid: target.did,
     });
-    return [support.root, ...support.dependencies];
+    return {
+      ...support,
+      root: { ...support.root, isLatestBaseState: entry.isLatestBaseState },
+    };
   }
 
   private static reason(

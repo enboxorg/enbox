@@ -7,6 +7,7 @@ import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
+import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 import { SyncEngineNext } from '../src/sync-next/engine.js';
 import { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
 
@@ -224,6 +225,28 @@ describe('SyncEngineNext orchestration', () => {
     expect(refresh.calledOnce).toBe(true);
 
     internal._live = false;
+  });
+
+  it('should refresh a followed source after structured terminal authorization', async () => {
+    const internal = engine as any;
+    const roleTarget: SyncTarget = {
+      ...target('did:example:owner', 'https://role.example'),
+      authorization: {
+        actorDid     : 'did:example:member',
+        kind         : 'role',
+        protocolRole : 'notebook/member',
+        roleRecordId : 'role-record',
+      },
+    };
+    const refresh = sinon.stub(internal, 'refreshFollowedSource').resolves();
+
+    expect(internal.recoverRoleAuthorization(roleTarget, {
+      code   : DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
+      detail : 'subscription authorization failed during delivery',
+    })).toBe(true);
+    await Promise.resolve();
+
+    expect(refresh.calledOnceWithExactly(roleTarget)).toBe(true);
   });
 
   it('should include foreign role targets authorized by a scoped identity', async () => {
