@@ -1,11 +1,13 @@
-import type { SyncEvent } from '../src/types/sync.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
+import type { SyncEvent, SyncIdentityOptions } from '../src/types/sync.js';
 
 import { Level } from 'level';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
+import { buildLinkKey } from '../src/sync-link-key.js';
 import { SyncEngineNext } from '../src/sync-next/engine.js';
+import { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
 
 function target(did: string, dwnUrl: string): SyncTarget {
   return {
@@ -68,6 +70,103 @@ describe('SyncEngineNext orchestration', () => {
     unsubscribeHealthy();
   });
 
+  it('should own catalog mutations directly and refresh sibling next engines', async () => {
+    const dataPath = '__TESTDATA__/sync-next-catalog-wakes';
+    const first = new SyncEngineNext({ dataPath, db });
+    const second = new SyncEngineNext({ dataPath, db });
+    const fakeAgent = { dwn: {}, permissions: {} } as never;
+    first.agent = fakeAgent;
+    second.agent = fakeAgent;
+    sinon.stub(SyncScopeClosureValidator.prototype, 'validateClosure').resolves();
+    const did = 'did:example:next-catalog-wake';
+    const events: Array<SyncIdentityOptions | undefined> = [];
+    let resolveSet!: () => void;
+    let resolveRemove!: () => void;
+    const setObserved = new Promise<void>(resolve => { resolveSet = resolve; });
+    const removeObserved = new Promise<void>(resolve => { resolveRemove = resolve; });
+    second.on((event): void => {
+      if (event.type !== 'identity:registration-change' || event.tenantDid !== did) {
+        return;
+      }
+      events.push(event.options);
+      if (events.length === 1) {
+        resolveSet();
+      } else if (events.length === 2) {
+        resolveRemove();
+      }
+    });
+
+    try {
+      await first.setIdentityOptions({ did, options: { protocols: ['https://proto.example'] } });
+      await setObserved;
+      await expect(first.ensureIdentityOptions({
+        did,
+        options: { protocols: ['https://proto.example', 'https://proto.example'] },
+      })).resolves.toBe(false);
+      await first.removeIdentity(did);
+      await removeObserved;
+
+      expect(events).toEqual([{ protocols: ['https://proto.example'] }, undefined]);
+      expect((first as any)._control).toBeUndefined();
+    } finally {
+      for (const next of [first, second]) {
+        next['_identityWakePublisher']?.clear();
+        next['_identityWakePublisher']?.close();
+        next['_followedSourceWakePublisher']?.clear();
+        next['_followedSourceWakePublisher']?.close();
+      }
+    }
+  });
+
+  it('should accept and remove a role source without delegating to the legacy engine', async () => {
+    const roleEngine = new SyncEngineNext({ db });
+    roleEngine.agent = { dwn: {}, permissions: {} } as never;
+    const actorDid = 'did:example:next-role-actor';
+    const followed = {
+      acceptanceId   : 'acceptance-role-record',
+      actorDid,
+      contextId      : 'notebook-a',
+      id             : 'role-record',
+      protocol       : 'https://role.example/notebook',
+      protocolPaths  : ['notebook', 'notebook/note'] as [string, ...string[]],
+      protocolRole   : 'notebook/member',
+      remoteEndpoint : 'https://owner.example',
+      roles          : ['notebook/member'] as [string, ...string[]],
+      sourceDid      : 'did:example:next-role-owner',
+    };
+    const catalog = (roleEngine as any)._catalog;
+    sinon.stub(catalog, 'resolveFollowedSource').resolves({ batch: {}, source: followed });
+    sinon.stub(catalog, 'admitFollowedSource').resolves();
+    await roleEngine.setIdentityOptions({ did: actorDid, options: { protocols: 'all' } });
+
+    const accepted = await roleEngine.followSource({
+      actorDid,
+      contextId : followed.contextId,
+      protocol  : followed.protocol,
+      roles     : followed.roles,
+      sourceDid : followed.sourceDid,
+    });
+
+    expect(accepted).toEqual(followed);
+    expect(await roleEngine.getFollowedSource(followed.id)).toEqual(followed);
+    const roleInternal = roleEngine as any;
+    sinon.stub(roleInternal, 'ensureSession').resolves({
+      session: {
+        cover: async (): Promise<void> => {
+          await roleInternal._identityStore.delete(actorDid);
+        },
+      },
+      subscribed : false,
+      target     : await roleInternal.targetResolver.buildTargetForSource(followed),
+    });
+    sinon.stub(roleInternal, 'disposeSession').resolves();
+    expect(await roleEngine.pullFollowedSource(followed)).toBe(false);
+    await roleEngine.deleteFollowedSource(followed);
+    expect(await roleEngine.getFollowedSource(followed.id)).toBeUndefined();
+    expect(await roleEngine.pullFollowedSource(followed)).toBe(false);
+    await roleEngine.removeIdentity(actorDid);
+  });
+
   it('should require two unchanged fingerprint observations for convergence', async () => {
     const internal = engine as any;
     const verify = sinon.stub(internal, 'verifyConvergence');
@@ -91,6 +190,48 @@ describe('SyncEngineNext orchestration', () => {
       converged : false,
       error     : 'SyncEngineNext: feed head changed during convergence proof.',
     });
+  });
+
+  it('should give equivalent endpoint URLs one exact durable session identity', async () => {
+    const internal = engine as any;
+    const createSession = sinon.stub(internal, 'createSession').callsFake(async (syncTarget: SyncTarget) => ({
+      session    : {},
+      subscribed : false,
+      target     : syncTarget,
+    }));
+    const canonical = target('did:example:normalized-link', 'https://dwn.example/path');
+    const equivalent = { ...canonical, dwnUrl: 'https://dwn.example/path/' };
+
+    const [first, second] = await Promise.all([
+      internal.ensureSession(canonical),
+      internal.ensureSession(equivalent),
+    ]);
+
+    expect(first).toBe(second);
+    expect(first.target.dwnUrl).toBe('https://dwn.example/path');
+    expect(createSession.calledOnce).toBe(true);
+  });
+
+  it('should coalesce failed subscription setup into one bounded retry', async () => {
+    const clock = sinon.useFakeTimers();
+    const internal = engine as any;
+    const syncTarget = target('did:example:subscription-retry', 'https://retry.example');
+    const item = { session: {}, subscribed: false, target: syncTarget };
+    const key = (SyncEngineNext as any).targetKey(syncTarget);
+    internal._live = true;
+    internal._sessions.set(key, item);
+    const refresh = sinon.stub(internal, 'scheduleLiveRefresh');
+
+    internal.scheduleSubscriptionRetry(item);
+    internal.scheduleSubscriptionRetry(item);
+    await clock.tickAsync(4_999);
+    expect(refresh.notCalled).toBe(true);
+    await clock.tickAsync(1);
+    expect(refresh.calledOnce).toBe(true);
+
+    internal.clearSubscriptionRetry(syncTarget);
+    internal._sessions.delete(key);
+    internal._live = false;
   });
 
   it('should include foreign role targets authorized by a scoped identity', async () => {
@@ -119,6 +260,41 @@ describe('SyncEngineNext orchestration', () => {
     await engine.sync('pull', { did: actorDid });
 
     expect(cover.calledOnceWith('pull')).toBe(true);
+  });
+
+  it('should dispose owned and foreign-role sessions when their actor identity stops', async () => {
+    const actorDid = 'did:example:actor';
+    const disposeOwned = sinon.stub().resolves();
+    const disposeRole = sinon.stub().resolves();
+    const disposeOther = sinon.stub().resolves();
+    const internal = engine as any;
+    internal._sessions.set('owned', {
+      session : { dispose: disposeOwned },
+      target  : target(actorDid, 'https://owned.example'),
+    });
+    internal._sessions.set('role', {
+      session : { dispose: disposeRole },
+      target  : {
+        ...target('did:example:source', 'https://source.example'),
+        authorization: {
+          actorDid,
+          kind         : 'role',
+          protocolRole : 'notebook/editor',
+          roleRecordId : 'role-record',
+        },
+      },
+    });
+    internal._sessions.set('other', {
+      session : { dispose: disposeOther },
+      target  : target('did:example:other', 'https://other.example'),
+    });
+
+    await internal.disposeIdentitySessions(actorDid);
+
+    expect(disposeOwned.calledOnce).toBe(true);
+    expect(disposeRole.calledOnce).toBe(true);
+    expect(disposeOther.notCalled).toBe(true);
+    internal._sessions.clear();
   });
 
   it('should coalesce callers arriving during one covering run into one follow-up', async () => {
@@ -188,7 +364,7 @@ describe('SyncEngineNext orchestration', () => {
     expect(cover.calledOnce).toBe(true);
   });
 
-  it('should serialize covering work per endpoint while independent endpoints overlap', async () => {
+  it('should let watermark covers interleave while endpoint operations remain separately bounded', async () => {
     const targets = [
       target('did:example:a1', 'https://shared.example'),
       target('did:example:a2', 'https://shared.example/'),
@@ -222,7 +398,218 @@ describe('SyncEngineNext orchestration', () => {
 
     await engine.sync('pull');
 
-    expect(maxShared).toBe(1);
-    expect(maxTotal).toBe(2);
+    expect(maxShared).toBe(2);
+    expect(maxTotal).toBe(3);
+  });
+
+  it('should report offline and degraded state from one tenant-scoped ledger snapshot', async () => {
+    const syncTarget = target('did:example:status-next', 'https://status.example');
+    const internal = engine as any;
+    await internal._ledger.getOrCreateLink({
+      authorization      : syncTarget.authorization,
+      authorizationEpoch : syncTarget.authorizationEpoch,
+      logicalTargetId    : `${syncTarget.did}^${syncTarget.projectionId}`,
+      projectionId       : syncTarget.projectionId,
+      remoteEndpoint     : syncTarget.dwnUrl,
+      scope              : syncTarget.scope,
+      tenantDid          : syncTarget.did,
+    });
+    await internal._ledger.commitPushPage({
+      authorizationEpoch : syncTarget.authorizationEpoch,
+      projectionId       : syncTarget.projectionId,
+      remoteEndpoint     : syncTarget.dwnUrl,
+      tenantDid          : syncTarget.did,
+    }, {
+      delivery: [{
+        messageCid : 'pending-cid',
+        outcome    : { blockScope: 'endpoint', reason: 'transport' },
+        source     : { epoch: 'epoch', messageCid: 'pending-cid', position: '1', streamId: 'stream' },
+      }],
+      handledThrough : { epoch: 'epoch', position: '1', streamId: 'stream' },
+      settled        : [],
+    });
+    const key = buildLinkKey(
+      syncTarget.did,
+      syncTarget.dwnUrl,
+      syncTarget.projectionId,
+      syncTarget.authorizationEpoch,
+    );
+    internal._sessions.set(key, {
+      session    : { isOnline: false, isPullCurrent: false },
+      subscribed : true,
+      target     : syncTarget,
+    });
+
+    const status = await engine.getIdentitySyncStatus(syncTarget.did);
+
+    expect(status.connectivity).toBe('offline');
+    expect(status.health.syncHealthy).toBe(false);
+    expect(status.remotes).toMatchObject([{
+      connectivity : 'offline',
+      state        : 'offline',
+    }]);
+    internal._sessions.delete(key);
+    await internal._ledger.deleteForTenant(syncTarget.did);
+  });
+
+  it('should retire obsolete-epoch delivery rows instead of orphaning them', async () => {
+    const oldTarget = target('did:example:epoch-next', 'https://epoch.example');
+    const replacement = { ...oldTarget, authorizationEpoch: 'replacement-epoch' };
+    const internal = engine as any;
+    await internal._ledger.getOrCreateLink({
+      authorization      : oldTarget.authorization,
+      authorizationEpoch : oldTarget.authorizationEpoch,
+      logicalTargetId    : `${oldTarget.did}^${oldTarget.projectionId}`,
+      projectionId       : oldTarget.projectionId,
+      remoteEndpoint     : oldTarget.dwnUrl,
+      scope              : oldTarget.scope,
+      tenantDid          : oldTarget.did,
+    });
+    await internal._ledger.commitPushPage({
+      authorizationEpoch : oldTarget.authorizationEpoch,
+      projectionId       : oldTarget.projectionId,
+      remoteEndpoint     : oldTarget.dwnUrl,
+      tenantDid          : oldTarget.did,
+    }, {
+      delivery: [{
+        messageCid : 'old-obligation',
+        outcome    : { blockScope: 'endpoint', reason: 'transport' },
+        source     : { epoch: 'epoch', messageCid: 'old-obligation', position: '1', streamId: 'stream' },
+      }],
+      handledThrough : { epoch: 'epoch', position: '1', streamId: 'stream' },
+      settled        : [],
+    });
+    sinon.stub(internal._planner, 'lastResolutionComplete').get(() => true);
+
+    await internal.pruneSupersededLinks([replacement]);
+
+    expect(await internal._ledger.getLink({
+      authorizationEpoch : oldTarget.authorizationEpoch,
+      projectionId       : oldTarget.projectionId,
+      remoteEndpoint     : oldTarget.dwnUrl,
+      tenantDid          : oldTarget.did,
+    })).toBeUndefined();
+    expect(await internal._ledger.getDeliveryForTenant(oldTarget.did)).toEqual([]);
+    await internal._ledger.deleteForTenant(oldTarget.did);
+  });
+
+  it('should purge sparse state when an explicit scope change removes its logical target', async () => {
+    const oldTarget = target('did:example:scope-next', 'https://scope.example');
+    const replacement = { ...oldTarget, projectionId: 'replacement-projection' };
+    const internal = engine as any;
+    await internal._ledger.getOrCreateLink({
+      authorization      : oldTarget.authorization,
+      authorizationEpoch : oldTarget.authorizationEpoch,
+      logicalTargetId    : `${oldTarget.did}^${oldTarget.projectionId}`,
+      projectionId       : oldTarget.projectionId,
+      remoteEndpoint     : oldTarget.dwnUrl,
+      scope              : oldTarget.scope,
+      tenantDid          : oldTarget.did,
+    });
+    await internal._ledger.commitPullPage({
+      authorizationEpoch : oldTarget.authorizationEpoch,
+      projectionId       : oldTarget.projectionId,
+      remoteEndpoint     : oldTarget.dwnUrl,
+      tenantDid          : oldTarget.did,
+    }, {
+      handledThrough : { epoch: 'epoch', position: '1', streamId: 'stream' },
+      quarantine     : [{
+        encryptedPayload : 'retired-scope-input',
+        messageCid       : 'retired-scope-cid',
+        outcome          : { reason: 'data' },
+        source           : {
+          epoch      : 'epoch',
+          messageCid : 'retired-scope-cid',
+          position   : '1',
+          streamId   : 'stream',
+        },
+      }],
+      settled: [],
+    });
+    sinon.stub(internal._planner, 'lastResolutionComplete').get(() => true);
+
+    await internal.pruneSupersededLinks([replacement]);
+
+    expect(await internal._ledger.getQuarantineForTenant(oldTarget.did)).toEqual([]);
+    await internal._ledger.deleteForTenant(oldTarget.did);
+  });
+
+  it('should reset current pull progress before purging corrupt logical-target quarantine', async () => {
+    const current = target('did:example:rebuild-next', 'https://rebuild.example');
+    const peer = { ...current, dwnUrl: 'https://peer.example' };
+    const retired = { ...current, authorizationEpoch: 'retired-epoch', dwnUrl: 'https://old.example' };
+    const internal = engine as any;
+    for (const syncTarget of [current, peer, retired]) {
+      await internal._ledger.getOrCreateLink({
+        authorization      : syncTarget.authorization,
+        authorizationEpoch : syncTarget.authorizationEpoch,
+        logicalTargetId    : `${current.did}^${current.projectionId}`,
+        projectionId       : syncTarget.projectionId,
+        remoteEndpoint     : syncTarget.dwnUrl,
+        scope              : syncTarget.scope,
+        tenantDid          : syncTarget.did,
+      });
+      await internal._ledger.commitPullPage({
+        authorizationEpoch : syncTarget.authorizationEpoch,
+        projectionId       : syncTarget.projectionId,
+        remoteEndpoint     : syncTarget.dwnUrl,
+        tenantDid          : syncTarget.did,
+      }, {
+        handledThrough : { epoch: 'epoch', position: '1', streamId: 'stream' },
+        quarantine     : [{
+          encryptedPayload : 'corrupt',
+          messageCid       : `pending-${syncTarget.authorizationEpoch}`,
+          outcome          : { reason: 'data' },
+          source           : {
+            epoch      : 'epoch',
+            messageCid : `pending-${syncTarget.authorizationEpoch}`,
+            position   : '1',
+            streamId   : 'stream',
+          },
+        }],
+        settled: [],
+      });
+    }
+    await internal._ledger.retireLink({
+      authorizationEpoch : retired.authorizationEpoch,
+      projectionId       : retired.projectionId,
+      remoteEndpoint     : retired.dwnUrl,
+      tenantDid          : retired.did,
+    });
+    const cover = sinon.stub().resolves();
+    sinon.stub(internal._planner, 'getTargets').resolves([current, peer]);
+    sinon.stub(internal._planner, 'lastResolutionComplete').get(() => true);
+    sinon.stub(internal, 'ensureSession').resolves({
+      session    : { cover },
+      subscribed : false,
+      target     : current,
+    });
+    sinon.stub(internal, 'disposeSession').resolves();
+
+    await engine.rebuildRemoteDirection({
+      direction      : 'pull',
+      remoteEndpoint : current.dwnUrl,
+      tenantDid      : current.did,
+    });
+
+    const rebuilt = await internal._ledger.getLink({
+      authorizationEpoch : current.authorizationEpoch,
+      projectionId       : current.projectionId,
+      remoteEndpoint     : current.dwnUrl,
+      tenantDid          : current.did,
+    });
+    expect(rebuilt.pullHandledThrough).toBeUndefined();
+    const rebuiltPeer = await internal._ledger.getLink({
+      authorizationEpoch : peer.authorizationEpoch,
+      projectionId       : peer.projectionId,
+      remoteEndpoint     : peer.dwnUrl,
+      tenantDid          : peer.did,
+    });
+    expect(rebuiltPeer.pullHandledThrough).toBeUndefined();
+    expect(await internal._ledger.getQuarantineForLogicalTarget(
+      `${current.did}^${current.projectionId}`,
+    )).toEqual([]);
+    expect(cover.calledOnceWith('pull')).toBe(true);
+    await internal._ledger.deleteForTenant(current.did);
   });
 });

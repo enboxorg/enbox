@@ -4,7 +4,7 @@ import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnError, DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { DwnRpcError, JsonRpcErrorCodes, RateLimitError } from '@enbox/dwn-clients';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import {
@@ -2371,12 +2371,37 @@ describe('sync-messages', () => {
       });
 
       expect(result.failed).toEqual([{
-        cid      : messageCid,
-        detail   : `(${JsonRpcErrorCodes.InvalidParams}) - unsupported replicated apply payload`,
-        kind     : 'Invalid',
-        terminal : true,
+        cid              : messageCid,
+        detail           : `(${JsonRpcErrorCodes.InvalidParams}) - unsupported replicated apply payload`,
+        endpointRejected : true,
+        kind             : 'Invalid',
+        terminal         : true,
       }]);
       expect(agent.rpc.applyReplicatedMessage.calledOnce).toBe(true);
+    });
+
+    it('should retain a rate-limit deadline for endpoint-wide delivery backoff', async () => {
+      const clock = sinon.useFakeTimers({ now: Date.parse('2026-09-22T12:00:00.000Z'), toFake: ['Date'] });
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map([[messageCid, { message }]]),
+        applyResults  : [],
+      });
+      agent.rpc.applyReplicatedMessage.rejects(new RateLimitError(17));
+
+      const result = await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [messageCid],
+        agent,
+      });
+
+      expect(result.failed).toMatchObject([{
+        cid        : messageCid,
+        retryAfter : '2026-09-22T12:00:17.000Z',
+      }]);
+      clock.restore();
     });
 
     it('should keep quota JSON-RPC rejections retryable', async () => {

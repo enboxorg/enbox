@@ -1,5 +1,6 @@
 import type { ProtocolDefinition, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 
+import sinon from 'sinon';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import type { BearerIdentity } from '../../src/bearer-identity.js';
@@ -255,6 +256,43 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
     await expect(sync.sync('pull')).rejects.toThrow('covering sync failed');
 
     expect((await queryLocal(alice.did.uri)).entries).toHaveLength(1);
+  }, 120_000);
+
+  it('bounds offline endpoint probes while a sustained local write burst pages forward', async () => {
+    const offline = 'http://127.0.0.1:9';
+    const alice = await harness.createIdentity({
+      name        : 'Sync next offline write burst',
+      testDwnUrls : [testDwnUrl, offline],
+    });
+    await configureBoth(alice.did.uri);
+    await register(alice.did.uri);
+    const apply = sinon.spy(harness.agent.rpc, 'applyReplicatedMessage');
+    const http = sinon.spy(globalThis, 'fetch');
+    await sync.startSync({ interval: '1m' });
+    try {
+      for (let index = 0; index < 20; index++) {
+        await writeLocal(alice.did.uri, `local-burst-${index}`);
+      }
+      await waitForCount(() => queryRemote(alice.did.uri), 20);
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const offlineAttempts = apply.args.filter(([request]) =>
+        request.targetDid === alice.did.uri && request.dwnUrl === offline
+      );
+      const offlineHttp = http.args.filter(([input]) => {
+        try {
+          return new URL(String(input)).origin === new URL(offline).origin;
+        } catch {
+          return false;
+        }
+      });
+      expect(offlineAttempts.length).toBeLessThanOrEqual(3);
+      expect(offlineHttp.length).toBeLessThanOrEqual(1);
+    } finally {
+      apply.restore();
+      http.restore();
+      await sync.stopSync();
+    }
   }, 120_000);
 
   it('drains a selected endpoint only after sparse work and fingerprints converge', async () => {
