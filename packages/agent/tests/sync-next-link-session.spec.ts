@@ -368,6 +368,7 @@ describe('SyncNextLinkSession', () => {
       source     : token('2'),
     };
     const parts = fixture({ delivery: [first, second] });
+    parts.ledger.getDeliveryForLink.resolves([]);
     parts.ledger.getDeliveryForLink.onCall(0).resolves([first, second]);
     parts.ledger.getDeliveryForLink.onCall(1).resolves([first, second]);
     parts.ledger.getDeliveryForLink.onCall(2).resolves([second]);
