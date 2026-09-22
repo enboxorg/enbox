@@ -15,7 +15,6 @@ import type { SyncNextLinkIdentity } from '../src/sync-next/types.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 import { SyncEchoSuppressor } from '../src/sync-echo-suppressor.js';
-import { SyncNextDeliveryRetry } from '../src/sync-next/delivery-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
 
@@ -214,7 +213,7 @@ describe('SyncNextPushPage', () => {
       },
     });
 
-    const result = await new SyncNextDeliveryRetry(fixture.agent, ledger).retry(target(), obligation);
+    const result = await new SyncNextPushPage(fixture.agent, ledger).retryDelivery(target(), obligation);
 
     expect(result.kind).toBe('settled');
     expect(fixture.apply.calledOnce).toBe(true);

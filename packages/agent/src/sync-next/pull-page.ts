@@ -137,7 +137,6 @@ export class SyncNextPullPage {
         source,
       }, {
         entry,
-        support: [],
       });
       quarantine.push({
         encryptedPayload,

@@ -17,16 +17,18 @@ import type {
 } from '../sync-scope-closure-validator.js';
 
 import { admitClosure } from '../sync-admit-closure.js';
+import { createSyncLifecycleDeadline } from '../sync-lifecycle-coordinator.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { DwnInterface } from '../types/dwn.js';
 import { fetchConnectionStatus } from '../connect-status.js';
 import { normalizeSyncProtocols } from '../types/sync.js';
 import { SyncScopeClosureValidator } from '../sync-scope-closure-validator.js';
 import {
-  createSyncLifecycleDeadline,
-  remainingSyncLifecycleTimeout,
-} from '../sync-lifecycle-coordinator.js';
-import { DwnInterfaceName, DwnMethodName, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
+  DwnInterfaceName,
+  DwnMethodName,
+  executeUnlessAborted,
+  resolveProtocolRoleContextScope,
+} from '@enbox/dwn-sdk-js';
 import {
   FollowedSourceNotReadyError,
   FollowedSourceRoleAbsentError,
@@ -56,6 +58,8 @@ type SyncNextCatalogFollowResult = {
   changed: boolean;
   source: FollowedSyncSource;
 };
+
+type SyncNextCatalogDeadline = SyncLifecycleDeadline & { signal: AbortSignal };
 
 /**
  * Owns the small durable catalog that remains independent of transfer state.
@@ -368,66 +372,42 @@ export class SyncNextCatalog {
   private runIdentityLifecycle<T>(
     did: string,
     operation: () => Promise<T>,
-    deadline?: SyncLifecycleDeadline,
+    deadline?: SyncNextCatalogDeadline,
   ): Promise<T> {
     const lockName = `enbox:sync-identity:${this._lockNamespace}:${did}`;
-    if (deadline === undefined) {
-      return runWithCrossContextLock(lockName, operation);
-    }
-
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutError = (): Error => new Error(
-      `SyncNextCatalog: cross-context identity mutation did not start within ${deadline.timeout} milliseconds.`,
+      `SyncNextCatalog: cross-context identity mutation did not start within ${deadline?.timeout} milliseconds.`,
     );
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout((): void => {
-        cancelled = true;
-        reject(timeoutError());
-      }, remainingSyncLifecycleTimeout(deadline));
-    });
     const locked = runWithCrossContextLock(lockName, async (): Promise<T> => {
-      if (cancelled) {
+      if (deadline?.signal.aborted === true) {
         throw timeoutError();
-      }
-      if (timer !== undefined) {
-        clearTimeout(timer);
       }
       return operation();
     });
-    return Promise.race([locked, timeout]).finally((): void => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-    });
+    return this.waitFor(locked, deadline, 'cross-context identity mutation did not start');
   }
 
   private async waitFor<T>(
     operation: Promise<T>,
-    deadline: ReturnType<typeof createSyncLifecycleDeadline> | undefined,
+    deadline: SyncNextCatalogDeadline | undefined,
     failure: string,
   ): Promise<T> {
     if (deadline === undefined) {
       return operation;
     }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout((): void => {
-        reject(new Error(`SyncNextCatalog: ${failure} within ${deadline.timeout} milliseconds.`));
-      }, remainingSyncLifecycleTimeout(deadline));
-    });
     try {
-      return await Promise.race([operation, timeout]);
-    } finally {
-      if (timer !== undefined) {
-        clearTimeout(timer);
+      return await executeUnlessAborted(operation, deadline.signal);
+    } catch (error: unknown) {
+      if (deadline.signal.aborted && error === deadline.signal.reason) {
+        throw new Error(`SyncNextCatalog: ${failure} within ${deadline.timeout} milliseconds.`);
       }
+      throw error;
     }
   }
 
   private static createDeadline(
     options: SyncLifecycleOptions,
-  ): ReturnType<typeof createSyncLifecycleDeadline> | undefined {
+  ): SyncNextCatalogDeadline | undefined {
     const timeout = options.timeout;
     if (timeout === undefined) {
       return undefined;
@@ -437,7 +417,7 @@ export class SyncNextCatalog {
         `SyncNextCatalog: lifecycle timeout must be between 0 and ${MAX_TIMER_DELAY_MS} milliseconds.`,
       );
     }
-    return createSyncLifecycleDeadline(timeout);
+    return { ...createSyncLifecycleDeadline(timeout), signal: AbortSignal.timeout(timeout) };
   }
 
   private static optionsEqual(left: SyncIdentityOptions, right: SyncIdentityOptions): boolean {

@@ -13,7 +13,6 @@ export const SYNC_NEXT_MAX_QUARANTINE_PLAINTEXT_BYTES = 1024 * 1024;
 /** Received pull input that must survive after handled-through progress advances. */
 export type SyncNextQuarantinePayload = {
   entry: MessagesQueryReplyEntry;
-  support: MessagesQueryReplyEntry[];
 };
 
 type BoundQuarantinePayload = SyncNextQuarantinePayload & {
@@ -45,7 +44,6 @@ export async function sealSyncNextQuarantinePayload(
       source     : structuredClone(binding.source),
     },
     entry   : structuredClone(payload.entry),
-    support : structuredClone(payload.support),
     version : QUARANTINE_PAYLOAD_VERSION,
   };
   const plaintext = new TextEncoder().encode(JSON.stringify(bound));
@@ -82,7 +80,7 @@ export async function openSyncNextQuarantinePayload(
   ) {
     throw new Error('SyncNextQuarantineCodec: encrypted payload does not belong to this receipt.');
   }
-  const payload = { entry: parsed.entry, support: parsed.support };
+  const payload = { entry: parsed.entry };
   SyncNextQuarantineCodec.assertPayloadMatchesBinding(binding, payload);
   return payload;
 }
@@ -113,8 +111,7 @@ class SyncNextQuarantineCodec {
       typeof candidate.binding.linkKey === 'string' &&
       typeof candidate.binding.messageCid === 'string' &&
       SyncNextQuarantineCodec.isProgressToken(candidate.binding.source) &&
-      SyncNextQuarantineCodec.isFeedEntry(candidate.entry) &&
-      Array.isArray(candidate.support) && candidate.support.every(SyncNextQuarantineCodec.isFeedEntry);
+      SyncNextQuarantineCodec.isFeedEntry(candidate.entry);
   }
 
   private static isFeedEntry(value: unknown): value is MessagesQueryReplyEntry {

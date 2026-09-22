@@ -13,7 +13,16 @@ import { admitClosure } from '../sync-admit-closure.js';
 import { fetchRemoteMessages } from '../sync-messages.js';
 import { openSyncNextQuarantinePayload } from './quarantine-codec.js';
 import { readRoleReplicationSupport } from '../sync-role-replication-support.js';
+import { runSerializedByKey } from '@enbox/common';
 import { syncEntriesFromFeedEntries } from './feed-entry.js';
+
+const RETRY_DELAY_MS = 1_000;
+const MAX_RETRY_DELAY_MS = 60_000;
+
+export type SyncNextQuarantineAttempt = {
+  kind: 'aborted' | 'deferred' | 'empty' | 'pending' | 'settled';
+  remaining: number;
+};
 
 export type SyncNextQuarantineRetryResult = {
   aborted?: true;
@@ -23,12 +32,57 @@ export type SyncNextQuarantineRetryResult = {
 
 /** Retries one quarantined root independently from feed-page consumption. */
 export class SyncNextQuarantineRetry {
+  private readonly _pending = new Map<string, Promise<void>>();
+
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _resolveTarget: (target: SyncTarget) => Promise<SyncTarget> = async target => target,
     private readonly _onApplied?: (target: SyncTarget, entries: readonly SyncFreshEntry[]) => void,
   ) {}
+
+  /** Select and retry one due receipt across every binding for a logical target. */
+  public retryOne(
+    target: SyncTarget,
+    shouldContinue: () => boolean = (): boolean => true,
+    signal?: AbortSignal,
+    force = false,
+  ): Promise<SyncNextQuarantineAttempt> {
+    const logicalTargetId = `${target.did}^${target.projectionId}`;
+    return runSerializedByKey(this._pending, logicalTargetId, async (): Promise<SyncNextQuarantineAttempt> => {
+      if (!shouldContinue()) {
+        return { kind: 'aborted', remaining: 0 };
+      }
+      const entries = await this._ledger.getQuarantineForLogicalTarget(logicalTargetId);
+      if (entries.length === 0) {
+        return { kind: 'empty', remaining: 0 };
+      }
+      const entry = force
+        ? entries[0]
+        : entries.find(candidate => SyncNextQuarantineRetry.retryAt(candidate) <= Date.now());
+      if (entry === undefined) {
+        return {
+          kind      : 'deferred',
+          remaining : entries.length,
+        };
+      }
+
+      try {
+        const result = await this.retry(target, entry, shouldContinue, signal);
+        if (result.kind === 'aborted') {
+          return { kind: 'aborted', remaining: entries.length };
+        }
+        const remainingEntries = await this._ledger.getQuarantineForLogicalTarget(logicalTargetId);
+        return {
+          kind      : result.kind,
+          remaining : remainingEntries.length,
+        };
+      } catch (error: unknown) {
+        await this._ledger.updateQuarantine(entry, entry.outcome);
+        throw error;
+      }
+    });
+  }
 
   public async retry(
     target: SyncTarget,
@@ -56,7 +110,7 @@ export class SyncNextQuarantineRetry {
     const prefetched = current.authorization.kind === 'role'
       ? await this.fetchRoleSupport(current, payload.entry.message, shouldContinue)
       : syncEntriesFromFeedEntries(
-        [payload.entry, ...payload.support],
+        [payload.entry],
         (feedEntry): (() => Promise<ReadableStream<Uint8Array> | undefined>) =>
           (): Promise<ReadableStream<Uint8Array> | undefined> => this.fetchData(current, feedEntry, signal),
       );
@@ -155,5 +209,11 @@ export class SyncNextQuarantineRetry {
       remoteEndpoint     : entry.remoteEndpoint,
       tenantDid          : entry.tenantDid,
     };
+  }
+
+  private static retryAt(entry: SyncNextQuarantineEntry): number {
+    const exponent = Math.min(Math.max(0, entry.attempts - 1), 6);
+    const delay = Math.min(RETRY_DELAY_MS * (2 ** exponent), MAX_RETRY_DELAY_MS);
+    return Date.parse(entry.lastAttemptAt) + delay;
   }
 }

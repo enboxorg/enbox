@@ -6,6 +6,7 @@ import type { SyncTarget } from '../sync-target-resolver.js';
 import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
 import type {
   SyncNextDeliveryInput,
+  SyncNextDeliveryObligation,
   SyncNextDeliveryOutcome,
   SyncNextLinkIdentity,
   SyncNextSettledSource,
@@ -36,6 +37,12 @@ export type SyncNextPushPageOptions = {
 
 export type SyncNextPushPageObserver = {
   onCheckpoint?: (target: SyncTarget, token: ProgressToken) => void;
+};
+
+export type SyncNextDeliveryRetryResult = {
+  aborted?: true;
+  kind: 'aborted' | 'pending' | 'settled';
+  outcome?: SyncNextDeliveryOutcome;
 };
 
 /** Consumes one local feed page without letting one delivery block its independent tail. */
@@ -146,6 +153,48 @@ export class SyncNextPushPage {
       hasMore   : reply.drained !== true,
       retained  : delivery.length,
     };
+  }
+
+  /** Retry one exact outbound obligation from the authoritative local feed. */
+  public async retryDelivery(
+    target: SyncTarget,
+    obligation: SyncNextDeliveryObligation,
+    shouldContinue: () => boolean = (): boolean => true,
+    signal?: AbortSignal,
+  ): Promise<SyncNextDeliveryRetryResult> {
+    if (target.authorization.kind === 'role' || !shouldContinue()) {
+      return { aborted: true, kind: 'aborted' };
+    }
+    if (
+      obligation.tenantDid !== target.did ||
+      obligation.remoteEndpoint !== target.dwnUrl ||
+      obligation.projectionId !== target.projectionId ||
+      obligation.authorizationEpoch !== target.authorizationEpoch
+    ) {
+      throw new Error('SyncNextPushPage: target does not own this delivery obligation.');
+    }
+    const context = new RemoteApplyPushContext({
+      agent              : this._agent,
+      did                : target.did,
+      dwnUrl             : target.dwnUrl,
+      delegateDid        : target.delegateDid,
+      permissionGrantIds : target.permissionGrantIds,
+      permissionsApi     : this._agent.permissions,
+      signal,
+    });
+    const result = await context.push([obligation.messageCid]);
+    if (!shouldContinue()) {
+      return { aborted: true, kind: 'aborted' };
+    }
+    const failure = result.failed.find(({ cid }): boolean => cid === obligation.messageCid);
+    if (failure === undefined) {
+      await this._ledger.settleDelivery(obligation, obligation);
+      return { kind: 'settled' };
+    }
+
+    const outcome = SyncNextPushPage.deliveryOutcome(failure);
+    await this._ledger.updateDelivery(obligation, outcome);
+    return { kind: 'pending', outcome };
   }
 
   private query(target: SyncTarget, cursor?: ProgressToken): Promise<MessagesQueryReply> {

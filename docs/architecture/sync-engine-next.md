@@ -93,20 +93,19 @@ consumePushPage          retryDeliveryObligation
 commitPushPage
 ```
 
-Feed consumption and sparse retry are independently eligible. At most one page
-operation and one retry operation per direction/link run at once. Pull and push
-network waits do not share a whole-link execution lock. Commit operations use a
+Each direction has one serialized loop. A live turn consumes one requested page
+and tries one due sparse receipt; a covering turn repeats pages until drain and
+then gives consecutively successful sparse work one bounded pass. Pull and push
+remain independent, so a blocked push cannot stop pull. Commit operations use a
 short cross-context link lock, reread the latest link record, reject stale
 lifetimes/domains, and preserve the opposite direction's progress.
 
-Network work is capped at two operations per normalized endpoint. Covering
-operations serialize their link streams per endpoint, and a persisted
-endpoint-wide delivery block is consulted by every link before fresh delivery.
-The same gate opens a short in-memory circuit after a connection failure, so
-already queued links are deferred without turning a concurrent burst into a
-sequential one. Failed subscription establishment is retried on bounded
-backoff; successful reconnect clears the circuit and forces catch-up over the
-socket.
+Network work is capped at two operations per normalized endpoint. The gate
+opens a short in-memory circuit after a connection failure, so already queued
+links are deferred without adding a persisted endpoint scheduler. Failed
+subscription establishment remains unsubscribed and is retried by the next
+ordinary refresh; successful reconnect clears the circuit and forces catch-up
+over the socket.
 This bounds an outage to a small probe count instead of multiplying it by the
 number of protocols, contexts, or identities at that endpoint.
 
@@ -125,8 +124,10 @@ never durable progress.
 ## Retry, settlement, and purge
 
 - **Settle:** success or a verified complete duplicate deletes the sparse row.
-- **Retry:** rotate fairly, stop at the first unresolved receipt, and retain
-  typed in-memory/persisted retry deadlines.
+- **Retry:** stop at the first unresolved receipt. Eligibility is derived from
+  the row's persisted attempt time/count and optional `Retry-After`; wakes,
+  manual operations, and the periodic pass provide retry opportunities without
+  per-receipt timers.
 - **Rebuild:** reset the affected checkpoint to zero before removing sparse
   rows, then replay the current authorized source.
 - **Remove:** deleting an identity or accepted followed context is explicit
@@ -279,7 +280,8 @@ cutover:
   pre-aborted endpoint, and could skip non-live session cleanup on failure;
 - observer exceptions could escape into replication, while messages admitted
   later from quarantine had no delivery event.
-- every successful materialization scanned the complete central quarantine;
+- every successful materialization scanned the complete central quarantine
+  separately instead of settling all page CIDs in one sparse scan;
 - a covering run retried only one of several healthy streamed obligations;
 - terminal subscription errors left a link permanently marked subscribed;
 - equivalent endpoint spellings created distinct durable links;
@@ -298,12 +300,14 @@ HTTP burst or let one continuously active target starve its peers. Drain
 requires two unchanged fingerprint observations before success and rechecks
 cancellation or topology between phases.
 
-The corrective pass adds a logical-target quarantine index, one bounded pass
-over consecutively successful sparse work, central endpoint blocks, normalized
-link identity, transactional subscription pairs with terminal-drop reporting,
-direct catalog ownership with cross-context wakes, and reset-before-purge
-rebuild. Transport-disconnect notifications mark currentness stale without
-launching an HTTP query; reconnect or the periodic backstop requests catch-up.
+The corrective pass retains one bounded pass over consecutively successful
+sparse work, normalized link identity, transactional subscription pairs with
+terminal-drop reporting, direct catalog ownership with one structured
+cross-context wake channel, and reset-before-purge rebuild. Quarantine remains
+sparse and is scanned once for all materialized CIDs in a page instead of
+maintaining a fourth durable index. Transport-disconnect notifications mark
+currentness stale without launching an HTTP query; reconnect or the periodic
+backstop requests catch-up.
 
 The real-transport matrix covers the four required dapp modes, wake-only live
 updates, non-inline bodies followed by independent tiny roots, one offline and
