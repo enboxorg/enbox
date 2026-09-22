@@ -2220,7 +2220,9 @@ export class AgentDwnApi {
     protocolDefinitionSource: ProtocolDefinitionSource;
   }): Promise<DwnMessageWithData<T>> {
     if (request.granteeDid && !this.hasGrantParams(request.messageParams)) {
-      throw new Error('AgentDwnApi: Requested to sign with a permission but no grant messageParams were provided in the request');
+      throw new Error(
+        `AgentDwnApi: Requested to sign ${request.messageType} with a permission but no grant parameters were provided.`,
+      );
     }
 
     if (isDwnRequest(request, DwnInterface.ProtocolsConfigure)) {

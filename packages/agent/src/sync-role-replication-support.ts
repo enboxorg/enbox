@@ -106,9 +106,9 @@ export class FollowedSourceNotReadyError extends Error {
 }
 
 /** Every matching role record is absent from one verified remote response. */
-export class FollowedSourceRoleAbsentError extends Error {
+export class FollowedSourceRoleAbsentError extends FollowedSourceNotReadyError {
   public constructor(detail: string) {
-    super(`Followed source role is absent: ${detail}`);
+    super(`role is absent: ${detail}`);
     this.name = 'FollowedSourceRoleAbsentError';
   }
 }
@@ -682,5 +682,10 @@ async function resolveDelegatedRoleReadGrant(
     protocol     : params.protocol,
     protocolPath,
   });
+  if (message === undefined) {
+    throw new Error(
+      `Role replication support has no delegate RecordsRead grant for '${protocolPath}' in '${contextId}'.`,
+    );
+  }
   return message;
 }

@@ -29,6 +29,7 @@ import { Level } from 'level';
 import { openSyncNextSubscriptions } from './subscriptions.js';
 import { RateLimitError } from '@enbox/dwn-clients';
 import { resolveSyncConnectivityState } from '../sync-connectivity-manager.js';
+import { FollowedSourceRoleAbsentError } from '../sync-role-replication-support.js';
 import { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from '../sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from '../sync-identity-store-level.js';
@@ -50,6 +51,7 @@ import {
 } from '../types/sync.js';
 import { normalizeDwnEndpoint, SyncTargetResolver } from '../sync-target-resolver.js';
 import { queryLocalMessageFeed, queryRemoteMessageFeed, syncMessageDescriptor } from '../sync-messages.js';
+import { isNonRetryableSyncAuthorizationFailure, syncErrorMessage } from '../sync-runtime-errors.js';
 
 type LevelKey = string | Buffer | Uint8Array;
 
@@ -395,14 +397,10 @@ export class SyncEngineNext implements SyncEngine {
 
   public async pullFollowedSource(source: FollowedSyncSource): Promise<boolean> {
     const expected = normalizeFollowedSyncSource(source);
-    const runtimeGeneration = this._runtimeGeneration;
     try {
-      return await this.runExclusive(async (): Promise<boolean> => {
-        if (runtimeGeneration !== this._runtimeGeneration) {
-          return false;
-        }
-        return this.runFollowedSourcePull(expected, runtimeGeneration);
-      });
+      return await this.runExclusive((): Promise<boolean> =>
+        this.runFollowedSourcePull(expected, this._runtimeGeneration)
+      );
     } catch {
       return false;
     }
@@ -1041,8 +1039,10 @@ export class SyncEngineNext implements SyncEngine {
             to             : 'live',
           });
         } catch (error: unknown) {
-          this.scheduleSubscriptionRetry(error);
-          console.error('SyncEngineNext: subscription establishment failed', error);
+          if (!this.recoverRoleAuthorization(item.target, error)) {
+            this.scheduleSubscriptionRetry(error);
+            console.error('SyncEngineNext: subscription establishment failed', error);
+          }
         }
       }
     }));
@@ -1094,8 +1094,10 @@ export class SyncEngineNext implements SyncEngine {
         to             : 'initializing',
       });
     }
-    console.warn('SyncEngineNext: subscription ended; scheduled refresh will retry it', error);
-    this.scheduleSubscriptionRetry(error);
+    if (!this.recoverRoleAuthorization(item.target, error)) {
+      console.warn('SyncEngineNext: subscription ended; scheduled refresh will retry it', error);
+      this.scheduleSubscriptionRetry(error);
+    }
   }
 
   private async createSession(target: SyncTarget, key: string): Promise<ActiveSession> {
@@ -1144,7 +1146,11 @@ export class SyncEngineNext implements SyncEngine {
         pullPage,
         pushPage,
         this.quarantineRetry,
-        (error): void => { console.error('SyncEngineNext: link work failed', error); },
+        (error): void => {
+          if (!this.recoverRoleAuthorization(target, error)) {
+            console.error('SyncEngineNext: link work failed', error);
+          }
+        },
         {
           block : (delayMs): void => { this._endpointGate.block(target.dwnUrl, delayMs); },
           clear : (): void => { this._endpointGate.clear(target.dwnUrl); },
@@ -1388,6 +1394,45 @@ export class SyncEngineNext implements SyncEngine {
       this._subscriptionRetryTimer = undefined;
       this.scheduleLiveRefresh();
     }, delay);
+  }
+
+  private recoverRoleAuthorization(target: SyncTarget, error: unknown): boolean {
+    if (
+      target.authorization.kind !== 'role' ||
+      !isNonRetryableSyncAuthorizationFailure(syncErrorMessage(error))
+    ) {
+      return false;
+    }
+    void this.refreshFollowedSource(target).catch((cause: unknown): void => {
+      console.warn('SyncEngineNext: followed source refresh failed', cause);
+      this.scheduleSubscriptionRetry(cause);
+    });
+    return true;
+  }
+
+  private async refreshFollowedSource(target: SyncTarget): Promise<void> {
+    if (target.authorization.kind !== 'role') {
+      return;
+    }
+    const source = await this._sourceStore.get(target.authorization.roleRecordId);
+    if (source === undefined) {
+      return;
+    }
+    try {
+      await this.followSource({
+        actorDid  : source.actorDid,
+        contextId : source.contextId,
+        protocol  : source.protocol,
+        roles     : source.roles,
+        sourceDid : source.sourceDid,
+      });
+    } catch (error: unknown) {
+      if (error instanceof FollowedSourceRoleAbsentError) {
+        await this.deleteFollowedSource(source);
+        return;
+      }
+      throw error;
+    }
   }
 
   /** Validate and serialize catalog wakes from sibling contexts. */

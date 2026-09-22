@@ -21,6 +21,11 @@ type DeliveryAttempt = {
   remaining: number;
 };
 
+type PageAttempt = {
+  hasMore: boolean;
+  retained: boolean;
+};
+
 type Direction = 'pull' | 'push';
 
 type DirectionState = {
@@ -194,9 +199,9 @@ export class SyncNextLinkSession {
       state.requested = false;
       const wakeVersion = state.wakeVersion;
       const shouldContinue = (): boolean => !this._abortController.signal.aborted;
-      const hasMore = await this.consumePage(direction, shouldContinue);
-      const sparse = await this.retrySparse(direction, false, shouldContinue);
-      if (hasMore) {
+      const page = await this.consumePage(direction, shouldContinue);
+      const sparse = await this.retrySparse(direction, page.retained, shouldContinue);
+      if (page.hasMore) {
         this.request(direction);
       } else if (direction === 'pull' && wakeVersion === state.wakeVersion) {
         this._pullFeedDrained = true;
@@ -212,9 +217,9 @@ export class SyncNextLinkSession {
         const state = this.state(direction);
         state.requested = false;
         const wakeVersion = state.wakeVersion;
-        const hasMore = await this.consumePage(direction, shouldContinue);
-        const sparse = await this.retrySparse(direction, false, shouldContinue);
-        if (hasMore) {
+        const page = await this.consumePage(direction, shouldContinue);
+        const sparse = await this.retrySparse(direction, page.retained, shouldContinue);
+        if (page.hasMore) {
           await SyncNextLinkSession.yieldTurn();
           continue;
         }
@@ -239,13 +244,13 @@ export class SyncNextLinkSession {
     });
   }
 
-  private consumePage(direction: Direction, shouldContinue: () => boolean): Promise<boolean> {
+  private consumePage(direction: Direction, shouldContinue: () => boolean): Promise<PageAttempt> {
     return direction === 'pull'
       ? this.consumePullPage(shouldContinue)
       : this.consumePushPage(shouldContinue);
   }
 
-  private async consumePullPage(shouldContinue: () => boolean): Promise<boolean> {
+  private async consumePullPage(shouldContinue: () => boolean): Promise<PageAttempt> {
     const result = await this._endpoint.run(() => this._pullPage.consume(this._target, {
       signal: this._abortController.signal,
       shouldContinue,
@@ -263,10 +268,10 @@ export class SyncNextLinkSession {
         result.materializedCids,
       );
     }
-    return result.hasMore;
+    return { hasMore: result.hasMore, retained: result.quarantined > 0 };
   }
 
-  private async consumePushPage(shouldContinue: () => boolean): Promise<boolean> {
+  private async consumePushPage(shouldContinue: () => boolean): Promise<PageAttempt> {
     const existingBlock = await this.getDeliveryBlock();
     const result = await this._endpoint.run(() => this._pushPage.consume(this._target, {
       endpointBlock : existingBlock,
@@ -284,7 +289,7 @@ export class SyncNextLinkSession {
     this.setOnline(result.endpointBlock?.reason !== 'transport');
     this._push.failures = 0;
     this._push.notBefore = 0;
-    return result.hasMore;
+    return { hasMore: result.hasMore, retained: result.retained > 0 };
   }
 
   private retrySparse(
