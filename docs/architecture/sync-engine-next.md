@@ -124,12 +124,18 @@ that needs encryption; the engine never falls back to plaintext.
 
 Incremental live work consumes bounded pages. Public operations whose existing
 contract promises coverage—`sync()`, identity recovery, followed-context
-refresh, and endpoint drain—must capture a finite source head and drive the
-same page primitive until that head is handled.
+refresh, and endpoint drain—drive the same page primitive from the durable
+watermark until a page reports `drained: true`. Every page returns to the
+runtime before another is requested, so an active feed cannot monopolize a
+link, direction, or endpoint.
 
 They resolve only when their documented materialization/delivery conditions are
 met. Otherwise they reject or return an explicit incomplete result; one-page
-success is never silently substituted for covering success.
+success is never silently substituted for covering success. Subscriptions are
+opened before catch-up, and a wake received during a page remains trailing
+work. A continuously growing feed can therefore keep a covering call active,
+but cannot prevent other work from progressing; no snapshot-style query head
+is part of the base design.
 
 ## Temporary legacy/next coexistence
 
