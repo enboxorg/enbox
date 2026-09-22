@@ -74,6 +74,22 @@ async function waitForRecord(
   throw new Error(`waitForRecord: record ${recordId} not found within ${timeoutMs}ms`);
 }
 
+async function waitForLiveSync(
+  agent: PlatformAgentTestHarness['agent'],
+  did: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const links = await agent.sync.getReplicationLinks(did);
+    if (links.length > 0 && links.every(link => link.status === 'live')) {
+      return;
+    }
+    await new Promise(resolve => { setTimeout(resolve, 100); });
+  }
+  throw new Error(`waitForLiveSync: ${did} did not become live within ${timeoutMs}ms`);
+}
+
 /** Opens application-readable bytes from one raw RecordsRead entry. */
 async function decryptReadEntry(
   harness: PlatformAgentTestHarness,
@@ -883,7 +899,6 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       await deviceHarness.agent.sync.sync('pull');
-      expect(await deviceHarness.agent.sync.getDeadLetters(alice.did.uri)).toEqual([]);
 
       const localGrantKeyQuery = await deviceHarness.agent.dwn.processRequest({
         author        : delegateDid,
@@ -1130,7 +1145,6 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       await deviceHarness.agent.sync.sync('pull');
-      expect(await deviceHarness.agent.sync.getDeadLetters(alice.did.uri)).toEqual([]);
 
       const localFeedQuery = await deviceHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -1299,11 +1313,12 @@ describe('E2E Multi-Agent Sync', () => {
       });
 
       // Start live sync on BOTH agents.
-      await primaryHarness.agent.sync.startSync({ interval: '60s' });
-      await deviceHarness.agent.sync.startSync({ interval: '60s' });
-
-      // Give subscriptions a moment to establish.
-      await new Promise(r => setTimeout(r, 500));
+      await primaryHarness.agent.sync.startSync({ interval: '1s' });
+      await deviceHarness.agent.sync.startSync({ interval: '1s' });
+      await Promise.all([
+        waitForLiveSync(primaryHarness.agent, alice.did.uri),
+        waitForLiveSync(deviceHarness.agent, alice.did.uri),
+      ]);
 
       // Primary agent writes a note locally.
       const writeResult = await primaryHarness.agent.dwn.processRequest({
@@ -1330,14 +1345,14 @@ describe('E2E Multi-Agent Sync', () => {
         recordId,
         delegateDid    : aliceDevice.did.uri,
         delegatedGrant : recordsQueryGrant.grant.message,
-        timeoutMs      : 20_000,
+        timeoutMs      : 45_000,
       });
       expect(received.recordId).toBe(recordId);
 
       // Clean up.
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
-    }, 30_000);
+    }, 90_000);
 
     it('should handle multiple sequential writes in live mode', async () => {
       // Register and start live sync.
@@ -1349,9 +1364,12 @@ describe('E2E Multi-Agent Sync', () => {
           delegateDid : aliceDevice.did.uri,
         },
       });
-      await primaryHarness.agent.sync.startSync({ interval: '60s' });
-      await deviceHarness.agent.sync.startSync({ interval: '60s' });
-      await new Promise(r => setTimeout(r, 500));
+      await primaryHarness.agent.sync.startSync({ interval: '1s' });
+      await deviceHarness.agent.sync.startSync({ interval: '1s' });
+      await Promise.all([
+        waitForLiveSync(primaryHarness.agent, alice.did.uri),
+        waitForLiveSync(deviceHarness.agent, alice.did.uri),
+      ]);
 
       // Write 3 records in quick succession.
       const recordIds: string[] = [];
@@ -1405,7 +1423,7 @@ describe('E2E Multi-Agent Sync', () => {
 
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
-    }, 30_000);
+    }, 60_000);
 
     it('should drain an in-flight durable push pass before unregistering its identity', async () => {
       await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });

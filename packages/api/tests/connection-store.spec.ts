@@ -223,7 +223,6 @@ function remoteStatus(overrides: Partial<RemoteSyncStatus> = {}): RemoteSyncStat
     state                    : 'healthy',
     connectivity             : 'online',
     quotaBlockedMessageCount : 0,
-    failedMessageCount       : 0,
     ...overrides,
   };
 }
@@ -248,7 +247,6 @@ function identitySyncStatus(
     health      : {
       connectivity             : 'unknown',
       degradedLinkCount        : 0,
-      failedMessageCount       : 0,
       quotaBlockedMessageCount : 0,
       syncHealthy              : true,
     },
@@ -555,10 +553,6 @@ describe('createConnectionStore()', () => {
       engine.links = [syncLink({
         status       : 'paused',
         connectivity : 'offline',
-        recovery     : {
-          error    : 'authority endpoint unavailable',
-          failedAt : '2026-09-11T12:00:00.000Z',
-        },
       })];
       engine.emit({
         type           : 'link:status-change',
@@ -569,7 +563,7 @@ describe('createConnectionStore()', () => {
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('error'); });
       expect(store.getSnapshot().sync?.error?.message).toContain('paused');
-      expect(store.getSnapshot().sync?.error?.message).toContain('authority endpoint unavailable');
+      expect(store.getSnapshot().sync?.error?.message).toContain('https://dwn.example');
     });
 
     it('should treat an identity without a sync registration as locally caught up', async () => {
@@ -722,14 +716,20 @@ describe('createConnectionStore()', () => {
       const stable = store.getSnapshot();
       const settledReads = engine.settledLinkReads;
       engine.emit({
-        type: 'dead-letter:change', tenantDid: OWNER_DID, remoteEndpoint: 'https://dwn.example',
+        type           : 'checkpoint:push-advance',
+        tenantDid      : OWNER_DID,
+        remoteEndpoint : 'https://dwn.example',
+        position       : '1',
       });
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
       expect(store.getSnapshot()).toBe(stable);
 
       engine.remotes[2] = remoteStatus({ nextRetryAt: '2026-07-29T11:45:00.000Z' });
       engine.emit({
-        type: 'dead-letter:change', tenantDid: OWNER_DID, remoteEndpoint: 'https://dwn.example',
+        type           : 'checkpoint:push-advance',
+        tenantDid      : OWNER_DID,
+        remoteEndpoint : 'https://dwn.example',
+        position       : '2',
       });
       await waitFor(() => {
         expect(store.getSnapshot().sync?.remotes[0]?.nextRetryAt).toBe('2026-07-29T11:45:00.000Z');
@@ -737,7 +737,10 @@ describe('createConnectionStore()', () => {
 
       engine.remotes = [remoteStatus()];
       engine.emit({
-        type: 'dead-letter:change', tenantDid: OWNER_DID, remoteEndpoint: 'https://dwn.example',
+        type           : 'checkpoint:push-advance',
+        tenantDid      : OWNER_DID,
+        remoteEndpoint : 'https://dwn.example',
+        position       : '3',
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.remotes).toHaveLength(1); });
     });

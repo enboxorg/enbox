@@ -125,7 +125,6 @@ export { DwnInterface } from '@enbox/agent';
 // ConnectionStore receive current advertised rows through `snapshot.sync.remotes`
 // and can call `store.retryRemote(remoteEndpoint)` without wiring agent events.
 export type {
-  DeadLetterEntry,
   RemoteSyncState,
   RemoteSyncStatus,
   SyncConnectivityState,

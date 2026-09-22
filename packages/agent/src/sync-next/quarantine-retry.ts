@@ -4,7 +4,6 @@ import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { MessagesQueryReplyEntry, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { RoleReplicationSupportBatch } from '../sync-role-replication-support.js';
 import type {
   SyncNextLinkIdentity,
   SyncNextQuarantineEntry,

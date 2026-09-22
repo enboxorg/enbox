@@ -430,18 +430,15 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     ]);
 
     if (b !== a || remote !== a) {
-      const [aFeed, bFeed, remoteFeed, aHealth, bHealth, aFailed, bFailed] = await Promise.all([
+      const [aFeed, bFeed, remoteFeed, aHealth, bHealth] = await Promise.all([
         feedCids('local-a'),
         feedCids('local-b'),
         feedCids('remote'),
         deviceA.harness.agent.sync.getSyncHealth(),
         deviceB.harness.agent.sync.getSyncHealth(),
-        deviceA.harness.agent.sync.getDeadLetters(aliceDid),
-        deviceB.harness.agent.sync.getDeadLetters(aliceDid),
       ]);
       throw new Error(`fingerprints diverged: ${JSON.stringify({
         feeds        : { a: aFeed, b: bFeed, remote: remoteFeed },
-        failed       : { a: aFailed, b: bFailed },
         fingerprints : { a, b, remote },
         health       : { a: aHealth, b: bHealth },
       }, null, 2)}`);
@@ -513,7 +510,6 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
 
   async function expectHealthySync(device: Device): Promise<void> {
     const health = await device.harness.agent.sync.getSyncHealth();
-    expect(health.failedMessageCount).toBe(0);
     expect(health.syncHealthy).toBe(true);
   }
 

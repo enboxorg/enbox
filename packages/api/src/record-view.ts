@@ -9,9 +9,9 @@ import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent } from '@enbox/agen
 import { ContextRetiredError } from './context-errors.js';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
-import { latestPausedRecoveryLink } from './sync-status-error.js';
 import { ObservedView } from './observed-view.js';
 import { openView } from './view-opening.js';
+import { pausedReplicationLink } from './sync-status-error.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { projectReplicationCurrentness, syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
 
@@ -385,10 +385,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       return;
     }
 
-    if (event.type === 'dead-letter:change') {
-      return;
-    }
-
     if (!syncEventCoversProtocol(event, this._query.filter.protocol)
       || (this._followedContextId !== undefined && event.contextId !== this._followedContextId)) {
       return;
@@ -575,7 +571,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
           && link.scope.protocolPaths.includes(this._query.filter.protocolPath));
     const status = projectReplicationCurrentness(links);
     if (status === 'error') {
-      return this.resolveUnavailableCurrentness(true, latestPausedRecoveryLink(links));
+      return this.resolveUnavailableCurrentness(true, pausedReplicationLink(links));
     }
     return { current: status === 'caught-up' };
   }
@@ -586,10 +582,10 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     failedLink?: ReplicationLinkSnapshot,
   ): RecordViewCurrentness {
     if (isPaused) {
-      const message = failedLink?.recovery === undefined
+      const message = failedLink === undefined
         ? `RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`
         : `RecordView: replication is paused for protocol '${this._query.filter.protocol}'; `
-          + `source '${failedLink.remoteEndpoint}' failed: ${failedLink.recovery.error}`;
+          + `source '${failedLink.remoteEndpoint}' is unavailable.`;
       return {
         status : 'error',
         error  : new Error(message),
