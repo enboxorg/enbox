@@ -103,9 +103,10 @@ lifetimes/domains, and preserve the opposite direction's progress.
 Network work is capped at two operations per normalized endpoint. The gate
 opens a short in-memory circuit after a connection failure, so already queued
 links are deferred without adding a persisted endpoint scheduler. Failed
-subscription establishment remains unsubscribed and is retried by the next
-ordinary refresh; successful reconnect clears the circuit and forces catch-up
-over the socket.
+subscription establishment remains unsubscribed and requests one coalesced
+engine refresh after `Retry-After` (or five seconds); the periodic pass remains
+the backstop. Successful reconnect clears the circuit and forces catch-up over
+the socket.
 This bounds an outage to a small probe count instead of multiplying it by the
 number of protocols, contexts, or identities at that endpoint.
 

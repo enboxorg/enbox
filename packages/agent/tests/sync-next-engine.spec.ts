@@ -2,6 +2,7 @@ import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { SyncEvent, SyncIdentityOptions } from '../src/types/sync.js';
 
 import { Level } from 'level';
+import { RateLimitError } from '@enbox/dwn-clients';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
@@ -207,6 +208,22 @@ describe('SyncEngineNext orchestration', () => {
     expect(first).toBe(second);
     expect(first.target.dwnUrl).toBe('https://dwn.example/path');
     expect(createSession.calledOnce).toBe(true);
+  });
+
+  it('should coalesce subscription retries and honor Retry-After', async () => {
+    const clock = sinon.useFakeTimers();
+    const internal = engine as any;
+    const refresh = sinon.stub(internal, 'scheduleLiveRefresh');
+    internal._live = true;
+
+    internal.scheduleSubscriptionRetry(new RateLimitError(1));
+    internal.scheduleSubscriptionRetry(new RateLimitError(1));
+    await clock.tickAsync(999);
+    expect(refresh.notCalled).toBe(true);
+    await clock.tickAsync(1);
+    expect(refresh.calledOnce).toBe(true);
+
+    internal._live = false;
   });
 
   it('should include foreign role targets authorized by a scoped identity', async () => {
