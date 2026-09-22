@@ -21,7 +21,6 @@ export {
   syncScopeCoversProtocol,
   syncScopeFromProtocols,
 } from './types/sync.js';
-export { SyncRunCancelledError } from './sync-runtime-errors.js';
 export { resolveSyncConnectivityState } from './sync-connectivity-manager.js';
 export * from './agent-session.js';
 export * from './anonymous-dwn-api.js';
@@ -40,7 +39,6 @@ export * from './local-dwn.js';
 export * from './local-key-manager.js';
 export * from './permissions-api.js';
 export * from './secret-store.js';
-export * from './sync-next/engine.js';
 export {
   publishServiceConfigNotice,
   ServiceConfigProtocolDefinition,

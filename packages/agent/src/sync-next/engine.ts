@@ -292,6 +292,13 @@ export class SyncEngineNext implements SyncEngine {
   ): Promise<void> {
     await this.runRuntimeTransition(async (): Promise<void> => {
       const removed = await this.catalog.removeIdentity(did, lifecycleOptions, async (): Promise<void> => {
+        const active = [...this._sessions.values()]
+          .filter(({ target }) => SyncEngineNext.targetBelongsToIdentity(target, did));
+        const failed = (await this.settleCovers(active, 'push'))
+          .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+        if (failed.length > 0) {
+          throw new AggregateError(failed.map(({ reason }) => reason), 'SyncEngineNext: identity push did not drain.');
+        }
         await this.disposeIdentitySessions(did);
         await this._ledger.deleteForTenant(did);
         for (const link of await this._ledger.getAllLinks()) {
@@ -504,6 +511,21 @@ export class SyncEngineNext implements SyncEngine {
   public on(listener: SyncEventListener): () => void {
     this._eventListeners.add(listener);
     return (): void => { this._eventListeners.delete(listener); };
+  }
+
+  /** Clear every catalog and replication row owned by this engine. */
+  public async clear(): Promise<void> {
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      await this.stopRuntime();
+      await Promise.all([
+        this._endpointStore.clear(),
+        this._identityStore.clear(),
+        this._ledger.clear(),
+        this._sourceStore.clear(),
+      ]);
+      this._pausedIdentities.clear();
+      this._planner.invalidate();
+    });
   }
 
   public async close(options: SyncLifecycleOptions = {}): Promise<void> {

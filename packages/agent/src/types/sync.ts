@@ -957,8 +957,7 @@ export interface SyncEngine {
    * merged (differing directions widen to both; differing scopes widen to
    * unscoped) so the follow-up covers every joined request. A runtime
    * transition (`startSync`/`stopSync`/`clear`/`close`) while the follow-up
-   * is still queued cancels it — joined callers reject with
-   * `SyncRunCancelledError`, keeping "resolved ⇒ a covering run completed"
+   * is still queued cancels it, keeping "resolved ⇒ a covering run completed"
    * true for every caller.
    *
    * @param direction which direction you'd like to perform the sync operation.

@@ -2,7 +2,6 @@ import type { AgentPermissionsApi } from '../permissions-api.js';
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { FollowedSyncSourceStore } from '../followed-sync-source.js';
 import type { SyncIdentityStore } from '../sync-identity-store.js';
-import type { SyncLifecycleDeadline } from '../sync-lifecycle-coordinator.js';
 import type { SyncTargetResolver } from '../sync-target-resolver.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
 import type {
@@ -17,7 +16,6 @@ import type {
 } from '../sync-scope-closure-validator.js';
 
 import { admitClosure } from '../sync-admit-closure.js';
-import { createSyncLifecycleDeadline } from '../sync-lifecycle-coordinator.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { DwnInterface } from '../types/dwn.js';
 import { fetchConnectionStatus } from '../connect-status.js';
@@ -59,7 +57,7 @@ type SyncNextCatalogFollowResult = {
   source: FollowedSyncSource;
 };
 
-type SyncNextCatalogDeadline = SyncLifecycleDeadline & { signal: AbortSignal };
+type SyncNextCatalogDeadline = { signal: AbortSignal; timeout: number };
 
 /**
  * Owns the small durable catalog that remains independent of transfer state.
@@ -417,7 +415,7 @@ export class SyncNextCatalog {
         `SyncNextCatalog: lifecycle timeout must be between 0 and ${MAX_TIMER_DELAY_MS} milliseconds.`,
       );
     }
-    return { ...createSyncLifecycleDeadline(timeout), signal: AbortSignal.timeout(timeout) };
+    return { signal: AbortSignal.timeout(timeout), timeout };
   }
 
   private static optionsEqual(left: SyncIdentityOptions, right: SyncIdentityOptions): boolean {

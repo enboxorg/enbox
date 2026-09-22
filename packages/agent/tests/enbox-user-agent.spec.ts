@@ -44,18 +44,8 @@ describe('EnboxUserAgent', () => {
       expect(userAgent.keyManager).toBeDefined();
       expect(userAgent.rpc).toBeDefined();
       expect(userAgent.sync).toBeDefined();
-      expect(userAgent.vault).toBeDefined();
-    });
-
-    it('should select the isolated next sync engine only when explicitly requested', async () => {
-      const userAgent = await EnboxUserAgent.create({
-        dataPath   : '__TESTDATA__/USERAGENT-NEXT',
-        syncEngine : 'next',
-      });
-
       expect(userAgent.sync).toBeInstanceOf(SyncEngineNext);
-      await userAgent.sync.close();
-      await userAgent.rpc.close();
+      expect(userAgent.vault).toBeDefined();
     });
   });
 

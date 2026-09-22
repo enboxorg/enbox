@@ -296,9 +296,6 @@ export interface AuthManagerOptions {
    */
   agent?: EnboxUserAgent;
 
-  /** Temporary selector for apples-to-apples legacy/next sync comparison. */
-  syncEngine?: 'legacy' | 'next';
-
   /**
    * Provide a custom {@link HdIdentityVault} implementation.
    * Defaults to a LevelDB-backed vault with PBES2-HS512+A256KW encryption.
