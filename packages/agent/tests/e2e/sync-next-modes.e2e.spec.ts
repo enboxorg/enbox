@@ -221,9 +221,17 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
     await writeRemote(alice.did.uri, 'remote-live');
     await waitForCount(() => queryLocal(alice.did.uri), 1);
 
-    await writeLocal(alice.did.uri, 'local-live');
-    await waitForCount(() => queryRemote(alice.did.uri), 2);
-    await sync.stopSync();
+    const localApply = sinon.spy(harness.agent.dwn, 'applyReplicatedMessage');
+    try {
+      await writeLocal(alice.did.uri, 'local-live');
+      await waitForCount(() => queryRemote(alice.did.uri), 2);
+      await sync.sync('pull');
+
+      expect(localApply.notCalled).toBe(true);
+    } finally {
+      localApply.restore();
+      await sync.stopSync();
+    }
   }, 120_000);
 
   it('finishes covering pull and push through quarantined non-inline bodies', async () => {

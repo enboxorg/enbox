@@ -14,6 +14,7 @@ import type { EnboxPlatformAgent } from '../src/types/agent.js';
 import type { SyncNextLinkIdentity } from '../src/sync-next/types.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
+import { SyncEchoSuppressor } from '../src/sync-echo-suppressor.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { SyncNextPullPage } from '../src/sync-next/pull-page.js';
 import { SyncNextQuarantineRetry } from '../src/sync-next/quarantine-retry.js';
@@ -99,14 +100,17 @@ function page(entries: MessagesQueryReplyEntry[], drained = true): MessagesQuery
 function fakeAgent(reply: MessagesQueryReply): {
   agent: EnboxPlatformAgent;
   apply: sinon.SinonStub;
+  read: sinon.SinonStub;
   send: sinon.SinonStub;
 } {
   const apply = sinon.stub().resolves({ kind: 'Applied' });
+  const read = sinon.stub().resolves({ reply: { status: { code: 404, detail: 'Not Found' } } });
   const send = sinon.stub().resolves(reply);
   const agent = {
     dwn: {
       applyReplicatedMessage : apply,
       isRemoteMode           : false,
+      processRequest         : read,
     },
     processDwnRequest : sinon.stub().resolves({ message: protocolMessage('query') }),
     rpc               : { sendDwnRequest: send },
@@ -117,7 +121,7 @@ function fakeAgent(reply: MessagesQueryReply): {
         Buffer.from(plaintext).toString('base64url'),
     },
   } as unknown as EnboxPlatformAgent;
-  return { agent, apply, send };
+  return { agent, apply, read, send };
 }
 
 describe('SyncNextPullPage', () => {
@@ -198,6 +202,83 @@ describe('SyncNextPullPage', () => {
     expect(observations).toEqual(['applied', 'checkpoint']);
   });
 
+  it('should verify a recent push locally before suppressing its pull echo', async () => {
+    const root = await feedEntry(protocolMessage('pushed-echo'), 1);
+    const fixture = fakeAgent(page([root]));
+    fixture.read.resolves({
+      reply: {
+        entry  : { message: root.message },
+        status : { code: 200, detail: 'OK' },
+      },
+    });
+    const suppressor = new SyncEchoSuppressor();
+    suppressor.trackPushed(target().did, root.messageCid, target().dwnUrl);
+    await createLink();
+
+    const result = await new SyncNextPullPage(fixture.agent, ledger, suppressor).consume(target());
+
+    expect(fixture.read.calledOnce).toBe(true);
+    expect(fixture.apply.notCalled).toBe(true);
+    expect(result.materializedCids).toEqual([root.messageCid]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+  });
+
+  it('should not trust a recent-push hint when the local message is missing', async () => {
+    const root = await feedEntry(protocolMessage('missing-pushed-echo'), 1);
+    const fixture = fakeAgent(page([root]));
+    const suppressor = new SyncEchoSuppressor();
+    suppressor.trackPushed(target().did, root.messageCid, target().dwnUrl);
+    await createLink();
+
+    await new SyncNextPullPage(fixture.agent, ledger, suppressor).consume(target());
+
+    expect(fixture.read.calledOnce).toBe(true);
+    expect(fixture.apply.calledOnce).toBe(true);
+  });
+
+  it('should not suppress a current record echo when its local body is missing', async () => {
+    const root = await feedEntry(missingBodyMessage(), 1);
+    const fixture = fakeAgent(page([root]));
+    fixture.read.resolves({
+      reply: {
+        entry  : { message: root.message },
+        status : { code: 200, detail: 'OK' },
+      },
+    });
+    const suppressor = new SyncEchoSuppressor();
+    suppressor.trackPushed(target().did, root.messageCid, target().dwnUrl);
+    await createLink();
+
+    const result = await new SyncNextPullPage(fixture.agent, ledger, suppressor).consume(target());
+
+    expect(result.quarantined).toBe(1);
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toHaveLength(1);
+  });
+
+  it('should suppress a current record echo when its local body exists', async () => {
+    const root = await feedEntry(missingBodyMessage(), 1);
+    const fixture = fakeAgent(page([root]));
+    const cancel = sinon.stub();
+    fixture.read.resolves({
+      reply: {
+        entry: {
+          data    : new ReadableStream<Uint8Array>({ cancel }),
+          message : root.message,
+        },
+        status: { code: 200, detail: 'OK' },
+      },
+    });
+    const suppressor = new SyncEchoSuppressor();
+    suppressor.trackPushed(target().did, root.messageCid, target().dwnUrl);
+    await createLink();
+
+    const result = await new SyncNextPullPage(fixture.agent, ledger, suppressor).consume(target());
+
+    expect(result.quarantined).toBe(0);
+    expect(fixture.apply.notCalled).toBe(true);
+    expect(cancel.calledOnce).toBe(true);
+  });
+
   it('should not issue point reads while classifying received-only page input', async () => {
     const missingBody = await feedEntry(missingBodyMessage(), 1);
     const fixture = fakeAgent(page([missingBody]));
@@ -206,6 +287,7 @@ describe('SyncNextPullPage', () => {
     await new SyncNextPullPage(fixture.agent, ledger).consume(target());
 
     expect(fixture.send.calledOnce).toBe(true);
+    expect(fixture.read.notCalled).toBe(true);
     expect(fixture.apply.notCalled).toBe(true);
   });
 

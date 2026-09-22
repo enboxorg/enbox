@@ -114,6 +114,14 @@ Subscriptions are wake signals. Establishment and reconnect always schedule a
 page from durable progress; a cursorless subscription is never treated as
 coverage. A wake arriving during work remains as trailing work.
 
+A bounded in-memory echo cache is shared across link sessions but scoped by
+tenant, CID, and endpoint. Pulling a CID suppresses an immediate push back to
+that endpoint without suppressing fan-out to another endpoint. A recent push
+only narrows a local lookup: pull skips re-admission after verifying the exact
+local message still exists and that a current `RecordsWrite` still has its
+body. Cache loss merely permits an idempotent duplicate apply; cache state is
+never durable progress.
+
 ## Retry, settlement, and purge
 
 - **Settle:** success or a verified complete duplicate deletes the sparse row.
