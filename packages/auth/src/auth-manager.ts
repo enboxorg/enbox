@@ -250,7 +250,6 @@ export class AuthManager {
       didDhtNetwork    : options.didDhtNetwork,
       localDwnStrategy : options.localDwnStrategy,
       localDwnEndpoint,
-      syncEngine       : options.syncEngine,
       rpcClient        : localDwnEndpoint === undefined || localDwnPairing === undefined
         ? undefined
         : createLocalDwnRpcClient(localDwnPairing),

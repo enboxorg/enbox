@@ -1,6 +1,6 @@
-# Sync engine next
+# Sync engine architecture
 
-Status: implementation contract for the temporary `SyncEngineNext` PR stack.
+Status: implementation contract for the watermark-based sync engine.
 
 Parent design work: [#1722](https://github.com/enboxorg/enbox/issues/1722) and
 [#1727](https://github.com/enboxorg/enbox/issues/1727).
@@ -162,34 +162,17 @@ work. A continuously growing feed can therefore keep a covering call active,
 but cannot prevent other work from progressing; no snapshot-style query head
 is part of the base design.
 
-## Temporary legacy/next coexistence
+## Cutover
 
-Exactly one engine is selected when an agent is created:
+The comparison stack ran the legacy and watermark engines independently against
+equivalent fixtures. After that matrix passed, the selector and legacy
+checkpoint namespace were removed. `SyncEngineLevel` remains as the public
+compatibility name, backed by the watermark engine; `syncNextV1/*` is the only
+active transfer namespace.
 
-```text
-legacy | next
-```
-
-One agent instance runs exactly one engine, and the engines never share
-checkpoint namespaces. Next uses `syncNextV1/*`; switching modes therefore
-rescans from its own state and needs no dual writes or checkpoint translation.
-The temporary selector does not yet prevent two independently constructed
-agents over the same profile from choosing different modes concurrently. Hosts
-must keep that configuration consistent; cross-context mode exclusion remains
-a cutover gate before next can become the default.
-
-The selector is forwarded by `AuthManager` and `ConnectionStore`, so a real
-dapp can compare engines without constructing a private agent. Next owns the
-small shared registration/followed-context catalog directly; it does not
-instantiate the legacy transfer engine as a hidden control plane.
-
-Apples-to-apples comparison uses cloned deterministic fixtures. Running one
-engine and then the other against the same mutable remotes is not a comparison,
-because the first run changes the inputs.
-
-Legacy code is deleted after next passes the comparison matrix and becomes the
-default. The mode switch and legacy namespace are temporary migration tools,
-not permanent product surface.
+The registration and followed-context catalog remains shared across browser
+contexts through one structured wake channel. Transfer checkpoints and sparse
+rows have one owner and require no dual writes or checkpoint translation.
 
 ## Required application modes
 
@@ -205,10 +188,10 @@ Every stack layer must preserve these four modes:
 4. **Existing dapp hydrates a new empty remote:** local history reaches the new
    endpoint, including required bodies, while pull and other links remain live.
 
-## Comparison matrix
+## Validation matrix
 
-The reusable scenario runner executes legacy and next separately from identical
-local/remote snapshots and fault scripts. It records:
+The pre-cutover comparison used identical local/remote snapshots and fault
+scripts. The retained watermark scenarios continue to record:
 
 - final local and remote fingerprints;
 - link progress and sparse obligations;
@@ -312,23 +295,19 @@ backstop requests catch-up.
 
 The real-transport matrix covers the four required dapp modes, wake-only live
 updates, non-inline bodies followed by independent tiny roots, one offline and
-one healthy exact link, and isolated legacy/next comparison. A 579-root unit
-fixture proves six watermark-driven remote page queries without point reads.
+one healthy exact link. A 579-root unit fixture proves six watermark-driven
+remote page queries without point reads.
 
 ### Deliberate remaining boundaries
 
-- Legacy remains the default. `next` is opt-in until the stacked reviews and CI
-  complete.
 - Followed-source acceptance currently reuses the established catalog ceremony;
-  replica transfer and all next-engine checkpoints remain isolated. The
+  replica transfer and all checkpoints remain isolated. The
   multi-binding/revocation redesign is still a separate security slice.
 - Owner-authorized historical import remains a separate security protocol and
   is not hidden inside page classification.
 - Terminal classification is intentionally conservative: uncertain or broad
   `Invalid` outcomes stay sparse/retryable until a typed allowlist proves
   permanence.
-- Constructor-time selection prevents two engines in one agent. Cross-context
-  legacy-versus-next exclusion must be solved before changing the default.
 - Per-endpoint network work is capped at two operations. Page pumps return to
   the endpoint queue after every turn, so a continuously growing target cannot
   retain the endpoint indefinitely. Change that small fixed concurrency only
@@ -336,8 +315,6 @@ fixture proves six watermark-driven remote page queries without point reads.
 - Drain cancellation is cooperative between committed pages, exact-link runs,
   and drain phases. Local admission and an in-flight request are never
   preempted halfway through; the next page is not requested after cancellation.
-- The next engine currently emits registration, durable checkpoint, and fresh
-  delivery events used by application readiness/data refresh. The legacy
-  repair/quota lifecycle event vocabulary still needs a consumer audit before
-  next becomes the default; it must not be mechanically recreated as another
-  state machine without a demonstrated consumer.
+- The engine emits registration, durable checkpoint, and fresh delivery events
+  used by application readiness and data refresh. Removed repair/quota event
+  vocabulary is not recreated without a demonstrated consumer.

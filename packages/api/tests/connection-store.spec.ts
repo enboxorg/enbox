@@ -2763,7 +2763,6 @@ describe('createConnectionStore()', () => {
         password               : 'pw',
         requireHostedReadiness : true,
         sync                   : 'off',
-        syncEngine             : 'next',
         monitor                : false,
         restore                : { password: 'restore-pw' },
       });
@@ -2772,7 +2771,7 @@ describe('createConnectionStore()', () => {
       await store.initialize();
 
       expect(create.calledOnce).toBe(true);
-      expect(create.firstCall.args[0]).toEqual({ password: 'pw', sync: 'off', syncEngine: 'next' });
+      expect(create.firstCall.args[0]).toEqual({ password: 'pw', sync: 'off' });
       expect(fake.restoreSession.firstCall.args[0]).toEqual({ password: 'restore-pw' });
     });
 

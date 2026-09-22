@@ -105,9 +105,6 @@ export type CreateUserAgentParams = Partial<AgentParams> & {
 
   localDwnStrategy?: LocalDwnStrategy;
 
-  /** Temporary selector used while the replacement sync engine is compared with legacy sync. */
-  syncEngine?: 'legacy' | 'next';
-
   /**
    * When set, the agent operates in "remote mode": no in-process DWN is
    * created. All `processRequest()` calls are routed through RPC to
@@ -179,7 +176,6 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     localDwnStrategy,
     localDwnEndpoint,
     agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, secretsApi, syncApi,
-    syncEngine = 'legacy',
   }: CreateUserAgentParams = {}
   ): Promise<EnboxUserAgent> {
     if (didDhtNetwork !== undefined && didApi !== undefined) {
@@ -251,13 +247,8 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     rpcClient ??= new EnboxRpcClient();
 
     if (syncApi === undefined) {
-      if (syncEngine === 'next') {
-        const { SyncEngineNext } = await import('./sync-next/engine.js');
-        syncApi = new SyncEngineNext({ dataPath });
-      } else {
-        const { SyncEngineLevel } = await import('./sync-engine-level.js');
-        syncApi = new SyncEngineLevel({ dataPath });
-      }
+      const { SyncEngineLevel } = await import('./sync-engine-level.js');
+      syncApi = new SyncEngineLevel({ dataPath });
     }
 
     // Instantiate the Agent using the provided or default components.

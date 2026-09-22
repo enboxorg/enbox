@@ -513,6 +513,21 @@ export class SyncEngineNext implements SyncEngine {
     return (): void => { this._eventListeners.delete(listener); };
   }
 
+  /** Clear every catalog and replication row owned by this engine. */
+  public async clear(): Promise<void> {
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      await this.stopRuntime();
+      await Promise.all([
+        this._endpointStore.clear(),
+        this._identityStore.clear(),
+        this._ledger.clear(),
+        this._sourceStore.clear(),
+      ]);
+      this._pausedIdentities.clear();
+      this._planner.invalidate();
+    });
+  }
+
   public async close(options: SyncLifecycleOptions = {}): Promise<void> {
     await this.stopSync(options.timeout ?? 2_000);
     this._catalogClosed = true;

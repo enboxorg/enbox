@@ -44,6 +44,7 @@ describe('EnboxUserAgent', () => {
       expect(userAgent.keyManager).toBeDefined();
       expect(userAgent.rpc).toBeDefined();
       expect(userAgent.sync).toBeDefined();
+      expect(userAgent.sync).toBeInstanceOf(SyncEngineNext);
       expect(userAgent.vault).toBeDefined();
     });
 
@@ -73,17 +74,6 @@ describe('EnboxUserAgent', () => {
         didApi        : {} as any,
         didDhtNetwork : { gatewayUri: 'http://127.0.0.1:17527', allowPrivateGatewayUri: true },
       })).rejects.toThrow('didDhtNetwork cannot be combined with a custom didApi');
-    });
-
-    it('should select the isolated next sync engine only when explicitly requested', async () => {
-      const userAgent = await EnboxUserAgent.create({
-        dataPath   : '__TESTDATA__/USERAGENT-NEXT',
-        syncEngine : 'next',
-      });
-
-      expect(userAgent.sync).toBeInstanceOf(SyncEngineNext);
-      await userAgent.sync.close();
-      await userAgent.rpc.close();
     });
   });
 

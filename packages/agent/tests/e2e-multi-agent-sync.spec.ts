@@ -1,8 +1,9 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnDataEncodedRecordsWriteMessage } from '../src/types/dwn.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
+import type { SyncEvent } from '../src/types/sync.js';
+
 import type { GenericMessage, MessagesQueryReplyEntry, PermissionScope, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { PushResult, SyncEvent } from '../src/types/sync.js';
 
 import sinon from 'sinon';
 
@@ -1413,25 +1414,15 @@ describe('E2E Multi-Agent Sync', () => {
 
       const pushStarted = createDeferred();
       const releasePush = createDeferred();
-      const syncEngine = primaryHarness.agent.sync as unknown as {
-        createRemoteApplyPushContext(target: unknown): {
-          pushFeedEntry(entry: MessagesQueryReplyEntry, stagedRootCids: string[]): Promise<PushResult>;
-        };
-      };
-      const createPushContext = syncEngine.createRemoteApplyPushContext.bind(syncEngine);
+      const applyReplicatedMessage = primaryHarness.agent.rpc.applyReplicatedMessage.bind(primaryHarness.agent.rpc);
       let shouldGatePush = true;
-      const pushContextStub = sinon.stub(syncEngine, 'createRemoteApplyPushContext').callsFake((target) => {
-        const context = createPushContext(target);
-        const pushFeedEntry = context.pushFeedEntry.bind(context);
-        sinon.stub(context, 'pushFeedEntry').callsFake(async (entry, stagedRootCids): Promise<PushResult> => {
-          if (shouldGatePush) {
-            shouldGatePush = false;
-            pushStarted.resolve();
-            await releasePush.promise;
-          }
-          return pushFeedEntry(entry, stagedRootCids);
-        });
-        return context;
+      const applyStub = sinon.stub(primaryHarness.agent.rpc, 'applyReplicatedMessage').callsFake(async (request) => {
+        if (shouldGatePush) {
+          shouldGatePush = false;
+          pushStarted.resolve();
+          await releasePush.promise;
+        }
+        return applyReplicatedMessage(request);
       });
       let unregisterPromise: Promise<void> | undefined;
 
@@ -1475,7 +1466,7 @@ describe('E2E Multi-Agent Sync', () => {
       } finally {
         releasePush.resolve();
         await unregisterPromise?.catch((): void => {});
-        pushContextStub.restore();
+        applyStub.restore();
         await primaryHarness.agent.sync.stopSync();
       }
     }, 20_000);
