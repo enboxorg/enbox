@@ -31,26 +31,30 @@ export function syncNextTenantRange(tenantDid: string): { gte: string; lte: stri
   return { gte: prefix, lte: `${prefix}${KEY_END}` };
 }
 
+/** Secondary-index key for one logical-target quarantine receipt. */
+export function syncNextLogicalTargetReceiptKey(
+  logicalTargetId: string,
+  messageCid: string,
+  receiptKey: string,
+): string {
+  return [logicalTargetId, messageCid, receiptKey].map(encodePart).join('');
+}
+
+/** Prefix range for one logical target, optionally narrowed to one CID. */
+export function syncNextLogicalTargetRange(
+  logicalTargetId: string,
+  messageCid?: string,
+): { gte: string; lte: string } {
+  const prefix = [logicalTargetId, messageCid].flatMap(value => value === undefined ? [] : [encodePart(value)]).join('');
+  return { gte: prefix, lte: `${prefix}${KEY_END}` };
+}
+
 /** Durable key for one exact source receipt beneath its link. */
 export function syncNextReceiptKey(
   identity: SyncNextLinkIdentity,
   receipt: SyncNextSourceReceipt,
 ): string {
   return `${syncNextLinkKey(identity)}${[
-    receipt.source.streamId,
-    receipt.source.epoch,
-    receipt.source.position,
-    receipt.messageCid,
-  ].map(encodePart).join('')}`;
-}
-
-/** Durable key for one terminal outcome, additionally isolated by direction. */
-export function syncNextTerminalKey(
-  identity: SyncNextLinkIdentity,
-  direction: 'pull' | 'push',
-  receipt: SyncNextSourceReceipt,
-): string {
-  return `${syncNextLinkKey(identity)}${encodePart(direction)}${[
     receipt.source.streamId,
     receipt.source.epoch,
     receipt.source.position,

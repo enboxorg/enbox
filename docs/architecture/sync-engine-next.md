@@ -25,7 +25,7 @@ Every link is isolated by:
 tenant DID + normalized endpoint + canonical projection ID + authorization epoch
 ```
 
-Each link has two domain-qualified progress tokens:
+Each normalized link has two domain-qualified progress tokens:
 
 - `pullHandledThrough`: every remote-feed entry through the token was
   materialized, quarantined, or given a precise terminal outcome.
@@ -57,24 +57,24 @@ the local DWN feed is the durable source.
 This sparse ledger allows a large attachment or a retryable remote failure to
 remain owed while later independent local roots continue to the same endpoint.
 
-### Terminal outcomes
-
-Only enumerated, evidence-backed outcomes are terminal. Time, retry count,
-generic HTTP status, missing support, wrong transferred bytes, resolver outage,
-or the broad `Invalid` replication result are not terminal by themselves.
+There is deliberately no third terminal/dead-letter ledger. A broad `Invalid`,
+authorization failure, retry count, elapsed time, or malformed retained payload
+does not prove that skipping a signed source entry is safe. Such entries remain
+visible sparse work until they settle or an explicit rebuild resets the source
+before purging them.
 
 ## Page-forward invariant
 
 Every root before a committed page cursor has exactly one durable disposition:
 
-| Direction | Success | Retryable | Permanent |
-| --- | --- | --- | --- |
-| Pull | Materialized in the local DWN | Exact-source quarantine row | Precise terminal outcome |
-| Push | Accepted/duplicate/superseded at that endpoint | Delivery obligation | Precise terminal outcome |
+| Direction | Success | Unsettled but retained |
+| --- | --- | --- |
+| Pull | Materialized in the local DWN | Exact-source quarantine row |
+| Push | Accepted/duplicate/superseded at that endpoint | Delivery obligation |
 
-The sparse rows, terminal outcomes, and handled-through token commit in one
-Level batch. A single root therefore cannot block the rest of its page when the
-engine can durably retain what remains owed.
+The sparse rows and handled-through token commit in one Level batch. A single
+root therefore cannot block the rest of its page when the engine can durably
+retain what remains owed.
 
 A page must stop without advancing when the engine cannot assume that
 responsibility—for example, stale authority, cancellation, failed encryption,
@@ -99,6 +99,17 @@ network waits do not share a whole-link execution lock. Commit operations use a
 short cross-context link lock, reread the latest link record, reject stale
 lifetimes/domains, and preserve the opposite direction's progress.
 
+Network work is capped at two operations per normalized endpoint. Covering
+operations serialize their link streams per endpoint, and a persisted
+endpoint-wide delivery block is consulted by every link before fresh delivery.
+The same gate opens a short in-memory circuit after a connection failure, so
+already queued links are deferred without turning a concurrent burst into a
+sequential one. Failed subscription establishment is retried on bounded
+backoff; successful reconnect clears the circuit and forces catch-up over the
+socket.
+This bounds an outage to a small probe count instead of multiplying it by the
+number of protocols, contexts, or identities at that endpoint.
+
 Subscriptions are wake signals. Establishment and reconnect always schedule a
 page from durable progress; a cursorless subscription is never treated as
 coverage. A wake arriving during work remains as trailing work.
@@ -106,19 +117,23 @@ coverage. A wake arriving during work remains as trailing work.
 ## Retry, settlement, and purge
 
 - **Settle:** success or a verified complete duplicate deletes the sparse row.
-- **Terminalize:** replace the sparse row with a precise permanent outcome.
-- **Abandon:** explicit user intent records an abandoned terminal outcome; it
-  never silently claims success.
-- **Rebuild:** reset the affected checkpoint before the earliest removed
-  obligation (or safely to zero), remove the sparse rows, and replay the source.
+- **Retry:** rotate fairly, stop at the first unresolved receipt, and retain
+  typed in-memory/persisted retry deadlines.
+- **Rebuild:** reset the affected checkpoint to zero before removing sparse
+  rows, then replay the current authorized source.
+- **Remove:** deleting an identity or accepted followed context is explicit
+  owner intent and removes the sparse state that only that owner can recover.
 
 Push is rebuildable while the local feed exists. Pull is rebuildable only while
 an authorized remote retains the source. If no source remains, the quarantine
 row may be the only recoverable copy and must not be silently purged.
 
-Corrupt or unreadable encrypted quarantine follows the same rule: quarantine
-the corruption and reset/rescan when possible. Vault lock prevents a commit
-that needs encryption; the engine never falls back to plaintext.
+Corrupt or unreadable encrypted quarantine follows the same rule. Ordinary
+retry backs it off and leaves it visible. `rebuildRemoteDirection()` is the
+explicit disaster-recovery path: it refuses an incomplete target plan or a
+missing current source, resets every current checkpoint for the logical target,
+then purges quarantine and replays. Vault lock prevents a commit that needs
+encryption; the engine never falls back to plaintext.
 
 ## Covering operations
 
@@ -139,10 +154,18 @@ Exactly one engine is selected when an agent is created:
 legacy | next
 ```
 
-The engines never run concurrently for the same profile and never share
-checkpoint namespaces. Next uses `syncNextV1/*`. Switching engines stops and
-fences the active runtime, then the selected engine safely rescans from its own
-state. No dual writes or checkpoint translation are required.
+One agent instance runs exactly one engine, and the engines never share
+checkpoint namespaces. Next uses `syncNextV1/*`; switching modes therefore
+rescans from its own state and needs no dual writes or checkpoint translation.
+The temporary selector does not yet prevent two independently constructed
+agents over the same profile from choosing different modes concurrently. Hosts
+must keep that configuration consistent; cross-context mode exclusion remains
+a cutover gate before next can become the default.
+
+The selector is forwarded by `AuthManager` and `ConnectionStore`, so a real
+dapp can compare engines without constructing a private agent. Next owns the
+small shared registration/followed-context catalog directly; it does not
+instantiate the legacy transfer engine as a hidden control plane.
 
 Apples-to-apples comparison uses cloned deterministic fixtures. Running one
 engine and then the other against the same mutable remotes is not a comparison,
@@ -196,12 +219,12 @@ Required fault scenarios include:
 - generic authorization failure versus proven immutable invalidity;
 - authorization-epoch replacement;
 - sparse selected context in a large unrelated tenant;
-- explicit abandon and checkpoint-reset/rescan recovery.
+- explicit checkpoint-reset/rescan recovery.
 
 ## Abstraction budget
 
 - The local DWN and handled-through tokens are the success records.
-- Persist only sparse quarantine, delivery, and terminal outcomes.
+- Persist only sparse quarantine and delivery obligations.
 - Keep query/classify, commit, and retry functions separate and short.
 - Share an abstraction only when it owns a real lifetime/invariant or removes
   substantial duplicated code.
@@ -242,6 +265,13 @@ cutover:
   pre-aborted endpoint, and could skip non-live session cleanup on failure;
 - observer exceptions could escape into replication, while messages admitted
   later from quarantine had no delivery event.
+- every successful materialization scanned the complete central quarantine;
+- a covering run retried only one of several healthy streamed obligations;
+- terminal subscription errors left a link permanently marked subscribed;
+- equivalent endpoint spellings created distinct durable links;
+- next still constructed the complete legacy engine for catalog operations;
+- corrupt quarantine had an internal reset primitive but no safe replay entry
+  point.
 
 Regression coverage now includes delayed retry ownership, continuous-feed
 pending fairness, concurrent same-link directions, non-advancing cursors,
@@ -252,6 +282,13 @@ one merged follow-up, independent endpoints remain concurrent, and covering
 work for one endpoint is serialized so target count cannot become an HTTP
 burst. Drain requires two unchanged fingerprint observations before success
 and rechecks cancellation or topology between phases.
+
+The corrective pass adds a logical-target quarantine index, one bounded pass
+over consecutively successful sparse work, central endpoint blocks, normalized
+link identity, transactional subscription pairs with terminal-drop reporting,
+direct catalog ownership with cross-context wakes, and reset-before-purge
+rebuild. Transport-disconnect notifications mark currentness stale without
+launching an HTTP query; reconnect or the periodic backstop requests catch-up.
 
 The real-transport matrix covers the four required dapp modes, wake-only live
 updates, non-inline bodies followed by independent tiny roots, one offline and

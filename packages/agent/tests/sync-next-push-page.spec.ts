@@ -178,6 +178,23 @@ describe('SyncNextPushPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('2');
   });
 
+  it('should advance later pages behind a persisted endpoint block without another network probe', async () => {
+    const first = await feedEntry(protocolMessage('first-offline'), 1);
+    const later = await feedEntry(protocolMessage('later-offline'), 2);
+    const fixture = fakeAgent(page([first], false));
+    fixture.apply.rejects(new Error('offline'));
+    await createLink();
+    const processor = new SyncNextPushPage(fixture.agent, ledger);
+
+    const blocked = await processor.consume(target());
+    fixture.process.resolves({ reply: page([later]) });
+    await processor.consume(target(), { endpointBlock: blocked.endpointBlock });
+
+    expect(fixture.apply.calledOnce).toBe(true);
+    expect(await ledger.getDeliveryForLink(linkIdentity())).toHaveLength(2);
+    expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('2');
+  });
+
   it('should retry a retained large delivery from the local DWN and settle it', async () => {
     const attachment = await feedEntry(largeWrite(), 1);
     const fixture = fakeAgent(page([attachment]));
@@ -216,7 +233,6 @@ describe('SyncNextPushPage', () => {
       messageCid : root.messageCid,
       outcome    : { detail: 'Unauthorized', reason: 'remote-rejected' },
     }]);
-    expect(await ledger.getTerminalForLink(linkIdentity())).toEqual([]);
   });
 
   it('should replay exact local input after remote apply succeeds but the ledger batch fails', async () => {
@@ -305,5 +321,15 @@ describe('SyncNextPushPage', () => {
 
     await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
+  });
+
+  it('should reject a local cursor beyond its captured head', async () => {
+    const root = await feedEntry(protocolMessage('head-contract'), 2);
+    const expectedHead = { epoch: 'local-epoch', position: '1', streamId: 'local-stream' };
+    const fixture = fakeAgent({ ...page([root]), head: expectedHead });
+    await createLink();
+
+    await expect(new SyncNextPushPage(fixture.agent, ledger).consume(target(), { head: expectedHead }))
+      .rejects.toThrow('cursor exceeded the captured query head');
   });
 });

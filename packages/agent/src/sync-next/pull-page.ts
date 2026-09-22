@@ -3,7 +3,7 @@ import type { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
-import type { MessagesQueryReply, ProgressToken } from '@enbox/dwn-sdk-js';
+import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type {
   SyncNextLinkIdentity,
   SyncNextQuarantineInput,
@@ -11,7 +11,7 @@ import type {
   SyncNextSettledSource,
 } from './types.js';
 
-import { Message } from '@enbox/dwn-sdk-js';
+import { Cid, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../sync-admit-closure.js';
 import { compareSyncNextPosition } from './ledger-key.js';
@@ -49,6 +49,7 @@ export class SyncNextPullPage {
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _echoSuppressor?: SyncEchoSuppressor,
     private readonly _observer: SyncNextPullPageObserver = {},
+    private readonly _resolveTarget: (target: SyncTarget) => Promise<SyncTarget> = async target => target,
   ) {}
 
   public async consume(
@@ -61,12 +62,13 @@ export class SyncNextPullPage {
     if (link === undefined || link.status !== 'active' || !shouldContinue()) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
+    const current = await this._resolveTarget(target);
 
-    const reply = await this.query(target, link.pullHandledThrough, options.head, options.signal);
+    const reply = await this.query(current, link.pullHandledThrough, options.head, options.signal);
     if (!shouldContinue()) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
-    SyncNextPullPage.assertSuccessfulPage(reply, target);
+    SyncNextPullPage.assertSuccessfulPage(reply, current);
     SyncNextPullPage.assertHead(reply.head, options.head);
 
     const handledThrough = reply.cursor;
@@ -76,11 +78,13 @@ export class SyncNextPullPage {
       );
     }
     SyncNextPullPage.assertCursorAdvanced(link.pullHandledThrough, handledThrough, reply.drained === true);
+    SyncNextPullPage.assertCursorWithinHead(handledThrough, reply.head ?? options.head);
     const entries = reply.entries ?? [];
     for (const entry of entries) {
       if (entry.message === undefined || await Message.getCid(entry.message) !== entry.messageCid) {
         throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} failed CID verification.`);
       }
+      await SyncNextPullPage.assertInlineData(entry);
     }
     const prefetched = syncEntriesFromFeedEntries(entries);
     const quarantine: SyncNextQuarantineInput[] = [];
@@ -94,16 +98,16 @@ export class SyncNextPullPage {
       const source = sourceTokenFromFeedEntry(handledThrough, entry);
       const outcome = await admitClosure(entry.messageCid, {
         agent         : this._agent,
-        did           : target.did,
-        dwnUrl        : target.dwnUrl,
-        delegateDid   : target.delegateDid,
+        did           : current.did,
+        dwnUrl        : current.dwnUrl,
+        delegateDid   : current.delegateDid,
         onBeforeApply : (messageCid): void => {
-          this._echoSuppressor?.trackPulled(target.did, messageCid, target.dwnUrl);
+          this._echoSuppressor?.trackPulled(current.did, messageCid, current.dwnUrl);
         },
-        permissionGrantIds : target.permissionGrantIds,
+        permissionGrantIds : current.permissionGrantIds,
         prefetched,
         remoteHydration    : 'defer',
-        scope              : target.scope,
+        scope              : current.scope,
         shouldContinue,
       });
       if (!shouldContinue()) {
@@ -116,7 +120,7 @@ export class SyncNextPullPage {
           materializedCids.add(messageCid);
         }
         if (outcome.freshEntries.length > 0) {
-          this._observer.onApplied?.(target, outcome.freshEntries);
+          this._observer.onApplied?.(current, outcome.freshEntries);
         }
         continue;
       }
@@ -143,12 +147,11 @@ export class SyncNextPullPage {
       handledThrough,
       quarantine,
       settled,
-      terminal: [],
     });
     if (!committed) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
-    this._observer.onCheckpoint?.(target, handledThrough);
+    this._observer.onCheckpoint?.(current, handledThrough);
 
     return {
       capturedHead     : reply.head ?? options.head,
@@ -192,6 +195,25 @@ export class SyncNextPullPage {
     return outcome.reason ?? 'admission-unresolved';
   }
 
+  private static async assertInlineData(entry: MessagesQueryReplyEntry): Promise<void> {
+    if (
+      entry.encodedData === undefined ||
+      entry.message?.descriptor.interface !== 'Records' ||
+      entry.message.descriptor.method !== 'Write'
+    ) {
+      return;
+    }
+    const data = Encoder.base64UrlToBytes(entry.encodedData);
+    const write = entry.message as RecordsWriteMessage;
+    const dataCid = await Cid.computeDagPbCidFromBytes(data);
+    RecordsWrite.validateDataIntegrity(
+      write.descriptor.dataCid,
+      write.descriptor.dataSize,
+      dataCid,
+      data.byteLength,
+    );
+  }
+
   private static assertSuccessfulPage(reply: MessagesQueryReply, target: SyncTarget): void {
     if (reply.status.code !== 200) {
       throw new Error(
@@ -211,8 +233,11 @@ export class SyncNextPullPage {
   }
 
   private static assertHead(actual: ProgressToken | undefined, expected: ProgressToken | undefined): void {
-    if (actual === undefined || expected === undefined) {
+    if (expected === undefined) {
       return;
+    }
+    if (actual === undefined) {
+      throw new Error('SyncNextPullPage: remote omitted the requested captured query head.');
     }
     if (
       actual.streamId !== expected.streamId ||
@@ -220,6 +245,19 @@ export class SyncNextPullPage {
       actual.position !== expected.position
     ) {
       throw new Error('SyncNextPullPage: remote changed the captured query head.');
+    }
+  }
+
+  private static assertCursorWithinHead(cursor: ProgressToken, head: ProgressToken | undefined): void {
+    if (head === undefined) {
+      return;
+    }
+    if (
+      cursor.streamId !== head.streamId ||
+      cursor.epoch !== head.epoch ||
+      compareSyncNextPosition(cursor, head) > 0
+    ) {
+      throw new Error('SyncNextPullPage: remote cursor exceeded the captured query head.');
     }
   }
 

@@ -1,8 +1,8 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
-import type { MessagesQueryReplyEntry } from '@enbox/dwn-sdk-js';
 import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
+import type { MessagesQueryReplyEntry, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type {
   SyncNextLinkIdentity,
   SyncNextQuarantineEntry,
@@ -12,6 +12,7 @@ import type {
 import { admitClosure } from '../sync-admit-closure.js';
 import { fetchRemoteMessages } from '../sync-messages.js';
 import { openSyncNextQuarantinePayload } from './quarantine-codec.js';
+import { readRoleReplicationSupport } from '../sync-role-replication-support.js';
 import { syncEntriesFromFeedEntries } from './feed-entry.js';
 
 export type SyncNextQuarantineRetryResult = {
@@ -25,6 +26,7 @@ export class SyncNextQuarantineRetry {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
+    private readonly _resolveTarget: (target: SyncTarget) => Promise<SyncTarget> = async target => target,
     private readonly _onApplied?: (target: SyncTarget, entries: readonly SyncFreshEntry[]) => void,
   ) {}
 
@@ -40,6 +42,7 @@ export class SyncNextQuarantineRetry {
     if (entry.logicalTargetId !== `${target.did}^${target.projectionId}`) {
       throw new Error('SyncNextQuarantineRetry: target does not own this quarantined receipt.');
     }
+    const current = await this._resolveTarget(target);
     const sourceIdentity = SyncNextQuarantineRetry.identity(entry);
     const payload = await openSyncNextQuarantinePayload(this._agent.vault, {
       identity   : sourceIdentity,
@@ -50,20 +53,21 @@ export class SyncNextQuarantineRetry {
       return { aborted: true, kind: 'aborted' };
     }
 
-    const received = [payload.entry, ...payload.support];
-    const prefetched = syncEntriesFromFeedEntries(
-      received,
-      (feedEntry): (() => Promise<ReadableStream<Uint8Array> | undefined>) =>
-        (): Promise<ReadableStream<Uint8Array> | undefined> => this.fetchData(target, feedEntry, signal),
-    );
+    const prefetched = current.authorization.kind === 'role'
+      ? await this.fetchRoleSupport(current, payload.entry.message, shouldContinue)
+      : syncEntriesFromFeedEntries(
+        [payload.entry, ...payload.support],
+        (feedEntry): (() => Promise<ReadableStream<Uint8Array> | undefined>) =>
+          (): Promise<ReadableStream<Uint8Array> | undefined> => this.fetchData(current, feedEntry, signal),
+      );
     const outcome = await admitClosure(entry.messageCid, {
       agent              : this._agent,
-      did                : target.did,
-      dwnUrl             : target.dwnUrl,
-      delegateDid        : target.delegateDid,
-      permissionGrantIds : target.permissionGrantIds,
+      did                : current.did,
+      dwnUrl             : current.dwnUrl,
+      delegateDid        : current.delegateDid,
+      permissionGrantIds : current.permissionGrantIds,
       prefetched,
-      scope              : target.scope,
+      scope              : current.scope,
       shouldContinue,
     });
     if (!shouldContinue()) {
@@ -72,7 +76,7 @@ export class SyncNextQuarantineRetry {
 
     if (outcome.kind === 'admitted') {
       if (outcome.freshEntries.length > 0) {
-        this._onApplied?.(target, outcome.freshEntries);
+        this._onApplied?.(current, outcome.freshEntries);
       }
       await this._ledger.settleQuarantineForLogicalTarget(entry.logicalTargetId, entry.messageCid);
       return { kind: 'settled', materializedCids: outcome.appliedCids };
@@ -99,6 +103,41 @@ export class SyncNextQuarantineRetry {
       signal,
     });
     return fetched?.dataStream;
+  }
+
+  private async fetchRoleSupport(
+    target: Extract<SyncTarget, { authorization: { kind: 'role' } }> | SyncTarget,
+    expectedRoot: MessagesQueryReplyEntry['message'],
+    shouldContinue: () => boolean,
+  ): Promise<ReturnType<typeof syncEntriesFromFeedEntries>> {
+    if (
+      target.authorization.kind !== 'role' ||
+      target.scope.kind !== 'context' ||
+      expectedRoot === undefined ||
+      expectedRoot.descriptor.interface !== 'Records' ||
+      (expectedRoot.descriptor.method !== 'Write' && expectedRoot.descriptor.method !== 'Delete')
+    ) {
+      throw new Error('SyncNextQuarantineRetry: role quarantine requires an exact context root.');
+    }
+    const protocolPath = (expectedRoot.descriptor as { protocolPath?: string }).protocolPath;
+    if (protocolPath === undefined || !target.scope.protocolPaths.includes(protocolPath)) {
+      throw new Error('SyncNextQuarantineRetry: role quarantine root is outside the accepted paths.');
+    }
+    const support = await readRoleReplicationSupport({
+      actorDid       : target.authorization.actorDid,
+      agent          : this._agent,
+      contextId      : target.scope.contextId,
+      delegateDid    : target.delegateDid,
+      dwnUrl         : target.dwnUrl,
+      expectedRoot   : expectedRoot as RecordsDeleteMessage | RecordsWriteMessage,
+      permissionsApi : this._agent.permissions,
+      protocol       : target.scope.protocol,
+      protocolPath,
+      protocolRole   : target.authorization.protocolRole,
+      shouldContinue,
+      sourceDid      : target.did,
+    });
+    return [support.root, ...support.dependencies];
   }
 
   private static reason(

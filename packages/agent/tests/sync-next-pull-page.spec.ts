@@ -210,6 +210,63 @@ describe('SyncNextPullPage', () => {
     expect(fixture.apply.notCalled).toBe(true);
   });
 
+  it('should reject unverified inline bytes before they can enter quarantine', async () => {
+    const entry = await feedEntry(missingBodyMessage(), 1);
+    entry.encodedData = Buffer.from('wrong-bytes').toString('base64url');
+    const fixture = fakeAgent(page([entry]));
+    await createLink();
+
+    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
+      .rejects.toThrow('data CID');
+
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+  });
+
+  it('should refresh transient actor delegation before every role feed page', async () => {
+    const roleTarget: SyncTarget = {
+      ...target(),
+      authorization: {
+        actorDid     : 'did:example:member',
+        kind         : 'role',
+        protocolRole : 'notebook/editor',
+        roleRecordId : 'role-record',
+      },
+      delegateDid : 'did:example:delegate',
+      scope       : {
+        contextId     : 'context/root',
+        kind          : 'context',
+        protocol      : 'https://example.com/notebook',
+        protocolPaths : ['notebook/note'],
+      },
+    };
+    const fixture = fakeAgent({
+      ...page([]),
+      roleRecordId: 'role-record',
+    });
+    const delegatedGrant = protocolMessage('actor-delegation') as never;
+    const resolveTarget = sinon.stub().resolves({ ...roleTarget, authorDelegatedGrant: delegatedGrant });
+    await createLink(roleTarget);
+
+    await new SyncNextPullPage(
+      fixture.agent,
+      ledger,
+      undefined,
+      {},
+      resolveTarget,
+    ).consume(roleTarget);
+
+    expect(resolveTarget.calledOnceWith(roleTarget)).toBe(true);
+    expect((fixture.agent.processDwnRequest as sinon.SinonStub).firstCall.args[0]).toMatchObject({
+      author        : 'did:example:member',
+      granteeDid    : 'did:example:delegate',
+      messageParams : {
+        delegatedGrant,
+        protocolRole: 'notebook/editor',
+      },
+    });
+  });
+
   it('should retry quarantine independently and settle its exact source receipt', async () => {
     const missingBody = await feedEntry(missingBodyMessage(), 1);
     const fixture = fakeAgent(page([missingBody]));
@@ -228,7 +285,12 @@ describe('SyncNextPullPage', () => {
     });
 
     const onApplied = sinon.stub();
-    const result = await new SyncNextQuarantineRetry(fixture.agent, ledger, onApplied).retry(target(), pending);
+    const result = await new SyncNextQuarantineRetry(
+      fixture.agent,
+      ledger,
+      async syncTarget => syncTarget,
+      onApplied,
+    ).retry(target(), pending);
 
     expect(result.kind).toBe('settled');
     expect(fixture.send.callCount).toBe(2);
@@ -294,7 +356,6 @@ describe('SyncNextPullPage', () => {
       messageCid : root.messageCid,
       outcome    : { reason: 'admission-unresolved' },
     }]);
-    expect(await ledger.getTerminalForLink(linkIdentity())).toEqual([]);
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
   });
 
@@ -320,6 +381,20 @@ describe('SyncNextPullPage', () => {
 
     await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+  });
+
+  it('should reject a server that omits or advances beyond a requested captured head', async () => {
+    const root = await feedEntry(protocolMessage('head-contract'), 2);
+    const expectedHead: ProgressToken = { epoch: 'remote-epoch', position: '1', streamId: 'remote-stream' };
+    const fixture = fakeAgent(page([root]));
+    await createLink();
+
+    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target(), { head: expectedHead }))
+      .rejects.toThrow('omitted the requested captured query head');
+
+    fixture.send.resolves({ ...page([root]), head: expectedHead });
+    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target(), { head: expectedHead }))
+      .rejects.toThrow('cursor exceeded the captured query head');
   });
 
   it('should consume 579 roots in six page-scaled queries under one captured head', async () => {

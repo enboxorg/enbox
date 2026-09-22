@@ -15,8 +15,6 @@ import type {
   SyncNextQuarantineOutcome,
   SyncNextSettledSource,
   SyncNextSourceReceipt,
-  SyncNextTerminalInput,
-  SyncNextTerminalOutcome,
 } from './types.js';
 
 import { runSerializedByKey, runWithCrossContextLock } from '@enbox/common';
@@ -27,9 +25,10 @@ import {
   isValidSyncNextToken,
   syncNextLinkKey,
   syncNextLinkRange,
+  syncNextLogicalTargetRange,
+  syncNextLogicalTargetReceiptKey,
   syncNextReceiptKey,
   syncNextTenantRange,
-  syncNextTerminalKey,
 } from './ledger-key.js';
 
 type LevelKey = string | Buffer | Uint8Array;
@@ -65,8 +64,8 @@ export class SyncNextCapacityError extends Error {
 /**
  * Isolated `syncNextV1` durable ledger.
  *
- * Successful outcomes are compressed into link progress. Only quarantine,
- * delivery obligations, and terminal outcomes occupy sparse rows.
+ * Successful outcomes are compressed into link progress. Only quarantine and
+ * delivery obligations occupy sparse rows.
  */
 export class SyncNextLedgerStore {
   private readonly _delivery: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
@@ -77,7 +76,7 @@ export class SyncNextLedgerStore {
   private readonly _maxQuarantinePerLink: number;
   private readonly _pendingOperations = new Map<string, Promise<void>>();
   private readonly _quarantine: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
-  private readonly _terminal: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
+  private readonly _quarantineByLogicalTarget: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
 
   public constructor(
     private readonly _db: SyncNextDatabase,
@@ -103,7 +102,7 @@ export class SyncNextLedgerStore {
       'maxQuarantinePerLink',
     );
     this._quarantine = _db.sublevel('syncNextV1Quarantine');
-    this._terminal = _db.sublevel('syncNextV1Terminal');
+    this._quarantineByLogicalTarget = _db.sublevel('syncNextV1QuarantineByLogicalTarget');
   }
 
   /** Create one exact link without reading or mutating legacy sync state. */
@@ -156,6 +155,18 @@ export class SyncNextLedgerStore {
     });
   }
 
+  /** Retire an obsolete binding while preserving inbound recovery input owned by its logical target. */
+  public async retireLink(identity: SyncNextLinkIdentity): Promise<void> {
+    const key = syncNextLinkKey(identity);
+    await this.runForLink(key, async (): Promise<void> => {
+      const operations: SyncNextBatchOperation[] = [this.deleteOperation(this._links, key)];
+      for (const entry of await this.getDeliveryForLink(identity)) {
+        operations.push(this.deleteOperation(this._delivery, syncNextReceiptKey(identity, entry)));
+      }
+      await this._db.batch(operations);
+    });
+  }
+
   /** Explicit acceptance removal deletes one link and every sparse outcome it owns. */
   public async deleteLinkAndSparse(identity: SyncNextLinkIdentity): Promise<void> {
     const key = syncNextLinkKey(identity);
@@ -163,15 +174,10 @@ export class SyncNextLedgerStore {
       const operations: SyncNextBatchOperation[] = [this.deleteOperation(this._links, key)];
       for (const entry of await this.getQuarantineForLink(identity)) {
         operations.push(this.deleteOperation(this._quarantine, syncNextReceiptKey(identity, entry)));
+        operations.push(this.deleteQuarantineIndexOperation(entry));
       }
       for (const entry of await this.getDeliveryForLink(identity)) {
         operations.push(this.deleteOperation(this._delivery, syncNextReceiptKey(identity, entry)));
-      }
-      for (const entry of await this.getTerminalForLink(identity)) {
-        operations.push(this.deleteOperation(
-          this._terminal,
-          syncNextTerminalKey(identity, entry.direction, entry),
-        ));
       }
       await this._db.batch(operations);
     });
@@ -219,21 +225,16 @@ export class SyncNextLedgerStore {
         const receiptKey = syncNextReceiptKey(link, state);
         retained.set(receiptKey, state);
         operations.push(this.putOperation(this._quarantine, receiptKey, state));
-        operations.push(this.deleteOperation(
-          this._terminal,
-          syncNextTerminalKey(link, 'pull', state),
-        ));
-      }
-      for (const input of commit.terminal) {
-        const state = SyncNextLedgerStore.terminalState(link, 'pull', input);
-        retained.delete(syncNextReceiptKey(link, state));
-        operations.push(this.putOperation(this._terminal, syncNextTerminalKey(link, 'pull', state), state));
-        operations.push(this.deleteOperation(this._quarantine, syncNextReceiptKey(link, state)));
+        operations.push(this.putQuarantineIndexOperation(state, receiptKey));
       }
       for (const settled of commit.settled) {
-        retained.delete(syncNextReceiptKey(link, settled));
-        operations.push(this.deleteOperation(this._quarantine, syncNextReceiptKey(link, settled)));
-        operations.push(this.deleteOperation(this._terminal, syncNextTerminalKey(link, 'pull', settled)));
+        const receiptKey = syncNextReceiptKey(link, settled);
+        const previous = retained.get(receiptKey);
+        retained.delete(receiptKey);
+        operations.push(this.deleteOperation(this._quarantine, receiptKey));
+        if (previous !== undefined) {
+          operations.push(this.deleteQuarantineIndexOperation(previous));
+        }
       }
       this.assertQuarantineCapacity(retained.values());
 
@@ -269,21 +270,10 @@ export class SyncNextLedgerStore {
         const receiptKey = syncNextReceiptKey(link, state);
         retained.set(receiptKey, state);
         operations.push(this.putOperation(this._delivery, receiptKey, state));
-        operations.push(this.deleteOperation(
-          this._terminal,
-          syncNextTerminalKey(link, 'push', state),
-        ));
-      }
-      for (const input of commit.terminal) {
-        const state = SyncNextLedgerStore.terminalState(link, 'push', input);
-        retained.delete(syncNextReceiptKey(link, state));
-        operations.push(this.putOperation(this._terminal, syncNextTerminalKey(link, 'push', state), state));
-        operations.push(this.deleteOperation(this._delivery, syncNextReceiptKey(link, state)));
       }
       for (const settled of commit.settled) {
         retained.delete(syncNextReceiptKey(link, settled));
         operations.push(this.deleteOperation(this._delivery, syncNextReceiptKey(link, settled)));
-        operations.push(this.deleteOperation(this._terminal, syncNextTerminalKey(link, 'push', settled)));
       }
       if (retained.size > this._maxDeliveryPerLink) {
         throw new SyncNextCapacityError(
@@ -306,6 +296,10 @@ export class SyncNextLedgerStore {
     return this.readValues(this._quarantine.iterator());
   }
 
+  public async getQuarantineForTenant(tenantDid: string): Promise<SyncNextQuarantineEntry[]> {
+    return this.readValues(this._quarantine.iterator(syncNextTenantRange(tenantDid)));
+  }
+
   public async getDeliveryForLink(identity: SyncNextLinkIdentity): Promise<SyncNextDeliveryObligation[]> {
     return this.readValues(this._delivery.iterator(syncNextLinkRange(identity)));
   }
@@ -314,23 +308,25 @@ export class SyncNextLedgerStore {
     return this.readValues(this._delivery.iterator());
   }
 
-  public async getTerminalForLink(identity: SyncNextLinkIdentity): Promise<SyncNextTerminalOutcome[]> {
-    return this.readValues(this._terminal.iterator(syncNextLinkRange(identity)));
+  /** Central endpoint view used to prevent one outage from probing once per link. */
+  public async getDeliveryForEndpoint(remoteEndpoint: string): Promise<SyncNextDeliveryObligation[]> {
+    return (await this.getAllDelivery()).filter(entry => entry.remoteEndpoint === remoteEndpoint);
   }
 
-  public async getAllTerminal(): Promise<SyncNextTerminalOutcome[]> {
-    return this.readValues(this._terminal.iterator());
+  public async getDeliveryForTenant(tenantDid: string): Promise<SyncNextDeliveryObligation[]> {
+    return this.readValues(this._delivery.iterator(syncNextTenantRange(tenantDid)));
   }
 
   /** Explicit identity removal owns all next-engine state for that tenant. */
   public async deleteForTenant(tenantDid: string): Promise<void> {
     const range = syncNextTenantRange(tenantDid);
-    await Promise.all([
-      this._delivery.clear(range),
-      this._links.clear(range),
-      this._quarantine.clear(range),
-      this._terminal.clear(range),
-    ]);
+    for (const link of await this.getLinksForTenant(tenantDid)) {
+      await this.deleteLinkAndSparse(link);
+    }
+    for (const entry of await this.getQuarantineForTenant(tenantDid)) {
+      await this.settleQuarantine(entry, entry);
+    }
+    await Promise.all([this._delivery.clear(range), this._links.clear(range), this._quarantine.clear(range)]);
   }
 
   /** Sparse scan used after one CID materializes locally to settle duplicate source receipts. */
@@ -338,8 +334,14 @@ export class SyncNextLedgerStore {
     logicalTargetId: string,
     messageCid?: string,
   ): Promise<SyncNextQuarantineEntry[]> {
-    const entries = await this.readValues<SyncNextQuarantineEntry>(this._quarantine.iterator());
-    return entries.filter((entry): boolean =>
+    const receiptKeys = await this.readValues<string>(
+      this._quarantineByLogicalTarget.iterator(syncNextLogicalTargetRange(logicalTargetId, messageCid)),
+    );
+    const entries = await Promise.all(receiptKeys.map(receiptKey =>
+      this.getSparseValue<SyncNextQuarantineEntry>(this._quarantine, receiptKey)
+    ));
+    return entries.filter((entry): entry is SyncNextQuarantineEntry =>
+      entry !== undefined &&
       entry.logicalTargetId === logicalTargetId &&
       (messageCid === undefined || entry.messageCid === messageCid)
     );
@@ -351,10 +353,14 @@ export class SyncNextLedgerStore {
   ): Promise<void> {
     const linkKey = syncNextLinkKey(identity);
     await this.runForLink(linkKey, async (): Promise<void> => {
-      await this._db.batch([
-        this.deleteOperation(this._quarantine, syncNextReceiptKey(identity, receipt)),
-        this.deleteOperation(this._terminal, syncNextTerminalKey(identity, 'pull', receipt)),
-      ]);
+      const receiptKey = syncNextReceiptKey(identity, receipt);
+      const current = await this.getSparseValue<SyncNextQuarantineEntry>(this._quarantine, receiptKey);
+      if (current !== undefined) {
+        await this._db.batch([
+          this.deleteOperation(this._quarantine, receiptKey),
+          this.deleteQuarantineIndexOperation(current),
+        ]);
+      }
     });
   }
 
@@ -389,16 +395,20 @@ export class SyncNextLedgerStore {
     await Promise.all(entries.map((entry): Promise<void> => this.settleQuarantine(entry, entry)));
   }
 
+  /** Explicit recovery cleanup after every current source checkpoint has been reset. */
+  public async purgeQuarantineForLogicalTarget(logicalTargetId: string): Promise<number> {
+    const entries = await this.getQuarantineForLogicalTarget(logicalTargetId);
+    await Promise.all(entries.map((entry): Promise<void> => this.settleQuarantine(entry, entry)));
+    return entries.length;
+  }
+
   public async settleDelivery(
     identity: SyncNextLinkIdentity,
     receipt: SyncNextSourceReceipt,
   ): Promise<void> {
     const linkKey = syncNextLinkKey(identity);
     await this.runForLink(linkKey, async (): Promise<void> => {
-      await this._db.batch([
-        this.deleteOperation(this._delivery, syncNextReceiptKey(identity, receipt)),
-        this.deleteOperation(this._terminal, syncNextTerminalKey(identity, 'push', receipt)),
-      ]);
+      await this._delivery.del(syncNextReceiptKey(identity, receipt));
     });
   }
 
@@ -421,33 +431,6 @@ export class SyncNextLedgerStore {
         outcome       : structuredClone(outcome),
       };
       await this._delivery.put(key, JSON.stringify(updated));
-    });
-  }
-
-  /** Reset one direction explicitly; ordinary commits never change token domain. */
-  public async resetProgress(
-    identity: SyncNextLinkIdentity,
-    direction: 'pull' | 'push',
-    token?: ProgressToken,
-  ): Promise<boolean> {
-    if (token !== undefined) {
-      SyncNextLedgerStore.assertValidToken(token, `${direction} reset token`);
-    }
-    const key = syncNextLinkKey(identity);
-    return this.runForLink(key, async (): Promise<boolean> => {
-      const link = await this.getStoredLink(key);
-      if (link === undefined) {
-        return false;
-      }
-      const updated = structuredClone(link);
-      if (direction === 'pull') {
-        updated.pullHandledThrough = token;
-      } else {
-        updated.pushHandledThrough = token;
-      }
-      updated.updatedAt = new Date().toISOString();
-      await this._links.put(key, JSON.stringify(updated));
-      return true;
     });
   }
 
@@ -475,16 +458,10 @@ export class SyncNextLedgerStore {
           direction === 'pull' ? this._quarantine : this._delivery,
           syncNextReceiptKey(identity, entry),
         ));
-      }
-      for (const entry of await this.getTerminalForLink(identity)) {
-        if (entry.direction === direction) {
-          operations.push(this.deleteOperation(
-            this._terminal,
-            syncNextTerminalKey(identity, direction, entry),
-          ));
+        if (direction === 'pull') {
+          operations.push(this.deleteQuarantineIndexOperation(entry as SyncNextQuarantineEntry));
         }
       }
-
       const updated = structuredClone(link);
       if (direction === 'pull') {
         updated.pullHandledThrough = token;
@@ -505,7 +482,7 @@ export class SyncNextLedgerStore {
       this._delivery.clear(),
       this._links.clear(),
       this._quarantine.clear(),
-      this._terminal.clear(),
+      this._quarantineByLogicalTarget.clear(),
     ]);
   }
 
@@ -601,6 +578,25 @@ export class SyncNextLedgerStore {
     return { type: 'del', key, sublevel };
   }
 
+  private putQuarantineIndexOperation(
+    entry: SyncNextQuarantineEntry,
+    receiptKey = syncNextReceiptKey(entry, entry),
+  ): SyncNextBatchOperation {
+    return this.putOperation(
+      this._quarantineByLogicalTarget,
+      syncNextLogicalTargetReceiptKey(entry.logicalTargetId, entry.messageCid, receiptKey),
+      receiptKey,
+    );
+  }
+
+  private deleteQuarantineIndexOperation(entry: SyncNextQuarantineEntry): SyncNextBatchOperation {
+    const receiptKey = syncNextReceiptKey(entry, entry);
+    return this.deleteOperation(
+      this._quarantineByLogicalTarget,
+      syncNextLogicalTargetReceiptKey(entry.logicalTargetId, entry.messageCid, receiptKey),
+    );
+  }
+
   private async readValues<T>(entries: AsyncIterable<[string, string]>): Promise<T[]> {
     const values: T[] = [];
     for await (const [, value] of entries) {
@@ -648,7 +644,6 @@ export class SyncNextLedgerStore {
       commit.handledThrough,
       commit.quarantine,
       commit.settled,
-      commit.terminal,
       'pull',
     );
   }
@@ -658,7 +653,6 @@ export class SyncNextLedgerStore {
       commit.handledThrough,
       commit.delivery,
       commit.settled,
-      commit.terminal,
       'push',
     );
   }
@@ -667,16 +661,11 @@ export class SyncNextLedgerStore {
     handledThrough: ProgressToken,
     pending: SyncNextSourceReceipt[],
     settled: SyncNextSettledSource[],
-    terminal: SyncNextTerminalInput[],
     direction: 'pull' | 'push',
   ): void {
     SyncNextLedgerStore.assertValidToken(handledThrough, `${direction} handled-through token`);
     const seen = new Set<string>();
-    for (const [disposition, receipts] of [
-      ['pending', pending],
-      ['settled', settled],
-      ['terminal', terminal],
-    ] as const) {
+    for (const receipts of [pending, settled]) {
       for (const receipt of receipts) {
         SyncNextLedgerStore.assertReceiptWithinPage(receipt, handledThrough, direction);
         const key = SyncNextLedgerStore.receiptIdentity(receipt);
@@ -686,9 +675,6 @@ export class SyncNextLedgerStore {
           );
         }
         seen.add(key);
-        if (disposition === 'terminal' && (receipt as SyncNextTerminalInput).code.length === 0) {
-          throw new SyncNextProgressError('SyncNextLedgerStore: terminal outcome code must not be empty.');
-        }
       }
     }
   }
@@ -759,27 +745,6 @@ export class SyncNextLedgerStore {
     }
     updated.updatedAt = new Date().toISOString();
     return updated;
-  }
-
-  private static terminalState(
-    link: SyncNextLink,
-    direction: 'pull' | 'push',
-    input: SyncNextTerminalInput,
-  ): SyncNextTerminalOutcome {
-    return {
-      authorizationEpoch : link.authorizationEpoch,
-      code               : input.code,
-      ...(input.detail === undefined ? {} : { detail: input.detail }),
-      direction,
-      failedAt           : new Date().toISOString(),
-      logicalTargetId    : link.logicalTargetId,
-      messageCid         : input.messageCid,
-      projectionId       : link.projectionId,
-      remoteEndpoint     : link.remoteEndpoint,
-      source             : structuredClone(input.source),
-      tenantDid          : link.tenantDid,
-      version            : SYNC_NEXT_LEDGER_VERSION,
-    };
   }
 
   private static receiptIdentity(receipt: SyncNextSourceReceipt): string {

@@ -45,7 +45,7 @@ import {
   newestProtocolConfig,
   recordsWriteRequiresData,
 } from './sync-fetch-helpers.js';
-import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
+import { DwnRpcError, isQuotaExceededError, RateLimitError } from '@enbox/dwn-clients';
 import { getRoleKey, orderMessagesForAdmission } from './sync-admission-order.js';
 import { isNonRetryableSyncAuthorizationFailure, syncErrorMessage } from './sync-runtime-errors.js';
 
@@ -845,8 +845,19 @@ export class RemoteApplyPushContext {
         // this is an expected, surfaced condition, not an error.
         return { kind: 'failed', failure: this.quotaBlockedFailure(rootCid, cid, detail) };
       }
+      if (error instanceof RateLimitError) {
+        return {
+          kind    : 'failed',
+          failure : this.retryableFailure(rootCid, cid, detail, {
+            retryAfter: new Date(Date.now() + error.retryAfterSec * 1000).toISOString(),
+          }),
+        };
+      }
       if (error instanceof DwnRpcError && error.terminal) {
-        return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, 'Invalid') };
+        return {
+          kind    : 'failed',
+          failure : { ...this.terminalFailure(rootCid, cid, detail, 'Invalid'), endpointRejected: true },
+        };
       }
       return { kind: 'failed', failure: this.retryableFailure(rootCid, cid, detail) };
     }
@@ -981,12 +992,14 @@ export class RemoteApplyPushContext {
     cid: string,
     detail: string,
     context: {
+      endpointRejected?: boolean;
       localMissing?: boolean;
       localStatusCode?: number;
       remoteResult?: RemoteRetryableResult;
+      retryAfter?: string;
     } = {},
   ): PushFailure {
-    const { localMissing, localStatusCode, remoteResult } = context;
+    const { endpointRejected, localMissing, localStatusCode, remoteResult, retryAfter } = context;
     const deferred = remoteResult?.kind === 'Deferred' ? remoteResult : undefined;
     return {
       cid    : rootCid,
@@ -994,8 +1007,10 @@ export class RemoteApplyPushContext {
       ...(remoteResult === undefined ? {} : { kind: remoteResult.kind, remoteResult }),
       ...(deferred === undefined ? {} : { reason: deferred.reason }),
       ...(deferred?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
+      ...(endpointRejected === true ? { endpointRejected: true } : {}),
       ...(localMissing === true && cid === rootCid ? { localMissing: true } : {}),
       ...(localStatusCode === undefined ? {} : { localStatusCode }),
+      ...(retryAfter === undefined ? {} : { retryAfter }),
       detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
     };
   }
