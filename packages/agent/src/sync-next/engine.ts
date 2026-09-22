@@ -2,8 +2,8 @@ import type { AbstractLevel } from 'abstract-level';
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
+import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
 import type {
-  DeadLetterEntry,
   ReplicationLinkSnapshot,
   StartSyncParams,
   SyncConnectivityState,
@@ -20,7 +20,6 @@ import type {
   SyncLifecycleOptions,
   SyncRunOptions,
 } from '../types/sync.js';
-import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
 
 import { AgentPermissionsApi } from '../permissions-api.js';
 import { buildLinkKey } from '../sync-link-key.js';
@@ -30,7 +29,6 @@ import { Level } from 'level';
 import { openSyncNextSubscriptions } from './subscriptions.js';
 import { RateLimitError } from '@enbox/dwn-clients';
 import { resolveSyncConnectivityState } from '../sync-connectivity-manager.js';
-import { FollowedSourceRoleAbsentError } from '../sync-role-replication-support.js';
 import { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from '../sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from '../sync-identity-store-level.js';
@@ -53,7 +51,6 @@ import {
 } from '../types/sync.js';
 import { normalizeDwnEndpoint, SyncTargetResolver } from '../sync-target-resolver.js';
 import { queryLocalMessageFeed, queryRemoteMessageFeed, syncMessageDescriptor } from '../sync-messages.js';
-import { isNonRetryableSyncAuthorizationFailure, syncErrorMessage } from '../sync-runtime-errors.js';
 
 type LevelKey = string | Buffer | Uint8Array;
 
@@ -96,7 +93,7 @@ function isSignalAborted(signal?: AbortSignal): boolean {
   return signal?.aborted === true;
 }
 
-/** Temporary selectable façade for the isolated next-engine implementation. */
+/** Watermark-based sync engine. */
 export class SyncEngineNext implements SyncEngine {
   private _agent?: EnboxPlatformAgent;
   private _catalog?: SyncNextCatalog;
@@ -538,11 +535,6 @@ export class SyncEngineNext implements SyncEngine {
     await this._db.close();
   }
 
-  public async getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]> {
-    void tenantDid;
-    return [];
-  }
-
   public async getSyncHealth(): Promise<SyncHealthSummary> {
     return this.readHealth();
   }
@@ -564,10 +556,9 @@ export class SyncEngineNext implements SyncEngine {
     const connectivity = resolveSyncConnectivityState(links.map(link => link.connectivity), this.connectivityState);
     const health: SyncHealthSummary = {
       connectivity,
-      degradedLinkCount  : degradedKeys.size,
-      failedMessageCount : 0,
+      degradedLinkCount : degradedKeys.size,
       quotaBlockedMessageCount,
-      syncHealthy        : degradedKeys.size === 0,
+      syncHealthy       : degradedKeys.size === 0,
     };
     const endpoints = new Set([
       ...links.map(link => link.remoteEndpoint),
@@ -576,7 +567,6 @@ export class SyncEngineNext implements SyncEngine {
     ]);
     const remotes = [...endpoints].map(remoteEndpoint => {
       const remoteLinks = links.filter(link => link.remoteEndpoint === remoteEndpoint);
-      const failedMessageCount = 0;
       const quotaBlockedMessageCount = delivery.filter(entry =>
         entry.tenantDid === tenantDid &&
         entry.remoteEndpoint === remoteEndpoint &&
@@ -585,10 +575,9 @@ export class SyncEngineNext implements SyncEngine {
       const remoteConnectivity = resolveSyncConnectivityState(remoteLinks.map(link => link.connectivity));
       const pending = delivery.some(entry => entry.remoteEndpoint === remoteEndpoint) ||
         quarantine.some(entry => entry.remoteEndpoint === remoteEndpoint);
-      const degraded = failedMessageCount > 0 || pending || remoteLinks.some(link => link.status === 'paused');
+      const degraded = pending || remoteLinks.some(link => link.status === 'paused');
       return {
         connectivity : remoteConnectivity,
-        failedMessageCount,
         quotaBlockedMessageCount,
         remoteEndpoint,
         state        : remoteConnectivity === 'offline'
@@ -1584,11 +1573,10 @@ export class SyncEngineNext implements SyncEngine {
     ]);
     const quotaBlockedMessageCount = currentDelivery.filter(entry => entry.outcome.reason === 'quota').length;
     return {
-      connectivity       : this.connectivityState,
-      degradedLinkCount  : degradedKeys.size,
-      failedMessageCount : 0,
+      connectivity      : this.connectivityState,
+      degradedLinkCount : degradedKeys.size,
       quotaBlockedMessageCount,
-      syncHealthy        : degradedKeys.size === 0,
+      syncHealthy       : degradedKeys.size === 0,
     };
   }
 

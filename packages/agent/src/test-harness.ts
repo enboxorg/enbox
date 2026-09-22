@@ -129,7 +129,7 @@ export class PlatformAgentTestHarness {
     await this.dwnMessageStore.clear();
     await this.dwnResumableTaskStore.clear();
     await this.audienceKeyDeliveryStore.clear();
-    await this.clearSyncStore();
+    await this.syncStore.clear();
     await this.vaultStore.clear();
     if (this.secretStore) { await this.secretStore.clear(); }
     (this.agent.vault as any)['_cachedInitialized'] = undefined;
@@ -167,7 +167,7 @@ export class PlatformAgentTestHarness {
   public async clearDwnStores(): Promise<void> {
     await this.agent.sync.stopSync();
     await this.resetDwnEventLog();
-    await this.clearSyncStore();
+    await this.syncStore.clear();
     await this.dwnDataStore.clear();
     await this.dwnMessageStore.clear();
     await this.dwnResumableTaskStore.clear();
@@ -182,20 +182,6 @@ export class PlatformAgentTestHarness {
     if (this.secretStore) { await this.secretStore.close(); }
     await this.syncStore.close();
     await this.vaultStore.close();
-  }
-
-  private async clearSyncStore(): Promise<void> {
-    const sublevelNames = [
-      'deadLetters',
-      'deferredPulls',
-      'registeredIdentities',
-      'replicationLinks',
-    ];
-
-    for (const sublevelName of sublevelNames) {
-      await this.syncStore.sublevel(sublevelName).clear();
-    }
-    await this.syncStore.clear();
   }
 
   private async resetDwnEventLog(): Promise<void> {

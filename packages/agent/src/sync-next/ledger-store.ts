@@ -85,7 +85,7 @@ export class SyncNextLedgerStore {
     this._quarantine = _db.sublevel('syncNextV1Quarantine');
   }
 
-  /** Create one exact link without reading or mutating legacy sync state. */
+  /** Read or create one exact link. */
   public async getOrCreateLink(input: SyncNextLinkCreate): Promise<SyncNextLink> {
     const key = syncNextLinkKey(input);
     return this.runForLink(key, async (): Promise<SyncNextLink> => {

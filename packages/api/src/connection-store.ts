@@ -69,7 +69,7 @@ import {
 
 import { Enbox } from './enbox.js';
 import { getApplicationProtocolRequests } from './application-manifest.js';
-import { latestPausedRecoveryLink } from './sync-status-error.js';
+import { pausedReplicationLink } from './sync-status-error.js';
 import { ProtocolReadinessError } from './protocol-readiness.js';
 import { WalletReapprovalRequiredError } from './typed-enbox.js';
 
@@ -1750,11 +1750,10 @@ function projectSyncStatus(
   remotes: readonly Readonly<RemoteSyncStatus>[],
 ): SyncStatusSnapshot {
   if (state === 'error') {
-    const failedLink = latestPausedRecoveryLink(links);
-    const message = failedLink?.recovery === undefined
+    const failedLink = pausedReplicationLink(links);
+    const message = failedLink === undefined
       ? 'Synchronization is paused for the selected identity.'
-      : `Synchronization is paused for the selected identity; remote `
-        + `'${failedLink.remoteEndpoint}' failed: ${failedLink.recovery.error}`;
+      : `Synchronization is paused for the selected identity at '${failedLink.remoteEndpoint}'.`;
     return immutableSyncStatus({
       state : 'error',
       connectivity,
@@ -1807,7 +1806,6 @@ function remoteSyncRowsEqual(a: Readonly<RemoteSyncStatus>, b: Readonly<RemoteSy
     && a.state === b.state
     && a.connectivity === b.connectivity
     && a.quotaBlockedMessageCount === b.quotaBlockedMessageCount
-    && a.failedMessageCount === b.failedMessageCount
     && a.nextProbeAt === b.nextProbeAt
     && a.nextRetryAt === b.nextRetryAt
     && a.lastError === b.lastError

@@ -341,8 +341,6 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
     expect(await readRecordBytes(walletA, did, avatarRecord.recordId)).toEqual(avatarBytes);
     expect(await readRecordBytes(walletA, did, heroRecord.recordId)).toEqual(heroBytes);
 
-    // Convergence must be clean — no dead-lettered messages.
-    const health = await walletA.agent.sync.getSyncHealth();
-    expect(health.failedMessageCount).toBe(0);
+    expect((await walletA.agent.sync.getSyncHealth()).syncHealthy).toBe(true);
   }, 120_000);
 });

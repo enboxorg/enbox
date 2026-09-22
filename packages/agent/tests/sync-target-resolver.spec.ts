@@ -1,7 +1,6 @@
 import type { SinonStub } from 'sinon';
 
 import type { FollowedSyncSource } from '../src/followed-sync-source.js';
-import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { SyncEndpointDiscovery } from '../src/sync-target-resolver.js';
 import type { SyncEndpointStore } from '../src/sync-endpoint-store.js';
 import type { PermissionGrantEntry, PermissionsApi } from '../src/types/permissions.js';
@@ -10,7 +9,7 @@ import sinon from 'sinon';
 
 import { describe, expect, it } from 'bun:test';
 
-import { normalizeDwnEndpoint, syncTargetFromLink, SyncTargetResolver } from '../src/sync-target-resolver.js';
+import { normalizeDwnEndpoint, SyncTargetResolver } from '../src/sync-target-resolver.js';
 
 type ResolverFixtureParams = {
   endpointError?: unknown;
@@ -152,66 +151,6 @@ describe('SyncTargetResolver', () => {
   });
 
   describe('target construction', () => {
-    it('should recreate a delegated target from its durable link', () => {
-      const permissionGrantIds = ['grant-1'] as [string];
-      const link = {
-        authorization: {
-          kind        : 'delegate',
-          delegateDid : 'did:example:delegate',
-          permissionGrantIds,
-        },
-        authorizationEpoch : 'delegate-epoch',
-        connectivity       : 'online',
-        delegateDid        : 'did:example:delegate',
-        projectionId       : 'projection',
-        pull               : {},
-        push               : {},
-        remoteEndpoint     : 'https://dwn.example.com',
-        scope              : { kind: 'protocolSet', protocols: ['https://protocol.example/notes'] },
-        status             : 'live',
-        tenantDid          : 'did:example:alice',
-      } satisfies ReplicationLinkState;
-
-      expect(syncTargetFromLink(link)).toEqual({
-        did                : link.tenantDid,
-        dwnUrl             : link.remoteEndpoint,
-        delegateDid        : link.delegateDid,
-        projectionId       : link.projectionId,
-        scope              : link.scope,
-        authorization      : link.authorization,
-        authorizationEpoch : link.authorizationEpoch,
-        permissionGrantIds,
-      });
-    });
-
-    it('should derive a followed-source registration from role authorization', () => {
-      const link = {
-        authorization: {
-          kind         : 'role',
-          actorDid     : 'did:example:member',
-          protocolRole : 'notebook/viewer',
-          roleRecordId : 'role-a',
-        },
-        authorizationEpoch : 'role-epoch',
-        connectivity       : 'online',
-        projectionId       : 'projection',
-        pull               : {},
-        push               : {},
-        remoteEndpoint     : 'https://dwn.example.com',
-        scope              : {
-          kind          : 'context',
-          protocol      : 'https://example.com/notebooks',
-          contextId     : 'notebook-a',
-          protocolPaths : ['notebook/page'],
-        },
-        status    : 'live',
-        tenantDid : 'did:example:owner',
-      } satisfies ReplicationLinkState;
-
-      const target = syncTargetFromLink(link);
-      expect(target.authorDelegatedGrant).toBeUndefined();
-    });
-
     it('should build a deterministic owner target for all protocols', async () => {
       const { getEndpointDiscovery, resolver } = createResolver();
 
