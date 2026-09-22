@@ -27,6 +27,7 @@ import { buildLinkKey } from '../sync-link-key.js';
 import { FollowedSyncSourceStoreLevel } from '../followed-sync-source-store-level.js';
 import { Level } from 'level';
 import { openSyncNextSubscriptions } from './subscriptions.js';
+import { RateLimitError } from '@enbox/dwn-clients';
 import { resolveSyncConnectivityState } from '../sync-connectivity-manager.js';
 import { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from '../sync-endpoint-store-level.js';
@@ -121,6 +122,7 @@ export class SyncEngineNext implements SyncEngine {
   private readonly _sessionCreations = new Map<string, Promise<ActiveSession>>();
   private readonly _sessions = new Map<string, ActiveSession>();
   private readonly _sourceStore: FollowedSyncSourceStoreLevel;
+  private _subscriptionRetryTimer?: ReturnType<typeof setTimeout>;
   private _timer?: ReturnType<typeof setInterval>;
 
   public constructor({ dataPath, db }: SyncEngineNextParams = {}) {
@@ -1039,6 +1041,7 @@ export class SyncEngineNext implements SyncEngine {
             to             : 'live',
           });
         } catch (error: unknown) {
+          this.scheduleSubscriptionRetry(error);
           console.error('SyncEngineNext: subscription establishment failed', error);
         }
       }
@@ -1092,6 +1095,7 @@ export class SyncEngineNext implements SyncEngine {
       });
     }
     console.warn('SyncEngineNext: subscription ended; scheduled refresh will retry it', error);
+    this.scheduleSubscriptionRetry(error);
   }
 
   private async createSession(target: SyncTarget, key: string): Promise<ActiveSession> {
@@ -1335,6 +1339,10 @@ export class SyncEngineNext implements SyncEngine {
       clearInterval(this._timer);
       this._timer = undefined;
     }
+    if (this._subscriptionRetryTimer !== undefined) {
+      clearTimeout(this._subscriptionRetryTimer);
+      this._subscriptionRetryTimer = undefined;
+    }
     await this._refreshLive;
     await Promise.allSettled([...this._sessionCreations.values()]);
     const sessions = [...this._sessions.values()];
@@ -1369,6 +1377,17 @@ export class SyncEngineNext implements SyncEngine {
       this._refreshLivePending = false;
       this.scheduleLiveRefresh();
     }
+  }
+
+  private scheduleSubscriptionRetry(error: unknown): void {
+    if (!this._live || this._subscriptionRetryTimer !== undefined) {
+      return;
+    }
+    const delay = error instanceof RateLimitError ? error.retryAfterSec * 1_000 : 5_000;
+    this._subscriptionRetryTimer = setTimeout((): void => {
+      this._subscriptionRetryTimer = undefined;
+      this.scheduleLiveRefresh();
+    }, delay);
   }
 
   /** Validate and serialize catalog wakes from sibling contexts. */
