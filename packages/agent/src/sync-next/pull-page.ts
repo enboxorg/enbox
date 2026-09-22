@@ -19,7 +19,6 @@ const PULL_PAGE_SIZE = 100;
 
 export type SyncNextPullPageResult = {
   aborted?: true;
-  capturedHead?: ProgressToken;
   handledThrough?: ProgressToken;
   hasMore: boolean;
   materializedCids: string[];
@@ -27,7 +26,6 @@ export type SyncNextPullPageResult = {
 };
 
 export type SyncNextPullPageOptions = {
-  head?: ProgressToken;
   shouldContinue?: () => boolean;
 };
 
@@ -49,12 +47,11 @@ export class SyncNextPullPage {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
 
-    const reply = await this.query(target, link.pullHandledThrough, options.head);
+    const reply = await this.query(target, link.pullHandledThrough);
     if (!shouldContinue()) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
     SyncNextPullPage.assertSuccessfulPage(reply, target);
-    SyncNextPullPage.assertHead(reply.head, options.head);
 
     const handledThrough = reply.cursor;
     if (handledThrough === undefined) {
@@ -132,7 +129,6 @@ export class SyncNextPullPage {
     }
 
     return {
-      capturedHead     : reply.head ?? options.head,
       handledThrough,
       hasMore          : reply.drained !== true,
       materializedCids : [...materializedCids],
@@ -140,11 +136,7 @@ export class SyncNextPullPage {
     };
   }
 
-  private query(
-    target: SyncTarget,
-    cursor?: ProgressToken,
-    head?: ProgressToken,
-  ): Promise<MessagesQueryReply> {
+  private query(target: SyncTarget, cursor?: ProgressToken): Promise<MessagesQueryReply> {
     const role = target.authorization.kind === 'role' ? target.authorization : undefined;
     return queryRemoteMessageFeed({
       agent              : this._agent,
@@ -155,7 +147,6 @@ export class SyncNextPullPage {
       did                : target.did,
       dwnUrl             : target.dwnUrl,
       filters            : messageFeedFiltersForSyncScope(target.scope),
-      head,
       limit              : PULL_PAGE_SIZE,
       permissionGrantIds : target.permissionGrantIds,
       protocolRole       : role?.protocolRole,
@@ -186,19 +177,6 @@ export class SyncNextPullPage {
         `SyncNextPullPage: role feed resolved ${reply.roleRecordId ?? 'no role'} instead of ` +
         `${target.authorization.roleRecordId}.`,
       );
-    }
-  }
-
-  private static assertHead(actual: ProgressToken | undefined, expected: ProgressToken | undefined): void {
-    if (actual === undefined || expected === undefined) {
-      return;
-    }
-    if (
-      actual.streamId !== expected.streamId ||
-      actual.epoch !== expected.epoch ||
-      actual.position !== expected.position
-    ) {
-      throw new Error('SyncNextPullPage: remote changed the captured query head.');
     }
   }
 

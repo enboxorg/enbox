@@ -18,7 +18,7 @@ function target(): SyncTarget {
   };
 }
 
-function head(position = '2'): ProgressToken {
+function token(position = '2'): ProgressToken {
   return { epoch: 'epoch', position, streamId: 'stream' };
 }
 
@@ -50,8 +50,7 @@ function fixture(overrides: {
     },
     pullPage: {
       consume: sinon.stub().resolves({
-        capturedHead     : head(),
-        handledThrough   : head(),
+        handledThrough   : token(),
         hasMore          : false,
         materializedCids : [],
         quarantined      : 0,
@@ -59,9 +58,8 @@ function fixture(overrides: {
     },
     pushPage: {
       consume: sinon.stub().resolves({
-        capturedHead   : head(),
         delivered      : 0,
-        handledThrough : head(),
+        handledThrough : token(),
         hasMore        : false,
         retained       : 0,
       }),
@@ -88,19 +86,17 @@ describe('SyncNextLinkSession', () => {
     sinon.restore();
   });
 
-  it('should release between covering pages and reuse one captured head', async () => {
+  it('should release between covering pages until it observes drain', async () => {
     const clock = sinon.useFakeTimers();
     const parts = fixture();
     parts.pullPage.consume.onFirstCall().resolves({
-      capturedHead     : head('5'),
-      handledThrough   : head('1'),
+      handledThrough   : token('1'),
       hasMore          : true,
       materializedCids : [],
       quarantined      : 0,
     });
     parts.pullPage.consume.onSecondCall().resolves({
-      capturedHead     : head('5'),
-      handledThrough   : head('5'),
+      handledThrough   : token('5'),
       hasMore          : false,
       materializedCids : [],
       quarantined      : 0,
@@ -114,8 +110,38 @@ describe('SyncNextLinkSession', () => {
     await covering;
 
     expect(parts.pullPage.consume.callCount).toBe(2);
-    expect(parts.pullPage.consume.firstCall.args[1].head).toBeUndefined();
-    expect(parts.pullPage.consume.secondCall.args[1].head).toEqual(head('5'));
+    await link.dispose();
+  });
+
+  it('should keep a covering run open when a wake arrives during its drained page', async () => {
+    const clock = sinon.useFakeTimers();
+    const parts = fixture();
+    const firstPage = deferred();
+    parts.pullPage.consume.onFirstCall().callsFake(async () => {
+      await firstPage.promise;
+      return {
+        handledThrough   : token('1'),
+        hasMore          : false,
+        materializedCids : [],
+        quarantined      : 0,
+      };
+    });
+    parts.pullPage.consume.onSecondCall().resolves({
+      handledThrough   : token('2'),
+      hasMore          : false,
+      materializedCids : [],
+      quarantined      : 0,
+    });
+    const link = session(parts);
+    const covering = link.cover('pull');
+    await clock.tickAsync(0);
+
+    link.requestPull();
+    firstPage.resolve();
+    await clock.tickAsync(1);
+    await covering;
+
+    expect(parts.pullPage.consume.callCount).toBe(2);
     await link.dispose();
   });
 
@@ -144,8 +170,7 @@ describe('SyncNextLinkSession', () => {
     const pending = { messageCid: 'pending' };
     const parts = fixture({ quarantine: [pending] });
     parts.pullPage.consume.resolves({
-      capturedHead     : head('100'),
-      handledThrough   : head('1'),
+      handledThrough   : token('1'),
       hasMore          : true,
       materializedCids : [],
       quarantined      : 0,
@@ -160,7 +185,7 @@ describe('SyncNextLinkSession', () => {
     await link.dispose();
   });
 
-  it('should reject a covering run that reaches head with unresolved obligations', async () => {
+  it('should reject a covering run that observes drain with unresolved obligations', async () => {
     const parts = fixture({ quarantine: [{ messageCid: 'pending' }] });
     const link = session(parts);
 
