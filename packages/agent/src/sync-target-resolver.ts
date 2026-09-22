@@ -196,6 +196,12 @@ export class SyncTargetResolver {
       messageType  : DwnInterface.MessagesQuery,
       protocol     : target.scope.kind === 'context' ? target.scope.protocol : undefined,
     });
+    if (message === undefined) {
+      throw new Error(
+        `SyncTargetResolver: delegate '${target.delegateDid}' has no MessagesQuery grant from ` +
+        `'${target.authorization.actorDid}' for '${target.scope.kind === 'context' ? target.scope.protocol : 'all'}'.`,
+      );
+    }
     return { ...target, authorDelegatedGrant: message };
   }
 

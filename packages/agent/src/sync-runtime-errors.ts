@@ -87,5 +87,14 @@ export function isRetryableSyncRecovery(recovery: SyncLinkRecoveryState | undefi
 
 /** Stable conversion for event diagnostics. */
 export function syncErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'object' && error !== null) {
+    const { code, detail } = error as { code?: unknown; detail?: unknown };
+    if (typeof detail === 'string') {
+      return typeof code === 'string' ? `${code}: ${detail}` : detail;
+    }
+  }
+  return String(error);
 }

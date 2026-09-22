@@ -11,7 +11,7 @@ import type {
   SyncNextSettledSource,
 } from './types.js';
 
-import { Cid, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../sync-admit-closure.js';
 import { compareSyncNextPosition } from './ledger-key.js';
@@ -93,6 +93,15 @@ export class SyncNextPullPage {
         return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
       }
       const source = sourceTokenFromFeedEntry(handledThrough, entry);
+      if (
+        current.authorization.kind === 'role' &&
+        entry.isLatestBaseState === false &&
+        entry.message !== undefined &&
+        Records.isRecordsWrite(entry.message)
+      ) {
+        settled.push({ messageCid: entry.messageCid, source });
+        continue;
+      }
       const isPushEcho = await this.hasDurableLocalPullEcho(current, entry);
       if (!shouldContinue()) {
         return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };

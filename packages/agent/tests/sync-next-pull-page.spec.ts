@@ -348,6 +348,27 @@ describe('SyncNextPullPage', () => {
     });
   });
 
+  it('should advance past retained non-latest role writes without support reads', async () => {
+    const roleTarget: SyncTarget = {
+      ...target(),
+      authorization: {
+        actorDid     : 'did:example:member',
+        kind         : 'role',
+        protocolRole : 'notebook/member',
+        roleRecordId : 'role-record',
+      },
+    };
+    const retained = await feedEntry(missingBodyMessage(), 1, false);
+    const fixture = fakeAgent({ ...page([retained]), roleRecordId: 'role-record' });
+    await createLink(roleTarget);
+
+    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(roleTarget);
+
+    expect(result.quarantined).toBe(0);
+    expect(fixture.apply.notCalled).toBe(true);
+    expect((await ledger.getLink(linkIdentity(roleTarget)))?.pullHandledThrough?.position).toBe('1');
+  });
+
   it('should retry quarantine independently and settle its exact source receipt', async () => {
     const missingBody = await feedEntry(missingBodyMessage(), 1);
     const fixture = fakeAgent(page([missingBody]));

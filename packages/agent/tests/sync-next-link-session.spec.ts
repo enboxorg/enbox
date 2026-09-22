@@ -268,7 +268,7 @@ describe('SyncNextLinkSession', () => {
       handledThrough   : token('1'),
       hasMore          : true,
       materializedCids : [],
-      quarantined      : 0,
+      quarantined      : 1,
     });
     const link = session(parts);
 
@@ -277,6 +277,7 @@ describe('SyncNextLinkSession', () => {
 
     expect(parts.pullPage.consume.called).toBe(true);
     expect(parts.quarantine.retryOne.called).toBe(true);
+    expect(parts.quarantine.retryOne.firstCall.args[3]).toBe(true);
     await link.dispose();
   });
 
