@@ -16,8 +16,9 @@ import { Cid, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { admitClosure } from '../sync-admit-closure.js';
 import { compareSyncNextPosition } from './ledger-key.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
-import { queryRemoteMessageFeed } from '../sync-messages.js';
+import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { sealSyncNextQuarantinePayload } from './quarantine-codec.js';
+import { getLocalMessage, queryRemoteMessageFeed } from '../sync-messages.js';
 import { sourceTokenFromFeedEntry, syncEntriesFromFeedEntries } from './feed-entry.js';
 
 const PULL_PAGE_SIZE = 100;
@@ -92,6 +93,15 @@ export class SyncNextPullPage {
         return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
       }
       const source = sourceTokenFromFeedEntry(handledThrough, entry);
+      const isPushEcho = await this.hasDurableLocalPullEcho(current, entry);
+      if (!shouldContinue()) {
+        return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
+      }
+      if (isPushEcho) {
+        settled.push({ messageCid: entry.messageCid, source });
+        materializedCids.add(entry.messageCid);
+        continue;
+      }
       const outcome = await admitClosure(entry.messageCid, {
         agent         : this._agent,
         did           : current.did,
@@ -177,6 +187,33 @@ export class SyncNextPullPage {
       protocolRole       : role?.protocolRole,
       signal,
     });
+  }
+
+  /** Verify a recent-push hint against the complete local message before skipping its pull echo. */
+  private async hasDurableLocalPullEcho(
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+  ): Promise<boolean> {
+    if (this._echoSuppressor?.hasRecentlyPushed(target.did, entry.messageCid, target.dwnUrl) !== true) {
+      return false;
+    }
+
+    const local = await getLocalMessage({
+      agent              : this._agent,
+      author             : target.did,
+      delegateDid        : target.delegateDid,
+      messageCid         : entry.messageCid,
+      permissionGrantIds : target.permissionGrantIds,
+    });
+    if (local === undefined) {
+      return false;
+    }
+
+    const hasStoredData = local.dataStream !== undefined;
+    await local.dataStream?.cancel();
+    return entry.isLatestBaseState !== true ||
+      !recordsWriteRequiresData(local.message) ||
+      hasStoredData;
   }
 
   private static quarantineReason(
