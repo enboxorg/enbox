@@ -37,6 +37,7 @@ describe('E2E: populated catch-up transport request budgets', () => {
     // connection left by another end-to-end fixture.
     await harness.agent.rpc.close();
     await harness.clearStorage();
+    await harness.agent.vault.initialize({ password: 'sync-catchup-traffic-password' });
     await harness.createAgentDid();
   });
 
@@ -133,7 +134,7 @@ describe('E2E: populated catch-up transport request budgets', () => {
         request.method === 'dwn.processMessage' && request.params?.message?.descriptor?.method === 'Query');
       expect(queries.length).toBeGreaterThan(0);
       expect(queries.length).toBeLessThanOrEqual(8);
-      expect(queries.some(([request]) => request.params?.message?.descriptor?.cidsOnly === false)).toBe(true);
+      expect(queries.some(([request]) => request.params?.message?.descriptor?.cidsOnly !== true)).toBe(true);
       expect(socket.args.some(([request]) => request.params?.message?.descriptor?.method === 'Read')).toBe(false);
     } else {
       expect(socket.callCount).toBe(0);
