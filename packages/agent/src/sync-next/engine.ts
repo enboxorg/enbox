@@ -24,6 +24,7 @@ import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sy
 
 import { AgentPermissionsApi } from '../permissions-api.js';
 import { buildLinkKey } from '../sync-link-key.js';
+import { FollowedSourceRoleAbsentError } from '../sync-role-replication-support.js';
 import { FollowedSyncSourceStoreLevel } from '../followed-sync-source-store-level.js';
 import { Level } from 'level';
 import { openSyncNextSubscriptions } from './subscriptions.js';
@@ -42,6 +43,7 @@ import { SyncNextPushPage } from './push-page.js';
 import { SyncNextQuarantineRetry } from './quarantine-retry.js';
 import { SyncTargetPlanner } from '../sync-target-planner.js';
 import { followedSyncSourceActiveEqual, normalizeFollowedSyncSource } from '../followed-sync-source.js';
+import { isNonRetryableSyncAuthorizationFailure, syncErrorMessage } from '../sync-runtime-errors.js';
 import { MAX_TIMER_DELAY_MS, parseDurationInMilliseconds, runSerializedByKey } from '@enbox/common';
 import {
   messageFeedFiltersForSyncScope,

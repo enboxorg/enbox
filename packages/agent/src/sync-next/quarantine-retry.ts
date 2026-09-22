@@ -1,4 +1,5 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
+import type { RoleReplicationSupportBatch } from '../sync-role-replication-support.js';
 import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
@@ -121,11 +122,13 @@ export class SyncNextQuarantineRetry {
       )
       : [roleSupport.root, ...roleSupport.dependencies];
     const outcome = await admitClosure(entry.messageCid, {
-      agent              : this._agent,
-      did                : current.did,
-      dwnUrl             : current.dwnUrl,
-      delegateDid        : current.delegateDid,
-      ...(roleSupport === undefined ? {} : { fetchReplicationSupport: async () => roleSupport }),
+      agent       : this._agent,
+      did         : current.did,
+      dwnUrl      : current.dwnUrl,
+      delegateDid : current.delegateDid,
+      ...(roleSupport === undefined
+        ? {}
+        : { fetchReplicationSupport: async (): Promise<RoleReplicationSupportBatch> => roleSupport }),
       permissionGrantIds : current.permissionGrantIds,
       prefetched,
       scope              : current.scope,
@@ -206,20 +209,20 @@ export class SyncNextQuarantineRetry {
       throw new Error('SyncNextQuarantineRetry: role quarantine root is outside the accepted paths.');
     }
     const support = await readRoleReplicationSupport({
-        actorDid       : target.authorization.actorDid,
-        agent          : this._agent,
-        contextId,
-        delegateDid    : target.delegateDid,
-        dwnUrl         : target.dwnUrl,
-        expectedRoot   : expectedRoot as RecordsDeleteMessage | RecordsWriteMessage,
-        permissionsApi : this._agent.permissions,
-        protocol       : target.scope.protocol,
-        protocolPath,
-        protocolRole   : target.authorization.protocolRole,
-        ...(entry.encodedData === undefined
-          ? {}
-          : { rootData: Encoder.base64UrlToBytes(entry.encodedData) }),
-        shouldContinue,
+      actorDid       : target.authorization.actorDid,
+      agent          : this._agent,
+      contextId,
+      delegateDid    : target.delegateDid,
+      dwnUrl         : target.dwnUrl,
+      expectedRoot   : expectedRoot as RecordsDeleteMessage | RecordsWriteMessage,
+      permissionsApi : this._agent.permissions,
+      protocol       : target.scope.protocol,
+      protocolPath,
+      protocolRole   : target.authorization.protocolRole,
+      ...(entry.encodedData === undefined
+        ? {}
+        : { rootData: Encoder.base64UrlToBytes(entry.encodedData) }),
+      shouldContinue,
       sourceDid: target.did,
     });
     return {
