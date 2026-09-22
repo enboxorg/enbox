@@ -30,6 +30,7 @@ import { Level } from 'level';
 import { openSyncNextSubscriptions } from './subscriptions.js';
 import { RateLimitError } from '@enbox/dwn-clients';
 import { resolveSyncConnectivityState } from '../sync-connectivity-manager.js';
+import { FollowedSourceRoleAbsentError } from '../sync-role-replication-support.js';
 import { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from '../sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from '../sync-identity-store-level.js';
@@ -52,6 +53,7 @@ import {
 } from '../types/sync.js';
 import { normalizeDwnEndpoint, SyncTargetResolver } from '../sync-target-resolver.js';
 import { queryLocalMessageFeed, queryRemoteMessageFeed, syncMessageDescriptor } from '../sync-messages.js';
+import { isNonRetryableSyncAuthorizationFailure, syncErrorMessage } from '../sync-runtime-errors.js';
 
 type LevelKey = string | Buffer | Uint8Array;
 

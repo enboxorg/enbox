@@ -176,6 +176,7 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
       testDataLocation : `__TESTDATA__/e2e-sync-perturbation/${name}`,
     });
     await harness.clearStorage();
+    await harness.agent.vault.initialize({ password: `sync-perturbation-${name}` });
     await harness.createAgentDid();
     return { harness, name };
   }

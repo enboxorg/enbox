@@ -12,7 +12,7 @@ function isTerminalSyncAuthorizationFailure(detail: string | undefined): boolean
 }
 
 /** Whether a role-authorized operation no longer has its matching role record. */
-function isMissingRoleAuthorizationFailure(detail: string | undefined): boolean {
+export function isMissingRoleAuthorizationFailure(detail: string | undefined): boolean {
   return detail?.includes(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound) === true;
 }
 

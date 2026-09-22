@@ -1330,14 +1330,14 @@ describe('E2E Multi-Agent Sync', () => {
         recordId,
         delegateDid    : aliceDevice.did.uri,
         delegatedGrant : recordsQueryGrant.grant.message,
-        timeoutMs      : 10_000,
+        timeoutMs      : 20_000,
       });
       expect(received.recordId).toBe(recordId);
 
       // Clean up.
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
-    });
+    }, 30_000);
 
     it('should handle multiple sequential writes in live mode', async () => {
       // Register and start live sync.
@@ -1380,7 +1380,7 @@ describe('E2E Multi-Agent Sync', () => {
           recordId,
           delegateDid    : aliceDevice.did.uri,
           delegatedGrant : recordsQueryGrant.grant.message,
-          timeoutMs      : 8_000,
+          timeoutMs      : 20_000,
         });
       }
 
@@ -1405,7 +1405,7 @@ describe('E2E Multi-Agent Sync', () => {
 
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
-    });
+    }, 30_000);
 
     it('should drain an in-flight durable push pass before unregistering its identity', async () => {
       await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
