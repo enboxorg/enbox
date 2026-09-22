@@ -112,7 +112,6 @@ type MessageFeedQuery = {
   protocolRole?: string;
   filters?: MessagesFilter[];
   cursor?: ProgressToken;
-  head?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
   agent: EnboxPlatformAgent;
@@ -353,7 +352,6 @@ function shouldBufferDataStream(entry: SyncMessageEntry): boolean {
 function buildMessageFeedParams({
   filters,
   cursor,
-  head,
   limit,
   cidsOnly,
   delegatedGrant,
@@ -363,7 +361,6 @@ function buildMessageFeedParams({
   return {
     filters,
     cursor,
-    head,
     limit,
     cidsOnly,
     permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantIds),
@@ -385,7 +382,6 @@ export async function queryRemoteMessageFeed({
   protocolRole,
   filters,
   cursor,
-  head,
   limit,
   cidsOnly,
   agent,
@@ -399,7 +395,6 @@ export async function queryRemoteMessageFeed({
     messageParams : buildMessageFeedParams({
       filters,
       cursor,
-      head,
       limit,
       cidsOnly,
       delegatedGrant,
@@ -427,7 +422,6 @@ export async function queryLocalMessageFeed({
   protocolRole,
   filters,
   cursor,
-  head,
   limit,
   cidsOnly,
   agent,
@@ -440,7 +434,6 @@ export async function queryLocalMessageFeed({
     messageParams : buildMessageFeedParams({
       filters,
       cursor,
-      head,
       limit,
       cidsOnly,
       delegatedGrant,

@@ -1,4 +1,3 @@
-import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { SyncDirection } from '../types/sync.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
@@ -15,13 +14,12 @@ type CoveringRun = {
   promise: Promise<void>;
   reject: (error: unknown) => void;
   resolve: () => void;
-  head?: ProgressToken;
 };
 
-/** A covering operation reached its finite feed head but retained sparse obligations. */
+/** A covering operation observed feed drain but retained sparse obligations. */
 export class SyncNextIncompleteError extends Error {
   public constructor(direction: SyncDirection, count: number) {
-    super(`SyncEngineNext: ${direction} reached its captured head with ${count} unresolved obligations.`);
+    super(`SyncEngineNext: ${direction} observed feed drain with ${count} unresolved obligations.`);
     this.name = 'SyncNextIncompleteError';
   }
 }
@@ -35,10 +33,12 @@ export class SyncNextLinkSession {
   private _pullCurrent = false;
   private _pullFeedDrained = false;
   private readonly _pullPagePump: SyncNextWorkPump;
+  private _pullWakeVersion = 0;
   private _quarantineIndex = 0;
   private readonly _quarantinePump: SyncNextWorkPump;
   private _pushCover?: CoveringRun;
   private readonly _pushPagePump: SyncNextWorkPump;
+  private _pushWakeVersion = 0;
   private readonly _subscriptions = new Set<() => Promise<void>>();
   private _online = false;
 
@@ -91,6 +91,7 @@ export class SyncNextLinkSession {
   }
 
   public requestPull(): void {
+    this._pullWakeVersion++;
     this._pullCurrent = false;
     this._pullFeedDrained = false;
     this._pullPagePump.request();
@@ -98,11 +99,12 @@ export class SyncNextLinkSession {
 
   public requestPush(): void {
     if (this._target.authorization.kind !== 'role') {
+      this._pushWakeVersion++;
       this._pushPagePump.request();
     }
   }
 
-  /** Run the same page pumps to one finite captured head. */
+  /** Run the same page pumps until they observe drain with no trailing wake. */
   public cover(direction?: SyncDirection): Promise<void> {
     const runs: Promise<void>[] = [];
     if (direction !== 'push') {
@@ -140,53 +142,44 @@ export class SyncNextLinkSession {
   }
 
   private async consumePullPage(): Promise<void> {
+    const wakeVersion = this._pullWakeVersion;
     const result = await this._pullPage.consume(this._target, {
-      head           : this._pullCover?.head,
-      shouldContinue : (): boolean => !this._abortController.signal.aborted,
+      shouldContinue: (): boolean => !this._abortController.signal.aborted,
     });
     if (result.aborted === true) {
       return;
     }
     this._online = true;
-    if (this._pullCover !== undefined) {
-      this._pullCover.head ??= result.capturedHead;
-      if (this._pullCover.head === undefined) {
-        throw new Error('SyncEngineNext: remote does not support captured query heads.');
-      }
-    }
     this._quarantinePump.request();
     if (result.hasMore) {
       this._pullPagePump.request();
       return;
     }
     this._pullFeedDrained = true;
-    this._pullCurrent = (await this._ledger.getQuarantineForLink(
+    const pullCurrent = (await this._ledger.getQuarantineForLink(
       SyncNextLinkSession.identity(this._target),
     )).length === 0;
-    await this.finishCover('pull');
+    if (wakeVersion === this._pullWakeVersion) {
+      this._pullCurrent = pullCurrent;
+    }
+    await this.finishCover('pull', wakeVersion);
   }
 
   private async consumePushPage(): Promise<void> {
+    const wakeVersion = this._pushWakeVersion;
     const result = await this._pushPage.consume(this._target, {
-      head           : this._pushCover?.head,
-      shouldContinue : (): boolean => !this._abortController.signal.aborted,
+      shouldContinue: (): boolean => !this._abortController.signal.aborted,
     });
     if (result.aborted === true) {
       return;
     }
     this._online = true;
-    if (this._pushCover !== undefined) {
-      this._pushCover.head ??= result.capturedHead;
-      if (this._pushCover.head === undefined) {
-        throw new Error('SyncEngineNext: local feed did not return a captured query head.');
-      }
-    }
     this._deliveryPump.request();
     if (result.hasMore) {
       this._pushPagePump.request();
       return;
     }
-    await this.finishCover('push');
+    await this.finishCover('push', wakeVersion);
   }
 
   private async retryQuarantine(): Promise<void> {
@@ -230,7 +223,7 @@ export class SyncNextLinkSession {
     }
   }
 
-  private async finishCover(direction: SyncDirection): Promise<void> {
+  private async finishCover(direction: SyncDirection, pageWakeVersion: number): Promise<void> {
     const cover = direction === 'pull' ? this._pullCover : this._pushCover;
     if (cover === undefined) {
       return;
@@ -238,6 +231,10 @@ export class SyncNextLinkSession {
     const pending = direction === 'pull'
       ? await this._ledger.getQuarantineForLink(SyncNextLinkSession.identity(this._target))
       : await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target));
+    const currentWakeVersion = direction === 'pull' ? this._pullWakeVersion : this._pushWakeVersion;
+    if (currentWakeVersion !== pageWakeVersion) {
+      return;
+    }
     if (pending.length > 0) {
       this.rejectCover(direction, new SyncNextIncompleteError(direction, pending.length));
     } else {
