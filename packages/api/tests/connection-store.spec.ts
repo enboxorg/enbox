@@ -690,10 +690,7 @@ describe('createConnectionStore()', () => {
         remoteStatus({ remoteEndpoint: 'https://old.example' }),
         remoteStatus({ remoteEndpoint: 'https://backup.example', state: 'degraded' }),
         remoteStatus({
-          nextProbeAt    : '2026-07-29T12:00:00.000Z',
-          nextRetryAt    : '2026-07-29T11:30:00.000Z',
-          lastError      : 'Quota exceeded',
-          lastActivityAt : '2026-07-29T11:00:00.000Z',
+          lastActivityAt: '2026-07-29T11:00:00.000Z',
         }),
       ];
       getDwnEndpointStatus.resolves({
@@ -724,7 +721,7 @@ describe('createConnectionStore()', () => {
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
       expect(store.getSnapshot()).toBe(stable);
 
-      engine.remotes[2] = remoteStatus({ nextRetryAt: '2026-07-29T11:45:00.000Z' });
+      engine.remotes[2] = remoteStatus({ lastActivityAt: '2026-07-29T11:45:00.000Z' });
       engine.emit({
         type           : 'checkpoint:push-advance',
         tenantDid      : OWNER_DID,
@@ -732,7 +729,7 @@ describe('createConnectionStore()', () => {
         position       : '2',
       });
       await waitFor(() => {
-        expect(store.getSnapshot().sync?.remotes[0]?.nextRetryAt).toBe('2026-07-29T11:45:00.000Z');
+        expect(store.getSnapshot().sync?.remotes[0]?.lastActivityAt).toBe('2026-07-29T11:45:00.000Z');
       });
 
       engine.remotes = [remoteStatus()];

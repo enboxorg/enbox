@@ -1806,9 +1806,6 @@ function remoteSyncRowsEqual(a: Readonly<RemoteSyncStatus>, b: Readonly<RemoteSy
     && a.state === b.state
     && a.connectivity === b.connectivity
     && a.quotaBlockedMessageCount === b.quotaBlockedMessageCount
-    && a.nextProbeAt === b.nextProbeAt
-    && a.nextRetryAt === b.nextRetryAt
-    && a.lastError === b.lastError
     && a.lastActivityAt === b.lastActivityAt;
 }
 
