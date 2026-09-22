@@ -624,12 +624,6 @@ export type RemoteSyncStatus = {
   connectivity: SyncConnectivityState;
   /** Messages currently deferred against this remote for quota. */
   quotaBlockedMessageCount: number;
-  /** ISO-8601 time of the soonest quota re-probe across this remote's blocked messages, if any. */
-  nextProbeAt?: string;
-  /** ISO-8601 time of the soonest scheduled link-recovery retry, if any. */
-  nextRetryAt?: string;
-  /** Human-readable detail of the most recent recovery, quota, or terminal failure, if any. */
-  lastError?: string;
   /** ISO-8601 timestamp of the latest successful activity across current links for this remote. */
   lastActivityAt?: string;
 };
