@@ -9,6 +9,7 @@ import { SyncNextPushPage } from './push-page.js';
 export type SyncNextDeliveryRetryResult = {
   aborted?: true;
   kind: 'aborted' | 'pending' | 'settled';
+  outcome?: SyncNextDeliveryObligation['outcome'];
 };
 
 /** Retries one exact outbound obligation from the authoritative local feed. */
@@ -55,7 +56,8 @@ export class SyncNextDeliveryRetry {
       return { kind: 'settled' };
     }
 
-    await this._ledger.updateDelivery(obligation, SyncNextPushPage.deliveryOutcome(failure));
-    return { kind: 'pending' };
+    const outcome = SyncNextPushPage.deliveryOutcome(failure);
+    await this._ledger.updateDelivery(obligation, outcome);
+    return { kind: 'pending', outcome };
   }
 }

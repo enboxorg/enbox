@@ -429,6 +429,8 @@ export type PushFailure = {
   reason?: 'tenant-inactive' | 'resolver-unavailable' | 'storage';
   /** True only for Invalid or terminal dependency outcomes. */
   terminal?: boolean;
+  /** True when transport rejected the endpoint-level request before DWN admission. */
+  endpointRejected?: boolean;
   /** True when the remote tenant is inactive and retrying the same message would hot-loop. */
   tenantInactive?: boolean;
   /**
@@ -439,6 +441,8 @@ export type PushFailure = {
    * engine therefore defers + re-probes instead of dead-lettering.
    */
   quotaBlocked?: boolean;
+  /** Absolute ISO-8601 time before which this endpoint should not be retried. */
+  retryAfter?: string;
   /** True when the requested root CID was definitively absent from the local DWN. */
   localMissing?: boolean;
   /** Local DWN status code when a local read/query produced this failure. */

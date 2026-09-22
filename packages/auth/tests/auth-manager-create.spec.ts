@@ -132,6 +132,18 @@ describe('AuthManager.create()', () => {
     expect(capturedOptions.dataPath).toBe('/my/data');
   });
 
+  test('passes the temporary sync-engine selector to EnboxUserAgent.create', async () => {
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    await AuthManager.create({ storage: new MemoryStorage(), syncEngine: 'next' });
+
+    expect(capturedOptions.syncEngine).toBe('next');
+  });
+
   test('uses pre-built agent when provided', async () => {
     const customAgent = createMockAgent({ vaultIsInitialized: async () => false });
     const callsBefore = userAgentCreateStub.callCount;

@@ -92,10 +92,9 @@ describe('E2E: legacy and next sync comparison', () => {
           target      : did,
         })).reply.status.code).toBe(202);
       }
-      await sync.setIdentityOptions({ did, options: { protocols: [protocol.protocol] } });
-
       const http = sinon.spy(globalThis, 'fetch');
       const socket = sinon.spy(JsonRpcSocket.prototype, 'request');
+      await sync.setIdentityOptions({ did, options: { protocols: [protocol.protocol] } });
       await sync.startSync({ interval: '1m' });
       const local = (await harness.agent.dwn.processRequest({
         author        : did,
@@ -139,6 +138,6 @@ describe('E2E: legacy and next sync comparison', () => {
 
     expect(next.httpPosts).toBeLessThanOrEqual(legacy.httpPosts);
     expect(next.socketQueries).toBeGreaterThan(0);
-    expect(next.socketQueries).toBeLessThanOrEqual(legacy.socketQueries + 2);
+    expect(next.socketQueries).toBeLessThanOrEqual(legacy.socketQueries);
   }, 120_000);
 });

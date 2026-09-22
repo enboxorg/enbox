@@ -1,6 +1,6 @@
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { SyncAuthorization, SyncDirection, SyncScope } from '../types/sync.js';
+import type { SyncAuthorization, SyncScope } from '../types/sync.js';
 
 /** Durable schema version for the isolated next-engine ledger. */
 export const SYNC_NEXT_LEDGER_VERSION = 1 as const;
@@ -48,11 +48,9 @@ export type SyncNextSourceReceipt = {
 /** Why received input is not materialized in the local DWN yet. */
 export type SyncNextQuarantineReason =
   | 'admission-unresolved'
-  | 'authorization-unresolved'
   | 'data'
   | 'dependency'
-  | 'resolver-unavailable'
-  | 'storage';
+  | 'resolver-unavailable';
 
 /** Retry state retained with encrypted received input. */
 export type SyncNextQuarantineOutcome = {
@@ -78,7 +76,6 @@ export type SyncNextQuarantineInput = SyncNextSourceReceipt & {
 
 /** Why one exact remote endpoint still owes a local feed entry. */
 export type SyncNextDeliveryReason =
-  | 'ambiguous'
   | 'authorization-unresolved'
   | 'dependency'
   | 'quota'
@@ -88,6 +85,7 @@ export type SyncNextDeliveryReason =
 
 /** Retry state for one endpoint-specific outbound obligation. */
 export type SyncNextDeliveryOutcome = {
+  blockScope?: 'endpoint' | 'link';
   detail?: string;
   reason: SyncNextDeliveryReason;
   retryAfter?: string;
@@ -108,22 +106,6 @@ export type SyncNextDeliveryInput = SyncNextSourceReceipt & {
   outcome: SyncNextDeliveryOutcome;
 };
 
-/** Precise non-retryable or explicitly abandoned outcome for one source entry. */
-export type SyncNextTerminalOutcome = SyncNextLinkIdentity & SyncNextSourceReceipt & {
-  code: string;
-  detail?: string;
-  direction: SyncDirection;
-  failedAt: string;
-  logicalTargetId: string;
-  version: typeof SYNC_NEXT_LEDGER_VERSION;
-};
-
-/** Input staged for one atomic terminal-outcome write. */
-export type SyncNextTerminalInput = SyncNextSourceReceipt & {
-  code: string;
-  detail?: string;
-};
-
 /** Exact sparse receipt that can be removed after a verified success. */
 export type SyncNextSettledSource = SyncNextSourceReceipt;
 
@@ -132,7 +114,6 @@ export type SyncNextPullPageCommit = {
   handledThrough: ProgressToken;
   quarantine: SyncNextQuarantineInput[];
   settled: SyncNextSettledSource[];
-  terminal: SyncNextTerminalInput[];
 };
 
 /** Atomic push-page ledger mutation. */
@@ -140,5 +121,4 @@ export type SyncNextPushPageCommit = {
   delivery: SyncNextDeliveryInput[];
   handledThrough: ProgressToken;
   settled: SyncNextSettledSource[];
-  terminal: SyncNextTerminalInput[];
 };

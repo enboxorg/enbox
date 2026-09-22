@@ -14,12 +14,46 @@ export async function openSyncNextSubscriptions(
   resolver: SyncTargetResolver,
   target: SyncTarget,
   session: SyncNextLinkSession,
+  onTerminal: (error: unknown) => void = (): void => {},
 ): Promise<void> {
-  const closeRemote = await openRemoteSubscription(agent, resolver, target, session);
-  session.addSubscription(closeRemote);
-  if (target.authorization.kind !== 'role') {
-    const closeLocal = await openLocalSubscription(agent, target, session);
-    session.addSubscription(closeLocal);
+  let closeLocal: (() => Promise<void>) | undefined;
+  let closeRemote: (() => Promise<void>) | undefined;
+  let closed = false;
+  let terminalError: unknown;
+  const closePair = async (): Promise<void> => {
+    closed = true;
+    session.removeSubscription(closePair);
+    const local = closeLocal;
+    const remote = closeRemote;
+    closeLocal = undefined;
+    closeRemote = undefined;
+    await Promise.allSettled([remote?.(), local?.()]);
+  };
+  const terminal = async (error: unknown): Promise<void> => {
+    terminalError = error;
+    await closePair();
+    onTerminal(error);
+  };
+
+  try {
+    closeRemote = await openRemoteSubscription(agent, resolver, target, session, terminal);
+    if (closed) {
+      await closePair();
+      throw terminalError;
+    }
+    if (target.authorization.kind !== 'role') {
+      closeLocal = await openLocalSubscription(agent, target, session, terminal);
+      if (closed) {
+        await closePair();
+        throw terminalError;
+      }
+    }
+    if (!closed) {
+      session.addSubscription(closePair);
+    }
+  } catch (error: unknown) {
+    await closePair();
+    throw error;
   }
 }
 
@@ -28,6 +62,7 @@ async function openRemoteSubscription(
   resolver: SyncTargetResolver,
   target: SyncTarget,
   session: SyncNextLinkSession,
+  onTerminal: (error: unknown) => Promise<void>,
 ): Promise<() => Promise<void>> {
   const createRequest = async (): Promise<Parameters<typeof agent.dwn.processRequest>[0]> => {
     const current = await resolver.withCurrentRoleGrant(target);
@@ -52,13 +87,23 @@ async function openRemoteSubscription(
   if (message === undefined) {
     throw new Error(`SyncEngineNext: failed to construct remote subscription for ${target.dwnUrl}.`);
   }
-  const handler: DwnSubscriptionHandler = async (): Promise<void> => { session.requestPull(); };
+  const handler: DwnSubscriptionHandler = async (message): Promise<void> => {
+    if (message.type === 'disconnected' || message.type === 'reconnecting') {
+      session.noteRemoteDisconnected();
+      return;
+    }
+    if (message.type === 'error') {
+      session.requestPull();
+      await onTerminal(message.error);
+      return;
+    }
+    session.requestPull(message.type === 'reconnected');
+  };
   const resubscribeFactory: ResubscribeFactory = async () => {
     const { message: next } = await agent.dwn.processRequest(await createRequest());
     if (next === undefined) {
       throw new Error(`SyncEngineNext: failed to reconstruct remote subscription for ${target.dwnUrl}.`);
     }
-    session.requestPull();
     return next;
   };
   const reply = await agent.rpc.sendDwnRequest({
@@ -87,6 +132,7 @@ async function openLocalSubscription(
   agent: EnboxPlatformAgent,
   target: SyncTarget,
   session: SyncNextLinkSession,
+  onTerminal: (error: unknown) => Promise<void>,
 ): Promise<() => Promise<void>> {
   const response = await agent.dwn.processRequest({
     author        : target.did,
@@ -96,8 +142,14 @@ async function openLocalSubscription(
       permissionGrantIds : toMessagesPermissionGrantIds(target.permissionGrantIds),
     },
     messageType         : DwnInterface.MessagesSubscribe,
-    subscriptionHandler : async (): Promise<void> => { session.requestPush(); },
-    target              : target.did,
+    subscriptionHandler : async (message): Promise<void> => {
+      if (message.type === 'error') {
+        await onTerminal(message.error);
+        return;
+      }
+      session.requestPush();
+    },
+    target: target.did,
   });
   const reply = response.reply as MessagesSubscribeReply;
   if (reply.status.code !== 200 || reply.subscription === undefined) {

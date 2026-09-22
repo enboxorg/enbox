@@ -22,12 +22,14 @@ const PUSH_PAGE_SIZE = 100;
 export type SyncNextPushPageResult = {
   aborted?: true;
   delivered: number;
+  endpointBlock?: SyncNextDeliveryOutcome;
   handledThrough?: ProgressToken;
   hasMore: boolean;
   retained: number;
 };
 
 export type SyncNextPushPageOptions = {
+  endpointBlock?: SyncNextDeliveryOutcome;
   signal?: AbortSignal;
   shouldContinue?: () => boolean;
 };
@@ -86,7 +88,7 @@ export class SyncNextPushPage {
     });
     const delivery: SyncNextDeliveryInput[] = [];
     const settled: SyncNextSettledSource[] = [];
-    let endpointBlock: SyncNextDeliveryOutcome | undefined;
+    let endpointBlock = options.endpointBlock;
 
     for (const entry of reply.entries ?? []) {
       if (!shouldContinue()) {
@@ -123,7 +125,7 @@ export class SyncNextPushPage {
 
       const outcome = SyncNextPushPage.deliveryOutcome(failure);
       delivery.push({ messageCid: entry.messageCid, outcome, source });
-      if (SyncNextPushPage.blocksPageEndpoint(outcome)) {
+      if (SyncNextPushPage.blocksPageEndpoint(outcome, failure.endpointRejected === true)) {
         endpointBlock = outcome;
       }
     }
@@ -132,7 +134,6 @@ export class SyncNextPushPage {
       delivery,
       handledThrough,
       settled,
-      terminal: [],
     });
     if (!committed) {
       return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
@@ -140,6 +141,7 @@ export class SyncNextPushPage {
     this._observer.onCheckpoint?.(target, handledThrough);
     return {
       delivered : settled.length,
+      ...(endpointBlock === undefined ? {} : { endpointBlock }),
       handledThrough,
       hasMore   : reply.drained !== true,
       retained  : delivery.length,
@@ -167,29 +169,28 @@ export class SyncNextPushPage {
   }
 
   public static deliveryOutcome(failure: PushFailure): SyncNextDeliveryOutcome {
+    const retry = failure.retryAfter === undefined ? {} : { retryAfter: failure.retryAfter };
+    const endpoint = failure.endpointRejected === true ? { blockScope: 'endpoint' as const } : {};
     if (failure.quotaBlocked === true) {
-      return { detail: failure.detail, reason: 'quota' };
+      return { blockScope: 'link', detail: failure.detail, reason: 'quota', ...retry };
     }
     if (failure.tenantInactive === true) {
-      return { detail: failure.detail, reason: 'authorization-unresolved' };
+      return { blockScope: 'link', detail: failure.detail, reason: 'authorization-unresolved', ...retry };
     }
     if (failure.kind === 'Incomplete') {
-      return { detail: failure.detail, reason: 'dependency' };
+      return { detail: failure.detail, reason: 'dependency', ...retry };
     }
     if (failure.kind === 'Invalid' || failure.terminal === true) {
-      return { detail: failure.detail, reason: 'remote-rejected' };
+      return { detail: failure.detail, reason: 'remote-rejected', ...endpoint, ...retry };
     }
     if (failure.kind === 'Deferred') {
-      return { detail: failure.detail, reason: 'remote-incomplete' };
+      return { blockScope: 'link', detail: failure.detail, reason: 'remote-incomplete', ...retry };
     }
-    return { detail: failure.detail, reason: 'transport' };
+    return { blockScope: 'endpoint', detail: failure.detail, reason: 'transport', ...retry };
   }
 
-  private static blocksPageEndpoint(outcome: SyncNextDeliveryOutcome): boolean {
-    return outcome.reason === 'authorization-unresolved' ||
-      outcome.reason === 'quota' ||
-      outcome.reason === 'remote-incomplete' ||
-      outcome.reason === 'transport';
+  private static blocksPageEndpoint(outcome: SyncNextDeliveryOutcome, endpointRejected = false): boolean {
+    return endpointRejected || outcome.blockScope !== undefined;
   }
 
   private static assertSuccessfulPage(reply: MessagesQueryReply, target: SyncTarget): void {
