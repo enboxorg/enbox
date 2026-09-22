@@ -4,7 +4,7 @@ import type { SyncTarget } from '../src/sync-target-resolver.js';
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { SyncNextQuarantineCoordinator } from '../src/sync-next/quarantine-coordinator.js';
+import { SyncNextQuarantineRetry } from '../src/sync-next/quarantine-retry.js';
 
 function target(dwnUrl: string): SyncTarget {
   return {
@@ -33,34 +33,51 @@ const entry: SyncNextQuarantineEntry = {
   version            : 1,
 };
 
-describe('SyncNextQuarantineCoordinator', () => {
+describe('SyncNextQuarantineRetry coordination', () => {
   afterEach(() => {
     sinon.restore();
   });
 
   it('should allow only one binding to retry a logical receipt before global backoff', async () => {
-    const ledger = { getQuarantineForLogicalTarget: sinon.stub().resolves([entry]) };
-    const retry = { retry: sinon.stub().resolves({ kind: 'pending' }) };
-    const coordinator = new SyncNextQuarantineCoordinator(ledger as never, retry as never);
+    sinon.useFakeTimers({ now: Date.parse('2026-09-22T12:00:00.000Z') });
+    let stored = entry;
+    const ledger = {
+      getQuarantineForLogicalTarget : sinon.stub().callsFake(async () => [stored]),
+      updateQuarantine              : sinon.stub().callsFake(async () => {
+        stored = { ...stored, attempts: stored.attempts + 1, lastAttemptAt: new Date().toISOString() };
+      }),
+    };
+    const quarantine = new SyncNextQuarantineRetry({} as never, ledger as never);
+    const retry = sinon.stub(quarantine, 'retry').callsFake(async () => {
+      await ledger.updateQuarantine();
+      return { kind: 'pending' };
+    });
 
     const [first, second] = await Promise.all([
-      coordinator.retryOne(target('https://first.example')),
-      coordinator.retryOne(target('https://second.example')),
+      quarantine.retryOne(target('https://first.example')),
+      quarantine.retryOne(target('https://second.example')),
     ]);
 
-    expect(retry.retry.calledOnce).toBe(true);
+    expect(retry.calledOnce).toBe(true);
     expect([first.kind, second.kind].sort()).toEqual(['deferred', 'pending']);
   });
 
   it('should back off a corrupt or unreadable row instead of hot-looping the failure', async () => {
-    const ledger = { getQuarantineForLogicalTarget: sinon.stub().resolves([entry]) };
-    const retry = { retry: sinon.stub().rejects(new Error('ciphertext is corrupt')) };
-    const coordinator = new SyncNextQuarantineCoordinator(ledger as never, retry as never);
+    sinon.useFakeTimers({ now: Date.parse('2026-09-22T12:00:00.000Z') });
+    let stored = entry;
+    const ledger = {
+      getQuarantineForLogicalTarget : sinon.stub().callsFake(async () => [stored]),
+      updateQuarantine              : sinon.stub().callsFake(async () => {
+        stored = { ...stored, attempts: stored.attempts + 1, lastAttemptAt: new Date().toISOString() };
+      }),
+    };
+    const quarantine = new SyncNextQuarantineRetry({} as never, ledger as never);
+    const retry = sinon.stub(quarantine, 'retry').rejects(new Error('ciphertext is corrupt'));
 
-    await expect(coordinator.retryOne(target('https://first.example'))).rejects.toThrow('ciphertext is corrupt');
-    const deferred = await coordinator.retryOne(target('https://second.example'));
+    await expect(quarantine.retryOne(target('https://first.example'))).rejects.toThrow('ciphertext is corrupt');
+    const deferred = await quarantine.retryOne(target('https://second.example'));
 
     expect(deferred.kind).toBe('deferred');
-    expect(retry.retry.calledOnce).toBe(true);
+    expect(retry.calledOnce).toBe(true);
   });
 });

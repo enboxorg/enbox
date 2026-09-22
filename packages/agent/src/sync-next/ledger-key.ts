@@ -31,24 +31,6 @@ export function syncNextTenantRange(tenantDid: string): { gte: string; lte: stri
   return { gte: prefix, lte: `${prefix}${KEY_END}` };
 }
 
-/** Secondary-index key for one logical-target quarantine receipt. */
-export function syncNextLogicalTargetReceiptKey(
-  logicalTargetId: string,
-  messageCid: string,
-  receiptKey: string,
-): string {
-  return [logicalTargetId, messageCid, receiptKey].map(encodePart).join('');
-}
-
-/** Prefix range for one logical target, optionally narrowed to one CID. */
-export function syncNextLogicalTargetRange(
-  logicalTargetId: string,
-  messageCid?: string,
-): { gte: string; lte: string } {
-  const prefix = [logicalTargetId, messageCid].flatMap(value => value === undefined ? [] : [encodePart(value)]).join('');
-  return { gte: prefix, lte: `${prefix}${KEY_END}` };
-}
-
 /** Durable key for one exact source receipt beneath its link. */
 export function syncNextReceiptKey(
   identity: SyncNextLinkIdentity,

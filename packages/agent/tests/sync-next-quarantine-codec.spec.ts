@@ -57,10 +57,7 @@ describe('SyncNext quarantine codec', () => {
 
   it('should round-trip received input through the existing vault encryption', async () => {
     const binding = { identity: identity(), messageCid: 'cid-1', source: source() };
-    const payload = {
-      entry   : entry(),
-      support : [entry('support-cid')],
-    };
+    const payload = { entry: entry() };
 
     const encrypted = await sealSyncNextQuarantinePayload(vault, binding, payload);
 
@@ -70,10 +67,7 @@ describe('SyncNext quarantine codec', () => {
 
   it('should reject ciphertext moved to another link, source position, or CID', async () => {
     const binding = { identity: identity(), messageCid: 'cid-1', source: source() };
-    const encrypted = await sealSyncNextQuarantinePayload(vault, binding, {
-      entry   : entry(),
-      support : [],
-    });
+    const encrypted = await sealSyncNextQuarantinePayload(vault, binding, { entry: entry() });
 
     await expect(openSyncNextQuarantinePayload(vault, {
       ...binding,
@@ -95,10 +89,7 @@ describe('SyncNext quarantine codec', () => {
       identity   : identity(),
       messageCid : 'cid-1',
       source     : source(),
-    }, {
-      entry   : entry('cid-2'),
-      support : [],
-    })).rejects.toThrow('root entry CID does not match its receipt');
+    }, { entry: entry('cid-2') })).rejects.toThrow('root entry CID does not match its receipt');
   });
 
   it('should reject an oversized row before encryption', async () => {
@@ -107,10 +98,7 @@ describe('SyncNext quarantine codec', () => {
       identity   : identity(),
       messageCid : 'cid-1',
       source     : source(),
-    }, {
-      entry   : entry('cid-1', oversized),
-      support : [],
-    })).rejects.toThrow('payload exceeds');
+    }, { entry: entry('cid-1', oversized) })).rejects.toThrow('payload exceeds');
   });
 
   it('should fail closed while the vault is locked', async () => {
@@ -120,9 +108,6 @@ describe('SyncNext quarantine codec', () => {
       identity   : identity(),
       messageCid : 'cid-1',
       source     : source(),
-    }, {
-      entry   : entry(),
-      support : [],
-    })).rejects.toThrow('vault is locked');
+    }, { entry: entry() })).rejects.toThrow('vault is locked');
   });
 });

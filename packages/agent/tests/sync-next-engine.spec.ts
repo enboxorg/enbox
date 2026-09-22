@@ -110,10 +110,7 @@ describe('SyncEngineNext orchestration', () => {
       expect((first as any)._control).toBeUndefined();
     } finally {
       for (const next of [first, second]) {
-        next['_identityWakePublisher']?.clear();
-        next['_identityWakePublisher']?.close();
-        next['_followedSourceWakePublisher']?.clear();
-        next['_followedSourceWakePublisher']?.close();
+        next['_catalogChannel']?.close();
       }
     }
   });
@@ -210,28 +207,6 @@ describe('SyncEngineNext orchestration', () => {
     expect(first).toBe(second);
     expect(first.target.dwnUrl).toBe('https://dwn.example/path');
     expect(createSession.calledOnce).toBe(true);
-  });
-
-  it('should coalesce failed subscription setup into one bounded retry', async () => {
-    const clock = sinon.useFakeTimers();
-    const internal = engine as any;
-    const syncTarget = target('did:example:subscription-retry', 'https://retry.example');
-    const item = { session: {}, subscribed: false, target: syncTarget };
-    const key = (SyncEngineNext as any).targetKey(syncTarget);
-    internal._live = true;
-    internal._sessions.set(key, item);
-    const refresh = sinon.stub(internal, 'scheduleLiveRefresh');
-
-    internal.scheduleSubscriptionRetry(item);
-    internal.scheduleSubscriptionRetry(item);
-    await clock.tickAsync(4_999);
-    expect(refresh.notCalled).toBe(true);
-    await clock.tickAsync(1);
-    expect(refresh.calledOnce).toBe(true);
-
-    internal.clearSubscriptionRetry(syncTarget);
-    internal._sessions.delete(key);
-    internal._live = false;
   });
 
   it('should include foreign role targets authorized by a scoped identity', async () => {

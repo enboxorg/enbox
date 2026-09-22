@@ -23,9 +23,7 @@ import type {
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
 
 import { AgentPermissionsApi } from '../permissions-api.js';
-import { BroadcastChannelWakePublisher } from '@enbox/dwn-sdk-js';
 import { buildLinkKey } from '../sync-link-key.js';
-import { CryptoUtils } from '@enbox/crypto';
 import { FollowedSyncSourceStoreLevel } from '../followed-sync-source-store-level.js';
 import { Level } from 'level';
 import { openSyncNextSubscriptions } from './subscriptions.js';
@@ -34,17 +32,15 @@ import { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from '../sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from '../sync-identity-store-level.js';
 import { SyncNextCatalog } from './catalog.js';
-import { SyncNextDeliveryRetry } from './delivery-retry.js';
 import { SyncNextEndpointGate } from './endpoint-gate.js';
 import { SyncNextLedgerStore } from './ledger-store.js';
 import { SyncNextLinkSession } from './link-session.js';
 import { SyncNextPullPage } from './pull-page.js';
 import { SyncNextPushPage } from './push-page.js';
-import { SyncNextQuarantineCoordinator } from './quarantine-coordinator.js';
 import { SyncNextQuarantineRetry } from './quarantine-retry.js';
 import { SyncTargetPlanner } from '../sync-target-planner.js';
 import { followedSyncSourceActiveEqual, normalizeFollowedSyncSource } from '../followed-sync-source.js';
-import { MAX_TIMER_DELAY_MS, parseDurationInMilliseconds } from '@enbox/common';
+import { MAX_TIMER_DELAY_MS, parseDurationInMilliseconds, runSerializedByKey } from '@enbox/common';
 import {
   messageFeedFiltersForSyncScope,
   normalizeSyncProtocols,
@@ -73,14 +69,6 @@ type ActiveSession = {
   target: SyncTarget;
 };
 
-type SubscriptionRetry = {
-  attempts: number;
-  timer?: ReturnType<typeof setTimeout>;
-};
-
-const SUBSCRIPTION_RETRY_DELAY_MS = 5_000;
-const MAX_SUBSCRIPTION_RETRY_DELAY_MS = 5 * 60_000;
-
 type MergedSyncRunRequest = {
   direction?: SyncDirection;
   directionConflict: boolean;
@@ -95,6 +83,10 @@ type PendingSyncRun = {
   promise: Promise<void>;
 };
 
+type CatalogWake =
+  | { did: string; kind: 'identity' }
+  | { deleted: boolean; kind: 'followed-source'; source: FollowedSyncSource };
+
 function isSignalAborted(signal?: AbortSignal): boolean {
   return signal?.aborted === true;
 }
@@ -103,9 +95,8 @@ function isSignalAborted(signal?: AbortSignal): boolean {
 export class SyncEngineNext implements SyncEngine {
   private _agent?: EnboxPlatformAgent;
   private _catalog?: SyncNextCatalog;
+  private readonly _catalogChannel?: BroadcastChannel;
   private _catalogClosed = false;
-  private _catalogWakeSequence = 0;
-  private readonly _catalogWakeSource = CryptoUtils.randomUuid();
   private _catalogWakeTail: Promise<void> = Promise.resolve();
   private readonly _db: AbstractLevel<LevelKey>;
   private readonly _echoSuppressor = new SyncEchoSuppressor();
@@ -113,32 +104,24 @@ export class SyncEngineNext implements SyncEngine {
   private readonly _endpointStore: SyncEndpointStoreLevel;
   private readonly _eventListeners = new Set<SyncEventListener>();
   private readonly _identityStore: SyncIdentityStoreLevel;
-  private readonly _identityWakePublisher?: BroadcastChannelWakePublisher;
   private readonly _ledger: SyncNextLedgerStore;
   private readonly _lockNamespace: string;
   private _live = false;
+  private readonly _operations = new Map<string, Promise<void>>();
   private readonly _pausedIdentities = new Map<string, string>();
   private _permissionsApi?: AgentPermissionsApi;
   private readonly _planner: SyncTargetPlanner;
-  private _quarantineCoordinator?: SyncNextQuarantineCoordinator;
-  private _oneShotActive = false;
+  private _quarantineRetry?: SyncNextQuarantineRetry;
   private _pendingSyncRun?: PendingSyncRun;
   private _resolver?: SyncTargetResolver;
   private _refreshLive?: Promise<void>;
   private _refreshLivePending = false;
-  private _retryTail: Promise<void> = Promise.resolve();
   private _runtimeGeneration = 0;
   private _runtimeTransitionDepth = 0;
   private readonly _sessionCreations = new Map<string, Promise<ActiveSession>>();
   private readonly _sessions = new Map<string, ActiveSession>();
-  private readonly _subscriptionRetries = new Map<string, SubscriptionRetry>();
   private readonly _sourceStore: FollowedSyncSourceStoreLevel;
-  private readonly _followedSourceSnapshot = new Map<string, FollowedSyncSource>();
-  private _followedSourceSnapshotInitialized = false;
-  private readonly _followedSourceWakePublisher?: BroadcastChannelWakePublisher;
-  private _syncTail: Promise<unknown> = Promise.resolve();
   private _timer?: ReturnType<typeof setInterval>;
-  private _transition: Promise<void> = Promise.resolve();
 
   public constructor({ dataPath, db }: SyncEngineNextParams = {}) {
     this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
@@ -156,23 +139,12 @@ export class SyncEngineNext implements SyncEngine {
       sourceStore : this._sourceStore,
       warn        : (message, error): void => { console.warn(message, error); },
     });
-    if (dataPath !== undefined) {
-      this._identityWakePublisher = new BroadcastChannelWakePublisher(
-        `enbox:sync-identity-registration:${dataPath}`,
-      );
-      this._identityWakePublisher.subscribe(({ tenant, seq }): void => {
-        if (!seq.startsWith(`${this._catalogWakeSource}:`)) {
-          this.scheduleCatalogWake((): Promise<void> => this.applyExternalIdentityChange(tenant));
-        }
-      });
-      this._followedSourceWakePublisher = new BroadcastChannelWakePublisher(
-        `enbox:sync-followed-source:${dataPath}`,
-      );
-      this._followedSourceWakePublisher.subscribe(({ seq }): void => {
-        if (!seq.startsWith(`${this._catalogWakeSource}:`)) {
-          this.scheduleCatalogWake((): Promise<void> => this.applyExternalFollowedSourceChanges());
-        }
-      });
+    if (dataPath !== undefined && typeof BroadcastChannel !== 'undefined') {
+      this._catalogChannel = new BroadcastChannel(`enbox:sync-catalog:${dataPath}`);
+      (this._catalogChannel as { unref?: () => void }).unref?.();
+      this._catalogChannel.onmessage = ({ data }: MessageEvent): void => {
+        this.scheduleCatalogWake(data);
+      };
     }
   }
 
@@ -199,14 +171,11 @@ export class SyncEngineNext implements SyncEngine {
       this._resolver,
       this._lockNamespace,
     );
-    this._quarantineCoordinator = new SyncNextQuarantineCoordinator(
+    this._quarantineRetry = new SyncNextQuarantineRetry(
+      agent,
       this._ledger,
-      new SyncNextQuarantineRetry(
-        agent,
-        this._ledger,
-        (target): Promise<SyncTarget> => this.targetResolver.withCurrentRoleGrant(target),
-        (pullTarget, entries): void => this.emitApplied(pullTarget, entries),
-      ),
+      (target): Promise<SyncTarget> => this.targetResolver.withCurrentRoleGrant(target),
+      (pullTarget, entries): void => this.emitApplied(pullTarget, entries),
     );
   }
 
@@ -237,7 +206,7 @@ export class SyncEngineNext implements SyncEngine {
       this._pausedIdentities.delete(did);
       this._planner.invalidate();
       this.emit({ type: 'identity:registration-change', tenantDid: did, options: normalized });
-      this.publishIdentityChange(did);
+      this.publishCatalogWake({ did, kind: 'identity' });
       await this.refreshLiveTargets(false, did);
     });
   }
@@ -261,7 +230,7 @@ export class SyncEngineNext implements SyncEngine {
       this._pausedIdentities.delete(params.did);
       this._planner.invalidate();
       this.emit({ type: 'identity:registration-change', tenantDid: params.did, options: normalized });
-      this.publishIdentityChange(params.did);
+      this.publishCatalogWake({ did: params.did, kind: 'identity' });
       await this.refreshLiveTargets(false, params.did);
     });
     return changed;
@@ -337,7 +306,7 @@ export class SyncEngineNext implements SyncEngine {
       this._pausedIdentities.delete(did);
       this._planner.invalidate();
       this.emit({ type: 'identity:registration-change', tenantDid: did });
-      this.publishIdentityChange(did);
+      this.publishCatalogWake({ did, kind: 'identity' });
       await this.refreshLiveTargets();
     });
   }
@@ -349,7 +318,6 @@ export class SyncEngineNext implements SyncEngine {
   public async followSource(source: FollowedSyncSourceInput): Promise<FollowedSyncSource> {
     let followed!: FollowedSyncSource;
     await this.runRuntimeTransition(async (): Promise<void> => {
-      await this.initializeFollowedSourceSnapshot();
       const result = await this.catalog.followSource(
         source,
         (accepted): Promise<void> => this.disposeFollowedContextSessions(accepted),
@@ -358,10 +326,9 @@ export class SyncEngineNext implements SyncEngine {
       if (!result.changed) {
         return;
       }
-      this._followedSourceSnapshot.set(SyncEngineNext.followedContextKey(followed), followed);
       this._planner.invalidate();
       this.emitFollowedSourceChange(followed, followed.id);
-      this.publishFollowedSourceChange(followed.sourceDid);
+      this.publishCatalogWake({ deleted: false, kind: 'followed-source', source: followed });
       await this.refreshLiveTargets(false, source.actorDid);
     });
     return followed;
@@ -371,22 +338,18 @@ export class SyncEngineNext implements SyncEngine {
     return this._sourceStore.get(id);
   }
 
-  public async listFollowedSources(): Promise<FollowedSyncSource[]> {
-    const sources = await this.catalog.listFollowedSources();
-    this.initializeFollowedSourceSnapshotFrom(sources);
-    return sources;
+  public listFollowedSources(): Promise<FollowedSyncSource[]> {
+    return this.catalog.listFollowedSources();
   }
 
   public async deleteFollowedSource(source: FollowedSyncSource): Promise<void> {
     await this.runRuntimeTransition(async (): Promise<void> => {
-      await this.initializeFollowedSourceSnapshot();
       const removed = await this.catalog.deleteFollowedSource(source, async (current): Promise<void> => {
         const identity = await this._identityStore.get(current.actorDid);
         const target = SyncEngineNext.normalizeTarget(
           await this.targetResolver.buildTargetForSource(current, identity?.delegateDid),
         );
         await this.disposeSession(target);
-        await this.waitForCancelledOneShot();
         await this._ledger.deleteLinkAndSparse({
           authorizationEpoch : target.authorizationEpoch,
           projectionId       : target.projectionId,
@@ -397,10 +360,9 @@ export class SyncEngineNext implements SyncEngine {
       if (removed === undefined) {
         return;
       }
-      this._followedSourceSnapshot.delete(SyncEngineNext.followedContextKey(removed));
       this._planner.invalidate();
       this.emitFollowedSourceChange(removed, undefined);
-      this.publishFollowedSourceChange(removed.sourceDid);
+      this.publishCatalogWake({ deleted: true, kind: 'followed-source', source: removed });
       await this.refreshLiveTargets(false, source.actorDid);
     });
   }
@@ -425,16 +387,13 @@ export class SyncEngineNext implements SyncEngine {
   public async pullFollowedSource(source: FollowedSyncSource): Promise<boolean> {
     const expected = normalizeFollowedSyncSource(source);
     const runtimeGeneration = this._runtimeGeneration;
-    const operation = this._retryTail.then(async (): Promise<boolean> => {
-      await this._syncTail;
-      if (runtimeGeneration !== this._runtimeGeneration) {
-        return false;
-      }
-      return this.runOneShot((): Promise<boolean> => this.runFollowedSourcePull(expected, runtimeGeneration));
-    });
-    this._retryTail = operation.then((): void => {}, (): void => {});
     try {
-      return await operation;
+      return await this.runExclusive(async (): Promise<boolean> => {
+        if (runtimeGeneration !== this._runtimeGeneration) {
+          return false;
+        }
+        return this.runFollowedSourcePull(expected, runtimeGeneration);
+      });
     } catch {
       return false;
     }
@@ -478,10 +437,10 @@ export class SyncEngineNext implements SyncEngine {
     if (this._runtimeTransitionDepth > 0) {
       return Promise.reject(new Error('SyncEngineNext: sync run cancelled by a runtime transition.'));
     }
-    if (this._oneShotActive || this._pendingSyncRun !== undefined) {
+    if (this.hasExclusiveWork || this._pendingSyncRun !== undefined) {
       return this.joinPendingSyncRun(direction, options);
     }
-    return this.runOneShot((): Promise<void> => this.runCoveringSync(direction, options));
+    return this.runExclusive((): Promise<void> => this.runCoveringSync(direction, options));
   }
 
   public async drainTo(endpoint: string, options: SyncDrainOptions = {}): Promise<SyncDrainResult> {
@@ -499,10 +458,10 @@ export class SyncEngineNext implements SyncEngine {
     if (this._runtimeTransitionDepth > 0) {
       throw new Error('SyncEngineNext: drain cancelled by a runtime transition.');
     }
-    if (this._oneShotActive || this._pendingSyncRun !== undefined) {
+    if (this.hasExclusiveWork || this._pendingSyncRun !== undefined) {
       throw new Error('SyncEngineNext: Sync operation is already in progress.');
     }
-    return this.runOneShot((): Promise<SyncDrainResult> => this.runDrain(normalizedEndpoint, options));
+    return this.runExclusive((): Promise<SyncDrainResult> => this.runDrain(normalizedEndpoint, options));
   }
 
   public async startSync(params: StartSyncParams = {}): Promise<void> {
@@ -550,10 +509,7 @@ export class SyncEngineNext implements SyncEngine {
   public async close(options: SyncLifecycleOptions = {}): Promise<void> {
     await this.stopSync(options.timeout ?? 2_000);
     this._catalogClosed = true;
-    this._identityWakePublisher?.clear();
-    this._identityWakePublisher?.close();
-    this._followedSourceWakePublisher?.clear();
-    this._followedSourceWakePublisher?.close();
+    this._catalogChannel?.close();
     await this._catalogWakeTail;
     await this._db.close();
   }
@@ -673,15 +629,12 @@ export class SyncEngineNext implements SyncEngine {
       throw new Error('SyncEngineNext: retry cancelled by a runtime transition.');
     }
     const runtimeGeneration = this._runtimeGeneration;
-    const retry = this._retryTail.then(async (): Promise<void> => {
-      await this._syncTail;
+    await this.runExclusive(async (): Promise<void> => {
       if (runtimeGeneration !== this._runtimeGeneration) {
         throw new Error('SyncEngineNext: queued retry was cancelled by a runtime transition.');
       }
-      await this.runOneShot((): Promise<void> => this.runRetryRemoteNow(tenantDid, remoteEndpoint));
+      await this.runRetryRemoteNow(tenantDid, remoteEndpoint);
     });
-    this._retryTail = retry.catch((): void => {});
-    await retry;
   }
 
   /**
@@ -720,7 +673,6 @@ export class SyncEngineNext implements SyncEngine {
         : targets;
       await Promise.all(resetTargets.map(target => this.ensureSession(target)));
       await Promise.all(resetTargets.map(target => this.disposeSession(target)));
-      await this.waitForCancelledOneShot();
       const links = (await Promise.all(resetTargets.map(target => this._ledger.getLink({
         authorizationEpoch : target.authorizationEpoch,
         projectionId       : target.projectionId,
@@ -799,11 +751,11 @@ export class SyncEngineNext implements SyncEngine {
     return this._catalog;
   }
 
-  private get quarantineCoordinator(): SyncNextQuarantineCoordinator {
-    if (this._quarantineCoordinator === undefined) {
+  private get quarantineRetry(): SyncNextQuarantineRetry {
+    if (this._quarantineRetry === undefined) {
       throw new Error('SyncEngineNext: agent is not set.');
     }
-    return this._quarantineCoordinator;
+    return this._quarantineRetry;
   }
 
   private async runDrain(endpoint: string, options: SyncDrainOptions): Promise<SyncDrainResult> {
@@ -821,26 +773,9 @@ export class SyncEngineNext implements SyncEngine {
       const shouldContinue = (): boolean => !isSignalAborted(options.signal) &&
         runtimeGeneration === this._runtimeGeneration &&
         topologyGeneration === this._planner.topologyGeneration;
-      const pullOutcomes = await this.settleCovers(active, 'pull', shouldContinue);
-      const stopAfterPull = isSignalAborted(options.signal) ||
-        topologyGeneration !== this._planner.topologyGeneration;
-      const pushOutcomes = stopAfterPull
-        ? SyncEngineNext.rejectedOutcomes(
-          active.length,
-          options.signal?.reason ?? new Error('SyncEngineNext: drain topology changed.'),
-        )
-        : await this.settleCovers(active, 'push', shouldContinue);
-      const targetOutcomes = await this.settleByEndpoint(
-        planned.map((target, index) => ({ index, target })),
-        ({ index, target }): Promise<SyncDrainTargetResult> => this.drainTarget(
-          target,
-          pullOutcomes[index],
-          pushOutcomes[index],
-          runtimeGeneration,
-          topologyGeneration,
-          options,
-        ),
-      );
+      const targetOutcomes = await Promise.allSettled(active.map(({ session, target }) =>
+        this.drainTarget(target, session, shouldContinue, options)
+      ));
       const targets = targetOutcomes.map((outcome, index): SyncDrainTargetResult => outcome.status === 'fulfilled'
         ? outcome.value
         : {
@@ -889,12 +824,33 @@ export class SyncEngineNext implements SyncEngine {
 
   private async drainTarget(
     target: SyncTarget,
-    pullOutcome: PromiseSettledResult<void>,
-    pushOutcome: PromiseSettledResult<void>,
-    runtimeGeneration: number,
-    topologyGeneration: number,
+    session: SyncNextLinkSession,
+    shouldContinue: () => boolean,
     options: SyncDrainOptions,
   ): Promise<SyncDrainTargetResult> {
+    let convergence: {
+      converged: boolean;
+      error?: string;
+      localFingerprint?: string;
+      remoteFingerprint?: string;
+    };
+    const transfers = await Promise.allSettled([
+      session.cover('pull', shouldContinue),
+      session.cover('push', shouldContinue),
+    ]);
+    const transferError = transfers
+      .find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')?.reason;
+    try {
+      if (transferError !== undefined) {
+        throw transferError;
+      }
+      if (!shouldContinue()) {
+        throw options.signal?.reason ?? new DOMException('Drain cancelled.', 'AbortError');
+      }
+      convergence = await this.verifyStableConvergenceAtEndpoint(target, shouldContinue);
+    } catch (error: unknown) {
+      convergence = { converged: false, error: error instanceof Error ? error.message : String(error) };
+    }
     const link = await this._ledger.getLink({
       authorizationEpoch : target.authorizationEpoch,
       projectionId       : target.projectionId,
@@ -912,50 +868,15 @@ export class SyncEngineNext implements SyncEngine {
         tenantDid      : target.did,
       };
     }
-
-    let convergence: {
-      converged: boolean;
-      error?: string;
-      localFingerprint?: string;
-      remoteFingerprint?: string;
-    };
-    const transferError = [pullOutcome, pushOutcome]
-      .find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')?.reason;
-    try {
-      if (transferError !== undefined) {
-        throw transferError;
-      }
-      if (isSignalAborted(options.signal)) {
-        throw options.signal?.reason ?? new DOMException('Drain cancelled.', 'AbortError');
-      }
-      if (runtimeGeneration !== this._runtimeGeneration) {
-        throw new Error('SyncEngineNext: sync runtime changed during drain.');
-      }
-      if (topologyGeneration !== this._planner.topologyGeneration) {
-        throw new Error('SyncEngineNext: drain topology changed.');
-      }
-      convergence = await this.verifyStableConvergence(
-        target,
-        (): boolean => !isSignalAborted(options.signal) &&
-          runtimeGeneration === this._runtimeGeneration &&
-          topologyGeneration === this._planner.topologyGeneration,
-      );
-    } catch (error: unknown) {
-      convergence = { converged: false, error: error instanceof Error ? error.message : String(error) };
-    }
     const [delivery, quarantine] = await Promise.all([
       this._ledger.getDeliveryForLink(link),
       this._ledger.getQuarantineForLink(link),
     ]);
     const cancelled = isSignalAborted(options.signal);
-    const runtimeChanged = runtimeGeneration !== this._runtimeGeneration;
-    const topologyChanged = topologyGeneration !== this._planner.topologyGeneration;
     const completed = convergence.converged &&
       delivery.length === 0 &&
       quarantine.length === 0 &&
-      !cancelled &&
-      !runtimeChanged &&
-      !topologyChanged;
+      shouldContinue();
     return {
       cancelled,
       completed,
@@ -968,19 +889,6 @@ export class SyncEngineNext implements SyncEngine {
       scope             : link.scope,
       tenantDid         : link.tenantDid,
     };
-  }
-
-  private runOneShot<T>(operation: () => Promise<T>): Promise<T> {
-    this._oneShotActive = true;
-    const active = (async (): Promise<T> => {
-      try {
-        return await operation();
-      } finally {
-        this._oneShotActive = false;
-      }
-    })();
-    this._syncTail = active.catch((): void => {});
-    return active;
   }
 
   private joinPendingSyncRun(direction: SyncDirection | undefined, options: SyncRunOptions): Promise<void> {
@@ -997,23 +905,22 @@ export class SyncEngineNext implements SyncEngine {
       verifyConvergence : options.verifyConvergence === true,
     };
     const pending: PendingSyncRun = { cancelled: false, merged, promise: Promise.resolve() };
-    pending.promise = this._syncTail.then(async (): Promise<void> => {
+    pending.promise = this.runExclusive(async (): Promise<void> => {
       if (this._pendingSyncRun === pending) {
         this._pendingSyncRun = undefined;
       }
       if (pending.cancelled) {
         throw new Error('SyncEngineNext: queued sync run was cancelled by a runtime transition.');
       }
-      await this.runOneShot((): Promise<void> => this.runCoveringSync(
+      await this.runCoveringSync(
         merged.directionConflict ? undefined : merged.direction,
         {
           ...(merged.unscoped || merged.did === undefined ? {} : { did: merged.did }),
           ...(merged.verifyConvergence ? { verifyConvergence: true } : {}),
         },
-      ));
+      );
     });
     this._pendingSyncRun = pending;
-    this._syncTail = pending.promise.catch((): void => {});
     return pending.promise;
   }
 
@@ -1058,18 +965,15 @@ export class SyncEngineNext implements SyncEngine {
         : await this.settleCovers(sessions, direction, shouldContinue));
       const transferFailed = outcomes.some(outcome => outcome.status === 'rejected');
       if (options.verifyConvergence === true && !transferFailed) {
-        outcomes.push(...await this.settleByEndpoint(
-          targets.map(target => ({ target })),
-          async ({ target }): Promise<void> => {
-            if (!shouldContinue()) {
-              throw new Error('SyncEngineNext: convergence proof cancelled by a runtime transition.');
-            }
-            const convergence = await this.verifyStableConvergence(target, shouldContinue);
-            if (!convergence.converged) {
-              throw new Error(convergence.error ?? 'SyncEngineNext: feed fingerprints did not converge.');
-            }
-          },
-        ));
+        outcomes.push(...await Promise.allSettled(targets.map(async (target): Promise<void> => {
+          if (!shouldContinue()) {
+            throw new Error('SyncEngineNext: convergence proof cancelled by a runtime transition.');
+          }
+          const convergence = await this.verifyStableConvergenceAtEndpoint(target, shouldContinue);
+          if (!convergence.converged) {
+            throw new Error(convergence.error ?? 'SyncEngineNext: feed fingerprints did not converge.');
+          }
+        })));
       }
     } finally {
       if (!this._live) {
@@ -1103,7 +1007,6 @@ export class SyncEngineNext implements SyncEngine {
             ),
           );
           item.subscribed = true;
-          this.clearSubscriptionRetry(item.target);
           this._endpointGate.clear(item.target.dwnUrl);
           this.emit({
             type           : 'link:status-change',
@@ -1114,7 +1017,6 @@ export class SyncEngineNext implements SyncEngine {
             to             : 'live',
           });
         } catch (error: unknown) {
-          this.scheduleSubscriptionRetry(item);
           console.error('SyncEngineNext: subscription establishment failed', error);
         }
       }
@@ -1168,7 +1070,6 @@ export class SyncEngineNext implements SyncEngine {
       });
     }
     console.warn('SyncEngineNext: subscription ended; scheduled refresh will retry it', error);
-    this.scheduleSubscriptionRetry(item);
   }
 
   private async createSession(target: SyncTarget, key: string): Promise<ActiveSession> {
@@ -1216,8 +1117,7 @@ export class SyncEngineNext implements SyncEngine {
         this._ledger,
         pullPage,
         pushPage,
-        this.quarantineCoordinator,
-        new SyncNextDeliveryRetry(this.agent, this._ledger),
+        this.quarantineRetry,
         (error): void => { console.error('SyncEngineNext: link work failed', error); },
         {
           block : (delayMs): void => { this._endpointGate.block(target.dwnUrl, delayMs); },
@@ -1330,29 +1230,17 @@ export class SyncEngineNext implements SyncEngine {
     }));
   }
 
-  /** Serialize finite multi-request proofs per endpoint while independent endpoints overlap. */
-  private async settleByEndpoint<T extends { target: SyncTarget }, TResult>(
-    items: readonly T[],
-    operation: (item: T) => Promise<TResult>,
-  ): Promise<PromiseSettledResult<TResult>[]> {
-    const outcomes = new Array<PromiseSettledResult<TResult>>(items.length);
-    const groups = new Map<string, number[]>();
-    for (let index = 0; index < items.length; index++) {
-      const endpoint = normalizeDwnEndpoint(items[index].target.dwnUrl);
-      const group = groups.get(endpoint) ?? [];
-      group.push(index);
-      groups.set(endpoint, group);
-    }
-    await Promise.all([...groups.values()].map(async (indexes): Promise<void> => {
-      for (const index of indexes) {
-        try {
-          outcomes[index] = { status: 'fulfilled', value: await operation(items[index]) };
-        } catch (reason: unknown) {
-          outcomes[index] = { status: 'rejected', reason };
-        }
-      }
-    }));
-    return outcomes;
+  /** Keep finite fingerprint proofs serial per endpoint without serializing page coverage. */
+  private verifyStableConvergenceAtEndpoint(
+    target: SyncTarget,
+    shouldContinue: () => boolean,
+  ): ReturnType<SyncEngineNext['verifyStableConvergence']> {
+    return runSerializedByKey(
+      this._operations,
+      `convergence:${normalizeDwnEndpoint(target.dwnUrl)}`,
+      (): ReturnType<SyncEngineNext['verifyStableConvergence']> =>
+        this.verifyStableConvergence(target, shouldContinue),
+    );
   }
 
   private async pruneSupersededLinks(targets: readonly SyncTarget[]): Promise<void> {
@@ -1390,7 +1278,6 @@ export class SyncEngineNext implements SyncEngine {
       : buildLinkKey(target.tenantDid, target.remoteEndpoint, target.projectionId, target.authorizationEpoch);
     const active = this._sessions.get(key);
     if (active !== undefined) {
-      this.clearSubscriptionRetry(active.target);
       await active.session.dispose();
       this._sessions.delete(key);
     }
@@ -1414,12 +1301,10 @@ export class SyncEngineNext implements SyncEngine {
   private async disposeSessions(matches: (target: SyncTarget) => boolean): Promise<void> {
     await Promise.allSettled([...this._sessionCreations.values()]);
     const sessions = [...this._sessions.entries()].filter(([, { target }]) => matches(target));
-    await Promise.all(sessions.map(async ([key, { session, target }]): Promise<void> => {
-      this.clearSubscriptionRetry(target);
+    await Promise.all(sessions.map(async ([key, { session }]): Promise<void> => {
       await session.dispose();
       this._sessions.delete(key);
     }));
-    await this.waitForCancelledOneShot();
   }
 
   private async stopRuntime(): Promise<void> {
@@ -1432,20 +1317,9 @@ export class SyncEngineNext implements SyncEngine {
     await Promise.allSettled([...this._sessionCreations.values()]);
     const sessions = [...this._sessions.values()];
     this._sessions.clear();
-    for (const retry of this._subscriptionRetries.values()) {
-      if (retry.timer !== undefined) {
-        clearTimeout(retry.timer);
-      }
-    }
-    this._subscriptionRetries.clear();
     this._echoSuppressor.clear();
     this._endpointGate.reset();
     await Promise.all(sessions.map(({ session }) => session.dispose()));
-    await this.waitForCancelledOneShot();
-  }
-
-  private async waitForCancelledOneShot(): Promise<void> {
-    await this._syncTail.catch((): void => {});
   }
 
   private scheduleLiveRefresh(): void {
@@ -1475,45 +1349,15 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
-  private scheduleSubscriptionRetry(item: ActiveSession): void {
-    if (!this._live || item.subscribed) {
+  /** Validate and serialize catalog wakes from sibling contexts. */
+  private scheduleCatalogWake(value: unknown): void {
+    const message = SyncEngineNext.catalogWake(value);
+    if (this._catalogClosed || message === undefined) {
       return;
     }
-    const key = SyncEngineNext.targetKey(item.target);
-    const retry = this._subscriptionRetries.get(key) ?? { attempts: 0 };
-    if (retry.timer !== undefined) {
-      return;
-    }
-    retry.attempts++;
-    const exponent = Math.min(retry.attempts - 1, 6);
-    const delay = Math.min(SUBSCRIPTION_RETRY_DELAY_MS * (2 ** exponent), MAX_SUBSCRIPTION_RETRY_DELAY_MS);
-    retry.timer = setTimeout((): void => {
-      retry.timer = undefined;
-      if (
-        this._live &&
-        this._sessions.get(key) === item &&
-        !item.subscribed
-      ) {
-        this.scheduleLiveRefresh();
-      }
-    }, delay);
-    this._subscriptionRetries.set(key, retry);
-  }
-
-  private clearSubscriptionRetry(target: SyncTarget): void {
-    const key = SyncEngineNext.targetKey(target);
-    const retry = this._subscriptionRetries.get(key);
-    if (retry?.timer !== undefined) {
-      clearTimeout(retry.timer);
-    }
-    this._subscriptionRetries.delete(key);
-  }
-
-  /** Serialize catalog wakes so sibling contexts cannot interleave topology replacement. */
-  private scheduleCatalogWake(operation: () => Promise<void>): void {
-    if (this._catalogClosed) {
-      return;
-    }
+    const operation = message.kind === 'identity'
+      ? (): Promise<void> => this.applyExternalIdentityChange(message.did)
+      : (): Promise<void> => this.applyExternalFollowedSourceChange(message.source, message.deleted);
     const wake = this._catalogWakeTail.then(operation, operation).catch((error: unknown): void => {
       if (!this._catalogClosed) {
         console.error('SyncEngineNext: cross-context catalog refresh failed', error);
@@ -1543,63 +1387,18 @@ export class SyncEngineNext implements SyncEngine {
     });
   }
 
-  private async applyExternalFollowedSourceChanges(): Promise<void> {
+  private async applyExternalFollowedSourceChange(
+    source: FollowedSyncSource,
+    deleted: boolean,
+  ): Promise<void> {
     await this.runRuntimeTransition(async (): Promise<void> => {
-      const sources = await this.catalog.listFollowedSources();
-      if (!this._followedSourceSnapshotInitialized) {
-        this.initializeFollowedSourceSnapshotFrom(sources);
-        this._planner.invalidate();
-        await this.refreshLiveTargets();
-        return;
-      }
-
-      const current = new Map(sources.map(source => [SyncEngineNext.followedContextKey(source), source]));
-      const changes: Array<{
-        next?: FollowedSyncSource;
-        previous?: FollowedSyncSource;
-      }> = [];
-      for (const key of new Set([...this._followedSourceSnapshot.keys(), ...current.keys()])) {
-        const previous = this._followedSourceSnapshot.get(key);
-        const next = current.get(key);
-        if (previous !== undefined && next !== undefined && followedSyncSourceActiveEqual(previous, next)) {
-          continue;
-        }
-        changes.push({
-          ...(next === undefined ? {} : { next }),
-          ...(previous === undefined ? {} : { previous }),
-        });
-      }
-      if (changes.length === 0) {
-        return;
-      }
-
-      const changedSources = new Map<string, FollowedSyncSource>();
-      for (const { next, previous } of changes) {
-        for (const source of [next, previous]) {
-          if (source !== undefined) {
-            changedSources.set(source.acceptanceId, source);
-          }
-        }
-      }
-      await Promise.all([...changedSources.values()].map(source => this.disposeFollowedContextSessions(source)));
-      for (const { next, previous } of changes) {
-        if (previous !== undefined && next === undefined) {
-          await this.deleteRoleLinkAndSparse(previous);
-        }
-      }
-
-      this._followedSourceSnapshot.clear();
-      for (const [key, source] of current) {
-        this._followedSourceSnapshot.set(key, source);
+      await this.disposeFollowedContextSessions(source);
+      if (deleted) {
+        await this.deleteRoleLinkAndSparse(source);
       }
       this._planner.invalidate();
-      for (const { next, previous } of changes) {
-        const changed = next ?? previous;
-        if (changed !== undefined) {
-          this.emitFollowedSourceChange(changed, next?.id);
-        }
-      }
-      await this.refreshLiveTargets();
+      this.emitFollowedSourceChange(source, deleted ? undefined : source.id);
+      await this.refreshLiveTargets(false, source.actorDid);
     });
   }
 
@@ -1615,34 +1414,12 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
-  private async initializeFollowedSourceSnapshot(): Promise<void> {
-    if (!this._followedSourceSnapshotInitialized) {
-      this.initializeFollowedSourceSnapshotFrom(await this.catalog.listFollowedSources());
+  private publishCatalogWake(message: CatalogWake): void {
+    try {
+      this._catalogChannel?.postMessage(message);
+    } catch {
+      // Cross-context notification is best effort; durable catalog state remains authoritative.
     }
-  }
-
-  private initializeFollowedSourceSnapshotFrom(sources: readonly FollowedSyncSource[]): void {
-    if (this._followedSourceSnapshotInitialized) {
-      return;
-    }
-    for (const source of sources) {
-      this._followedSourceSnapshot.set(SyncEngineNext.followedContextKey(source), source);
-    }
-    this._followedSourceSnapshotInitialized = true;
-  }
-
-  private publishIdentityChange(did: string): void {
-    this._identityWakePublisher?.publish({
-      tenant : did,
-      seq    : `${this._catalogWakeSource}:${++this._catalogWakeSequence}`,
-    });
-  }
-
-  private publishFollowedSourceChange(sourceDid: string): void {
-    this._followedSourceWakePublisher?.publish({
-      tenant : sourceDid,
-      seq    : `${this._catalogWakeSource}:${++this._catalogWakeSequence}`,
-    });
   }
 
   private runRuntimeTransition(operation: () => Promise<void>): Promise<void> {
@@ -1652,15 +1429,17 @@ export class SyncEngineNext implements SyncEngine {
       this._pendingSyncRun.cancelled = true;
       this._pendingSyncRun = undefined;
     }
-    return this.runTransition(operation).finally((): void => {
+    return this.runExclusive(operation).finally((): void => {
       this._runtimeTransitionDepth--;
     });
   }
 
-  private runTransition(operation: () => Promise<void>): Promise<void> {
-    const transition = this._transition.then(operation, operation);
-    this._transition = transition.catch((): void => {});
-    return transition;
+  private get hasExclusiveWork(): boolean {
+    return this._operations.has('engine');
+  }
+
+  private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return runSerializedByKey(this._operations, 'engine', operation);
   }
 
   private emitApplied(target: SyncTarget, entries: readonly SyncFreshEntry[]): void {
@@ -1744,10 +1523,26 @@ export class SyncEngineNext implements SyncEngine {
       (target.authorization.kind === 'role' && target.authorization.actorDid === did);
   }
 
-  private static followedContextKey(
-    source: Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'protocol' | 'sourceDid'>,
-  ): string {
-    return JSON.stringify([source.sourceDid, source.actorDid, source.protocol, source.contextId]);
+  private static catalogWake(value: unknown): CatalogWake | undefined {
+    if (typeof value !== 'object' || value === null) {
+      return;
+    }
+    const candidate = value as { deleted?: unknown; did?: unknown; kind?: unknown; source?: unknown };
+    if (candidate.kind === 'identity' && typeof candidate.did === 'string') {
+      return { did: candidate.did, kind: 'identity' };
+    }
+    if (candidate.kind !== 'followed-source' || typeof candidate.deleted !== 'boolean') {
+      return;
+    }
+    try {
+      return {
+        deleted : candidate.deleted,
+        kind    : 'followed-source',
+        source  : normalizeFollowedSyncSource(candidate.source as FollowedSyncSource),
+      };
+    } catch {
+      return;
+    }
   }
 
   private static healthKey(link: {
@@ -1779,7 +1574,4 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
-  private static rejectedOutcomes(count: number, reason: unknown): PromiseRejectedResult[] {
-    return Array.from({ length: count }, (): PromiseRejectedResult => ({ status: 'rejected', reason }));
-  }
 }

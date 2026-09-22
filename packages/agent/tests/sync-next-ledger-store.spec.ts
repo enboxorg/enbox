@@ -5,11 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import type { SyncNextLinkCreate, SyncNextLinkIdentity } from '../src/sync-next/types.js';
 
-import {
-  SyncNextCapacityError,
-  SyncNextLedgerStore,
-  SyncNextProgressError,
-} from '../src/sync-next/ledger-store.js';
+import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 
 function token(position: number, domain = 'one', messageCid?: string): ProgressToken {
   return {
@@ -155,7 +151,7 @@ describe('SyncNextLedgerStore', () => {
         outcome          : { reason: 'data' },
       }],
       settled: [validSource],
-    })).rejects.toBeInstanceOf(SyncNextProgressError);
+    })).rejects.toThrow('more than one page disposition');
 
     await expect(store.commitPullPage(identity(create), {
       handledThrough : token(2, 'pull'),
@@ -340,7 +336,7 @@ describe('SyncNextLedgerStore', () => {
         source           : token(2, 'pull', 'cid-2'),
       }],
       settled: [],
-    })).rejects.toBeInstanceOf(SyncNextCapacityError);
+    })).rejects.toThrow('quarantine entry capacity');
     expect((await limited.getLink(identity(create)))?.pullHandledThrough).toEqual(token(1, 'pull'));
     expect(await limited.getQuarantineForLink(identity(create))).toHaveLength(1);
 
@@ -385,7 +381,7 @@ describe('SyncNextLedgerStore', () => {
       }],
       handledThrough : token(2, 'push'),
       settled        : [],
-    })).rejects.toBeInstanceOf(SyncNextCapacityError);
+    })).rejects.toThrow('delivery obligation capacity');
     expect((await limited.getLink(identity(create)))?.pushHandledThrough).toEqual(token(1, 'push'));
     expect(await limited.getDeliveryForLink(identity(create))).toHaveLength(1);
   });
