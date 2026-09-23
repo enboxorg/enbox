@@ -33,13 +33,7 @@ export type SyncTargetPlannerParams = {
   sourceStore: FollowedSyncSourceStore;
   now?: () => number;
   isIdentityPaused: (did: string, delegateDid?: string) => boolean;
-  handleAuthorizationFailure: (did: string, options: SyncIdentityOptions, error: unknown) => Promise<boolean>;
   warn?: (message: string, error: unknown) => void;
-};
-
-export type SyncTargetPlanningOptions = {
-  /** Run engine-owned pruning before a complete target snapshot is cached. */
-  beforeCache?: (targets: SyncTarget[], topologyGeneration: number) => Promise<void>;
 };
 
 type SyncTargetCache = {
@@ -66,7 +60,6 @@ export class SyncTargetPlanner {
   private readonly _getTargetResolver: () => SyncTargetPlanningResolver;
   private readonly _identityStore: SyncIdentityStore;
   private readonly _isIdentityPaused: SyncTargetPlannerParams['isIdentityPaused'];
-  private readonly _handleAuthorizationFailure: SyncTargetPlannerParams['handleAuthorizationFailure'];
   private readonly _sourceStore: FollowedSyncSourceStore;
   private _lastResolutionComplete = false;
   private readonly _now: () => number;
@@ -78,7 +71,6 @@ export class SyncTargetPlanner {
     getTargetResolver,
     identityStore,
     isIdentityPaused,
-    handleAuthorizationFailure,
     sourceStore,
     now = (): number => Date.now(),
     warn = (message, error): void => { console.warn(message, error); },
@@ -87,7 +79,6 @@ export class SyncTargetPlanner {
     this._getTargetResolver = getTargetResolver;
     this._identityStore = identityStore;
     this._isIdentityPaused = isIdentityPaused;
-    this._handleAuthorizationFailure = handleAuthorizationFailure;
     this._sourceStore = sourceStore;
     this._now = now;
     this._warn = warn;
@@ -111,7 +102,7 @@ export class SyncTargetPlanner {
   }
 
   /** Resolve every registered identity into canonical sync targets. */
-  public async getTargets({ beforeCache }: SyncTargetPlanningOptions = {}): Promise<SyncTarget[]> {
+  public async getTargets(): Promise<SyncTarget[]> {
     if (this._cache !== undefined && (this._now() - this._cache.timestamp) < this._cacheTtlMs) {
       this._lastResolutionComplete = true;
       return this._cache.targets;
@@ -156,9 +147,8 @@ export class SyncTargetPlanner {
       targets.push(await this._getTargetResolver().buildTargetForSource(entry.source, identity.delegateDid));
     }
 
-    await this.cacheCompleteTargets({
+    this.cacheCompleteTargets({
       anyTargetUnavailable,
-      beforeCache,
       topologyGenerationAtStart,
       hasRegistrations,
       targets,
@@ -167,22 +157,15 @@ export class SyncTargetPlanner {
   }
 
   /** Shared prerequisite for endpoint planning and durable-link retention. */
-  public async resolveAuthorization(did: string, options: SyncIdentityOptions): Promise<SyncTargetResolution[] | undefined> {
+  private async resolveAuthorization(did: string, options: SyncIdentityOptions): Promise<SyncTargetResolution[] | undefined> {
     if (this._isIdentityPaused(did, options.delegateDid)) {
       return undefined;
     }
-    try {
-      return await this._getTargetResolver().buildTargetResolutions(did, syncScopeFromProtocols(options.protocols), options);
-    } catch (error: unknown) {
-      if (await this._handleAuthorizationFailure(did, options, error)) {
-        return undefined;
-      }
-      throw error;
-    }
+    return this._getTargetResolver().buildTargetResolutions(did, syncScopeFromProtocols(options.protocols), options);
   }
 
   /** Resolve shared authorization once before materializing endpoint-specific targets. */
-  public async resolveIdentity(did: string, options: SyncIdentityOptions): Promise<RegisteredIdentityTargets> {
+  private async resolveIdentity(did: string, options: SyncIdentityOptions): Promise<RegisteredIdentityTargets> {
     let resolutions: SyncTargetResolution[] | undefined;
     try {
       resolutions = await this.resolveAuthorization(did, options);
@@ -220,19 +203,17 @@ export class SyncTargetPlanner {
     return { targets, unavailable };
   }
 
-  private async cacheCompleteTargets({
+  private cacheCompleteTargets({
     anyTargetUnavailable,
-    beforeCache,
     topologyGenerationAtStart,
     hasRegistrations,
     targets,
   }: {
     anyTargetUnavailable: boolean;
-    beforeCache: SyncTargetPlanningOptions['beforeCache'];
     topologyGenerationAtStart: number;
     hasRegistrations: boolean;
     targets: SyncTarget[];
-  }): Promise<void> {
+  }): void {
     const topologyGenerationIsCurrent = this._topologyGeneration === topologyGenerationAtStart;
     this._lastResolutionComplete = !anyTargetUnavailable && topologyGenerationIsCurrent;
     const isComplete = hasRegistrations && this._lastResolutionComplete;
@@ -240,7 +221,6 @@ export class SyncTargetPlanner {
       return;
     }
 
-    await beforeCache?.(targets, topologyGenerationAtStart);
     if (this._topologyGeneration === topologyGenerationAtStart) {
       this._cache = { targets, timestamp: this._now() };
     } else {

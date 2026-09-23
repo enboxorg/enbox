@@ -8,23 +8,21 @@ import type {
   SyncNextDeliveryInput,
   SyncNextDeliveryObligation,
   SyncNextDeliveryOutcome,
-  SyncNextLinkIdentity,
-  SyncNextSettledSource,
+  SyncNextSourceReceipt,
 } from './types.js';
 
-import { compareSyncNextPosition } from './ledger-key.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
-import { sourceTokenFromFeedEntry } from './feed-entry.js';
+import { syncNextLinkIdentity } from './ledger-key.js';
+import { assertPageCursorAdvanced, sourceTokenFromFeedEntry } from './feed-entry.js';
 import { queryLocalMessageFeed, RemoteApplyPushContext } from '../sync-messages.js';
 
 const PUSH_PAGE_SIZE = 100;
 
-export type SyncNextPushPageResult = {
-  aborted?: true;
+export type SyncNextPushPageResult = { aborted: true } | {
+  aborted?: false;
   delivered: number;
   endpointBlock?: SyncNextDeliveryOutcome;
-  handledThrough?: ProgressToken;
   hasMore: boolean;
   retained: number;
 };
@@ -40,7 +38,6 @@ export type SyncNextPushPageObserver = {
 };
 
 export type SyncNextDeliveryRetryResult = {
-  aborted?: true;
   kind: 'aborted' | 'pending' | 'settled';
   outcome?: SyncNextDeliveryOutcome;
 };
@@ -60,17 +57,17 @@ export class SyncNextPushPage {
   ): Promise<SyncNextPushPageResult> {
     const shouldContinue = options.shouldContinue ?? ((): boolean => true);
     if (target.authorization.kind === 'role') {
-      return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
+      return { aborted: true };
     }
-    const identity = SyncNextPushPage.identity(target);
+    const identity = syncNextLinkIdentity(target);
     const link = await this._ledger.getLink(identity);
     if (link === undefined || link.status !== 'active' || !shouldContinue()) {
-      return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
+      return { aborted: true };
     }
 
     const reply = await this.query(target, link.pushHandledThrough);
     if (!shouldContinue()) {
-      return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
+      return { aborted: true };
     }
     SyncNextPushPage.assertSuccessfulPage(reply, target);
     const handledThrough = reply.cursor;
@@ -79,7 +76,12 @@ export class SyncNextPushPage {
         `SyncNextPushPage: local feed for ${target.did} returned no cursor for a successful page.`,
       );
     }
-    SyncNextPushPage.assertCursorAdvanced(link.pushHandledThrough, handledThrough, reply.drained === true);
+    assertPageCursorAdvanced(
+      link.pushHandledThrough,
+      handledThrough,
+      reply.drained === true,
+      'SyncNextPushPage',
+    );
 
     const context = new RemoteApplyPushContext({
       agent         : this._agent,
@@ -94,12 +96,12 @@ export class SyncNextPushPage {
       signal             : options.signal,
     });
     const delivery: SyncNextDeliveryInput[] = [];
-    const settled: SyncNextSettledSource[] = [];
+    const settled: SyncNextSourceReceipt[] = [];
     let endpointBlock = options.endpointBlock;
 
     for (const entry of reply.entries ?? []) {
       if (!shouldContinue()) {
-        return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
+        return { aborted: true };
       }
       const source = sourceTokenFromFeedEntry(handledThrough, entry);
       if (this._echoSuppressor?.hasRecentlyPulled(target.did, entry.messageCid, target.dwnUrl) === true) {
@@ -110,14 +112,8 @@ export class SyncNextPushPage {
         delivery.push({
           messageCid : entry.messageCid,
           outcome    : endpointBlock === undefined
-            ? {
-              detail : 'non-inline payload is delivered outside page intake',
-              reason : 'remote-incomplete',
-            }
-            : {
-              ...endpointBlock,
-              detail: `endpoint blocked after an earlier page delivery: ${endpointBlock.detail ?? endpointBlock.reason}`,
-            },
+            ? { reason: 'remote-incomplete' }
+            : endpointBlock,
           source,
         });
         continue;
@@ -132,7 +128,7 @@ export class SyncNextPushPage {
 
       const outcome = SyncNextPushPage.deliveryOutcome(failure);
       delivery.push({ messageCid: entry.messageCid, outcome, source });
-      if (SyncNextPushPage.blocksPageEndpoint(outcome, failure.endpointRejected === true)) {
+      if (outcome.blockScope !== undefined) {
         endpointBlock = outcome;
       }
     }
@@ -143,13 +139,12 @@ export class SyncNextPushPage {
       settled,
     });
     if (!committed) {
-      return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
+      return { aborted: true };
     }
     this._observer.onCheckpoint?.(target, handledThrough);
     return {
       delivered : settled.length,
       ...(endpointBlock === undefined ? {} : { endpointBlock }),
-      handledThrough,
       hasMore   : reply.drained !== true,
       retained  : delivery.length,
     };
@@ -163,7 +158,7 @@ export class SyncNextPushPage {
     signal?: AbortSignal,
   ): Promise<SyncNextDeliveryRetryResult> {
     if (target.authorization.kind === 'role' || !shouldContinue()) {
-      return { aborted: true, kind: 'aborted' };
+      return { kind: 'aborted' };
     }
     if (
       obligation.tenantDid !== target.did ||
@@ -184,7 +179,7 @@ export class SyncNextPushPage {
     });
     const result = await context.push([obligation.messageCid]);
     if (!shouldContinue()) {
-      return { aborted: true, kind: 'aborted' };
+      return { kind: 'aborted' };
     }
     const failure = result.failed.find(({ cid }): boolean => cid === obligation.messageCid);
     if (failure === undefined) {
@@ -221,25 +216,21 @@ export class SyncNextPushPage {
     const retry = failure.retryAfter === undefined ? {} : { retryAfter: failure.retryAfter };
     const endpoint = failure.endpointRejected === true ? { blockScope: 'endpoint' as const } : {};
     if (failure.quotaBlocked === true) {
-      return { blockScope: 'link', detail: failure.detail, reason: 'quota', ...retry };
+      return { blockScope: 'link', reason: 'quota', ...retry };
     }
     if (failure.tenantInactive === true) {
-      return { blockScope: 'link', detail: failure.detail, reason: 'authorization-unresolved', ...retry };
+      return { blockScope: 'link', reason: 'authorization-unresolved', ...retry };
     }
     if (failure.kind === 'Incomplete') {
-      return { detail: failure.detail, reason: 'dependency', ...retry };
+      return { reason: 'dependency', ...retry };
     }
     if (failure.kind === 'Invalid' || failure.terminal === true) {
-      return { detail: failure.detail, reason: 'remote-rejected', ...endpoint, ...retry };
+      return { reason: 'remote-rejected', ...endpoint, ...retry };
     }
     if (failure.kind === 'Deferred') {
-      return { blockScope: 'link', detail: failure.detail, reason: 'remote-incomplete', ...retry };
+      return { blockScope: 'link', reason: 'remote-incomplete', ...retry };
     }
-    return { blockScope: 'endpoint', detail: failure.detail, reason: 'transport', ...retry };
-  }
-
-  private static blocksPageEndpoint(outcome: SyncNextDeliveryOutcome, endpointRejected = false): boolean {
-    return endpointRejected || outcome.blockScope !== undefined;
+    return { blockScope: 'endpoint', reason: 'transport', ...retry };
   }
 
   private static assertSuccessfulPage(reply: MessagesQueryReply, target: SyncTarget): void {
@@ -251,28 +242,4 @@ export class SyncNextPushPage {
     }
   }
 
-  private static assertCursorAdvanced(
-    previous: ProgressToken | undefined,
-    next: ProgressToken,
-    drained: boolean,
-  ): void {
-    if (
-      previous !== undefined &&
-      previous.streamId === next.streamId &&
-      previous.epoch === next.epoch &&
-      compareSyncNextPosition(next, previous) === 0 &&
-      !drained
-    ) {
-      throw new Error('SyncNextPushPage: non-drained query cursor did not advance.');
-    }
-  }
-
-  private static identity(target: SyncTarget): SyncNextLinkIdentity {
-    return {
-      authorizationEpoch : target.authorizationEpoch,
-      projectionId       : target.projectionId,
-      remoteEndpoint     : target.dwnUrl,
-      tenantDid          : target.did,
-    };
-  }
 }

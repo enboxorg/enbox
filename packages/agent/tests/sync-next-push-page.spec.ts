@@ -133,7 +133,6 @@ describe('SyncNextPushPage', () => {
     await ledger.getOrCreateLink({
       authorization      : syncTarget.authorization,
       authorizationEpoch : syncTarget.authorizationEpoch,
-      logicalTargetId    : `${syncTarget.did}^${syncTarget.projectionId}`,
       projectionId       : syncTarget.projectionId,
       remoteEndpoint     : syncTarget.dwnUrl,
       scope              : syncTarget.scope,
@@ -230,7 +229,7 @@ describe('SyncNextPushPage', () => {
 
     expect(await ledger.getDeliveryForLink(linkIdentity())).toMatchObject([{
       messageCid : root.messageCid,
-      outcome    : { detail: 'Unauthorized', reason: 'remote-rejected' },
+      outcome    : { reason: 'remote-rejected' },
     }]);
   });
 

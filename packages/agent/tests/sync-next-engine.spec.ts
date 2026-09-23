@@ -6,10 +6,10 @@ import { RateLimitError } from '@enbox/dwn-clients';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
-import { buildLinkKey } from '../src/sync-link-key.js';
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 import { SyncEngineNext } from '../src/sync-next/engine.js';
 import { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
+import { syncNextLinkKey, syncNextLogicalTargetId } from '../src/sync-next/ledger-key.js';
 
 function target(did: string, dwnUrl: string): SyncTarget {
   return {
@@ -423,7 +423,6 @@ describe('SyncEngineNext orchestration', () => {
     await internal._ledger.getOrCreateLink({
       authorization      : syncTarget.authorization,
       authorizationEpoch : syncTarget.authorizationEpoch,
-      logicalTargetId    : `${syncTarget.did}^${syncTarget.projectionId}`,
       projectionId       : syncTarget.projectionId,
       remoteEndpoint     : syncTarget.dwnUrl,
       scope              : syncTarget.scope,
@@ -443,12 +442,12 @@ describe('SyncEngineNext orchestration', () => {
       handledThrough : { epoch: 'epoch', position: '1', streamId: 'stream' },
       settled        : [],
     });
-    const key = buildLinkKey(
-      syncTarget.did,
-      syncTarget.dwnUrl,
-      syncTarget.projectionId,
-      syncTarget.authorizationEpoch,
-    );
+    const key = syncNextLinkKey({
+      authorizationEpoch : syncTarget.authorizationEpoch,
+      projectionId       : syncTarget.projectionId,
+      remoteEndpoint     : syncTarget.dwnUrl,
+      tenantDid          : syncTarget.did,
+    });
     internal._sessions.set(key, {
       session    : { isOnline: false, isPullCurrent: false },
       subscribed : true,
@@ -474,7 +473,6 @@ describe('SyncEngineNext orchestration', () => {
     await internal._ledger.getOrCreateLink({
       authorization      : oldTarget.authorization,
       authorizationEpoch : oldTarget.authorizationEpoch,
-      logicalTargetId    : `${oldTarget.did}^${oldTarget.projectionId}`,
       projectionId       : oldTarget.projectionId,
       remoteEndpoint     : oldTarget.dwnUrl,
       scope              : oldTarget.scope,
@@ -515,7 +513,6 @@ describe('SyncEngineNext orchestration', () => {
     await internal._ledger.getOrCreateLink({
       authorization      : oldTarget.authorization,
       authorizationEpoch : oldTarget.authorizationEpoch,
-      logicalTargetId    : `${oldTarget.did}^${oldTarget.projectionId}`,
       projectionId       : oldTarget.projectionId,
       remoteEndpoint     : oldTarget.dwnUrl,
       scope              : oldTarget.scope,
@@ -531,7 +528,6 @@ describe('SyncEngineNext orchestration', () => {
       quarantine     : [{
         encryptedPayload : 'retired-scope-input',
         messageCid       : 'retired-scope-cid',
-        outcome          : { reason: 'data' },
         source           : {
           epoch      : 'epoch',
           messageCid : 'retired-scope-cid',
@@ -549,6 +545,21 @@ describe('SyncEngineNext orchestration', () => {
     await internal._ledger.deleteForTenant(oldTarget.did);
   });
 
+  it('should not create durable state while rebuilding a missing link', async () => {
+    const current = target('did:example:missing-rebuild', 'https://rebuild.example');
+    const internal = engine as any;
+    sinon.stub(internal._planner, 'getTargets').resolves([current]);
+    sinon.stub(internal._planner, 'lastResolutionComplete').get(() => true);
+
+    await expect(engine.rebuildRemoteDirection({
+      direction      : 'pull',
+      remoteEndpoint : current.dwnUrl,
+      tenantDid      : current.did,
+    })).rejects.toThrow('no durable checkpoint');
+
+    expect(await internal._ledger.getAllLinks()).toEqual([]);
+  });
+
   it('should reset current pull progress before purging corrupt logical-target quarantine', async () => {
     const current = target('did:example:rebuild-next', 'https://rebuild.example');
     const peer = { ...current, dwnUrl: 'https://peer.example' };
@@ -558,7 +569,6 @@ describe('SyncEngineNext orchestration', () => {
       await internal._ledger.getOrCreateLink({
         authorization      : syncTarget.authorization,
         authorizationEpoch : syncTarget.authorizationEpoch,
-        logicalTargetId    : `${current.did}^${current.projectionId}`,
         projectionId       : syncTarget.projectionId,
         remoteEndpoint     : syncTarget.dwnUrl,
         scope              : syncTarget.scope,
@@ -574,7 +584,6 @@ describe('SyncEngineNext orchestration', () => {
         quarantine     : [{
           encryptedPayload : 'corrupt',
           messageCid       : `pending-${syncTarget.authorizationEpoch}`,
-          outcome          : { reason: 'data' },
           source           : {
             epoch      : 'epoch',
             messageCid : `pending-${syncTarget.authorizationEpoch}`,
@@ -600,6 +609,8 @@ describe('SyncEngineNext orchestration', () => {
       target     : current,
     });
     sinon.stub(internal, 'disposeSession').resolves();
+    const logicalTargetId = syncNextLogicalTargetId(current.did, current.projectionId);
+    expect(await internal._ledger.getQuarantineForLogicalTarget(logicalTargetId)).toHaveLength(3);
 
     await engine.rebuildRemoteDirection({
       direction      : 'pull',
@@ -621,9 +632,7 @@ describe('SyncEngineNext orchestration', () => {
       tenantDid          : peer.did,
     });
     expect(rebuiltPeer.pullHandledThrough).toBeUndefined();
-    expect(await internal._ledger.getQuarantineForLogicalTarget(
-      `${current.did}^${current.projectionId}`,
-    )).toEqual([]);
+    expect(await internal._ledger.getQuarantineForLogicalTarget(logicalTargetId)).toEqual([]);
     expect(cover.calledOnceWith('pull')).toBe(true);
     await internal._ledger.deleteForTenant(current.did);
   });

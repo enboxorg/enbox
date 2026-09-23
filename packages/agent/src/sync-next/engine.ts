@@ -1,5 +1,6 @@
 import type { AbstractLevel } from 'abstract-level';
 import type { EnboxPlatformAgent } from '../types/agent.js';
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
@@ -20,9 +21,9 @@ import type {
   SyncLifecycleOptions,
   SyncRunOptions,
 } from '../types/sync.js';
+import type { SyncNextDeliveryObligation, SyncNextLink, SyncNextQuarantineEntry } from './types.js';
 
 import { AgentPermissionsApi } from '../permissions-api.js';
-import { buildLinkKey } from '../sync-link-key.js';
 import { FollowedSourceRoleAbsentError } from '../sync-role-replication-support.js';
 import { FollowedSyncSourceStoreLevel } from '../followed-sync-source-store-level.js';
 import { Level } from 'level';
@@ -51,10 +52,12 @@ import {
 } from '../types/sync.js';
 import { normalizeDwnEndpoint, SyncTargetResolver } from '../sync-target-resolver.js';
 import { queryLocalMessageFeed, queryRemoteMessageFeed, syncMessageDescriptor } from '../sync-messages.js';
+import { syncNextLinkIdentity, syncNextLinkKey, syncNextLogicalTargetId } from './ledger-key.js';
 
 type LevelKey = string | Buffer | Uint8Array;
 
 export type SyncEngineNextParams = {
+  agent?: EnboxPlatformAgent;
   dataPath?: string;
   db?: AbstractLevel<LevelKey>;
 };
@@ -126,7 +129,7 @@ export class SyncEngineNext implements SyncEngine {
   private _subscriptionRetryTimer?: ReturnType<typeof setTimeout>;
   private _timer?: ReturnType<typeof setInterval>;
 
-  public constructor({ dataPath, db }: SyncEngineNextParams = {}) {
+  public constructor({ agent, dataPath, db }: SyncEngineNextParams = {}) {
     this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
     this._lockNamespace = dataPath ?? 'default';
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
@@ -134,10 +137,9 @@ export class SyncEngineNext implements SyncEngine {
     this._ledger = new SyncNextLedgerStore(this._db, dataPath ?? 'default');
     this._sourceStore = new FollowedSyncSourceStoreLevel(this._db);
     this._planner = new SyncTargetPlanner({
-      getTargetResolver          : (): SyncTargetResolver => this.targetResolver,
-      handleAuthorizationFailure : async (): Promise<boolean> => false,
-      identityStore              : this._identityStore,
-      isIdentityPaused           : (did, delegateDid): boolean =>
+      getTargetResolver : (): SyncTargetResolver => this.targetResolver,
+      identityStore     : this._identityStore,
+      isIdentityPaused  : (did, delegateDid): boolean =>
         delegateDid !== undefined && this._pausedIdentities.get(did) === delegateDid,
       sourceStore : this._sourceStore,
       warn        : (message, error): void => { console.warn(message, error); },
@@ -148,6 +150,9 @@ export class SyncEngineNext implements SyncEngine {
       this._catalogChannel.onmessage = ({ data }: MessageEvent): void => {
         this.scheduleCatalogWake(data);
       };
+    }
+    if (agent !== undefined) {
+      this.agent = agent;
     }
   }
 
@@ -196,43 +201,39 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async setIdentityOptions(
-    { did, options }: { did: string; options: SyncIdentityOptions },
+    params: { did: string; options: SyncIdentityOptions },
     lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<void> {
-    const normalized = SyncEngineNext.normalizeOptions(options);
-    await this.runRuntimeTransition(async (): Promise<void> => {
-      await this.catalog.setIdentityOptions(
-        { did, options: normalized },
-        lifecycleOptions,
-        (): Promise<void> => this.disposeIdentitySessions(did),
-      );
-      this._pausedIdentities.delete(did);
-      this._planner.invalidate();
-      this.emit({ type: 'identity:registration-change', tenantDid: did, options: normalized });
-      this.publishCatalogWake({ did, kind: 'identity' });
-      await this.refreshLiveTargets(false, did);
-    });
+    await this.storeIdentityOptions(params, lifecycleOptions, false);
   }
 
   public async ensureIdentityOptions(
     params: { did: string; options: SyncIdentityOptions },
     lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<boolean> {
-    const normalized = SyncEngineNext.normalizeOptions(params.options);
-    let changed = false;
+    return this.storeIdentityOptions(params, lifecycleOptions, true);
+  }
+
+  private async storeIdentityOptions(
+    params: { did: string; options: SyncIdentityOptions },
+    lifecycleOptions: SyncLifecycleOptions,
+    skipIfUnchanged: boolean,
+  ): Promise<boolean> {
+    const options = SyncEngineNext.normalizeOptions(params.options);
+    let changed = true;
     await this.runRuntimeTransition(async (): Promise<void> => {
       changed = await this.catalog.setIdentityOptions(
-        { did: params.did, options: normalized },
+        { did: params.did, options },
         lifecycleOptions,
         (): Promise<void> => this.disposeIdentitySessions(params.did),
-        true,
+        skipIfUnchanged,
       );
       if (!changed) {
         return;
       }
       this._pausedIdentities.delete(params.did);
       this._planner.invalidate();
-      this.emit({ type: 'identity:registration-change', tenantDid: params.did, options: normalized });
+      this.emit({ type: 'identity:registration-change', tenantDid: params.did, options });
       this.publishCatalogWake({ did: params.did, kind: 'identity' });
       await this.refreshLiveTargets(false, params.did);
     });
@@ -269,9 +270,12 @@ export class SyncEngineNext implements SyncEngine {
         try {
           await this.disposeIdentitySessions(params.did);
           for (const link of await this._ledger.getAllLinks()) {
-            const belongsToIdentity = link.tenantDid === params.did ||
-              (link.authorization.kind === 'role' && link.authorization.actorDid === params.did);
-            if (belongsToIdentity && link.delegateDid === params.delegateDid) {
+            const usesDelegate = link.authorization.kind === 'role'
+              ? link.authorization.actorDid === params.did
+              : link.authorization.kind === 'delegate' &&
+                link.tenantDid === params.did &&
+                link.authorization.delegateDid === params.delegateDid;
+            if (usesDelegate) {
               await this._ledger.setLinkStatus(link, 'authorization-paused');
             }
           }
@@ -297,18 +301,12 @@ export class SyncEngineNext implements SyncEngine {
       const removed = await this.catalog.removeIdentity(did, lifecycleOptions, async (): Promise<void> => {
         const active = [...this._sessions.values()]
           .filter(({ target }) => SyncEngineNext.targetBelongsToIdentity(target, did));
-        const failed = (await this.settleCovers(active, 'push'))
-          .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
-        if (failed.length > 0) {
-          throw new AggregateError(failed.map(({ reason }) => reason), 'SyncEngineNext: identity push did not drain.');
-        }
+        SyncEngineNext.throwRejected(
+          await this.settleCovers(active, 'push'),
+          'SyncEngineNext: identity push did not drain.',
+        );
         await this.disposeIdentitySessions(did);
-        await this._ledger.deleteForTenant(did);
-        for (const link of await this._ledger.getAllLinks()) {
-          if (link.authorization.kind === 'role' && link.authorization.actorDid === did) {
-            await this._ledger.retireLink(link);
-          }
-        }
+        await this.deleteIdentityReplicationState(did);
       });
       if (!removed) {
         return;
@@ -355,17 +353,8 @@ export class SyncEngineNext implements SyncEngine {
   public async deleteFollowedSource(source: FollowedSyncSource): Promise<void> {
     await this.runRuntimeTransition(async (): Promise<void> => {
       const removed = await this.catalog.deleteFollowedSource(source, async (current): Promise<void> => {
-        const identity = await this._identityStore.get(current.actorDid);
-        const target = SyncEngineNext.normalizeTarget(
-          await this.targetResolver.buildTargetForSource(current, identity?.delegateDid),
-        );
-        await this.disposeSession(target);
-        await this._ledger.deleteLinkAndSparse({
-          authorizationEpoch : target.authorizationEpoch,
-          projectionId       : target.projectionId,
-          remoteEndpoint     : target.dwnUrl,
-          tenantDid          : target.did,
-        });
+        await this.disposeFollowedContextSessions(current);
+        await this.deleteRoleLinkAndSparse(current);
       });
       if (removed === undefined) {
         return;
@@ -536,7 +525,12 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
-    return this.readHealth();
+    const [delivery, links, quarantine] = await Promise.all([
+      this._ledger.getAllDelivery(),
+      this._ledger.getAllLinks(),
+      this._ledger.getAllQuarantine(),
+    ]);
+    return SyncEngineNext.health(links, delivery, quarantine, this.connectivityState);
   }
 
   public async getIdentitySyncStatus(tenantDid: string): Promise<SyncIdentityStatus> {
@@ -547,19 +541,8 @@ export class SyncEngineNext implements SyncEngine {
       this.getIdentityOptions(tenantDid),
     ]);
     const links = this.linkSnapshots(durableLinks);
-    const degradedKeys = new Set([
-      ...durableLinks.filter(link => link.status === 'authorization-paused').map(SyncEngineNext.healthKey),
-      ...delivery.map(SyncEngineNext.healthKey),
-      ...quarantine.map(SyncEngineNext.healthKey),
-    ]);
-    const quotaBlockedMessageCount = delivery.filter(entry => entry.outcome.reason === 'quota').length;
     const connectivity = resolveSyncConnectivityState(links.map(link => link.connectivity), this.connectivityState);
-    const health: SyncHealthSummary = {
-      connectivity,
-      degradedLinkCount : degradedKeys.size,
-      quotaBlockedMessageCount,
-      syncHealthy       : degradedKeys.size === 0,
-    };
+    const health = SyncEngineNext.health(durableLinks, delivery, quarantine, connectivity);
     const endpoints = new Set([
       ...links.map(link => link.remoteEndpoint),
       ...delivery.map(entry => entry.remoteEndpoint),
@@ -613,15 +596,11 @@ export class SyncEngineNext implements SyncEngine {
 
   private linkSnapshots(links: Awaited<ReturnType<SyncNextLedgerStore['getAllLinks']>>): ReplicationLinkSnapshot[] {
     return links.map(link => {
-      const active = this._sessions.get(buildLinkKey(
-        link.tenantDid,
-        link.remoteEndpoint,
-        link.projectionId,
-        link.authorizationEpoch,
-      ));
+      const active = this._sessions.get(syncNextLinkKey(link));
       return {
-        connectivity     : active === undefined ? 'unknown' : active.session.isOnline ? 'online' : 'offline',
-        delegateDid      : link.delegateDid,
+        connectivity : active === undefined ? 'unknown' : active.session.isOnline ? 'online' : 'offline',
+        delegateDid  : active?.target.delegateDid ??
+          (link.authorization.kind === 'delegate' ? link.authorization.delegateDid : undefined),
         followedSourceId : link.authorization.kind === 'role' ? link.authorization.roleRecordId : undefined,
         isPullCurrent    : active?.session.isPullCurrent ?? false,
         lastActivityAt   : link.updatedAt,
@@ -680,11 +659,14 @@ export class SyncEngineNext implements SyncEngine {
         throw new Error('SyncEngineNext: cannot rebuild without a current authorized source link.');
       }
 
-      const logicalTargetIds = new Set(targets.map(target => `${target.did}^${target.projectionId}`));
+      const logicalTargetIds = new Set(targets.map(target =>
+        syncNextLogicalTargetId(target.did, target.projectionId)
+      ));
       const resetTargets = direction === 'pull'
-        ? planned.filter(target => logicalTargetIds.has(`${target.did}^${target.projectionId}`))
+        ? planned.filter(target => logicalTargetIds.has(
+          syncNextLogicalTargetId(target.did, target.projectionId)
+        ))
         : targets;
-      await Promise.all(resetTargets.map(target => this.ensureSession(target)));
       await Promise.all(resetTargets.map(target => this.disposeSession(target)));
       const links = (await Promise.all(resetTargets.map(target => this._ledger.getLink({
         authorizationEpoch : target.authorizationEpoch,
@@ -708,12 +690,7 @@ export class SyncEngineNext implements SyncEngine {
       try {
         const active = await Promise.all(targets.map(target => this.ensureSession(target)));
         const outcomes = await this.settleCovers(active, direction);
-        const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult =>
-          outcome.status === 'rejected'
-        );
-        if (failures.length > 0) {
-          throw new AggregateError(failures.map(({ reason }) => reason), 'SyncEngineNext: rebuild sync failed.');
-        }
+        SyncEngineNext.throwRejected(outcomes, 'SyncEngineNext: rebuild sync failed.');
       } finally {
         if (this._live) {
           await this.refreshLiveTargets(false, tenantDid);
@@ -744,10 +721,7 @@ export class SyncEngineNext implements SyncEngine {
         await Promise.allSettled(targets.map(target => this.disposeSession(target)));
       }
     }
-    const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
-    if (failures.length > 0) {
-      throw new AggregateError(failures.map(({ reason }) => reason), 'SyncEngineNext: retry failed.');
-    }
+    SyncEngineNext.throwRejected(outcomes, 'SyncEngineNext: retry failed.');
   }
 
   private get targetResolver(): SyncTargetResolver {
@@ -993,10 +967,7 @@ export class SyncEngineNext implements SyncEngine {
         await Promise.allSettled(targets.map(target => this.disposeSession(target)));
       }
     }
-    const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
-    if (failures.length > 0) {
-      throw new AggregateError(failures.map(({ reason }) => reason), 'SyncEngineNext: covering sync failed.');
-    }
+    SyncEngineNext.throwRejected(outcomes, 'SyncEngineNext: covering sync failed.');
   }
 
   private async refreshLiveTargets(initialCover = false, wakeDid?: string): Promise<void> {
@@ -1042,8 +1013,8 @@ export class SyncEngineNext implements SyncEngine {
       await this.settleCovers(active, 'push');
     }
     for (const { session, target } of active) {
-      if (wakeDid === undefined || SyncEngineNext.targetBelongsToIdentity(target, wakeDid)) {
-        session.start(!initialCover);
+      if (!initialCover && (wakeDid === undefined || SyncEngineNext.targetBelongsToIdentity(target, wakeDid))) {
+        session.start();
       }
     }
   }
@@ -1095,8 +1066,6 @@ export class SyncEngineNext implements SyncEngine {
     const link = await this._ledger.getOrCreateLink({
       authorization      : target.authorization,
       authorizationEpoch : target.authorizationEpoch,
-      delegateDid        : target.delegateDid,
-      logicalTargetId    : `${target.did}^${target.projectionId}`,
       projectionId       : target.projectionId,
       remoteEndpoint     : target.dwnUrl,
       scope              : target.scope,
@@ -1107,28 +1076,10 @@ export class SyncEngineNext implements SyncEngine {
     }
     const pullPage = new SyncNextPullPage(this.agent, this._ledger, this._echoSuppressor, {
       onApplied    : (pullTarget, entries): void => this.emitApplied(pullTarget, entries),
-      onCheckpoint : (pullTarget, token): void => {
-        this.emit({
-          type           : 'checkpoint:pull-advance',
-          tenantDid      : pullTarget.did,
-          remoteEndpoint : pullTarget.dwnUrl,
-          ...syncEventScope(pullTarget.scope),
-          position       : token.position,
-          ...(token.messageCid === undefined ? {} : { messageCid: token.messageCid }),
-        });
-      },
+      onCheckpoint : (pullTarget, token): void => this.emitCheckpoint('pull', pullTarget, token),
     }, (pullTarget): Promise<SyncTarget> => this.targetResolver.withCurrentRoleGrant(pullTarget));
     const pushPage = new SyncNextPushPage(this.agent, this._ledger, this._echoSuppressor, {
-      onCheckpoint: (pushTarget, token): void => {
-        this.emit({
-          type           : 'checkpoint:push-advance',
-          tenantDid      : pushTarget.did,
-          remoteEndpoint : pushTarget.dwnUrl,
-          ...syncEventScope(pushTarget.scope),
-          position       : token.position,
-          ...(token.messageCid === undefined ? {} : { messageCid: token.messageCid }),
-        });
-      },
+      onCheckpoint: (pushTarget, token): void => this.emitCheckpoint('push', pushTarget, token),
     });
     const active: ActiveSession = {
       session: new SyncNextLinkSession(
@@ -1271,17 +1222,14 @@ export class SyncEngineNext implements SyncEngine {
       return;
     }
     const current = new Set(targets.map(SyncEngineNext.targetKey));
-    const currentLogicalTargets = new Set(targets.map(target => `${target.did}^${target.projectionId}`));
+    const currentLogicalTargets = new Set(targets.map(target =>
+      syncNextLogicalTargetId(target.did, target.projectionId)
+    ));
     for (const link of await this._ledger.getAllLinks()) {
-      const key = buildLinkKey(
-        link.tenantDid,
-        link.remoteEndpoint,
-        link.projectionId,
-        link.authorizationEpoch,
-      );
+      const key = syncNextLinkKey(link);
       if (!current.has(key)) {
         await this.disposeSession(link);
-        if (currentLogicalTargets.has(link.logicalTargetId)) {
+        if (currentLogicalTargets.has(syncNextLogicalTargetId(link.tenantDid, link.projectionId))) {
           await this._ledger.retireLink(link);
         } else {
           await this._ledger.deleteLinkAndSparse(link);
@@ -1298,7 +1246,7 @@ export class SyncEngineNext implements SyncEngine {
   }): Promise<void> {
     const key = 'did' in target
       ? SyncEngineNext.targetKey(target)
-      : buildLinkKey(target.tenantDid, target.remoteEndpoint, target.projectionId, target.authorizationEpoch);
+      : syncNextLinkKey(target);
     const active = this._sessions.get(key);
     if (active !== undefined) {
       await active.session.dispose();
@@ -1449,12 +1397,7 @@ export class SyncEngineNext implements SyncEngine {
       const options = await this._identityStore.get(did);
       this._pausedIdentities.delete(did);
       if (options === undefined) {
-        await this._ledger.deleteForTenant(did);
-        for (const link of await this._ledger.getAllLinks()) {
-          if (link.authorization.kind === 'role' && link.authorization.actorDid === did) {
-            await this._ledger.retireLink(link);
-          }
-        }
+        await this.deleteIdentityReplicationState(did);
       }
       this._planner.invalidate();
       this.emit(options === undefined
@@ -1487,6 +1430,15 @@ export class SyncEngineNext implements SyncEngine {
         link.authorization.roleRecordId === source.id
       ) {
         await this._ledger.deleteLinkAndSparse(link);
+      }
+    }
+  }
+
+  private async deleteIdentityReplicationState(did: string): Promise<void> {
+    await this._ledger.deleteForTenant(did);
+    for (const link of await this._ledger.getAllLinks()) {
+      if (link.authorization.kind === 'role' && link.authorization.actorDid === did) {
+        await this._ledger.retireLink(link);
       }
     }
   }
@@ -1532,6 +1484,17 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
+  private emitCheckpoint(direction: SyncDirection, target: SyncTarget, token: ProgressToken): void {
+    this.emit({
+      type           : direction === 'pull' ? 'checkpoint:pull-advance' : 'checkpoint:push-advance',
+      tenantDid      : target.did,
+      remoteEndpoint : target.dwnUrl,
+      ...syncEventScope(target.scope),
+      position       : token.position,
+      ...(token.messageCid === undefined ? {} : { messageCid: token.messageCid }),
+    });
+  }
+
   private emitFollowedSourceChange(
     source: FollowedSyncSource,
     followedSourceId: string | undefined,
@@ -1557,23 +1520,20 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
-  private async readHealth(tenantDid?: string): Promise<SyncHealthSummary> {
-    const [delivery, links, quarantine] = await Promise.all([
-      this._ledger.getAllDelivery(),
-      this._ledger.getAllLinks(),
-      this._ledger.getAllQuarantine(),
-    ]);
-    const currentLinks = links.filter(link => tenantDid === undefined || link.tenantDid === tenantDid);
-    const currentDelivery = delivery.filter(entry => tenantDid === undefined || entry.tenantDid === tenantDid);
-    const currentQuarantine = quarantine.filter(entry => tenantDid === undefined || entry.tenantDid === tenantDid);
+  private static health(
+    links: readonly SyncNextLink[],
+    delivery: readonly SyncNextDeliveryObligation[],
+    quarantine: readonly SyncNextQuarantineEntry[],
+    connectivity: SyncConnectivityState,
+  ): SyncHealthSummary {
     const degradedKeys = new Set([
-      ...currentLinks.filter(link => link.status === 'authorization-paused').map(SyncEngineNext.healthKey),
-      ...currentDelivery.map(SyncEngineNext.healthKey),
-      ...currentQuarantine.map(SyncEngineNext.healthKey),
+      ...links.filter(link => link.status === 'authorization-paused').map(syncNextLinkKey),
+      ...delivery.map(syncNextLinkKey),
+      ...quarantine.map(syncNextLinkKey),
     ]);
-    const quotaBlockedMessageCount = currentDelivery.filter(entry => entry.outcome.reason === 'quota').length;
+    const quotaBlockedMessageCount = delivery.filter(entry => entry.outcome.reason === 'quota').length;
     return {
-      connectivity      : this.connectivityState,
+      connectivity,
       degradedLinkCount : degradedKeys.size,
       quotaBlockedMessageCount,
       syncHealthy       : degradedKeys.size === 0,
@@ -1581,12 +1541,7 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   private static targetKey(target: SyncTarget): string {
-    return buildLinkKey(
-      target.did,
-      normalizeDwnEndpoint(target.dwnUrl),
-      target.projectionId,
-      target.authorizationEpoch,
-    );
+    return syncNextLinkKey(syncNextLinkIdentity(SyncEngineNext.normalizeTarget(target)));
   }
 
   private static normalizeTarget(target: SyncTarget): SyncTarget {
@@ -1621,19 +1576,17 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
-  private static healthKey(link: {
-    authorizationEpoch: string;
-    projectionId: string;
-    remoteEndpoint: string;
-    tenantDid: string;
-  }): string {
-    return buildLinkKey(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
-  }
-
   private static normalizeOptions(options: SyncIdentityOptions): SyncIdentityOptions {
     return options.protocols === 'all'
       ? { ...options, protocols: 'all' }
       : { ...options, protocols: normalizeSyncProtocols(options.protocols) };
+  }
+
+  private static throwRejected(outcomes: readonly PromiseSettledResult<unknown>[], message: string): void {
+    const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+    if (failures.length > 0) {
+      throw new AggregateError(failures.map(({ reason }) => reason), message);
+    }
   }
 
   private static async withTimeout<T>(operation: Promise<T>, timeout: number, message: string): Promise<T> {
