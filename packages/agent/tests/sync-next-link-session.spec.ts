@@ -242,7 +242,7 @@ describe('SyncNextLinkSession', () => {
       outcome       : {
         blockScope : 'endpoint',
         reason     : 'transport',
-        retryAfter : '2026-09-22T12:01:00.000Z',
+        retryAt    : Date.parse('2026-09-22T12:01:00.000Z'),
       },
       source: token('1'),
     };

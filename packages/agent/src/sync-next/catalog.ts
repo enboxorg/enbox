@@ -90,11 +90,11 @@ export class SyncNextCatalog {
     this._closureValidator.validateOptions(options);
     const signal = SyncNextCatalog.timeoutSignal(lifecycleOptions);
     await this.runIdentityLifecycle(did, async (): Promise<void> => {
-      await this.waitFor(
+      await executeUnlessAborted(
         this._closureValidator.validateClosure(did, options),
         signal,
       );
-      await this.waitFor(beforeCommit(), signal);
+      await executeUnlessAborted(beforeCommit(), signal);
       await this._identityStore.set(did, options);
     }, signal);
   }
@@ -109,7 +109,7 @@ export class SyncNextCatalog {
       if (await this._identityStore.get(did) === undefined) {
         return false;
       }
-      await this.waitFor(beforeRefresh(), signal);
+      await executeUnlessAborted(beforeRefresh(), signal);
       return true;
     }, signal);
   }
@@ -124,7 +124,7 @@ export class SyncNextCatalog {
       if (await this._identityStore.get(did) === undefined) {
         return false;
       }
-      await this.waitFor(beforeCommit(), signal);
+      await executeUnlessAborted(beforeCommit(), signal);
       await this._identityStore.delete(did);
       return true;
     }, signal);
@@ -369,14 +369,7 @@ export class SyncNextCatalog {
       }
       return operation();
     });
-    return this.waitFor(locked, signal);
-  }
-
-  private waitFor<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
-    if (signal === undefined) {
-      return operation;
-    }
-    return executeUnlessAborted(operation, signal);
+    return executeUnlessAborted(locked, signal);
   }
 
   private static timeoutSignal(options: SyncLifecycleOptions): AbortSignal | undefined {

@@ -13,10 +13,7 @@ import { syncNextLinkIdentity, syncNextLogicalTargetId } from './ledger-key.js';
 const RETRY_DELAY_MS = 1_000;
 const COVER_SPARSE_RETRY_LIMIT = 100;
 
-type SparseAttempt = {
-  progressed: boolean;
-  remaining: number;
-};
+type SparseAttempt = SyncNextQuarantineAttempt;
 
 type PageAttempt = {
   hasMore: boolean;
@@ -44,10 +41,12 @@ export interface SyncNextEndpointOperations {
 /** Owns the two independent page loops for one exact replication link. */
 export class SyncNextLinkSession {
   private readonly _abortController = new AbortController();
+  private readonly _directions: Record<SyncDirection, DirectionState> = {
+    pull : { requested: false, running: false, wakeVersion: 0 },
+    push : { requested: false, running: false, wakeVersion: 0 },
+  };
   private _online = false;
-  private readonly _pull: DirectionState;
   private _pullCurrent = false;
-  private readonly _push: DirectionState;
   private readonly _runs = new Map<string, Promise<void>>();
   private readonly _subscriptions = new Set<() => Promise<void>>();
 
@@ -60,18 +59,7 @@ export class SyncNextLinkSession {
     private readonly _reportError: (error: unknown) => void,
     private readonly _endpoint: SyncNextEndpointOperations,
     private readonly _observer: SyncNextLinkSessionObserver = {},
-  ) {
-    this._pull = {
-      requested   : false,
-      running     : false,
-      wakeVersion : 0,
-    };
-    this._push = {
-      requested   : false,
-      running     : false,
-      wakeVersion : 0,
-    };
-  }
+  ) {}
 
   public get isPullCurrent(): boolean {
     return this._pullCurrent;
@@ -104,7 +92,7 @@ export class SyncNextLinkSession {
     if (direction === 'push' && this._target.authorization.kind === 'role') {
       return;
     }
-    const state = this.state(direction);
+    const state = this._directions[direction];
     state.requested = true;
     state.wakeVersion++;
     if (direction === 'pull') {
@@ -142,7 +130,7 @@ export class SyncNextLinkSession {
   }
 
   private schedule(direction: SyncDirection): void {
-    const state = this.state(direction);
+    const state = this._directions[direction];
     if (state.running || this._abortController.signal.aborted) {
       return;
     }
@@ -165,7 +153,7 @@ export class SyncNextLinkSession {
 
   private runRequested(direction: SyncDirection): Promise<void> {
     return runSerializedByKey(this._runs, direction, async (): Promise<void> => {
-      const state = this.state(direction);
+      const state = this._directions[direction];
       if (!state.requested || this._abortController.signal.aborted) {
         return;
       }
@@ -187,7 +175,7 @@ export class SyncNextLinkSession {
     return runSerializedByKey(this._runs, direction, async (): Promise<void> => {
       for (;;) {
         this.assertCurrent(direction, shouldContinue);
-        const state = this.state(direction);
+        const state = this._directions[direction];
         state.requested = false;
         const wakeVersion = state.wakeVersion;
         const page = await this.consumePage(direction, shouldContinue);
@@ -344,10 +332,6 @@ export class SyncNextLinkSession {
     }
   }
 
-  private state(direction: SyncDirection): DirectionState {
-    return direction === 'pull' ? this._pull : this._push;
-  }
-
   private assertCurrent(direction: SyncDirection, shouldContinue: () => boolean): void {
     if (!this._abortController.signal.aborted && shouldContinue()) {
       return;
@@ -381,24 +365,14 @@ export class SyncNextLinkSession {
   }
 
   private static deliveryRetryAt(entry: SyncNextDeliveryObligation): number {
-    const retryAfter = SyncNextLinkSession.retryAfter(entry.outcome);
-    return retryAfter !== undefined && retryAfter > Date.now()
-      ? retryAfter
+    return entry.outcome.retryAt !== undefined && entry.outcome.retryAt > Date.now()
+      ? entry.outcome.retryAt
       : Date.parse(entry.lastAttemptAt) + RETRY_DELAY_MS;
   }
 
-  private static retryAfter(outcome: SyncNextDeliveryOutcome): number | undefined {
-    if (outcome.retryAfter === undefined) {
-      return;
-    }
-    const retryAfter = Date.parse(outcome.retryAfter);
-    return Number.isFinite(retryAfter) ? retryAfter : undefined;
-  }
-
   private static endpointDelay(outcome: SyncNextDeliveryOutcome): number {
-    const retryAfter = SyncNextLinkSession.retryAfter(outcome);
-    return retryAfter !== undefined && retryAfter > Date.now()
-      ? retryAfter - Date.now()
+    return outcome.retryAt !== undefined && outcome.retryAt > Date.now()
+      ? outcome.retryAt - Date.now()
       : RETRY_DELAY_MS;
   }
 

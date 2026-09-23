@@ -205,7 +205,8 @@ export class SyncNextPushPage {
   }
 
   public static deliveryOutcome(failure: PushFailure): SyncNextDeliveryOutcome {
-    const retry = failure.retryAfter === undefined ? {} : { retryAfter: failure.retryAfter };
+    const retryAt = Date.parse(failure.retryAfter ?? '');
+    const retry = Number.isFinite(retryAt) ? { retryAt } : {};
     const endpoint = failure.endpointRejected === true ? { blockScope: 'endpoint' as const } : {};
     if (failure.quotaBlocked === true) {
       return { blockScope: 'link', reason: 'quota', ...retry };

@@ -128,6 +128,16 @@ describe('SyncNextPushPage', () => {
     await db.close();
   });
 
+  it('should normalize a retry deadline once when classifying delivery failure', () => {
+    const retryAfter = '2026-09-22T12:00:17.000Z';
+
+    expect(SyncNextPushPage.deliveryOutcome({ retryAfter } as never)).toEqual({
+      blockScope : 'endpoint',
+      reason     : 'transport',
+      retryAt    : Date.parse(retryAfter),
+    });
+  });
+
   async function createLink(): Promise<void> {
     const syncTarget = target();
     await ledger.getOrCreateLink({

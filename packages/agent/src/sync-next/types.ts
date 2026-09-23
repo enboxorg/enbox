@@ -50,7 +50,7 @@ export type SyncNextDeliveryReason =
 export type SyncNextDeliveryOutcome = {
   blockScope?: 'endpoint' | 'link';
   reason: SyncNextDeliveryReason;
-  retryAfter?: string;
+  retryAt?: number;
 };
 
 /** Sparse outbound obligation; message and data remain in the local DWN. */
