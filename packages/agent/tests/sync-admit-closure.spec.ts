@@ -692,6 +692,35 @@ describe('admitClosure', () => {
     expect(agent.dwn.applyReplicatedMessage.called).toBe(false);
   });
 
+  it('defers a source-latest RecordsWrite when its retryable data fetch is temporarily unavailable', async () => {
+    const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+      data     : new Uint8Array([1, 2, 3]),
+      protocol : 'https://example.com/protocol',
+    });
+    const rootCid = await Message.getCid(recordsWrite.message);
+    const agent = createMockAgent();
+    const dataStreamFactory = sinon.stub().resolves(undefined);
+
+    const outcome = await admitClosure(rootCid, {
+      did        : 'did:example:alice',
+      dwnUrl     : 'https://dwn.example.com',
+      agent,
+      prefetched : [{
+        dataStreamFactory,
+        message           : recordsWrite.message,
+        isLatestBaseState : true,
+      }],
+    });
+
+    expect(outcome).toEqual({
+      kind   : 'deferred',
+      rootCid,
+      detail : 'latest records write data fetch returned no data',
+    });
+    expect(dataStreamFactory.calledOnce).toBe(true);
+    expect(agent.dwn.applyReplicatedMessage.called).toBe(false);
+  });
+
   it('hydrates a role root through the replication-support hook instead of an owner-shaped fetch', async () => {
     const recordsWrite = await TestDataGenerator.generateRecordsWrite({
       data     : new Uint8Array([1, 2, 3]),

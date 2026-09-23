@@ -4933,6 +4933,7 @@ export class SyncEngineLevel implements SyncEngine {
       syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
     } else if (
       target.authorization.kind !== 'role' &&
+      entry.isLatestBaseState !== false &&
       recordsWriteRequiresData(message)
     ) {
       syncEntry.dataStreamFactory = async (): Promise<ReadableStream<Uint8Array> | undefined> => {
