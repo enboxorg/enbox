@@ -18,7 +18,6 @@ function target(dwnUrl: string): SyncTarget {
 }
 
 const entry: SyncNextQuarantineEntry = {
-  attempts           : 1,
   authorizationEpoch : 'owner-epoch',
   encryptedPayload   : 'encrypted',
   lastAttemptAt      : '2026-09-22T00:00:00.000Z',
@@ -40,13 +39,13 @@ describe('SyncNextQuarantineRetry coordination', () => {
     const ledger = {
       getQuarantineForLogicalTarget : sinon.stub().callsFake(async () => [stored]),
       updateQuarantine              : sinon.stub().callsFake(async () => {
-        stored = { ...stored, attempts: stored.attempts + 1, lastAttemptAt: new Date().toISOString() };
+        stored = { ...stored, lastAttemptAt: new Date().toISOString() };
       }),
     };
     const quarantine = new SyncNextQuarantineRetry({} as never, ledger as never);
     const retry = sinon.stub(quarantine, 'retry').callsFake(async () => {
       await ledger.updateQuarantine();
-      return { kind: 'pending' };
+      return false;
     });
 
     const [first, second] = await Promise.all([
@@ -55,7 +54,8 @@ describe('SyncNextQuarantineRetry coordination', () => {
     ]);
 
     expect(retry.calledOnce).toBe(true);
-    expect([first.kind, second.kind].sort()).toEqual(['deferred', 'pending']);
+    expect([first.progressed, second.progressed]).toEqual([false, false]);
+    expect([first.remaining, second.remaining].sort()).toEqual([1, 1]);
   });
 
   it('should back off a corrupt or unreadable row instead of hot-looping the failure', async () => {
@@ -64,7 +64,7 @@ describe('SyncNextQuarantineRetry coordination', () => {
     const ledger = {
       getQuarantineForLogicalTarget : sinon.stub().callsFake(async () => [stored]),
       updateQuarantine              : sinon.stub().callsFake(async () => {
-        stored = { ...stored, attempts: stored.attempts + 1, lastAttemptAt: new Date().toISOString() };
+        stored = { ...stored, lastAttemptAt: new Date().toISOString() };
       }),
     };
     const quarantine = new SyncNextQuarantineRetry({} as never, ledger as never);
@@ -73,7 +73,7 @@ describe('SyncNextQuarantineRetry coordination', () => {
     await expect(quarantine.retryOne(target('https://first.example'))).rejects.toThrow('ciphertext is corrupt');
     const deferred = await quarantine.retryOne(target('https://second.example'));
 
-    expect(deferred.kind).toBe('deferred');
+    expect(deferred).toEqual({ progressed: false, remaining: 1 });
     expect(retry.calledOnce).toBe(true);
   });
 });

@@ -84,7 +84,6 @@ describe('SyncNextLedgerStore', () => {
 
     expect((await store.getLink(identity(create)))?.pullHandledThrough).toEqual(token(2, 'pull'));
     expect(await store.getQuarantineForLink(identity(create))).toMatchObject([{
-      attempts         : 1,
       encryptedPayload : 'encrypted-input',
       messageCid       : 'cid-1',
       source,
@@ -108,8 +107,7 @@ describe('SyncNextLedgerStore', () => {
 
     expect((await store.getLink(identity(create)))?.pushHandledThrough).toEqual(token(2, 'push'));
     expect(await store.getDeliveryForLink(identity(create))).toMatchObject([{
-      attempts   : 1,
-      messageCid : 'cid-1',
+      messageCid: 'cid-1',
       source,
     }]);
   });
@@ -172,7 +170,7 @@ describe('SyncNextLedgerStore', () => {
     expect((await store.getLink(identity(create)))?.pullHandledThrough).toBeUndefined();
   });
 
-  it('should require explicit reset before changing a progress-token domain', async () => {
+  it('should reject a progress-token domain change', async () => {
     const create = linkCreate();
     await store.getOrCreateLink(create);
     await store.commitPullPage(identity(create), {
@@ -186,16 +184,9 @@ describe('SyncNextLedgerStore', () => {
       quarantine     : [],
       settled        : [],
     })).rejects.toThrow('domain changed without an explicit reset');
-
-    expect(await store.rebuildDirection(identity(create), 'pull')).toBe(true);
-    expect(await store.commitPullPage(identity(create), {
-      handledThrough : token(1, 'new'),
-      quarantine     : [],
-      settled        : [],
-    })).toBe(true);
   });
 
-  it('should fence paused or retired links without deleting their sparse recovery input', async () => {
+  it('should fence retired links without deleting their sparse recovery input', async () => {
     const create = linkCreate();
     await store.getOrCreateLink(create);
     const source = token(1, 'pull', 'cid-1');
@@ -208,13 +199,6 @@ describe('SyncNextLedgerStore', () => {
       }],
       settled: [],
     });
-
-    await store.setLinkStatus(identity(create), 'authorization-paused');
-    expect(await store.commitPullPage(identity(create), {
-      handledThrough : token(2, 'pull'),
-      quarantine     : [],
-      settled        : [],
-    })).toBe(false);
 
     await store.retireLink(identity(create));
     expect(await store.commitPullPage(identity(create), {
@@ -379,33 +363,4 @@ describe('SyncNextLedgerStore', () => {
     expect(await limited.getDeliveryForLink(identity(create))).toHaveLength(1);
   });
 
-  it('should atomically reset one direction and purge only its reconstructible sparse state', async () => {
-    const create = linkCreate();
-    await store.getOrCreateLink(create);
-    await store.commitPullPage(identity(create), {
-      handledThrough : token(2, 'pull'),
-      quarantine     : [{
-        encryptedPayload : 'encrypted',
-        messageCid       : 'pull-cid',
-        source           : token(1, 'pull', 'pull-cid'),
-      }],
-      settled: [],
-    });
-    await store.commitPushPage(identity(create), {
-      delivery: [{
-        messageCid : 'push-cid',
-        outcome    : { reason: 'transport' },
-        source     : token(1, 'push', 'push-cid'),
-      }],
-      handledThrough : token(1, 'push'),
-      settled        : [],
-    });
-
-    expect(await store.rebuildDirection(identity(create), 'pull')).toBe(true);
-
-    expect((await store.getLink(identity(create)))?.pullHandledThrough).toBeUndefined();
-    expect((await store.getLink(identity(create)))?.pushHandledThrough).toEqual(token(1, 'push'));
-    expect(await store.getQuarantineForLink(identity(create))).toEqual([]);
-    expect(await store.getDeliveryForLink(identity(create))).toHaveLength(1);
-  });
 });

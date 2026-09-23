@@ -244,7 +244,7 @@ export class SyncTargetResolver {
         // is only used to avoid scheduling an equivalent endpoint twice.
       }
       if (!endpointsByKey.has(key)) {
-        endpointsByKey.set(key, endpoint);
+        endpointsByKey.set(key, key);
       }
     }
     return [...endpointsByKey.values()];

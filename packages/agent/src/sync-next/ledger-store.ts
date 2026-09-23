@@ -30,6 +30,7 @@ import {
 type LevelKey = string | Buffer | Uint8Array;
 type SyncNextDatabase = AbstractLevel<LevelKey>;
 type SyncNextBatchOperation = AbstractBatchOperation<SyncNextDatabase, string, string>;
+type SyncNextSparseEntry = SyncNextDeliveryObligation | SyncNextQuarantineEntry;
 
 export const SYNC_NEXT_DEFAULT_MAX_DELIVERY_PER_LINK = 10_000;
 export const SYNC_NEXT_DEFAULT_MAX_QUARANTINE_BYTES_PER_LINK = 64 * 1024 * 1024;
@@ -65,29 +66,17 @@ export class SyncNextLedgerStore {
     this._delivery = _db.sublevel('syncNextV1Delivery');
     this._links = _db.sublevel('syncNextV1Links');
     this._lockNamespace = lockNamespace;
-    this._maxDeliveryPerLink = SyncNextLedgerStore.capacity(
-      options.maxDeliveryPerLink,
-      SYNC_NEXT_DEFAULT_MAX_DELIVERY_PER_LINK,
-      'maxDeliveryPerLink',
-    );
-    this._maxQuarantineBytesPerLink = SyncNextLedgerStore.capacity(
-      options.maxQuarantineBytesPerLink,
-      SYNC_NEXT_DEFAULT_MAX_QUARANTINE_BYTES_PER_LINK,
-      'maxQuarantineBytesPerLink',
-    );
-    this._maxQuarantinePerLink = SyncNextLedgerStore.capacity(
-      options.maxQuarantinePerLink,
-      SYNC_NEXT_DEFAULT_MAX_QUARANTINE_PER_LINK,
-      'maxQuarantinePerLink',
-    );
+    this._maxDeliveryPerLink = options.maxDeliveryPerLink ?? SYNC_NEXT_DEFAULT_MAX_DELIVERY_PER_LINK;
+    this._maxQuarantineBytesPerLink = options.maxQuarantineBytesPerLink ??
+      SYNC_NEXT_DEFAULT_MAX_QUARANTINE_BYTES_PER_LINK;
+    this._maxQuarantinePerLink = options.maxQuarantinePerLink ?? SYNC_NEXT_DEFAULT_MAX_QUARANTINE_PER_LINK;
     this._quarantine = _db.sublevel('syncNextV1Quarantine');
   }
 
-  /** Read or create one exact link. */
   public async getOrCreateLink(input: SyncNextLinkCreate): Promise<SyncNextLink> {
     const key = syncNextLinkKey(input);
     return this.runForLink(key, async (): Promise<SyncNextLink> => {
-      const existing = await this.getStoredLink(key);
+      const existing = await this.getValue<SyncNextLink>(this._links, key);
       if (existing !== undefined) {
         SyncNextLedgerStore.assertSameLinkDefinition(existing, input);
         return existing;
@@ -100,7 +89,6 @@ export class SyncNextLedgerStore {
         projectionId       : input.projectionId,
         remoteEndpoint     : input.remoteEndpoint,
         scope              : structuredClone(input.scope),
-        status             : 'active',
         tenantDid          : input.tenantDid,
         updatedAt          : now,
       };
@@ -110,7 +98,7 @@ export class SyncNextLedgerStore {
   }
 
   public async getLink(identity: SyncNextLinkIdentity): Promise<SyncNextLink | undefined> {
-    return this.getStoredLink(syncNextLinkKey(identity));
+    return this.getValue(this._links, syncNextLinkKey(identity));
   }
 
   public async getLinksForTenant(tenantDid: string): Promise<SyncNextLink[]> {
@@ -133,7 +121,6 @@ export class SyncNextLedgerStore {
     });
   }
 
-  /** Explicit acceptance removal deletes one link and every sparse outcome it owns. */
   public async deleteLinkAndSparse(identity: SyncNextLinkIdentity): Promise<void> {
     const key = syncNextLinkKey(identity);
     await this.runForLink(key, async (): Promise<void> => {
@@ -148,32 +135,15 @@ export class SyncNextLedgerStore {
     });
   }
 
-  public async setLinkStatus(
-    identity: SyncNextLinkIdentity,
-    status: SyncNextLink['status'],
-  ): Promise<boolean> {
-    const key = syncNextLinkKey(identity);
-    return this.runForLink(key, async (): Promise<boolean> => {
-      const link = await this.getStoredLink(key);
-      if (link === undefined) {
-        return false;
-      }
-      link.status = status;
-      link.updatedAt = new Date().toISOString();
-      await this._links.put(key, JSON.stringify(link));
-      return true;
-    });
-  }
-
   /** Atomically retain pull exceptions and advance the remote handled-through token. */
   public async commitPullPage(
     identity: SyncNextLinkIdentity,
     commit: SyncNextPullPageCommit,
   ): Promise<boolean> {
-    SyncNextLedgerStore.validatePullCommit(commit);
+    SyncNextLedgerStore.validatePageCommit(commit.handledThrough, commit.quarantine, commit.settled, 'pull');
     const key = syncNextLinkKey(identity);
     return this.runForLink(key, async (): Promise<boolean> => {
-      const link = await this.getActiveLink(key);
+      const link = await this.getValue<SyncNextLink>(this._links, key);
       if (link === undefined) {
         return false;
       }
@@ -186,7 +156,7 @@ export class SyncNextLedgerStore {
         (entry): [string, SyncNextQuarantineEntry] => [syncNextReceiptKey(link, entry), entry],
       ));
       for (const input of commit.quarantine) {
-        const state = await this.nextQuarantineState(link, input);
+        const state = this.nextQuarantineState(link, input);
         const receiptKey = syncNextReceiptKey(link, state);
         retained.set(receiptKey, state);
         operations.push(this.putOperation(this._quarantine, receiptKey, state));
@@ -210,10 +180,10 @@ export class SyncNextLedgerStore {
     identity: SyncNextLinkIdentity,
     commit: SyncNextPushPageCommit,
   ): Promise<boolean> {
-    SyncNextLedgerStore.validatePushCommit(commit);
+    SyncNextLedgerStore.validatePageCommit(commit.handledThrough, commit.delivery, commit.settled, 'push');
     const key = syncNextLinkKey(identity);
     return this.runForLink(key, async (): Promise<boolean> => {
-      const link = await this.getActiveLink(key);
+      const link = await this.getValue<SyncNextLink>(this._links, key);
       if (link === undefined) {
         return false;
       }
@@ -226,7 +196,7 @@ export class SyncNextLedgerStore {
         (entry): [string, SyncNextDeliveryObligation] => [syncNextReceiptKey(link, entry), entry],
       ));
       for (const input of commit.delivery) {
-        const state = await this.nextDeliveryState(link, input);
+        const state = this.nextDeliveryState(link, input);
         const receiptKey = syncNextReceiptKey(link, state);
         retained.set(receiptKey, state);
         operations.push(this.putOperation(this._delivery, receiptKey, state));
@@ -252,10 +222,6 @@ export class SyncNextLedgerStore {
     return this.readValues(this._quarantine.iterator(syncNextLinkRange(identity)));
   }
 
-  public async getAllQuarantine(): Promise<SyncNextQuarantineEntry[]> {
-    return this.readValues(this._quarantine.iterator());
-  }
-
   public async getQuarantineForTenant(tenantDid: string): Promise<SyncNextQuarantineEntry[]> {
     return this.readValues(this._quarantine.iterator(syncNextTenantRange(tenantDid)));
   }
@@ -264,16 +230,12 @@ export class SyncNextLedgerStore {
     return this.readValues(this._delivery.iterator(syncNextLinkRange(identity)));
   }
 
-  public async getAllDelivery(): Promise<SyncNextDeliveryObligation[]> {
-    return this.readValues(this._delivery.iterator());
-  }
-
   public async getDeliveryForTenant(tenantDid: string): Promise<SyncNextDeliveryObligation[]> {
     return this.readValues(this._delivery.iterator(syncNextTenantRange(tenantDid)));
   }
 
-  /** Explicit identity removal owns all next-engine state for that tenant. */
   public async deleteForTenant(tenantDid: string): Promise<void> {
+    await Promise.all((await this.getLinksForTenant(tenantDid)).map(link => this.deleteLinkAndSparse(link)));
     const range = syncNextTenantRange(tenantDid);
     await Promise.all([this._delivery.clear(range), this._links.clear(range), this._quarantine.clear(range)]);
   }
@@ -282,27 +244,13 @@ export class SyncNextLedgerStore {
   public async getQuarantineForLogicalTarget(
     logicalTargetId: string,
   ): Promise<SyncNextQuarantineEntry[]> {
-    return (await this.getAllQuarantine()).filter(entry =>
+    return (await this.readValues<SyncNextQuarantineEntry>(this._quarantine.iterator())).filter(entry =>
       syncNextLogicalTargetId(entry.tenantDid, entry.projectionId) === logicalTargetId
     );
   }
 
-  /** Update one retained receipt without requiring its original link to remain active. */
   public async updateQuarantine(entry: SyncNextQuarantineEntry): Promise<void> {
-    const linkKey = syncNextLinkKey(entry);
-    await this.runForLink(linkKey, async (): Promise<void> => {
-      const key = syncNextReceiptKey(entry, entry);
-      const current = await this.getSparseValue<SyncNextQuarantineEntry>(this._quarantine, key);
-      if (current === undefined) {
-        return;
-      }
-      const updated: SyncNextQuarantineEntry = {
-        ...current,
-        attempts      : current.attempts + 1,
-        lastAttemptAt : new Date().toISOString(),
-      };
-      await this._quarantine.put(key, JSON.stringify(updated));
-    });
+    return this.updateSparse(this._quarantine, entry);
   }
 
   /** Settle every exact-source receipt satisfied by one verified local materialization. */
@@ -318,14 +266,6 @@ export class SyncNextLedgerStore {
     ));
   }
 
-  /** Explicit recovery cleanup after every current source checkpoint has been reset. */
-  public async purgeQuarantineForLogicalTarget(logicalTargetId: string): Promise<void> {
-    const entries = await this.getQuarantineForLogicalTarget(logicalTargetId);
-    await Promise.all(entries.map((entry): Promise<void> =>
-      this.settleSparse(this._quarantine, entry, entry)
-    ));
-  }
-
   public async settleDelivery(
     identity: SyncNextLinkIdentity,
     receipt: SyncNextSourceReceipt,
@@ -333,69 +273,15 @@ export class SyncNextLedgerStore {
     return this.settleSparse(this._delivery, identity, receipt);
   }
 
-  /** Update one outbound retry outcome without changing local feed progress. */
   public async updateDelivery(
     entry: SyncNextDeliveryObligation,
     outcome: SyncNextDeliveryOutcome,
   ): Promise<void> {
-    const linkKey = syncNextLinkKey(entry);
-    await this.runForLink(linkKey, async (): Promise<void> => {
-      const key = syncNextReceiptKey(entry, entry);
-      const current = await this.getSparseValue<SyncNextDeliveryObligation>(this._delivery, key);
-      if (current === undefined) {
-        return;
-      }
-      const updated: SyncNextDeliveryObligation = {
-        ...current,
-        attempts      : current.attempts + 1,
-        lastAttemptAt : new Date().toISOString(),
-        outcome       : structuredClone(outcome),
-      };
-      await this._delivery.put(key, JSON.stringify(updated));
-    });
+    return this.updateSparse(this._delivery, entry, outcome);
   }
 
-  /** Atomically discard reconstructible sparse state and reset one source for replay. */
-  public async rebuildDirection(
-    identity: SyncNextLinkIdentity,
-    direction: 'pull' | 'push',
-    token?: ProgressToken,
-  ): Promise<boolean> {
-    if (token !== undefined) {
-      SyncNextLedgerStore.assertValidToken(token, `${direction} rebuild token`);
-    }
-    const key = syncNextLinkKey(identity);
-    return this.runForLink(key, async (): Promise<boolean> => {
-      const link = await this.getStoredLink(key);
-      if (link === undefined) {
-        return false;
-      }
-      const operations: SyncNextBatchOperation[] = [];
-      const sparse = direction === 'pull'
-        ? await this.getQuarantineForLink(identity)
-        : await this.getDeliveryForLink(identity);
-      for (const entry of sparse) {
-        operations.push(this.deleteOperation(
-          direction === 'pull' ? this._quarantine : this._delivery,
-          syncNextReceiptKey(identity, entry),
-        ));
-      }
-      const updated = structuredClone(link);
-      if (direction === 'pull') {
-        updated.pullHandledThrough = token;
-      } else {
-        updated.pushHandledThrough = token;
-      }
-      updated.updatedAt = new Date().toISOString();
-      operations.push(this.putOperation(this._links, key, updated));
-      await this._db.batch(operations);
-      return true;
-    });
-  }
-
-  /** Clear only the isolated next-engine namespace. */
   public async clear(): Promise<void> {
-    await this.waitForPendingOperations();
+    await Promise.allSettled([...this._pendingOperations.values()]);
     await Promise.all([
       this._delivery.clear(),
       this._links.clear(),
@@ -403,34 +289,14 @@ export class SyncNextLedgerStore {
     ]);
   }
 
-  private async getActiveLink(key: string): Promise<SyncNextLink | undefined> {
-    const link = await this.getStoredLink(key);
-    return link?.status === 'active' ? link : undefined;
-  }
-
-  private async getStoredLink(key: string): Promise<SyncNextLink | undefined> {
-    try {
-      return JSON.parse(await this._links.get(key)) as SyncNextLink;
-    } catch (error: unknown) {
-      if (SyncNextLedgerStore.isNotFound(error)) {
-        return undefined;
-      }
-      throw error;
-    }
-  }
-
-  private async nextQuarantineState(
+  private nextQuarantineState(
     link: SyncNextLink,
     input: SyncNextQuarantineInput,
-  ): Promise<SyncNextQuarantineEntry> {
-    const key = syncNextReceiptKey(link, input);
-    const previous = await this.getSparseValue<SyncNextQuarantineEntry>(this._quarantine, key);
-    const now = new Date().toISOString();
+  ): SyncNextQuarantineEntry {
     return {
-      attempts           : (previous?.attempts ?? 0) + 1,
       authorizationEpoch : link.authorizationEpoch,
       encryptedPayload   : input.encryptedPayload,
-      lastAttemptAt      : now,
+      lastAttemptAt      : new Date().toISOString(),
       messageCid         : input.messageCid,
       projectionId       : link.projectionId,
       remoteEndpoint     : link.remoteEndpoint,
@@ -439,17 +305,13 @@ export class SyncNextLedgerStore {
     };
   }
 
-  private async nextDeliveryState(
+  private nextDeliveryState(
     link: SyncNextLink,
     input: SyncNextDeliveryInput,
-  ): Promise<SyncNextDeliveryObligation> {
-    const key = syncNextReceiptKey(link, input);
-    const previous = await this.getSparseValue<SyncNextDeliveryObligation>(this._delivery, key);
-    const now = new Date().toISOString();
+  ): SyncNextDeliveryObligation {
     return {
-      attempts           : (previous?.attempts ?? 0) + 1,
       authorizationEpoch : link.authorizationEpoch,
-      lastAttemptAt      : now,
+      lastAttemptAt      : new Date().toISOString(),
       messageCid         : input.messageCid,
       outcome            : structuredClone(input.outcome),
       projectionId       : link.projectionId,
@@ -459,7 +321,7 @@ export class SyncNextLedgerStore {
     };
   }
 
-  private async getSparseValue<T>(
+  private async getValue<T>(
     store: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>,
     key: string,
   ): Promise<T | undefined> {
@@ -471,6 +333,26 @@ export class SyncNextLedgerStore {
       }
       throw error;
     }
+  }
+
+  private async updateSparse(
+    store: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>,
+    entry: SyncNextSparseEntry,
+    outcome?: SyncNextDeliveryOutcome,
+  ): Promise<void> {
+    const linkKey = syncNextLinkKey(entry);
+    await this.runForLink(linkKey, async (): Promise<void> => {
+      const key = syncNextReceiptKey(entry, entry);
+      const current = await this.getValue<SyncNextSparseEntry>(store, key);
+      if (current === undefined) {
+        return;
+      }
+      await store.put(key, JSON.stringify({
+        ...current,
+        lastAttemptAt: new Date().toISOString(),
+        ...(outcome === undefined ? {} : { outcome: structuredClone(outcome) }),
+      }));
+    });
   }
 
   private settleSparse(
@@ -518,10 +400,6 @@ export class SyncNextLedgerStore {
     );
   }
 
-  private async waitForPendingOperations(): Promise<void> {
-    await Promise.allSettled([...this._pendingOperations.values()]);
-  }
-
   private assertQuarantineCapacity(entries: Iterable<SyncNextQuarantineEntry>): void {
     let count = 0;
     let bytes = 0;
@@ -539,24 +417,6 @@ export class SyncNextLedgerStore {
         `SyncNextLedgerStore: quarantine byte capacity ${this._maxQuarantineBytesPerLink} exceeded.`,
       );
     }
-  }
-
-  private static validatePullCommit(commit: SyncNextPullPageCommit): void {
-    SyncNextLedgerStore.validatePageCommit(
-      commit.handledThrough,
-      commit.quarantine,
-      commit.settled,
-      'pull',
-    );
-  }
-
-  private static validatePushCommit(commit: SyncNextPushPageCommit): void {
-    SyncNextLedgerStore.validatePageCommit(
-      commit.handledThrough,
-      commit.delivery,
-      commit.settled,
-      'push',
-    );
   }
 
   private static validatePageCommit(
@@ -665,14 +525,6 @@ export class SyncNextLedgerStore {
     ) {
       throw new Error('SyncNextLedgerStore: exact link key resolves to a different durable definition.');
     }
-  }
-
-  private static capacity(value: number | undefined, fallback: number, label: string): number {
-    const resolved = value ?? fallback;
-    if (!Number.isSafeInteger(resolved) || resolved < 0) {
-      throw new RangeError(`SyncNextLedgerStore: ${label} must be a non-negative safe integer.`);
-    }
-    return resolved;
   }
 
   private static isNotFound(error: unknown): boolean {

@@ -129,7 +129,7 @@ describe('Agent remote mode integration', () => {
     expect(localServer.httpUrl).not.toBe(remoteServer.httpUrl);
   });
 
-  it('drains local and remote data to an explicit endpoint and reports convergence progress', async () => {
+  it('drains local and remote data to an explicit endpoint', async () => {
     context = await setupRemoteModeContext('drain');
     const { alice, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync;
@@ -151,17 +151,7 @@ describe('Agent remote mode integration', () => {
 
     expect(result.endpoint).toBe(remoteServer.httpUrl);
     expect(result.completed).toBe(true);
-    expect(result.targets).toHaveLength(1);
-
-    const target = result.targets[0]!;
-    expect(target.tenantDid).toBe(alice.did.uri);
-    expect(target.remoteEndpoint).toBe(remoteServer.httpUrl);
-    expect(target.completed).toBe(true);
-    expect(target.converged).toBe(true);
-    expect(target.pushCheckpoint).toBeDefined();
-    expect(target.localFingerprint).toBeDefined();
-    expect(target.localFingerprint).toBe(target.remoteFingerprint);
-    expect(target.error).toBeUndefined();
+    expect(result.error).toBeUndefined();
     expect(await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, localWrite.recordId)).toBe('drained local body');
     expect(await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId)).toBe('drained remote body');
 
@@ -169,7 +159,7 @@ describe('Agent remote mode integration', () => {
     const link = links.find(candidate => candidate.remoteEndpoint === remoteServer.httpUrl);
 
     expect(link).toBeDefined();
-    expect(link?.pushPosition).toBe(target.pushCheckpoint?.position);
+    expect(link?.pushPosition).toBeDefined();
     expect(link?.pullPosition).toBeDefined();
 
     // The explicit handoff endpoint remains a durable supplemental target.

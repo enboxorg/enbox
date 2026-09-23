@@ -309,11 +309,6 @@ export type SyncRunOptions = {
    * Rejects when the DID is not registered.
    */
   did?: string;
-
-  /**
-   * Verify two stable cids-only feed fingerprints after page coverage.
-   */
-  verifyConvergence?: boolean;
 };
 
 /**
@@ -444,26 +439,6 @@ export type SyncDrainOptions = {
 };
 
 /**
- * Per-link drain progress for a tenant and endpoint. A tenant can have more
- * than one target when delegated grants split the requested sync scope.
- */
-export type SyncDrainTargetResult = {
-  tenantDid: string;
-  remoteEndpoint: string;
-  scope?: SyncScope;
-  completed: boolean;
-  /** True only when this target stopped because the caller's abort signal fired. */
-  cancelled: boolean;
-  converged: boolean;
-  /** True when the target was reachable but intentionally remains incomplete because of durable quota omissions. */
-  quotaBlocked?: boolean;
-  pushCheckpoint?: ProgressToken;
-  localFingerprint?: string;
-  remoteFingerprint?: string;
-  error?: string;
-};
-
-/**
  * Result of draining all registered sync identities to a specific DWN endpoint.
  */
 export type SyncDrainResult = {
@@ -471,9 +446,6 @@ export type SyncDrainResult = {
   completed: boolean;
   /** True only when the caller's abort signal was observed before completion. */
   cancelled: boolean;
-  /** True when identity registration or agent topology changed while the drain was running. */
-  topologyChanged: boolean;
-  targets: SyncDrainTargetResult[];
   error?: string;
 };
 
@@ -571,12 +543,9 @@ export type SyncEvent =
   }
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
+  | SyncEventBase & { type: 'link:activity' }
   /** Whether all accepted remote pull work is settled. */
   | SyncEventBase & { type: 'pull:currentness-change'; from: boolean; to: boolean }
-  /** A pull checkpoint was durably committed. */
-  | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
-  /** A push checkpoint was durably committed. */
-  | SyncEventBase & { type: 'checkpoint:push-advance'; position: string; messageCid?: string }
   /**
    * Emitted once per FRESHLY applied remote message — the feed root and any
    * fetched dependency (parent, role record, initial write) admitted alongside
@@ -586,23 +555,6 @@ export type SyncEvent =
   | SyncEventBase & { type: 'delivery:applied'; messageCid: string; descriptor: SyncMessageDescriptor };
 
 export type SyncEventListener = (event: SyncEvent) => void;
-
-/** Sync health summary returned by `getSyncHealth()`. */
-export type SyncHealthSummary = {
-  /** Current connectivity state. */
-  connectivity: SyncConnectivityState;
-  /** Number of current links that are paused or have sparse pending work. */
-  degradedLinkCount: number;
-  /**
-   * Number of messages currently deferred because a remote rejected the push
-   * for tenant storage/message quota. These are re-probed on a backoff and
-   * self-heal when quota grows, another device delivers the CID, or local
-   * history retires it. They are user-actionable state, not a dead letter.
-   */
-  quotaBlockedMessageCount: number;
-  /** True only when there are no quota blocks or degraded links. */
-  syncHealthy: boolean;
-};
 
 /**
  * Coarse per-remote sync state for UI. Precedence when several apply:
@@ -672,8 +624,6 @@ type ReplicationCurrentnessLink = Pick<ReplicationLinkSnapshot, 'connectivity' |
 export type SyncIdentityStatus = Readonly<{
   /** Durable sync registration, or `undefined` when the identity is not registered. */
   registration: SyncIdentityOptions | undefined;
-  /** Health summary scoped to this identity. */
-  health: SyncHealthSummary;
   /** Connectivity across current identity links, with the engine state as the zero-link fallback. */
   connectivity: SyncConnectivityState;
   /** Currentness across this identity's replication links. */
@@ -711,13 +661,6 @@ export interface SyncEngine {
   agent: EnboxPlatformAgent;
 
   /**
-   * Current connectivity state as observed by the sync engine.
-   * Updated when WebSocket subscriptions connect/disconnect or when the
-   * browser `online`/`offline` events fire.
-   */
-  readonly connectivityState: SyncConnectivityState;
-
-  /**
    * Whether at least one live pull or push subscription is open.
    *
    * This is specifically about live subscriptions — it is `false` when only
@@ -738,7 +681,7 @@ export interface SyncEngine {
    * other identities. Replacing existing options rebuilds only that identity's
    * links when needed.
    * Repeated calls with equal options are value-idempotent, not cost-free: they
-   * clear tenant quota state and rebuild any existing live routing.
+   * rebuild that identity's live routing while retaining durable progress.
    *
    * `lifecycleOptions.timeout` bounds only preparation waits. A timed-out
    * mutation preserves the previous durable options and may be retried.
@@ -748,24 +691,6 @@ export interface SyncEngine {
     lifecycleOptions?: SyncLifecycleOptions,
   ): Promise<void>;
   /**
-   * Create or replace an identity's sync options only when their effective
-   * scope or delegate changes.
-   *
-   * The comparison and optional update run under the same per-DID lifecycle
-   * fence, so callers do not need a read/compare/single-flight wrapper.
-   * Protocol-list order and duplicates do not count as changes. Returns
-   * `true` when new options were applied and `false` for an existing,
-   * semantically equal registration.
-   *
-   * This compares durable identity options only. Call
-   * {@link refreshIdentityRouting} when authorization or endpoint state changes
-   * without changing those options.
-   */
-  ensureIdentityOptions(
-    params: { did: string, options: SyncIdentityOptions },
-    lifecycleOptions?: SyncLifecycleOptions,
-  ): Promise<boolean>;
-  /**
    * Reapply one registered identity's durable options to its live routing.
    *
    * The read and rebuild are serialized with identity replacement/removal, so
@@ -774,11 +699,11 @@ export interface SyncEngine {
    */
   refreshIdentityRouting(did: string, lifecycleOptions?: SyncLifecycleOptions): Promise<void>;
   /**
-   * Recheck a confirmed inactive wallet approval and park its delegated work.
-   * Preserves registration and followed contexts; fresh registration resumes sync.
+   * Recheck a confirmed inactive wallet approval and remove its sync registration.
+   * Followed contexts remain accepted; fresh registration safely rescans them.
    * An observation of an older approval cannot pause a newer one.
    * Returns whether the observed approval is still current and inactive,
-   * even when no registered work needs parking.
+   * even when no registration needs removal.
    */
   pauseIdentity(params: { did: string; delegateDid: string; connectSessionId: string }): Promise<boolean>;
   /**
@@ -820,15 +745,11 @@ export interface SyncEngine {
   /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *
-   * Concurrent calls coalesce instead of throwing: when a sync (or drain) is
-   * already holding the lock, the call joins a single queued follow-up run
-   * that starts after the current operation completes. All joined callers
-   * share that run's outcome, and their requested directions/scopes are
-   * merged (differing directions widen to both; differing scopes widen to
-   * unscoped) so the follow-up covers every joined request. A runtime
-   * transition (`startSync`/`stopSync`/`clear`/`close`) while the follow-up
-   * is still queued cancels it, keeping "resolved ⇒ a covering run completed"
-   * true for every caller.
+   * Concurrent calls share one serialized batch. Requests arriving during a
+   * covering pass merge into at most one follow-up (different directions widen
+   * to both; different identities widen to all). A runtime transition
+   * invalidates active coverage and drops its pending follow-up; calls made
+   * after the transition starts serialize behind it.
    *
    * @param direction which direction you'd like to perform the sync operation.
    * @param options optional scoping — `did` restricts the run to one
@@ -844,9 +765,9 @@ export interface SyncEngine {
    *
    * This is a one-shot eject primitive: it creates or resumes durable
    * exact links for `endpoint`, persists it as a supplemental target for later
-   * live sync, covers local and remote feeds, and requires two
-   * stable cids-only convergence snapshots before marking a target complete.
-   * Empty plans, paused links, cancellation, or registration changes produce
+   * live sync, and covers local and remote feeds until both drain with no
+   * retained sparse work.
+   * Empty plans, cancellation, or registration changes produce
    * an incomplete result that callers may safely retry.
    *
    * @throws {Error} if another one-shot sync or drain is already in progress.
@@ -885,9 +806,15 @@ export interface SyncEngine {
   stopSync(timeout?: number): Promise<void>;
 
   /**
+   * Clear all sync registrations and progress for explicit disaster recovery.
+   * The application must register identities and followed contexts again.
+   */
+  reset(): Promise<void>;
+
+  /**
    * Subscribe to sync engine events. Returns an unsubscribe function.
-   * Events are emitted for catalog changes, link state, watermark advancement,
-   * and freshly applied messages.
+   * Events are emitted for catalog changes, link state/activity, and freshly
+   * applied messages.
    */
   on(listener: SyncEventListener): () => void;
 
@@ -899,9 +826,6 @@ export interface SyncEngine {
    */
   close(options?: SyncLifecycleOptions): Promise<void>;
 
-  /** Returns a summary of sync connectivity and sparse pending work. */
-  getSyncHealth(): Promise<SyncHealthSummary>;
-
   /**
    * Returns one identity's registration, links, remotes, and health from one
    * combined status read. Prefer this when a caller needs more than one projection.
@@ -909,22 +833,20 @@ export interface SyncEngine {
   getIdentitySyncStatus(tenantDid: string): Promise<SyncIdentityStatus>;
 
   /**
-   * Returns a read-only snapshot of every current replication link, optionally
-   * filtered by tenant. Superseded links (from a previous scope/delegate
-   * registration) are excluded. An identity has completed its initial
-   * catch-up and is currently attached when every one of its links reports
+   * Returns a tenant's current replication links. Superseded links from a
+   * previous scope or delegate are excluded. Initial catch-up is complete when
+   * every link reports
    * `status: 'live'`, `connectivity: 'online'`, and `isPullCurrent: true` —
    * `startSync()` resolving covers identities registered before start, and
    * this surface covers hot-added identities and later inspection.
    */
-  getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]>;
+  getReplicationLinks(tenantDid: string): Promise<ReplicationLinkSnapshot[]>;
 
   /**
    * Immediately retry a remote's retained sparse work instead of waiting for
-   * the next periodic pass. Runs
-   * targeted, per-link work for `(tenantDid, remoteEndpoint)`, so a UI
+   * the next periodic pass. Runs targeted work for `(tenantDid, remoteEndpoint)`, so a UI
    * "Retry now" button (or a freshly purchased quota) resumes without touching
-   * unrelated remotes. Authorization and policy pauses remain parked. No-op
+   * unrelated remotes. Authorization failures remain retained. No-op
    * when nothing is retryable.
    */
   retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void>;

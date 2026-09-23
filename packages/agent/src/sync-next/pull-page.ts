@@ -27,34 +27,24 @@ export type SyncNextPullPageResult = { aborted: true } | {
   quarantined: number;
 };
 
-export type SyncNextPullPageOptions = {
-  signal?: AbortSignal;
-  shouldContinue?: () => boolean;
-};
-
-export type SyncNextPullPageObserver = {
-  onApplied?: (target: SyncTarget, entries: readonly SyncFreshEntry[]) => void;
-  onCheckpoint?: (target: SyncTarget, token: ProgressToken) => void;
-};
-
 /** Consumes exactly one remote feed page through normal local DWN admission. */
 export class SyncNextPullPage {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _echoSuppressor?: SyncEchoSuppressor,
-    private readonly _observer: SyncNextPullPageObserver = {},
+    private readonly _onApplied?: (target: SyncTarget, entries: readonly SyncFreshEntry[]) => void,
     private readonly _resolveTarget: (target: SyncTarget) => Promise<SyncTarget> = async target => target,
   ) {}
 
   public async consume(
     target: SyncTarget,
-    options: SyncNextPullPageOptions = {},
+    options: { signal?: AbortSignal; shouldContinue?: () => boolean } = {},
   ): Promise<SyncNextPullPageResult> {
     const shouldContinue = options.shouldContinue ?? ((): boolean => true);
     const identity = syncNextLinkIdentity(target);
     const link = await this._ledger.getLink(identity);
-    if (link === undefined || link.status !== 'active' || !shouldContinue()) {
+    if (link === undefined || !shouldContinue()) {
       return { aborted: true };
     }
     const current = await this._resolveTarget(target);
@@ -136,7 +126,7 @@ export class SyncNextPullPage {
           materializedCids.add(messageCid);
         }
         if (outcome.freshEntries.length > 0) {
-          this._observer.onApplied?.(current, outcome.freshEntries);
+          this._onApplied?.(current, outcome.freshEntries);
         }
         continue;
       }
@@ -161,8 +151,6 @@ export class SyncNextPullPage {
     if (!committed) {
       return { aborted: true };
     }
-    this._observer.onCheckpoint?.(current, handledThrough);
-
     return {
       hasMore          : reply.drained !== true,
       materializedCids : [...materializedCids],

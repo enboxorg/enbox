@@ -19,7 +19,7 @@ import { admitClosure } from '../sync-admit-closure.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { DwnInterface } from '../types/dwn.js';
 import { fetchConnectionStatus } from '../connect-status.js';
-import { normalizeSyncProtocols } from '../types/sync.js';
+import { runWithCrossContextLock } from '@enbox/common';
 import { SyncScopeClosureValidator } from '../sync-scope-closure-validator.js';
 import {
   DwnInterfaceName,
@@ -45,8 +45,6 @@ import {
   permissionGrantIdsFromEntries,
   SyncProtocolRootPermissionGrantMissingError,
 } from '../sync-permission-grants.js';
-import { MAX_TIMER_DELAY_MS, runWithCrossContextLock } from '@enbox/common';
-
 type PreparedFollowedSource = {
   batch: RoleReplicationSupportBatch;
   source: FollowedSyncSource;
@@ -56,8 +54,6 @@ type SyncNextCatalogFollowResult = {
   changed: boolean;
   source: FollowedSyncSource;
 };
-
-type SyncNextCatalogDeadline = { signal: AbortSignal; timeout: number };
 
 /**
  * Owns the small durable catalog that remains independent of transfer state.
@@ -90,24 +86,17 @@ export class SyncNextCatalog {
     { did, options }: { did: string; options: SyncIdentityOptions },
     lifecycleOptions: SyncLifecycleOptions,
     beforeCommit: () => Promise<void>,
-    skipIfUnchanged = false,
-  ): Promise<boolean> {
+  ): Promise<void> {
     this._closureValidator.validateOptions(options);
-    const deadline = SyncNextCatalog.createDeadline(lifecycleOptions);
-    return this.runIdentityLifecycle(did, async (): Promise<boolean> => {
-      const existing = await this._identityStore.get(did);
-      if (skipIfUnchanged && existing !== undefined && SyncNextCatalog.optionsEqual(existing, options)) {
-        return false;
-      }
+    const signal = SyncNextCatalog.timeoutSignal(lifecycleOptions);
+    await this.runIdentityLifecycle(did, async (): Promise<void> => {
       await this.waitFor(
         this._closureValidator.validateClosure(did, options),
-        deadline,
-        'identity scope validation did not complete',
+        signal,
       );
-      await this.waitFor(beforeCommit(), deadline, 'identity runtime did not stop');
+      await this.waitFor(beforeCommit(), signal);
       await this._identityStore.set(did, options);
-      return true;
-    }, deadline);
+    }, signal);
   }
 
   public async refreshIdentityRouting(
@@ -115,14 +104,14 @@ export class SyncNextCatalog {
     lifecycleOptions: SyncLifecycleOptions,
     beforeRefresh: () => Promise<void>,
   ): Promise<boolean> {
-    const deadline = SyncNextCatalog.createDeadline(lifecycleOptions);
+    const signal = SyncNextCatalog.timeoutSignal(lifecycleOptions);
     return this.runIdentityLifecycle(did, async (): Promise<boolean> => {
       if (await this._identityStore.get(did) === undefined) {
         return false;
       }
-      await this.waitFor(beforeRefresh(), deadline, 'identity runtime did not stop');
+      await this.waitFor(beforeRefresh(), signal);
       return true;
-    }, deadline);
+    }, signal);
   }
 
   public async removeIdentity(
@@ -130,15 +119,15 @@ export class SyncNextCatalog {
     lifecycleOptions: SyncLifecycleOptions,
     beforeCommit: () => Promise<void>,
   ): Promise<boolean> {
-    const deadline = SyncNextCatalog.createDeadline(lifecycleOptions);
+    const signal = SyncNextCatalog.timeoutSignal(lifecycleOptions);
     return this.runIdentityLifecycle(did, async (): Promise<boolean> => {
       if (await this._identityStore.get(did) === undefined) {
         return false;
       }
-      await this.waitFor(beforeCommit(), deadline, 'identity runtime did not stop');
+      await this.waitFor(beforeCommit(), signal);
       await this._identityStore.delete(did);
       return true;
-    }, deadline);
+    }, signal);
   }
 
   public async pauseIdentity(
@@ -158,6 +147,7 @@ export class SyncNextCatalog {
         return false;
       }
       await beforePause();
+      await this._identityStore.delete(params.did);
       return true;
     });
   }
@@ -370,62 +360,27 @@ export class SyncNextCatalog {
   private runIdentityLifecycle<T>(
     did: string,
     operation: () => Promise<T>,
-    deadline?: SyncNextCatalogDeadline,
+    signal?: AbortSignal,
   ): Promise<T> {
     const lockName = `enbox:sync-identity:${this._lockNamespace}:${did}`;
-    const timeoutError = (): Error => new Error(
-      `SyncNextCatalog: cross-context identity mutation did not start within ${deadline?.timeout} milliseconds.`,
-    );
     const locked = runWithCrossContextLock(lockName, async (): Promise<T> => {
-      if (deadline?.signal.aborted === true) {
-        throw timeoutError();
+      if (signal?.aborted === true) {
+        throw signal.reason;
       }
       return operation();
     });
-    return this.waitFor(locked, deadline, 'cross-context identity mutation did not start');
+    return this.waitFor(locked, signal);
   }
 
-  private async waitFor<T>(
-    operation: Promise<T>,
-    deadline: SyncNextCatalogDeadline | undefined,
-    failure: string,
-  ): Promise<T> {
-    if (deadline === undefined) {
+  private waitFor<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (signal === undefined) {
       return operation;
     }
-    try {
-      return await executeUnlessAborted(operation, deadline.signal);
-    } catch (error: unknown) {
-      if (deadline.signal.aborted && error === deadline.signal.reason) {
-        throw new Error(`SyncNextCatalog: ${failure} within ${deadline.timeout} milliseconds.`);
-      }
-      throw error;
-    }
+    return executeUnlessAborted(operation, signal);
   }
 
-  private static createDeadline(
-    options: SyncLifecycleOptions,
-  ): SyncNextCatalogDeadline | undefined {
-    const timeout = options.timeout;
-    if (timeout === undefined) {
-      return undefined;
-    }
-    if (!Number.isFinite(timeout) || timeout < 0 || timeout > MAX_TIMER_DELAY_MS) {
-      throw new RangeError(
-        `SyncNextCatalog: lifecycle timeout must be between 0 and ${MAX_TIMER_DELAY_MS} milliseconds.`,
-      );
-    }
-    return { signal: AbortSignal.timeout(timeout), timeout };
-  }
-
-  private static optionsEqual(left: SyncIdentityOptions, right: SyncIdentityOptions): boolean {
-    if (left.delegateDid !== right.delegateDid || left.protocols === 'all' || right.protocols === 'all') {
-      return left.delegateDid === right.delegateDid && left.protocols === right.protocols;
-    }
-    const leftProtocols = normalizeSyncProtocols(left.protocols);
-    const rightProtocols = normalizeSyncProtocols(right.protocols);
-    return leftProtocols.length === rightProtocols.length &&
-      leftProtocols.every((protocol, index): boolean => protocol === rightProtocols[index]);
+  private static timeoutSignal(options: SyncLifecycleOptions): AbortSignal | undefined {
+    return options.timeout === undefined ? undefined : AbortSignal.timeout(options.timeout);
   }
 
   private static sameFollowedContext(

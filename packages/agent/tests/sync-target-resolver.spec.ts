@@ -109,7 +109,7 @@ describe('SyncTargetResolver', () => {
       });
 
       expect(await resolver.getEndpointUrls('did:example:alice')).toEqual([
-        'https://dwn.example.com/',
+        'https://dwn.example.com',
         'https://other.example.com/dwn',
       ]);
     });

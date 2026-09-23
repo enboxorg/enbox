@@ -183,21 +183,17 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
   });
 
-  it('should publish fresh delivery after admission and checkpoint after the ledger commits', async () => {
+  it('should publish fresh delivery and commit progress', async () => {
     const root = await feedEntry(protocolMessage('observed'), 1);
     const fixture = fakeAgent(page([root]));
-    const observations: string[] = [];
-    const onApplied = sinon.stub().callsFake((): void => { observations.push('applied'); });
-    const onCheckpoint = sinon.stub().callsFake((): void => { observations.push('checkpoint'); });
+    const onApplied = sinon.stub();
     await createLink();
 
-    await new SyncNextPullPage(fixture.agent, ledger, undefined, { onApplied, onCheckpoint }).consume(target());
+    await new SyncNextPullPage(fixture.agent, ledger, undefined, onApplied).consume(target());
 
-    expect(onCheckpoint.calledOnce).toBe(true);
-    expect(onCheckpoint.firstCall.args[1].position).toBe('1');
     expect(onApplied.calledOnce).toBe(true);
     expect(onApplied.firstCall.args[1]).toMatchObject([{ messageCid: root.messageCid }]);
-    expect(observations).toEqual(['applied', 'checkpoint']);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
   });
 
   it('should verify a recent push locally before suppressing its pull echo', async () => {
@@ -392,7 +388,7 @@ describe('SyncNextPullPage', () => {
       onApplied,
     ).retry(target(), pending);
 
-    expect(result.kind).toBe('settled');
+    expect(result).toBe(true);
     expect(fixture.send.callCount).toBe(2);
     expect(fixture.apply.calledOnce).toBe(true);
     expect(onApplied.calledOnce).toBe(true);
@@ -408,19 +404,16 @@ describe('SyncNextPullPage', () => {
     commit.onFirstCall().rejects(new Error('injected batch failure'));
     commit.callThrough();
     const onApplied = sinon.stub();
-    const onCheckpoint = sinon.stub();
-    const processor = new SyncNextPullPage(fixture.agent, ledger, undefined, { onApplied, onCheckpoint });
+    const processor = new SyncNextPullPage(fixture.agent, ledger, undefined, onApplied);
 
     await expect(processor.consume(target())).rejects.toThrow('injected batch failure');
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
     expect(onApplied.calledOnce).toBe(true);
-    expect(onCheckpoint.notCalled).toBe(true);
 
     fixture.apply.resolves({ kind: 'Duplicate' });
     await expect(processor.consume(target())).resolves.toMatchObject({ hasMore: false });
     expect(fixture.apply.calledTwice).toBe(true);
     expect(onApplied.calledOnce).toBe(true);
-    expect(onCheckpoint.calledOnce).toBe(true);
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
   });
 

@@ -16,15 +16,10 @@ import { syncNextLogicalTargetId } from './ledger-key.js';
 import { Encoder, Records } from '@enbox/dwn-sdk-js';
 
 const RETRY_DELAY_MS = 1_000;
-const MAX_RETRY_DELAY_MS = 60_000;
 
 export type SyncNextQuarantineAttempt = {
-  kind: 'aborted' | 'deferred' | 'empty' | 'pending' | 'settled';
+  progressed: boolean;
   remaining: number;
-};
-
-export type SyncNextQuarantineRetryResult = {
-  kind: 'aborted' | 'pending' | 'settled';
 };
 
 /** Retries one quarantined root independently from feed-page consumption. */
@@ -48,32 +43,24 @@ export class SyncNextQuarantineRetry {
     const logicalTargetId = syncNextLogicalTargetId(target.did, target.projectionId);
     return runSerializedByKey(this._pending, logicalTargetId, async (): Promise<SyncNextQuarantineAttempt> => {
       if (!shouldContinue()) {
-        return { kind: 'aborted', remaining: 0 };
+        return { progressed: false, remaining: 0 };
       }
       const entries = await this._ledger.getQuarantineForLogicalTarget(logicalTargetId);
       if (entries.length === 0) {
-        return { kind: 'empty', remaining: 0 };
+        return { progressed: false, remaining: 0 };
       }
+      entries.sort((left, right) => left.lastAttemptAt.localeCompare(right.lastAttemptAt));
       const entry = force
         ? entries[0]
         : entries.find(candidate => SyncNextQuarantineRetry.retryAt(candidate) <= Date.now());
       if (entry === undefined) {
-        return {
-          kind      : 'deferred',
-          remaining : entries.length,
-        };
+        return { progressed: false, remaining: entries.length };
       }
 
       try {
-        const result = await this.retry(target, entry, shouldContinue, signal);
-        if (result.kind === 'aborted') {
-          return { kind: 'aborted', remaining: entries.length };
-        }
+        const progressed = await this.retry(target, entry, shouldContinue, signal);
         const remainingEntries = await this._ledger.getQuarantineForLogicalTarget(logicalTargetId);
-        return {
-          kind      : result.kind,
-          remaining : remainingEntries.length,
-        };
+        return { progressed, remaining: remainingEntries.length };
       } catch (error: unknown) {
         await this._ledger.updateQuarantine(entry);
         throw error;
@@ -86,9 +73,9 @@ export class SyncNextQuarantineRetry {
     entry: SyncNextQuarantineEntry,
     shouldContinue: () => boolean = (): boolean => true,
     signal?: AbortSignal,
-  ): Promise<SyncNextQuarantineRetryResult> {
+  ): Promise<boolean> {
     if (!shouldContinue()) {
-      return { kind: 'aborted' };
+      return false;
     }
     const logicalTargetId = syncNextLogicalTargetId(target.did, target.projectionId);
     if (syncNextLogicalTargetId(entry.tenantDid, entry.projectionId) !== logicalTargetId) {
@@ -101,7 +88,7 @@ export class SyncNextQuarantineRetry {
       source     : entry.source,
     }, entry.encryptedPayload);
     if (!shouldContinue()) {
-      return { kind: 'aborted' };
+      return false;
     }
 
     const roleSupport = current.authorization.kind === 'role'
@@ -128,7 +115,7 @@ export class SyncNextQuarantineRetry {
       shouldContinue,
     });
     if (!shouldContinue()) {
-      return { kind: 'aborted' };
+      return false;
     }
 
     if (outcome.kind === 'admitted') {
@@ -136,11 +123,11 @@ export class SyncNextQuarantineRetry {
         this._onApplied?.(current, outcome.freshEntries);
       }
       await this._ledger.settleQuarantineForLogicalTarget(logicalTargetId, entry.messageCid);
-      return { kind: 'settled' };
+      return true;
     }
 
     await this._ledger.updateQuarantine(entry);
-    return { kind: 'pending' };
+    return false;
   }
 
   private async fetchData(
@@ -223,8 +210,6 @@ export class SyncNextQuarantineRetry {
   }
 
   private static retryAt(entry: SyncNextQuarantineEntry): number {
-    const exponent = Math.min(Math.max(0, entry.attempts - 1), 6);
-    const delay = Math.min(RETRY_DELAY_MS * (2 ** exponent), MAX_RETRY_DELAY_MS);
-    return Date.parse(entry.lastAttemptAt) + delay;
+    return Date.parse(entry.lastAttemptAt) + RETRY_DELAY_MS;
   }
 }

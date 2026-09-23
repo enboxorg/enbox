@@ -131,7 +131,6 @@ export type {
   SyncEngine,
   SyncEvent,
   SyncEventListener,
-  SyncHealthSummary,
   SyncIdentityStatus,
 } from '@enbox/agent';
 

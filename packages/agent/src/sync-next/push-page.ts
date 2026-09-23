@@ -27,16 +27,6 @@ export type SyncNextPushPageResult = { aborted: true } | {
   retained: number;
 };
 
-export type SyncNextPushPageOptions = {
-  endpointBlock?: SyncNextDeliveryOutcome;
-  signal?: AbortSignal;
-  shouldContinue?: () => boolean;
-};
-
-export type SyncNextPushPageObserver = {
-  onCheckpoint?: (target: SyncTarget, token: ProgressToken) => void;
-};
-
 export type SyncNextDeliveryRetryResult = {
   kind: 'aborted' | 'pending' | 'settled';
   outcome?: SyncNextDeliveryOutcome;
@@ -48,12 +38,15 @@ export class SyncNextPushPage {
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _echoSuppressor?: SyncEchoSuppressor,
-    private readonly _observer: SyncNextPushPageObserver = {},
   ) {}
 
   public async consume(
     target: SyncTarget,
-    options: SyncNextPushPageOptions = {},
+    options: {
+      endpointBlock?: SyncNextDeliveryOutcome;
+      signal?: AbortSignal;
+      shouldContinue?: () => boolean;
+    } = {},
   ): Promise<SyncNextPushPageResult> {
     const shouldContinue = options.shouldContinue ?? ((): boolean => true);
     if (target.authorization.kind === 'role') {
@@ -61,7 +54,7 @@ export class SyncNextPushPage {
     }
     const identity = syncNextLinkIdentity(target);
     const link = await this._ledger.getLink(identity);
-    if (link === undefined || link.status !== 'active' || !shouldContinue()) {
+    if (link === undefined || !shouldContinue()) {
       return { aborted: true };
     }
 
@@ -141,7 +134,6 @@ export class SyncNextPushPage {
     if (!committed) {
       return { aborted: true };
     }
-    this._observer.onCheckpoint?.(target, handledThrough);
     return {
       delivered : settled.length,
       ...(endpointBlock === undefined ? {} : { endpointBlock }),

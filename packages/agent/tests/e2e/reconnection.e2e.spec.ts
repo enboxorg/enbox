@@ -198,6 +198,7 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
   }, 45_000);
 
   it('should report healthy sync after pull subscription recovery', async () => {
-    expect((await harness.agent.sync.getSyncHealth()).syncHealthy).toBe(true);
+    const status = await harness.agent.sync.getIdentitySyncStatus(did);
+    expect(status.remotes.every(remote => remote.state === 'healthy')).toBe(true);
   });
 });

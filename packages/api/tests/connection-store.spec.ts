@@ -110,7 +110,6 @@ async function waitFor(assertion: () => void): Promise<void> {
 }
 
 type FakeSyncStatusEngine = {
-  connectivityState: SyncConnectivityState;
   emit(event: SyncEvent): void;
   linkReads: number;
   links: ReplicationLinkSnapshot[];
@@ -126,8 +125,7 @@ type FakeSyncStatusEngine = {
 function createSyncStatusEngine(): FakeSyncStatusEngine {
   const listeners = new Set<SyncEventListener>();
   const state: FakeSyncStatusEngine = {
-    connectivityState : 'unknown',
-    emit              : (event): void => {
+    emit: (event): void => {
       for (const listener of listeners) {
         listener(event);
       }
@@ -143,11 +141,10 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
     sync             : undefined as unknown as SyncEngine,
   };
   state.sync = {
-    get connectivityState(): SyncConnectivityState { return state.connectivityState; },
     getIdentityOptions    : async (): Promise<SyncIdentityOptions | undefined> => state.options,
     getIdentitySyncStatus : async (): Promise<SyncIdentityStatus> => {
       const links = await readLinks();
-      return identitySyncStatus(state.options, links, state.remotes, state.connectivityState);
+      return identitySyncStatus(state.options, links, state.remotes);
     },
     retryRemoteNow : async (): Promise<void> => {},
     on             : (listener: SyncEventListener): (() => void) => {
@@ -474,7 +471,7 @@ describe('createConnectionStore()', () => {
   describe('sync status', () => {
     it('should project the selected identity without exposing link topology', async () => {
       const engine = createSyncStatusEngine();
-      engine.connectivityState = 'offline';
+      engine.links = [syncLink({ connectivity: 'offline' })];
       const { store } = await connectWithSync(engine);
       await waitFor(() => {
         expect(store.getSnapshot().sync).toMatchObject({ state: 'syncing', connectivity: 'offline' });
@@ -512,10 +509,9 @@ describe('createConnectionStore()', () => {
 
       const settledReads = engine.settledLinkReads;
       engine.emit({
-        type           : 'checkpoint:pull-advance',
+        type           : 'link:activity',
         tenantDid      : OWNER_DID,
         remoteEndpoint : 'https://dwn.example',
-        position       : '1',
       });
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
       expect(store.getSnapshot().sync).toBe(caughtUp);
@@ -595,10 +591,9 @@ describe('createConnectionStore()', () => {
         throw new Error('local status unavailable');
       };
       engine.emit({
-        type           : 'checkpoint:push-advance',
+        type           : 'link:activity',
         tenantDid      : OWNER_DID,
         remoteEndpoint : 'https://dwn.example',
-        position       : '2',
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('error'); });
 
@@ -621,10 +616,9 @@ describe('createConnectionStore()', () => {
       const readsBeforeOtherIdentity = engine.linkReads;
 
       engine.emit({
-        type           : 'checkpoint:pull-advance',
+        type           : 'link:activity',
         tenantDid      : 'did:dht:someone-else',
         remoteEndpoint : 'https://dwn.example',
-        position       : '1',
       });
       await Promise.resolve();
       expect(engine.linkReads).toBe(readsBeforeOtherIdentity);
@@ -713,20 +707,18 @@ describe('createConnectionStore()', () => {
       const stable = store.getSnapshot();
       const settledReads = engine.settledLinkReads;
       engine.emit({
-        type           : 'checkpoint:push-advance',
+        type           : 'link:activity',
         tenantDid      : OWNER_DID,
         remoteEndpoint : 'https://dwn.example',
-        position       : '1',
       });
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
       expect(store.getSnapshot()).toBe(stable);
 
       engine.remotes[2] = remoteStatus({ lastActivityAt: '2026-07-29T11:45:00.000Z' });
       engine.emit({
-        type           : 'checkpoint:push-advance',
+        type           : 'link:activity',
         tenantDid      : OWNER_DID,
         remoteEndpoint : 'https://dwn.example',
-        position       : '2',
       });
       await waitFor(() => {
         expect(store.getSnapshot().sync?.remotes[0]?.lastActivityAt).toBe('2026-07-29T11:45:00.000Z');
@@ -734,10 +726,9 @@ describe('createConnectionStore()', () => {
 
       engine.remotes = [remoteStatus()];
       engine.emit({
-        type           : 'checkpoint:push-advance',
+        type           : 'link:activity',
         tenantDid      : OWNER_DID,
         remoteEndpoint : 'https://dwn.example',
-        position       : '3',
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.remotes).toHaveLength(1); });
     });
