@@ -45,6 +45,34 @@ describe('EnboxUserAgent', () => {
       expect(userAgent.sync).toBeDefined();
       expect(userAgent.vault).toBeDefined();
     });
+
+    it('binds the default DID API to its configured DID DHT network', async () => {
+      const gatewayUri = 'http://127.0.0.1:17527';
+      const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+      const userAgent = await EnboxUserAgent.create({
+        dataPath      : '__TESTDATA__/USERAGENT_DID_NETWORK',
+        didDhtNetwork : { gatewayUri, allowPrivateGatewayUri: true },
+      });
+
+      try {
+        const resolution = await userAgent.did.refreshResolution(
+          'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy'
+        );
+
+        expect(resolution.didResolutionMetadata.error).toBe('notFound');
+        expect(String(fetchSpy.mock.calls[0][0])).toStartWith(`${gatewayUri}/`);
+      } finally {
+        await userAgent.shutdown();
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it('rejects DID DHT network configuration with a custom DID API', async () => {
+      await expect(EnboxUserAgent.create({
+        didApi        : {} as any,
+        didDhtNetwork : { gatewayUri: 'http://127.0.0.1:17527', allowPrivateGatewayUri: true },
+      })).rejects.toThrow('didDhtNetwork cannot be combined with a custom didApi');
+    });
   });
 
   const agentStoreTypes = ['dwn', 'memory'] as const;

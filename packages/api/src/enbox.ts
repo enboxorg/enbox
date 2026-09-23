@@ -16,7 +16,7 @@ import type {
 
 import { AnonymousDwnApi } from '@enbox/agent';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
-import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
+import { createDidDhtMethod, DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
 import { createProtocolReadinessApi } from './protocol-readiness.js';
 import { DidApi } from './did-api.js';
@@ -259,8 +259,14 @@ export class Enbox {
    * @beta
    */
   public static anonymous(options?: EnboxAnonymousOptions): EnboxAnonymousApi {
+    if (options?.didDhtNetwork !== undefined && options.didResolvers !== undefined) {
+      throw new Error('Enbox.anonymous: didDhtNetwork cannot be combined with didResolvers. Configure the resolver list directly.');
+    }
+    const didDht = options?.didDhtNetwork === undefined
+      ? DidDht
+      : createDidDhtMethod(options.didDhtNetwork);
     const didResolver = new UniversalResolver({
-      didResolvers : options?.didResolvers ?? [DidDht, DidJwk, DidKey, DidWeb],
+      didResolvers : options?.didResolvers ?? [didDht, DidJwk, DidKey, DidWeb],
       cache        : new DidResolverCacheMemory(),
     });
 

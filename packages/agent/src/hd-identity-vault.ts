@@ -1,7 +1,7 @@
 import type { KeyValueStore } from '@enbox/common';
 import type { JweHeaderParams, Jwk } from '@enbox/crypto';
 
-import type { DidDhtCreateOptions, DidDocument, DidResolutionResult, DidResolver, PortableDid } from '@enbox/dids';
+import type { DidDhtCreateOptions, DidDocument, DidRegistrationResult, DidResolutionResult, DidResolver, PortableDid } from '@enbox/dids';
 
 import { CompactJwe } from '@enbox/crypto';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
@@ -70,6 +70,7 @@ type HdIdentityVaultDidResolver = Pick<DidResolver, 'resolve'> & {
   refreshResolution?: (didUri: string) => Promise<DidResolutionResult>;
   cacheResolution?: (didUri: string, result: DidResolutionResult) => Promise<void>;
   pinResolution?: (didUri: string, fallback: DidResolutionResult) => Promise<void>;
+  publish?: (params: { did: BearerDid }) => Promise<DidRegistrationResult>;
 };
 
 type HdIdentityVaultDerivedMaterial = {
@@ -1021,7 +1022,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   ): Promise<PortableDid> {
     const did = await BearerDid.import({ portableDid });
     did.document = structuredClone(publicDocument);
-    const result = await DidDht.publish({ did });
+    const result = await (this._didResolver.publish?.({ did }) ?? DidDht.publish({ did }));
     if (result.didDocumentMetadata.published === false) {
       throw new Error(`HdIdentityVault: Failed to publish vault DID '${portableDid.uri}'.`);
     }

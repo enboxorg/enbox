@@ -9,7 +9,7 @@
  */
 
 import type { AgentSessionPrimitives } from '@enbox/agent';
-import type { DidMethodResolver } from '@enbox/dids';
+import type { DidDhtNetworkConfig, DidMethodResolver } from '@enbox/dids';
 
 import type { DwnReaderApi } from './dwn-reader-api.js';
 
@@ -21,6 +21,9 @@ import type { DwnReaderApi } from './dwn-reader-api.js';
 export type EnboxAnonymousOptions = {
   /** Override the default DID method resolvers. Defaults to `[DidDht, DidJwk, DidKey, DidWeb]`. */
   didResolvers?: DidMethodResolver[];
+
+  /** Configure the default `did:dht` resolver. Cannot be combined with `didResolvers`. */
+  didDhtNetwork?: DidDhtNetworkConfig;
 };
 
 /**

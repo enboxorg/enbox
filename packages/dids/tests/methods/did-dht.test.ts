@@ -13,7 +13,7 @@ import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json'
 import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' with { type: 'json' };
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils, TXT_SEGMENT_MAX_BYTES } from '../../src/methods/did-dht.js';
+import { createDidDhtMethod, DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils, TXT_SEGMENT_MAX_BYTES } from '../../src/methods/did-dht.js';
 import { DidErrorCode, DidResolutionErrorCause } from '../../src/did-error.js';
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
@@ -122,6 +122,62 @@ describe('DidDht', () => {
   afterEach(() => {
     fetchStub.mockRestore();
     mock.restore();
+  });
+
+  describe('createDidDhtMethod()', () => {
+    const validDid = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+
+    it('binds create, publish, and resolve to isolated immutable gateways', async () => {
+      const firstConfig = { gatewayUri: 'https://first-gateway.example.com' };
+      const first = createDidDhtMethod(firstConfig);
+      const second = createDidDhtMethod({ gatewayUri: 'https://second-gateway.example.com' });
+
+      firstConfig.gatewayUri = 'https://mutated.example.com';
+
+      await first.create({
+        options: { gatewayUri: 'https://second-gateway.example.com' },
+      });
+      await second.create();
+
+      expect(new URL(String(fetchStub.mock.calls[0][0])).origin).toBe('https://first-gateway.example.com');
+      expect(new URL(String(fetchStub.mock.calls[1][0])).origin).toBe('https://second-gateway.example.com');
+
+      const unpublished = await DidDht.create({ options: { publish: false } });
+      fetchStub.mockClear();
+      await first.publish({
+        did                    : unpublished,
+        gatewayUri             : 'https://second-gateway.example.com',
+        allowPrivateGatewayUri : true,
+      });
+      expect(new URL(String(fetchStub.mock.calls[0][0])).origin).toBe('https://first-gateway.example.com');
+
+      fetchStub.mockClear();
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
+      const resolution = await first.resolve(validDid, {
+        gatewayUri             : 'https://second-gateway.example.com',
+        allowPrivateGatewayUri : true,
+      });
+      expect(new URL(String(fetchStub.mock.calls[0][0])).origin).toBe('https://first-gateway.example.com');
+      expect(resolution.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
+    });
+
+    it('requires explicit private-gateway opt-in for configured methods', async () => {
+      const blockedMethod = createDidDhtMethod({ gatewayUri: 'http://127.0.0.1:7527' });
+      const blocked = await blockedMethod.resolve(validDid, { allowPrivateGatewayUri: true });
+
+      expect(fetchStub).not.toHaveBeenCalled();
+      expect(blocked.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
+
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
+      const allowedMethod = createDidDhtMethod({
+        gatewayUri             : 'http://127.0.0.1:7527',
+        allowPrivateGatewayUri : true,
+      });
+      const allowed = await allowedMethod.resolve(validDid);
+
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(allowed.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
+    });
   });
 
   describe('create()', () => {

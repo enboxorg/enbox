@@ -147,6 +147,16 @@ describe('AuthManager.create()', () => {
     expect(manager.state).toBe('uninitialized');
   });
 
+  test('rejects DID DHT network configuration with a pre-built agent', async () => {
+    const customAgent = createMockAgent({ vaultIsInitialized: async () => false });
+
+    await expect(AuthManager.create({
+      agent         : customAgent as any,
+      didDhtNetwork : { gatewayUri: 'http://127.0.0.1:7527', allowPrivateGatewayUri: true },
+      storage       : new MemoryStorage(),
+    })).rejects.toThrow('didDhtNetwork cannot be combined with a pre-built agent');
+  });
+
   test('agent option ignores dataPath, agentVault, and localDwnStrategy', async () => {
     const customAgent = createMockAgent({ vaultIsInitialized: async () => true, vaultIsLocked: () => false });
     const callsBefore = userAgentCreateStub.callCount;
@@ -198,15 +208,21 @@ describe('AuthManager.create()', () => {
     });
 
     const fakeVault = { fake: 'vault' } as any;
+    const didDhtNetwork = {
+      gatewayUri             : 'http://127.0.0.1:7527',
+      allowPrivateGatewayUri : true,
+    };
     await AuthManager.create({
       dataPath         : '/custom/path',
       agentVault       : fakeVault,
+      didDhtNetwork,
       localDwnStrategy : 'only' as any,
       storage          : new MemoryStorage(),
     });
 
     expect(capturedOptions.dataPath).toBe('/custom/path');
     expect(capturedOptions.agentVault).toBe(fakeVault);
+    expect(capturedOptions.didDhtNetwork).toBe(didDhtNetwork);
     expect(capturedOptions.localDwnStrategy).toBe('only');
   });
 

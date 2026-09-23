@@ -296,7 +296,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
     let publishedMetadata: DidDocumentMetadata | undefined;
     if (publishRequired) {
       bearerDid.document = publicDocument;
-      publishedMetadata = (await DidDht.publish({ did: bearerDid })).didDocumentMetadata;
+      publishedMetadata = (await this.agent.did.publish({ did: bearerDid })).didDocumentMetadata;
       if (publishedMetadata.published === false) {
         throw new Error(`AgentIdentityApi: Failed to publish updated DWN endpoints for '${didUri}'.`);
       }

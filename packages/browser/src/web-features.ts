@@ -4,9 +4,9 @@
   so take care to gate additions to only activate code in the right env, such as a Service Worker scope or page window.
 */
 
-import type { DidMethodResolver } from '@enbox/dids';
+import type { DidDhtNetworkConfig, DidMethodResolver } from '@enbox/dids';
 
-import { DidDht, DidResolverCacheMemory, DidWeb, resolveDwnEndpointStatus, UniversalResolver } from '@enbox/dids';
+import { createDidDhtMethod, DidDht, DidResolverCacheMemory, DidWeb, resolveDwnEndpointStatus, UniversalResolver } from '@enbox/dids';
 
 /**
  * Result returned by the `onCacheCheck` callback.
@@ -51,6 +51,13 @@ export type ActivatePolyfillsOptions = {
    * Pass a custom array to add or replace DID methods (e.g., `[DidDht, DidWeb, DidJwk]`).
    */
   didResolvers?: DidMethodResolver[];
+  /**
+   * Configure the realm-wide default `did:dht` resolver for this page or worker.
+   * Cannot be combined with `didResolvers`. Call `activatePolyfills()` in each service worker
+   * with the same actor-scoped bootstrap configuration used by its page. A later call in the same
+   * realm replaces the resolver and cache for that realm.
+   */
+  didDhtNetwork?: DidDhtNetworkConfig;
 };
 
 /**
@@ -66,6 +73,21 @@ let didResolver = new UniversalResolver({
   didResolvers : [DidDht, DidWeb],
   cache        : new DidResolverCacheMemory(),
 });
+
+function configureDidResolver({ didDhtNetwork, didResolvers }: ActivatePolyfillsOptions): void {
+  if (didResolvers !== undefined && didDhtNetwork !== undefined) {
+    throw new Error('activatePolyfills: didDhtNetwork cannot be combined with didResolvers. Configure the resolver list directly.');
+  }
+  if (didResolvers === undefined && didDhtNetwork === undefined) {
+    return;
+  }
+
+  const didDht = didDhtNetwork === undefined ? DidDht : createDidDhtMethod(didDhtNetwork);
+  didResolver = new UniversalResolver({
+    didResolvers : didResolvers ?? [didDht, DidWeb],
+    cache        : new DidResolverCacheMemory(),
+  });
+}
 
 import { parseDrlUrl } from './drl-url-parser.js';
 export { parseDrlUrl } from './drl-url-parser.js';
@@ -581,12 +603,7 @@ async function resetContextMenuTarget(e?: Event): Promise<void> {
  * activatePolyfills({ didResolvers: [DidDht, DidWeb, DidJwk] });
  */
 export function activatePolyfills(options: ActivatePolyfillsOptions = {}): void {
-  if (options.didResolvers) {
-    didResolver = new UniversalResolver({
-      didResolvers : options.didResolvers,
-      cache        : new DidResolverCacheMemory(),
-    });
-  }
+  configureDidResolver(options);
   if (options.serviceWorker !== false) {
     installWorker(options);
   }
