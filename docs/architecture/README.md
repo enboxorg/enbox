@@ -33,6 +33,10 @@ Sync is centered on DWN records and protocol scopes:
 - Durable sync fills gaps through pull/push paths after reconnects.
 - Bounded control requests and small byte-backed replication pushes reuse an
   existing connected WebSocket; streaming and larger pushes use HTTP.
+- Automatic routing keeps `MessagesRead` and `RecordsRead` on HTTP because
+  current WebSocket read replies do not carry their record-data streams.
+  Dense pull catch-up uses query pages with inline messages and small payloads,
+  which can reuse the socket instead of issuing individual reads.
 - Large record data is stored through the DWN data store and must remain
   readable through both live and durable replication paths.
 

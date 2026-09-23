@@ -16,11 +16,14 @@ import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enb
 import {
   DataStream,
   DurableEventLog,
+  DwnConstant,
+  Encoder,
   EventEmitterWakePublisher,
   Message,
   RecordsDelete,
   RecordsRead,
   RecordsWrite,
+  Time,
 } from '@enbox/dwn-sdk-js';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 
@@ -209,6 +212,74 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(await localFingerprint()).toBe(await remoteFingerprint());
   });
 
+  it('retries a temporarily unavailable large catch-up payload without dead-lettering it', async () => {
+    const config = await testHarness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: notesProtocol },
+    });
+    expect(config.reply.status.code).toBe(202);
+    expect((await remoteStores.dwn.processMessage(tenantDid, config.message!)).status.code).toBe(202);
+
+    const smallText = 'small inline record';
+    const smallWrite = await testHarness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : notesProtocol.protocol,
+        protocolPath : 'note',
+        schema       : notesProtocol.types.note.schema,
+        dataFormat   : 'text/plain',
+      },
+      dataStream: new Blob([smallText]),
+    });
+    expect(smallWrite.reply.status.code).toBe(202);
+
+    const largeText = 'x'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+    const largeWrite = await testHarness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : notesProtocol.protocol,
+        protocolPath : 'note',
+        schema       : notesProtocol.types.note.schema,
+        dataFormat   : 'text/plain',
+      },
+      dataStream: new Blob([largeText]),
+    });
+    expect(largeWrite.reply.status.code).toBe(202);
+
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
+    const rpc = testHarness.agent.rpc;
+    const sendDwnRequest = rpc.sendDwnRequest.bind(rpc);
+    let failNextRead = true;
+    const requests = sinon.stub(rpc, 'sendDwnRequest').callsFake(async (request): Promise<DwnRpcResponse> => {
+      if (failNextRead && request.message.descriptor?.method === 'Read') {
+        failNextRead = false;
+        return { status: { code: 503, detail: 'payload temporarily unavailable' } } as DwnRpcResponse;
+      }
+      return sendDwnRequest(request);
+    });
+
+    await syncEngine.sync('pull');
+
+    expect(failNextRead).toBe(false);
+    await expectLocalRecordCount(largeWrite.message!.recordId, 0);
+    expect(await syncEngine.getDeadLetters(tenantDid)).toHaveLength(0);
+
+    await syncEngine.sync('pull');
+
+    const reads = requests.args.filter(([request]) => request.message.descriptor?.method === 'Read');
+    expect(reads).toHaveLength(2);
+    expect(await readLocalRecordText(smallWrite.message!.recordId)).toBe(smallText);
+    expect(await readLocalRecordText(largeWrite.message!.recordId)).toBe(largeText);
+    expect(await syncEngine.getDeadLetters(tenantDid)).toHaveLength(0);
+    expect(await localFingerprint()).toBe(await remoteFingerprint());
+  });
+
   it('pushes local feed entries through real MessagesQuery and remote replicated apply', async () => {
     const localConfig = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
@@ -242,6 +313,133 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(await readRemoteRecordText(recordId)).toBe(localText);
     expect(await remoteFingerprint()).toBe(await localFingerprint());
   });
+
+  it.each(['owner', 'delegate'] as const)('bounds populated two-remote %s catch-up while both replicas converge', async (authorization) => {
+    const previousTenant = tenantDid;
+    const secondaryStores = await createRemoteDwnStores(
+      '__TESTDATA__/sync-feed-convergence/catchup-secondary',
+      testHarness,
+    );
+    await clearRemoteDwnStores(secondaryStores);
+
+    try {
+      const identity = await testHarness.createIdentity({
+        name        : 'Two-remote catch-up',
+        testDwnUrls : [remoteEndpoint, secondaryRemoteEndpoint],
+      });
+      tenantDid = identity.did.uri;
+      const config = await testHarness.agent.dwn.processRequest({
+        author        : tenantDid,
+        target        : tenantDid,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: notesProtocol },
+      });
+      expect(config.reply.status.code).toBe(202);
+      for (const stores of [remoteStores, secondaryStores]) {
+        expect((await stores.dwn.processMessage(tenantDid, config.message!)).status.code).toBe(202);
+      }
+
+      let delegateDid: string | undefined;
+      if (authorization === 'delegate') {
+        const delegate = await testHarness.agent.identity.create({
+          didMethod : 'jwk',
+          metadata  : { name: 'Catch-up delegate', connectedDid: tenantDid },
+        });
+        delegateDid = delegate.did.uri;
+        const grant = await testHarness.agent.permissions.createGrant({
+          author      : tenantDid,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 3600 }),
+          grantedTo   : delegateDid,
+          scope       : { interface: 'Messages', method: 'Read', protocol: notesProtocol.protocol },
+          store       : true,
+        });
+        const { encodedData, ...message } = grant.message;
+        const data = Encoder.base64UrlToBytes(encodedData);
+        for (const stores of [remoteStores, secondaryStores]) {
+          const reply = await stores.dwn.processMessage(tenantDid, message, { dataStream: DataStream.fromBytes(data) });
+          expect(reply.status.code).toBe(202);
+        }
+        const stored = await testHarness.agent.dwn.processRequest({
+          author      : delegateDid,
+          target      : delegateDid,
+          messageType : DwnInterface.RecordsWrite,
+          rawMessage  : message,
+          dataStream  : new Blob([data]),
+          signAsOwner : true,
+        });
+        expect(stored.reply.status.code).toBe(202);
+      }
+
+      // A nonempty local inventory, more than one feed page, retained history,
+      // and a streaming attachment exercise a freshly connected wallet whose
+      // protocol or delegate grant is already installed.
+      const signer = await (testHarness.agent.dwn as any).getSigner(tenantDid);
+      const writes: RecordsWriteMessage[] = [];
+      const largeText = 'x'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+      for (let index = 0; index <= 104; index++) {
+        const data = new TextEncoder().encode(index === 104 ? largeText : `record-${index}`);
+        const write = await RecordsWrite.create({
+          data,
+          dataFormat   : 'text/plain',
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          signer,
+        });
+        writes.push(write.message);
+        for (const stores of [remoteStores, secondaryStores]) {
+          const reply = await stores.dwn.processMessage(tenantDid, write.message, {
+            dataStream: DataStream.fromBytes(data),
+          });
+          expect(reply.status.code).toBe(202);
+        }
+      }
+      for (const write of writes.slice(0, 21)) {
+        const deletion = await RecordsDelete.create({ recordId: write.recordId, signer });
+        for (const stores of [remoteStores, secondaryStores]) {
+          expect((await stores.dwn.processMessage(tenantDid, deletion.message)).status.code).toBe(202);
+        }
+      }
+
+      const primaryRpc = createLocalDwnRpc(remoteStores.dwn);
+      const secondaryRpc = createLocalDwnRpc(secondaryStores.dwn);
+      const sendPrimary = primaryRpc.sendDwnRequest.bind(primaryRpc);
+      primaryRpc.sendDwnRequest = (request: DwnRpcRequest): Promise<DwnRpcResponse> =>
+        request.dwnUrl === secondaryRemoteEndpoint
+          ? secondaryRpc.sendDwnRequest(request)
+          : sendPrimary(request);
+      testHarness.agent.rpc = primaryRpc;
+      const requests = sinon.spy(primaryRpc, 'sendDwnRequest');
+      await syncEngine.setIdentityOptions({ did: tenantDid, options: { delegateDid, protocols: [notesProtocol.protocol] } });
+
+      await syncEngine.sync('pull');
+
+      const reads = requests.args.filter(([request]) => request.message.descriptor?.method === 'Read');
+      const queries = requests.args.filter(([request]) => request.message.descriptor?.method === 'Query');
+      expect(reads.length).toBeGreaterThan(0);
+      expect(reads.length).toBeLessThanOrEqual(2);
+      expect(queries.length).toBeLessThanOrEqual(12);
+      expect(await readLocalRecordText(writes[104].recordId)).toBe(largeText);
+      expect(await readLocalRecordText(writes[103].recordId)).toBe('record-103');
+      await expectLocalRecordCount(writes[0].recordId, 0);
+
+      const local = await queryLocalMessageFeed({ did: tenantDid, agent: testHarness.agent, limit: 1 });
+      for (const dwnUrl of [remoteEndpoint, secondaryRemoteEndpoint]) {
+        const remote = await queryRemoteMessageFeed({ did: tenantDid, dwnUrl, agent: testHarness.agent, limit: 1 });
+        expect(remote.fingerprint).toBe(local.fingerprint);
+      }
+
+      requests.resetHistory();
+      await syncEngine.sync('pull');
+      expect(requests.args.filter(([request]) => request.message.descriptor?.method === 'Read')).toHaveLength(0);
+      expect(requests.callCount).toBeLessThanOrEqual(4);
+    } finally {
+      await syncEngine.clear();
+      tenantDid = previousTenant;
+      testHarness.agent.rpc = createLocalDwnRpc(remoteStores.dwn);
+      await closeRemoteDwnStores(secondaryStores);
+    }
+  }, 60_000);
 
   it.each(['incremental', 'inventory-diff'] as const)(
     'pushes the captured inline feed snapshot through the %s path when its record is updated behind an earlier apply',
