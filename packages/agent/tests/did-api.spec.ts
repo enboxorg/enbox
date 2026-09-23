@@ -608,7 +608,7 @@ describe('AgentDidApi', () => {
           expect(defaultPublish.notCalled).toBe(true);
         });
 
-        it('does not cache or store an update when publication fails', async () => {
+        it('does not cache or store an update when publication reports failure', async () => {
           const did = await testHarness.agent.did.create({ method: 'dht', tenant: testHarness.agent.agentDid.uri });
           const originalDocument = structuredClone(did.document);
           const portableDid = await did.export();
@@ -616,12 +616,14 @@ describe('AgentDidApi', () => {
             ...portableDid.document,
             service: [{ id: 'service1', type: 'example', serviceEndpoint: 'https://example.com' }],
           };
-          sinon.stub(testHarness.agent.did, 'publish').rejects(new Error('publication rejected'));
+          sinon.stub(testHarness.agent.did, 'publish').resolves({
+            didDocumentMetadata: { published: false },
+          } as any);
 
           await expect(testHarness.agent.did.update({
             portableDid,
             tenant: testHarness.agent.agentDid.uri,
-          })).rejects.toThrow('publication rejected');
+          })).rejects.toThrow(`Failed to publish updated DID '${did.uri}'`);
 
           const storedDid = await testHarness.agent.did.get({
             didUri : did.uri,

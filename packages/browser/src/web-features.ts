@@ -74,6 +74,21 @@ let didResolver = new UniversalResolver({
   cache        : new DidResolverCacheMemory(),
 });
 
+function configureDidResolver({ didDhtNetwork, didResolvers }: ActivatePolyfillsOptions): void {
+  if (didResolvers !== undefined && didDhtNetwork !== undefined) {
+    throw new Error('activatePolyfills: didDhtNetwork cannot be combined with didResolvers. Configure the resolver list directly.');
+  }
+  if (didResolvers === undefined && didDhtNetwork === undefined) {
+    return;
+  }
+
+  const didDht = didDhtNetwork === undefined ? DidDht : createDidDhtMethod(didDhtNetwork);
+  didResolver = new UniversalResolver({
+    didResolvers : didResolvers ?? [didDht, DidWeb],
+    cache        : new DidResolverCacheMemory(),
+  });
+}
+
 import { parseDrlUrl } from './drl-url-parser.js';
 export { parseDrlUrl } from './drl-url-parser.js';
 
@@ -588,18 +603,7 @@ async function resetContextMenuTarget(e?: Event): Promise<void> {
  * activatePolyfills({ didResolvers: [DidDht, DidWeb, DidJwk] });
  */
 export function activatePolyfills(options: ActivatePolyfillsOptions = {}): void {
-  if (options.didResolvers !== undefined && options.didDhtNetwork !== undefined) {
-    throw new Error('activatePolyfills: didDhtNetwork cannot be combined with didResolvers. Configure the resolver list directly.');
-  }
-  if (options.didResolvers || options.didDhtNetwork) {
-    const didDht = options.didDhtNetwork === undefined
-      ? DidDht
-      : createDidDhtMethod(options.didDhtNetwork);
-    didResolver = new UniversalResolver({
-      didResolvers : options.didResolvers ?? [didDht, DidWeb],
-      cache        : new DidResolverCacheMemory(),
-    });
-  }
+  configureDidResolver(options);
   if (options.serviceWorker !== false) {
     installWorker(options);
   }

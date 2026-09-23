@@ -504,11 +504,6 @@ export class DidDht extends DidMethod {
   }
 }
 
-/** A `did:dht` method class bound to one immutable gateway configuration. */
-export type ConfiguredDidDht = typeof DidDht & {
-  readonly network: Readonly<Required<DidDhtNetworkConfig>>;
-};
-
 /**
  * Creates a `did:dht` method implementation bound to one gateway.
  *
@@ -517,15 +512,13 @@ export type ConfiguredDidDht = typeof DidDht & {
  * override the configured network. This keeps concurrently running resolver instances isolated
  * without changing process environment variables or mutating global defaults.
  */
-export function createDidDhtMethod(config: DidDhtNetworkConfig): ConfiguredDidDht {
+export function createDidDhtMethod(config: DidDhtNetworkConfig): typeof DidDht {
   const network = Object.freeze({
     gatewayUri             : config.gatewayUri,
     allowPrivateGatewayUri : config.allowPrivateGatewayUri ?? false,
   });
 
   class ConfiguredDidDhtMethod extends DidDht {
-    public static readonly network = network;
-
     public static override create<TKms extends KeyManager | undefined = undefined>({
       keyManager,
       options,

@@ -133,11 +133,6 @@ describe('DidDht', () => {
       const second = createDidDhtMethod({ gatewayUri: 'https://second-gateway.example.com' });
 
       firstConfig.gatewayUri = 'https://mutated.example.com';
-      expect(first.network).toEqual({
-        gatewayUri             : 'https://first-gateway.example.com',
-        allowPrivateGatewayUri : false,
-      });
-      expect(Object.isFrozen(first.network)).toBe(true);
 
       await first.create({
         options: { gatewayUri: 'https://second-gateway.example.com' },

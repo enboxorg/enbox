@@ -1,11 +1,10 @@
 import type { AgentKeyManager } from './types/key-manager.js';
-import type { BearerDid } from '@enbox/dids';
-import type { DidDhtNetworkConfig } from '@enbox/dids';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
 import type { SecretStore } from './secret-store.js';
 import type { SyncEngine } from './types/sync.js';
+import type { BearerDid, DidDhtNetworkConfig } from '@enbox/dids';
 import type {
   DecryptRecordDataParams,
   DwnInterface,
