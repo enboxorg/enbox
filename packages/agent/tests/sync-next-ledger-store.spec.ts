@@ -114,6 +114,7 @@ describe('SyncNextLedgerStore', () => {
 
   it('should preserve concurrent pull and push progress through one short link lock', async () => {
     const create = linkCreate();
+    const sibling = new SyncNextLedgerStore(db, 'sync-next-ledger-store-spec');
     await store.getOrCreateLink(create);
 
     await Promise.all([
@@ -122,7 +123,7 @@ describe('SyncNextLedgerStore', () => {
         quarantine     : [],
         settled        : [],
       }),
-      store.commitPushPage(identity(create), {
+      sibling.commitPushPage(identity(create), {
         delivery       : [],
         handledThrough : token(7, 'push'),
         settled        : [],

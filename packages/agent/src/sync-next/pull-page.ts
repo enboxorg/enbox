@@ -110,10 +110,10 @@ export class SyncNextPullPage {
         onBeforeApply : (messageCid): void => {
           this._echoSuppressor?.trackPulled(current.did, messageCid, current.dwnUrl);
         },
-        permissionGrantIds : current.permissionGrantIds,
+        permissionGrantIds   : current.permissionGrantIds,
         prefetched,
-        remoteHydration    : 'defer',
-        scope              : current.scope,
+        deferRemoteHydration : true,
+        scope                : current.scope,
         shouldContinue,
       });
       if (!shouldContinue()) {

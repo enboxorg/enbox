@@ -15,7 +15,7 @@ import type {
   SyncNextSourceReceipt,
 } from './types.js';
 
-import { runSerializedByKey, runWithCrossContextLock } from '@enbox/common';
+import { runWithCrossContextLock } from '@enbox/common';
 
 import {
   compareSyncNextPosition,
@@ -55,7 +55,6 @@ export class SyncNextLedgerStore {
   private readonly _maxDeliveryPerLink: number;
   private readonly _maxQuarantineBytesPerLink: number;
   private readonly _maxQuarantinePerLink: number;
-  private readonly _pendingOperations = new Map<string, Promise<void>>();
   private readonly _quarantine: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
 
   public constructor(
@@ -249,7 +248,7 @@ export class SyncNextLedgerStore {
     );
   }
 
-  public async updateQuarantine(entry: SyncNextQuarantineEntry): Promise<void> {
+  public updateQuarantine(entry: SyncNextQuarantineEntry): Promise<void> {
     return this.updateSparse(this._quarantine, entry);
   }
 
@@ -266,14 +265,14 @@ export class SyncNextLedgerStore {
     ));
   }
 
-  public async settleDelivery(
+  public settleDelivery(
     identity: SyncNextLinkIdentity,
     receipt: SyncNextSourceReceipt,
   ): Promise<void> {
     return this.settleSparse(this._delivery, identity, receipt);
   }
 
-  public async updateDelivery(
+  public updateDelivery(
     entry: SyncNextDeliveryObligation,
     outcome: SyncNextDeliveryOutcome,
   ): Promise<void> {
@@ -281,7 +280,6 @@ export class SyncNextLedgerStore {
   }
 
   public async clear(): Promise<void> {
-    await Promise.allSettled([...this._pendingOperations.values()]);
     await Promise.all([
       this._delivery.clear(),
       this._links.clear(),
@@ -390,13 +388,9 @@ export class SyncNextLedgerStore {
   }
 
   private runForLink<T>(key: string, operation: () => Promise<T>): Promise<T> {
-    return runSerializedByKey(
-      this._pendingOperations,
-      key,
-      (): Promise<T> => runWithCrossContextLock(
-        `enbox:sync-next-link:${this._lockNamespace}:${key}`,
-        operation,
-      ),
+    return runWithCrossContextLock(
+      `enbox:sync-next-link:${this._lockNamespace}:${key}`,
+      operation,
     );
   }
 

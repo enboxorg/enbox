@@ -523,11 +523,11 @@ export class SyncEngineNext implements SyncEngine {
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
     const endpoint = normalizeDwnEndpoint(remoteEndpoint);
     const runtimeGeneration = this._runtimeGeneration;
-    this._endpointGate.clear(endpoint);
     await this.runExclusive((): Promise<void> => {
       if (runtimeGeneration !== this._runtimeGeneration) {
         throw new Error('SyncEngineNext: remote retry cancelled by a runtime transition.');
       }
+      this._endpointGate.clear(endpoint);
       return this.runCoveringSync(undefined, { did: tenantDid }, endpoint);
     });
   }
