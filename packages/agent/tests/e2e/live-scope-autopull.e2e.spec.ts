@@ -253,8 +253,10 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
       });
       await wallet.agent.sync.startSync({ interval: '30s' });
     }
-    expect(walletA.agent.sync.hasActiveSubscriptions).toBe(true);
-    expect(walletB.agent.sync.hasActiveSubscriptions).toBe(true);
+    expect((await walletA.agent.sync.getReplicationLinks(walletA.agent.agentDid.uri))
+      .some(link => link.status === 'live')).toBe(true);
+    expect((await walletB.agent.sync.getReplicationLinks(walletB.agent.agentDid.uri))
+      .some(link => link.status === 'live')).toBe(true);
   }, 60_000);
 
   afterAll(async () => {

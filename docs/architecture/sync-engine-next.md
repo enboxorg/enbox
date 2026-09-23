@@ -111,9 +111,13 @@ the socket.
 This bounds an outage to a small probe count instead of multiplying it by the
 number of protocols, contexts, or identities at that endpoint.
 
-Subscriptions are wake signals. Establishment and reconnect always schedule a
-page from durable progress; a cursorless subscription is never treated as
-coverage. A wake arriving during work remains as trailing work.
+Subscriptions are wake signals. Concurrent refreshes share one in-flight
+subscription open per link. Establishment and reconnect schedule a page from
+durable progress; a cursorless subscription is never treated as coverage. An
+event cursor is a pushed lower bound: the link cannot report current until its
+durable pull checkpoint reaches that cursor. A drained query behind the pushed
+cursor retries at the ordinary one-second backoff, while a wake arriving during
+work remains as trailing work.
 
 A bounded in-memory echo cache is shared across link sessions but scoped by
 tenant, CID, and endpoint. Pulling a CID suppresses an immediate push back to
@@ -129,7 +133,8 @@ never durable progress.
 - **Retry:** stop at the first unresolved receipt. Eligibility is derived from
   the row's persisted last-attempt time and optional `Retry-After`; wakes,
   manual operations, and the periodic pass provide retry opportunities without
-  per-receipt timers.
+  per-receipt timers. A covering pull may override a deferred quarantine row
+  once after the feed drains; advancing pages never multiply that retry.
 - **Reset:** clear all checkpoints before removing sparse rows, then require the
   application to register its authorized sources again.
 - **Remove:** deleting an identity or accepted followed context is explicit
@@ -273,6 +278,11 @@ cutover:
   separately instead of settling all page CIDs in one sparse scan;
 - a covering run retried only one of several healthy streamed obligations;
 - terminal subscription errors left a link permanently marked subscribed;
+- concurrent live refreshes opened duplicate subscriptions for one link;
+- wake-only handling discarded the pushed cursor and could report current one
+  position before a just-delivered event became query-visible;
+- covering pull could skip newly recoverable quarantine during its retry delay,
+  while a naive fix would have retried it once per advancing page;
 - equivalent endpoint spellings created distinct durable links;
 - next still constructed the complete legacy engine for catalog operations;
 - corrupt quarantine had an internal reset primitive but no safe replay entry

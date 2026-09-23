@@ -97,7 +97,11 @@ async function openRemoteSubscription(
       await onTerminal(message.error);
       return;
     }
-    session.request('pull');
+    if (message.type === 'event' || message.type === 'eose') {
+      session.request('pull', true, message.cursor);
+    } else {
+      session.request('pull');
+    }
   };
   const resubscribeFactory: ResubscribeFactory = async () => {
     const { message: next } = await agent.dwn.processRequest(await createRequest());

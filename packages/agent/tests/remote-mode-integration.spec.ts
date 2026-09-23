@@ -181,8 +181,6 @@ describe('Agent remote mode integration', () => {
     });
     await testHarness.agent.sync.startSync({ interval: '30s' });
 
-    expect(testHarness.agent.sync.hasActiveSubscriptions).toBe(true);
-
     await configureProtocolOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesProtocol);
     const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'durable pull body');
 

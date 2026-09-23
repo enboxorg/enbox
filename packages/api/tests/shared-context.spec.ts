@@ -4,25 +4,25 @@ import type {
   AgentPermissionsApi,
   DwnMessage,
   EnboxAgent,
-  FollowedSyncSource,
-  FollowedSyncSourceInput,
   ProcessDwnRequest,
   SyncEngine,
   SyncEvent,
   SyncEventListener,
 } from '@enbox/agent';
+import type { FollowedSyncSource, FollowedSyncSourceInput } from '@enbox/agent/sync-internal';
 
 import { CONTEXT_INVITATION_PATH } from '../src/context-invitations.js';
 import { Convert } from '@enbox/common';
 import { createContextView } from '../src/context-view.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { DwnInterface } from '@enbox/agent';
+import { FollowedSourceNotReadyError } from '@enbox/agent/sync-internal';
 import { Poller } from '@enbox/dwn-sdk-js';
 import { recordCodecs } from '../src/record-codec.js';
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
-import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
 import { protocolContextKey, type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
 
 const connectedDid = 'did:example:member';
@@ -313,7 +313,7 @@ describe('TypedEnbox contexts', () => {
   let deleteFollowedSource: sinon.SinonStub;
   let deliveryListeners: Set<() => void>;
   let follow: sinon.SinonStub;
-  let get: sinon.SinonStub;
+  let isFollowedSourceActive: sinon.SinonStub;
   let getRoleDelivery: sinon.SinonStub;
   let list: sinon.SinonStub;
   let listeners: Set<SyncEventListener>;
@@ -376,8 +376,8 @@ describe('TypedEnbox contexts', () => {
       });
       return current;
     });
-    get = sinon.stub().callsFake(async (id: string): Promise<FollowedSyncSource | undefined> =>
-      current?.id === id ? current : undefined
+    isFollowedSourceActive = sinon.stub().callsFake(async (candidate: FollowedSyncSource): Promise<boolean> =>
+      current !== undefined && JSON.stringify(current) === JSON.stringify(candidate)
     );
     getRoleDelivery = sinon.stub().resolves({ state: 'delivered' });
     retryRoleDelivery = sinon.stub().resolves({ state: 'delivered' });
@@ -405,7 +405,7 @@ describe('TypedEnbox contexts', () => {
       sync: {
         deleteFollowedSource,
         followSource        : follow,
-        getFollowedSource   : get,
+        isFollowedSourceActive,
         getIdentityOptions  : async (): Promise<undefined> => undefined,
         getReplicationLinks : async () => [],
         listFollowedSources : list,
@@ -1053,8 +1053,8 @@ describe('TypedEnbox contexts', () => {
       id           : `role-${index}`,
     }));
     list.resolves(sources);
-    get.callsFake(async (id: string): Promise<FollowedSyncSource | undefined> =>
-      sources.find(candidate => candidate.id === id)
+    isFollowedSourceActive.callsFake(async (candidate: FollowedSyncSource): Promise<boolean> =>
+      sources.some(source => JSON.stringify(source) === JSON.stringify(candidate))
     );
     let releaseSubscriptions!: () => void;
     const subscriptionGate = new Promise<void>(resolve => { releaseSubscriptions = resolve; });
@@ -1285,8 +1285,8 @@ describe('TypedEnbox contexts', () => {
       id           : `role-${index}`,
     }));
     list.resolves(sources);
-    get.callsFake(async (id: string): Promise<FollowedSyncSource | undefined> =>
-      sources.find(candidate => candidate.id === id)
+    isFollowedSourceActive.callsFake(async (candidate: FollowedSyncSource): Promise<boolean> =>
+      sources.some(source => JSON.stringify(source) === JSON.stringify(candidate))
     );
     let releaseSubscriptions!: () => void;
     const gate = new Promise<void>(resolve => { releaseSubscriptions = resolve; });

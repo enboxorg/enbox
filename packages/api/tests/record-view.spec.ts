@@ -1201,7 +1201,6 @@ describe('RecordView', () => {
       throw new Error(`expected an error state, received '${state.status}'`);
     }
     expect(state.error.message).toContain('replication is paused');
-    expect(state.error.message).toContain('https://dwn.example');
     await view.close();
   });
 

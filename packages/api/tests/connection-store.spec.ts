@@ -18,7 +18,7 @@ import type {
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { AuthEventEmitter, AuthSession, ConnectDeniedError, isConnectDeniedError } from '@enbox/auth';
-import { EnboxUserAgent, projectReplicationCurrentness, resolveSyncConnectivityState } from '@enbox/agent';
+import { EnboxUserAgent, projectReplicationCurrentness } from '@enbox/agent';
 
 import type { ApplicationManifest } from '../src/application-manifest.js';
 import type { ConnectionSnapshot, ConnectionStore, ConnectionStoreOptions } from '../src/connection-store.js';
@@ -234,12 +234,14 @@ function identitySyncStatus(
     .flatMap(({ lastActivityAt }): string[] => lastActivityAt === undefined ? [] : [lastActivityAt])
     .sort()
     .at(-1);
+  const connectivity = links.some(link => link.connectivity === 'online')
+    ? 'online'
+    : links.some(link => link.connectivity === 'offline')
+      ? 'offline'
+      : links.length === 0 ? fallbackConnectivity : 'unknown';
   return {
     registration,
-    connectivity: resolveSyncConnectivityState(
-      links.map(({ connectivity }): SyncConnectivityState => connectivity),
-      fallbackConnectivity,
-    ),
+    connectivity,
     currentness : projectReplicationCurrentness(links),
     health      : {
       connectivity             : 'unknown',
@@ -559,7 +561,6 @@ describe('createConnectionStore()', () => {
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('error'); });
       expect(store.getSnapshot().sync?.error?.message).toContain('paused');
-      expect(store.getSnapshot().sync?.error?.message).toContain('https://dwn.example');
     });
 
     it('should treat an identity without a sync registration as locally caught up', async () => {

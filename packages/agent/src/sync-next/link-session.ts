@@ -1,3 +1,4 @@
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { SyncDirection } from '../types/sync.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextPullPage } from './pull-page.js';
@@ -8,7 +9,12 @@ import type { SyncNextDeliveryObligation, SyncNextDeliveryOutcome } from './type
 import type { SyncNextQuarantineAttempt, SyncNextQuarantineRetry } from './quarantine-retry.js';
 
 import { runSerializedByKey } from '@enbox/common';
-import { syncNextLinkIdentity, syncNextLogicalTargetId } from './ledger-key.js';
+import {
+  compareSyncNextPosition,
+  isValidSyncNextToken,
+  syncNextLinkIdentity,
+  syncNextLogicalTargetId,
+} from './ledger-key.js';
 
 const RETRY_DELAY_MS = 1_000;
 const COVER_SPARSE_RETRY_LIMIT = 100;
@@ -16,6 +22,7 @@ const COVER_SPARSE_RETRY_LIMIT = 100;
 type SparseAttempt = SyncNextQuarantineAttempt;
 
 type PageAttempt = {
+  handledThrough?: ProgressToken;
   hasMore: boolean;
   retained: boolean;
 };
@@ -24,6 +31,7 @@ type DirectionState = {
   requested: boolean;
   running: boolean;
   wakeVersion: number;
+  wakeThrough?: ProgressToken;
 };
 
 export type SyncNextLinkSessionObserver = {
@@ -88,11 +96,14 @@ export class SyncNextLinkSession {
     this.setPullCurrent(false);
   }
 
-  public request(direction: SyncDirection, schedule = true): void {
+  public request(direction: SyncDirection, schedule = true, wakeThrough?: ProgressToken): void {
     if (direction === 'push' && this._target.authorization.kind === 'role') {
       return;
     }
     const state = this._directions[direction];
+    if (direction === 'pull' && wakeThrough !== undefined) {
+      SyncNextLinkSession.retainLatestWake(state, wakeThrough);
+    }
     state.requested = true;
     state.wakeVersion++;
     if (direction === 'pull') {
@@ -162,8 +173,12 @@ export class SyncNextLinkSession {
       const shouldContinue = (): boolean => !this._abortController.signal.aborted;
       const page = await this.consumePage(direction, shouldContinue);
       const sparse = await this.retrySparse(direction, page.retained, shouldContinue);
+      const wakeCovered = direction !== 'pull' || this.clearCoveredWake(page.handledThrough);
       this._observer.onActivity?.();
       if (page.hasMore) {
+        this.request(direction);
+      } else if (direction === 'pull' && !wakeCovered) {
+        await SyncNextLinkSession.yieldTurn(RETRY_DELAY_MS);
         this.request(direction);
       } else if (direction === 'pull' && wakeVersion === state.wakeVersion) {
         this.setPullCurrent(sparse.remaining === 0);
@@ -180,6 +195,7 @@ export class SyncNextLinkSession {
         const wakeVersion = state.wakeVersion;
         const page = await this.consumePage(direction, shouldContinue);
         const sparse = await this.retrySparse(direction, page.retained, shouldContinue);
+        const wakeCovered = direction !== 'pull' || this.clearCoveredWake(page.handledThrough);
         if (page.hasMore) {
           this._observer.onActivity?.();
           await SyncNextLinkSession.yieldTurn();
@@ -189,8 +205,8 @@ export class SyncNextLinkSession {
         const remaining = await this.retryCoverSparse(direction, shouldContinue, sparse);
         this._observer.onActivity?.();
         this.assertCurrent(direction, shouldContinue);
-        if (state.requested || wakeVersion !== state.wakeVersion) {
-          await SyncNextLinkSession.yieldTurn();
+        if (state.requested || wakeVersion !== state.wakeVersion || !wakeCovered) {
+          await SyncNextLinkSession.yieldTurn(wakeCovered ? 1 : RETRY_DELAY_MS);
           continue;
         }
         if (remaining > 0) {
@@ -228,7 +244,11 @@ export class SyncNextLinkSession {
         result.materializedCids,
       );
     }
-    return { hasMore: result.hasMore, retained: result.quarantined > 0 };
+    return {
+      handledThrough : result.handledThrough,
+      hasMore        : result.hasMore,
+      retained       : result.quarantined > 0,
+    };
   }
 
   private async consumePushPage(shouldContinue: () => boolean): Promise<PageAttempt> {
@@ -312,7 +332,8 @@ export class SyncNextLinkSession {
   ): Promise<number> {
     let result = initial;
     for (let attempts = 0; attempts < COVER_SPARSE_RETRY_LIMIT; attempts++) {
-      if (result.remaining === 0 || !shouldContinue() || !result.progressed) {
+      const forceDeferredPull = direction === 'pull' && result.deferred === true;
+      if (result.remaining === 0 || !shouldContinue() || (!result.progressed && !forceDeferredPull)) {
         return result.remaining;
       }
       result = await this.retrySparse(direction, true, shouldContinue);
@@ -330,6 +351,24 @@ export class SyncNextLinkSession {
     if (!this._abortController.signal.aborted) {
       this._reportError(error);
     }
+  }
+
+  private clearCoveredWake(handledThrough: ProgressToken | undefined): boolean {
+    const state = this._directions.pull;
+    const required = state.wakeThrough;
+    if (required === undefined) {
+      return true;
+    }
+    if (
+      handledThrough === undefined ||
+      handledThrough.streamId !== required.streamId ||
+      handledThrough.epoch !== required.epoch ||
+      compareSyncNextPosition(handledThrough, required) < 0
+    ) {
+      return false;
+    }
+    state.wakeThrough = undefined;
+    return true;
   }
 
   private assertCurrent(direction: SyncDirection, shouldContinue: () => boolean): void {
@@ -376,7 +415,22 @@ export class SyncNextLinkSession {
       : RETRY_DELAY_MS;
   }
 
-  private static yieldTurn(): Promise<void> {
-    return new Promise(resolve => { setTimeout(resolve, 1); });
+  private static retainLatestWake(state: DirectionState, wakeThrough: ProgressToken): void {
+    if (!isValidSyncNextToken(wakeThrough)) {
+      return;
+    }
+    const current = state.wakeThrough;
+    if (
+      current === undefined ||
+      current.streamId !== wakeThrough.streamId ||
+      current.epoch !== wakeThrough.epoch ||
+      compareSyncNextPosition(wakeThrough, current) > 0
+    ) {
+      state.wakeThrough = structuredClone(wakeThrough);
+    }
+  }
+
+  private static yieldTurn(delay = 1): Promise<void> {
+    return new Promise(resolve => { setTimeout(resolve, delay); });
   }
 }

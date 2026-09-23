@@ -54,7 +54,6 @@ import type {
 import type {
   RemoteSyncStatus,
   ReplicationCurrentness,
-  ReplicationLinkSnapshot,
   SyncConnectivityState,
   SyncIdentityOptions,
 } from '@enbox/agent';
@@ -69,7 +68,6 @@ import {
 
 import { Enbox } from './enbox.js';
 import { getApplicationProtocolRequests } from './application-manifest.js';
-import { pausedReplicationLink } from './sync-status-error.js';
 import { ProtocolReadinessError } from './protocol-readiness.js';
 import { WalletReapprovalRequiredError } from './typed-enbox.js';
 
@@ -1544,7 +1542,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       const remotes = projectRemoteSyncRows(status.remotes, this._snapshot.remoteDwn);
       return status.registration === undefined
         ? immutableSyncStatus({ state: 'caught-up', connectivity: 'unknown', remotes })
-        : projectSyncStatus(status.currentness, status.connectivity, status.lastActivityAt, status.links, remotes);
+        : projectSyncStatus(status.currentness, status.connectivity, status.lastActivityAt, remotes);
     } catch (cause: unknown) {
       const current = this._snapshot.sync;
       return immutableSyncStatus({
@@ -1746,20 +1744,15 @@ function projectSyncStatus(
   state: ReplicationCurrentness,
   connectivity: SyncConnectivityState,
   lastActivityAt: string | undefined,
-  links: readonly Readonly<ReplicationLinkSnapshot>[],
   remotes: readonly Readonly<RemoteSyncStatus>[],
 ): SyncStatusSnapshot {
   if (state === 'error') {
-    const failedLink = pausedReplicationLink(links);
-    const message = failedLink === undefined
-      ? 'Synchronization is paused for the selected identity.'
-      : `Synchronization is paused for the selected identity at '${failedLink.remoteEndpoint}'.`;
     return immutableSyncStatus({
       state : 'error',
       connectivity,
       lastActivityAt,
       remotes,
-      error : new Error(message),
+      error : new Error('Synchronization is paused for the selected identity.'),
     });
   }
   return immutableSyncStatus({

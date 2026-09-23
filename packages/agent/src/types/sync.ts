@@ -1,7 +1,6 @@
 import type { MessagesFilter, ProgressToken, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
-import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
 
 /** Deterministic bytewise string comparator for hash inputs and canonical IDs. */
 export function lexicographicalCompare(a: string, b: string): number {
@@ -661,17 +660,6 @@ export interface SyncEngine {
   agent: EnboxPlatformAgent;
 
   /**
-   * Whether at least one live pull or push subscription is open.
-   *
-   * This is specifically about live subscriptions — it is `false` when only
-   * the settle-check timer remains (e.g. after the last identity was
-   * removed). Callers use this to avoid calling `startSync()` when live
-   * subscriptions are active, which would tear them all down and rebuild
-   * from scratch.
-   */
-  readonly hasActiveSubscriptions: boolean;
-
-  /**
    * Create or replace an identity's sync options.
    * Callers must explicitly specify which protocols to sync (`'all'` for a
    * full replica, or a list of protocol URIs) so that sync scope is always
@@ -701,11 +689,13 @@ export interface SyncEngine {
   /**
    * Recheck a confirmed inactive wallet approval and remove its sync registration.
    * Followed contexts remain accepted; fresh registration safely rescans them.
-   * An observation of an older approval cannot pause a newer one.
+   * An observation of an older approval cannot remove a newer registration.
    * Returns whether the observed approval is still current and inactive,
    * even when no registration needs removal.
    */
-  pauseIdentity(params: { did: string; delegateDid: string; connectSessionId: string }): Promise<boolean>;
+  removeIdentityIfApprovalInactive(
+    params: { did: string; delegateDid: string; connectSessionId: string },
+  ): Promise<boolean>;
   /**
    * Remove an identity from the SyncEngine, stopping sync for that identity.
    *
@@ -719,29 +709,6 @@ export interface SyncEngine {
    * Get the Sync Options for a specific identity.
    */
   getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined>;
-  /** Resolve and follow one role-authorized foreign context. */
-  followSource(source: FollowedSyncSourceInput): Promise<FollowedSyncSource>;
-  /** Read one followed foreign context by accepted role-record ID. */
-  getFollowedSource(id: string): Promise<FollowedSyncSource | undefined>;
-  /** List followed foreign contexts, excluding corrupt private store entries. */
-  listFollowedSources(): Promise<FollowedSyncSource[]>;
-  /** Stop following one exact followed source. */
-  deleteFollowedSource(source: FollowedSyncSource): Promise<void>;
-  /**
-   * Mark one exact followed source's live links pull-pending after a remote
-   * mutation is accepted. Returns false when that acceptance is no longer active.
-   *
-   * @internal Used by the typed shared-context mutation boundary.
-   */
-  markFollowedSourcePullPending(source: FollowedSyncSource): Promise<boolean>;
-  /**
-   * Pull one exact accepted foreign context from its accepted hosted endpoint.
-   * Returns `true` only when that feed reached its head while the acceptance
-   * and actor registration remained current.
-   *
-   * @internal Used by the typed shared-context readiness boundary.
-   */
-  pullFollowedSource(source: FollowedSyncSource): Promise<boolean>;
   /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *
@@ -779,8 +746,9 @@ export interface SyncEngine {
    * immediate push, and runs a periodic covering pass at `interval` for
    * anything the subscription wakes missed.
    *
-   * Subsequent calls update the interval, disposing of the previous
-   * runtime's resources before starting the new one.
+   * Calling this again while a live subscription is open joins any in-progress
+   * catch-up and otherwise is a no-op. Stop the runtime before starting it with
+   * a different periodic interval.
    *
    * The returned promise resolves after the initial durable-feed catch-up
    * and after link subscriptions have been opened for identities registered

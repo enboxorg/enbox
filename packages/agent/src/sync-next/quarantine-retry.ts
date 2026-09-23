@@ -18,6 +18,7 @@ import { Encoder, Records } from '@enbox/dwn-sdk-js';
 const RETRY_DELAY_MS = 1_000;
 
 export type SyncNextQuarantineAttempt = {
+  deferred?: boolean;
   progressed: boolean;
   remaining: number;
 };
@@ -54,7 +55,7 @@ export class SyncNextQuarantineRetry {
         ? entries[0]
         : entries.find(candidate => SyncNextQuarantineRetry.retryAt(candidate) <= Date.now());
       if (entry === undefined) {
-        return { progressed: false, remaining: entries.length };
+        return { deferred: true, progressed: false, remaining: entries.length };
       }
 
       try {

@@ -124,5 +124,9 @@ describe('openSyncNextSubscriptions', () => {
     expect(session.request.notCalled).toBe(true);
     await subscription.handler({ type: 'reconnected' });
     expect(session.request.calledOnceWithExactly('pull')).toBe(true);
+
+    const cursor = { epoch: 'epoch', position: '7', streamId: 'stream' };
+    await subscription.handler({ type: 'event', cursor, event: { message: { descriptor: {} } } });
+    expect(session.request.secondCall.calledWithExactly('pull', true, cursor)).toBe(true);
   });
 });

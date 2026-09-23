@@ -130,9 +130,9 @@ export class SyncNextCatalog {
     }, signal);
   }
 
-  public async pauseIdentity(
+  public async removeIdentityIfApprovalInactive(
     params: { did: string; delegateDid: string; connectSessionId: string },
-    beforePause: () => Promise<void>,
+    beforeRemove: () => Promise<void>,
   ): Promise<boolean> {
     return this.runIdentityLifecycle(params.did, async (): Promise<boolean> => {
       const status = await fetchConnectionStatus({
@@ -146,7 +146,7 @@ export class SyncNextCatalog {
       ) {
         return false;
       }
-      await beforePause();
+      await beforeRemove();
       await this._identityStore.delete(params.did);
       return true;
     });

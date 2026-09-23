@@ -73,7 +73,7 @@ describe('SyncNextQuarantineRetry coordination', () => {
     await expect(quarantine.retryOne(target('https://first.example'))).rejects.toThrow('ciphertext is corrupt');
     const deferred = await quarantine.retryOne(target('https://second.example'));
 
-    expect(deferred).toEqual({ progressed: false, remaining: 1 });
+    expect(deferred).toEqual({ deferred: true, progressed: false, remaining: 1 });
     expect(retry.calledOnce).toBe(true);
   });
 });

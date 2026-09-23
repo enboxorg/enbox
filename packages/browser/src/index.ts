@@ -121,17 +121,12 @@ export type {
 // DWN interface enum for typing agent requests (from @enbox/agent).
 export { DwnInterface } from '@enbox/agent';
 
-// Low-level sync-status types for advanced agent consumers. Dapps using a
-// ConnectionStore receive current advertised rows through `snapshot.sync.remotes`
-// and can call `store.retryRemote(remoteEndpoint)` without wiring agent events.
+// Named field types used by the high-level `SyncStatusSnapshot` re-exported
+// from @enbox/api. Engine control and raw event types stay in @enbox/agent.
 export type {
   RemoteSyncState,
   RemoteSyncStatus,
   SyncConnectivityState,
-  SyncEngine,
-  SyncEvent,
-  SyncEventListener,
-  SyncIdentityStatus,
 } from '@enbox/agent';
 
 // Common DWN primitives for record queries, permission scopes, and protocol

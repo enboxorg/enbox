@@ -58,6 +58,7 @@ export type SyncEngineNextParams = {
 };
 
 type ActiveSession = {
+  opening?: Promise<void>;
   session: SyncNextLinkSession;
   subscribed: boolean;
   target: SyncTarget;
@@ -154,8 +155,8 @@ export class SyncEngineNext implements SyncEngine {
     );
   }
 
-  public get hasActiveSubscriptions(): boolean {
-    return [...this._sessions.values()].some(({ subscribed }) => subscribed);
+  private get hasLiveSubscription(): boolean {
+    return [...this._sessions.values()].some(({ opening, subscribed }) => subscribed || opening !== undefined);
   }
 
   public async setIdentityOptions(
@@ -196,18 +197,18 @@ export class SyncEngineNext implements SyncEngine {
     });
   }
 
-  public async pauseIdentity(params: {
+  public async removeIdentityIfApprovalInactive(params: {
     did: string;
     delegateDid: string;
     connectSessionId: string;
   }): Promise<boolean> {
-    let paused = false;
+    let confirmedInactive = false;
     await this.runRuntimeTransition(async (): Promise<void> => {
-      paused = await this.catalog.pauseIdentity(params, async (): Promise<void> => {
+      confirmedInactive = await this.catalog.removeIdentityIfApprovalInactive(params, async (): Promise<void> => {
         await this.disposeIdentitySessions(params.did);
         await this.deleteIdentityReplicationState(params.did);
       });
-      if (!paused) {
+      if (!confirmedInactive) {
         return;
       }
       this._planner.invalidate();
@@ -215,7 +216,7 @@ export class SyncEngineNext implements SyncEngine {
       this.publishCatalogWake();
       await this.refreshLiveTargets();
     });
-    return paused;
+    return confirmedInactive;
   }
 
   public async removeIdentity(
@@ -266,8 +267,11 @@ export class SyncEngineNext implements SyncEngine {
     return followed;
   }
 
-  public getFollowedSource(id: string): Promise<FollowedSyncSource | undefined> {
-    return this._sourceStore.get(id);
+  /** @internal Used by the typed shared-context boundary. */
+  public async isFollowedSourceActive(source: FollowedSyncSource): Promise<boolean> {
+    const expected = normalizeFollowedSyncSource(source);
+    const current = await this._sourceStore.get(expected.id);
+    return current !== undefined && followedSyncSourceActiveEqual(current, expected);
   }
 
   public listFollowedSources(): Promise<FollowedSyncSource[]> {
@@ -389,6 +393,10 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async startSync(params: StartSyncParams = {}): Promise<void> {
+    if (this.hasLiveSubscription) {
+      await this._refreshLive;
+      return;
+    }
     const interval = Math.min(
       Math.max(parseDurationInMilliseconds(params.interval ?? '5m'), 1_000),
       MAX_TIMER_DELAY_MS,
@@ -651,33 +659,8 @@ export class SyncEngineNext implements SyncEngine {
     const active = await Promise.all(targets.map(target => this.ensureSession(target)));
     await Promise.allSettled(active.map(async (item): Promise<void> => {
       if (!item.subscribed) {
-        try {
-          await this._endpointGate.run(
-            item.target.dwnUrl,
-            (): Promise<void> => openSyncNextSubscriptions(
-              this.agent,
-              this.targetResolver,
-              item.target,
-              item.session,
-              (error): void => { this.handleSubscriptionTerminal(item, error); },
-            ),
-          );
-          item.subscribed = true;
-          this._endpointGate.clear(item.target.dwnUrl);
-          this.emit({
-            type           : 'link:status-change',
-            tenantDid      : item.target.did,
-            remoteEndpoint : item.target.dwnUrl,
-            ...syncEventScope(item.target.scope),
-            from           : 'initializing',
-            to             : 'live',
-          });
-        } catch (error: unknown) {
-          if (!this.recoverRoleAuthorization(item.target, error)) {
-            this.scheduleLiveRetry(error);
-            console.error('SyncEngineNext: subscription establishment failed', error);
-          }
-        }
+        item.opening ??= this.openSubscription(item);
+        await item.opening;
       }
     }));
     if (initialCover) {
@@ -688,6 +671,42 @@ export class SyncEngineNext implements SyncEngine {
       if (!initialCover && (wakeDid === undefined || SyncEngineNext.targetBelongsToIdentity(target, wakeDid))) {
         session.start();
       }
+    }
+  }
+
+  private async openSubscription(item: ActiveSession): Promise<void> {
+    try {
+      await this._endpointGate.run(
+        item.target.dwnUrl,
+        (): Promise<void> => openSyncNextSubscriptions(
+          this.agent,
+          this.targetResolver,
+          item.target,
+          item.session,
+          (error): void => { this.handleSubscriptionTerminal(item, error); },
+        ),
+      );
+      if (this._sessions.get(SyncEngineNext.targetKey(item.target)) !== item) {
+        await item.session.dispose();
+        return;
+      }
+      item.subscribed = true;
+      this._endpointGate.clear(item.target.dwnUrl);
+      this.emit({
+        type           : 'link:status-change',
+        tenantDid      : item.target.did,
+        remoteEndpoint : item.target.dwnUrl,
+        ...syncEventScope(item.target.scope),
+        from           : 'initializing',
+        to             : 'live',
+      });
+    } catch (error: unknown) {
+      if (!this.recoverRoleAuthorization(item.target, error)) {
+        this.scheduleLiveRetry(error);
+        console.error('SyncEngineNext: subscription establishment failed', error);
+      }
+    } finally {
+      item.opening = undefined;
     }
   }
 

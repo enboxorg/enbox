@@ -155,6 +155,35 @@ describe('SyncNextLinkSession', () => {
     await link.dispose();
   });
 
+  it('should not become current before a drained page reaches the pushed wake cursor', async () => {
+    const clock = sinon.useFakeTimers();
+    const parts = fixture();
+    parts.pullPage.consume.onFirstCall().resolves({
+      handledThrough   : token('1'),
+      hasMore          : false,
+      materializedCids : [],
+      quarantined      : 0,
+    });
+    parts.pullPage.consume.onSecondCall().resolves({
+      handledThrough   : token('2'),
+      hasMore          : false,
+      materializedCids : [],
+      quarantined      : 0,
+    });
+    const link = session(parts);
+
+    link.request('pull', true, token('2'));
+    link.request('pull', true, token('1'));
+    await clock.tickAsync(0);
+    expect(link.isPullCurrent).toBe(false);
+    expect(parts.pullPage.consume.callCount).toBe(1);
+
+    await clock.tickAsync(1_001);
+    expect(parts.pullPage.consume.callCount).toBe(2);
+    expect(link.isPullCurrent).toBe(true);
+    await link.dispose();
+  });
+
   it('should resolve a covering run after one drained watermark page', async () => {
     const parts = fixture();
     parts.pullPage.consume.resolves({
@@ -324,6 +353,39 @@ describe('SyncNextLinkSession', () => {
     await expect(link.cover('pull')).resolves.toBeUndefined();
 
     expect(parts.quarantine.retryOne.calledOnce).toBe(true);
+    expect(parts.quarantine.retryOne.firstCall.args[3]).toBe(false);
+    await link.dispose();
+  });
+
+  it('should force one deferred quarantine retry after the feed drains', async () => {
+    const parts = fixture({ quarantine: [{ messageCid: 'deferred', source: token('1') }] });
+    parts.quarantine.retryOne.onFirstCall().resolves({ deferred: true, progressed: false, remaining: 1 });
+    parts.quarantine.retryOne.onSecondCall().resolves({ progressed: true, remaining: 0 });
+    const link = session(parts);
+
+    await expect(link.cover('pull')).resolves.toBeUndefined();
+
+    expect(parts.quarantine.retryOne.callCount).toBe(2);
+    expect(parts.quarantine.retryOne.firstCall.args[3]).toBe(false);
+    expect(parts.quarantine.retryOne.secondCall.args[3]).toBe(true);
+    await link.dispose();
+  });
+
+  it('should not force deferred quarantine while feed pages still advance', async () => {
+    const parts = fixture({ quarantine: [{ messageCid: 'deferred', source: token('1') }] });
+    parts.pullPage.consume.onFirstCall().resolves({
+      hasMore          : true,
+      materializedCids : [],
+      quarantined      : 0,
+    });
+    parts.quarantine.retryOne.onFirstCall().resolves({ deferred: true, progressed: false, remaining: 1 });
+    parts.quarantine.retryOne.onSecondCall().resolves({ deferred: true, progressed: false, remaining: 1 });
+    parts.quarantine.retryOne.onThirdCall().resolves({ progressed: false, remaining: 1 });
+    const link = session(parts);
+
+    await expect(link.cover('pull')).rejects.toThrow('unresolved obligations');
+
+    expect(parts.quarantine.retryOne.getCalls().map(call => call.args[3])).toEqual([false, false, true]);
     await link.dispose();
   });
 

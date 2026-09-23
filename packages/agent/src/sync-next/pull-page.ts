@@ -22,6 +22,7 @@ const PULL_PAGE_SIZE = 100;
 
 export type SyncNextPullPageResult = { aborted: true } | {
   aborted?: false;
+  handledThrough: ProgressToken;
   hasMore: boolean;
   materializedCids: string[];
   quarantined: number;
@@ -152,6 +153,7 @@ export class SyncNextPullPage {
       return { aborted: true };
     }
     return {
+      handledThrough,
       hasMore          : reply.drained !== true,
       materializedCids : [...materializedCids],
       quarantined      : quarantine.length,

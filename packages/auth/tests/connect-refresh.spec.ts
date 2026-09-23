@@ -683,7 +683,7 @@ describe('delegated connection lifecycle', () => {
     ] as const)('defers unavailable polls and refreshes once after a confirmed %s result', async (state, eventType) => {
       const clock = sinon.useFakeTimers();
       const agent = createMockAgent();
-      const pause = sinon.spy(agent.sync, 'pauseIdentity');
+      const removeInactive = sinon.spy(agent.sync, 'removeIdentityIfApprovalInactive');
       const manager = createTestManager(agent);
       const previousSession = manager.session;
       const status: ConnectionStatus = {
@@ -721,9 +721,9 @@ describe('delegated connection lifecycle', () => {
 
         await clock.tickAsync(5000);
         expect(emitted).toEqual([[eventType, status]]);
-        expect(pause.callCount).toBe(state === 'expired' ? 1 : 0);
+        expect(removeInactive.callCount).toBe(state === 'expired' ? 1 : 0);
         if (state === 'expired') {
-          expect(pause.calledOnceWithExactly({ did: OWNER_DID, delegateDid: DELEGATE_DID, connectSessionId: 'session-1' })).toBe(true);
+          expect(removeInactive.calledOnceWithExactly({ did: OWNER_DID, delegateDid: DELEGATE_DID, connectSessionId: 'session-1' })).toBe(true);
         }
         expect(refresh.calledOnce).toBe(true);
       } finally {
@@ -735,7 +735,7 @@ describe('delegated connection lifecycle', () => {
     test('does not publish expiry or auto-refresh when sync rejects the approval as stale', async () => {
       const clock = sinon.useFakeTimers();
       const agent = createMockAgent();
-      const pause = sinon.stub(agent.sync, 'pauseIdentity').resolves(false);
+      const removeInactive = sinon.stub(agent.sync, 'removeIdentityIfApprovalInactive').resolves(false);
       const manager = createTestManager(agent);
       const session = manager.session;
       sinon.stub(manager, 'getConnectionStatus').resolves({
@@ -750,7 +750,7 @@ describe('delegated connection lifecycle', () => {
       const stop = manager.startConnectionMonitor({ intervalMs: 1000, autoRefresh: { protocols: PROTOCOLS } });
       try {
         await clock.tickAsync(0);
-        expect(pause.calledOnce).toBe(true);
+        expect(removeInactive.calledOnce).toBe(true);
         expect(manager.session).toBe(session);
         expect(expired.notCalled).toBe(true);
         expect(refresh.notCalled).toBe(true);
@@ -763,7 +763,7 @@ describe('delegated connection lifecycle', () => {
     test('reports revoked sessions as invalid but never auto-refreshes them', async () => {
       const clock = sinon.useFakeTimers();
       const agent = createMockAgent();
-      const pause = sinon.spy(agent.sync, 'pauseIdentity');
+      const removeInactive = sinon.spy(agent.sync, 'removeIdentityIfApprovalInactive');
       const manager = createTestManager(agent);
       const status: ConnectionStatus = {
         state            : 'revoked',
@@ -783,7 +783,7 @@ describe('delegated connection lifecycle', () => {
       await clock.tickAsync(3000);
 
       expect(emitted).toEqual([status]);
-      expect(pause.calledOnce).toBe(true);
+      expect(removeInactive.calledOnce).toBe(true);
       expect(refresh.called).toBe(false);
       stop();
       clock.restore();
@@ -840,7 +840,7 @@ describe('delegated connection lifecycle', () => {
     test('does not overlap slow polls or apply a result from a replaced session', async () => {
       const clock = sinon.useFakeTimers();
       const agent = createMockAgent();
-      const pause = sinon.spy(agent.sync, 'pauseIdentity');
+      const removeInactive = sinon.spy(agent.sync, 'removeIdentityIfApprovalInactive');
       const manager = createTestManager(agent);
       const expired = sinon.spy();
       manager.on('connection-expired', expired);
@@ -864,7 +864,7 @@ describe('delegated connection lifecycle', () => {
       await clock.tickAsync(0);
       await clock.tickAsync(1000);
       expect(getStatus.callCount).toBe(2);
-      expect(pause.notCalled).toBe(true);
+      expect(removeInactive.notCalled).toBe(true);
       expect(expired.notCalled).toBe(true);
       stop();
       clock.restore();

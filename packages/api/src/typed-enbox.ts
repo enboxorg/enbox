@@ -37,7 +37,6 @@ import type {
   DwnPaginationCursor,
   DwnPublicKeyJwk,
   DwnResponseStatus,
-  FollowedSyncSource,
   SyncEngine,
 } from '@enbox/agent';
 import type {
@@ -53,6 +52,10 @@ import type {
 } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { ExpandableRecordView, RecordView } from './record-view.js';
+import type {
+  FollowedSyncSource as FollowedContextSource,
+  SyncEngineNext as SharedContextSyncEngine,
+} from '@enbox/agent/sync-internal';
 import type { MaterializedRecord, Record, RecordPatch } from './record.js';
 import type { ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
@@ -90,7 +93,14 @@ import {
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { createExpandableRecordView, createRecordView } from './record-view.js';
 import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
-import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual } from '@enbox/agent';
+import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual } from '@enbox/agent/sync-internal';
+
+function requireSharedContextSync(sync: SyncEngine | undefined): SharedContextSyncEngine {
+  if (sync === undefined) {
+    throw new Error('TypedEnbox.contexts requires an Enbox session with shared-context storage.');
+  }
+  return sync as SharedContextSyncEngine;
+}
 
 const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
@@ -1458,12 +1468,7 @@ export class TypedEnbox<
       return this._contexts;
     }
 
-    const requireSync = (): SyncEngine => {
-      if (this._options.sync === undefined) {
-        throw new Error('TypedEnbox.contexts requires an Enbox session with shared-context storage.');
-      }
-      return this._options.sync;
-    };
+    const requireSync = (): SharedContextSyncEngine => requireSharedContextSync(this._options.sync);
 
     const contextRoots = [...new Set(Object.keys(this._roleGroups)
       .map(group => this.resolveContextRoleGroup(group).contextPath))]
@@ -1484,15 +1489,15 @@ export class TypedEnbox<
         ): Promise<RecordView<ContextMaterializedRecord<unknown>>>;
       };
     };
-    const boundMembers = new Map<string, { context: MemberContext<D, C>; source: FollowedSyncSource }>();
+    const boundMembers = new Map<string, { context: MemberContext<D, C>; source: FollowedContextSource }>();
     const boundOwners = new Map<string, CatalogContext>();
 
-    const listSources = async (): Promise<FollowedSyncSource[]> => {
+    const listSources = async (): Promise<FollowedContextSource[]> => {
       this._options.signal?.throwIfAborted();
       if (this._options.sync === undefined) {
         return [];
       }
-      return (await this._options.sync.listFollowedSources())
+      return (await requireSharedContextSync(this._options.sync).listFollowedSources())
         .filter(source =>
           source.actorDid === this._dwn.connectedDid &&
           source.protocol === this._definition.protocol &&
@@ -1511,7 +1516,7 @@ export class TypedEnbox<
       }
       assertValidRecordWithin(contextPath, request.id, true);
       const sync = requireSync();
-      let source: FollowedSyncSource;
+      let source: FollowedContextSource;
       try {
         source = await sync.followSource({
           actorDid  : this._dwn.connectedDid,
@@ -1615,7 +1620,7 @@ export class TypedEnbox<
       return bindOwnedContext(normalizedPath, id);
     };
 
-    const bindMemberContext = (source: FollowedSyncSource): MemberContext<D, C> => {
+    const bindMemberContext = (source: FollowedContextSource): MemberContext<D, C> => {
       const key = protocolContextKey(source.sourceDid, source.contextId);
       const existing = boundMembers.get(key);
       if (existing !== undefined && followedSyncSourceActiveEqual(existing.source, source)) {
@@ -1626,7 +1631,7 @@ export class TypedEnbox<
       return context;
     };
 
-    const bindCatalogMembers = (sources: readonly FollowedSyncSource[]): CatalogMemberContext[] => {
+    const bindCatalogMembers = (sources: readonly FollowedContextSource[]): CatalogMemberContext[] => {
       const activeKeys = new Set(sources.map(source => protocolContextKey(source.sourceDid, source.contextId)));
       for (const key of boundMembers.keys()) {
         if (!activeKeys.has(key)) { boundMembers.delete(key); }
@@ -2905,7 +2910,7 @@ export class TypedEnbox<
   }
 
   /** Bind the existing typed records surface to one exact durable source. */
-  private bindMemberContext(source: FollowedSyncSource): MemberContext<D, C> {
+  private bindMemberContext(source: FollowedContextSource): MemberContext<D, C> {
     const scope = this.resolveMemberContextScope(source.protocolRole);
     const replicatedPaths = new Set(source.protocolPaths);
     const readablePaths = new Set(scope.readablePaths);
@@ -2913,19 +2918,16 @@ export class TypedEnbox<
       !readablePaths.has(path) || replicatedPaths.has(path)
     ));
 
-    const sync = this._options.sync;
-    if (sync === undefined) {
-      throw new Error('TypedEnbox.contexts requires an Enbox session with shared-context storage.');
-    }
+    const sync = requireSharedContextSync(this._options.sync);
     const controller = new AbortController();
     const signal = this._options.signal === undefined
       ? controller.signal
       : AbortSignal.any([this._options.signal, controller.signal]);
     const assertActive = async (): Promise<void> => {
       signal.throwIfAborted();
-      const current = await sync.getFollowedSource(source.id);
+      const isActive = await sync.isFollowedSourceActive(source);
       signal.throwIfAborted();
-      if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
+      if (!isActive) {
         throw new ContextRetiredError(source.contextId);
       }
     };

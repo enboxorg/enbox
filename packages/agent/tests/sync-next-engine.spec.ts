@@ -74,6 +74,80 @@ describe('SyncEngineNext orchestration', () => {
     unsubscribeHealthy();
   });
 
+  it('should keep repeated live startup idempotent', async () => {
+    const internal = engine as any;
+    const dispose = sinon.stub().resolves();
+    let finishCatchUp!: () => void;
+    internal._refreshLive = new Promise<void>(resolve => { finishCatchUp = resolve; });
+    internal._live = true;
+    internal._sessions.set('live-start', {
+      session    : { dispose },
+      subscribed : true,
+      target     : target('did:example:live-start', 'https://live-start.example'),
+    });
+
+    try {
+      let resolved = false;
+      const repeated = engine.startSync({ interval: '1s' }).then((): void => { resolved = true; });
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+      finishCatchUp();
+      await repeated;
+      expect(dispose.notCalled).toBe(true);
+      expect(internal._sessions.has('live-start')).toBe(true);
+    } finally {
+      internal._refreshLive = undefined;
+      internal._sessions.delete('live-start');
+      internal._live = false;
+    }
+  });
+
+  it('should share one in-flight subscription open across concurrent refreshes', async () => {
+    const syncTarget = target('did:example:subscription-open', 'https://subscription-open.example');
+    const internal = engine as any;
+    const item = {
+      session: {
+        dispose : sinon.stub().resolves(),
+        start   : sinon.stub(),
+      },
+      subscribed : false,
+      target     : syncTarget,
+    };
+    const linkKey = syncNextLinkKey({
+      authorizationEpoch : syncTarget.authorizationEpoch,
+      projectionId       : syncTarget.projectionId,
+      remoteEndpoint     : syncTarget.dwnUrl,
+      tenantDid          : syncTarget.did,
+    });
+    let beginOpen!: () => void;
+    let finishOpen!: () => void;
+    const openStarted = new Promise<void>(resolve => { beginOpen = resolve; });
+    const openGate = new Promise<void>(resolve => { finishOpen = resolve; });
+    const open = sinon.stub(internal._endpointGate, 'run').callsFake(async (): Promise<void> => {
+      beginOpen();
+      await openGate;
+    });
+    sinon.stub(internal._planner, 'getTargets').resolves([syncTarget]);
+    sinon.stub(internal, 'pruneSupersededLinks').resolves();
+    sinon.stub(internal, 'ensureSession').resolves(item);
+    internal._sessions.set(linkKey, item);
+    internal._live = true;
+
+    try {
+      const first = internal.refreshLiveTargets();
+      await openStarted;
+      const second = internal.refreshLiveTargets();
+      await Promise.resolve();
+      expect(open.calledOnce).toBe(true);
+      finishOpen();
+      await Promise.all([first, second]);
+      expect(item.subscribed).toBe(true);
+    } finally {
+      internal._sessions.delete(linkKey);
+      internal._live = false;
+    }
+  });
+
   it('should invalidate sibling target plans after catalog mutations', async () => {
     const dataPath = '__TESTDATA__/sync-next-catalog-wakes';
     const first = new SyncEngineNext({ dataPath, db });
@@ -125,24 +199,24 @@ describe('SyncEngineNext orchestration', () => {
     fetchGrants.onSecondCall().resolves([]);
     fetchGrants.onThirdCall().resolves([grant]);
     const identityStore = { delete: sinon.stub().resolves() };
-    const beforePause = sinon.stub().resolves();
+    const beforeRemove = sinon.stub().resolves();
     const catalog = new SyncNextCatalog(
       {} as never,
       { fetchGrants } as never,
       identityStore as never,
       {} as never,
       {} as never,
-      'pause-test',
+      'inactive-approval-test',
     );
 
-    expect(await catalog.pauseIdentity({
+    expect(await catalog.removeIdentityIfApprovalInactive({
       did              : 'did:example:owner',
       delegateDid      : 'did:example:delegate',
       connectSessionId : 'session-a',
-    }, beforePause)).toBe(true);
-    expect(beforePause.calledOnce).toBe(true);
+    }, beforeRemove)).toBe(true);
+    expect(beforeRemove.calledOnce).toBe(true);
     expect(identityStore.delete.calledOnceWithExactly('did:example:owner')).toBe(true);
-    expect(beforePause.calledBefore(identityStore.delete)).toBe(true);
+    expect(beforeRemove.calledBefore(identityStore.delete)).toBe(true);
   });
 
   it('should accept and remove a role source without delegating to the legacy engine', async () => {
@@ -175,7 +249,7 @@ describe('SyncEngineNext orchestration', () => {
     });
 
     expect(accepted).toEqual(followed);
-    expect(await roleEngine.getFollowedSource(followed.id)).toEqual(followed);
+    expect(await roleEngine.isFollowedSourceActive(followed)).toBe(true);
     const roleInternal = roleEngine as any;
     sinon.stub(roleInternal, 'ensureSession').resolves({
       session: {
@@ -189,7 +263,7 @@ describe('SyncEngineNext orchestration', () => {
     sinon.stub(roleInternal, 'disposeSession').resolves();
     expect(await roleEngine.pullFollowedSource(followed)).toBe(false);
     await roleEngine.deleteFollowedSource(followed);
-    expect(await roleEngine.getFollowedSource(followed.id)).toBeUndefined();
+    expect(await roleEngine.isFollowedSourceActive(followed)).toBe(false);
     expect(await roleEngine.pullFollowedSource(followed)).toBe(false);
     await roleEngine.removeIdentity(actorDid);
   });

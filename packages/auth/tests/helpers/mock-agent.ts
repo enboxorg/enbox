@@ -84,7 +84,6 @@ export interface MockAgentOverrides {
   syncSync?: (direction: string) => Promise<void>;
   syncDrainTo?: (endpoint: string, options?: any) => Promise<any>;
   syncClose?: () => Promise<void>;
-  syncHasActiveSubscriptions?: boolean;
   processDwnRequest?: (params: any) => Promise<any>;
   permissionsClear?: () => Promise<void>;
   permissionsFetchGrants?: (params: any) => Promise<any[]>;
@@ -200,15 +199,18 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     },
 
     sync: {
-      pauseIdentity          : async (): Promise<boolean> => true,
-      setIdentityOptions     : overrides.syncSetIdentityOptions ?? (async (): Promise<void> => {}),
-      removeIdentity         : overrides.syncRemoveIdentity ?? (async (): Promise<void> => {}),
-      startSync              : overrides.syncStartSync ?? (async (): Promise<void> => {}),
-      stopSync               : overrides.syncStopSync ?? (async (): Promise<void> => {}),
-      sync                   : overrides.syncSync ?? (async (): Promise<void> => {}),
-      drainTo                : overrides.syncDrainTo ?? (async (endpoint: string): Promise<any> => ({ completed: true, endpoint, targets: [] })),
-      close                  : overrides.syncClose ?? (async (): Promise<void> => {}),
-      hasActiveSubscriptions : overrides.syncHasActiveSubscriptions ?? false,
+      removeIdentityIfApprovalInactive : async (): Promise<boolean> => true,
+      setIdentityOptions               : overrides.syncSetIdentityOptions ?? (async (): Promise<void> => {}),
+      removeIdentity                   : overrides.syncRemoveIdentity ?? (async (): Promise<void> => {}),
+      startSync                        : overrides.syncStartSync ?? (async (): Promise<void> => {}),
+      stopSync                         : overrides.syncStopSync ?? (async (): Promise<void> => {}),
+      sync                             : overrides.syncSync ?? (async (): Promise<void> => {}),
+      drainTo                          : overrides.syncDrainTo ?? (async (endpoint: string): Promise<any> => ({
+        completed : true,
+        endpoint,
+        targets   : [],
+      })),
+      close: overrides.syncClose ?? (async (): Promise<void> => {}),
     },
 
     dwn: {
