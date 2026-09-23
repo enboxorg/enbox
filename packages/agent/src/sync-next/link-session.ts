@@ -10,12 +10,13 @@ import type { SyncNextQuarantineAttempt, SyncNextQuarantineRetry } from './quara
 import { runSerializedByKey } from '@enbox/common';
 import { SyncNextEndpointBackoffError } from './endpoint-gate.js';
 import { SyncNextWorkPump } from './work-pump.js';
+import { syncNextLinkIdentity, syncNextLogicalTargetId } from './ledger-key.js';
 
 const RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 60_000;
 const COVER_SPARSE_RETRY_LIMIT = 100;
 
-type DeliveryAttempt = {
+type SparseAttempt = {
   attempted: boolean;
   progressed: boolean;
   remaining: number;
@@ -25,8 +26,6 @@ type PageAttempt = {
   hasMore: boolean;
   retained: boolean;
 };
-
-type Direction = 'pull' | 'push';
 
 type DirectionState = {
   failures: number;
@@ -53,7 +52,6 @@ export class SyncNextLinkSession {
   private _online = false;
   private readonly _pull: DirectionState;
   private _pullCurrent = false;
-  private _pullFeedDrained = false;
   private readonly _push: DirectionState;
   private readonly _runs = new Map<string, Promise<void>>();
   private readonly _subscriptions = new Set<() => Promise<void>>();
@@ -102,11 +100,9 @@ export class SyncNextLinkSession {
     return this._online;
   }
 
-  public start(requestPages = true): void {
-    if (requestPages) {
-      this.requestPull();
-      this.requestPush();
-    }
+  public start(): void {
+    this.requestPull();
+    this.requestPush();
   }
 
   public addSubscription(close: () => Promise<void>): void {
@@ -121,7 +117,6 @@ export class SyncNextLinkSession {
   public noteRemoteDisconnected(): void {
     this.setOnline(false);
     this.setPullCurrent(false);
-    this._pullFeedDrained = false;
   }
 
   public requestPull(force = false): void {
@@ -174,7 +169,7 @@ export class SyncNextLinkSession {
     ]);
   }
 
-  private requestDirection(direction: Direction, force = false, schedule = true): void {
+  private requestDirection(direction: SyncDirection, force = false, schedule = true): void {
     const state = this.state(direction);
     state.requested = true;
     state.wakeVersion++;
@@ -182,7 +177,6 @@ export class SyncNextLinkSession {
       state.notBefore = 0;
     }
     if (direction === 'pull') {
-      this._pullFeedDrained = false;
       this.setPullCurrent(false);
     }
     if (schedule) {
@@ -190,7 +184,7 @@ export class SyncNextLinkSession {
     }
   }
 
-  private runRequested(direction: Direction): Promise<void> {
+  private runRequested(direction: SyncDirection): Promise<void> {
     return runSerializedByKey(this._runs, direction, async (): Promise<void> => {
       const state = this.state(direction);
       if (!state.requested || this._abortController.signal.aborted) {
@@ -204,13 +198,12 @@ export class SyncNextLinkSession {
       if (page.hasMore) {
         this.request(direction);
       } else if (direction === 'pull' && wakeVersion === state.wakeVersion) {
-        this._pullFeedDrained = true;
         this.setPullCurrent(sparse.remaining === 0);
       }
     });
   }
 
-  private runDirection(direction: Direction, shouldContinue: () => boolean): Promise<void> {
+  private runDirection(direction: SyncDirection, shouldContinue: () => boolean): Promise<void> {
     return runSerializedByKey(this._runs, direction, async (): Promise<void> => {
       for (;;) {
         this.assertCurrent(direction, shouldContinue);
@@ -236,7 +229,6 @@ export class SyncNextLinkSession {
           );
         }
         if (direction === 'pull') {
-          this._pullFeedDrained = true;
           this.setPullCurrent(true);
         }
         return;
@@ -244,7 +236,7 @@ export class SyncNextLinkSession {
     });
   }
 
-  private consumePage(direction: Direction, shouldContinue: () => boolean): Promise<PageAttempt> {
+  private consumePage(direction: SyncDirection, shouldContinue: () => boolean): Promise<PageAttempt> {
     return direction === 'pull'
       ? this.consumePullPage(shouldContinue)
       : this.consumePushPage(shouldContinue);
@@ -264,7 +256,7 @@ export class SyncNextLinkSession {
     this.setOnline(true);
     if (result.materializedCids.length > 0) {
       await this._ledger.settleQuarantineForLogicalTarget(
-        `${this._target.did}^${this._target.projectionId}`,
+        syncNextLogicalTargetId(this._target.did, this._target.projectionId),
         result.materializedCids,
       );
     }
@@ -293,10 +285,10 @@ export class SyncNextLinkSession {
   }
 
   private retrySparse(
-    direction: Direction,
+    direction: SyncDirection,
     force: boolean,
     shouldContinue: () => boolean,
-  ): Promise<DeliveryAttempt> {
+  ): Promise<SparseAttempt> {
     return direction === 'pull'
       ? this.retryQuarantine(force, shouldContinue).then(result => ({
         attempted  : result.kind !== 'deferred' && result.kind !== 'empty',
@@ -321,8 +313,8 @@ export class SyncNextLinkSession {
   private async retryDelivery(
     force: boolean,
     shouldContinue: () => boolean,
-  ): Promise<DeliveryAttempt> {
-    const entries = await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target));
+  ): Promise<SparseAttempt> {
+    const entries = await this._ledger.getDeliveryForLink(syncNextLinkIdentity(this._target));
     if (entries.length === 0 || !shouldContinue()) {
       return { attempted: false, progressed: false, remaining: entries.length };
     }
@@ -346,14 +338,14 @@ export class SyncNextLinkSession {
       }
       this.setOnline(result.outcome?.reason !== 'transport');
     }
-    const remaining = (await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target))).length;
+    const remaining = (await this._ledger.getDeliveryForLink(syncNextLinkIdentity(this._target))).length;
     return { attempted: true, progressed: result.kind === 'settled', remaining };
   }
 
   private async retryCoverSparse(
-    direction: Direction,
+    direction: SyncDirection,
     shouldContinue: () => boolean,
-    initial: DeliveryAttempt,
+    initial: SparseAttempt,
   ): Promise<number> {
     let result = initial;
     for (let attempts = 0; attempts < COVER_SPARSE_RETRY_LIMIT; attempts++) {
@@ -366,11 +358,11 @@ export class SyncNextLinkSession {
   }
 
   private async getDeliveryBlock(): Promise<SyncNextDeliveryOutcome | undefined> {
-    const entries = await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target));
+    const entries = await this._ledger.getDeliveryForLink(syncNextLinkIdentity(this._target));
     return entries.find(entry => entry.outcome.blockScope !== undefined)?.outcome;
   }
 
-  private handleBackgroundError(direction: Direction, error: unknown): void {
+  private handleBackgroundError(direction: SyncDirection, error: unknown): void {
     this.setOnline(false);
     if (this._abortController.signal.aborted) {
       return;
@@ -385,7 +377,7 @@ export class SyncNextLinkSession {
     this.request(direction);
   }
 
-  private request(direction: Direction): void {
+  private request(direction: SyncDirection): void {
     if (direction === 'pull') {
       this.requestPull();
     } else {
@@ -393,18 +385,18 @@ export class SyncNextLinkSession {
     }
   }
 
-  private state(direction: Direction): DirectionState {
+  private state(direction: SyncDirection): DirectionState {
     return direction === 'pull' ? this._pull : this._push;
   }
 
-  private assertCurrent(direction: Direction, shouldContinue: () => boolean): void {
+  private assertCurrent(direction: SyncDirection, shouldContinue: () => boolean): void {
     if (!this._abortController.signal.aborted && shouldContinue()) {
       return;
     }
     this.throwAborted(direction, shouldContinue);
   }
 
-  private throwAborted(direction: Direction, shouldContinue: () => boolean): never {
+  private throwAborted(direction: SyncDirection, shouldContinue: () => boolean): never {
     if (!shouldContinue()) {
       throw new DOMException('Covering sync cancelled.', 'AbortError');
     }
@@ -454,20 +446,6 @@ export class SyncNextLinkSession {
   private static retryDelay(attempts: number): number {
     const exponent = Math.min(Math.max(0, attempts - 1), 6);
     return Math.min(RETRY_DELAY_MS * (2 ** exponent), MAX_RETRY_DELAY_MS);
-  }
-
-  private static identity(target: SyncTarget): {
-    authorizationEpoch: string;
-    projectionId: string;
-    remoteEndpoint: string;
-    tenantDid: string;
-  } {
-    return {
-      authorizationEpoch : target.authorizationEpoch,
-      projectionId       : target.projectionId,
-      remoteEndpoint     : target.dwnUrl,
-      tenantDid          : target.did,
-    };
   }
 
   private static yieldTurn(): Promise<void> {

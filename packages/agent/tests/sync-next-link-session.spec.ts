@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 import { SyncNextLinkSession } from '../src/sync-next/link-session.js';
+import { syncNextLogicalTargetId } from '../src/sync-next/ledger-key.js';
 
 function target(): SyncTarget {
   return {
@@ -50,7 +51,6 @@ function fixture(overrides: {
     },
     pullPage: {
       consume: sinon.stub().resolves({
-        handledThrough   : token(),
         hasMore          : false,
         materializedCids : [],
         quarantined      : 0,
@@ -58,10 +58,9 @@ function fixture(overrides: {
     },
     pushPage: {
       consume: sinon.stub().resolves({
-        delivered      : 0,
-        handledThrough : token(),
-        hasMore        : false,
-        retained       : 0,
+        delivered : 0,
+        hasMore   : false,
+        retained  : 0,
       }),
       retryDelivery: sinon.stub().resolves({ kind: 'settled' }),
     },
@@ -94,13 +93,11 @@ describe('SyncNextLinkSession', () => {
     const clock = sinon.useFakeTimers();
     const parts = fixture();
     parts.pullPage.consume.onFirstCall().resolves({
-      handledThrough   : token('1'),
       hasMore          : true,
       materializedCids : [],
       quarantined      : 0,
     });
     parts.pullPage.consume.onSecondCall().resolves({
-      handledThrough   : token('5'),
       hasMore          : false,
       materializedCids : [],
       quarantined      : 0,
@@ -124,14 +121,12 @@ describe('SyncNextLinkSession', () => {
     parts.pullPage.consume.onFirstCall().callsFake(async () => {
       await firstPage.promise;
       return {
-        handledThrough   : token('1'),
         hasMore          : false,
         materializedCids : [],
         quarantined      : 0,
       };
     });
     parts.pullPage.consume.onSecondCall().resolves({
-      handledThrough   : token('2'),
       hasMore          : false,
       materializedCids : [],
       quarantined      : 0,
@@ -152,7 +147,6 @@ describe('SyncNextLinkSession', () => {
   it('should resolve a covering run after one drained watermark page', async () => {
     const parts = fixture();
     parts.pullPage.consume.resolves({
-      handledThrough   : token('1'),
       hasMore          : false,
       materializedCids : [],
       quarantined      : 0,
@@ -169,7 +163,6 @@ describe('SyncNextLinkSession', () => {
     parts.pullPage.consume.callsFake(async () => {
       current = false;
       return {
-        handledThrough   : token('1'),
         hasMore          : true,
         materializedCids : [],
         quarantined      : 0,
@@ -184,12 +177,7 @@ describe('SyncNextLinkSession', () => {
 
   it('should reject instead of hanging when an otherwise-current page loses its link fence', async () => {
     const parts = fixture();
-    parts.pullPage.consume.resolves({
-      aborted          : true,
-      hasMore          : false,
-      materializedCids : [],
-      quarantined      : 0,
-    });
+    parts.pullPage.consume.resolves({ aborted: true });
     const link = session(parts);
 
     await expect(link.cover('pull')).rejects.toThrow('link became stale');
@@ -265,7 +253,6 @@ describe('SyncNextLinkSession', () => {
     const pending = { attempts: 1, messageCid: 'pending', source: token('1') };
     const parts = fixture({ quarantine: [pending] });
     parts.pullPage.consume.resolves({
-      handledThrough   : token('1'),
       hasMore          : true,
       materializedCids : [],
       quarantined      : 1,
@@ -365,7 +352,6 @@ describe('SyncNextLinkSession', () => {
   it('should settle duplicate exact-source quarantine when another link materializes the CID', async () => {
     const parts = fixture();
     parts.pullPage.consume.resolves({
-      handledThrough   : token(),
       hasMore          : false,
       materializedCids : ['shared-cid'],
       quarantined      : 0,
@@ -375,7 +361,7 @@ describe('SyncNextLinkSession', () => {
     await expect(link.cover('pull')).resolves.toBeUndefined();
 
     expect(parts.ledger.settleQuarantineForLogicalTarget.calledOnceWithExactly(
-      'did:example:alice^projection',
+      syncNextLogicalTargetId('did:example:alice', 'projection'),
       ['shared-cid'],
     )).toBe(true);
     await link.dispose();

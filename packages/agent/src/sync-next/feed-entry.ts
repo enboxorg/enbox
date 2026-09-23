@@ -4,6 +4,7 @@ import type { SyncMessageEntry } from '../sync-messages.js';
 
 import { Encoder } from '@enbox/dwn-sdk-js';
 
+import { compareSyncNextPosition } from './ledger-key.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 
 type DataStreamFactory = (
@@ -53,4 +54,22 @@ export function sourceTokenFromFeedEntry(
     position   : entry.seq,
     streamId   : pageCursor.streamId,
   };
+}
+
+/** Reject a non-drained page that made no progress in its current token domain. */
+export function assertPageCursorAdvanced(
+  previous: ProgressToken | undefined,
+  next: ProgressToken,
+  drained: boolean,
+  context: string,
+): void {
+  if (
+    previous !== undefined &&
+    previous.streamId === next.streamId &&
+    previous.epoch === next.epoch &&
+    compareSyncNextPosition(next, previous) === 0 &&
+    !drained
+  ) {
+    throw new Error(`${context}: non-drained query cursor did not advance.`);
+  }
 }

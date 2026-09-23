@@ -28,10 +28,9 @@ tenant DID + normalized endpoint + canonical projection ID + authorization epoch
 Each normalized link has two domain-qualified progress tokens:
 
 - `pullHandledThrough`: every remote-feed entry through the token was
-  materialized, quarantined, or given a precise terminal outcome.
+  materialized or quarantined.
 - `pushHandledThrough`: every local-feed entry through the token was delivered,
-  retained as an endpoint-specific delivery obligation, or given a precise
-  terminal outcome.
+  or retained as an endpoint-specific delivery obligation.
 
 These are handled-through tokens, not claims that every sparse obligation is
 complete.
@@ -43,10 +42,12 @@ complete.
 The central quarantine store owns exact-source rows. "Central" means one store
 and lifecycle owner, not one row that merges authority from different remotes.
 
-A quarantine row identifies its exact link and source position, but also keeps a
-stable logical target so locally materializing the CID can settle duplicate
-receipts from other links. It stores an encrypted, versioned envelope containing
-only the received input required after the pull token advances.
+A quarantine row identifies its exact link and source position. Its logical
+target is derived from the tenant and projection, so locally materializing the
+CID can settle duplicate receipts from other links without persisting another
+identifier. The row stores an encrypted, versioned envelope containing only the
+received input required after the pull token advances, plus attempt timing for
+backoff.
 
 ### Outbound delivery obligations
 

@@ -146,7 +146,6 @@ describe('SyncNextPullPage', () => {
     await ledger.getOrCreateLink({
       authorization      : syncTarget.authorization,
       authorizationEpoch : syncTarget.authorizationEpoch,
-      logicalTargetId    : `${syncTarget.did}^${syncTarget.projectionId}`,
       projectionId       : syncTarget.projectionId,
       remoteEndpoint     : syncTarget.dwnUrl,
       scope              : syncTarget.scope,
@@ -168,7 +167,6 @@ describe('SyncNextPullPage', () => {
     expect(fixture.apply.calledOnce).toBe(true);
     expect(await ledger.getQuarantineForLink(linkIdentity())).toMatchObject([{
       messageCid : missingBody.messageCid,
-      outcome    : { reason: 'data' },
       source     : { position: '1' },
     }]);
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('2');
@@ -455,8 +453,7 @@ describe('SyncNextPullPage', () => {
     await new SyncNextPullPage(fixture.agent, ledger).consume(target());
 
     expect(await ledger.getQuarantineForLink(linkIdentity())).toMatchObject([{
-      messageCid : root.messageCid,
-      outcome    : { reason: 'admission-unresolved' },
+      messageCid: root.messageCid,
     }]);
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
   });

@@ -10,17 +10,13 @@ const QUARANTINE_PAYLOAD_VERSION = 1 as const;
 /** Maximum plaintext retained in one encrypted quarantine row. */
 export const SYNC_NEXT_MAX_QUARANTINE_PLAINTEXT_BYTES = 1024 * 1024;
 
-/** Received pull input that must survive after handled-through progress advances. */
-export type SyncNextQuarantinePayload = {
-  entry: MessagesQueryReplyEntry;
-};
-
-type BoundQuarantinePayload = SyncNextQuarantinePayload & {
+type BoundQuarantinePayload = {
   binding: {
     linkKey: string;
     messageCid: string;
     source: ProgressToken;
   };
+  entry: MessagesQueryReplyEntry;
   version: typeof QUARANTINE_PAYLOAD_VERSION;
 };
 
@@ -34,16 +30,16 @@ type QuarantinePayloadBinding = {
 export async function sealSyncNextQuarantinePayload(
   vault: Pick<IdentityVault, 'encryptData'>,
   binding: QuarantinePayloadBinding,
-  payload: SyncNextQuarantinePayload,
+  entry: MessagesQueryReplyEntry,
 ): Promise<string> {
-  SyncNextQuarantineCodec.assertPayloadMatchesBinding(binding, payload);
+  SyncNextQuarantineCodec.assertEntryMatchesBinding(binding, entry);
   const bound: BoundQuarantinePayload = {
     binding: {
       linkKey    : syncNextLinkKey(binding.identity),
       messageCid : binding.messageCid,
       source     : structuredClone(binding.source),
     },
-    entry   : structuredClone(payload.entry),
+    entry   : structuredClone(entry),
     version : QUARANTINE_PAYLOAD_VERSION,
   };
   const plaintext = new TextEncoder().encode(JSON.stringify(bound));
@@ -60,7 +56,7 @@ export async function openSyncNextQuarantinePayload(
   vault: Pick<IdentityVault, 'decryptData'>,
   binding: QuarantinePayloadBinding,
   encryptedPayload: string,
-): Promise<SyncNextQuarantinePayload> {
+): Promise<MessagesQueryReplyEntry> {
   const plaintext = await vault.decryptData({ jwe: encryptedPayload });
   let parsed: unknown;
   try {
@@ -80,23 +76,19 @@ export async function openSyncNextQuarantinePayload(
   ) {
     throw new Error('SyncNextQuarantineCodec: encrypted payload does not belong to this receipt.');
   }
-  const payload = { entry: parsed.entry };
-  SyncNextQuarantineCodec.assertPayloadMatchesBinding(binding, payload);
-  return payload;
+  SyncNextQuarantineCodec.assertEntryMatchesBinding(binding, parsed.entry);
+  return parsed.entry;
 }
 
 class SyncNextQuarantineCodec {
-  public static assertPayloadMatchesBinding(
+  public static assertEntryMatchesBinding(
     binding: QuarantinePayloadBinding,
-    payload: SyncNextQuarantinePayload,
+    entry: MessagesQueryReplyEntry,
   ): void {
-    if (payload.entry.messageCid !== binding.messageCid) {
+    if (entry.messageCid !== binding.messageCid) {
       throw new Error('SyncNextQuarantineCodec: root entry CID does not match its receipt.');
     }
-    if (
-      binding.source.messageCid !== undefined &&
-      binding.source.messageCid !== binding.messageCid
-    ) {
+    if (binding.source.messageCid !== undefined && binding.source.messageCid !== binding.messageCid) {
       throw new Error('SyncNextQuarantineCodec: source token CID does not match its receipt.');
     }
   }

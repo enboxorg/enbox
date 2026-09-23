@@ -1,5 +1,6 @@
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
+import type { SyncTarget } from '../sync-target-resolver.js';
 import type { SyncNextLinkIdentity, SyncNextSourceReceipt } from './types.js';
 
 const KEY_END = '\uffff';
@@ -7,6 +8,23 @@ const KEY_END = '\uffff';
 /** Encode one arbitrary string as an unambiguous compound-key part. */
 function encodePart(value: string): string {
   return `${value.length}:${value}`;
+}
+
+/** Exact durable identity for one resolved target. */
+export function syncNextLinkIdentity(
+  target: Pick<SyncTarget, 'authorizationEpoch' | 'did' | 'dwnUrl' | 'projectionId'>,
+): SyncNextLinkIdentity {
+  return {
+    authorizationEpoch : target.authorizationEpoch,
+    projectionId       : target.projectionId,
+    remoteEndpoint     : target.dwnUrl,
+    tenantDid          : target.did,
+  };
+}
+
+/** Endpoint-independent identity shared by equivalent target bindings. */
+export function syncNextLogicalTargetId(tenantDid: string, projectionId: string): string {
+  return `${encodePart(tenantDid)}${encodePart(projectionId)}`;
 }
 
 /** Durable key for one exact next-engine link. */

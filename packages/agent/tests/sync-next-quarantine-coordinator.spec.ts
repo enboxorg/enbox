@@ -21,16 +21,12 @@ const entry: SyncNextQuarantineEntry = {
   attempts           : 1,
   authorizationEpoch : 'owner-epoch',
   encryptedPayload   : 'encrypted',
-  firstPendingAt     : '2026-09-22T00:00:00.000Z',
   lastAttemptAt      : '2026-09-22T00:00:00.000Z',
-  logicalTargetId    : 'did:example:alice^projection',
   messageCid         : 'cid',
-  outcome            : { reason: 'data' },
   projectionId       : 'projection',
   remoteEndpoint     : 'https://first.example',
   source             : { epoch: 'epoch', position: '1', streamId: 'stream' },
   tenantDid          : 'did:example:alice',
-  version            : 1,
 };
 
 describe('SyncNextQuarantineRetry coordination', () => {

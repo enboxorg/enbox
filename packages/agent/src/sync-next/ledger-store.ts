@@ -12,19 +12,17 @@ import type {
   SyncNextPushPageCommit,
   SyncNextQuarantineEntry,
   SyncNextQuarantineInput,
-  SyncNextQuarantineOutcome,
-  SyncNextSettledSource,
   SyncNextSourceReceipt,
 } from './types.js';
 
 import { runSerializedByKey, runWithCrossContextLock } from '@enbox/common';
 
-import { SYNC_NEXT_LEDGER_VERSION } from './types.js';
 import {
   compareSyncNextPosition,
   isValidSyncNextToken,
   syncNextLinkKey,
   syncNextLinkRange,
+  syncNextLogicalTargetId,
   syncNextReceiptKey,
   syncNextTenantRange,
 } from './ledger-key.js';
@@ -99,16 +97,12 @@ export class SyncNextLedgerStore {
       const link: SyncNextLink = {
         authorization      : structuredClone(input.authorization),
         authorizationEpoch : input.authorizationEpoch,
-        createdAt          : now,
-        ...(input.delegateDid === undefined ? {} : { delegateDid: input.delegateDid }),
-        logicalTargetId    : input.logicalTargetId,
         projectionId       : input.projectionId,
         remoteEndpoint     : input.remoteEndpoint,
         scope              : structuredClone(input.scope),
         status             : 'active',
         tenantDid          : input.tenantDid,
         updatedAt          : now,
-        version            : SYNC_NEXT_LEDGER_VERSION,
       };
       await this._links.put(key, JSON.stringify(link));
       return link;
@@ -125,14 +119,6 @@ export class SyncNextLedgerStore {
 
   public async getAllLinks(): Promise<SyncNextLink[]> {
     return this.readValues(this._links.iterator());
-  }
-
-  /** Delete only the link. Sparse receipts survive until explicit owner cleanup or rebuild. */
-  public async deleteLink(identity: SyncNextLinkIdentity): Promise<void> {
-    const key = syncNextLinkKey(identity);
-    await this.runForLink(key, async (): Promise<void> => {
-      await this._links.del(key);
-    });
   }
 
   /** Retire an obsolete binding while preserving inbound recovery input owned by its logical target. */
@@ -295,26 +281,14 @@ export class SyncNextLedgerStore {
   /** Sparse scan used after one CID materializes locally to settle duplicate source receipts. */
   public async getQuarantineForLogicalTarget(
     logicalTargetId: string,
-    messageCid?: string,
   ): Promise<SyncNextQuarantineEntry[]> {
     return (await this.getAllQuarantine()).filter(entry =>
-      entry.logicalTargetId === logicalTargetId &&
-      (messageCid === undefined || entry.messageCid === messageCid)
+      syncNextLogicalTargetId(entry.tenantDid, entry.projectionId) === logicalTargetId
     );
   }
 
-  public async settleQuarantine(
-    identity: SyncNextLinkIdentity,
-    receipt: SyncNextSourceReceipt,
-  ): Promise<void> {
-    return this.settleSparse(this._quarantine, identity, receipt);
-  }
-
   /** Update one retained receipt without requiring its original link to remain active. */
-  public async updateQuarantine(
-    entry: SyncNextQuarantineEntry,
-    outcome: SyncNextQuarantineOutcome,
-  ): Promise<void> {
+  public async updateQuarantine(entry: SyncNextQuarantineEntry): Promise<void> {
     const linkKey = syncNextLinkKey(entry);
     await this.runForLink(linkKey, async (): Promise<void> => {
       const key = syncNextReceiptKey(entry, entry);
@@ -326,7 +300,6 @@ export class SyncNextLedgerStore {
         ...current,
         attempts      : current.attempts + 1,
         lastAttemptAt : new Date().toISOString(),
-        outcome       : structuredClone(outcome),
       };
       await this._quarantine.put(key, JSON.stringify(updated));
     });
@@ -340,14 +313,17 @@ export class SyncNextLedgerStore {
     const cids = new Set(typeof messageCids === 'string' ? [messageCids] : messageCids);
     const entries = (await this.getQuarantineForLogicalTarget(logicalTargetId))
       .filter(entry => cids.has(entry.messageCid));
-    await Promise.all(entries.map((entry): Promise<void> => this.settleQuarantine(entry, entry)));
+    await Promise.all(entries.map((entry): Promise<void> =>
+      this.settleSparse(this._quarantine, entry, entry)
+    ));
   }
 
   /** Explicit recovery cleanup after every current source checkpoint has been reset. */
-  public async purgeQuarantineForLogicalTarget(logicalTargetId: string): Promise<number> {
+  public async purgeQuarantineForLogicalTarget(logicalTargetId: string): Promise<void> {
     const entries = await this.getQuarantineForLogicalTarget(logicalTargetId);
-    await Promise.all(entries.map((entry): Promise<void> => this.settleQuarantine(entry, entry)));
-    return entries.length;
+    await Promise.all(entries.map((entry): Promise<void> =>
+      this.settleSparse(this._quarantine, entry, entry)
+    ));
   }
 
   public async settleDelivery(
@@ -454,16 +430,12 @@ export class SyncNextLedgerStore {
       attempts           : (previous?.attempts ?? 0) + 1,
       authorizationEpoch : link.authorizationEpoch,
       encryptedPayload   : input.encryptedPayload,
-      firstPendingAt     : previous?.firstPendingAt ?? now,
       lastAttemptAt      : now,
-      logicalTargetId    : link.logicalTargetId,
       messageCid         : input.messageCid,
-      outcome            : structuredClone(input.outcome),
       projectionId       : link.projectionId,
       remoteEndpoint     : link.remoteEndpoint,
       source             : structuredClone(input.source),
       tenantDid          : link.tenantDid,
-      version            : SYNC_NEXT_LEDGER_VERSION,
     };
   }
 
@@ -477,16 +449,13 @@ export class SyncNextLedgerStore {
     return {
       attempts           : (previous?.attempts ?? 0) + 1,
       authorizationEpoch : link.authorizationEpoch,
-      firstPendingAt     : previous?.firstPendingAt ?? now,
       lastAttemptAt      : now,
-      logicalTargetId    : link.logicalTargetId,
       messageCid         : input.messageCid,
       outcome            : structuredClone(input.outcome),
       projectionId       : link.projectionId,
       remoteEndpoint     : link.remoteEndpoint,
       source             : structuredClone(input.source),
       tenantDid          : link.tenantDid,
-      version            : SYNC_NEXT_LEDGER_VERSION,
     };
   }
 
@@ -593,7 +562,7 @@ export class SyncNextLedgerStore {
   private static validatePageCommit(
     handledThrough: ProgressToken,
     pending: SyncNextSourceReceipt[],
-    settled: SyncNextSettledSource[],
+    settled: SyncNextSourceReceipt[],
     direction: 'pull' | 'push',
   ): void {
     SyncNextLedgerStore.assertValidToken(handledThrough, `${direction} handled-through token`);
@@ -691,7 +660,6 @@ export class SyncNextLedgerStore {
 
   private static assertSameLinkDefinition(existing: SyncNextLink, input: SyncNextLinkCreate): void {
     if (
-      existing.logicalTargetId !== input.logicalTargetId ||
       JSON.stringify(existing.scope) !== JSON.stringify(input.scope) ||
       JSON.stringify(existing.authorization) !== JSON.stringify(input.authorization)
     ) {
