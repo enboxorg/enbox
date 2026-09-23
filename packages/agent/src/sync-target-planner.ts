@@ -32,7 +32,6 @@ export type SyncTargetPlannerParams = {
   identityStore: SyncIdentityStore;
   sourceStore: FollowedSyncSourceStore;
   now?: () => number;
-  isIdentityPaused: (did: string, delegateDid?: string) => boolean;
   warn?: (message: string, error: unknown) => void;
 };
 
@@ -59,7 +58,6 @@ export class SyncTargetPlanner {
   private readonly _cacheTtlMs: number;
   private readonly _getTargetResolver: () => SyncTargetPlanningResolver;
   private readonly _identityStore: SyncIdentityStore;
-  private readonly _isIdentityPaused: SyncTargetPlannerParams['isIdentityPaused'];
   private readonly _sourceStore: FollowedSyncSourceStore;
   private _lastResolutionComplete = false;
   private readonly _now: () => number;
@@ -70,7 +68,6 @@ export class SyncTargetPlanner {
     cacheTtlMs = SyncTargetPlanner.DEFAULT_CACHE_TTL_MS,
     getTargetResolver,
     identityStore,
-    isIdentityPaused,
     sourceStore,
     now = (): number => Date.now(),
     warn = (message, error): void => { console.warn(message, error); },
@@ -78,7 +75,6 @@ export class SyncTargetPlanner {
     this._cacheTtlMs = cacheTtlMs;
     this._getTargetResolver = getTargetResolver;
     this._identityStore = identityStore;
-    this._isIdentityPaused = isIdentityPaused;
     this._sourceStore = sourceStore;
     this._now = now;
     this._warn = warn;
@@ -141,9 +137,6 @@ export class SyncTargetPlanner {
         // invalidate the plan so it can include the source when the actor returns.
         continue;
       }
-      if (this._isIdentityPaused(entry.source.actorDid, identity.delegateDid)) {
-        continue;
-      }
       targets.push(await this._getTargetResolver().buildTargetForSource(entry.source, identity.delegateDid));
     }
 
@@ -156,28 +149,21 @@ export class SyncTargetPlanner {
     return targets;
   }
 
-  /** Shared prerequisite for endpoint planning and durable-link retention. */
-  private async resolveAuthorization(did: string, options: SyncIdentityOptions): Promise<SyncTargetResolution[] | undefined> {
-    if (this._isIdentityPaused(did, options.delegateDid)) {
-      return undefined;
-    }
-    return this._getTargetResolver().buildTargetResolutions(did, syncScopeFromProtocols(options.protocols), options);
-  }
-
   /** Resolve shared authorization once before materializing endpoint-specific targets. */
   private async resolveIdentity(did: string, options: SyncIdentityOptions): Promise<RegisteredIdentityTargets> {
-    let resolutions: SyncTargetResolution[] | undefined;
+    let resolutions: SyncTargetResolution[];
     try {
-      resolutions = await this.resolveAuthorization(did, options);
+      resolutions = await this._getTargetResolver().buildTargetResolutions(
+        did,
+        syncScopeFromProtocols(options.protocols),
+        options,
+      );
     } catch (error: unknown) {
       if (isDidResolutionUnavailableError(error)) {
         throw error;
       }
       this._warn(`SyncEngineLevel: Unable to resolve sync authorization for ${did}, skipping identity:`, error);
       return { targets: [], unavailable: true };
-    }
-    if (resolutions === undefined) {
-      return { targets: [], unavailable: false };
     }
     const resolver = this._getTargetResolver();
     const dwnEndpointUrls = await resolver.getEndpointUrls(did);

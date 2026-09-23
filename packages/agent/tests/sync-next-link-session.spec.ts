@@ -33,6 +33,11 @@ function fixture(overrides: {
   delivery?: object[];
   quarantine?: object[];
 } = {}): {
+  endpoint: {
+    block: sinon.SinonStub;
+    clear: sinon.SinonStub;
+    run: sinon.SinonStub;
+  };
   ledger: {
     getDeliveryForLink: sinon.SinonStub;
     getQuarantineForLogicalTarget: sinon.SinonStub;
@@ -48,6 +53,11 @@ function fixture(overrides: {
       getDeliveryForLink               : sinon.stub().resolves(overrides.delivery ?? []),
       getQuarantineForLogicalTarget    : sinon.stub().resolves(overrides.quarantine ?? []),
       settleQuarantineForLogicalTarget : sinon.stub().resolves(),
+    },
+    endpoint: {
+      block : sinon.stub(),
+      clear : sinon.stub(),
+      run   : sinon.stub().callsFake(async (operation) => operation()),
     },
     pullPage: {
       consume: sinon.stub().resolves({
@@ -66,8 +76,8 @@ function fixture(overrides: {
     },
     quarantine: {
       retryOne: sinon.stub().resolves(overrides.quarantine?.length
-        ? { kind: 'pending', remaining: overrides.quarantine.length }
-        : { kind: 'empty', remaining: 0 }),
+        ? { progressed: false, remaining: overrides.quarantine.length }
+        : { progressed: false, remaining: 0 }),
     },
     report: sinon.stub(),
   };
@@ -81,6 +91,7 @@ function session(parts: ReturnType<typeof fixture>): SyncNextLinkSession {
     parts.pushPage as never,
     parts.quarantine as never,
     parts.report,
+    parts.endpoint,
   );
 }
 
@@ -135,7 +146,7 @@ describe('SyncNextLinkSession', () => {
     const covering = link.cover('pull');
     await clock.tickAsync(0);
 
-    link.requestPull();
+    link.request('pull');
     firstPage.resolve();
     await clock.tickAsync(1);
     await covering;
@@ -207,15 +218,15 @@ describe('SyncNextLinkSession', () => {
   it('should apply a retained link block before fresh delivery', async () => {
     const clock = sinon.useFakeTimers();
     const block = {
-      attempts   : 1,
-      messageCid : 'other-link-pending',
-      outcome    : { blockScope: 'endpoint', reason: 'transport' },
-      source     : token('1'),
+      lastAttemptAt : '2026-09-22T00:00:00.000Z',
+      messageCid    : 'other-link-pending',
+      outcome       : { blockScope: 'endpoint', reason: 'transport' },
+      source        : token('1'),
     };
     const parts = fixture({ delivery: [block] });
     const link = session(parts);
 
-    link.requestPush();
+    link.request('push');
     await clock.tickAsync(0);
 
     expect(parts.pushPage.consume.calledOnce).toBe(true);
@@ -226,7 +237,6 @@ describe('SyncNextLinkSession', () => {
   it('should honor a persisted Retry-After before the first delivery retry', async () => {
     const clock = sinon.useFakeTimers({ now: Date.parse('2026-09-22T12:00:00.000Z') });
     const pending = {
-      attempts      : 1,
       lastAttemptAt : '2026-09-22T12:00:00.000Z',
       messageCid    : 'rate-limited',
       outcome       : {
@@ -249,8 +259,30 @@ describe('SyncNextLinkSession', () => {
     await link.dispose();
   });
 
+  it('should retry the least recently attempted delivery first', async () => {
+    const newer = {
+      lastAttemptAt : '2026-09-22T12:00:00.000Z',
+      messageCid    : 'newer',
+      outcome       : { reason: 'transport' },
+      source        : token('2'),
+    };
+    const older = { ...newer, lastAttemptAt: '2026-09-22T11:00:00.000Z', messageCid: 'older' };
+    const parts = fixture({ delivery: [newer, older] });
+    const link = session(parts);
+
+    link.request('push');
+    await new Promise(resolve => { setTimeout(resolve, 5); });
+
+    expect(parts.pushPage.retryDelivery.firstCall.args[1]).toBe(older);
+    await link.dispose();
+  });
+
   it('should service quarantine while fresh pull pages continue', async () => {
-    const pending = { attempts: 1, messageCid: 'pending', source: token('1') };
+    const pending = {
+      lastAttemptAt : '2026-09-22T00:00:00.000Z',
+      messageCid    : 'pending',
+      source        : token('1'),
+    };
     const parts = fixture({ quarantine: [pending] });
     parts.pullPage.consume.resolves({
       hasMore          : true,
@@ -269,7 +301,10 @@ describe('SyncNextLinkSession', () => {
   });
 
   it('should reject a covering run that observes drain with unresolved obligations', async () => {
-    const parts = fixture({ quarantine: [{ messageCid: 'pending' }] });
+    const parts = fixture({ quarantine: [{
+      lastAttemptAt : '2026-09-22T00:00:00.000Z',
+      messageCid    : 'pending',
+    }] });
     const link = session(parts);
 
     await expect(link.cover('pull')).rejects.toThrow('unresolved obligations');
@@ -277,9 +312,13 @@ describe('SyncNextLinkSession', () => {
   });
 
   it('should give retained sparse obligations one finite retry before declaring incomplete', async () => {
-    const pending = { attempts: 1, messageCid: 'pending', source: token('1') };
+    const pending = {
+      lastAttemptAt : '2026-09-22T00:00:00.000Z',
+      messageCid    : 'pending',
+      source        : token('1'),
+    };
     const parts = fixture({ quarantine: [pending] });
-    parts.quarantine.retryOne.resolves({ kind: 'settled', remaining: 0 });
+    parts.quarantine.retryOne.resolves({ progressed: true, remaining: 0 });
     const link = session(parts);
 
     await expect(link.cover('pull')).resolves.toBeUndefined();
@@ -290,11 +329,11 @@ describe('SyncNextLinkSession', () => {
 
   it('should stop a covering sparse pass at the first unresolved receipt', async () => {
     const pending = [
-      { attempts: 1, messageCid: 'pending-1', source: token('1') },
-      { attempts: 1, messageCid: 'pending-2', source: token('2') },
+      { lastAttemptAt: '2026-09-22T00:00:00.000Z', messageCid: 'pending-1', source: token('1') },
+      { lastAttemptAt: '2026-09-22T00:00:00.000Z', messageCid: 'pending-2', source: token('2') },
     ];
     const parts = fixture({ quarantine: pending });
-    parts.quarantine.retryOne.resolves({ kind: 'pending', remaining: 2 });
+    parts.quarantine.retryOne.resolves({ progressed: false, remaining: 2 });
     const link = session(parts);
 
     await expect(link.cover('pull')).rejects.toThrow('unresolved obligations');
@@ -305,12 +344,12 @@ describe('SyncNextLinkSession', () => {
 
   it('should settle consecutive recoverable receipts in one bounded covering pass', async () => {
     const pending = [
-      { attempts: 1, messageCid: 'pending-1', source: token('1') },
-      { attempts: 1, messageCid: 'pending-2', source: token('2') },
+      { lastAttemptAt: '2026-09-22T00:00:00.000Z', messageCid: 'pending-1', source: token('1') },
+      { lastAttemptAt: '2026-09-22T00:00:00.000Z', messageCid: 'pending-2', source: token('2') },
     ];
     const parts = fixture({ quarantine: pending });
-    parts.quarantine.retryOne.onFirstCall().resolves({ kind: 'settled', remaining: 1 });
-    parts.quarantine.retryOne.onSecondCall().resolves({ kind: 'settled', remaining: 0 });
+    parts.quarantine.retryOne.onFirstCall().resolves({ progressed: true, remaining: 1 });
+    parts.quarantine.retryOne.onSecondCall().resolves({ progressed: true, remaining: 0 });
     const link = session(parts);
 
     await expect(link.cover('pull')).resolves.toBeUndefined();
@@ -321,14 +360,12 @@ describe('SyncNextLinkSession', () => {
 
   it('should settle consecutive recoverable deliveries in one bounded covering pass', async () => {
     const first = {
-      attempts      : 1,
       lastAttemptAt : '2026-09-22T00:00:00.000Z',
       messageCid    : 'pending-1',
       outcome       : { reason: 'transport' },
       source        : token('1'),
     };
     const second = {
-      attempts      : 1,
       lastAttemptAt : '2026-09-22T00:00:00.000Z',
       messageCid    : 'pending-2',
       outcome       : { reason: 'transport' },

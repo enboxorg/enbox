@@ -292,8 +292,8 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
         await expectFingerprintsConverged();
         await expectHealthySync(deviceA);
         await expectHealthySync(deviceB);
-        await (deviceA.harness.agent.sync as SyncEngineLevel).sync(undefined, { verifyConvergence: true });
-        await (deviceB.harness.agent.sync as SyncEngineLevel).sync(undefined, { verifyConvergence: true });
+        await (deviceA.harness.agent.sync as SyncEngineLevel).sync();
+        await (deviceB.harness.agent.sync as SyncEngineLevel).sync();
         return;
       } catch (error) {
         lastError = error;
@@ -434,8 +434,8 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
         feedCids('local-a'),
         feedCids('local-b'),
         feedCids('remote'),
-        deviceA.harness.agent.sync.getSyncHealth(),
-        deviceB.harness.agent.sync.getSyncHealth(),
+        deviceA.harness.agent.sync.getIdentitySyncStatus(aliceDid),
+        deviceB.harness.agent.sync.getIdentitySyncStatus(aliceDid),
       ]);
       throw new Error(`fingerprints diverged: ${JSON.stringify({
         feeds        : { a: aFeed, b: bFeed, remote: remoteFeed },
@@ -509,8 +509,8 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
   }
 
   async function expectHealthySync(device: Device): Promise<void> {
-    const health = await device.harness.agent.sync.getSyncHealth();
-    expect(health.syncHealthy).toBe(true);
+    const status = await device.harness.agent.sync.getIdentitySyncStatus(aliceDid);
+    expect(status.remotes.every(remote => remote.state === 'healthy')).toBe(true);
   }
 
   function compareSnapshotEntries(a: SnapshotEntry, b: SnapshotEntry): number {

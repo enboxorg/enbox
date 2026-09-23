@@ -46,8 +46,8 @@ A quarantine row identifies its exact link and source position. Its logical
 target is derived from the tenant and projection, so locally materializing the
 CID can settle duplicate receipts from other links without persisting another
 identifier. The row stores an encrypted, versioned envelope containing only the
-received input required after the pull token advances, plus attempt timing for
-backoff.
+received input required after the pull token advances, plus a last-attempt
+timestamp for retry eligibility.
 
 ### Outbound delivery obligations
 
@@ -61,8 +61,8 @@ remain owed while later independent local roots continue to the same endpoint.
 There is deliberately no third terminal/dead-letter ledger. A broad `Invalid`,
 authorization failure, retry count, elapsed time, or malformed retained payload
 does not prove that skipping a signed source entry is safe. Such entries remain
-visible sparse work until they settle or an explicit rebuild resets the source
-before purging them.
+visible sparse work until they settle or an explicit full reset removes all
+progress before the application registers its sources again.
 
 ## Page-forward invariant
 
@@ -101,7 +101,7 @@ remain independent, so a blocked push cannot stop pull. Commit operations use a
 short cross-context link lock, reread the latest link record, reject stale
 lifetimes/domains, and preserve the opposite direction's progress.
 
-Network work is capped at two operations per normalized endpoint. The gate
+Network work is serialized per normalized endpoint. The gate
 opens a short in-memory circuit after a connection failure, so already queued
 links are deferred without adding a persisted endpoint scheduler. Failed
 subscription establishment remains unsubscribed and requests one coalesced
@@ -127,24 +127,23 @@ never durable progress.
 
 - **Settle:** success or a verified complete duplicate deletes the sparse row.
 - **Retry:** stop at the first unresolved receipt. Eligibility is derived from
-  the row's persisted attempt time/count and optional `Retry-After`; wakes,
+  the row's persisted last-attempt time and optional `Retry-After`; wakes,
   manual operations, and the periodic pass provide retry opportunities without
   per-receipt timers.
-- **Rebuild:** reset the affected checkpoint to zero before removing sparse
-  rows, then replay the current authorized source.
+- **Reset:** clear all checkpoints before removing sparse rows, then require the
+  application to register its authorized sources again.
 - **Remove:** deleting an identity or accepted followed context is explicit
   owner intent and removes the sparse state that only that owner can recover.
 
-Push is rebuildable while the local feed exists. Pull is rebuildable only while
+Push can be replayed while the local feed exists. Pull can be replayed only while
 an authorized remote retains the source. If no source remains, the quarantine
 row may be the only recoverable copy and must not be silently purged.
 
 Corrupt or unreadable encrypted quarantine follows the same rule. Ordinary
-retry backs it off and leaves it visible. `rebuildRemoteDirection()` is the
-explicit disaster-recovery path: it refuses an incomplete target plan or a
-missing current source, resets every current checkpoint for the logical target,
-then purges quarantine and replays. Vault lock prevents a commit that needs
-encryption; the engine never falls back to plaintext.
+retry backs it off and leaves it visible. `reset()` is the explicit
+disaster-recovery path; it clears the complete sync catalog and ledger, after
+which the application reconnects and re-registers. Vault lock prevents a commit
+that needs encryption; the engine never falls back to plaintext.
 
 ## Covering operations
 
@@ -172,8 +171,13 @@ compatibility name, backed by the watermark engine; `syncNextV1/*` is the only
 active transfer namespace.
 
 The registration and followed-context catalog remains shared across browser
-contexts through one structured wake channel. Transfer checkpoints and sparse
-rows have one owner and require no dual writes or checkpoint translation.
+contexts through a content-free invalidation wake. Durable catalog state is
+authoritative; transfer checkpoints and sparse rows require no dual writes or
+checkpoint translation.
+
+A confirmed expired or revoked delegated approval removes its sync registration
+and exact-link state. Followed-source acceptances remain cataloged; reapproval
+re-registers the actor and safely rescans from source feeds.
 
 ## Required application modes
 
@@ -219,7 +223,7 @@ Required fault scenarios include:
 - generic authorization failure versus proven immutable invalidity;
 - authorization-epoch replacement;
 - sparse selected context in a large unrelated tenant;
-- explicit checkpoint-reset/rescan recovery.
+- explicit full reset followed by source registration and rescan.
 
 ## Abstraction budget
 
@@ -276,19 +280,20 @@ cutover:
 
 Regression coverage now includes delayed retry ownership, continuous-feed
 pending fairness, concurrent same-link directions, non-advancing cursors,
-cross-endpoint quarantine settlement, atomic rebuild, pooled-socket request
+cross-endpoint quarantine settlement, reset-before-replay recovery, pooled-socket request
 cancellation, broad `Invalid` outcomes remaining non-terminal, and replay after
 apply-before-ledger crashes. Public one-shot callers now coalesce into at most
 one merged follow-up, independent endpoints remain concurrent, and covering
 page turns interleave behind the endpoint gate so target count cannot become an
 HTTP burst or let one continuously active target starve its peers. Drain
-requires two unchanged fingerprint observations before success and rechecks
-cancellation or topology between phases.
+requires both covering directions to observe drain with no sparse work and
+rechecks cancellation or topology before reporting completion. Fingerprints
+remain test evidence, not a second runtime completion mechanism.
 
 The corrective pass retains one bounded pass over consecutively successful
 sparse work, normalized link identity, transactional subscription pairs with
 terminal-drop reporting, direct catalog ownership with one structured
-cross-context wake channel, and reset-before-purge rebuild. Quarantine remains
+cross-context invalidation wake, and explicit full reset. Quarantine remains
 sparse and is scanned once for all materialized CIDs in a page instead of
 maintaining a fourth durable index. Transport-disconnect notifications mark
 currentness stale without launching an HTTP query; reconnect or the periodic
@@ -309,13 +314,13 @@ remote page queries without point reads.
 - Terminal classification is intentionally conservative: uncertain or broad
   `Invalid` outcomes stay sparse/retryable until a typed allowlist proves
   permanence.
-- Per-endpoint network work is capped at two operations. Page pumps return to
+- Per-endpoint network work is serialized. Page pumps return to
   the endpoint queue after every turn, so a continuously growing target cannot
-  retain the endpoint indefinitely. Change that small fixed concurrency only
-  from measured workloads, not by returning to unbounded transport fan-out.
+  retain the endpoint indefinitely. Add concurrency only from measured
+  workloads, not by returning to unbounded transport fan-out.
 - Drain cancellation is cooperative between committed pages, exact-link runs,
   and drain phases. Local admission and an in-flight request are never
   preempted halfway through; the next page is not requested after cancellation.
-- The engine emits registration, durable checkpoint, and fresh delivery events
-  used by application readiness and data refresh. Removed repair/quota event
+- The engine emits registration, link activity, and fresh delivery events used
+  by application readiness and data refresh. Removed repair/quota event
   vocabulary is not recreated without a demonstrated consumer.

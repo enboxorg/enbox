@@ -1,15 +1,17 @@
+import type { SyncEvent } from '../src/types/sync.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
-import type { SyncEvent, SyncIdentityOptions } from '../src/types/sync.js';
 
-import { Level } from 'level';
-import { RateLimitError } from '@enbox/dwn-clients';
 import sinon from 'sinon';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
+import { Level } from 'level';
+import { RateLimitError } from '@enbox/dwn-clients';
 import { SyncEngineNext } from '../src/sync-next/engine.js';
+import { SyncNextCatalog } from '../src/sync-next/catalog.js';
+import { syncNextLinkKey } from '../src/sync-next/ledger-key.js';
 import { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
-import { syncNextLinkKey, syncNextLogicalTargetId } from '../src/sync-next/ledger-key.js';
+
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 function target(did: string, dwnUrl: string): SyncTarget {
   return {
@@ -27,7 +29,8 @@ describe('SyncEngineNext orchestration', () => {
   let engine: SyncEngineNext;
 
   beforeAll(async () => {
-    db = new Level<string, string>('__TESTDATA__/sync-next-engine-spec');
+    db = new Level<string, string>('__TESTDATA__/sync-next-engine-orchestration-v2-spec');
+    await db.open();
     await db.clear();
     engine = new SyncEngineNext({ db });
   });
@@ -49,10 +52,9 @@ describe('SyncEngineNext orchestration', () => {
     });
 
     expect(result).toMatchObject({
-      endpoint        : 'https://cancelled.example/path',
-      completed       : false,
-      cancelled       : true,
-      topologyChanged : false,
+      endpoint  : 'https://cancelled.example/path',
+      completed : false,
+      cancelled : true,
     });
     expect(await (engine as any)._endpointStore.get()).toBeUndefined();
   });
@@ -72,7 +74,7 @@ describe('SyncEngineNext orchestration', () => {
     unsubscribeHealthy();
   });
 
-  it('should own catalog mutations directly and refresh sibling next engines', async () => {
+  it('should invalidate sibling target plans after catalog mutations', async () => {
     const dataPath = '__TESTDATA__/sync-next-catalog-wakes';
     const first = new SyncEngineNext({ dataPath, db });
     const second = new SyncEngineNext({ dataPath, db });
@@ -81,19 +83,15 @@ describe('SyncEngineNext orchestration', () => {
     second.agent = fakeAgent;
     sinon.stub(SyncScopeClosureValidator.prototype, 'validateClosure').resolves();
     const did = 'did:example:next-catalog-wake';
-    const events: Array<SyncIdentityOptions | undefined> = [];
     let resolveSet!: () => void;
     let resolveRemove!: () => void;
     const setObserved = new Promise<void>(resolve => { resolveSet = resolve; });
     const removeObserved = new Promise<void>(resolve => { resolveRemove = resolve; });
-    second.on((event): void => {
-      if (event.type !== 'identity:registration-change' || event.tenantDid !== did) {
-        return;
-      }
-      events.push(event.options);
-      if (events.length === 1) {
+    let wakes = 0;
+    sinon.stub(second as any, 'scheduleLiveRefresh').callsFake((): void => {
+      if (++wakes === 1) {
         resolveSet();
-      } else if (events.length === 2) {
+      } else {
         resolveRemove();
       }
     });
@@ -101,20 +99,50 @@ describe('SyncEngineNext orchestration', () => {
     try {
       await first.setIdentityOptions({ did, options: { protocols: ['https://proto.example'] } });
       await setObserved;
-      await expect(first.ensureIdentityOptions({
-        did,
-        options: { protocols: ['https://proto.example', 'https://proto.example'] },
-      })).resolves.toBe(false);
       await first.removeIdentity(did);
       await removeObserved;
 
-      expect(events).toEqual([{ protocols: ['https://proto.example'] }, undefined]);
-      expect((first as any)._control).toBeUndefined();
+      expect((second as any)._planner.topologyGeneration).toBe(2);
     } finally {
       for (const next of [first, second]) {
         next['_catalogChannel']?.close();
       }
     }
+  });
+
+  it('should remove a registration after confirming its approval is revoked', async () => {
+    const grant = {
+      grant: {
+        id             : 'grant-a',
+        grantor        : 'did:example:owner',
+        grantee        : 'did:example:delegate',
+        dateExpires    : '2040-01-01T00:00:00.000000Z',
+        connectSession : { id: 'session-a', createdAt: '2026-01-01T00:00:00.000000Z' },
+      },
+    };
+    const fetchGrants = sinon.stub();
+    fetchGrants.onFirstCall().resolves([grant]);
+    fetchGrants.onSecondCall().resolves([]);
+    fetchGrants.onThirdCall().resolves([grant]);
+    const identityStore = { delete: sinon.stub().resolves() };
+    const beforePause = sinon.stub().resolves();
+    const catalog = new SyncNextCatalog(
+      {} as never,
+      { fetchGrants } as never,
+      identityStore as never,
+      {} as never,
+      {} as never,
+      'pause-test',
+    );
+
+    expect(await catalog.pauseIdentity({
+      did              : 'did:example:owner',
+      delegateDid      : 'did:example:delegate',
+      connectSessionId : 'session-a',
+    }, beforePause)).toBe(true);
+    expect(beforePause.calledOnce).toBe(true);
+    expect(identityStore.delete.calledOnceWithExactly('did:example:owner')).toBe(true);
+    expect(beforePause.calledBefore(identityStore.delete)).toBe(true);
   });
 
   it('should accept and remove a role source without delegating to the legacy engine', async () => {
@@ -166,65 +194,35 @@ describe('SyncEngineNext orchestration', () => {
     await roleEngine.removeIdentity(actorDid);
   });
 
-  it('should require two unchanged fingerprint observations for convergence', async () => {
-    const internal = engine as any;
-    const verify = sinon.stub(internal, 'verifyConvergence');
-    verify.onFirstCall().resolves({
-      converged         : true,
-      localFingerprint  : 'first',
-      remoteFingerprint : 'first',
-    });
-    verify.onSecondCall().resolves({
-      converged         : true,
-      localFingerprint  : 'second',
-      remoteFingerprint : 'second',
-    });
-
-    const result = await internal.verifyStableConvergence(
-      target('did:example:stable', 'https://stable.example'),
-    );
-
-    expect(verify.callCount).toBe(2);
-    expect(result).toMatchObject({
-      converged : false,
-      error     : 'SyncEngineNext: feed head changed during convergence proof.',
-    });
-  });
-
-  it('should give equivalent endpoint URLs one exact durable session identity', async () => {
-    const internal = engine as any;
-    const createSession = sinon.stub(internal, 'createSession').callsFake(async (syncTarget: SyncTarget) => ({
-      session    : {},
-      subscribed : false,
-      target     : syncTarget,
-    }));
-    const canonical = target('did:example:normalized-link', 'https://dwn.example/path');
-    const equivalent = { ...canonical, dwnUrl: 'https://dwn.example/path/' };
-
-    const [first, second] = await Promise.all([
-      internal.ensureSession(canonical),
-      internal.ensureSession(equivalent),
-    ]);
-
-    expect(first).toBe(second);
-    expect(first.target.dwnUrl).toBe('https://dwn.example/path');
-    expect(createSession.calledOnce).toBe(true);
-  });
-
   it('should coalesce subscription retries and honor Retry-After', async () => {
     const clock = sinon.useFakeTimers();
     const internal = engine as any;
     const refresh = sinon.stub(internal, 'scheduleLiveRefresh');
     internal._live = true;
 
-    internal.scheduleSubscriptionRetry(new RateLimitError(1));
-    internal.scheduleSubscriptionRetry(new RateLimitError(1));
+    internal.scheduleLiveRetry(new RateLimitError(1));
+    internal.scheduleLiveRetry(new RateLimitError(1));
     await clock.tickAsync(999);
     expect(refresh.notCalled).toBe(true);
     await clock.tickAsync(1);
     expect(refresh.calledOnce).toBe(true);
 
     internal._live = false;
+  });
+
+  it('should retry only the selected normalized remote', async () => {
+    const internal = engine as any;
+    const cover = sinon.stub(internal, 'runCoveringSync').resolves();
+    const clear = sinon.spy(internal._endpointGate, 'clear');
+
+    await engine.retryRemoteNow('did:example:retry', 'https://retry.example/path/?ignored=1');
+
+    expect(clear.calledOnceWithExactly('https://retry.example/path')).toBe(true);
+    expect(cover.calledOnceWithExactly(
+      undefined,
+      { did: 'did:example:retry' },
+      'https://retry.example/path',
+    )).toBe(true);
   });
 
   it('should refresh a followed source after structured terminal authorization', async () => {
@@ -347,15 +345,18 @@ describe('SyncEngineNext orchestration', () => {
     expect(cover.callCount).toBe(2);
   });
 
-  it('should cancel a queued follow-up when the runtime stops', async () => {
+  it('should cancel a coalesced covering run when the runtime stops', async () => {
     const syncTarget = target('did:example:stop', 'https://stop.example');
     let releaseFirst!: () => void;
     let markStarted!: () => void;
     const firstStarted = new Promise<void>(resolve => { markStarted = resolve; });
     const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
-    const cover = sinon.stub().callsFake(async (): Promise<void> => {
+    const cover = sinon.stub().callsFake(async (_direction, shouldContinue): Promise<void> => {
       markStarted();
       await firstGate;
+      if (!shouldContinue()) {
+        throw new DOMException('Covering sync cancelled.', 'AbortError');
+      }
     });
     const internal = engine as any;
     sinon.stub(internal._planner, 'getTargets').resolves([syncTarget]);
@@ -370,12 +371,14 @@ describe('SyncEngineNext orchestration', () => {
     const first = engine.sync('pull');
     await firstStarted;
     const queued = engine.sync('pull');
-    void queued.catch((): void => {});
     const stopping = engine.stopSync();
+    const firstError = first.catch((error: unknown): unknown => error);
+    const queuedError = queued.catch((error: unknown): unknown => error);
     releaseFirst();
 
-    await Promise.all([first, stopping]);
-    await expect(queued).rejects.toThrow('cancelled by a runtime transition');
+    const [firstFailure, queuedFailure] = await Promise.all([firstError, queuedError, stopping]);
+    expect(firstFailure).toBeInstanceOf(AggregateError);
+    expect(queuedFailure).toBe(firstFailure);
     expect(cover.calledOnce).toBe(true);
   });
 
@@ -457,7 +460,6 @@ describe('SyncEngineNext orchestration', () => {
     const status = await engine.getIdentitySyncStatus(syncTarget.did);
 
     expect(status.connectivity).toBe('offline');
-    expect(status.health.syncHealthy).toBe(false);
     expect(status.remotes).toMatchObject([{
       connectivity : 'offline',
       state        : 'offline',
@@ -545,95 +547,4 @@ describe('SyncEngineNext orchestration', () => {
     await internal._ledger.deleteForTenant(oldTarget.did);
   });
 
-  it('should not create durable state while rebuilding a missing link', async () => {
-    const current = target('did:example:missing-rebuild', 'https://rebuild.example');
-    const internal = engine as any;
-    sinon.stub(internal._planner, 'getTargets').resolves([current]);
-    sinon.stub(internal._planner, 'lastResolutionComplete').get(() => true);
-
-    await expect(engine.rebuildRemoteDirection({
-      direction      : 'pull',
-      remoteEndpoint : current.dwnUrl,
-      tenantDid      : current.did,
-    })).rejects.toThrow('no durable checkpoint');
-
-    expect(await internal._ledger.getAllLinks()).toEqual([]);
-  });
-
-  it('should reset current pull progress before purging corrupt logical-target quarantine', async () => {
-    const current = target('did:example:rebuild-next', 'https://rebuild.example');
-    const peer = { ...current, dwnUrl: 'https://peer.example' };
-    const retired = { ...current, authorizationEpoch: 'retired-epoch', dwnUrl: 'https://old.example' };
-    const internal = engine as any;
-    for (const syncTarget of [current, peer, retired]) {
-      await internal._ledger.getOrCreateLink({
-        authorization      : syncTarget.authorization,
-        authorizationEpoch : syncTarget.authorizationEpoch,
-        projectionId       : syncTarget.projectionId,
-        remoteEndpoint     : syncTarget.dwnUrl,
-        scope              : syncTarget.scope,
-        tenantDid          : syncTarget.did,
-      });
-      await internal._ledger.commitPullPage({
-        authorizationEpoch : syncTarget.authorizationEpoch,
-        projectionId       : syncTarget.projectionId,
-        remoteEndpoint     : syncTarget.dwnUrl,
-        tenantDid          : syncTarget.did,
-      }, {
-        handledThrough : { epoch: 'epoch', position: '1', streamId: 'stream' },
-        quarantine     : [{
-          encryptedPayload : 'corrupt',
-          messageCid       : `pending-${syncTarget.authorizationEpoch}`,
-          source           : {
-            epoch      : 'epoch',
-            messageCid : `pending-${syncTarget.authorizationEpoch}`,
-            position   : '1',
-            streamId   : 'stream',
-          },
-        }],
-        settled: [],
-      });
-    }
-    await internal._ledger.retireLink({
-      authorizationEpoch : retired.authorizationEpoch,
-      projectionId       : retired.projectionId,
-      remoteEndpoint     : retired.dwnUrl,
-      tenantDid          : retired.did,
-    });
-    const cover = sinon.stub().resolves();
-    sinon.stub(internal._planner, 'getTargets').resolves([current, peer]);
-    sinon.stub(internal._planner, 'lastResolutionComplete').get(() => true);
-    sinon.stub(internal, 'ensureSession').resolves({
-      session    : { cover },
-      subscribed : false,
-      target     : current,
-    });
-    sinon.stub(internal, 'disposeSession').resolves();
-    const logicalTargetId = syncNextLogicalTargetId(current.did, current.projectionId);
-    expect(await internal._ledger.getQuarantineForLogicalTarget(logicalTargetId)).toHaveLength(3);
-
-    await engine.rebuildRemoteDirection({
-      direction      : 'pull',
-      remoteEndpoint : current.dwnUrl,
-      tenantDid      : current.did,
-    });
-
-    const rebuilt = await internal._ledger.getLink({
-      authorizationEpoch : current.authorizationEpoch,
-      projectionId       : current.projectionId,
-      remoteEndpoint     : current.dwnUrl,
-      tenantDid          : current.did,
-    });
-    expect(rebuilt.pullHandledThrough).toBeUndefined();
-    const rebuiltPeer = await internal._ledger.getLink({
-      authorizationEpoch : peer.authorizationEpoch,
-      projectionId       : peer.projectionId,
-      remoteEndpoint     : peer.dwnUrl,
-      tenantDid          : peer.did,
-    });
-    expect(rebuiltPeer.pullHandledThrough).toBeUndefined();
-    expect(await internal._ledger.getQuarantineForLogicalTarget(logicalTargetId)).toEqual([]);
-    expect(cover.calledOnceWith('pull')).toBe(true);
-    await internal._ledger.deleteForTenant(current.did);
-  });
 });

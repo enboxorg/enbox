@@ -33,12 +33,12 @@ watermarks; there is no second accepted/sent-accepted ledger.
 | Whether a role/owner source has no uncovered wake or quarantine | **pull currentness** |
 | Per-endpoint concurrency bound plus short outage circuit | **endpoint gate** |
 | Short-lived `(tenant, CID, endpoint)` transfer hint | **echo suppression** |
-| Explicit reset-before-purge disaster recovery | **rebuild** |
+| Explicit full-state disaster recovery | **reset** |
 
 Subscriptions wake the durable page loop; they are not a second replication
 path and their cursors are not checkpoint evidence. Pull and push loops are
-independent. Sparse retry eligibility comes from durable attempt metadata and
-optional `Retry-After`; it does not own a per-record timer.
+independent. Sparse retry eligibility comes from the durable last-attempt
+timestamp and optional `Retry-After`; it does not own a per-record timer.
 
 ## Catalog
 
@@ -61,8 +61,8 @@ is retired.
 - **retry** sparse work without moving a watermark.
 - **retire** an obsolete binding while preserving recoverable logical-target input.
 - **remove** state after explicit owner intent.
-- **rebuild** by resetting progress before purging reconstructible sparse state.
+- **reset** all progress before purging sparse state and registering sources again.
 
 Do not use *repair*, *reconcile*, *dead letter*, *quota probe*, *feed
-convergence*, or *captured head* for watermark-engine behavior. Those names
+convergence*, *rebuild*, or *captured head* for watermark-engine behavior. Those names
 belonged to deleted mechanisms, not aliases for the concepts above.
