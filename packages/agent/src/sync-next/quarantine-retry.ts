@@ -202,7 +202,7 @@ export class SyncNextQuarantineRetry {
         ? {}
         : { rootData: Encoder.base64UrlToBytes(entry.encodedData) }),
       shouldContinue,
-      sourceDid     : target.did,
+      sourceDid: target.did,
     });
     return {
       ...support,

@@ -5,4 +5,4 @@
 "@enbox/browser": patch
 ---
 
-refactor: make the watermark sync engine authoritative and remove the legacy selector
+refactor: make watermark sync authoritative, remove the legacy engine and selector, and simplify live coordination and public sync APIs
