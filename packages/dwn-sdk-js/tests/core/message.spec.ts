@@ -188,16 +188,15 @@ describe('Message', () => {
   });
 
   describe('getCid()', () => {
-    it('encodedData does not have an effect on getCid()', async () => {
+    it('should exclude encodedData from the CID even when the encoded body is empty', async () => {
       const { message } = await TestDataGenerator.generateRecordsWrite();
-      const cid1 = await Message.getCid(message);
+      const messageCid = await Message.getCid(message);
 
-      const messageWithData: RecordsQueryReplyEntry = message;
-      messageWithData.encodedData = TestDataGenerator.randomString(25);
+      for (const encodedData of [TestDataGenerator.randomString(25), '']) {
+        const messageWithData: RecordsQueryReplyEntry = { ...message, encodedData };
 
-      const cid2 = await Message.getCid(messageWithData);
-
-      expect(cid1).toBe(cid2);
+        expect(await Message.getCid(messageWithData)).toBe(messageCid);
+      }
     });
   });
 });

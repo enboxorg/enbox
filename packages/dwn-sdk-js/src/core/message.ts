@@ -82,22 +82,14 @@ export class Message {
   }
 
   /**
-   * Gets the CID of the given message.
+   * Gets the CID of the given message. Inline `encodedData` is storage metadata and does not
+   * contribute to message identity, including when it represents an empty body.
    */
   public static async getCid(message: GenericMessage): Promise<string> {
-    // NOTE: we wrap the `computeCid()` here in case that
-    // the message will contain properties that should not be part of the CID computation
-    // and we need to strip them out (like `encodedData` that we historically had for a long time),
-    // but we can remove this method entirely if the code becomes stable and it is apparent that the wrapper is not needed
-
-    // ^--- seems like we might need to keep this around for now.
     const rawMessage = { ...message };
-    if (rawMessage.encodedData) {
-      delete rawMessage.encodedData;
-    }
+    delete rawMessage.encodedData;
 
-    const cid = await Cid.computeCid(rawMessage);
-    return cid;
+    return Cid.computeCid(rawMessage);
   }
 
   /**

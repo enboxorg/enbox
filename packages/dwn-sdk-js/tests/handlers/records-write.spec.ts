@@ -1153,6 +1153,25 @@ export function testRecordsWriteHandler(): void {
         expect(duplicateReply.status.code).toBe(409);
       });
 
+      it('should store and deduplicate an exact RecordsWrite with empty data', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const data = new Uint8Array();
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
+        const messageCid = await Message.getCid(message);
+
+        const firstReply = await dwn.processMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(data),
+        });
+        expect(firstReply.status.code).toBe(202);
+        expect(await messageStore.get(alice.did, messageCid)).toBeDefined();
+
+        const duplicateReply = await dwn.processMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(data),
+        });
+        expect(duplicateReply.status.code).toBe(409);
+      });
+
       it('should return 409 for an exact duplicate RecordsWrite before mutable parent validation', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
