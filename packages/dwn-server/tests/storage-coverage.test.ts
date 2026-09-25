@@ -125,6 +125,16 @@ describe('storage — coverage', () => {
       await expect(getDwnConfig(cfg, {})).rejects.toThrow();
     });
 
+    it('should reject a file-based MessageStore missing the required replication contract', async () => {
+      const cfg = testConfig({
+        messageStore: '../tests/plugins/message-store-incomplete.js',
+      });
+
+      await expect(getDwnConfig(cfg, {})).rejects.toThrow(
+        'missing required methods: completeData, logRead, logBounds, fingerprint, epoch',
+      );
+    });
+
     it('should skip SQL migrations for level:// backend', async () => {
       // level:// stores don't need SQL migrations — the function should
       // detect the non-SQL protocol and skip without error.

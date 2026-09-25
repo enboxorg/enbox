@@ -8,6 +8,7 @@ import type {
   GenericMessage,
   MessageSort,
   MessageStore,
+  MessageStoreCompleteDataResult,
   MessageStoreLatestStateTransition,
   MessageStoreOptions,
   MessageStorePutResult,
@@ -17,7 +18,6 @@ import type {
   ProgressGapInfo,
   ProgressGapReason,
   ProgressToken,
-  ReplicationFeedReader,
   WakePublisher,
 } from '@enbox/dwn-sdk-js';
 import type { InsertObject, Kysely, Selectable, SelectQueryBuilder, Transaction, UpdateObject } from 'kysely';
@@ -111,7 +111,7 @@ const BOOLEAN_INDEX_COLUMNS = new Set<MessageStoreIndexColumn>([
  * reads or writes row/fingerprint state. This keeps tenant positions gap-free and serializes the
  * fingerprint folds without requiring backend-specific advisory locks.
  */
-export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
+export class MessageStoreSql implements MessageStore {
   readonly #dialect: Dialect;
   readonly #tags: TagTables;
   #db: Kysely<DwnDatabaseType> | null = null;
@@ -542,6 +542,80 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     });
   }
 
+  public async completeData(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+    encodedData?: string,
+    options?: MessageStoreOptions
+  ): Promise<MessageStoreCompleteDataResult> {
+    const db = this.requireDb('completeData');
+    options?.signal?.throwIfAborted();
+
+    // Once started, await the transaction through commit so every committed completion publishes its wake.
+    const result = await executeWithTransaction(db, async (tx): Promise<MessageStoreCompleteDataResult> => {
+      await this.#dialect.lockReplicationCounter(tx, tenant);
+      const row = await tx
+        .selectFrom('messageStoreMessages')
+        .select(['interface', 'method', 'recordId', 'isLatestBaseState'])
+        .where('tenant', '=', tenant)
+        .where('messageCid', '=', messageCid)
+        .executeTakeFirst();
+      if (row === undefined) {
+        throw new DwnError(
+          DwnErrorCode.MessageStoreCompleteDataInvalidTarget,
+          `no message found for tenant ${tenant} with CID ${messageCid}`
+        );
+      }
+      if (
+        row.interface !== DwnInterfaceName.Records ||
+          row.method !== DwnMethodName.Write ||
+          row.recordId === null
+      ) {
+        throw new DwnError(
+          DwnErrorCode.MessageStoreCompleteDataInvalidTarget,
+          `message ${messageCid} is not a RecordsWrite`
+        );
+      }
+      if (MessageStoreSql.toBooleanIndex(row.isLatestBaseState)) {
+        return { status: 'duplicate' };
+      }
+
+      const otherMessage = await tx
+        .selectFrom('messageStoreMessages')
+        .select('id')
+        .where('tenant', '=', tenant)
+        .where('interface', '=', DwnInterfaceName.Records)
+        .where('recordId', '=', row.recordId)
+        .where('messageCid', '!=', messageCid)
+        .executeTakeFirst();
+      if (otherMessage !== undefined) {
+        return { status: 'superseded' };
+      }
+
+      // Move the existing row forward rather than creating a second feed row.
+      const completionSeq = await this.#dialect.incrementReplicationCounter(tx, tenant);
+      await this.replaceRowIndexesInTx(tx, {
+        tenant,
+        messageCid,
+        indexes,
+        encodedData,
+        notFoundErrorCode : DwnErrorCode.MessageStoreCompleteDataInvalidTarget,
+        seq               : completionSeq,
+      });
+
+      return {
+        status   : 'completed',
+        position : await this.buildToken(tenant, completionSeq, messageCid),
+      };
+    });
+
+    if (result.status === 'completed') {
+      this.publishWake(tenant, BigInt(result.position.position));
+    }
+    return result;
+  }
+
   public async delete(
     tenant: string,
     cid: string,
@@ -736,8 +810,18 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     encodedData?: string | null;
     messageForScopeCheck?: GenericMessage;
     notFoundErrorCode: DwnErrorCode;
+    seq?: bigint;
   }): Promise<void> {
-    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, messageForScopeCheck, notFoundErrorCode } = input;
+    const {
+      tenant,
+      messageCid,
+      indexes,
+      encodedMessageBytes,
+      encodedData,
+      messageForScopeCheck,
+      notFoundErrorCode,
+      seq,
+    } = input;
     const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
 
     const existingRow = await tx
@@ -764,6 +848,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       ...replacementIndexes,
       ...(encodedMessageBytes !== undefined && { encodedMessageBytes }),
       ...(encodedData !== undefined && { encodedData }),
+      ...(seq !== undefined && { seq: seq.toString() }),
     };
 
     await tx

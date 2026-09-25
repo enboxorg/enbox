@@ -53,8 +53,9 @@
   "replicated: initial write accepted by timestamped config": [
     "fetchProtocolDefinition"
   ],
-  "replicated: same-CID data retry of dataless stub": [
-    "fetchProtocolDefinition"
+  "replicated: same-CID completion of dataless stub": [
+    "fetchProtocolDefinition",
+    "hasStoredData"
   ],
   "replicated: tombstone-beaten dataless update missing compacted data": [
     "fetchProtocolDefinition",

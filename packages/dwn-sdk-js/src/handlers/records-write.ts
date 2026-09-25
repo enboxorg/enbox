@@ -47,13 +47,18 @@ export class RecordsWriteHandler implements MethodHandler {
     };
     const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ]);
 
-    // If the exact same message already exists, return 409 before re-running
-    // mutable validation. An already-stored message has already passed
-    // admission; replay should not be reinterpreted against current protocol,
-    // parent, role, grant, or record-limit state.
-    const conflictReply = await this.findConflictingMessageReply(message, existingMessages);
-    if (conflictReply !== undefined) {
-      return conflictReply;
+    const incomingCid = await Message.getCid(message);
+    for (const existingMessage of existingMessages) {
+      if (await Message.getCid(existingMessage) === incomingCid) {
+        return this.handleExistingRecordsWrite({
+          dataStream,
+          existingMessage,
+          recordHasAdvanced: existingMessages.length > 1,
+          incomingCid,
+          recordsWrite,
+          tenant,
+        });
+      }
     }
 
     const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
@@ -162,26 +167,62 @@ export class RecordsWriteHandler implements MethodHandler {
     return messageReply;
   };
 
-  /**
-   * Returns a 409 Conflict reply if a message with the same CID as the incoming message already
-   * exists among `existingMessages`, else `undefined`. An already-stored message has already
-   * passed admission; replay should not be reinterpreted against current protocol, parent, role,
-   * grant, or record-limit state.
-   */
-  private async findConflictingMessageReply(
-    message: RecordsWriteMessage,
-    existingMessages: GenericMessage[],
-  ): Promise<GenericMessageReply | undefined> {
-    const incomingCid = await Message.getCid(message);
-    for (const existingMessage of existingMessages) {
-      if (await Message.getCid(existingMessage) !== incomingCid) {
-        continue;
-      }
-
+  /** Handles an exact message replay without repeating mutable admission checks or lifecycle hooks. */
+  private async handleExistingRecordsWrite(input: {
+    tenant: string;
+    recordsWrite: RecordsWrite;
+    existingMessage: GenericMessage;
+    recordHasAdvanced: boolean;
+    incomingCid: string;
+    dataStream?: ReadableStream<Uint8Array>;
+  }): Promise<GenericMessageReply> {
+    const { tenant, recordsWrite, existingMessage, recordHasAdvanced, incomingCid, dataStream } = input;
+    // Only a sole, dataless initial write can be completed in place.
+    if (
+      dataStream === undefined ||
+      !Records.isRecordsWrite(existingMessage) ||
+      !await RecordsWrite.isInitialWrite(existingMessage) ||
+      recordHasAdvanced ||
+      await this.hasStoredData(tenant, existingMessage)
+    ) {
+      await dataStream?.cancel().catch((): void => {});
       return { status: { code: 409, detail: 'Conflict' } };
     }
 
-    return undefined;
+    try {
+      const completedMessage = await this.processMessageWithDataStream(tenant, recordsWrite.message, dataStream);
+      const indexes = await recordsWrite.constructIndexes(true);
+      const result = await this.deps.messageStore.completeData(
+        tenant,
+        incomingCid,
+        indexes,
+        completedMessage.encodedData,
+      );
+      if (result.status !== 'completed') {
+        return { status: { code: 409, detail: 'Conflict' } };
+      }
+
+      return {
+        status   : { code: 202, detail: 'Accepted' },
+        position : result.position,
+      };
+    } catch (error: unknown) {
+      if (error instanceof DwnError && error.code === DwnErrorCode.MessageStoreCompleteDataInvalidTarget) {
+        return { status: { code: 409, detail: 'Conflict' } };
+      }
+      return this.mapCommitWriteErrorToReply(error);
+    }
+  }
+
+  private async hasStoredData(tenant: string, message: RecordsWriteMessage): Promise<boolean> {
+    if ((message as RecordsQueryReplyEntry).encodedData !== undefined) {
+      return true;
+    }
+    return this.deps.validationStateReader.hasStoredData(
+      tenant,
+      message.recordId,
+      message.descriptor.dataCid,
+    );
   }
 
   /**

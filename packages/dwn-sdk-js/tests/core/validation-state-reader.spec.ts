@@ -113,7 +113,7 @@ describe('validation-state reader admission parity', () => {
       expect(replicatedResult.kind).toBe('Applied');
     });
 
-    it('should continue to admit a child after same-CID data retry is rejected', async () => {
+    it('should continue to admit a child after same-CID data completion', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolDefinition = nestedProtocolDefinition;
@@ -147,12 +147,11 @@ describe('validation-state reader admission parity', () => {
       });
       expect(childBeforeRetryReply.status.code).toBe(202);
 
-      // Same-CID delivery with data is not a completion mechanism; the retained parent still
-      // authorizes children through immutable ancestry facts.
+      // The exact signed write can supply its missing body without repeating mutable admission.
       const retriedParentReply = await dwn.processMessage(alice.did, parentMessage, {
         dataStream: DataStream.fromBytes(parentDataBytes!),
       });
-      expect(retriedParentReply.status.code).toBe(409);
+      expect(retriedParentReply.status.code).toBe(202);
 
       const { message: childAfterRetryMessage, dataStream: childAfterRetryDataStream } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,

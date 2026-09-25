@@ -7,7 +7,7 @@ import { Kysely } from 'kysely';
 import { MessageStoreSql } from '../src/message-store-sql.js';
 import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { SqliteDialect } from '../src/dialect/sqlite-dialect.js';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { DwnErrorCode, Message, Replication, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
 
@@ -136,6 +136,107 @@ function runReplicationLogTests(dialect: Dialect): void {
       expect(events.map((entry) => entry.messageCid)).toEqual(storedCids);
       expect(cursor!.position).toBe('3');
       expect(drained).toBe(true);
+    });
+
+    it('should move a completed row so fresh and resumed readers each see it once', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const { message, messageCid, indexes } = await generateStoredMessage();
+      const ancestryIndexes = { ...indexes, isLatestBaseState: false };
+      const put = await messageStore.put(alice.did, message, ancestryIndexes);
+      const other = await generateStoredMessage();
+      const otherPut = await messageStore.put(alice.did, other.message, other.indexes);
+      const fingerprint = await messageStore.fingerprint(alice.did, [Replication.globalDomain]);
+
+      expect((await messageStore.logRead(alice.did)).events.map((entry) => entry.messageCid))
+        .toEqual([messageCid, other.messageCid]);
+
+      const completed = await messageStore.completeData(
+        alice.did,
+        messageCid,
+        indexes,
+        'aGVsbG8',
+      );
+      expect(completed).toEqual(expect.objectContaining({ status: 'completed' }));
+      expect(completed.status === 'completed' && completed.position.position).toBe('3');
+      expect(await messageStore.completeData(alice.did, messageCid, indexes, 'aGVsbG8'))
+        .toEqual({ status: 'duplicate' });
+
+      const page = await messageStore.logRead(alice.did);
+      expect(page.events.map((entry) => entry.messageCid)).toEqual([other.messageCid, messageCid]);
+      expect(page.events.map((entry) => entry.position)).toEqual(['2', '3']);
+      expect(page.events.map((entry) => entry.seq)).toEqual(['2', '3']);
+      expect(wakePublisher.wakes.map(({ seq }) => seq)).toEqual(['1', '2', '3']);
+      expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(fingerprint);
+      expect((await messageStore.get(alice.did, messageCid) as { encodedData?: string }).encodedData)
+        .toBe('aGVsbG8');
+
+      const resumedAfterAncestry = await messageStore.logRead(alice.did, { cursor: put.position });
+      expect(resumedAfterAncestry.events.map((entry) => entry.messageCid)).toEqual([other.messageCid, messageCid]);
+
+      const resumedAfterOther = await messageStore.logRead(alice.did, { cursor: otherPut.position });
+      expect(resumedAfterOther.events.map((entry) => entry.messageCid)).toEqual([messageCid]);
+      expect(resumedAfterOther.events[0].position).toBe('3');
+
+      const firstPage = await messageStore.logRead(alice.did, { limit: 1 });
+      expect(firstPage.events.map((entry) => entry.messageCid)).toEqual([other.messageCid]);
+      expect(firstPage.cursor?.position).toBe('2');
+      expect(firstPage.drained).toBe(false);
+      const secondPage = await messageStore.logRead(alice.did, { cursor: firstPage.cursor });
+      expect(secondPage.events.map((entry) => entry.messageCid)).toEqual([messageCid]);
+      expect(secondPage.cursor?.position).toBe('3');
+      expect(secondPage.drained).toBe(true);
+
+      expect(put.position?.position).toBe('1');
+    });
+
+    it('should publish completion after an abort requested during its transaction', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const { message, messageCid, indexes } = await generateStoredMessage();
+      await messageStore.put(alice.did, message, { ...indexes, isLatestBaseState: false });
+      wakePublisher.clear();
+
+      const controller = new AbortController();
+      const incrementReplicationCounter = dialect.incrementReplicationCounter.bind(dialect);
+      const incrementSpy = spyOn(dialect, 'incrementReplicationCounter').mockImplementation(async (tx, tenant) => {
+        const position = await incrementReplicationCounter(tx, tenant);
+        controller.abort(new Error('completion request aborted'));
+        return position;
+      });
+
+      try {
+        const completed = await messageStore.completeData(
+          alice.did,
+          messageCid,
+          indexes,
+          'aGVsbG8',
+          { signal: controller.signal },
+        );
+        expect(completed).toEqual(expect.objectContaining({ status: 'completed' }));
+        expect(wakePublisher.wakes.map(({ seq }) => seq)).toEqual(['2']);
+      } finally {
+        incrementSpy.mockRestore();
+      }
+    });
+
+    it('should not move a completion superseded by another non-latest message', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const first = await generateStoredMessage();
+      await expect(messageStore.completeData(alice.did, first.messageCid, first.indexes, 'aGVsbG8'))
+        .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataInvalidTarget);
+      const newer = structuredClone(first.message);
+      newer.descriptor.messageTimestamp = '9999-01-01T00:00:00.000000Z';
+      const newerCid = await Message.getCid(newer);
+      await messageStore.put(alice.did, first.message, { ...first.indexes, isLatestBaseState: false });
+      await messageStore.put(alice.did, newer, {
+        ...first.indexes,
+        isLatestBaseState : false,
+        messageTimestamp  : newer.descriptor.messageTimestamp,
+      });
+
+      expect(await messageStore.completeData(alice.did, first.messageCid, first.indexes, 'aGVsbG8'))
+        .toEqual({ status: 'superseded' });
+      expect((await messageStore.logRead(alice.did)).events.map((entry) => entry.messageCid))
+        .toEqual([first.messageCid, newerCid]);
     });
 
     it('should return the position-zero anchor cursor for an empty log and resume from it', async () => {

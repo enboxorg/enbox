@@ -1,6 +1,5 @@
 import type { PaginationCursor } from '../../src/types/query-types.js';
 import type { RecordsWriteMessage } from '../../src/types/records-types.js';
-import type { ReplicationFeedReader } from '../../src/types/subscriptions.js';
 import type { KeyValues, MessageStore } from '../../src/index.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -928,8 +927,38 @@ export function testMessageStore(): void {
         // fingerprint contributions are tenant-independent hashes of message CIDs, so identical
         // message sets must produce identical domain fingerprints across the two tenants
         const scopes = Replication.computeFingerprintScopes(update2.message, update2Indexes);
-        const feedReader = messageStore as unknown as ReplicationFeedReader;
-        expect(await feedReader.fingerprint(alice.did, scopes)).toBe(await feedReader.fingerprint(bob.did, scopes));
+        expect(await messageStore.fingerprint(alice.did, scopes)).toBe(await messageStore.fingerprint(bob.did, scopes));
+      });
+    });
+
+    describe('completeData', () => {
+      beforeAll(async () => {
+        const stores = TestStores.get();
+        messageStore = stores.messageStore;
+        await messageStore.open();
+      });
+
+      beforeEach(async () => {
+        await messageStore.clear();
+      });
+
+      afterAll(async () => {
+        await messageStore.close();
+      });
+
+      it('should reject a non-RecordsWrite row', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const write = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+          author   : alice,
+          recordId : write.message.recordId,
+        });
+        const indexes = recordsDelete.recordsDelete.constructIndexes(write.message, write.message);
+        const messageCid = await Message.getCid(recordsDelete.message);
+        await messageStore.put(alice.did, recordsDelete.message, indexes);
+
+        await expect(messageStore.completeData(alice.did, messageCid, indexes))
+          .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataInvalidTarget);
       });
     });
   });

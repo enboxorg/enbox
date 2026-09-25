@@ -342,13 +342,7 @@ export function testMessagesSubscribeHandler(): void {
       });
 
       describe('feed snapshot on subscribe reply', () => {
-        // Registration-time probe of the injected message store, mirroring the
-        // equivalent probe in messages-query.spec.ts: feed-dependent tests
-        // register as skipped when the store under test does not implement
-        // the replication feed reader interface.
-        const supportsReplicationFeed = Replication.asFeedReader(TestStores.get().messageStore) !== undefined;
-
-        it.skipIf(!supportsReplicationFeed)('should attach the position-zero anchor head and empty fingerprint for an empty feed', async () => {
+        it('should attach the position-zero anchor head and empty fingerprint for an empty feed', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           const messagesSubscribe = await MessagesSubscribe.create({ signer: Jws.createSigner(alice) });
@@ -368,7 +362,7 @@ export function testMessagesSubscribeHandler(): void {
           await reply.subscription!.close();
         });
 
-        it.skipIf(!supportsReplicationFeed)('should attach a head and fingerprint consistent with a drained MessagesQuery', async () => {
+        it('should attach a head and fingerprint consistent with a drained MessagesQuery', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -392,8 +386,8 @@ export function testMessagesSubscribeHandler(): void {
           await reply.subscription!.close();
         });
 
-        it.skipIf(!supportsReplicationFeed)('should attach the protocol-scope fingerprint for protocol-only filters', async () => {
-          const feedReader = Replication.asFeedReader(messageStore)!;
+        it('should attach the protocol-scope fingerprint for protocol-only filters', async () => {
+          const feedReader = messageStore;
           const alice = await TestDataGenerator.generateDidKeyPersona();
           await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -420,7 +414,7 @@ export function testMessagesSubscribeHandler(): void {
           await reply.subscription!.close();
         });
 
-        it.skipIf(!supportsReplicationFeed)('should omit the fingerprint for filter sets naming a core protocol directly', async () => {
+        it('should omit the fingerprint for filter sets naming a core protocol directly', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           // Core protocols contribute no tagged domains for themselves, so a
@@ -438,7 +432,7 @@ export function testMessagesSubscribeHandler(): void {
           await reply.subscription!.close();
         });
 
-        it.skipIf(!supportsReplicationFeed)('should return the live subscription without snapshot fields when the snapshot fails', async () => {
+        it('should return the live subscription without snapshot fields when the snapshot fails', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           // `fingerprint` is snapshot-only (`logBounds` also serves the
           // subscribe path itself), so it is the clean injection point.
@@ -478,7 +472,7 @@ export function testMessagesSubscribeHandler(): void {
           expect(delivered).toBe(deliveredAtClose);
         });
 
-        it.skipIf(!supportsReplicationFeed)('should omit the fingerprint but keep the head for filters outside fingerprint domains', async () => {
+        it('should omit the fingerprint but keep the head for filters outside fingerprint domains', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           const messagesSubscribe = await MessagesSubscribe.create({
