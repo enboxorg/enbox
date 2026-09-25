@@ -62,7 +62,13 @@ export type AdmitOutcome =
        */
       freshEntries: SyncFreshEntry[];
     }
-  | { kind: 'deferred'; rootCid: string; detail?: string }
+  | {
+      kind: 'deferred';
+      rootCid: string;
+      detail?: string;
+      missing?: DependencyRef[];
+      reason?: 'data' | 'dependency' | 'resolver-unavailable';
+    }
   | { kind: 'failed'; rootCid: string; reason: 'invalid' | 'terminal'; detail?: string };
 
 export type AdmitClosureDeps = {
@@ -81,6 +87,8 @@ export type AdmitClosureDeps = {
     root: SyncMessageEntry;
   }>;
   shouldContinue?: () => boolean;
+  /** Defer missing remote support instead of issuing point reads during page intake. */
+  remoteHydration?: 'allow' | 'defer';
 };
 
 type AdmissionPassResult =
@@ -199,6 +207,18 @@ class AdmitClosureContext {
 
     const dataStream = await replayableDataStream(entry);
     if (entryRequiresDataBeforeApply(entry) && dataStream === undefined) {
+      if (this.deps.remoteHydration === 'defer') {
+        return {
+          kind    : 'done',
+          outcome : {
+            kind    : 'deferred',
+            rootCid,
+            detail  : 'latest records write data is not present in the received page',
+            missing : recordDataDependency(entry),
+            reason  : 'data',
+          },
+        };
+      }
       const support = await this.fetchReplicationSupport(rootCid);
       if (support !== undefined) {
         return { kind: 'retry', entries: support };
@@ -265,6 +285,19 @@ class AdmitClosureContext {
       };
     }
 
+    if (this.deps.remoteHydration === 'defer') {
+      return {
+        kind    : 'done',
+        outcome : {
+          kind   : 'deferred',
+          rootCid,
+          detail : missingDependencyDetail(missing),
+          missing,
+          reason : 'dependency',
+        },
+      };
+    }
+
     const support = await this.fetchReplicationSupport(rootCid);
     if (support !== undefined) {
       return { kind: 'retry', entries: support };
@@ -288,6 +321,10 @@ class AdmitClosureContext {
     const existing = this.entriesByCid.get(rootCid);
     if (existing !== undefined) {
       return [existing];
+    }
+
+    if (this.deps.remoteHydration === 'defer') {
+      return [];
     }
 
     // A role source can only name messages returned by its exact authenticated
@@ -695,6 +732,26 @@ async function replayableDataStream(entry: SyncMessageEntry): Promise<ReadableSt
 
 function entryRequiresDataBeforeApply(entry: SyncMessageEntry): boolean {
   return entry.isLatestBaseState === true && recordsWriteRequiresData(entry.message);
+}
+
+function recordDataDependency(entry: SyncMessageEntry): DependencyRef[] | undefined {
+  if (
+    entry.message.descriptor.interface !== DwnInterfaceName.Records ||
+    entry.message.descriptor.method !== DwnMethodName.Write
+  ) {
+    return undefined;
+  }
+  const recordsWrite = entry.message as RecordsWriteMessage;
+  const { dataCid, protocol } = recordsWrite.descriptor;
+  if (dataCid === undefined) {
+    return undefined;
+  }
+  return [{
+    type     : 'RecordData',
+    dataCid,
+    recordId : recordsWrite.recordId,
+    ...(protocol === undefined ? {} : { protocol }),
+  }];
 }
 
 /**
