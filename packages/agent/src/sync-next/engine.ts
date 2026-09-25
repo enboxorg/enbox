@@ -24,21 +24,26 @@ import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sy
 
 import { AgentPermissionsApi } from '../permissions-api.js';
 import { buildLinkKey } from '../sync-link-key.js';
+import { FollowedSourceRoleAbsentError } from '../sync-role-replication-support.js';
 import { FollowedSyncSourceStoreLevel } from '../followed-sync-source-store-level.js';
 import { Level } from 'level';
 import { openSyncNextSubscriptions } from './subscriptions.js';
+import { RateLimitError } from '@enbox/dwn-clients';
+import { resolveSyncConnectivityState } from '../sync-connectivity-manager.js';
 import { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from '../sync-endpoint-store-level.js';
-import { SyncEngineLevel } from '../sync-engine-level.js';
 import { SyncIdentityStoreLevel } from '../sync-identity-store-level.js';
-import { SyncNextDeliveryRetry } from './delivery-retry.js';
+import { SyncNextCatalog } from './catalog.js';
+import { SyncNextEndpointGate } from './endpoint-gate.js';
 import { SyncNextLedgerStore } from './ledger-store.js';
 import { SyncNextLinkSession } from './link-session.js';
 import { SyncNextPullPage } from './pull-page.js';
 import { SyncNextPushPage } from './push-page.js';
 import { SyncNextQuarantineRetry } from './quarantine-retry.js';
 import { SyncTargetPlanner } from '../sync-target-planner.js';
-import { MAX_TIMER_DELAY_MS, parseDurationInMilliseconds } from '@enbox/common';
+import { followedSyncSourceActiveEqual, normalizeFollowedSyncSource } from '../followed-sync-source.js';
+import { isNonRetryableSyncAuthorizationFailure, syncErrorMessage } from '../sync-runtime-errors.js';
+import { MAX_TIMER_DELAY_MS, parseDurationInMilliseconds, runSerializedByKey } from '@enbox/common';
 import {
   messageFeedFiltersForSyncScope,
   normalizeSyncProtocols,
@@ -53,6 +58,12 @@ type LevelKey = string | Buffer | Uint8Array;
 export type SyncEngineNextParams = {
   dataPath?: string;
   db?: AbstractLevel<LevelKey>;
+};
+
+export type SyncEngineNextRebuildParams = {
+  direction: SyncDirection;
+  remoteEndpoint: string;
+  tenantDid: string;
 };
 
 type ActiveSession = {
@@ -75,6 +86,10 @@ type PendingSyncRun = {
   promise: Promise<void>;
 };
 
+type CatalogWake =
+  | { did: string; kind: 'identity' }
+  | { deleted: boolean; kind: 'followed-source'; source: FollowedSyncSource };
+
 function isSignalAborted(signal?: AbortSignal): boolean {
   return signal?.aborted === true;
 }
@@ -82,31 +97,39 @@ function isSignalAborted(signal?: AbortSignal): boolean {
 /** Temporary selectable façade for the isolated next-engine implementation. */
 export class SyncEngineNext implements SyncEngine {
   private _agent?: EnboxPlatformAgent;
-  private readonly _control: SyncEngineLevel;
+  private _catalog?: SyncNextCatalog;
+  private readonly _catalogChannel?: BroadcastChannel;
+  private _catalogClosed = false;
+  private _catalogWakeTail: Promise<void> = Promise.resolve();
   private readonly _db: AbstractLevel<LevelKey>;
   private readonly _echoSuppressor = new SyncEchoSuppressor();
+  private readonly _endpointGate = new SyncNextEndpointGate();
   private readonly _endpointStore: SyncEndpointStoreLevel;
   private readonly _eventListeners = new Set<SyncEventListener>();
   private readonly _identityStore: SyncIdentityStoreLevel;
   private readonly _ledger: SyncNextLedgerStore;
+  private readonly _lockNamespace: string;
   private _live = false;
+  private readonly _operations = new Map<string, Promise<void>>();
   private readonly _pausedIdentities = new Map<string, string>();
   private _permissionsApi?: AgentPermissionsApi;
   private readonly _planner: SyncTargetPlanner;
-  private _oneShotActive = false;
+  private _quarantineRetry?: SyncNextQuarantineRetry;
   private _pendingSyncRun?: PendingSyncRun;
   private _resolver?: SyncTargetResolver;
+  private _refreshLive?: Promise<void>;
+  private _refreshLivePending = false;
   private _runtimeGeneration = 0;
   private _runtimeTransitionDepth = 0;
+  private readonly _sessionCreations = new Map<string, Promise<ActiveSession>>();
   private readonly _sessions = new Map<string, ActiveSession>();
   private readonly _sourceStore: FollowedSyncSourceStoreLevel;
-  private _syncTail: Promise<unknown> = Promise.resolve();
+  private _subscriptionRetryTimer?: ReturnType<typeof setTimeout>;
   private _timer?: ReturnType<typeof setInterval>;
-  private _transition: Promise<void> = Promise.resolve();
 
   public constructor({ dataPath, db }: SyncEngineNextParams = {}) {
     this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
-    this._control = new SyncEngineLevel({ db: this._db });
+    this._lockNamespace = dataPath ?? 'default';
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
     this._ledger = new SyncNextLedgerStore(this._db, dataPath ?? 'default');
@@ -120,6 +143,13 @@ export class SyncEngineNext implements SyncEngine {
       sourceStore : this._sourceStore,
       warn        : (message, error): void => { console.warn(message, error); },
     });
+    if (dataPath !== undefined && typeof BroadcastChannel !== 'undefined') {
+      this._catalogChannel = new BroadcastChannel(`enbox:sync-catalog:${dataPath}`);
+      (this._catalogChannel as { unref?: () => void }).unref?.();
+      this._catalogChannel.onmessage = ({ data }: MessageEvent): void => {
+        this.scheduleCatalogWake(data);
+      };
+    }
   }
 
   public get agent(): EnboxPlatformAgent {
@@ -131,13 +161,26 @@ export class SyncEngineNext implements SyncEngine {
 
   public set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
-    this._control.agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
     this._resolver = new SyncTargetResolver({
       endpointStore        : this._endpointStore,
       getEndpointDiscovery : (): EnboxPlatformAgent['dwn'] => this.agent.dwn,
       permissionsApi       : this._permissionsApi,
     });
+    this._catalog = new SyncNextCatalog(
+      agent,
+      this._permissionsApi,
+      this._identityStore,
+      this._sourceStore,
+      this._resolver,
+      this._lockNamespace,
+    );
+    this._quarantineRetry = new SyncNextQuarantineRetry(
+      agent,
+      this._ledger,
+      (target): Promise<SyncTarget> => this.targetResolver.withCurrentRoleGrant(target),
+      (pullTarget, entries): void => this.emitApplied(pullTarget, entries),
+    );
   }
 
   public get connectivityState(): SyncConnectivityState {
@@ -158,11 +201,18 @@ export class SyncEngineNext implements SyncEngine {
     lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<void> {
     const normalized = SyncEngineNext.normalizeOptions(options);
-    await this._control.setIdentityOptions({ did, options: normalized }, lifecycleOptions);
-    this._pausedIdentities.delete(did);
-    this._planner.invalidate();
-    this.emit({ type: 'identity:registration-change', tenantDid: did, options: normalized });
-    await this.refreshLiveTargets();
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      await this.catalog.setIdentityOptions(
+        { did, options: normalized },
+        lifecycleOptions,
+        (): Promise<void> => this.disposeIdentitySessions(did),
+      );
+      this._pausedIdentities.delete(did);
+      this._planner.invalidate();
+      this.emit({ type: 'identity:registration-change', tenantDid: did, options: normalized });
+      this.publishCatalogWake({ did, kind: 'identity' });
+      await this.refreshLiveTargets(false, did);
+    });
   }
 
   public async ensureIdentityOptions(
@@ -170,30 +220,42 @@ export class SyncEngineNext implements SyncEngine {
     lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<boolean> {
     const normalized = SyncEngineNext.normalizeOptions(params.options);
-    const changed = await this._control.ensureIdentityOptions({
-      did     : params.did,
-      options : normalized,
-    }, lifecycleOptions);
-    if (!changed) {
-      return false;
-    }
-    this._pausedIdentities.delete(params.did);
-    this._planner.invalidate();
-    this.emit({ type: 'identity:registration-change', tenantDid: params.did, options: normalized });
-    await this.refreshLiveTargets();
-    return true;
+    let changed = false;
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      changed = await this.catalog.setIdentityOptions(
+        { did: params.did, options: normalized },
+        lifecycleOptions,
+        (): Promise<void> => this.disposeIdentitySessions(params.did),
+        true,
+      );
+      if (!changed) {
+        return;
+      }
+      this._pausedIdentities.delete(params.did);
+      this._planner.invalidate();
+      this.emit({ type: 'identity:registration-change', tenantDid: params.did, options: normalized });
+      this.publishCatalogWake({ did: params.did, kind: 'identity' });
+      await this.refreshLiveTargets(false, params.did);
+    });
+    return changed;
   }
 
   public async refreshIdentityRouting(
     did: string,
     lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<void> {
-    if (await this._identityStore.get(did) === undefined) {
-      return;
-    }
-    await this._control.refreshIdentityRouting(did, lifecycleOptions);
-    this._planner.invalidate();
-    await this.refreshLiveTargets();
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      const refreshed = await this.catalog.refreshIdentityRouting(
+        did,
+        lifecycleOptions,
+        (): Promise<void> => this.disposeIdentitySessions(did),
+      );
+      if (!refreshed) {
+        return;
+      }
+      this._planner.invalidate();
+      await this.refreshLiveTargets(false, did);
+    });
   }
 
   public async pauseIdentity(params: {
@@ -201,36 +263,63 @@ export class SyncEngineNext implements SyncEngine {
     delegateDid: string;
     connectSessionId: string;
   }): Promise<boolean> {
-    const paused = await this._control.pauseIdentity(params);
-    if (!paused) {
-      return false;
-    }
-    this._pausedIdentities.set(params.did, params.delegateDid);
-    for (const link of await this._ledger.getLinksForTenant(params.did)) {
-      if (link.delegateDid === params.delegateDid) {
-        await this._ledger.setLinkStatus(link, 'authorization-paused');
-        await this.disposeSession(link);
+    let paused = false;
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      paused = await this.catalog.pauseIdentity(params, async (): Promise<void> => {
+        this._pausedIdentities.set(params.did, params.delegateDid);
+        try {
+          await this.disposeIdentitySessions(params.did);
+          for (const link of await this._ledger.getAllLinks()) {
+            const belongsToIdentity = link.tenantDid === params.did ||
+              (link.authorization.kind === 'role' && link.authorization.actorDid === params.did);
+            if (belongsToIdentity && link.delegateDid === params.delegateDid) {
+              await this._ledger.setLinkStatus(link, 'authorization-paused');
+            }
+          }
+        } catch (error: unknown) {
+          this._pausedIdentities.delete(params.did);
+          throw error;
+        }
+      });
+      if (!paused) {
+        return;
       }
-    }
-    this._planner.invalidate();
-    return true;
+      this._planner.invalidate();
+      await this.refreshLiveTargets(false, params.did);
+    });
+    return paused;
   }
 
   public async removeIdentity(
     did: string,
     lifecycleOptions: SyncLifecycleOptions = {},
   ): Promise<void> {
-    await this._control.removeIdentity(did, lifecycleOptions);
-    this._pausedIdentities.delete(did);
-    for (const [key, active] of this._sessions) {
-      if (active.target.did === did) {
-        await active.session.dispose();
-        this._sessions.delete(key);
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      const removed = await this.catalog.removeIdentity(did, lifecycleOptions, async (): Promise<void> => {
+        const active = [...this._sessions.values()]
+          .filter(({ target }) => SyncEngineNext.targetBelongsToIdentity(target, did));
+        const failed = (await this.settleCovers(active, 'push'))
+          .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+        if (failed.length > 0) {
+          throw new AggregateError(failed.map(({ reason }) => reason), 'SyncEngineNext: identity push did not drain.');
+        }
+        await this.disposeIdentitySessions(did);
+        await this._ledger.deleteForTenant(did);
+        for (const link of await this._ledger.getAllLinks()) {
+          if (link.authorization.kind === 'role' && link.authorization.actorDid === did) {
+            await this._ledger.retireLink(link);
+          }
+        }
+      });
+      if (!removed) {
+        return;
       }
-    }
-    await this._ledger.deleteForTenant(did);
-    this._planner.invalidate();
-    this.emit({ type: 'identity:registration-change', tenantDid: did });
+      this._pausedIdentities.delete(did);
+      this._planner.invalidate();
+      this.emit({ type: 'identity:registration-change', tenantDid: did });
+      this.publishCatalogWake({ did, kind: 'identity' });
+      await this.refreshLiveTargets();
+    });
   }
 
   public getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
@@ -238,9 +327,21 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async followSource(source: FollowedSyncSourceInput): Promise<FollowedSyncSource> {
-    const followed = await this._control.followSource(source);
-    this._planner.invalidate();
-    await this.refreshLiveTargets();
+    let followed!: FollowedSyncSource;
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      const result = await this.catalog.followSource(
+        source,
+        (accepted): Promise<void> => this.disposeFollowedContextSessions(accepted),
+      );
+      followed = result.source;
+      if (!result.changed) {
+        return;
+      }
+      this._planner.invalidate();
+      this.emitFollowedSourceChange(followed, followed.id);
+      this.publishCatalogWake({ deleted: false, kind: 'followed-source', source: followed });
+      await this.refreshLiveTargets(false, source.actorDid);
+    });
     return followed;
   }
 
@@ -248,34 +349,45 @@ export class SyncEngineNext implements SyncEngine {
     return this._sourceStore.get(id);
   }
 
-  public async listFollowedSources(): Promise<FollowedSyncSource[]> {
-    return (await this._sourceStore.list()).flatMap(entry => entry.status === 'valid' ? [entry.source] : []);
+  public listFollowedSources(): Promise<FollowedSyncSource[]> {
+    return this.catalog.listFollowedSources();
   }
 
   public async deleteFollowedSource(source: FollowedSyncSource): Promise<void> {
-    const identity = await this._identityStore.get(source.actorDid);
-    const target = await this.targetResolver.buildTargetForSource(source, identity?.delegateDid);
-    await this.disposeSession(target);
-    await this._ledger.deleteLinkAndSparse({
-      authorizationEpoch : target.authorizationEpoch,
-      projectionId       : target.projectionId,
-      remoteEndpoint     : target.dwnUrl,
-      tenantDid          : target.did,
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      const removed = await this.catalog.deleteFollowedSource(source, async (current): Promise<void> => {
+        const identity = await this._identityStore.get(current.actorDid);
+        const target = SyncEngineNext.normalizeTarget(
+          await this.targetResolver.buildTargetForSource(current, identity?.delegateDid),
+        );
+        await this.disposeSession(target);
+        await this._ledger.deleteLinkAndSparse({
+          authorizationEpoch : target.authorizationEpoch,
+          projectionId       : target.projectionId,
+          remoteEndpoint     : target.dwnUrl,
+          tenantDid          : target.did,
+        });
+      });
+      if (removed === undefined) {
+        return;
+      }
+      this._planner.invalidate();
+      this.emitFollowedSourceChange(removed, undefined);
+      this.publishCatalogWake({ deleted: true, kind: 'followed-source', source: removed });
+      await this.refreshLiveTargets(false, source.actorDid);
     });
-    await this._sourceStore.delete(source.id);
-    this._planner.invalidate();
-    await this.refreshLiveTargets();
   }
 
   public async markFollowedSourcePullPending(source: FollowedSyncSource): Promise<boolean> {
-    const current = await this._sourceStore.get(source.id);
-    if (current?.acceptanceId !== source.acceptanceId) {
+    const expected = normalizeFollowedSyncSource(source);
+    const current = await this._sourceStore.get(expected.id);
+    if (current === undefined || !followedSyncSourceActiveEqual(current, expected)) {
       return false;
     }
     for (const active of this._sessions.values()) {
       if (
         active.target.authorization.kind === 'role' &&
-        active.target.authorization.roleRecordId === source.id
+        active.target.authorization.roleRecordId === expected.id
       ) {
         active.session.requestPull();
       }
@@ -284,17 +396,43 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async pullFollowedSource(source: FollowedSyncSource): Promise<boolean> {
-    const identity = await this._identityStore.get(source.actorDid);
+    const expected = normalizeFollowedSyncSource(source);
+    try {
+      return await this.runExclusive((): Promise<boolean> =>
+        this.runFollowedSourcePull(expected, this._runtimeGeneration)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private async runFollowedSourcePull(
+    source: FollowedSyncSource,
+    runtimeGeneration: number,
+  ): Promise<boolean> {
+    const [accepted, identity] = await Promise.all([
+      this._sourceStore.get(source.id),
+      this._identityStore.get(source.actorDid),
+    ]);
+    if (accepted === undefined || !followedSyncSourceActiveEqual(accepted, source)) {
+      return false;
+    }
     if (identity === undefined) {
       return false;
     }
     const target = await this.targetResolver.buildTargetForSource(source, identity.delegateDid);
     const active = await this.ensureSession(target);
     try {
-      await active.session.cover('pull');
-      return true;
-    } catch {
-      return false;
+      await active.session.cover('pull', (): boolean => runtimeGeneration === this._runtimeGeneration);
+      const [current, currentIdentity] = await Promise.all([
+        this._sourceStore.get(source.id),
+        this._identityStore.get(source.actorDid),
+      ]);
+      return runtimeGeneration === this._runtimeGeneration &&
+        current !== undefined &&
+        followedSyncSourceActiveEqual(current, source) &&
+        currentIdentity !== undefined &&
+        currentIdentity.delegateDid === identity.delegateDid;
     } finally {
       if (!this._live) {
         await this.disposeSession(target);
@@ -306,10 +444,10 @@ export class SyncEngineNext implements SyncEngine {
     if (this._runtimeTransitionDepth > 0) {
       return Promise.reject(new Error('SyncEngineNext: sync run cancelled by a runtime transition.'));
     }
-    if (this._oneShotActive || this._pendingSyncRun !== undefined) {
+    if (this.hasExclusiveWork || this._pendingSyncRun !== undefined) {
       return this.joinPendingSyncRun(direction, options);
     }
-    return this.runOneShot((): Promise<void> => this.runCoveringSync(direction, options));
+    return this.runExclusive((): Promise<void> => this.runCoveringSync(direction, options));
   }
 
   public async drainTo(endpoint: string, options: SyncDrainOptions = {}): Promise<SyncDrainResult> {
@@ -327,10 +465,10 @@ export class SyncEngineNext implements SyncEngine {
     if (this._runtimeTransitionDepth > 0) {
       throw new Error('SyncEngineNext: drain cancelled by a runtime transition.');
     }
-    if (this._oneShotActive || this._pendingSyncRun !== undefined) {
+    if (this.hasExclusiveWork || this._pendingSyncRun !== undefined) {
       throw new Error('SyncEngineNext: Sync operation is already in progress.');
     }
-    return this.runOneShot((): Promise<SyncDrainResult> => this.runDrain(normalizedEndpoint, options));
+    return this.runExclusive((): Promise<SyncDrainResult> => this.runDrain(normalizedEndpoint, options));
   }
 
   public async startSync(params: StartSyncParams = {}): Promise<void> {
@@ -342,11 +480,13 @@ export class SyncEngineNext implements SyncEngine {
       await this.stopRuntime();
       this._live = true;
       try {
-        await this.refreshLiveTargets(true);
+        const initial = this.refreshLiveTargets(true).finally((): void => {
+          this.finishLiveRefresh(initial);
+        });
+        this._refreshLive = initial;
+        await initial;
         this._timer = setInterval((): void => {
-          for (const { session } of this._sessions.values()) {
-            session.start();
-          }
+          this.scheduleLiveRefresh();
         }, interval);
       } catch (error: unknown) {
         await this.stopRuntime();
@@ -375,21 +515,15 @@ export class SyncEngineNext implements SyncEngine {
 
   public async close(options: SyncLifecycleOptions = {}): Promise<void> {
     await this.stopSync(options.timeout ?? 2_000);
-    await this._control.close();
+    this._catalogClosed = true;
+    this._catalogChannel?.close();
+    await this._catalogWakeTail;
+    await this._db.close();
   }
 
   public async getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]> {
-    return (await this._ledger.getAllTerminal())
-      .filter(entry => tenantDid === undefined || entry.tenantDid === tenantDid)
-      .map(entry => ({
-        errorCode      : entry.code,
-        errorDetail    : entry.detail ?? entry.code,
-        failedAt       : entry.failedAt,
-        messageCid     : entry.messageCid,
-        remoteEndpoint : entry.remoteEndpoint,
-        tenantDid      : entry.tenantDid,
-      }))
-      .sort((a, b) => b.failedAt.localeCompare(a.failedAt));
+    void tenantDid;
+    return [];
   }
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
@@ -397,31 +531,50 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   public async getIdentitySyncStatus(tenantDid: string): Promise<SyncIdentityStatus> {
-    const [delivery, health, links, registration, terminal] = await Promise.all([
-      this._ledger.getAllDelivery(),
-      this.readHealth(tenantDid),
-      this.getReplicationLinks(tenantDid),
+    const [delivery, durableLinks, quarantine, registration] = await Promise.all([
+      this._ledger.getDeliveryForTenant(tenantDid),
+      this._ledger.getLinksForTenant(tenantDid),
+      this._ledger.getQuarantineForTenant(tenantDid),
       this.getIdentityOptions(tenantDid),
-      this._ledger.getAllTerminal(),
     ]);
-    const remotes = [...new Set(links.map(link => link.remoteEndpoint))].map(remoteEndpoint => {
+    const links = this.linkSnapshots(durableLinks);
+    const degradedKeys = new Set([
+      ...durableLinks.filter(link => link.status === 'authorization-paused').map(SyncEngineNext.healthKey),
+      ...delivery.map(SyncEngineNext.healthKey),
+      ...quarantine.map(SyncEngineNext.healthKey),
+    ]);
+    const quotaBlockedMessageCount = delivery.filter(entry => entry.outcome.reason === 'quota').length;
+    const connectivity = resolveSyncConnectivityState(links.map(link => link.connectivity), this.connectivityState);
+    const health: SyncHealthSummary = {
+      connectivity,
+      degradedLinkCount  : degradedKeys.size,
+      failedMessageCount : 0,
+      quotaBlockedMessageCount,
+      syncHealthy        : degradedKeys.size === 0,
+    };
+    const endpoints = new Set([
+      ...links.map(link => link.remoteEndpoint),
+      ...delivery.map(entry => entry.remoteEndpoint),
+      ...quarantine.map(entry => entry.remoteEndpoint),
+    ]);
+    const remotes = [...endpoints].map(remoteEndpoint => {
       const remoteLinks = links.filter(link => link.remoteEndpoint === remoteEndpoint);
-      const failedMessageCount = terminal.filter(entry =>
-        entry.tenantDid === tenantDid && entry.remoteEndpoint === remoteEndpoint
-      ).length;
+      const failedMessageCount = 0;
       const quotaBlockedMessageCount = delivery.filter(entry =>
         entry.tenantDid === tenantDid &&
         entry.remoteEndpoint === remoteEndpoint &&
         entry.outcome.reason === 'quota'
       ).length;
-      const connectivity = remoteLinks.find(link => link.connectivity === 'online')?.connectivity ?? 'unknown';
-      const degraded = failedMessageCount > 0 || remoteLinks.some(link => link.status === 'paused');
+      const remoteConnectivity = resolveSyncConnectivityState(remoteLinks.map(link => link.connectivity));
+      const pending = delivery.some(entry => entry.remoteEndpoint === remoteEndpoint) ||
+        quarantine.some(entry => entry.remoteEndpoint === remoteEndpoint);
+      const degraded = failedMessageCount > 0 || pending || remoteLinks.some(link => link.status === 'paused');
       return {
-        connectivity,
+        connectivity : remoteConnectivity,
         failedMessageCount,
         quotaBlockedMessageCount,
         remoteEndpoint,
-        state: connectivity === 'offline'
+        state        : remoteConnectivity === 'offline'
           ? 'offline' as const
           : quotaBlockedMessageCount > 0
             ? 'quota-blocked' as const
@@ -429,10 +582,16 @@ export class SyncEngineNext implements SyncEngine {
         tenantDid,
       };
     });
+    const lastActivityAt = links.reduce<string | undefined>((latest, link) =>
+      link.lastActivityAt !== undefined && (latest === undefined || link.lastActivityAt > latest)
+        ? link.lastActivityAt
+        : latest
+    , undefined);
     return {
-      connectivity : links.some(link => link.connectivity === 'online') ? 'online' : this.connectivityState,
-      currentness  : projectReplicationCurrentness(links),
+      connectivity,
+      currentness: projectReplicationCurrentness(links),
       health,
+      lastActivityAt,
       links,
       registration,
       remotes,
@@ -443,6 +602,10 @@ export class SyncEngineNext implements SyncEngine {
     const links = tenantDid === undefined
       ? await this._ledger.getAllLinks()
       : await this._ledger.getLinksForTenant(tenantDid);
+    return this.linkSnapshots(links);
+  }
+
+  private linkSnapshots(links: Awaited<ReturnType<SyncNextLedgerStore['getAllLinks']>>): ReplicationLinkSnapshot[] {
     return links.map(link => {
       const active = this._sessions.get(buildLinkKey(
         link.tenantDid,
@@ -460,20 +623,112 @@ export class SyncEngineNext implements SyncEngine {
         pushPosition     : link.pushHandledThrough?.position,
         remoteEndpoint   : link.remoteEndpoint,
         scope            : link.scope,
-        status           : link.status === 'authorization-paused' ? 'paused' : active === undefined ? 'initializing' : 'live',
-        tenantDid        : link.tenantDid,
+        status           : link.status === 'authorization-paused'
+          ? 'paused'
+          : active?.subscribed === true ? 'live' : 'initializing',
+        tenantDid: link.tenantDid,
       };
     });
   }
 
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
+    if (this._runtimeTransitionDepth > 0) {
+      throw new Error('SyncEngineNext: retry cancelled by a runtime transition.');
+    }
+    const runtimeGeneration = this._runtimeGeneration;
+    await this.runExclusive(async (): Promise<void> => {
+      if (runtimeGeneration !== this._runtimeGeneration) {
+        throw new Error('SyncEngineNext: queued retry was cancelled by a runtime transition.');
+      }
+      await this.runRetryRemoteNow(tenantDid, remoteEndpoint);
+    });
+  }
+
+  /**
+   * Explicit disaster recovery for current links at one remote.
+   *
+   * Pull rebuild first resets every current source for a logical target, then
+   * purges its unreadable quarantine so a crash can only cause a conservative
+   * rescan. Ordinary retry paths never call this destructive operation.
+   */
+  public async rebuildRemoteDirection({
+    direction,
+    remoteEndpoint,
+    tenantDid,
+  }: SyncEngineNextRebuildParams): Promise<void> {
+    if (this._runtimeTransitionDepth > 0) {
+      throw new Error('SyncEngineNext: rebuild cancelled by a runtime transition.');
+    }
+    const endpoint = normalizeDwnEndpoint(remoteEndpoint);
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      const planned = (await this._planner.getTargets()).map(SyncEngineNext.normalizeTarget);
+      const targets = planned.filter(target =>
+        target.did === tenantDid &&
+        normalizeDwnEndpoint(target.dwnUrl) === endpoint &&
+        (direction === 'pull' || target.authorization.kind !== 'role')
+      );
+      if (!this._planner.lastResolutionComplete) {
+        throw new Error('SyncEngineNext: cannot rebuild while sync target resolution is incomplete.');
+      }
+      if (targets.length === 0) {
+        throw new Error('SyncEngineNext: cannot rebuild without a current authorized source link.');
+      }
+
+      const logicalTargetIds = new Set(targets.map(target => `${target.did}^${target.projectionId}`));
+      const resetTargets = direction === 'pull'
+        ? planned.filter(target => logicalTargetIds.has(`${target.did}^${target.projectionId}`))
+        : targets;
+      await Promise.all(resetTargets.map(target => this.ensureSession(target)));
+      await Promise.all(resetTargets.map(target => this.disposeSession(target)));
+      const links = (await Promise.all(resetTargets.map(target => this._ledger.getLink({
+        authorizationEpoch : target.authorizationEpoch,
+        projectionId       : target.projectionId,
+        remoteEndpoint     : target.dwnUrl,
+        tenantDid          : target.did,
+      })))).filter(link => link !== undefined);
+      if (links.length === 0) {
+        throw new Error('SyncEngineNext: cannot rebuild a link that has no durable checkpoint.');
+      }
+
+      for (const link of links) {
+        await this._ledger.rebuildDirection(link, direction);
+      }
+      if (direction === 'pull') {
+        for (const logicalTargetId of logicalTargetIds) {
+          await this._ledger.purgeQuarantineForLogicalTarget(logicalTargetId);
+        }
+      }
+
+      try {
+        const active = await Promise.all(targets.map(target => this.ensureSession(target)));
+        const outcomes = await this.settleCovers(active, direction);
+        const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult =>
+          outcome.status === 'rejected'
+        );
+        if (failures.length > 0) {
+          throw new AggregateError(failures.map(({ reason }) => reason), 'SyncEngineNext: rebuild sync failed.');
+        }
+      } finally {
+        if (this._live) {
+          await this.refreshLiveTargets(false, tenantDid);
+        } else {
+          await Promise.allSettled(targets.map(target => this.disposeSession(target)));
+        }
+      }
+    });
+  }
+
+  private async runRetryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
     const normalizedEndpoint = normalizeDwnEndpoint(remoteEndpoint);
-    const targets = (await this._planner.getTargets()).filter(target =>
+    const targets = (await this._planner.getTargets()).map(SyncEngineNext.normalizeTarget).filter(target =>
       target.did === tenantDid && normalizeDwnEndpoint(target.dwnUrl) === normalizedEndpoint
     );
     const outcomes: PromiseSettledResult<void>[] = [];
     try {
       const active = await Promise.all(targets.map(target => this.ensureSession(target)));
+      for (const { session } of active) {
+        session.clearRetryBackoff();
+      }
       outcomes.push(
         ...await this.settleCovers(active, 'pull'),
         ...await this.settleCovers(active, 'push'),
@@ -496,12 +751,26 @@ export class SyncEngineNext implements SyncEngine {
     return this._resolver;
   }
 
+  private get catalog(): SyncNextCatalog {
+    if (this._catalog === undefined) {
+      throw new Error('SyncEngineNext: agent is not set.');
+    }
+    return this._catalog;
+  }
+
+  private get quarantineRetry(): SyncNextQuarantineRetry {
+    if (this._quarantineRetry === undefined) {
+      throw new Error('SyncEngineNext: agent is not set.');
+    }
+    return this._quarantineRetry;
+  }
+
   private async runDrain(endpoint: string, options: SyncDrainOptions): Promise<SyncDrainResult> {
     const runtimeGeneration = this._runtimeGeneration;
     await this._endpointStore.set(endpoint);
     this._planner.invalidate();
     const topologyGeneration = this._planner.topologyGeneration;
-    const planned = (await this._planner.getTargets()).filter(target =>
+    const planned = (await this._planner.getTargets()).map(SyncEngineNext.normalizeTarget).filter(target =>
       normalizeDwnEndpoint(target.dwnUrl) === endpoint
     );
     const planComplete = this._planner.lastResolutionComplete;
@@ -511,26 +780,9 @@ export class SyncEngineNext implements SyncEngine {
       const shouldContinue = (): boolean => !isSignalAborted(options.signal) &&
         runtimeGeneration === this._runtimeGeneration &&
         topologyGeneration === this._planner.topologyGeneration;
-      const pullOutcomes = await this.settleCovers(active, 'pull', shouldContinue);
-      const stopAfterPull = isSignalAborted(options.signal) ||
-        topologyGeneration !== this._planner.topologyGeneration;
-      const pushOutcomes = stopAfterPull
-        ? SyncEngineNext.rejectedOutcomes(
-          active.length,
-          options.signal?.reason ?? new Error('SyncEngineNext: drain topology changed.'),
-        )
-        : await this.settleCovers(active, 'push', shouldContinue);
-      const targetOutcomes = await this.settleByEndpoint(
-        planned.map((target, index) => ({ index, target })),
-        ({ index, target }): Promise<SyncDrainTargetResult> => this.drainTarget(
-          target,
-          pullOutcomes[index],
-          pushOutcomes[index],
-          runtimeGeneration,
-          topologyGeneration,
-          options,
-        ),
-      );
+      const targetOutcomes = await Promise.allSettled(active.map(({ session, target }) =>
+        this.drainTarget(target, session, shouldContinue, options)
+      ));
       const targets = targetOutcomes.map((outcome, index): SyncDrainTargetResult => outcome.status === 'fulfilled'
         ? outcome.value
         : {
@@ -579,12 +831,33 @@ export class SyncEngineNext implements SyncEngine {
 
   private async drainTarget(
     target: SyncTarget,
-    pullOutcome: PromiseSettledResult<void>,
-    pushOutcome: PromiseSettledResult<void>,
-    runtimeGeneration: number,
-    topologyGeneration: number,
+    session: SyncNextLinkSession,
+    shouldContinue: () => boolean,
     options: SyncDrainOptions,
   ): Promise<SyncDrainTargetResult> {
+    let convergence: {
+      converged: boolean;
+      error?: string;
+      localFingerprint?: string;
+      remoteFingerprint?: string;
+    };
+    const transfers = await Promise.allSettled([
+      session.cover('pull', shouldContinue),
+      session.cover('push', shouldContinue),
+    ]);
+    const transferError = transfers
+      .find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')?.reason;
+    try {
+      if (transferError !== undefined) {
+        throw transferError;
+      }
+      if (!shouldContinue()) {
+        throw options.signal?.reason ?? new DOMException('Drain cancelled.', 'AbortError');
+      }
+      convergence = await this.verifyStableConvergenceAtEndpoint(target, shouldContinue);
+    } catch (error: unknown) {
+      convergence = { converged: false, error: error instanceof Error ? error.message : String(error) };
+    }
     const link = await this._ledger.getLink({
       authorizationEpoch : target.authorizationEpoch,
       projectionId       : target.projectionId,
@@ -602,50 +875,15 @@ export class SyncEngineNext implements SyncEngine {
         tenantDid      : target.did,
       };
     }
-
-    let convergence: {
-      converged: boolean;
-      error?: string;
-      localFingerprint?: string;
-      remoteFingerprint?: string;
-    };
-    const transferError = [pullOutcome, pushOutcome]
-      .find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')?.reason;
-    try {
-      if (transferError !== undefined) {
-        throw transferError;
-      }
-      if (isSignalAborted(options.signal)) {
-        throw options.signal?.reason ?? new DOMException('Drain cancelled.', 'AbortError');
-      }
-      if (runtimeGeneration !== this._runtimeGeneration) {
-        throw new Error('SyncEngineNext: sync runtime changed during drain.');
-      }
-      if (topologyGeneration !== this._planner.topologyGeneration) {
-        throw new Error('SyncEngineNext: drain topology changed.');
-      }
-      convergence = await this.verifyStableConvergence(
-        target,
-        (): boolean => !isSignalAborted(options.signal) &&
-          runtimeGeneration === this._runtimeGeneration &&
-          topologyGeneration === this._planner.topologyGeneration,
-      );
-    } catch (error: unknown) {
-      convergence = { converged: false, error: error instanceof Error ? error.message : String(error) };
-    }
     const [delivery, quarantine] = await Promise.all([
       this._ledger.getDeliveryForLink(link),
       this._ledger.getQuarantineForLink(link),
     ]);
     const cancelled = isSignalAborted(options.signal);
-    const runtimeChanged = runtimeGeneration !== this._runtimeGeneration;
-    const topologyChanged = topologyGeneration !== this._planner.topologyGeneration;
     const completed = convergence.converged &&
       delivery.length === 0 &&
       quarantine.length === 0 &&
-      !cancelled &&
-      !runtimeChanged &&
-      !topologyChanged;
+      shouldContinue();
     return {
       cancelled,
       completed,
@@ -658,19 +896,6 @@ export class SyncEngineNext implements SyncEngine {
       scope             : link.scope,
       tenantDid         : link.tenantDid,
     };
-  }
-
-  private runOneShot<T>(operation: () => Promise<T>): Promise<T> {
-    this._oneShotActive = true;
-    const active = (async (): Promise<T> => {
-      try {
-        return await operation();
-      } finally {
-        this._oneShotActive = false;
-      }
-    })();
-    this._syncTail = active.catch((): void => {});
-    return active;
   }
 
   private joinPendingSyncRun(direction: SyncDirection | undefined, options: SyncRunOptions): Promise<void> {
@@ -687,23 +912,22 @@ export class SyncEngineNext implements SyncEngine {
       verifyConvergence : options.verifyConvergence === true,
     };
     const pending: PendingSyncRun = { cancelled: false, merged, promise: Promise.resolve() };
-    pending.promise = this._syncTail.then(async (): Promise<void> => {
+    pending.promise = this.runExclusive(async (): Promise<void> => {
       if (this._pendingSyncRun === pending) {
         this._pendingSyncRun = undefined;
       }
       if (pending.cancelled) {
         throw new Error('SyncEngineNext: queued sync run was cancelled by a runtime transition.');
       }
-      await this.runOneShot((): Promise<void> => this.runCoveringSync(
+      await this.runCoveringSync(
         merged.directionConflict ? undefined : merged.direction,
         {
           ...(merged.unscoped || merged.did === undefined ? {} : { did: merged.did }),
           ...(merged.verifyConvergence ? { verifyConvergence: true } : {}),
         },
-      ));
+      );
     });
     this._pendingSyncRun = pending;
-    this._syncTail = pending.promise.catch((): void => {});
     return pending.promise;
   }
 
@@ -728,7 +952,7 @@ export class SyncEngineNext implements SyncEngine {
     if (options.did !== undefined && await this._identityStore.get(options.did) === undefined) {
       throw new Error(`SyncEngineNext: identity '${options.did}' is not registered.`);
     }
-    const allTargets = await this._planner.getTargets();
+    const allTargets = (await this._planner.getTargets()).map(SyncEngineNext.normalizeTarget);
     const shouldContinue = (): boolean => runtimeGeneration === this._runtimeGeneration;
     if (!shouldContinue()) {
       throw new Error('SyncEngineNext: sync run cancelled by a runtime transition.');
@@ -748,18 +972,15 @@ export class SyncEngineNext implements SyncEngine {
         : await this.settleCovers(sessions, direction, shouldContinue));
       const transferFailed = outcomes.some(outcome => outcome.status === 'rejected');
       if (options.verifyConvergence === true && !transferFailed) {
-        outcomes.push(...await this.settleByEndpoint(
-          targets.map(target => ({ target })),
-          async ({ target }): Promise<void> => {
-            if (!shouldContinue()) {
-              throw new Error('SyncEngineNext: convergence proof cancelled by a runtime transition.');
-            }
-            const convergence = await this.verifyStableConvergence(target, shouldContinue);
-            if (!convergence.converged) {
-              throw new Error(convergence.error ?? 'SyncEngineNext: feed fingerprints did not converge.');
-            }
-          },
-        ));
+        outcomes.push(...await Promise.allSettled(targets.map(async (target): Promise<void> => {
+          if (!shouldContinue()) {
+            throw new Error('SyncEngineNext: convergence proof cancelled by a runtime transition.');
+          }
+          const convergence = await this.verifyStableConvergenceAtEndpoint(target, shouldContinue);
+          if (!convergence.converged) {
+            throw new Error(convergence.error ?? 'SyncEngineNext: feed fingerprints did not converge.');
+          }
+        })));
       }
     } finally {
       if (!this._live) {
@@ -772,20 +993,41 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
-  private async refreshLiveTargets(initialCover = false): Promise<void> {
+  private async refreshLiveTargets(initialCover = false, wakeDid?: string): Promise<void> {
     if (!this._live) {
       return;
     }
-    const targets = await this._planner.getTargets();
+    const targets = (await this._planner.getTargets()).map(SyncEngineNext.normalizeTarget);
     await this.pruneSupersededLinks(targets);
     const active = await Promise.all(targets.map(target => this.ensureSession(target)));
     await Promise.allSettled(active.map(async (item): Promise<void> => {
       if (!item.subscribed) {
         try {
-          await openSyncNextSubscriptions(this.agent, this.targetResolver, item.target, item.session);
+          await this._endpointGate.run(
+            item.target.dwnUrl,
+            (): Promise<void> => openSyncNextSubscriptions(
+              this.agent,
+              this.targetResolver,
+              item.target,
+              item.session,
+              (error): void => { this.handleSubscriptionTerminal(item, error); },
+            ),
+          );
           item.subscribed = true;
+          this._endpointGate.clear(item.target.dwnUrl);
+          this.emit({
+            type           : 'link:status-change',
+            tenantDid      : item.target.did,
+            remoteEndpoint : item.target.dwnUrl,
+            ...syncEventScope(item.target.scope),
+            from           : 'initializing',
+            to             : 'live',
+          });
         } catch (error: unknown) {
-          console.error('SyncEngineNext: subscription establishment failed', error);
+          if (!this.recoverRoleAuthorization(item.target, error)) {
+            this.scheduleSubscriptionRetry(error);
+            console.error('SyncEngineNext: subscription establishment failed', error);
+          }
         }
       }
     }));
@@ -793,18 +1035,58 @@ export class SyncEngineNext implements SyncEngine {
       await this.settleCovers(active, 'pull');
       await this.settleCovers(active, 'push');
     }
-    for (const { session } of active) {
-      session.start();
+    for (const { session, target } of active) {
+      if (wakeDid === undefined || SyncEngineNext.targetBelongsToIdentity(target, wakeDid)) {
+        session.start(!initialCover);
+      }
     }
   }
 
   private async ensureSession(target: SyncTarget): Promise<ActiveSession> {
+    target = SyncEngineNext.normalizeTarget(target);
     const key = SyncEngineNext.targetKey(target);
     const existing = this._sessions.get(key);
     if (existing !== undefined) {
       return existing;
     }
-    await this._ledger.getOrCreateLink({
+    const pending = this._sessionCreations.get(key);
+    if (pending !== undefined) {
+      return pending;
+    }
+    const creation = this.createSession(target, key).finally((): void => {
+      if (this._sessionCreations.get(key) === creation) {
+        this._sessionCreations.delete(key);
+      }
+    });
+    this._sessionCreations.set(key, creation);
+    return creation;
+  }
+
+  private handleSubscriptionTerminal(item: ActiveSession, error: unknown): void {
+    if (this._sessions.get(SyncEngineNext.targetKey(item.target)) !== item) {
+      return;
+    }
+    const wasSubscribed = item.subscribed;
+    item.subscribed = false;
+    item.session.noteRemoteDisconnected();
+    if (wasSubscribed) {
+      this.emit({
+        type           : 'link:status-change',
+        tenantDid      : item.target.did,
+        remoteEndpoint : item.target.dwnUrl,
+        ...syncEventScope(item.target.scope),
+        from           : 'live',
+        to             : 'initializing',
+      });
+    }
+    if (!this.recoverRoleAuthorization(item.target, error)) {
+      console.warn('SyncEngineNext: subscription ended; scheduled refresh will retry it', error);
+      this.scheduleSubscriptionRetry(error);
+    }
+  }
+
+  private async createSession(target: SyncTarget, key: string): Promise<ActiveSession> {
+    const link = await this._ledger.getOrCreateLink({
       authorization      : target.authorization,
       authorizationEpoch : target.authorizationEpoch,
       delegateDid        : target.delegateDid,
@@ -814,6 +1096,9 @@ export class SyncEngineNext implements SyncEngine {
       scope              : target.scope,
       tenantDid          : target.did,
     });
+    if (link.status === 'authorization-paused') {
+      await this._ledger.setLinkStatus(link, 'active');
+    }
     const pullPage = new SyncNextPullPage(this.agent, this._ledger, this._echoSuppressor, {
       onApplied    : (pullTarget, entries): void => this.emitApplied(pullTarget, entries),
       onCheckpoint : (pullTarget, token): void => {
@@ -826,7 +1111,7 @@ export class SyncEngineNext implements SyncEngine {
           ...(token.messageCid === undefined ? {} : { messageCid: token.messageCid }),
         });
       },
-    });
+    }, (pullTarget): Promise<SyncTarget> => this.targetResolver.withCurrentRoleGrant(pullTarget));
     const pushPage = new SyncNextPushPage(this.agent, this._ledger, this._echoSuppressor, {
       onCheckpoint: (pushTarget, token): void => {
         this.emit({
@@ -845,13 +1130,39 @@ export class SyncEngineNext implements SyncEngine {
         this._ledger,
         pullPage,
         pushPage,
-        new SyncNextQuarantineRetry(
-          this.agent,
-          this._ledger,
-          (pullTarget, entries): void => this.emitApplied(pullTarget, entries),
-        ),
-        new SyncNextDeliveryRetry(this.agent, this._ledger),
-        (error): void => { console.error('SyncEngineNext: link work failed', error); },
+        this.quarantineRetry,
+        (error): void => {
+          if (!this.recoverRoleAuthorization(target, error)) {
+            console.error('SyncEngineNext: link work failed', error);
+          }
+        },
+        {
+          block : (delayMs): void => { this._endpointGate.block(target.dwnUrl, delayMs); },
+          clear : (): void => { this._endpointGate.clear(target.dwnUrl); },
+          run   : operation => this._endpointGate.run(target.dwnUrl, operation),
+        },
+        {
+          onConnectivityChange: (from, to): void => {
+            this.emit({
+              type           : 'link:connectivity-change',
+              tenantDid      : target.did,
+              remoteEndpoint : target.dwnUrl,
+              ...syncEventScope(target.scope),
+              from           : from ? 'online' : 'offline',
+              to             : to ? 'online' : 'offline',
+            });
+          },
+          onPullCurrentnessChange: (from, to): void => {
+            this.emit({
+              type           : 'pull:currentness-change',
+              tenantDid      : target.did,
+              remoteEndpoint : target.dwnUrl,
+              ...syncEventScope(target.scope),
+              from,
+              to,
+            });
+          },
+        },
       ),
       subscribed: false,
       target,
@@ -928,37 +1239,25 @@ export class SyncEngineNext implements SyncEngine {
     direction: SyncDirection,
     shouldContinue: () => boolean = (): boolean => true,
   ): Promise<PromiseSettledResult<void>[]> {
-    return this.settleByEndpoint(active, ({ session }) => {
+    return Promise.allSettled(active.map(({ session }) => {
       if (!shouldContinue()) {
         return Promise.reject(new Error('SyncEngineNext: covering work was interrupted.'));
       }
       return session.cover(direction, shouldContinue);
-    });
+    }));
   }
 
-  /** Keep independent endpoints concurrent while bounding one endpoint to one covering request stream. */
-  private async settleByEndpoint<T extends { target: SyncTarget }, TResult>(
-    items: readonly T[],
-    operation: (item: T) => Promise<TResult>,
-  ): Promise<PromiseSettledResult<TResult>[]> {
-    const outcomes = new Array<PromiseSettledResult<TResult>>(items.length);
-    const groups = new Map<string, number[]>();
-    for (let index = 0; index < items.length; index++) {
-      const endpoint = normalizeDwnEndpoint(items[index].target.dwnUrl);
-      const group = groups.get(endpoint) ?? [];
-      group.push(index);
-      groups.set(endpoint, group);
-    }
-    await Promise.all([...groups.values()].map(async (indexes): Promise<void> => {
-      for (const index of indexes) {
-        try {
-          outcomes[index] = { status: 'fulfilled', value: await operation(items[index]) };
-        } catch (reason: unknown) {
-          outcomes[index] = { status: 'rejected', reason };
-        }
-      }
-    }));
-    return outcomes;
+  /** Keep finite fingerprint proofs serial per endpoint without serializing page coverage. */
+  private verifyStableConvergenceAtEndpoint(
+    target: SyncTarget,
+    shouldContinue: () => boolean,
+  ): ReturnType<SyncEngineNext['verifyStableConvergence']> {
+    return runSerializedByKey(
+      this._operations,
+      `convergence:${normalizeDwnEndpoint(target.dwnUrl)}`,
+      (): ReturnType<SyncEngineNext['verifyStableConvergence']> =>
+        this.verifyStableConvergence(target, shouldContinue),
+    );
   }
 
   private async pruneSupersededLinks(targets: readonly SyncTarget[]): Promise<void> {
@@ -966,6 +1265,7 @@ export class SyncEngineNext implements SyncEngine {
       return;
     }
     const current = new Set(targets.map(SyncEngineNext.targetKey));
+    const currentLogicalTargets = new Set(targets.map(target => `${target.did}^${target.projectionId}`));
     for (const link of await this._ledger.getAllLinks()) {
       const key = buildLinkKey(
         link.tenantDid,
@@ -975,7 +1275,11 @@ export class SyncEngineNext implements SyncEngine {
       );
       if (!current.has(key)) {
         await this.disposeSession(link);
-        await this._ledger.deleteLink(link);
+        if (currentLogicalTargets.has(link.logicalTargetId)) {
+          await this._ledger.retireLink(link);
+        } else {
+          await this._ledger.deleteLinkAndSparse(link);
+        }
       }
     }
   }
@@ -996,16 +1300,197 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
+  private async disposeIdentitySessions(did: string): Promise<void> {
+    await this.disposeSessions(target => SyncEngineNext.targetBelongsToIdentity(target, did));
+  }
+
+  private async disposeFollowedContextSessions(source: FollowedSyncSource): Promise<void> {
+    await this.disposeSessions(target =>
+      target.did === source.sourceDid &&
+      target.authorization.kind === 'role' &&
+      target.authorization.actorDid === source.actorDid &&
+      target.scope.kind === 'context' &&
+      target.scope.protocol === source.protocol &&
+      target.scope.contextId === source.contextId
+    );
+  }
+
+  private async disposeSessions(matches: (target: SyncTarget) => boolean): Promise<void> {
+    await Promise.allSettled([...this._sessionCreations.values()]);
+    const sessions = [...this._sessions.entries()].filter(([, { target }]) => matches(target));
+    await Promise.all(sessions.map(async ([key, { session }]): Promise<void> => {
+      await session.dispose();
+      this._sessions.delete(key);
+    }));
+  }
+
   private async stopRuntime(): Promise<void> {
     this._live = false;
     if (this._timer !== undefined) {
       clearInterval(this._timer);
       this._timer = undefined;
     }
+    if (this._subscriptionRetryTimer !== undefined) {
+      clearTimeout(this._subscriptionRetryTimer);
+      this._subscriptionRetryTimer = undefined;
+    }
+    await this._refreshLive;
+    await Promise.allSettled([...this._sessionCreations.values()]);
     const sessions = [...this._sessions.values()];
     this._sessions.clear();
     this._echoSuppressor.clear();
+    this._endpointGate.reset();
     await Promise.all(sessions.map(({ session }) => session.dispose()));
+  }
+
+  private scheduleLiveRefresh(): void {
+    if (!this._live) {
+      return;
+    }
+    if (this._refreshLive !== undefined) {
+      this._refreshLivePending = true;
+      return;
+    }
+    const refresh = this.refreshLiveTargets().catch((error: unknown): void => {
+      console.error('SyncEngineNext: live refresh failed', error);
+    }).finally((): void => {
+      this.finishLiveRefresh(refresh);
+    });
+    this._refreshLive = refresh;
+  }
+
+  private finishLiveRefresh(refresh: Promise<void>): void {
+    if (this._refreshLive !== refresh) {
+      return;
+    }
+    this._refreshLive = undefined;
+    if (this._refreshLivePending) {
+      this._refreshLivePending = false;
+      this.scheduleLiveRefresh();
+    }
+  }
+
+  private scheduleSubscriptionRetry(error: unknown): void {
+    if (!this._live || this._subscriptionRetryTimer !== undefined) {
+      return;
+    }
+    const delay = error instanceof RateLimitError ? error.retryAfterSec * 1_000 : 5_000;
+    this._subscriptionRetryTimer = setTimeout((): void => {
+      this._subscriptionRetryTimer = undefined;
+      this.scheduleLiveRefresh();
+    }, delay);
+  }
+
+  private recoverRoleAuthorization(target: SyncTarget, error: unknown): boolean {
+    if (
+      target.authorization.kind !== 'role' ||
+      !isNonRetryableSyncAuthorizationFailure(syncErrorMessage(error))
+    ) {
+      return false;
+    }
+    void this.refreshFollowedSource(target).catch((cause: unknown): void => {
+      console.warn('SyncEngineNext: followed source refresh failed', cause);
+      this.scheduleSubscriptionRetry(cause);
+    });
+    return true;
+  }
+
+  private async refreshFollowedSource(target: SyncTarget): Promise<void> {
+    if (target.authorization.kind !== 'role') {
+      return;
+    }
+    const source = await this._sourceStore.get(target.authorization.roleRecordId);
+    if (source === undefined) {
+      return;
+    }
+    try {
+      await this.followSource({
+        actorDid  : source.actorDid,
+        contextId : source.contextId,
+        protocol  : source.protocol,
+        roles     : source.roles,
+        sourceDid : source.sourceDid,
+      });
+    } catch (error: unknown) {
+      if (error instanceof FollowedSourceRoleAbsentError) {
+        await this.deleteFollowedSource(source);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  /** Validate and serialize catalog wakes from sibling contexts. */
+  private scheduleCatalogWake(value: unknown): void {
+    const message = SyncEngineNext.catalogWake(value);
+    if (this._catalogClosed || message === undefined) {
+      return;
+    }
+    const operation = message.kind === 'identity'
+      ? (): Promise<void> => this.applyExternalIdentityChange(message.did)
+      : (): Promise<void> => this.applyExternalFollowedSourceChange(message.source, message.deleted);
+    const wake = this._catalogWakeTail.then(operation, operation).catch((error: unknown): void => {
+      if (!this._catalogClosed) {
+        console.error('SyncEngineNext: cross-context catalog refresh failed', error);
+      }
+    });
+    this._catalogWakeTail = wake;
+  }
+
+  private async applyExternalIdentityChange(did: string): Promise<void> {
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      await this.disposeIdentitySessions(did);
+      const options = await this._identityStore.get(did);
+      this._pausedIdentities.delete(did);
+      if (options === undefined) {
+        await this._ledger.deleteForTenant(did);
+        for (const link of await this._ledger.getAllLinks()) {
+          if (link.authorization.kind === 'role' && link.authorization.actorDid === did) {
+            await this._ledger.retireLink(link);
+          }
+        }
+      }
+      this._planner.invalidate();
+      this.emit(options === undefined
+        ? { type: 'identity:registration-change', tenantDid: did }
+        : { type: 'identity:registration-change', tenantDid: did, options });
+      await this.refreshLiveTargets(false, did);
+    });
+  }
+
+  private async applyExternalFollowedSourceChange(
+    source: FollowedSyncSource,
+    deleted: boolean,
+  ): Promise<void> {
+    await this.runRuntimeTransition(async (): Promise<void> => {
+      await this.disposeFollowedContextSessions(source);
+      if (deleted) {
+        await this.deleteRoleLinkAndSparse(source);
+      }
+      this._planner.invalidate();
+      this.emitFollowedSourceChange(source, deleted ? undefined : source.id);
+      await this.refreshLiveTargets(false, source.actorDid);
+    });
+  }
+
+  private async deleteRoleLinkAndSparse(source: FollowedSyncSource): Promise<void> {
+    for (const link of await this._ledger.getAllLinks()) {
+      if (
+        link.authorization.kind === 'role' &&
+        link.authorization.actorDid === source.actorDid &&
+        link.authorization.roleRecordId === source.id
+      ) {
+        await this._ledger.deleteLinkAndSparse(link);
+      }
+    }
+  }
+
+  private publishCatalogWake(message: CatalogWake): void {
+    try {
+      this._catalogChannel?.postMessage(message);
+    } catch {
+      // Cross-context notification is best effort; durable catalog state remains authoritative.
+    }
   }
 
   private runRuntimeTransition(operation: () => Promise<void>): Promise<void> {
@@ -1015,15 +1500,17 @@ export class SyncEngineNext implements SyncEngine {
       this._pendingSyncRun.cancelled = true;
       this._pendingSyncRun = undefined;
     }
-    return this.runTransition(operation).finally((): void => {
+    return this.runExclusive(operation).finally((): void => {
       this._runtimeTransitionDepth--;
     });
   }
 
-  private runTransition(operation: () => Promise<void>): Promise<void> {
-    const transition = this._transition.then(operation, operation);
-    this._transition = transition.catch((): void => {});
-    return transition;
+  private get hasExclusiveWork(): boolean {
+    return this._operations.has('engine');
+  }
+
+  private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return runSerializedByKey(this._operations, 'engine', operation);
   }
 
   private emitApplied(target: SyncTarget, entries: readonly SyncFreshEntry[]): void {
@@ -1039,6 +1526,21 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
+  private emitFollowedSourceChange(
+    source: FollowedSyncSource,
+    followedSourceId: string | undefined,
+  ): void {
+    this.emit({
+      type                       : 'followed-context:change',
+      tenantDid                  : source.sourceDid,
+      actorDid                   : source.actorDid,
+      protocol                   : source.protocol,
+      contextId                  : source.contextId,
+      followedSourceAcceptanceId : source.acceptanceId,
+      followedSourceId,
+    });
+  }
+
   private emit(event: SyncEvent): void {
     for (const listener of Array.from(this._eventListeners)) {
       try {
@@ -1050,39 +1552,68 @@ export class SyncEngineNext implements SyncEngine {
   }
 
   private async readHealth(tenantDid?: string): Promise<SyncHealthSummary> {
-    const [delivery, links, quarantine, terminal] = await Promise.all([
+    const [delivery, links, quarantine] = await Promise.all([
       this._ledger.getAllDelivery(),
       this._ledger.getAllLinks(),
       this._ledger.getAllQuarantine(),
-      this._ledger.getAllTerminal(),
     ]);
     const currentLinks = links.filter(link => tenantDid === undefined || link.tenantDid === tenantDid);
     const currentDelivery = delivery.filter(entry => tenantDid === undefined || entry.tenantDid === tenantDid);
     const currentQuarantine = quarantine.filter(entry => tenantDid === undefined || entry.tenantDid === tenantDid);
-    const currentTerminal = terminal.filter(entry => tenantDid === undefined || entry.tenantDid === tenantDid);
     const degradedKeys = new Set([
       ...currentLinks.filter(link => link.status === 'authorization-paused').map(SyncEngineNext.healthKey),
       ...currentDelivery.map(SyncEngineNext.healthKey),
       ...currentQuarantine.map(SyncEngineNext.healthKey),
-      ...currentTerminal.map(SyncEngineNext.healthKey),
     ]);
     const quotaBlockedMessageCount = currentDelivery.filter(entry => entry.outcome.reason === 'quota').length;
     return {
       connectivity       : this.connectivityState,
       degradedLinkCount  : degradedKeys.size,
-      failedMessageCount : currentTerminal.length,
+      failedMessageCount : 0,
       quotaBlockedMessageCount,
       syncHealthy        : degradedKeys.size === 0,
     };
   }
 
   private static targetKey(target: SyncTarget): string {
-    return buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    return buildLinkKey(
+      target.did,
+      normalizeDwnEndpoint(target.dwnUrl),
+      target.projectionId,
+      target.authorizationEpoch,
+    );
+  }
+
+  private static normalizeTarget(target: SyncTarget): SyncTarget {
+    const dwnUrl = normalizeDwnEndpoint(target.dwnUrl);
+    return dwnUrl === target.dwnUrl ? target : { ...target, dwnUrl };
   }
 
   private static targetBelongsToIdentity(target: SyncTarget, did: string): boolean {
     return target.did === did ||
       (target.authorization.kind === 'role' && target.authorization.actorDid === did);
+  }
+
+  private static catalogWake(value: unknown): CatalogWake | undefined {
+    if (typeof value !== 'object' || value === null) {
+      return;
+    }
+    const candidate = value as { deleted?: unknown; did?: unknown; kind?: unknown; source?: unknown };
+    if (candidate.kind === 'identity' && typeof candidate.did === 'string') {
+      return { did: candidate.did, kind: 'identity' };
+    }
+    if (candidate.kind !== 'followed-source' || typeof candidate.deleted !== 'boolean') {
+      return;
+    }
+    try {
+      return {
+        deleted : candidate.deleted,
+        kind    : 'followed-source',
+        source  : normalizeFollowedSyncSource(candidate.source as FollowedSyncSource),
+      };
+    } catch {
+      return;
+    }
   }
 
   private static healthKey(link: {
@@ -1114,7 +1645,4 @@ export class SyncEngineNext implements SyncEngine {
     }
   }
 
-  private static rejectedOutcomes(count: number, reason: unknown): PromiseRejectedResult[] {
-    return Array.from({ length: count }, (): PromiseRejectedResult => ({ status: 'rejected', reason }));
-  }
 }

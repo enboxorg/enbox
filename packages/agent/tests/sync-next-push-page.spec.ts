@@ -15,7 +15,6 @@ import type { SyncNextLinkIdentity } from '../src/sync-next/types.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 import { SyncEchoSuppressor } from '../src/sync-echo-suppressor.js';
-import { SyncNextDeliveryRetry } from '../src/sync-next/delivery-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
 
@@ -178,6 +177,23 @@ describe('SyncNextPushPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('2');
   });
 
+  it('should advance later pages behind a persisted endpoint block without another network probe', async () => {
+    const first = await feedEntry(protocolMessage('first-offline'), 1);
+    const later = await feedEntry(protocolMessage('later-offline'), 2);
+    const fixture = fakeAgent(page([first], false));
+    fixture.apply.rejects(new Error('offline'));
+    await createLink();
+    const processor = new SyncNextPushPage(fixture.agent, ledger);
+
+    const blocked = await processor.consume(target());
+    fixture.process.resolves({ reply: page([later]) });
+    await processor.consume(target(), { endpointBlock: blocked.endpointBlock });
+
+    expect(fixture.apply.calledOnce).toBe(true);
+    expect(await ledger.getDeliveryForLink(linkIdentity())).toHaveLength(2);
+    expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('2');
+  });
+
   it('should retry a retained large delivery from the local DWN and settle it', async () => {
     const attachment = await feedEntry(largeWrite(), 1);
     const fixture = fakeAgent(page([attachment]));
@@ -197,7 +213,7 @@ describe('SyncNextPushPage', () => {
       },
     });
 
-    const result = await new SyncNextDeliveryRetry(fixture.agent, ledger).retry(target(), obligation);
+    const result = await new SyncNextPushPage(fixture.agent, ledger).retryDelivery(target(), obligation);
 
     expect(result.kind).toBe('settled');
     expect(fixture.apply.calledOnce).toBe(true);
@@ -216,7 +232,6 @@ describe('SyncNextPushPage', () => {
       messageCid : root.messageCid,
       outcome    : { detail: 'Unauthorized', reason: 'remote-rejected' },
     }]);
-    expect(await ledger.getTerminalForLink(linkIdentity())).toEqual([]);
   });
 
   it('should replay exact local input after remote apply succeeds but the ledger batch fails', async () => {
@@ -306,4 +321,5 @@ describe('SyncNextPushPage', () => {
     await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
   });
+
 });

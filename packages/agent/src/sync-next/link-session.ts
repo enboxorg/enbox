@@ -1,92 +1,97 @@
-import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { SyncDirection } from '../types/sync.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
-import type { SyncTarget } from '../sync-target-resolver.js';
-
-import type { SyncNextDeliveryRetry } from './delivery-retry.js';
 import type { SyncNextPullPage } from './pull-page.js';
 import type { SyncNextPushPage } from './push-page.js';
-import type { SyncNextQuarantineRetry } from './quarantine-retry.js';
+import type { SyncTarget } from '../sync-target-resolver.js';
+
+import type { SyncNextDeliveryObligation, SyncNextDeliveryOutcome } from './types.js';
+import type { SyncNextQuarantineAttempt, SyncNextQuarantineRetry } from './quarantine-retry.js';
+
+import { runSerializedByKey } from '@enbox/common';
+import { SyncNextEndpointBackoffError } from './endpoint-gate.js';
 import { SyncNextWorkPump } from './work-pump.js';
 
 const RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 60_000;
+const COVER_SPARSE_RETRY_LIMIT = 100;
 
-type CoveringRun = {
-  promise: Promise<void>;
-  reject: (error: unknown) => void;
-  resolve: () => void;
-  shouldContinue: () => boolean;
+type DeliveryAttempt = {
+  attempted: boolean;
+  progressed: boolean;
+  remaining: number;
 };
 
-/** A covering operation observed feed drain but retained sparse obligations. */
-export class SyncNextIncompleteError extends Error {
-  public constructor(direction: SyncDirection, count: number) {
-    super(`SyncEngineNext: ${direction} observed feed drain with ${count} unresolved obligations.`);
-    this.name = 'SyncNextIncompleteError';
-  }
+type PageAttempt = {
+  hasMore: boolean;
+  retained: boolean;
+};
+
+type Direction = 'pull' | 'push';
+
+type DirectionState = {
+  failures: number;
+  notBefore: number;
+  pump: SyncNextWorkPump;
+  requested: boolean;
+  wakeVersion: number;
+};
+
+export type SyncNextLinkSessionObserver = {
+  onConnectivityChange?: (from: boolean, to: boolean) => void;
+  onPullCurrentnessChange?: (from: boolean, to: boolean) => void;
+};
+
+export interface SyncNextEndpointOperations {
+  block(delayMs?: number): void;
+  clear(): void;
+  run<T>(operation: () => Promise<T>): Promise<T>;
 }
 
-/** Four independent, coalesced activities for one exact link. */
+/** Owns the two independent page loops for one exact replication link. */
 export class SyncNextLinkSession {
   private readonly _abortController = new AbortController();
-  private _deliveryIndex = 0;
-  private readonly _deliveryNotBefore = new Map<string, number>();
-  private readonly _deliveryPump: SyncNextWorkPump;
-  private _pullCover?: CoveringRun;
+  private _online = false;
+  private readonly _pull: DirectionState;
   private _pullCurrent = false;
   private _pullFeedDrained = false;
-  private _pullFailures = 0;
-  private readonly _pullPagePump: SyncNextWorkPump;
-  private _pullWakeVersion = 0;
-  private _quarantineIndex = 0;
-  private readonly _quarantineNotBefore = new Map<string, number>();
-  private readonly _quarantinePump: SyncNextWorkPump;
-  private _pushCover?: CoveringRun;
-  private _pushFailures = 0;
-  private readonly _pushPagePump: SyncNextWorkPump;
-  private _pushWakeVersion = 0;
+  private readonly _push: DirectionState;
+  private readonly _runs = new Map<string, Promise<void>>();
   private readonly _subscriptions = new Set<() => Promise<void>>();
-  private _online = false;
 
   public constructor(
     private readonly _target: SyncTarget,
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _pullPage: SyncNextPullPage,
     private readonly _pushPage: SyncNextPushPage,
-    private readonly _quarantineRetry: SyncNextQuarantineRetry,
-    private readonly _deliveryRetry: SyncNextDeliveryRetry,
+    private readonly _quarantine: SyncNextQuarantineRetry,
     private readonly _reportError: (error: unknown) => void,
+    private readonly _endpoint: SyncNextEndpointOperations = {
+      block : (): void => {},
+      clear : (): void => {},
+      run   : operation => operation(),
+    },
+    private readonly _observer: SyncNextLinkSessionObserver = {},
   ) {
-    this._pullPagePump = new SyncNextWorkPump(
-      (): Promise<void> => this.consumePullPage(),
-      (error): void => this.handlePageError('pull', error),
-    );
-    this._pushPagePump = new SyncNextWorkPump(
-      (): Promise<void> => this.consumePushPage(),
-      (error): void => this.handlePageError('push', error),
-    );
-    this._quarantinePump = new SyncNextWorkPump(
-      (): Promise<void> => this.retryQuarantine(),
-      (error): void => this.handleRetryError('pull', error),
-    );
-    this._deliveryPump = new SyncNextWorkPump(
-      (): Promise<void> => this.retryDelivery(),
-      (error): void => this.handleRetryError('push', error),
-    );
-  }
-
-  public start(): void {
-    this.requestPull();
-    if (this._target.authorization.kind !== 'role') {
-      this.requestPush();
-    }
-    if (this._pullCover === undefined) {
-      this._quarantinePump.request();
-    }
-    if (this._pushCover === undefined) {
-      this._deliveryPump.request();
-    }
+    this._pull = {
+      failures  : 0,
+      notBefore : 0,
+      pump      : new SyncNextWorkPump(
+        (): Promise<void> => this.runRequested('pull'),
+        (error): void => this.handleBackgroundError('pull', error),
+      ),
+      requested   : false,
+      wakeVersion : 0,
+    };
+    this._push = {
+      failures  : 0,
+      notBefore : 0,
+      pump      : new SyncNextWorkPump(
+        (): Promise<void> => this.runRequested('push'),
+        (error): void => this.handleBackgroundError('push', error),
+      ),
+      requested   : false,
+      wakeVersion : 0,
+    };
   }
 
   public get isPullCurrent(): boolean {
@@ -97,39 +102,59 @@ export class SyncNextLinkSession {
     return this._online;
   }
 
+  public start(requestPages = true): void {
+    if (requestPages) {
+      this.requestPull();
+      this.requestPush();
+    }
+  }
+
   public addSubscription(close: () => Promise<void>): void {
     this._subscriptions.add(close);
   }
 
-  public requestPull(): void {
-    this._pullWakeVersion++;
-    this._pullCurrent = false;
-    this._pullFeedDrained = false;
-    this._pullPagePump.request();
+  public removeSubscription(close: () => Promise<void>): void {
+    this._subscriptions.delete(close);
   }
 
-  public requestPush(): void {
-    if (this._target.authorization.kind !== 'role') {
-      this._pushWakeVersion++;
-      this._pushPagePump.request();
+  /** Transport loss invalidates currentness but waits for reconnect or the periodic pass. */
+  public noteRemoteDisconnected(): void {
+    this.setOnline(false);
+    this.setPullCurrent(false);
+    this._pullFeedDrained = false;
+  }
+
+  public requestPull(force = false): void {
+    this.requestDirection('pull', force);
+  }
+
+  public requestPush(force = false): void {
+    if (this._target.authorization.kind === 'role') {
+      return;
+    }
+    this.requestDirection('push', force);
+  }
+
+  public clearRetryBackoff(): void {
+    for (const state of [this._pull, this._push]) {
+      state.failures = 0;
+      state.notBefore = 0;
     }
   }
 
-  /** Run the same page pumps until they observe drain with no trailing wake. */
+  /** Consume bounded pages until drain, including one finite sparse recovery pass. */
   public cover(
     direction?: SyncDirection,
     shouldContinue: () => boolean = (): boolean => true,
   ): Promise<void> {
     const runs: Promise<void>[] = [];
     if (direction !== 'push') {
-      this._pullCover ??= SyncNextLinkSession.coveringRun(shouldContinue);
-      runs.push(this._pullCover.promise);
-      this.requestPull();
+      this.requestDirection('pull', true, false);
+      runs.push(this.runDirection('pull', shouldContinue));
     }
     if (direction !== 'pull' && this._target.authorization.kind !== 'role') {
-      this._pushCover ??= SyncNextLinkSession.coveringRun(shouldContinue);
-      runs.push(this._pushCover.promise);
-      this.requestPush();
+      this.requestDirection('push', true, false);
+      runs.push(this.runDirection('push', shouldContinue));
     }
     return Promise.all(runs).then((): void => {});
   }
@@ -138,303 +163,297 @@ export class SyncNextLinkSession {
     if (!this._abortController.signal.aborted) {
       this._abortController.abort(new DOMException('Sync link session disposed.', 'AbortError'));
     }
-    this._pullPagePump.dispose();
-    this._pushPagePump.dispose();
-    this._quarantinePump.dispose();
-    this._deliveryPump.dispose();
-    const error = this._abortController.signal.reason;
-    this.rejectCover('pull', error);
-    this.rejectCover('push', error);
+    this._pull.pump.dispose();
+    this._push.pump.dispose();
     await Promise.allSettled([...this._subscriptions].map(close => close()));
     this._subscriptions.clear();
-    await Promise.all([
-      this._pullPagePump.waitForIdle(),
-      this._pushPagePump.waitForIdle(),
-      this._quarantinePump.waitForIdle(),
-      this._deliveryPump.waitForIdle(),
+    await Promise.allSettled([
+      this._pull.pump.waitForIdle(),
+      this._push.pump.waitForIdle(),
+      ...this._runs.values(),
     ]);
   }
 
-  private async consumePullPage(): Promise<void> {
-    const wakeVersion = this._pullWakeVersion;
-    const result = await this._pullPage.consume(this._target, {
-      signal         : this._abortController.signal,
-      shouldContinue : (): boolean => this.shouldContinue('pull'),
-    });
-    if (result.aborted === true) {
-      this.rejectInterruptedCover('pull');
-      return;
+  private requestDirection(direction: Direction, force = false, schedule = true): void {
+    const state = this.state(direction);
+    state.requested = true;
+    state.wakeVersion++;
+    if (force) {
+      state.notBefore = 0;
     }
-    this._pullFailures = 0;
-    this._online = true;
-    for (const messageCid of result.materializedCids) {
+    if (direction === 'pull') {
+      this._pullFeedDrained = false;
+      this.setPullCurrent(false);
+    }
+    if (schedule) {
+      state.pump.request(Math.max(0, state.notBefore - Date.now()));
+    }
+  }
+
+  private runRequested(direction: Direction): Promise<void> {
+    return runSerializedByKey(this._runs, direction, async (): Promise<void> => {
+      const state = this.state(direction);
+      if (!state.requested || this._abortController.signal.aborted) {
+        return;
+      }
+      state.requested = false;
+      const wakeVersion = state.wakeVersion;
+      const shouldContinue = (): boolean => !this._abortController.signal.aborted;
+      const page = await this.consumePage(direction, shouldContinue);
+      const sparse = await this.retrySparse(direction, page.retained, shouldContinue);
+      if (page.hasMore) {
+        this.request(direction);
+      } else if (direction === 'pull' && wakeVersion === state.wakeVersion) {
+        this._pullFeedDrained = true;
+        this.setPullCurrent(sparse.remaining === 0);
+      }
+    });
+  }
+
+  private runDirection(direction: Direction, shouldContinue: () => boolean): Promise<void> {
+    return runSerializedByKey(this._runs, direction, async (): Promise<void> => {
+      for (;;) {
+        this.assertCurrent(direction, shouldContinue);
+        const state = this.state(direction);
+        state.requested = false;
+        const wakeVersion = state.wakeVersion;
+        const page = await this.consumePage(direction, shouldContinue);
+        const sparse = await this.retrySparse(direction, page.retained, shouldContinue);
+        if (page.hasMore) {
+          await SyncNextLinkSession.yieldTurn();
+          continue;
+        }
+
+        const remaining = await this.retryCoverSparse(direction, shouldContinue, sparse);
+        this.assertCurrent(direction, shouldContinue);
+        if (state.requested || wakeVersion !== state.wakeVersion) {
+          await SyncNextLinkSession.yieldTurn();
+          continue;
+        }
+        if (remaining > 0) {
+          throw new Error(
+            `SyncEngineNext: ${direction} observed feed drain with ${remaining} unresolved obligations.`,
+          );
+        }
+        if (direction === 'pull') {
+          this._pullFeedDrained = true;
+          this.setPullCurrent(true);
+        }
+        return;
+      }
+    });
+  }
+
+  private consumePage(direction: Direction, shouldContinue: () => boolean): Promise<PageAttempt> {
+    return direction === 'pull'
+      ? this.consumePullPage(shouldContinue)
+      : this.consumePushPage(shouldContinue);
+  }
+
+  private async consumePullPage(shouldContinue: () => boolean): Promise<PageAttempt> {
+    const result = await this._endpoint.run(() => this._pullPage.consume(this._target, {
+      signal: this._abortController.signal,
+      shouldContinue,
+    }));
+    if (result.aborted === true) {
+      this.throwAborted('pull', shouldContinue);
+    }
+    this._pull.failures = 0;
+    this._pull.notBefore = 0;
+    this._endpoint.clear();
+    this.setOnline(true);
+    if (result.materializedCids.length > 0) {
       await this._ledger.settleQuarantineForLogicalTarget(
         `${this._target.did}^${this._target.projectionId}`,
-        messageCid,
+        result.materializedCids,
       );
     }
-    this._quarantinePump.request();
-    if (result.hasMore) {
-      if (!this.shouldContinue('pull')) {
-        this.rejectInterruptedCover('pull');
-        return;
-      }
-      this._pullPagePump.request();
-      return;
-    }
-    const pullCurrent = (await this.getQuarantine()).length === 0;
-    if (wakeVersion === this._pullWakeVersion) {
-      this._pullFeedDrained = true;
-      this._pullCurrent = pullCurrent;
-    }
-    await this.finishCover('pull', wakeVersion);
+    return { hasMore: result.hasMore, retained: result.quarantined > 0 };
   }
 
-  private async consumePushPage(): Promise<void> {
-    const wakeVersion = this._pushWakeVersion;
-    const result = await this._pushPage.consume(this._target, {
-      signal         : this._abortController.signal,
-      shouldContinue : (): boolean => this.shouldContinue('push'),
-    });
+  private async consumePushPage(shouldContinue: () => boolean): Promise<PageAttempt> {
+    const existingBlock = await this.getDeliveryBlock();
+    const result = await this._endpoint.run(() => this._pushPage.consume(this._target, {
+      endpointBlock : existingBlock,
+      signal        : this._abortController.signal,
+      shouldContinue,
+    }));
     if (result.aborted === true) {
-      this.rejectInterruptedCover('push');
-      return;
+      this.throwAborted('push', shouldContinue);
     }
-    this._pushFailures = 0;
-    this._online = true;
-    this._deliveryPump.request();
-    if (result.hasMore) {
-      if (!this.shouldContinue('push')) {
-        this.rejectInterruptedCover('push');
-        return;
-      }
-      this._pushPagePump.request();
-      return;
+    if (existingBlock === undefined && result.endpointBlock?.blockScope === 'endpoint') {
+      this._endpoint.block(SyncNextLinkSession.endpointDelay(result.endpointBlock));
+    } else if (result.delivered > 0) {
+      this._endpoint.clear();
     }
-    await this.finishCover('push', wakeVersion);
+    this.setOnline(result.endpointBlock?.reason !== 'transport');
+    this._push.failures = 0;
+    this._push.notBefore = 0;
+    return { hasMore: result.hasMore, retained: result.retained > 0 };
   }
 
-  private async retryQuarantine(): Promise<void> {
-    const entries = await this.getQuarantine();
-    if (entries.length === 0 || this._abortController.signal.aborted) {
-      return;
-    }
-    const selected = this.selectEligible(entries, this._quarantineNotBefore, this._quarantineIndex);
-    if (selected === undefined) {
-      this._quarantinePump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._quarantineNotBefore));
-      return;
-    }
-    const entry = entries[selected];
-    this._quarantineIndex = (selected + 1) % entries.length;
-    const result = await this._quarantineRetry.retry(
+  private retrySparse(
+    direction: Direction,
+    force: boolean,
+    shouldContinue: () => boolean,
+  ): Promise<DeliveryAttempt> {
+    return direction === 'pull'
+      ? this.retryQuarantine(force, shouldContinue).then(result => ({
+        attempted  : result.kind !== 'deferred' && result.kind !== 'empty',
+        progressed : result.kind === 'settled',
+        remaining  : result.remaining,
+      }))
+      : this.retryDelivery(force, shouldContinue);
+  }
+
+  private retryQuarantine(
+    force: boolean,
+    shouldContinue: () => boolean,
+  ): Promise<SyncNextQuarantineAttempt> {
+    return this._endpoint.run(() => this._quarantine.retryOne(
       this._target,
-      entry,
-      (): boolean => !this._abortController.signal.aborted,
+      shouldContinue,
       this._abortController.signal,
-    );
-    if (result.kind === 'pending') {
-      this._quarantineNotBefore.set(
-        SyncNextLinkSession.receiptKey(entry),
-        Date.now() + SyncNextLinkSession.retryDelay(entry.attempts),
-      );
-      this._quarantinePump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._quarantineNotBefore));
-    } else {
-      this._quarantineNotBefore.delete(SyncNextLinkSession.receiptKey(entry));
-      if (entries.length > 1) {
-        this._quarantinePump.request();
-      }
-    }
-    if (result.kind === 'settled' && entries.length === 1 && this._pullFeedDrained) {
-      this._pullCurrent = true;
-    }
-  }
-
-  private async retryDelivery(): Promise<void> {
-    const entries = await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target));
-    if (entries.length === 0 || this._abortController.signal.aborted) {
-      return;
-    }
-    const selected = this.selectEligible(entries, this._deliveryNotBefore, this._deliveryIndex);
-    if (selected === undefined) {
-      this._deliveryPump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._deliveryNotBefore));
-      return;
-    }
-    const entry = entries[selected];
-    this._deliveryIndex = (selected + 1) % entries.length;
-    const result = await this._deliveryRetry.retry(
-      this._target,
-      entry,
-      (): boolean => !this._abortController.signal.aborted,
-      this._abortController.signal,
-    );
-    if (result.kind === 'pending') {
-      const retryAfter = entry.outcome.retryAfter === undefined ? undefined : Date.parse(entry.outcome.retryAfter);
-      this._deliveryNotBefore.set(
-        SyncNextLinkSession.receiptKey(entry),
-        retryAfter !== undefined && Number.isFinite(retryAfter) && retryAfter > Date.now()
-          ? retryAfter
-          : Date.now() + SyncNextLinkSession.retryDelay(entry.attempts),
-      );
-      this._deliveryPump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._deliveryNotBefore));
-    } else {
-      this._deliveryNotBefore.delete(SyncNextLinkSession.receiptKey(entry));
-      if (entries.length > 1) {
-        this._deliveryPump.request();
-      }
-    }
-  }
-
-  private async finishCover(direction: SyncDirection, pageWakeVersion: number): Promise<void> {
-    const cover = direction === 'pull' ? this._pullCover : this._pushCover;
-    if (cover === undefined) {
-      return;
-    }
-    let pendingCount: number;
-    if (direction === 'pull') {
-      for (const entry of await this.getQuarantine()) {
-        if (!this.shouldContinue(direction)) {
-          this.rejectInterruptedCover(direction);
-          return;
-        }
-        await this._quarantineRetry.retry(
-          this._target,
-          entry,
-          (): boolean => this.shouldContinue(direction),
-          this._abortController.signal,
-        );
-      }
-      if (!this.shouldContinue(direction)) {
-        this.rejectInterruptedCover(direction);
-        return;
-      }
-      pendingCount = (await this.getQuarantine()).length;
-    } else {
-      for (const entry of await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target))) {
-        if (!this.shouldContinue(direction)) {
-          this.rejectInterruptedCover(direction);
-          return;
-        }
-        await this._deliveryRetry.retry(
-          this._target,
-          entry,
-          (): boolean => this.shouldContinue(direction),
-          this._abortController.signal,
-        );
-      }
-      if (!this.shouldContinue(direction)) {
-        this.rejectInterruptedCover(direction);
-        return;
-      }
-      pendingCount = (await this._ledger.getDeliveryForLink(
-        SyncNextLinkSession.identity(this._target),
-      )).length;
-    }
-    const currentWakeVersion = direction === 'pull' ? this._pullWakeVersion : this._pushWakeVersion;
-    if (currentWakeVersion !== pageWakeVersion) {
-      return;
-    }
-    if (pendingCount > 0) {
-      this.rejectCover(direction, new SyncNextIncompleteError(direction, pendingCount));
-    } else {
-      cover.resolve();
-      this.clearCover(direction);
-    }
-  }
-
-  private handlePageError(direction: SyncDirection, error: unknown): void {
-    this._online = false;
-    this.rejectCover(direction, error);
-    this._reportError(error);
-    if (!this._abortController.signal.aborted) {
-      const attempts = direction === 'pull' ? ++this._pullFailures : ++this._pushFailures;
-      (direction === 'pull' ? this._pullPagePump : this._pushPagePump)
-        .request(SyncNextLinkSession.retryDelay(attempts));
-    }
-  }
-
-  private getQuarantine(): ReturnType<SyncNextLedgerStore['getQuarantineForLogicalTarget']> {
-    return this._ledger.getQuarantineForLogicalTarget(
-      `${this._target.did}^${this._target.projectionId}`,
-    );
-  }
-
-  private selectEligible<T extends { messageCid: string; source: ProgressToken }>(
-    entries: readonly T[],
-    notBefore: ReadonlyMap<string, number>,
-    start: number,
-  ): number | undefined {
-    const now = Date.now();
-    for (let offset = 0; offset < entries.length; offset++) {
-      const index = (start + offset) % entries.length;
-      if ((notBefore.get(SyncNextLinkSession.receiptKey(entries[index])) ?? 0) <= now) {
-        return index;
-      }
-    }
-  }
-
-  private static nextEligibilityDelay<T extends { messageCid: string; source: ProgressToken }>(
-    entries: readonly T[],
-    notBefore: ReadonlyMap<string, number>,
-  ): number {
-    const now = Date.now();
-    const next = Math.min(...entries.map(entry =>
-      notBefore.get(SyncNextLinkSession.receiptKey(entry)) ?? now
+      force,
     ));
-    return Math.max(0, next - now);
+  }
+
+  private async retryDelivery(
+    force: boolean,
+    shouldContinue: () => boolean,
+  ): Promise<DeliveryAttempt> {
+    const entries = await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target));
+    if (entries.length === 0 || !shouldContinue()) {
+      return { attempted: false, progressed: false, remaining: entries.length };
+    }
+    const entry = force
+      ? entries[0]
+      : entries.find(candidate => SyncNextLinkSession.deliveryRetryAt(candidate) <= Date.now());
+    if (entry === undefined) {
+      return { attempted: false, progressed: false, remaining: entries.length };
+    }
+    const result = await this._endpoint.run(() => this._pushPage.retryDelivery(
+      this._target,
+      entry,
+      shouldContinue,
+      this._abortController.signal,
+    ));
+    if (result.kind !== 'aborted') {
+      if (result.outcome?.blockScope === 'endpoint') {
+        this._endpoint.block(SyncNextLinkSession.endpointDelay(result.outcome, entry.attempts));
+      } else {
+        this._endpoint.clear();
+      }
+      this.setOnline(result.outcome?.reason !== 'transport');
+    }
+    const remaining = (await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target))).length;
+    return { attempted: true, progressed: result.kind === 'settled', remaining };
+  }
+
+  private async retryCoverSparse(
+    direction: Direction,
+    shouldContinue: () => boolean,
+    initial: DeliveryAttempt,
+  ): Promise<number> {
+    let result = initial;
+    for (let attempts = 0; attempts < COVER_SPARSE_RETRY_LIMIT; attempts++) {
+      if (result.remaining === 0 || !shouldContinue() || (result.attempted && !result.progressed)) {
+        return result.remaining;
+      }
+      result = await this.retrySparse(direction, true, shouldContinue);
+    }
+    return result.remaining;
+  }
+
+  private async getDeliveryBlock(): Promise<SyncNextDeliveryOutcome | undefined> {
+    const entries = await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target));
+    return entries.find(entry => entry.outcome.blockScope !== undefined)?.outcome;
+  }
+
+  private handleBackgroundError(direction: Direction, error: unknown): void {
+    this.setOnline(false);
+    if (this._abortController.signal.aborted) {
+      return;
+    }
+    if (error instanceof SyncNextEndpointBackoffError) {
+      this.state(direction).notBefore = Date.now() + error.retryAfterMs;
+    } else {
+      this._reportError(error);
+      const state = this.state(direction);
+      state.notBefore = Date.now() + SyncNextLinkSession.retryDelay(++state.failures);
+    }
+    this.request(direction);
+  }
+
+  private request(direction: Direction): void {
+    if (direction === 'pull') {
+      this.requestPull();
+    } else {
+      this.requestPush();
+    }
+  }
+
+  private state(direction: Direction): DirectionState {
+    return direction === 'pull' ? this._pull : this._push;
+  }
+
+  private assertCurrent(direction: Direction, shouldContinue: () => boolean): void {
+    if (!this._abortController.signal.aborted && shouldContinue()) {
+      return;
+    }
+    this.throwAborted(direction, shouldContinue);
+  }
+
+  private throwAborted(direction: Direction, shouldContinue: () => boolean): never {
+    if (!shouldContinue()) {
+      throw new DOMException('Covering sync cancelled.', 'AbortError');
+    }
+    const error = new Error(`SyncEngineNext: ${direction} link became stale before its page committed.`);
+    this._abortController.abort(error);
+    throw error;
+  }
+
+  private setOnline(online: boolean): void {
+    if (this._online !== online) {
+      const previous = this._online;
+      this._online = online;
+      this._observer.onConnectivityChange?.(previous, online);
+    }
+  }
+
+  private setPullCurrent(current: boolean): void {
+    if (this._pullCurrent !== current) {
+      const previous = this._pullCurrent;
+      this._pullCurrent = current;
+      this._observer.onPullCurrentnessChange?.(previous, current);
+    }
+  }
+
+  private static deliveryRetryAt(entry: SyncNextDeliveryObligation): number {
+    const retryAfter = SyncNextLinkSession.retryAfter(entry.outcome);
+    return retryAfter !== undefined && retryAfter > Date.now()
+      ? retryAfter
+      : Date.parse(entry.lastAttemptAt) + SyncNextLinkSession.retryDelay(entry.attempts);
+  }
+
+  private static retryAfter(outcome: SyncNextDeliveryOutcome): number | undefined {
+    if (outcome.retryAfter === undefined) {
+      return;
+    }
+    const retryAfter = Date.parse(outcome.retryAfter);
+    return Number.isFinite(retryAfter) ? retryAfter : undefined;
+  }
+
+  private static endpointDelay(outcome: SyncNextDeliveryOutcome, attempts = 1): number {
+    const retryAfter = SyncNextLinkSession.retryAfter(outcome);
+    return retryAfter !== undefined && retryAfter > Date.now()
+      ? retryAfter - Date.now()
+      : SyncNextLinkSession.retryDelay(attempts);
   }
 
   private static retryDelay(attempts: number): number {
     const exponent = Math.min(Math.max(0, attempts - 1), 6);
     return Math.min(RETRY_DELAY_MS * (2 ** exponent), MAX_RETRY_DELAY_MS);
-  }
-
-  private static receiptKey(entry: { messageCid: string; source: ProgressToken }): string {
-    return `${entry.source.streamId}\u0000${entry.source.epoch}\u0000${entry.source.position}\u0000${entry.messageCid}`;
-  }
-
-  private handleRetryError(direction: SyncDirection, error: unknown): void {
-    this._reportError(error);
-    if (!this._abortController.signal.aborted) {
-      (direction === 'pull' ? this._quarantinePump : this._deliveryPump).request(RETRY_DELAY_MS);
-    }
-  }
-
-  private rejectCover(direction: SyncDirection, error: unknown): void {
-    const cover = direction === 'pull' ? this._pullCover : this._pushCover;
-    if (cover !== undefined) {
-      cover.reject(error);
-      this.clearCover(direction);
-    }
-  }
-
-  private clearCover(direction: SyncDirection): void {
-    if (direction === 'pull') {
-      this._pullCover = undefined;
-    } else {
-      this._pushCover = undefined;
-    }
-  }
-
-  private shouldContinue(direction: SyncDirection): boolean {
-    const cover = direction === 'pull' ? this._pullCover : this._pushCover;
-    return !this._abortController.signal.aborted && (cover?.shouldContinue() ?? true);
-  }
-
-  private rejectInterruptedCover(direction: SyncDirection): void {
-    const cover = direction === 'pull' ? this._pullCover : this._pushCover;
-    if (cover !== undefined && !cover.shouldContinue()) {
-      this.rejectCover(direction, new DOMException('Covering sync cancelled.', 'AbortError'));
-    }
-  }
-
-  private static coveringRun(shouldContinue: () => boolean): CoveringRun {
-    let resolve!: () => void;
-    let reject!: (error: unknown) => void;
-    const promise = new Promise<void>((onResolve, onReject) => {
-      resolve = onResolve;
-      reject = onReject;
-    });
-    return { promise, reject, resolve, shouldContinue };
   }
 
   private static identity(target: SyncTarget): {
@@ -449,5 +468,9 @@ export class SyncNextLinkSession {
       remoteEndpoint     : target.dwnUrl,
       tenantDid          : target.did,
     };
+  }
+
+  private static yieldTurn(): Promise<void> {
+    return new Promise(resolve => { setTimeout(resolve, 1); });
   }
 }

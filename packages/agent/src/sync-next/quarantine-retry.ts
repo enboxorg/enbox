@@ -1,18 +1,31 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
-import type { MessagesQueryReplyEntry } from '@enbox/dwn-sdk-js';
+import type { RoleReplicationSupportBatch } from '../sync-role-replication-support.js';
 import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
+import type { MessagesQueryReplyEntry, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type {
   SyncNextLinkIdentity,
   SyncNextQuarantineEntry,
   SyncNextQuarantineReason,
 } from './types.js';
 
+import { Encoder, Records } from '@enbox/dwn-sdk-js';
+
 import { admitClosure } from '../sync-admit-closure.js';
 import { fetchRemoteMessages } from '../sync-messages.js';
 import { openSyncNextQuarantinePayload } from './quarantine-codec.js';
+import { readRoleReplicationSupport } from '../sync-role-replication-support.js';
+import { runSerializedByKey } from '@enbox/common';
 import { syncEntriesFromFeedEntries } from './feed-entry.js';
+
+const RETRY_DELAY_MS = 1_000;
+const MAX_RETRY_DELAY_MS = 60_000;
+
+export type SyncNextQuarantineAttempt = {
+  kind: 'aborted' | 'deferred' | 'empty' | 'pending' | 'settled';
+  remaining: number;
+};
 
 export type SyncNextQuarantineRetryResult = {
   aborted?: true;
@@ -22,11 +35,57 @@ export type SyncNextQuarantineRetryResult = {
 
 /** Retries one quarantined root independently from feed-page consumption. */
 export class SyncNextQuarantineRetry {
+  private readonly _pending = new Map<string, Promise<void>>();
+
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
+    private readonly _resolveTarget: (target: SyncTarget) => Promise<SyncTarget> = async target => target,
     private readonly _onApplied?: (target: SyncTarget, entries: readonly SyncFreshEntry[]) => void,
   ) {}
+
+  /** Select and retry one due receipt across every binding for a logical target. */
+  public retryOne(
+    target: SyncTarget,
+    shouldContinue: () => boolean = (): boolean => true,
+    signal?: AbortSignal,
+    force = false,
+  ): Promise<SyncNextQuarantineAttempt> {
+    const logicalTargetId = `${target.did}^${target.projectionId}`;
+    return runSerializedByKey(this._pending, logicalTargetId, async (): Promise<SyncNextQuarantineAttempt> => {
+      if (!shouldContinue()) {
+        return { kind: 'aborted', remaining: 0 };
+      }
+      const entries = await this._ledger.getQuarantineForLogicalTarget(logicalTargetId);
+      if (entries.length === 0) {
+        return { kind: 'empty', remaining: 0 };
+      }
+      const entry = force
+        ? entries[0]
+        : entries.find(candidate => SyncNextQuarantineRetry.retryAt(candidate) <= Date.now());
+      if (entry === undefined) {
+        return {
+          kind      : 'deferred',
+          remaining : entries.length,
+        };
+      }
+
+      try {
+        const result = await this.retry(target, entry, shouldContinue, signal);
+        if (result.kind === 'aborted') {
+          return { kind: 'aborted', remaining: entries.length };
+        }
+        const remainingEntries = await this._ledger.getQuarantineForLogicalTarget(logicalTargetId);
+        return {
+          kind      : result.kind,
+          remaining : remainingEntries.length,
+        };
+      } catch (error: unknown) {
+        await this._ledger.updateQuarantine(entry, entry.outcome);
+        throw error;
+      }
+    });
+  }
 
   public async retry(
     target: SyncTarget,
@@ -40,6 +99,7 @@ export class SyncNextQuarantineRetry {
     if (entry.logicalTargetId !== `${target.did}^${target.projectionId}`) {
       throw new Error('SyncNextQuarantineRetry: target does not own this quarantined receipt.');
     }
+    const current = await this._resolveTarget(target);
     const sourceIdentity = SyncNextQuarantineRetry.identity(entry);
     const payload = await openSyncNextQuarantinePayload(this._agent.vault, {
       identity   : sourceIdentity,
@@ -50,20 +110,27 @@ export class SyncNextQuarantineRetry {
       return { aborted: true, kind: 'aborted' };
     }
 
-    const received = [payload.entry, ...payload.support];
-    const prefetched = syncEntriesFromFeedEntries(
-      received,
-      (feedEntry): (() => Promise<ReadableStream<Uint8Array> | undefined>) =>
-        (): Promise<ReadableStream<Uint8Array> | undefined> => this.fetchData(target, feedEntry, signal),
-    );
+    const roleSupport = current.authorization.kind === 'role'
+      ? await this.fetchRoleSupport(current, payload.entry, shouldContinue)
+      : undefined;
+    const prefetched = roleSupport === undefined
+      ? syncEntriesFromFeedEntries(
+        [payload.entry],
+        (feedEntry): (() => Promise<ReadableStream<Uint8Array> | undefined>) =>
+          (): Promise<ReadableStream<Uint8Array> | undefined> => this.fetchData(current, feedEntry, signal),
+      )
+      : [roleSupport.root, ...roleSupport.dependencies];
     const outcome = await admitClosure(entry.messageCid, {
-      agent              : this._agent,
-      did                : target.did,
-      dwnUrl             : target.dwnUrl,
-      delegateDid        : target.delegateDid,
-      permissionGrantIds : target.permissionGrantIds,
+      agent       : this._agent,
+      did         : current.did,
+      dwnUrl      : current.dwnUrl,
+      delegateDid : current.delegateDid,
+      ...(roleSupport === undefined
+        ? {}
+        : { fetchReplicationSupport: async (): Promise<RoleReplicationSupportBatch> => roleSupport }),
+      permissionGrantIds : current.permissionGrantIds,
       prefetched,
-      scope              : target.scope,
+      scope              : current.scope,
       shouldContinue,
     });
     if (!shouldContinue()) {
@@ -72,7 +139,7 @@ export class SyncNextQuarantineRetry {
 
     if (outcome.kind === 'admitted') {
       if (outcome.freshEntries.length > 0) {
-        this._onApplied?.(target, outcome.freshEntries);
+        this._onApplied?.(current, outcome.freshEntries);
       }
       await this._ledger.settleQuarantineForLogicalTarget(entry.logicalTargetId, entry.messageCid);
       return { kind: 'settled', materializedCids: outcome.appliedCids };
@@ -101,6 +168,68 @@ export class SyncNextQuarantineRetry {
     return fetched?.dataStream;
   }
 
+  private async fetchRoleSupport(
+    target: Extract<SyncTarget, { authorization: { kind: 'role' } }> | SyncTarget,
+    entry: MessagesQueryReplyEntry,
+    shouldContinue: () => boolean,
+  ): Promise<RoleReplicationSupportBatch> {
+    const expectedRoot = entry.message;
+    const isWrite = expectedRoot !== undefined && Records.isRecordsWrite(expectedRoot);
+    const isDelete = expectedRoot?.descriptor.interface === 'Records' &&
+      expectedRoot.descriptor.method === 'Delete';
+    if (
+      target.authorization.kind !== 'role' ||
+      target.scope.kind !== 'context' ||
+      expectedRoot === undefined ||
+      (!isWrite && !isDelete)
+    ) {
+      throw new Error('SyncNextQuarantineRetry: role quarantine requires an exact context root.');
+    }
+    const rootRecordId = isWrite
+      ? expectedRoot.recordId
+      : (expectedRoot as RecordsDeleteMessage).descriptor.recordId;
+    const contextualWrite = isWrite ? expectedRoot : entry.initialWrite;
+    if (
+      contextualWrite === undefined ||
+      !Records.isRecordsWrite(contextualWrite) ||
+      contextualWrite.recordId !== rootRecordId
+    ) {
+      throw new Error('SyncNextQuarantineRetry: role delete is missing its initial write.');
+    }
+    const { contextId, recordId } = contextualWrite;
+    const { protocol, protocolPath } = contextualWrite.descriptor;
+    if (
+      contextId === undefined ||
+      recordId === undefined ||
+      protocol !== target.scope.protocol ||
+      protocolPath === undefined ||
+      !target.scope.protocolPaths.includes(protocolPath)
+    ) {
+      throw new Error('SyncNextQuarantineRetry: role quarantine root is outside the accepted paths.');
+    }
+    const support = await readRoleReplicationSupport({
+      actorDid       : target.authorization.actorDid,
+      agent          : this._agent,
+      contextId,
+      delegateDid    : target.delegateDid,
+      dwnUrl         : target.dwnUrl,
+      expectedRoot   : expectedRoot as RecordsDeleteMessage | RecordsWriteMessage,
+      permissionsApi : this._agent.permissions,
+      protocol       : target.scope.protocol,
+      protocolPath,
+      protocolRole   : target.authorization.protocolRole,
+      ...(entry.encodedData === undefined
+        ? {}
+        : { rootData: Encoder.base64UrlToBytes(entry.encodedData) }),
+      shouldContinue,
+      sourceDid: target.did,
+    });
+    return {
+      ...support,
+      root: { ...support.root, isLatestBaseState: entry.isLatestBaseState },
+    };
+  }
+
   private static reason(
     outcome: Exclude<Awaited<ReturnType<typeof admitClosure>>, { kind: 'admitted' }>,
   ): SyncNextQuarantineReason {
@@ -116,5 +245,11 @@ export class SyncNextQuarantineRetry {
       remoteEndpoint     : entry.remoteEndpoint,
       tenantDid          : entry.tenantDid,
     };
+  }
+
+  private static retryAt(entry: SyncNextQuarantineEntry): number {
+    const exponent = Math.min(Math.max(0, entry.attempts - 1), 6);
+    const delay = Math.min(RETRY_DELAY_MS * (2 ** exponent), MAX_RETRY_DELAY_MS);
+    return Date.parse(entry.lastAttemptAt) + delay;
   }
 }

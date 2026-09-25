@@ -3,7 +3,7 @@ import type { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import type { SyncFreshEntry } from '../sync-admit-closure.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
-import type { MessagesQueryReply, ProgressToken } from '@enbox/dwn-sdk-js';
+import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type {
   SyncNextLinkIdentity,
   SyncNextQuarantineInput,
@@ -11,13 +11,14 @@ import type {
   SyncNextSettledSource,
 } from './types.js';
 
-import { Message } from '@enbox/dwn-sdk-js';
+import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../sync-admit-closure.js';
 import { compareSyncNextPosition } from './ledger-key.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
-import { queryRemoteMessageFeed } from '../sync-messages.js';
+import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { sealSyncNextQuarantinePayload } from './quarantine-codec.js';
+import { getLocalMessage, queryRemoteMessageFeed } from '../sync-messages.js';
 import { sourceTokenFromFeedEntry, syncEntriesFromFeedEntries } from './feed-entry.js';
 
 const PULL_PAGE_SIZE = 100;
@@ -47,6 +48,7 @@ export class SyncNextPullPage {
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _echoSuppressor?: SyncEchoSuppressor,
     private readonly _observer: SyncNextPullPageObserver = {},
+    private readonly _resolveTarget: (target: SyncTarget) => Promise<SyncTarget> = async target => target,
   ) {}
 
   public async consume(
@@ -59,12 +61,13 @@ export class SyncNextPullPage {
     if (link === undefined || link.status !== 'active' || !shouldContinue()) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
+    const current = await this._resolveTarget(target);
 
-    const reply = await this.query(target, link.pullHandledThrough, options.signal);
+    const reply = await this.query(current, link.pullHandledThrough, options.signal);
     if (!shouldContinue()) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
-    SyncNextPullPage.assertSuccessfulPage(reply, target);
+    SyncNextPullPage.assertSuccessfulPage(reply, current);
 
     const handledThrough = reply.cursor;
     if (handledThrough === undefined) {
@@ -78,6 +81,7 @@ export class SyncNextPullPage {
       if (entry.message === undefined || await Message.getCid(entry.message) !== entry.messageCid) {
         throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} failed CID verification.`);
       }
+      await SyncNextPullPage.assertInlineData(entry);
     }
     const prefetched = syncEntriesFromFeedEntries(entries);
     const quarantine: SyncNextQuarantineInput[] = [];
@@ -89,18 +93,36 @@ export class SyncNextPullPage {
         return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
       }
       const source = sourceTokenFromFeedEntry(handledThrough, entry);
+      if (
+        current.authorization.kind === 'role' &&
+        entry.isLatestBaseState === false &&
+        entry.message !== undefined &&
+        Records.isRecordsWrite(entry.message)
+      ) {
+        settled.push({ messageCid: entry.messageCid, source });
+        continue;
+      }
+      const isPushEcho = await this.hasDurableLocalPullEcho(current, entry);
+      if (!shouldContinue()) {
+        return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
+      }
+      if (isPushEcho) {
+        settled.push({ messageCid: entry.messageCid, source });
+        materializedCids.add(entry.messageCid);
+        continue;
+      }
       const outcome = await admitClosure(entry.messageCid, {
         agent         : this._agent,
-        did           : target.did,
-        dwnUrl        : target.dwnUrl,
-        delegateDid   : target.delegateDid,
+        did           : current.did,
+        dwnUrl        : current.dwnUrl,
+        delegateDid   : current.delegateDid,
         onBeforeApply : (messageCid): void => {
-          this._echoSuppressor?.trackPulled(target.did, messageCid, target.dwnUrl);
+          this._echoSuppressor?.trackPulled(current.did, messageCid, current.dwnUrl);
         },
-        permissionGrantIds : target.permissionGrantIds,
+        permissionGrantIds : current.permissionGrantIds,
         prefetched,
         remoteHydration    : 'defer',
-        scope              : target.scope,
+        scope              : current.scope,
         shouldContinue,
       });
       if (!shouldContinue()) {
@@ -113,7 +135,7 @@ export class SyncNextPullPage {
           materializedCids.add(messageCid);
         }
         if (outcome.freshEntries.length > 0) {
-          this._observer.onApplied?.(target, outcome.freshEntries);
+          this._observer.onApplied?.(current, outcome.freshEntries);
         }
         continue;
       }
@@ -124,7 +146,6 @@ export class SyncNextPullPage {
         source,
       }, {
         entry,
-        support: [],
       });
       quarantine.push({
         encryptedPayload,
@@ -140,12 +161,11 @@ export class SyncNextPullPage {
       handledThrough,
       quarantine,
       settled,
-      terminal: [],
     });
     if (!committed) {
       return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
     }
-    this._observer.onCheckpoint?.(target, handledThrough);
+    this._observer.onCheckpoint?.(current, handledThrough);
 
     return {
       handledThrough,
@@ -177,6 +197,33 @@ export class SyncNextPullPage {
     });
   }
 
+  /** Verify a recent-push hint against the complete local message before skipping its pull echo. */
+  private async hasDurableLocalPullEcho(
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+  ): Promise<boolean> {
+    if (this._echoSuppressor?.hasRecentlyPushed(target.did, entry.messageCid, target.dwnUrl) !== true) {
+      return false;
+    }
+
+    const local = await getLocalMessage({
+      agent              : this._agent,
+      author             : target.did,
+      delegateDid        : target.delegateDid,
+      messageCid         : entry.messageCid,
+      permissionGrantIds : target.permissionGrantIds,
+    });
+    if (local === undefined) {
+      return false;
+    }
+
+    const hasStoredData = local.dataStream !== undefined;
+    await local.dataStream?.cancel();
+    return entry.isLatestBaseState !== true ||
+      !recordsWriteRequiresData(local.message) ||
+      hasStoredData;
+  }
+
   private static quarantineReason(
     outcome: Exclude<Awaited<ReturnType<typeof admitClosure>>, { kind: 'admitted' }>,
   ): SyncNextQuarantineReason {
@@ -184,6 +231,25 @@ export class SyncNextPullPage {
       return 'admission-unresolved';
     }
     return outcome.reason ?? 'admission-unresolved';
+  }
+
+  private static async assertInlineData(entry: MessagesQueryReplyEntry): Promise<void> {
+    if (
+      entry.encodedData === undefined ||
+      entry.message?.descriptor.interface !== 'Records' ||
+      entry.message.descriptor.method !== 'Write'
+    ) {
+      return;
+    }
+    const data = Encoder.base64UrlToBytes(entry.encodedData);
+    const write = entry.message as RecordsWriteMessage;
+    const dataCid = await Cid.computeDagPbCidFromBytes(data);
+    RecordsWrite.validateDataIntegrity(
+      write.descriptor.dataCid,
+      write.descriptor.dataSize,
+      dataCid,
+      data.byteLength,
+    );
   }
 
   private static assertSuccessfulPage(reply: MessagesQueryReply, target: SyncTarget): void {

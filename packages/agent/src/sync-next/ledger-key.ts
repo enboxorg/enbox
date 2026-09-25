@@ -44,20 +44,6 @@ export function syncNextReceiptKey(
   ].map(encodePart).join('')}`;
 }
 
-/** Durable key for one terminal outcome, additionally isolated by direction. */
-export function syncNextTerminalKey(
-  identity: SyncNextLinkIdentity,
-  direction: 'pull' | 'push',
-  receipt: SyncNextSourceReceipt,
-): string {
-  return `${syncNextLinkKey(identity)}${encodePart(direction)}${[
-    receipt.source.streamId,
-    receipt.source.epoch,
-    receipt.source.position,
-    receipt.messageCid,
-  ].map(encodePart).join('')}`;
-}
-
 /** Whether a progress token is safe for exact integer/domain comparison. */
 export function isValidSyncNextToken(token: ProgressToken): boolean {
   return token.streamId.length > 0 &&
