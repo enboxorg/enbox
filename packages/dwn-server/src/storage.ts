@@ -10,7 +10,6 @@ import type {
   DwnConfig,
   EventLog,
   MessageStore,
-  ReplicationFeedReader,
   ResumableTaskStore,
   TenantGate,
   WakePublisher,
@@ -65,11 +64,17 @@ type GetDwnConfigOptions = {
   enableEventLog? : boolean;
 };
 
-type DurableMessageStore = MessageStore & ReplicationFeedReader;
-
 type WakePublisherAwareStore = {
   setWakePublisher(wakePublisher: WakePublisher | undefined): void;
 };
+
+const requiredMessageStorePluginMethods = [
+  'completeData',
+  'logRead',
+  'logBounds',
+  'fingerprint',
+  'epoch',
+] as const satisfies readonly (keyof MessageStore)[];
 
 type Mysql2Module = {
   createPool : typeof Mysql2.createPool;
@@ -207,19 +212,7 @@ function createDurableEventLog(messageStore: MessageStore, options: GetDwnConfig
     throw new Error('DWN server misconfiguration: an EventBus is required when event log support is enabled.');
   }
 
-  if (!isDurableMessageStore(messageStore)) {
-    throw new Error('DWN server misconfiguration: the configured MessageStore does not implement the durable replication feed.');
-  }
-
   return new DurableEventLog(messageStore, options.eventBus);
-}
-
-function isDurableMessageStore(messageStore: MessageStore): messageStore is DurableMessageStore {
-  const candidate = messageStore as Partial<ReplicationFeedReader>;
-  return typeof candidate.logRead === 'function' &&
-    typeof candidate.logBounds === 'function' &&
-    typeof candidate.fingerprint === 'function' &&
-    typeof candidate.epoch === 'function';
 }
 
 /**
@@ -454,10 +447,13 @@ async function loadStoreFromFilePath(
     case StoreType.DataStore:
       store = await PluginLoader.loadPlugin<DataStore>(filePath);
       break;
-    case StoreType.MessageStore:
-      store = await PluginLoader.loadPlugin<MessageStore>(filePath);
-      setWakePublisherIfSupported(store, wakePublisher);
+    case StoreType.MessageStore: {
+      const messageStorePlugin = await PluginLoader.loadPlugin<MessageStore>(filePath);
+      validateRequiredMessageStorePluginMethods(messageStorePlugin, filePath);
+      setWakePublisherIfSupported(messageStorePlugin, wakePublisher);
+      store = messageStorePlugin;
       break;
+    }
     case StoreType.ResumableTaskStore:
       store = await PluginLoader.loadPlugin<ResumableTaskStore>(filePath);
       break;
@@ -466,6 +462,14 @@ async function loadStoreFromFilePath(
   }
 
   return store;
+}
+
+/** Checks only methods newly required from plugins; the pre-existing MessageStore surface remains trusted. */
+function validateRequiredMessageStorePluginMethods(store: MessageStore, filePath: string): void {
+  const missing = requiredMessageStorePluginMethods.filter(method => typeof store[method] !== 'function');
+  if (missing.length > 0) {
+    throw new Error(`MessageStore plugin at ${filePath} is missing required methods: ${missing.join(', ')}`);
+  }
 }
 
 function setWakePublisherIfSupported(store: DwnStore, wakePublisher: WakePublisher | undefined): void {
