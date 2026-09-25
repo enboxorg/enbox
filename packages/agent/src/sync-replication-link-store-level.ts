@@ -22,6 +22,9 @@ type LevelKey = string | Buffer | Uint8Array;
 /** Separator used in compound LevelDB keys. */
 const KEY_SEP = '^';
 
+/** Bump when an older checkpoint can no longer prove that its feed prefix is settled. */
+const CHECKPOINT_VERSION = 1;
+
 /** Parameters that identify and initialize a durable replication link. */
 export type SyncReplicationLinkCreateParams = {
   tenantDid : string;
@@ -112,6 +115,12 @@ export class SyncReplicationLinkStoreLevel {
           existing.delegateDid = params.delegateDid;
           changed = true;
         }
+        if (existing.checkpointVersion !== CHECKPOINT_VERSION) {
+          SyncCheckpoint.reset(existing.pull);
+          SyncCheckpoint.reset(existing.push);
+          existing.checkpointVersion = CHECKPOINT_VERSION;
+          changed = true;
+        }
         const persistNormalizedDecision = SyncReplicationLinkStoreLevel.normalizeResumedLink(existing);
         changed ||= persistNormalizedDecision;
         if (changed) {
@@ -137,6 +146,7 @@ export class SyncReplicationLinkStoreLevel {
         scope,
         authorization      : params.authorization,
         status             : 'initializing',
+        checkpointVersion  : CHECKPOINT_VERSION,
         connectivity       : 'unknown',
         pull               : {},
         push               : {},

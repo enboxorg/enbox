@@ -118,7 +118,7 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
     await db.close();
   });
 
-  it('should atomically adopt both heads when fresh subscription fingerprints match', async () => {
+  it('should reconcile fresh non-empty feeds even when subscription fingerprints match', async () => {
     const fixture = createBaselineFixture(db);
     const pullHead = tokenIn('remote-stream', 'remote-epoch', '7');
     const pushHead = tokenIn('local-stream', 'local-epoch', '11');
@@ -135,15 +135,12 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
 
     const result = await establishBaseline(fixture);
 
-    expect(result).toEqual({ converged: true });
-    expect(fixture.controller.link.pull.contiguousAppliedToken).toEqual(pullHead);
-    expect(fixture.controller.link.push.contiguousAppliedToken).toEqual(pushHead);
-    expect(fixture.persistCheckpoints.calledOnceWithExactly(fixture.controller.link)).toBe(true);
-    expect(fixture.reconcile.notCalled).toBe(true);
-    expect(events).toEqual([
-      expect.objectContaining({ type: 'checkpoint:pull-advance', position: '7' }),
-      expect.objectContaining({ type: 'checkpoint:push-advance', position: '11' }),
-    ]);
+    expect(result).toEqual({ converged: true, pullDrained: true });
+    expect(fixture.controller.link.pull.contiguousAppliedToken).toBeUndefined();
+    expect(fixture.controller.link.push.contiguousAppliedToken).toBeUndefined();
+    expect(fixture.persistCheckpoints.notCalled).toBe(true);
+    expect(fixture.reconcile.calledOnce).toBe(true);
+    expect(events).toEqual([]);
     expect(fixture.controller.isPullCurrent).toBe(false);
     expect(fixture.controller.executor.hasPending('pull')).toBe(true);
     expect(fixture.controller.executor.hasPending('push')).toBe(true);
@@ -273,7 +270,7 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
     await fixture.controller.dispose();
   });
 
-  it('should open wake subscriptions at the live head and advance an existing checkpoint pair from matching snapshots', async () => {
+  it('should reconcile when matching snapshots are ahead of the durable checkpoint pair', async () => {
     const fixture = createBaselineFixture(db);
     const pullCursor = tokenIn('remote-stream', 'remote-epoch', '17');
     const pushCursor = tokenIn('local-stream', 'local-epoch', '23');
@@ -318,12 +315,51 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
     expect(requests).toHaveLength(2);
     expect(requests[0].messageParams.cursor).toBeUndefined();
     expect(requests[1].messageParams.cursor).toBeUndefined();
+    expect(await establishBaseline(fixture)).toEqual({ converged: true, pullDrained: true });
+    expect(fixture.reconcile.calledOnce).toBe(true);
+    expect(fixture.persistCheckpoints.notCalled).toBe(true);
+    expect(fixture.controller.link.pull.contiguousAppliedToken).toEqual(pullCursor);
+    expect(fixture.controller.link.push.contiguousAppliedToken).toEqual(pushCursor);
+    expect(fixture.controller.isPullCurrent).toBe(true);
+
+    await fixture.controller.dispose();
+  });
+
+  it('should skip historical reconciliation only when both durable checkpoints cover matching snapshots', async () => {
+    const fixture = createBaselineFixture(db);
+    const pullHead = tokenIn('remote-stream', 'remote-epoch', '31');
+    const pushHead = tokenIn('local-stream', 'local-epoch', '37');
+    fixture.controller.link.pull.contiguousAppliedToken = pullHead;
+    fixture.controller.link.push.contiguousAppliedToken = pushHead;
+    attachSubscriptionSnapshots(
+      fixture.controller,
+      { fingerprint: 'same-feed', head: pullHead },
+      { fingerprint: 'same-feed', head: pushHead },
+    );
+
+    expect(await establishBaseline(fixture)).toEqual({ converged: true });
+    expect(fixture.reconcile.notCalled).toBe(true);
+    expect(fixture.persistCheckpoints.notCalled).toBe(true);
+    expect(fixture.controller.isPullCurrent).toBe(true);
+
+    await fixture.controller.dispose();
+  });
+
+  it('should establish position-zero checkpoints without reconciling empty feeds', async () => {
+    const fixture = createBaselineFixture(db);
+    const pullHead = tokenIn('remote-stream', 'remote-epoch', '0');
+    const pushHead = tokenIn('local-stream', 'local-epoch', '0');
+    attachSubscriptionSnapshots(
+      fixture.controller,
+      { fingerprint: 'empty-feed', head: pullHead },
+      { fingerprint: 'empty-feed', head: pushHead },
+    );
+
     expect(await establishBaseline(fixture)).toEqual({ converged: true });
     expect(fixture.reconcile.notCalled).toBe(true);
     expect(fixture.persistCheckpoints.calledOnceWithExactly(fixture.controller.link)).toBe(true);
     expect(fixture.controller.link.pull.contiguousAppliedToken).toEqual(pullHead);
     expect(fixture.controller.link.push.contiguousAppliedToken).toEqual(pushHead);
-    expect(fixture.controller.isPullCurrent).toBe(true);
 
     await fixture.controller.dispose();
   });

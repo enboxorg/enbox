@@ -37,9 +37,20 @@ export class SyncEchoSuppressor {
     this._pushedEntries.clear();
   }
 
-  /** Return whether this link recently pulled the CID and should not push it back. */
-  public hasRecentlyPulled(tenantDid: string, messageCid: string, remoteEndpoint: string): boolean {
-    return this.hasUnexpiredEntry(this._pulledEntries, tenantDid, messageCid, remoteEndpoint);
+  /** Return whether this link recently pulled the same CID and completeness state. */
+  public hasRecentlyPulled(
+    tenantDid: string,
+    messageCid: string,
+    remoteEndpoint: string,
+    isLatestBaseState?: boolean,
+  ): boolean {
+    return this.hasUnexpiredEntry(
+      this._pulledEntries,
+      tenantDid,
+      messageCid,
+      remoteEndpoint,
+      isLatestBaseState,
+    );
   }
 
   /** Return whether this link recently pushed the CID and should verify a possible pull echo locally. */
@@ -47,9 +58,14 @@ export class SyncEchoSuppressor {
     return this.hasUnexpiredEntry(this._pushedEntries, tenantDid, messageCid, remoteEndpoint);
   }
 
-  /** Record a successfully pulled message for endpoint-local push suppression. */
-  public trackPulled(tenantDid: string, messageCid: string, remoteEndpoint: string): void {
-    this.track(this._pulledEntries, tenantDid, messageCid, remoteEndpoint);
+  /** Record a successfully pulled message and its feed completeness state. */
+  public trackPulled(
+    tenantDid: string,
+    messageCid: string,
+    remoteEndpoint: string,
+    isLatestBaseState?: boolean,
+  ): void {
+    this.track(this._pulledEntries, tenantDid, messageCid, remoteEndpoint, isLatestBaseState);
   }
 
   /** Record a message about to be pushed so its possible pull echo can be verified locally. */
@@ -57,8 +73,13 @@ export class SyncEchoSuppressor {
     this.track(this._pushedEntries, tenantDid, messageCid, remoteEndpoint);
   }
 
-  private static cacheKey(tenantDid: string, messageCid: string, remoteEndpoint: string): string {
-    return `${messageCid}|${tenantDid}|${remoteEndpoint}`;
+  private static cacheKey(
+    tenantDid: string,
+    messageCid: string,
+    remoteEndpoint: string,
+    isLatestBaseState?: boolean,
+  ): string {
+    return `${messageCid}|${tenantDid}|${remoteEndpoint}|${isLatestBaseState ?? 'unknown'}`;
   }
 
   private evictExpiredAndExcessEntries(cache: Map<string, number>, now: number): void {
@@ -86,8 +107,9 @@ export class SyncEchoSuppressor {
     tenantDid: string,
     messageCid: string,
     remoteEndpoint: string,
+    isLatestBaseState?: boolean,
   ): boolean {
-    const key = SyncEchoSuppressor.cacheKey(tenantDid, messageCid, remoteEndpoint);
+    const key = SyncEchoSuppressor.cacheKey(tenantDid, messageCid, remoteEndpoint, isLatestBaseState);
     const expiry = cache.get(key);
     if (expiry === undefined) { return false; }
     if (this._now() >= expiry) {
@@ -102,10 +124,11 @@ export class SyncEchoSuppressor {
     tenantDid: string,
     messageCid: string,
     remoteEndpoint: string,
+    isLatestBaseState?: boolean,
   ): void {
     const now = this._now();
     cache.set(
-      SyncEchoSuppressor.cacheKey(tenantDid, messageCid, remoteEndpoint),
+      SyncEchoSuppressor.cacheKey(tenantDid, messageCid, remoteEndpoint, isLatestBaseState),
       now + this._ttlMs,
     );
     this.evictExpiredAndExcessEntries(cache, now);

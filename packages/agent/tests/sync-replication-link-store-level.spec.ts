@@ -71,6 +71,37 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(JSON.parse(raw)).toEqual(link);
   });
 
+  it('should reset checkpoints created before completeness-aware feed reconciliation', async () => {
+    const params = {
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' as const },
+      ...ownerAuthorization,
+    };
+    const link = await store.getOrCreateLink(params);
+    link.pull.contiguousAppliedToken = token(8);
+    link.push.contiguousAppliedToken = token(9);
+    const legacy = { ...link };
+    delete legacy.checkpointVersion;
+    const key = `${link.tenantDid}^${link.remoteEndpoint}^${link.projectionId}^${link.authorizationEpoch}`;
+    await db.sublevel('replicationLinks').put(key, JSON.stringify(legacy));
+
+    const resumed = await store.getOrCreateLink(params);
+
+    expect(resumed.checkpointVersion).toBe(1);
+    expect(resumed.pull.contiguousAppliedToken).toBeUndefined();
+    expect(resumed.push.contiguousAppliedToken).toBeUndefined();
+    expect(await store.getAllLinks()).toMatchObject([{
+      checkpointVersion : 1,
+      pull              : {},
+      push              : {},
+    }]);
+
+    resumed.pull.contiguousAppliedToken = token(10);
+    await store.persistCheckpoint(resumed, 'pull');
+    expect((await store.getOrCreateLink(params)).pull.contiguousAppliedToken).toEqual(token(10));
+  });
+
   it('should refresh a role delegate without persisting transient resume state', async () => {
     const params = {
       tenantDid      : 'did:example:owner',
