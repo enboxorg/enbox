@@ -42,6 +42,15 @@ describe('SyncEchoSuppressor', () => {
     expect(suppressor.hasRecentlyPushed(ALICE, 'cid-1', FIRST_REMOTE)).toBe(false);
   });
 
+  it('does not suppress a completed body after pulling the same CID as ancestry only', () => {
+    const suppressor = new SyncEchoSuppressor();
+
+    suppressor.trackPulled(ALICE, 'cid-1', FIRST_REMOTE, false);
+
+    expect(suppressor.hasRecentlyPulled(ALICE, 'cid-1', FIRST_REMOTE, false)).toBe(true);
+    expect(suppressor.hasRecentlyPulled(ALICE, 'cid-1', FIRST_REMOTE, true)).toBe(false);
+  });
+
   it('bounds each direction independently by evicting oldest entries first', () => {
     const suppressor = new SyncEchoSuppressor({ maxEntries: 3 });
 

@@ -378,10 +378,8 @@ export class SyncEngineLevel implements SyncEngine {
       connectivityManager    : this._connectivityManager,
       feedConvergenceManager : this._feedConvergenceManager,
       operations             : {
-        getTargets           : (): Promise<SyncTarget[]> => this.getSyncTargets(),
-        probeFeedConvergence : (target): Promise<SyncReconcileResult> =>
-          this.probeFeedConvergence(target),
-        reconcileTarget: (target, direction, verifyConvergence): Promise<SyncReconcileResult> =>
+        getTargets      : (): Promise<SyncTarget[]> => this.getSyncTargets(),
+        reconcileTarget : (target, direction, verifyConvergence): Promise<SyncReconcileResult> =>
           this.reconcileTarget(target, { direction, verifyConvergence }),
         recordPushFailures: (target, failures): Promise<PushFailure[]> =>
           this.recordTerminalPushFailures(target, failures),
@@ -2742,9 +2740,11 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Establish the durable checkpoint pair before subscription wakes may run.
-   * Equal snapshots prove that neither feed owes historical transfer;
-   * otherwise one direct reconciliation establishes both baselines. Events
-   * after either snapshot leave a work mark for executor eligibility.
+   * Matching fingerprints can skip work only when durable checkpoints already
+   * cover both captured heads (or both feeds are empty). A CID fingerprint
+   * does not distinguish an ancestry-only RecordsWrite from the same message
+   * after its body arrives. Events after either snapshot leave a work mark for
+   * executor eligibility.
    */
   private async establishLinkBaseline(
     target: SyncTarget,
@@ -2764,25 +2764,35 @@ export class SyncEngineLevel implements SyncEngine {
 
     const pullSnapshot = controller.pullSnapshot;
     const pushSnapshot = controller.pushSnapshot;
-    if (
-      pullSnapshot?.fingerprint !== undefined &&
+    const pullHead = pullSnapshot?.head;
+    const pushHead = pushSnapshot?.head;
+    const validSnapshots = pullSnapshot?.fingerprint !== undefined &&
       pullSnapshot.fingerprint === pushSnapshot?.fingerprint &&
-      pullSnapshot.head !== undefined &&
-      pushSnapshot.head !== undefined &&
-      isValidProgressToken(pullSnapshot.head) &&
-      isValidProgressToken(pushSnapshot.head)
+      pullHead !== undefined &&
+      pushHead !== undefined &&
+      isValidProgressToken(pullHead) &&
+      isValidProgressToken(pushHead);
+    const emptySnapshots = pullHead?.position === '0' && pushHead?.position === '0';
+    const checkpointsCoverSnapshots = pullHead !== undefined && pushHead !== undefined &&
+      SyncCheckpoint.covers(link.pull, pullHead) &&
+      SyncCheckpoint.covers(link.push, pushHead);
+    if (
+      validSnapshots &&
+      (emptySnapshots || checkpointsCoverSnapshots)
     ) {
       if (!isCurrent()) {
         return { aborted: true };
       }
-      SyncCheckpoint.commitContiguousToken(link.pull, pullSnapshot.head);
-      SyncCheckpoint.commitContiguousToken(link.push, pushSnapshot.head);
-      await this.replicationLinkStore.persistCheckpoints(link);
-      if (!isCurrent()) {
-        return { aborted: true };
+      if (!checkpointsCoverSnapshots) {
+        SyncCheckpoint.commitContiguousToken(link.pull, pullHead);
+        SyncCheckpoint.commitContiguousToken(link.push, pushHead);
+        await this.replicationLinkStore.persistCheckpoints(link);
+        if (!isCurrent()) {
+          return { aborted: true };
+        }
+        this.emitCheckpointAdvance(link, 'pull');
+        this.emitCheckpointAdvance(link, 'push');
       }
-      this.emitCheckpointAdvance(link, 'pull');
-      this.emitCheckpointAdvance(link, 'push');
       this.markPullCurrent(controller, expectedReplicationGeneration);
       return { converged: true };
     }
@@ -4112,49 +4122,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  /** Probe one active session through its link executor. */
-  private async probeFeedConvergence(target: SyncTarget): Promise<SyncReconcileResult> {
-    if (this.isTargetPaused(target)) {
-      return { paused: true };
-    }
-    if (target.authorization.kind === 'role') {
-      const result = await this.reconcileTarget(target);
-      return result.pullDrained === true ? { ...result, converged: true } : result;
-    }
-    await this.getOrCreateReplicationLink(target);
-    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
-    const controller = this.getLinkController(linkKey);
-    if (controller?.isActive !== true) {
-      return this.verifyFeedConvergence(target);
-    }
-    await this.retryFailedRepairForTarget(target, controller);
-    if (controller.link.status === 'paused') {
-      return { paused: true };
-    }
-    if (controller.link.status !== 'live' || !controller.isReplicationReady) {
-      return { aborted: true };
-    }
-
-    const result = await this._linkRecoveryCoordinator.execute(controller, async (): Promise<SyncReconcileResult> => {
-      // Re-check when this executor turn starts. A pre-executor status claim
-      // can become stale while earlier work runs.
-      if (!controller.isActive) {
-        return { aborted: true };
-      }
-      if (controller.link.status === 'paused') {
-        return { paused: true };
-      }
-      if (controller.link.status !== 'live' || !controller.isReplicationReady) {
-        return { aborted: true };
-      }
-
-      const replicationGeneration = controller.replicationGeneration;
-      const isCurrent = (): boolean => controller.isReplicationGenerationCurrent(replicationGeneration);
-      return this.verifyFeedConvergence(target, isCurrent);
-    });
-    return result ?? { aborted: true };
-  }
-
   private async queryDurableFeed({
     cidsOnly,
     cursor,
@@ -4449,7 +4416,12 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'processed' };
     }
 
-    if (this._echoSuppressor.hasRecentlyPulled(target.did, entry.messageCid, target.dwnUrl)) {
+    if (this._echoSuppressor.hasRecentlyPulled(
+      target.did,
+      entry.messageCid,
+      target.dwnUrl,
+      entry.isLatestBaseState,
+    )) {
       return { kind: 'processed' };
     }
 
@@ -4593,6 +4565,12 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       if (outcome.kind === 'admitted') {
+        this._echoSuppressor.trackPulled(
+          target.did,
+          entry.messageCid,
+          target.dwnUrl,
+          entry.isLatestBaseState,
+        );
         admittedCids.push(...outcome.appliedCids);
         await this.trackRemoteFeedAppliedCids(outcome.appliedCids, target);
         for (const freshEntry of outcome.freshEntries) {
@@ -4606,7 +4584,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void> {
     for (const cid of messageCids) {
-      this._echoSuppressor.trackPulled(target.did, cid, target.dwnUrl);
       await this.runDeferredPullLifecycle(target.did, async (): Promise<void> => {
         await this.clearDeferredPull(target.did, target.dwnUrl, cid);
         await this.clearDeadLetterForTenant(target.did, cid, target.dwnUrl);
@@ -4840,7 +4817,12 @@ export class SyncEngineLevel implements SyncEngine {
       scope              : target.scope,
       agent              : this.agent,
       onBeforeApply      : (messageCid): void => {
-        this._echoSuppressor.trackPulled(target.did, messageCid, target.dwnUrl);
+        this._echoSuppressor.trackPulled(
+          target.did,
+          messageCid,
+          target.dwnUrl,
+          messageCid === entry.messageCid ? entry.isLatestBaseState : undefined,
+        );
       },
       permissionsApi: this._permissionsApi,
       prefetched,
