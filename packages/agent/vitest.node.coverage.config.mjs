@@ -13,15 +13,13 @@ export default defineConfig({
   },
   test: {
     include: [
-      'tests/sync-durable-feed-reconciler.spec.ts',
-      'tests/sync-link-recovery-coordinator.spec.ts',
+      'tests/sync-next-*.spec.ts',
       'tests/sync-messages.spec.ts',
     ],
     testTimeout : 10_000,
     coverage: {
       include: [
-        'src/sync-durable-feed-reconciler.ts',
-        'src/sync-link-recovery-coordinator.ts',
+        'src/sync-next/**/*.ts',
         'src/sync-messages.ts',
       ],
       provider         : 'istanbul',
