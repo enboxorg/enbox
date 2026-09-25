@@ -328,16 +328,17 @@ describe('RPC Clients', () => {
       expect(sent).toHaveLength(2);
     });
 
-    it('keeps requests carrying HTTP-only caller semantics on HTTP', async () => {
+    it('keeps cancellation and deadlines on an eligible connected socket request', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
       const socketRequest = seedConnectedSocket();
+      const signal = AbortSignal.timeout(10_000);
 
       await rpcClient.sendDwnRequest({
         dwnUrl    : httpEndpoint,
         targetDid : 'did:example:alice',
         message   : queryMessage() as never,
-        signal    : AbortSignal.timeout(10_000),
+        signal,
       });
       await rpcClient.sendDwnRequest({
         dwnUrl    : httpEndpoint,
@@ -346,10 +347,10 @@ describe('RPC Clients', () => {
         timeoutMs : 5_000,
       });
 
-      // Abort signals and per-attempt timeouts are honored only by the HTTP
-      // transport — routing them onto the socket would silently drop them.
-      expect(socketRequest.called).toBe(false);
-      expect(sent).toHaveLength(2);
+      expect(socketRequest.calledTwice).toBe(true);
+      expect(socketRequest.firstCall.args[1]).toEqual({ signal, timeoutMs: undefined });
+      expect(socketRequest.secondCall.args[1]).toEqual({ signal: undefined, timeoutMs: 5_000 });
+      expect(sent).toHaveLength(0);
     });
 
     it('classifies serializable message instances by their wire representation', async () => {
@@ -629,16 +630,17 @@ describe('RPC Clients', () => {
       expect(applied).toHaveLength(3);
     });
 
-    it('keeps replicated applies with HTTP-only caller semantics on HTTP', async () => {
+    it('keeps cancellation and deadlines on an eligible connected socket apply', async () => {
       const { applied, client: httpStub } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
       const socketRequest = seedConnectedSocket();
+      const signal = AbortSignal.timeout(10_000);
 
       await rpcClient.applyReplicatedMessage({
         dwnUrl    : httpEndpoint,
         targetDid : 'did:example:alice',
         message   : replicatedWriteMessage(0) as never,
-        signal    : AbortSignal.timeout(10_000),
+        signal,
       });
       await rpcClient.applyReplicatedMessage({
         dwnUrl    : httpEndpoint,
@@ -647,8 +649,10 @@ describe('RPC Clients', () => {
         timeoutMs : 5_000,
       });
 
-      expect(socketRequest.called).toBe(false);
-      expect(applied).toHaveLength(2);
+      expect(socketRequest.calledTwice).toBe(true);
+      expect(socketRequest.firstCall.args[1]).toEqual({ signal, timeoutMs: undefined });
+      expect(socketRequest.secondCall.args[1]).toEqual({ signal: undefined, timeoutMs: 5_000 });
+      expect(applied).toHaveLength(0);
     });
 
     it('does not fall back replicated apply after uncertain socket delivery', async () => {

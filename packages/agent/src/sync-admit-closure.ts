@@ -697,7 +697,7 @@ class AdmitClosureContext {
   }
 
   private async rememberEntry(entry: SyncMessageEntry): Promise<string> {
-    const cid = await Message.getCid(entry.message);
+    const cid = entry.messageCid ?? await Message.getCid(entry.message);
     this.entriesByCid.set(cid, entry);
     return cid;
   }

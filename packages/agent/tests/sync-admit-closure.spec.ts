@@ -66,8 +66,9 @@ describe('admitClosure', () => {
     const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
     await Time.minimalSleep();
     const update = await TestDataGenerator.generateFromRecordsWrite({
-      author        : initial.author,
-      existingWrite : initial.recordsWrite,
+      author           : initial.author,
+      existingWrite    : initial.recordsWrite,
+      messageTimestamp : Time.createOffsetTimestamp({ seconds: 1 }),
     });
     const rootCid = await Message.getCid(update.message);
     const agent = createMockAgent();

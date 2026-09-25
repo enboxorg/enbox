@@ -1,5 +1,6 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { PushFailure } from '../types/sync.js';
+import type { SyncEchoSuppressor } from '../sync-echo-suppressor.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
@@ -10,6 +11,7 @@ import type {
   SyncNextSettledSource,
 } from './types.js';
 
+import { compareSyncNextPosition } from './ledger-key.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { sourceTokenFromFeedEntry } from './feed-entry.js';
@@ -26,7 +28,12 @@ export type SyncNextPushPageResult = {
 };
 
 export type SyncNextPushPageOptions = {
+  signal?: AbortSignal;
   shouldContinue?: () => boolean;
+};
+
+export type SyncNextPushPageObserver = {
+  onCheckpoint?: (target: SyncTarget, token: ProgressToken) => void;
 };
 
 /** Consumes one local feed page without letting one delivery block its independent tail. */
@@ -34,6 +41,8 @@ export class SyncNextPushPage {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
+    private readonly _echoSuppressor?: SyncEchoSuppressor,
+    private readonly _observer: SyncNextPushPageObserver = {},
   ) {}
 
   public async consume(
@@ -61,14 +70,19 @@ export class SyncNextPushPage {
         `SyncNextPushPage: local feed for ${target.did} returned no cursor for a successful page.`,
       );
     }
+    SyncNextPushPage.assertCursorAdvanced(link.pushHandledThrough, handledThrough, reply.drained === true);
 
     const context = new RemoteApplyPushContext({
-      agent              : this._agent,
-      did                : target.did,
-      dwnUrl             : target.dwnUrl,
-      delegateDid        : target.delegateDid,
+      agent         : this._agent,
+      did           : target.did,
+      dwnUrl        : target.dwnUrl,
+      delegateDid   : target.delegateDid,
+      onBeforeApply : (messageCid): void => {
+        this._echoSuppressor?.trackPushed(target.did, messageCid, target.dwnUrl);
+      },
       permissionGrantIds : target.permissionGrantIds,
       permissionsApi     : this._agent.permissions,
+      signal             : options.signal,
     });
     const delivery: SyncNextDeliveryInput[] = [];
     const settled: SyncNextSettledSource[] = [];
@@ -79,6 +93,10 @@ export class SyncNextPushPage {
         return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
       }
       const source = sourceTokenFromFeedEntry(handledThrough, entry);
+      if (this._echoSuppressor?.hasRecentlyPulled(target.did, entry.messageCid, target.dwnUrl) === true) {
+        settled.push({ messageCid: entry.messageCid, source });
+        continue;
+      }
       if (endpointBlock !== undefined || SyncNextPushPage.requiresDeferredStream(entry)) {
         delivery.push({
           messageCid : entry.messageCid,
@@ -116,9 +134,10 @@ export class SyncNextPushPage {
       settled,
       terminal: [],
     });
-    if (!committed || !shouldContinue()) {
+    if (!committed) {
       return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
     }
+    this._observer.onCheckpoint?.(target, handledThrough);
     return {
       delivered : settled.length,
       handledThrough,
@@ -169,6 +188,7 @@ export class SyncNextPushPage {
   private static blocksPageEndpoint(outcome: SyncNextDeliveryOutcome): boolean {
     return outcome.reason === 'authorization-unresolved' ||
       outcome.reason === 'quota' ||
+      outcome.reason === 'remote-incomplete' ||
       outcome.reason === 'transport';
   }
 
@@ -178,6 +198,22 @@ export class SyncNextPushPage {
         `SyncNextPushPage: local query failed for ${target.did}: ` +
         `${reply.status.code} ${reply.status.detail}`,
       );
+    }
+  }
+
+  private static assertCursorAdvanced(
+    previous: ProgressToken | undefined,
+    next: ProgressToken,
+    drained: boolean,
+  ): void {
+    if (
+      previous !== undefined &&
+      previous.streamId === next.streamId &&
+      previous.epoch === next.epoch &&
+      compareSyncNextPosition(next, previous) === 0 &&
+      !drained
+    ) {
+      throw new Error('SyncNextPushPage: non-drained query cursor did not advance.');
     }
   }
 

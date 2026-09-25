@@ -1,3 +1,4 @@
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { SyncDirection } from '../types/sync.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
@@ -9,11 +10,13 @@ import type { SyncNextQuarantineRetry } from './quarantine-retry.js';
 import { SyncNextWorkPump } from './work-pump.js';
 
 const RETRY_DELAY_MS = 1_000;
+const MAX_RETRY_DELAY_MS = 60_000;
 
 type CoveringRun = {
   promise: Promise<void>;
   reject: (error: unknown) => void;
   resolve: () => void;
+  shouldContinue: () => boolean;
 };
 
 /** A covering operation observed feed drain but retained sparse obligations. */
@@ -28,15 +31,19 @@ export class SyncNextIncompleteError extends Error {
 export class SyncNextLinkSession {
   private readonly _abortController = new AbortController();
   private _deliveryIndex = 0;
+  private readonly _deliveryNotBefore = new Map<string, number>();
   private readonly _deliveryPump: SyncNextWorkPump;
   private _pullCover?: CoveringRun;
   private _pullCurrent = false;
   private _pullFeedDrained = false;
+  private _pullFailures = 0;
   private readonly _pullPagePump: SyncNextWorkPump;
   private _pullWakeVersion = 0;
   private _quarantineIndex = 0;
+  private readonly _quarantineNotBefore = new Map<string, number>();
   private readonly _quarantinePump: SyncNextWorkPump;
   private _pushCover?: CoveringRun;
+  private _pushFailures = 0;
   private readonly _pushPagePump: SyncNextWorkPump;
   private _pushWakeVersion = 0;
   private readonly _subscriptions = new Set<() => Promise<void>>();
@@ -74,8 +81,12 @@ export class SyncNextLinkSession {
     if (this._target.authorization.kind !== 'role') {
       this.requestPush();
     }
-    this._quarantinePump.request();
-    this._deliveryPump.request();
+    if (this._pullCover === undefined) {
+      this._quarantinePump.request();
+    }
+    if (this._pushCover === undefined) {
+      this._deliveryPump.request();
+    }
   }
 
   public get isPullCurrent(): boolean {
@@ -105,15 +116,18 @@ export class SyncNextLinkSession {
   }
 
   /** Run the same page pumps until they observe drain with no trailing wake. */
-  public cover(direction?: SyncDirection): Promise<void> {
+  public cover(
+    direction?: SyncDirection,
+    shouldContinue: () => boolean = (): boolean => true,
+  ): Promise<void> {
     const runs: Promise<void>[] = [];
     if (direction !== 'push') {
-      this._pullCover ??= SyncNextLinkSession.coveringRun();
+      this._pullCover ??= SyncNextLinkSession.coveringRun(shouldContinue);
       runs.push(this._pullCover.promise);
       this.requestPull();
     }
     if (direction !== 'pull' && this._target.authorization.kind !== 'role') {
-      this._pushCover ??= SyncNextLinkSession.coveringRun();
+      this._pushCover ??= SyncNextLinkSession.coveringRun(shouldContinue);
       runs.push(this._pushCover.promise);
       this.requestPush();
     }
@@ -144,22 +158,33 @@ export class SyncNextLinkSession {
   private async consumePullPage(): Promise<void> {
     const wakeVersion = this._pullWakeVersion;
     const result = await this._pullPage.consume(this._target, {
-      shouldContinue: (): boolean => !this._abortController.signal.aborted,
+      signal         : this._abortController.signal,
+      shouldContinue : (): boolean => this.shouldContinue('pull'),
     });
     if (result.aborted === true) {
+      this.rejectInterruptedCover('pull');
       return;
     }
+    this._pullFailures = 0;
     this._online = true;
+    for (const messageCid of result.materializedCids) {
+      await this._ledger.settleQuarantineForLogicalTarget(
+        `${this._target.did}^${this._target.projectionId}`,
+        messageCid,
+      );
+    }
     this._quarantinePump.request();
     if (result.hasMore) {
+      if (!this.shouldContinue('pull')) {
+        this.rejectInterruptedCover('pull');
+        return;
+      }
       this._pullPagePump.request();
       return;
     }
-    this._pullFeedDrained = true;
-    const pullCurrent = (await this._ledger.getQuarantineForLink(
-      SyncNextLinkSession.identity(this._target),
-    )).length === 0;
+    const pullCurrent = (await this.getQuarantine()).length === 0;
     if (wakeVersion === this._pullWakeVersion) {
+      this._pullFeedDrained = true;
       this._pullCurrent = pullCurrent;
     }
     await this.finishCover('pull', wakeVersion);
@@ -168,14 +193,21 @@ export class SyncNextLinkSession {
   private async consumePushPage(): Promise<void> {
     const wakeVersion = this._pushWakeVersion;
     const result = await this._pushPage.consume(this._target, {
-      shouldContinue: (): boolean => !this._abortController.signal.aborted,
+      signal         : this._abortController.signal,
+      shouldContinue : (): boolean => this.shouldContinue('push'),
     });
     if (result.aborted === true) {
+      this.rejectInterruptedCover('push');
       return;
     }
+    this._pushFailures = 0;
     this._online = true;
     this._deliveryPump.request();
     if (result.hasMore) {
+      if (!this.shouldContinue('push')) {
+        this.rejectInterruptedCover('push');
+        return;
+      }
       this._pushPagePump.request();
       return;
     }
@@ -183,21 +215,34 @@ export class SyncNextLinkSession {
   }
 
   private async retryQuarantine(): Promise<void> {
-    const entries = await this._ledger.getQuarantineForLink(SyncNextLinkSession.identity(this._target));
+    const entries = await this.getQuarantine();
     if (entries.length === 0 || this._abortController.signal.aborted) {
       return;
     }
-    const entry = entries[this._quarantineIndex % entries.length];
-    this._quarantineIndex = (this._quarantineIndex + 1) % entries.length;
+    const selected = this.selectEligible(entries, this._quarantineNotBefore, this._quarantineIndex);
+    if (selected === undefined) {
+      this._quarantinePump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._quarantineNotBefore));
+      return;
+    }
+    const entry = entries[selected];
+    this._quarantineIndex = (selected + 1) % entries.length;
     const result = await this._quarantineRetry.retry(
       this._target,
       entry,
       (): boolean => !this._abortController.signal.aborted,
+      this._abortController.signal,
     );
     if (result.kind === 'pending') {
-      this._quarantinePump.request(RETRY_DELAY_MS);
-    } else if (entries.length > 1) {
-      this._quarantinePump.request();
+      this._quarantineNotBefore.set(
+        SyncNextLinkSession.receiptKey(entry),
+        Date.now() + SyncNextLinkSession.retryDelay(entry.attempts),
+      );
+      this._quarantinePump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._quarantineNotBefore));
+    } else {
+      this._quarantineNotBefore.delete(SyncNextLinkSession.receiptKey(entry));
+      if (entries.length > 1) {
+        this._quarantinePump.request();
+      }
     }
     if (result.kind === 'settled' && entries.length === 1 && this._pullFeedDrained) {
       this._pullCurrent = true;
@@ -209,17 +254,33 @@ export class SyncNextLinkSession {
     if (entries.length === 0 || this._abortController.signal.aborted) {
       return;
     }
-    const entry = entries[this._deliveryIndex % entries.length];
-    this._deliveryIndex = (this._deliveryIndex + 1) % entries.length;
+    const selected = this.selectEligible(entries, this._deliveryNotBefore, this._deliveryIndex);
+    if (selected === undefined) {
+      this._deliveryPump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._deliveryNotBefore));
+      return;
+    }
+    const entry = entries[selected];
+    this._deliveryIndex = (selected + 1) % entries.length;
     const result = await this._deliveryRetry.retry(
       this._target,
       entry,
       (): boolean => !this._abortController.signal.aborted,
+      this._abortController.signal,
     );
     if (result.kind === 'pending') {
-      this._deliveryPump.request(RETRY_DELAY_MS);
-    } else if (entries.length > 1) {
-      this._deliveryPump.request();
+      const retryAfter = entry.outcome.retryAfter === undefined ? undefined : Date.parse(entry.outcome.retryAfter);
+      this._deliveryNotBefore.set(
+        SyncNextLinkSession.receiptKey(entry),
+        retryAfter !== undefined && Number.isFinite(retryAfter) && retryAfter > Date.now()
+          ? retryAfter
+          : Date.now() + SyncNextLinkSession.retryDelay(entry.attempts),
+      );
+      this._deliveryPump.request(SyncNextLinkSession.nextEligibilityDelay(entries, this._deliveryNotBefore));
+    } else {
+      this._deliveryNotBefore.delete(SyncNextLinkSession.receiptKey(entry));
+      if (entries.length > 1) {
+        this._deliveryPump.request();
+      }
     }
   }
 
@@ -228,15 +289,52 @@ export class SyncNextLinkSession {
     if (cover === undefined) {
       return;
     }
-    const pending = direction === 'pull'
-      ? await this._ledger.getQuarantineForLink(SyncNextLinkSession.identity(this._target))
-      : await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target));
+    let pendingCount: number;
+    if (direction === 'pull') {
+      for (const entry of await this.getQuarantine()) {
+        if (!this.shouldContinue(direction)) {
+          this.rejectInterruptedCover(direction);
+          return;
+        }
+        await this._quarantineRetry.retry(
+          this._target,
+          entry,
+          (): boolean => this.shouldContinue(direction),
+          this._abortController.signal,
+        );
+      }
+      if (!this.shouldContinue(direction)) {
+        this.rejectInterruptedCover(direction);
+        return;
+      }
+      pendingCount = (await this.getQuarantine()).length;
+    } else {
+      for (const entry of await this._ledger.getDeliveryForLink(SyncNextLinkSession.identity(this._target))) {
+        if (!this.shouldContinue(direction)) {
+          this.rejectInterruptedCover(direction);
+          return;
+        }
+        await this._deliveryRetry.retry(
+          this._target,
+          entry,
+          (): boolean => this.shouldContinue(direction),
+          this._abortController.signal,
+        );
+      }
+      if (!this.shouldContinue(direction)) {
+        this.rejectInterruptedCover(direction);
+        return;
+      }
+      pendingCount = (await this._ledger.getDeliveryForLink(
+        SyncNextLinkSession.identity(this._target),
+      )).length;
+    }
     const currentWakeVersion = direction === 'pull' ? this._pullWakeVersion : this._pushWakeVersion;
     if (currentWakeVersion !== pageWakeVersion) {
       return;
     }
-    if (pending.length > 0) {
-      this.rejectCover(direction, new SyncNextIncompleteError(direction, pending.length));
+    if (pendingCount > 0) {
+      this.rejectCover(direction, new SyncNextIncompleteError(direction, pendingCount));
     } else {
       cover.resolve();
       this.clearCover(direction);
@@ -248,8 +346,50 @@ export class SyncNextLinkSession {
     this.rejectCover(direction, error);
     this._reportError(error);
     if (!this._abortController.signal.aborted) {
-      (direction === 'pull' ? this._pullPagePump : this._pushPagePump).request(RETRY_DELAY_MS);
+      const attempts = direction === 'pull' ? ++this._pullFailures : ++this._pushFailures;
+      (direction === 'pull' ? this._pullPagePump : this._pushPagePump)
+        .request(SyncNextLinkSession.retryDelay(attempts));
     }
+  }
+
+  private getQuarantine(): ReturnType<SyncNextLedgerStore['getQuarantineForLogicalTarget']> {
+    return this._ledger.getQuarantineForLogicalTarget(
+      `${this._target.did}^${this._target.projectionId}`,
+    );
+  }
+
+  private selectEligible<T extends { messageCid: string; source: ProgressToken }>(
+    entries: readonly T[],
+    notBefore: ReadonlyMap<string, number>,
+    start: number,
+  ): number | undefined {
+    const now = Date.now();
+    for (let offset = 0; offset < entries.length; offset++) {
+      const index = (start + offset) % entries.length;
+      if ((notBefore.get(SyncNextLinkSession.receiptKey(entries[index])) ?? 0) <= now) {
+        return index;
+      }
+    }
+  }
+
+  private static nextEligibilityDelay<T extends { messageCid: string; source: ProgressToken }>(
+    entries: readonly T[],
+    notBefore: ReadonlyMap<string, number>,
+  ): number {
+    const now = Date.now();
+    const next = Math.min(...entries.map(entry =>
+      notBefore.get(SyncNextLinkSession.receiptKey(entry)) ?? now
+    ));
+    return Math.max(0, next - now);
+  }
+
+  private static retryDelay(attempts: number): number {
+    const exponent = Math.min(Math.max(0, attempts - 1), 6);
+    return Math.min(RETRY_DELAY_MS * (2 ** exponent), MAX_RETRY_DELAY_MS);
+  }
+
+  private static receiptKey(entry: { messageCid: string; source: ProgressToken }): string {
+    return `${entry.source.streamId}\u0000${entry.source.epoch}\u0000${entry.source.position}\u0000${entry.messageCid}`;
   }
 
   private handleRetryError(direction: SyncDirection, error: unknown): void {
@@ -275,14 +415,26 @@ export class SyncNextLinkSession {
     }
   }
 
-  private static coveringRun(): CoveringRun {
+  private shouldContinue(direction: SyncDirection): boolean {
+    const cover = direction === 'pull' ? this._pullCover : this._pushCover;
+    return !this._abortController.signal.aborted && (cover?.shouldContinue() ?? true);
+  }
+
+  private rejectInterruptedCover(direction: SyncDirection): void {
+    const cover = direction === 'pull' ? this._pullCover : this._pushCover;
+    if (cover !== undefined && !cover.shouldContinue()) {
+      this.rejectCover(direction, new DOMException('Covering sync cancelled.', 'AbortError'));
+    }
+  }
+
+  private static coveringRun(shouldContinue: () => boolean): CoveringRun {
     let resolve!: () => void;
     let reject!: (error: unknown) => void;
     const promise = new Promise<void>((onResolve, onReject) => {
       resolve = onResolve;
       reject = onReject;
     });
-    return { promise, reject, resolve };
+    return { promise, reject, resolve, shouldContinue };
   }
 
   private static identity(target: SyncTarget): {

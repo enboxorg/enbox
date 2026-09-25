@@ -30,6 +30,7 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
       testDataLocation : '__TESTDATA__/e2e-sync-next-modes',
     });
     await harness.clearStorage();
+    await harness.agent.vault.initialize({ password: 'sync-next-e2e-password' });
     await harness.createAgentDid();
     sync = new SyncEngineNext({ db: harness.syncStore });
     sync.agent = harness.agent;
@@ -168,13 +169,22 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
 
   it('catches a new local dapp up from an existing remote protocol', async () => {
     const alice = await identity('Sync next remote history');
+    const events: string[] = [];
+    const unsubscribe = sync.on(event => {
+      if ('tenantDid' in event && event.tenantDid === alice.did.uri) {
+        events.push(event.type);
+      }
+    });
     await configureRemote(alice.did.uri);
     await writeRemote(alice.did.uri, 'remote-existing');
     await register(alice.did.uri);
 
     await sync.sync('pull');
+    unsubscribe();
 
     expect((await queryLocal(alice.did.uri)).entries).toHaveLength(1);
+    expect(events).toContain('delivery:applied');
+    expect(events).toContain('checkpoint:pull-advance');
   }, 120_000);
 
   it('pulls remote changes and publishes local changes for an existing dapp', async () => {
@@ -213,5 +223,53 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
     await writeLocal(alice.did.uri, 'local-live');
     await waitForCount(() => queryRemote(alice.did.uri), 2);
     await sync.stopSync();
+  }, 120_000);
+
+  it('finishes covering pull and push through quarantined non-inline bodies', async () => {
+    const alice = await identity('Sync next streamed bodies');
+    const largeRemote = 'r'.repeat(30_001);
+    const largeLocal = 'l'.repeat(30_001);
+    await configureBoth(alice.did.uri);
+    await writeRemote(alice.did.uri, largeRemote);
+    await writeRemote(alice.did.uri, 'tiny-after-remote-large');
+    await register(alice.did.uri);
+
+    await sync.sync('pull');
+    expect((await queryLocal(alice.did.uri)).entries).toHaveLength(2);
+
+    await writeLocal(alice.did.uri, largeLocal);
+    await writeLocal(alice.did.uri, 'tiny-after-large');
+    await sync.sync('push');
+    expect((await queryRemote(alice.did.uri)).entries).toHaveLength(4);
+  }, 120_000);
+
+  it('lets a healthy remote progress when another exact link is offline', async () => {
+    const alice = await harness.createIdentity({
+      name        : 'Sync next independent remotes',
+      testDwnUrls : [testDwnUrl, 'http://127.0.0.1:9'],
+    });
+    await configureRemote(alice.did.uri);
+    await writeRemote(alice.did.uri, 'healthy-remote');
+    await register(alice.did.uri);
+
+    await expect(sync.sync('pull')).rejects.toThrow('covering sync failed');
+
+    expect((await queryLocal(alice.did.uri)).entries).toHaveLength(1);
+  }, 120_000);
+
+  it('drains a selected endpoint only after sparse work and fingerprints converge', async () => {
+    const alice = await identity('Sync next drain');
+    await configureLocal(alice.did.uri);
+    await writeLocal(alice.did.uri, 'drained-local-history');
+    await register(alice.did.uri);
+
+    const result = await sync.drainTo(testDwnUrl);
+
+    expect(result.completed).toBe(true);
+    expect(result.cancelled).toBe(false);
+    expect(result.topologyChanged).toBe(false);
+    const target = result.targets.find(candidate => candidate.tenantDid === alice.did.uri);
+    expect(target).toMatchObject({ completed: true, converged: true });
+    expect(target?.localFingerprint).toBe(target?.remoteFingerprint);
   }, 120_000);
 });
