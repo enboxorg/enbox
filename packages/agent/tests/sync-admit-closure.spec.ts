@@ -3,7 +3,7 @@ import type { AdmitOutcome } from '../src/sync-admit-closure.js';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../src/sync-admit-closure.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -64,6 +64,7 @@ describe('admitClosure', () => {
   it('fetches a missing initial write and retries the root in dependency order', async () => {
     const protocol = 'https://example.com/protocol';
     const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
+    await Time.minimalSleep();
     const update = await TestDataGenerator.generateFromRecordsWrite({
       author        : initial.author,
       existingWrite : initial.recordsWrite,
