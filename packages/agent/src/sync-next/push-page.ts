@@ -25,6 +25,10 @@ export type SyncNextPushPageResult = {
   retained: number;
 };
 
+export type SyncNextPushPageOptions = {
+  shouldContinue?: () => boolean;
+};
+
 /** Consumes one local feed page without letting one delivery block its independent tail. */
 export class SyncNextPushPage {
   public constructor(
@@ -34,8 +38,9 @@ export class SyncNextPushPage {
 
   public async consume(
     target: SyncTarget,
-    shouldContinue: () => boolean = (): boolean => true,
+    options: SyncNextPushPageOptions = {},
   ): Promise<SyncNextPushPageResult> {
+    const shouldContinue = options.shouldContinue ?? ((): boolean => true);
     if (target.authorization.kind === 'role') {
       return { aborted: true, delivered: 0, hasMore: false, retained: 0 };
     }

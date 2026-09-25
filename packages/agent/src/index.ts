@@ -40,6 +40,7 @@ export * from './local-dwn.js';
 export * from './local-key-manager.js';
 export * from './permissions-api.js';
 export * from './secret-store.js';
+export * from './sync-next/engine.js';
 export {
   publishServiceConfigNotice,
   ServiceConfigProtocolDefinition,

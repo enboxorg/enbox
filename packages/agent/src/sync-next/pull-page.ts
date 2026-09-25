@@ -25,6 +25,10 @@ export type SyncNextPullPageResult = {
   quarantined: number;
 };
 
+export type SyncNextPullPageOptions = {
+  shouldContinue?: () => boolean;
+};
+
 /** Consumes exactly one remote feed page through normal local DWN admission. */
 export class SyncNextPullPage {
   public constructor(
@@ -34,8 +38,9 @@ export class SyncNextPullPage {
 
   public async consume(
     target: SyncTarget,
-    shouldContinue: () => boolean = (): boolean => true,
+    options: SyncNextPullPageOptions = {},
   ): Promise<SyncNextPullPageResult> {
+    const shouldContinue = options.shouldContinue ?? ((): boolean => true);
     const identity = SyncNextPullPage.identity(target);
     const link = await this._ledger.getLink(identity);
     if (link === undefined || link.status !== 'active' || !shouldContinue()) {

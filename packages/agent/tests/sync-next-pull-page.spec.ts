@@ -247,7 +247,7 @@ describe('SyncNextPullPage', () => {
 
     const result = await new SyncNextPullPage(fixture.agent, ledger).consume(
       target(),
-      (): boolean => current,
+      { shouldContinue: (): boolean => current },
     );
 
     expect(result.aborted).toBe(true);
