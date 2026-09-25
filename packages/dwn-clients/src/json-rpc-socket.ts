@@ -90,6 +90,13 @@ export interface JsonRpcSocketOptions {
   healthProbeTimeout?: number;
 }
 
+export type JsonRpcSocketRequestOptions = {
+  /** Abort only this request; the shared socket and subscriptions remain open. */
+  signal?: AbortSignal;
+  /** Per-request response deadline. Defaults to the socket response timeout. */
+  timeoutMs?: number;
+};
+
 /**
  * JSON RPC Socket Client for WebSocket request/response and long-running subscriptions.
  *
@@ -242,31 +249,65 @@ export class JsonRpcSocket {
    * connected. The typed pre-transmission boundary lets an explicit WebSocket
    * caller retry without implying any transport fallback policy.
    */
-  public async request(request: JsonRpcRequest): Promise<JsonRpcResponse> {
+  public async request(
+    request: JsonRpcRequest,
+    options: JsonRpcSocketRequestOptions = {},
+  ): Promise<JsonRpcResponse> {
     if (!this._isConnected) {
       throw new SocketUnavailableError('JsonRpcSocket: request refused — socket is not connected');
+    }
+    if (options.signal?.aborted === true) {
+      throw options.signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+    }
+    const timeoutMs = options.timeoutMs ?? this.responseTimeout;
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      throw new RangeError('JsonRpcSocket: timeoutMs must be a finite non-negative number.');
     }
 
     return new Promise((resolve, reject) => {
       request.id ??= CryptoUtils.randomUuid();
-      const timeout = setTimeout(() => {
-        this.messageHandlers.delete(request.id!);
-        reject(new Error('request timed out'));
-      }, this.responseTimeout);
+      const requestId = request.id;
+      let settled = false;
 
+      const cleanup = (): void => {
+        if (this.messageHandlers.get(requestId) === handleResponse) {
+          this.messageHandlers.delete(requestId);
+        }
+        clearTimeout(timeout);
+        options.signal?.removeEventListener('abort', handleAbort);
+      };
+      const settle = (operation: () => void): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        operation();
+      };
+      const handleAbort = (): void => {
+        settle((): void => {
+          reject(options.signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+        });
+      };
       const handleResponse = (event: { data: any }):void => {
         const jsonRpsResponse = parseJson(toText(event.data)) as JsonRpcResponse;
-        if (jsonRpsResponse.id === request.id) {
-          // if the incoming response id matches the request id, we will remove the listener and resolve the response
-          this.messageHandlers.delete(request.id);
-          clearTimeout(timeout);
-          return resolve(jsonRpsResponse);
+        if (jsonRpsResponse.id === requestId) {
+          settle((): void => { resolve(jsonRpsResponse); });
         }
       };
 
+      const timeout = setTimeout((): void => {
+        settle((): void => { reject(new Error('request timed out')); });
+      }, timeoutMs);
+
       // add the listener to the map of message handlers
-      this.messageHandlers.set(request.id!, handleResponse);
-      this.send(request);
+      this.messageHandlers.set(requestId, handleResponse);
+      options.signal?.addEventListener('abort', handleAbort, { once: true });
+      try {
+        this.send(request);
+      } catch (error: unknown) {
+        settle((): void => { reject(error); });
+      }
     });
   }
 

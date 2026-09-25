@@ -4,12 +4,11 @@ import type { ObservableStore } from './observable-store.js';
 import type { Record } from './record.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
-import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent } from '@enbox/agent';
+import type { SyncEngine, SyncEvent } from '@enbox/agent';
 
 import { ContextRetiredError } from './context-errors.js';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
-import { latestPausedRecoveryLink } from './sync-status-error.js';
 import { ObservedView } from './observed-view.js';
 import { openView } from './view-opening.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
@@ -385,10 +384,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       return;
     }
 
-    if (event.type === 'dead-letter:change') {
-      return;
-    }
-
     if (!syncEventCoversProtocol(event, this._query.filter.protocol)
       || (this._followedContextId !== undefined && event.contextId !== this._followedContextId)) {
       return;
@@ -575,7 +570,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
           && link.scope.protocolPaths.includes(this._query.filter.protocolPath));
     const status = projectReplicationCurrentness(links);
     if (status === 'error') {
-      return this.resolveUnavailableCurrentness(true, latestPausedRecoveryLink(links));
+      return this.resolveUnavailableCurrentness(true);
     }
     return { current: status === 'caught-up' };
   }
@@ -583,16 +578,11 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   /** Resolve a provisional unavailable state or attach the RecordView-specific pause error. */
   private resolveUnavailableCurrentness(
     isPaused: boolean,
-    failedLink?: ReplicationLinkSnapshot,
   ): RecordViewCurrentness {
     if (isPaused) {
-      const message = failedLink?.recovery === undefined
-        ? `RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`
-        : `RecordView: replication is paused for protocol '${this._query.filter.protocol}'; `
-          + `source '${failedLink.remoteEndpoint}' failed: ${failedLink.recovery.error}`;
       return {
         status : 'error',
-        error  : new Error(message),
+        error  : new Error(`RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`),
       };
     }
 

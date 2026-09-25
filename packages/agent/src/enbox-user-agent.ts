@@ -175,7 +175,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     didDhtNetwork,
     localDwnStrategy,
     localDwnEndpoint,
-    agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, secretsApi, syncApi
+    agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, secretsApi, syncApi,
   }: CreateUserAgentParams = {}
   ): Promise<EnboxUserAgent> {
     if (didDhtNetwork !== undefined && didApi !== undefined) {

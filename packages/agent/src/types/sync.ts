@@ -1,7 +1,6 @@
 import type { MessagesFilter, ProgressToken, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
-import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
 
 /** Deterministic bytewise string comparator for hash inputs and canonical IDs. */
 export function lexicographicalCompare(a: string, b: string): number {
@@ -278,24 +277,19 @@ export async function computeAuthorizationEpoch(input:
 // ---------------------------------------------------------------------------
 
 /**
- * Tracks directional (pull or push) reconciliation progress for a single
- * replication link. All tokens belong to the same `(streamId, epoch)`.
+ * Tracks ordered progress for a feed consumer. All tokens belong to the same
+ * `(streamId, epoch)`.
  *
- * This is the **durable** replication checkpoint persisted to the
- * `replicationLinkStore`. A fully admitted socket event may advance it on the
- * live path; durable reconciliation resumes from the same token for baseline,
- * reconnect, and recovery. Idempotent DWN admission makes replay after a crash
- * safe.
+ * This durable checkpoint is the consumer's crash/reconnect resume point.
+ * Idempotent DWN admission makes replay after a crash safe.
  */
 export type DirectionCheckpoint = {
   /**
    * The highest feed token through which all earlier work for this link has
    * been durably settled. This is the resume point after crash or reconnect.
    *
-   * A completed durable-feed page, or an authenticated socket event admitted
-   * through the same closure policy, advances it. An equal paired-subscription
-   * snapshot may establish the initial baseline. A lifecycle notification or
-   * unprocessed event alone is never checkpoint evidence.
+   * A completed durable-feed page advances it. A lifecycle notification or
+   * unprocessed subscription wake is never checkpoint evidence.
    * Positions may be sparse for filtered feeds.
    */
   contiguousAppliedToken?: ProgressToken;
@@ -314,12 +308,6 @@ export type SyncRunOptions = {
    * Rejects when the DID is not registered.
    */
   did?: string;
-
-  /**
-   * Verify cids-only feed convergence after reconciliation and schedule
-   * repair on divergence. Used by the engine's own settle checks.
-   */
-  verifyConvergence?: boolean;
 };
 
 /**
@@ -344,66 +332,9 @@ export type SyncLifecycleOptions = {
  * - `live` — the latest completed replication generation established its
  *   baseline. Inspect `connectivity` on a runtime snapshot to determine
  *   whether that link is currently attached to its remote transport.
- * - `repairing` — recovering from a retryable subscription failure or verified feed divergence.
  * - `paused` — link retries are stopped until the app updates registration or recreates the link.
  */
-export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'paused';
-
-/** Durable diagnostic state for the latest failed link recovery operation. */
-export type SyncLinkRecoveryState = Readonly<{
-  /** Human-readable failure detail. */
-  error: string;
-  /** ISO-8601 timestamp of the failure. */
-  failedAt: string;
-  /** ISO-8601 timestamp of the scheduled retry, when one is armed. */
-  nextRetryAt?: string;
-}>;
-
-/**
- * Durable state of a single replication link. Persisted to LevelDB and
- * loaded on startup. Each link is identified by the tuple
- * `(tenantDid, remoteEndpoint, projectionId, authorizationEpoch)`.
- */
-export type ReplicationLinkState = {
-  /** The tenant DID this link syncs for. */
-  tenantDid: string;
-
-  /** The remote DWN endpoint URL. */
-  remoteEndpoint: string;
-
-  /** Deterministic hash of tenant DID, normalized scope, and root algorithm version. */
-  projectionId: string;
-
-  /** Deterministic hash of owner/delegate grant context for this link. */
-  authorizationEpoch: string;
-
-  /** The scope definition this link covers. */
-  scope: SyncScope;
-
-  /** Owner/delegate authorization context used to sign sync messages. */
-  authorization: SyncAuthorization;
-
-  /** Current link status. */
-  status: LinkStatus;
-
-  /** Latest recovery failure. Cleared after the failed operation succeeds. */
-  recovery?: SyncLinkRecoveryState;
-
-  /** Pull-direction replication checkpoint (remote → local). */
-  readonly pull: DirectionCheckpoint;
-
-  /** Push-direction replication checkpoint (local → remote). */
-  readonly push: DirectionCheckpoint;
-
-  /** Per-link connectivity state. Used to compute the aggregate engine-level state. */
-  connectivity: SyncConnectivityState;
-
-  /** Delegate DID used to sign sync messages, if any. */
-  delegateDid?: string;
-
-  /** ISO-8601 timestamp of last successful sync activity. */
-  lastActivityAt?: string;
-};
+export type LinkStatus = 'initializing' | 'live' | 'paused';
 
 // ---------------------------------------------------------------------------
 // Push result (per-CID outcome tracking)
@@ -429,6 +360,8 @@ export type PushFailure = {
   reason?: 'tenant-inactive' | 'resolver-unavailable' | 'storage';
   /** True only for Invalid or terminal dependency outcomes. */
   terminal?: boolean;
+  /** True when transport rejected the endpoint-level request before DWN admission. */
+  endpointRejected?: boolean;
   /** True when the remote tenant is inactive and retrying the same message would hot-loop. */
   tenantInactive?: boolean;
   /**
@@ -436,9 +369,11 @@ export type PushFailure = {
    * Like {@link tenantInactive}, retrying the same message immediately would
    * hot-loop — but unlike it, the block can self-heal once the remote quota
    * grows, another device delivers the CID, or local history retires it. The
-   * engine therefore defers + re-probes instead of dead-lettering.
+   * engine therefore retains a delivery obligation and retries it later.
    */
   quotaBlocked?: boolean;
+  /** Absolute ISO-8601 time before which this endpoint should not be retried. */
+  retryAfter?: string;
   /** True when the requested root CID was definitively absent from the local DWN. */
   localMissing?: boolean;
   /** Local DWN status code when a local read/query produced this failure. */
@@ -461,9 +396,7 @@ export type PushAcknowledgement = {
 };
 
 /**
- * Result of a batch push operation. Replaces the previous throw-on-first-failure
- * pattern so callers can retry transient failures, dead-letter terminal
- * failures, and mark links for later reconciliation.
+ * Result of a batch push operation with one disposition per requested root.
  */
 export type PushResult = {
   /** Requested root messageCids that reached Applied, Duplicate, or Superseded. */
@@ -474,29 +407,18 @@ export type PushResult = {
    * `succeeded`.
    */
   acknowledged: PushAcknowledgement[];
-  /** Requested root messageCids that failed and should be retried or reconciled. */
+  /** Requested root messageCids that failed and may need a retained delivery obligation. */
   failed: PushFailure[];
 };
-
-export function isTerminalPushFailure(failure: PushFailure): boolean {
-  return failure.terminal === true;
-}
-
-/** A push rejected because the remote is out of tenant storage/message quota. */
-export function isQuotaBlockedPushFailure(failure: PushFailure): boolean {
-  return failure.quotaBlocked === true;
-}
 
 /**
  * Parameters for {@link SyncEngine.startSync}.
  */
 export type StartSyncParams = {
   /**
-   * The cadence of the periodic durable feed settle check — live sync's
-   * degraded-network safety net. Each tick runs a convergence-verifying feed
-   * reconciliation that repairs anything the real-time subscriptions missed
-   * (dropped events, links waiting on a rate-limited subscription open,
-   * long offline windows).
+   * The cadence of the periodic covering pass. It resumes each durable feed
+   * from its handled-through watermark, covering dropped wakes, rate-limited
+   * subscription setup, and long offline windows.
    *
    * Accepts duration strings such as `'30s'`, `'2m'`, `'10m'`, or `'1 hour'`.
    * The parsed value is clamped to a one-second floor and the 32-bit native
@@ -516,26 +438,6 @@ export type SyncDrainOptions = {
 };
 
 /**
- * Per-link drain progress for a tenant and endpoint. A tenant can have more
- * than one target when delegated grants split the requested sync scope.
- */
-export type SyncDrainTargetResult = {
-  tenantDid: string;
-  remoteEndpoint: string;
-  scope?: SyncScope;
-  completed: boolean;
-  /** True only when this target stopped because the caller's abort signal fired. */
-  cancelled: boolean;
-  converged: boolean;
-  /** True when the target was reachable but intentionally remains incomplete because of durable quota omissions. */
-  quotaBlocked?: boolean;
-  pushCheckpoint?: ProgressToken;
-  localFingerprint?: string;
-  remoteFingerprint?: string;
-  error?: string;
-};
-
-/**
  * Result of draining all registered sync identities to a specific DWN endpoint.
  */
 export type SyncDrainResult = {
@@ -543,9 +445,6 @@ export type SyncDrainResult = {
   completed: boolean;
   /** True only when the caller's abort signal was observed before completion. */
   cancelled: boolean;
-  /** True when identity registration or agent topology changed while the drain was running. */
-  topologyChanged: boolean;
-  targets: SyncDrainTargetResult[];
   error?: string;
 };
 
@@ -630,8 +529,6 @@ export type SyncMessageDescriptor = {
 export type SyncEvent =
   /** Durable sync registration was added, changed, or removed for one identity. */
   | { type: 'identity:registration-change'; tenantDid: string; options?: SyncIdentityOptions }
-  /** The durable terminal-failure set changed for one identity. */
-  | { type: 'dead-letter:change'; tenantDid: string; remoteEndpoint: string }
   /** The durable accepted-context catalog changed for one actor. */
   | {
     type: 'followed-context:change';
@@ -645,80 +542,18 @@ export type SyncEvent =
   }
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
+  | SyncEventBase & { type: 'link:activity' }
   /** Whether all accepted remote pull work is settled. */
   | SyncEventBase & { type: 'pull:currentness-change'; from: boolean; to: boolean }
-  /** A pull checkpoint was durably committed. */
-  | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
-  /** A push checkpoint was durably committed. */
-  | SyncEventBase & { type: 'checkpoint:push-advance'; position: string; messageCid?: string }
   /**
    * Emitted once per FRESHLY applied remote message — the feed root and any
    * fetched dependency (parent, role record, initial write) admitted alongside
    * it — with each message described so consumers can react to the specific
    * change without querying. `Duplicate`/`Superseded` applies are silent.
    */
-  | SyncEventBase & { type: 'delivery:applied'; messageCid: string; descriptor: SyncMessageDescriptor }
-  | SyncEventBase & { type: 'reconcile:needed'; reason: string }
-  | SyncEventBase & { type: 'reconcile:completed' }
-  | SyncEventBase & { type: 'repair:started'; attempt: number }
-  | SyncEventBase & { type: 'repair:completed' }
-  | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
-  /** A push was rejected because the remote is out of storage/message quota for this tenant. Re-probing is deferred until `nextProbeAt`. */
-  | SyncEventBase & { type: 'push:quota-blocked'; messageCid: string; detail?: string; nextProbeAt: string }
-  /** A previously quota-blocked push was acknowledged or retired because it no longer exists locally. */
-  | SyncEventBase & { type: 'push:quota-cleared'; messageCid: string; resolution: PushSuccessResolution };
+  | SyncEventBase & { type: 'delivery:applied'; messageCid: string; descriptor: SyncMessageDescriptor };
 
 export type SyncEventListener = (event: SyncEvent) => void;
-
-// ---------------------------------------------------------------------------
-// Dead letter tracking
-// ---------------------------------------------------------------------------
-
-/** A message that permanently failed to sync. */
-export type DeadLetterEntry = {
-  /** The message CID that failed. */
-  messageCid: string;
-  /** The tenant DID the message belongs to. */
-  tenantDid: string;
-  /** The remote DWN endpoint involved. */
-  remoteEndpoint: string;
-  /** The protocol URI, if applicable. */
-  protocol?: string;
-  /** Machine-readable error code (for example, an HTTP status or admission reason). */
-  errorCode?: string;
-  /** Human-readable error detail. */
-  errorDetail: string;
-  /** ISO-8601 timestamp of when the failure was recorded. */
-  failedAt: string;
-};
-
-/**
- * Sync health summary returned by `getSyncHealth()`.
- *
- * `failedMessageCount` reflects messages that are currently failing — entries
- * are auto-cleared when the same CID later succeeds via push or pull, so the
- * count decreases as the engine self-heals through reconciliation and repair.
- */
-export type SyncHealthSummary = {
-  /** Current connectivity state. */
-  connectivity: SyncConnectivityState;
-  /**
-   * Number of messages currently in the dead letter store. Decreases as
-   * the engine self-heals — entries are auto-cleared on later success.
-   */
-  failedMessageCount: number;
-  /** Number of current links with a recovery failure or `repairing`/`paused` status. */
-  degradedLinkCount: number;
-  /**
-   * Number of messages currently deferred because a remote rejected the push
-   * for tenant storage/message quota. These are re-probed on a backoff and
-   * self-heal when quota grows, another device delivers the CID, or local
-   * history retires it. They are user-actionable state, not a dead letter.
-   */
-  quotaBlockedMessageCount: number;
-  /** True only when there are no failed messages, quota blocks, or degraded links. */
-  syncHealthy: boolean;
-};
 
 /**
  * Coarse per-remote sync state for UI. Precedence when several apply:
@@ -740,14 +575,6 @@ export type RemoteSyncStatus = {
   connectivity: SyncConnectivityState;
   /** Messages currently deferred against this remote for quota. */
   quotaBlockedMessageCount: number;
-  /** Dead-lettered (terminal) messages for this remote. */
-  failedMessageCount: number;
-  /** ISO-8601 time of the soonest quota re-probe across this remote's blocked messages, if any. */
-  nextProbeAt?: string;
-  /** ISO-8601 time of the soonest scheduled link-recovery retry, if any. */
-  nextRetryAt?: string;
-  /** Human-readable detail of the most recent recovery, quota, or terminal failure, if any. */
-  lastError?: string;
   /** ISO-8601 timestamp of the latest successful activity across current links for this remote. */
   lastActivityAt?: string;
 };
@@ -770,10 +597,8 @@ export type ReplicationLinkSnapshot = {
   remoteEndpoint: string;
   /** The scope definition this link covers. */
   scope: SyncScope;
-  /** Current link status (`initializing` | `live` | `repairing` | `paused`). */
+  /** Current link status (`initializing` | `live` | `paused`). */
   status: LinkStatus;
-  /** Latest durable recovery failure and scheduled retry, when present. */
-  recovery?: SyncLinkRecoveryState;
   /** Per-link connectivity state. */
   connectivity: SyncConnectivityState;
   /** Whether all accepted remote pull work is settled. */
@@ -798,8 +623,6 @@ type ReplicationCurrentnessLink = Pick<ReplicationLinkSnapshot, 'connectivity' |
 export type SyncIdentityStatus = Readonly<{
   /** Durable sync registration, or `undefined` when the identity is not registered. */
   registration: SyncIdentityOptions | undefined;
-  /** Health summary scoped to this identity. */
-  health: SyncHealthSummary;
   /** Connectivity across current identity links, with the engine state as the zero-link fallback. */
   connectivity: SyncConnectivityState;
   /** Currentness across this identity's replication links. */
@@ -837,24 +660,6 @@ export interface SyncEngine {
   agent: EnboxPlatformAgent;
 
   /**
-   * Current connectivity state as observed by the sync engine.
-   * Updated when WebSocket subscriptions connect/disconnect or when the
-   * browser `online`/`offline` events fire.
-   */
-  readonly connectivityState: SyncConnectivityState;
-
-  /**
-   * Whether at least one live pull or push subscription is open.
-   *
-   * This is specifically about live subscriptions — it is `false` when only
-   * the settle-check timer remains (e.g. after the last identity was
-   * removed). Callers use this to avoid calling `startSync()` when live
-   * subscriptions are active, which would tear them all down and rebuild
-   * from scratch.
-   */
-  readonly hasActiveSubscriptions: boolean;
-
-  /**
    * Create or replace an identity's sync options.
    * Callers must explicitly specify which protocols to sync (`'all'` for a
    * full replica, or a list of protocol URIs) so that sync scope is always
@@ -864,7 +669,7 @@ export interface SyncEngine {
    * other identities. Replacing existing options rebuilds only that identity's
    * links when needed.
    * Repeated calls with equal options are value-idempotent, not cost-free: they
-   * clear tenant quota state and rebuild any existing live routing.
+   * rebuild that identity's live routing while retaining durable progress.
    *
    * `lifecycleOptions.timeout` bounds only preparation waits. A timed-out
    * mutation preserves the previous durable options and may be retried.
@@ -874,24 +679,6 @@ export interface SyncEngine {
     lifecycleOptions?: SyncLifecycleOptions,
   ): Promise<void>;
   /**
-   * Create or replace an identity's sync options only when their effective
-   * scope or delegate changes.
-   *
-   * The comparison and optional update run under the same per-DID lifecycle
-   * fence, so callers do not need a read/compare/single-flight wrapper.
-   * Protocol-list order and duplicates do not count as changes. Returns
-   * `true` when new options were applied and `false` for an existing,
-   * semantically equal registration.
-   *
-   * This compares durable identity options only. Call
-   * {@link refreshIdentityRouting} when authorization or endpoint state changes
-   * without changing those options.
-   */
-  ensureIdentityOptions(
-    params: { did: string, options: SyncIdentityOptions },
-    lifecycleOptions?: SyncLifecycleOptions,
-  ): Promise<boolean>;
-  /**
    * Reapply one registered identity's durable options to its live routing.
    *
    * The read and rebuild are serialized with identity replacement/removal, so
@@ -900,13 +687,15 @@ export interface SyncEngine {
    */
   refreshIdentityRouting(did: string, lifecycleOptions?: SyncLifecycleOptions): Promise<void>;
   /**
-   * Recheck a confirmed inactive wallet approval and park its delegated work.
-   * Preserves registration and followed contexts; fresh registration resumes sync.
-   * An observation of an older approval cannot pause a newer one.
+   * Recheck a confirmed inactive wallet approval and remove its sync registration.
+   * Followed contexts remain accepted; fresh registration safely rescans them.
+   * An observation of an older approval cannot remove a newer registration.
    * Returns whether the observed approval is still current and inactive,
-   * even when no registered work needs parking.
+   * even when no registration needs removal.
    */
-  pauseIdentity(params: { did: string; delegateDid: string; connectSessionId: string }): Promise<boolean>;
+  removeIdentityIfApprovalInactive(
+    params: { did: string; delegateDid: string; connectSessionId: string },
+  ): Promise<boolean>;
   /**
    * Remove an identity from the SyncEngine, stopping sync for that identity.
    *
@@ -920,47 +709,19 @@ export interface SyncEngine {
    * Get the Sync Options for a specific identity.
    */
   getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined>;
-  /** Resolve and follow one role-authorized foreign context. */
-  followSource(source: FollowedSyncSourceInput): Promise<FollowedSyncSource>;
-  /** Read one followed foreign context by accepted role-record ID. */
-  getFollowedSource(id: string): Promise<FollowedSyncSource | undefined>;
-  /** List followed foreign contexts, excluding corrupt private store entries. */
-  listFollowedSources(): Promise<FollowedSyncSource[]>;
-  /** Stop following one exact followed source. */
-  deleteFollowedSource(source: FollowedSyncSource): Promise<void>;
-  /**
-   * Mark one exact followed source's live links pull-pending after a remote
-   * mutation is accepted. Returns false when that acceptance is no longer active.
-   *
-   * @internal Used by the typed shared-context mutation boundary.
-   */
-  markFollowedSourcePullPending(source: FollowedSyncSource): Promise<boolean>;
-  /**
-   * Pull one exact accepted foreign context from its accepted hosted endpoint.
-   * Returns `true` only when that feed reached its head while the acceptance
-   * and actor registration remained current.
-   *
-   * @internal Used by the typed shared-context readiness boundary.
-   */
-  pullFollowedSource(source: FollowedSyncSource): Promise<boolean>;
   /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *
-   * Concurrent calls coalesce instead of throwing: when a sync (or drain) is
-   * already holding the lock, the call joins a single queued follow-up run
-   * that starts after the current operation completes. All joined callers
-   * share that run's outcome, and their requested directions/scopes are
-   * merged (differing directions widen to both; differing scopes widen to
-   * unscoped) so the follow-up covers every joined request. A runtime
-   * transition (`startSync`/`stopSync`/`clear`/`close`) while the follow-up
-   * is still queued cancels it — joined callers reject with
-   * `SyncRunCancelledError`, keeping "resolved ⇒ a covering run completed"
-   * true for every caller.
+   * Concurrent calls share one serialized batch. Requests arriving during a
+   * covering pass merge into at most one follow-up (different directions widen
+   * to both; different identities widen to all). A runtime transition
+   * invalidates active coverage and drops its pending follow-up; calls made
+   * after the transition starts serialize behind it.
    *
    * @param direction which direction you'd like to perform the sync operation.
    * @param options optional scoping — `did` restricts the run to one
    * registered identity's owned and role-authorized targets, which
-   * keeps an app-triggered "pull my inbox now" from re-reconciling every
+   * keeps an app-triggered "pull my inbox now" from covering every
    * other identity.
    *
    * @throws {Error} if `options.did` is not a registered identity, or the sync operation fails.
@@ -970,10 +731,10 @@ export interface SyncEngine {
    * Drains every registered sync identity to the given DWN endpoint.
    *
    * This is a one-shot eject primitive: it creates or resumes durable
-   * replication links for `endpoint`, persists it as a supplemental target
-   * for later live sync, reconciles local and remote feeds, and requires two
-   * stable cids-only convergence snapshots before marking a target complete.
-   * Empty plans, paused links, cancellation, or registration changes produce
+   * exact links for `endpoint`, persists it as a supplemental target for later
+   * live sync, and covers local and remote feeds until both drain with no
+   * retained sparse work.
+   * Empty plans, cancellation, or registration changes produce
    * an incomplete result that callers may safely retry.
    *
    * @throws {Error} if another one-shot sync or drain is already in progress.
@@ -982,22 +743,23 @@ export interface SyncEngine {
   /**
    * Starts live sync: opens `MessagesSubscribe` WebSocket subscriptions to
    * remote DWNs for real-time pull, listens to the local EventLog for
-   * immediate push, and runs a periodic durable feed settle check at
-   * `interval` to repair anything the subscriptions missed.
+   * immediate push, and runs a periodic covering pass at `interval` for
+   * anything the subscription wakes missed.
    *
-   * Subsequent calls update the interval, disposing of the previous
-   * runtime's resources before starting the new one.
+   * Calling this again while a live subscription is open joins any in-progress
+   * catch-up and otherwise is a no-op. Stop the runtime before starting it with
+   * a different periodic interval.
    *
    * The returned promise resolves after the initial durable-feed catch-up
    * and after link subscriptions have been opened for identities registered
    * before the call — so `await startSync(...)` is the "initially caught up"
    * signal for those identities, best-effort: individual link failures
-   * schedule repair rather than rejecting. Identities hot-added later report
+   * remain retryable rather than rejecting. Identities hot-added later report
    * their own catch-up through {@link SyncEngine.getReplicationLinks} (all
    * links `'live'`) and the `link:status-change` event.
    *
    * Userland polling needs no engine mode: the one-shot {@link SyncEngine.sync}
-   * runs the same durable feed reconciliation on demand, e.g.
+   * runs the same durable page coverage on demand, e.g.
    * `setInterval(() => { agent.sync.sync().catch(console.error); }, ms)`.
    */
   startSync(params?: StartSyncParams): Promise<void>;
@@ -1012,9 +774,15 @@ export interface SyncEngine {
   stopSync(timeout?: number): Promise<void>;
 
   /**
+   * Clear all sync registrations and progress for explicit disaster recovery.
+   * The application must register identities and followed contexts again.
+   */
+  reset(): Promise<void>;
+
+  /**
    * Subscribe to sync engine events. Returns an unsubscribe function.
-   * Events are emitted at key state transitions: checkpoint advancement,
-   * link status changes, repair, gap detection.
+   * Events are emitted for catalog changes, link state/activity, and freshly
+   * applied messages.
    */
   on(listener: SyncEventListener): () => void;
 
@@ -1026,24 +794,6 @@ export interface SyncEngine {
    */
   close(options?: SyncLifecycleOptions): Promise<void>;
 
-  // ---------------------------------------------------------------------------
-  // Dead letter / sync health
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Returns messages that are currently failing to sync, optionally filtered
-   * by tenant. Entries are auto-cleared when the same CID later succeeds
-   * (via push or pull), so the list reflects current health — not historical
-   * incidents. Sorted newest-first by `failedAt`.
-   */
-  getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]>;
-
-  /**
-   * Returns a summary of sync health: connectivity, failed message count,
-   * and degraded link count.
-   */
-  getSyncHealth(): Promise<SyncHealthSummary>;
-
   /**
    * Returns one identity's registration, links, remotes, and health from one
    * combined status read. Prefer this when a caller needs more than one projection.
@@ -1051,22 +801,20 @@ export interface SyncEngine {
   getIdentitySyncStatus(tenantDid: string): Promise<SyncIdentityStatus>;
 
   /**
-   * Returns a read-only snapshot of every current replication link, optionally
-   * filtered by tenant. Superseded links (from a previous scope/delegate
-   * registration) are excluded. An identity has completed its initial
-   * catch-up and is currently attached when every one of its links reports
+   * Returns a tenant's current replication links. Superseded links from a
+   * previous scope or delegate are excluded. Initial catch-up is complete when
+   * every link reports
    * `status: 'live'`, `connectivity: 'online'`, and `isPullCurrent: true` —
    * `startSync()` resolving covers identities registered before start, and
    * this surface covers hot-added identities and later inspection.
    */
-  getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]>;
+  getReplicationLinks(tenantDid: string): Promise<ReplicationLinkSnapshot[]>;
 
   /**
-   * Immediately retry a remote's recoverable link repairs and quota-blocked
-   * messages instead of waiting for their next scheduled checks. Runs
-   * targeted, per-link work for `(tenantDid, remoteEndpoint)`, so a UI
+   * Immediately retry a remote's retained sparse work instead of waiting for
+   * the next periodic pass. Runs targeted work for `(tenantDid, remoteEndpoint)`, so a UI
    * "Retry now" button (or a freshly purchased quota) resumes without touching
-   * unrelated remotes. Authorization and policy pauses remain parked. No-op
+   * unrelated remotes. Authorization failures remain retained. No-op
    * when nothing is retryable.
    */
   retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void>;

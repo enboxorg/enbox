@@ -1187,13 +1187,7 @@ describe('RecordView', () => {
     const local = testRecord('local-while-paused');
     const harness = createHarness(async () => ok([local], { messageCid: 'next-page', value: 'cursor' }));
     const fakeSync = createSync();
-    fakeSync.links = [{
-      ...link('paused', 'offline'),
-      recovery: {
-        error    : 'authority endpoint unavailable',
-        failedAt : '2026-09-11T12:00:00.000Z',
-      },
-    }];
+    fakeSync.links = [link('paused', 'offline')];
 
     const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
       pagination: { limit: 10 },
@@ -1207,8 +1201,6 @@ describe('RecordView', () => {
       throw new Error(`expected an error state, received '${state.status}'`);
     }
     expect(state.error.message).toContain('replication is paused');
-    expect(state.error.message).toContain('https://dwn.example');
-    expect(state.error.message).toContain('authority endpoint unavailable');
     await view.close();
   });
 
@@ -1462,11 +1454,6 @@ describe('RecordView', () => {
       protocols      : ['https://example.com/protocols/unrelated'],
       from           : 'live',
       to             : 'paused',
-    });
-    fakeSync.emit({
-      type           : 'dead-letter:change',
-      tenantDid      : TENANT_DID,
-      remoteEndpoint : 'https://dwn.example',
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -1867,7 +1854,7 @@ describe('RecordView', () => {
       remoteEndpoint : 'https://dwn.example',
       protocol       : ViewDefinition.protocol,
       protocols      : [ViewDefinition.protocol],
-      from           : 'repairing',
+      from           : 'initializing',
       to             : 'paused',
     });
     await waitFor(() => { expect(view.getSnapshot().status).toBe('error'); });
@@ -1905,7 +1892,7 @@ describe('RecordView', () => {
       remoteEndpoint : 'https://dwn.example',
       protocol       : ViewDefinition.protocol,
       protocols      : [ViewDefinition.protocol],
-      from           : 'repairing',
+      from           : 'initializing',
       to             : 'paused',
     });
     const pausedState = view.getSnapshot();

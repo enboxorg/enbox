@@ -1770,7 +1770,7 @@ describe('AgentDwnApi', () => {
 
         throw new Error('Should have thrown');
       } catch (error:any) {
-        expect(error.message).toContain('Requested to sign with a permission but no grant messageParams were provided in the request');
+        expect(error.message).toContain('Requested to sign RecordsWrite with a permission but no grant parameters were provided.');
       }
     });
 
@@ -1800,7 +1800,7 @@ describe('AgentDwnApi', () => {
 
         throw new Error('Should have thrown');
       } catch (error:any) {
-        expect(error.message).toContain('AgentDwnApi: Requested to sign with a permission but no grant messageParams were provided in the request');
+        expect(error.message).toContain('AgentDwnApi: Requested to sign RecordsWrite with a permission but no grant parameters were provided.');
       }
     });
   });
@@ -1975,7 +1975,7 @@ describe('AgentDwnApi', () => {
       // Install free-for-all protocol locally and on remote DWN.
       await installFreeForAll(testHarness, alice.did.uri);
       await installFreeForAll(testHarness, alice.did.uri, true);
-    });
+    }, 30_000);
 
     afterAll(async () => {
       await testHarness.clearStorage();

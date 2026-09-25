@@ -128,9 +128,7 @@ function createPlanner({
     getTargetResolver,
     identityStore,
     sourceStore,
-    isIdentityPaused           : sinon.stub().returns(false),
-    handleAuthorizationFailure : sinon.stub().resolves(false),
-    now                        : (): number => currentTime,
+    now: (): number => currentTime,
     warn,
   });
 
@@ -153,16 +151,14 @@ describe('SyncTargetPlanner', () => {
     const { entries, getEndpointUrls, planner } = createPlanner({
       entries: [validEntry('did:example:alice'), validEntry('did:example:bob')],
     });
-    const beforeCache = sinon.stub().resolves();
 
-    const first = await planner.getTargets({ beforeCache });
-    const second = await planner.getTargets({ beforeCache });
+    const first = await planner.getTargets();
+    const second = await planner.getTargets();
 
     expect(first.map(({ did }) => did)).toEqual(['did:example:alice', 'did:example:bob']);
     expect(second).toBe(first);
     expect(entries.calledOnce).toBe(true);
     expect(getEndpointUrls.callCount).toBe(2);
-    expect(beforeCache.calledOnceWith(first, 0)).toBe(true);
     expect(planner.lastResolutionComplete).toBe(true);
   });
 
@@ -250,17 +246,13 @@ describe('SyncTargetPlanner', () => {
         validEntry('did:example:alice'),
       ],
     });
-    const beforeCache = sinon.stub().resolves();
-
-    expect(await planner.getTargets({ beforeCache })).toHaveLength(1);
+    expect(await planner.getTargets()).toHaveLength(1);
     expect(planner.lastResolutionComplete).toBe(false);
     expect(warn.calledOnceWith(
       'SyncEngineLevel: Corrupt sync options for did:example:corrupt, skipping identity:',
       corruptError,
     )).toBe(true);
-    expect(beforeCache.called).toBe(false);
-
-    await planner.getTargets({ beforeCache });
+    await planner.getTargets();
     expect(entries.callCount).toBe(2);
   });
 
@@ -319,27 +311,12 @@ describe('SyncTargetPlanner', () => {
       await discoveryGate;
       return ['https://alice.example.com'];
     });
-    const beforeCache = sinon.stub().resolves();
-
-    const resolution = planner.getTargets({ beforeCache });
+    const resolution = planner.getTargets();
     await discoveryStarted;
     planner.invalidate();
     releaseDiscovery();
 
     expect(await resolution).toHaveLength(1);
-    expect(beforeCache.called).toBe(false);
-    expect(planner.lastResolutionComplete).toBe(false);
-    await planner.getTargets();
-    expect(entries.callCount).toBe(2);
-  });
-
-  it('should not cache targets invalidated by work running before the cache commit', async () => {
-    const { entries, planner } = createPlanner();
-    const beforeCache = sinon.stub().callsFake(async (): Promise<void> => {
-      planner.invalidate();
-    });
-
-    expect(await planner.getTargets({ beforeCache })).toHaveLength(1);
     expect(planner.lastResolutionComplete).toBe(false);
     await planner.getTargets();
     expect(entries.callCount).toBe(2);

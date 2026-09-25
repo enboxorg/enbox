@@ -82,7 +82,7 @@ describe('Agent remote mode integration', () => {
   it('syncs push and pull through a real local DWN server and persists checkpoints', async () => {
     context = await setupRemoteModeContext('durable');
     const { alice, bob, localServer, remoteServer, testHarness } = context;
-    const syncEngine = testHarness.agent.sync as any;
+    const syncEngine = testHarness.agent.sync;
 
     await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
     const localWrite = await writeLocalRecord(testHarness.agent, alice.did.uri, 'local push body');
@@ -120,19 +120,19 @@ describe('Agent remote mode integration', () => {
     expect(await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId)).toBe('remote pull body');
     expect(await readLocalRecordText(testHarness.agent, bob.did.uri, bobRemoteWrite.recordId)).toBeUndefined();
 
-    const links = await syncEngine.replicationLinkStore.getLinksForTenant(alice.did.uri);
-    const link = links.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
+    const links = await syncEngine.getReplicationLinks(alice.did.uri);
+    const link = links.find(candidate => candidate.remoteEndpoint === remoteServer.httpUrl);
 
     expect(link).toBeDefined();
-    expect(link.push.contiguousAppliedToken).toBeDefined();
-    expect(link.pull.contiguousAppliedToken).toBeDefined();
+    expect(link?.pushPosition).toBeDefined();
+    expect(link?.pullPosition).toBeDefined();
     expect(localServer.httpUrl).not.toBe(remoteServer.httpUrl);
   });
 
-  it('drains local and remote data to an explicit endpoint and reports convergence progress', async () => {
+  it('drains local and remote data to an explicit endpoint', async () => {
     context = await setupRemoteModeContext('drain');
     const { alice, remoteServer, testHarness } = context;
-    const syncEngine = testHarness.agent.sync as any;
+    const syncEngine = testHarness.agent.sync;
 
     await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
     const localWrite = await writeLocalRecord(testHarness.agent, alice.did.uri, 'drained local body');
@@ -151,26 +151,16 @@ describe('Agent remote mode integration', () => {
 
     expect(result.endpoint).toBe(remoteServer.httpUrl);
     expect(result.completed).toBe(true);
-    expect(result.targets).toHaveLength(1);
-
-    const target = result.targets[0]!;
-    expect(target.tenantDid).toBe(alice.did.uri);
-    expect(target.remoteEndpoint).toBe(remoteServer.httpUrl);
-    expect(target.completed).toBe(true);
-    expect(target.converged).toBe(true);
-    expect(target.pushCheckpoint).toBeDefined();
-    expect(target.localFingerprint).toBeDefined();
-    expect(target.localFingerprint).toBe(target.remoteFingerprint);
-    expect(target.error).toBeUndefined();
+    expect(result.error).toBeUndefined();
     expect(await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, localWrite.recordId)).toBe('drained local body');
     expect(await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId)).toBe('drained remote body');
 
-    const links = await syncEngine.replicationLinkStore.getLinksForTenant(alice.did.uri);
-    const link = links.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
+    const links = await syncEngine.getReplicationLinks(alice.did.uri);
+    const link = links.find(candidate => candidate.remoteEndpoint === remoteServer.httpUrl);
 
     expect(link).toBeDefined();
-    expect(link.push.contiguousAppliedToken).toEqual(target.pushCheckpoint);
-    expect(link.pull.contiguousAppliedToken).toBeDefined();
+    expect(link?.pushPosition).toBeDefined();
+    expect(link?.pullPosition).toBeDefined();
 
     // The explicit handoff endpoint remains a durable supplemental target.
     // This late write must still reach it even though DID endpoint resolution
@@ -180,35 +170,16 @@ describe('Agent remote mode integration', () => {
     expect(await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, lateWrite.recordId)).toBe('late handoff body');
   });
 
-  it('excludes the active local DWN endpoint from supplemental targets after remote-mode boot', async () => {
-    context = await setupRemoteModeContext('self-sync-exclusion');
-    const { alice, localServer, remoteServer, testHarness } = context;
-    const syncEngine = testHarness.agent.sync as any;
-
-    await testHarness.agent.sync.setIdentityOptions({
-      did     : alice.did.uri,
-      options : { protocols: [notesProtocol.protocol] },
-    });
-    await syncEngine.registerSupplementalDwnEndpoint(localServer.httpUrl);
-
-    const targets = await syncEngine.getSyncTargets();
-
-    expect(targets.some((target: any): boolean => target.dwnUrl === localServer.httpUrl)).toBe(false);
-    expect(targets.some((target: any): boolean => target.dwnUrl === remoteServer.httpUrl)).toBe(true);
-  });
-
   it('reconciles a WebSocket pull wake through a real remote-mode local node', async () => {
     context = await setupRemoteModeContext('live');
     const { alice, remoteServer, testHarness } = context;
-    const syncEngine = testHarness.agent.sync as any;
+    const syncEngine = testHarness.agent.sync;
 
     await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
       options : { protocols: [notesProtocol.protocol] },
     });
     await testHarness.agent.sync.startSync({ interval: '30s' });
-
-    expect(testHarness.agent.sync.hasActiveSubscriptions).toBe(true);
 
     await configureProtocolOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesProtocol);
     const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'durable pull body');
@@ -217,22 +188,18 @@ describe('Agent remote mode integration', () => {
       await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId) === 'durable pull body'
     );
 
-    const controllers = [...syncEngine._linkControllers.values()];
-    const link = controllers.map((controller: any): any => controller.link).find((candidate: any): boolean =>
-      candidate.tenantDid === alice.did.uri &&
-      candidate.remoteEndpoint === remoteServer.httpUrl
-    );
+    const link = (await syncEngine.getReplicationLinks(alice.did.uri))
+      .find(candidate => candidate.remoteEndpoint === remoteServer.httpUrl);
 
     expect(link).toBeDefined();
-    expect(link.status).toBe('live');
-    expect(link.pull.contiguousAppliedToken).toBeDefined();
-    expect(link.pull.contiguousAppliedToken.messageCid).toBeDefined();
+    expect(link?.status).toBe('live');
+    expect(link?.pullPosition).toBeDefined();
   });
 
   it('persists both checkpoints across durable pull and push activity', async () => {
     context = await setupRemoteModeContext('concurrent-checkpoints');
     const { alice, remoteServer, testHarness } = context;
-    const syncEngine = testHarness.agent.sync as any;
+    const syncEngine = testHarness.agent.sync;
 
     await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
     await testHarness.agent.sync.setIdentityOptions({
@@ -241,11 +208,11 @@ describe('Agent remote mode integration', () => {
     });
     await testHarness.agent.sync.startSync({ interval: '30s' });
 
-    const beforeLinks = await syncEngine.replicationLinkStore.getLinksForTenant(alice.did.uri);
-    const before = beforeLinks.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
+    const beforeLinks = await syncEngine.getReplicationLinks(alice.did.uri);
+    const before = beforeLinks.find(candidate => candidate.remoteEndpoint === remoteServer.httpUrl);
     expect(before).toBeDefined();
-    const beforePullPosition = BigInt(before.pull.contiguousAppliedToken?.position ?? '-1');
-    const beforePushPosition = BigInt(before.push.contiguousAppliedToken?.position ?? '-1');
+    const beforePullPosition = BigInt(before?.pullPosition ?? '-1');
+    const beforePushPosition = BigInt(before?.pushPosition ?? '-1');
     const localWrite = await writeLocalRecord(testHarness.agent, alice.did.uri, 'concurrent local body');
 
     const [, remoteWrite] = await Promise.all([
@@ -260,11 +227,11 @@ describe('Agent remote mode integration', () => {
       await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, localWrite.recordId) === 'concurrent local body'
     );
     await waitFor(async () => {
-      const links = await syncEngine.replicationLinkStore.getLinksForTenant(alice.did.uri);
-      const link = links.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
+      const links = await syncEngine.getReplicationLinks(alice.did.uri);
+      const link = links.find(candidate => candidate.remoteEndpoint === remoteServer.httpUrl);
       return link !== undefined &&
-        BigInt(link.pull.contiguousAppliedToken?.position ?? '-1') > beforePullPosition &&
-        BigInt(link.push.contiguousAppliedToken?.position ?? '-1') > beforePushPosition;
+        BigInt(link.pullPosition ?? '-1') > beforePullPosition &&
+        BigInt(link.pushPosition ?? '-1') > beforePushPosition;
     });
   });
 });

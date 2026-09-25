@@ -253,8 +253,10 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
       });
       await wallet.agent.sync.startSync({ interval: '30s' });
     }
-    expect(walletA.agent.sync.hasActiveSubscriptions).toBe(true);
-    expect(walletB.agent.sync.hasActiveSubscriptions).toBe(true);
+    expect((await walletA.agent.sync.getReplicationLinks(walletA.agent.agentDid.uri))
+      .some(link => link.status === 'live')).toBe(true);
+    expect((await walletB.agent.sync.getReplicationLinks(walletB.agent.agentDid.uri))
+      .some(link => link.status === 'live')).toBe(true);
   }, 60_000);
 
   afterAll(async () => {
@@ -341,8 +343,7 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
     expect(await readRecordBytes(walletA, did, avatarRecord.recordId)).toEqual(avatarBytes);
     expect(await readRecordBytes(walletA, did, heroRecord.recordId)).toEqual(heroBytes);
 
-    // Convergence must be clean — no dead-lettered messages.
-    const health = await walletA.agent.sync.getSyncHealth();
-    expect(health.failedMessageCount).toBe(0);
+    const syncStatus = await walletA.agent.sync.getIdentitySyncStatus(did);
+    expect(syncStatus.remotes.every(remote => remote.state === 'healthy')).toBe(true);
   }, 120_000);
 });

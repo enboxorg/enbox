@@ -62,7 +62,11 @@ export type AdmitOutcome =
        */
       freshEntries: SyncFreshEntry[];
     }
-  | { kind: 'deferred'; rootCid: string; detail?: string }
+  | {
+      kind: 'deferred';
+      rootCid: string;
+      detail?: string;
+    }
   | { kind: 'failed'; rootCid: string; reason: 'invalid' | 'terminal'; detail?: string };
 
 export type AdmitClosureDeps = {
@@ -81,6 +85,8 @@ export type AdmitClosureDeps = {
     root: SyncMessageEntry;
   }>;
   shouldContinue?: () => boolean;
+  /** Defer missing remote support instead of issuing point reads during page intake. */
+  deferRemoteHydration?: boolean;
 };
 
 type AdmissionPassResult =
@@ -199,6 +205,16 @@ class AdmitClosureContext {
 
     const dataStream = await replayableDataStream(entry);
     if (entryRequiresDataBeforeApply(entry) && dataStream === undefined) {
+      if (this.deps.deferRemoteHydration === true) {
+        return {
+          kind    : 'done',
+          outcome : {
+            kind   : 'deferred',
+            rootCid,
+            detail : 'latest records write data is not present in the received page',
+          },
+        };
+      }
       const support = await this.fetchReplicationSupport(rootCid);
       if (support !== undefined) {
         return { kind: 'retry', entries: support };
@@ -265,6 +281,17 @@ class AdmitClosureContext {
       };
     }
 
+    if (this.deps.deferRemoteHydration === true) {
+      return {
+        kind    : 'done',
+        outcome : {
+          kind   : 'deferred',
+          rootCid,
+          detail : missingDependencyDetail(missing),
+        },
+      };
+    }
+
     const support = await this.fetchReplicationSupport(rootCid);
     if (support !== undefined) {
       return { kind: 'retry', entries: support };
@@ -288,6 +315,10 @@ class AdmitClosureContext {
     const existing = this.entriesByCid.get(rootCid);
     if (existing !== undefined) {
       return [existing];
+    }
+
+    if (this.deps.deferRemoteHydration === true) {
+      return [];
     }
 
     // A role source can only name messages returned by its exact authenticated
@@ -660,7 +691,7 @@ class AdmitClosureContext {
   }
 
   private async rememberEntry(entry: SyncMessageEntry): Promise<string> {
-    const cid = await Message.getCid(entry.message);
+    const cid = entry.messageCid ?? await Message.getCid(entry.message);
     this.entriesByCid.set(cid, entry);
     return cid;
   }

@@ -54,7 +54,6 @@ import type {
 import type {
   RemoteSyncStatus,
   ReplicationCurrentness,
-  ReplicationLinkSnapshot,
   SyncConnectivityState,
   SyncIdentityOptions,
 } from '@enbox/agent';
@@ -69,7 +68,6 @@ import {
 
 import { Enbox } from './enbox.js';
 import { getApplicationProtocolRequests } from './application-manifest.js';
-import { latestPausedRecoveryLink } from './sync-status-error.js';
 import { ProtocolReadinessError } from './protocol-readiness.js';
 import { WalletReapprovalRequiredError } from './typed-enbox.js';
 
@@ -1544,7 +1542,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       const remotes = projectRemoteSyncRows(status.remotes, this._snapshot.remoteDwn);
       return status.registration === undefined
         ? immutableSyncStatus({ state: 'caught-up', connectivity: 'unknown', remotes })
-        : projectSyncStatus(status.currentness, status.connectivity, status.lastActivityAt, status.links, remotes);
+        : projectSyncStatus(status.currentness, status.connectivity, status.lastActivityAt, remotes);
     } catch (cause: unknown) {
       const current = this._snapshot.sync;
       return immutableSyncStatus({
@@ -1746,21 +1744,15 @@ function projectSyncStatus(
   state: ReplicationCurrentness,
   connectivity: SyncConnectivityState,
   lastActivityAt: string | undefined,
-  links: readonly Readonly<ReplicationLinkSnapshot>[],
   remotes: readonly Readonly<RemoteSyncStatus>[],
 ): SyncStatusSnapshot {
   if (state === 'error') {
-    const failedLink = latestPausedRecoveryLink(links);
-    const message = failedLink?.recovery === undefined
-      ? 'Synchronization is paused for the selected identity.'
-      : `Synchronization is paused for the selected identity; remote `
-        + `'${failedLink.remoteEndpoint}' failed: ${failedLink.recovery.error}`;
     return immutableSyncStatus({
       state : 'error',
       connectivity,
       lastActivityAt,
       remotes,
-      error : new Error(message),
+      error : new Error('Synchronization is paused for the selected identity.'),
     });
   }
   return immutableSyncStatus({
@@ -1807,10 +1799,6 @@ function remoteSyncRowsEqual(a: Readonly<RemoteSyncStatus>, b: Readonly<RemoteSy
     && a.state === b.state
     && a.connectivity === b.connectivity
     && a.quotaBlockedMessageCount === b.quotaBlockedMessageCount
-    && a.failedMessageCount === b.failedMessageCount
-    && a.nextProbeAt === b.nextProbeAt
-    && a.nextRetryAt === b.nextRetryAt
-    && a.lastError === b.lastError
     && a.lastActivityAt === b.lastActivityAt;
 }
 

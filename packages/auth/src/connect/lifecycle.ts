@@ -249,7 +249,6 @@ export async function startSyncAndWaitIfEnabled(
     return;
   }
 
-  if (userAgent.sync.hasActiveSubscriptions) { return; } // setIdentityOptions() hot-adds inline
   await userAgent.sync.startSync(resolveSyncOption(sync));
 }
 

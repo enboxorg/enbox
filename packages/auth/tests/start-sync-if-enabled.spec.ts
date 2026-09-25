@@ -25,8 +25,7 @@ describe('sync startup', () => {
   test('should call startSync when sync is "live" or the object form', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
-      syncStartSync              : async (params) => { startSyncCalls.push(params); },
-      syncHasActiveSubscriptions : false,
+      syncStartSync: async (params) => { startSyncCalls.push(params); },
     });
 
     await startSyncAndWaitIfEnabled(agent, 'live');
@@ -52,8 +51,7 @@ describe('sync startup', () => {
   test('should call startSync with the engine-default interval when sync is undefined', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
-      syncStartSync              : async (params) => { startSyncCalls.push(params); },
-      syncHasActiveSubscriptions : false,
+      syncStartSync: async (params) => { startSyncCalls.push(params); },
     });
 
     await startSyncAndWaitIfEnabled(agent, undefined);
@@ -65,8 +63,7 @@ describe('sync startup', () => {
   test('should call startSync with the given settle-check cadence when sync is a string interval', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
-      syncStartSync              : async (params) => { startSyncCalls.push(params); },
-      syncHasActiveSubscriptions : false,
+      syncStartSync: async (params) => { startSyncCalls.push(params); },
     });
 
     await startSyncAndWaitIfEnabled(agent, '30s');
@@ -75,23 +72,10 @@ describe('sync startup', () => {
     expect(startSyncCalls[0]).toEqual({ interval: '30s' });
   });
 
-  test('should skip startSync when sync is already running', async () => {
-    const startSyncCalls: any[] = [];
-    const agent = createMockAgent({
-      syncStartSync              : async (params) => { startSyncCalls.push(params); },
-      syncHasActiveSubscriptions : true,
-    });
-
-    await startSyncAndWaitIfEnabled(agent, undefined);
-
-    expect(startSyncCalls).toHaveLength(0);
-  });
-
   test('should call startSync when sync is not running and sync option is an interval', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
-      syncStartSync              : async (params) => { startSyncCalls.push(params); },
-      syncHasActiveSubscriptions : false,
+      syncStartSync: async (params) => { startSyncCalls.push(params); },
     });
 
     await startSyncAndWaitIfEnabled(agent, '10s');

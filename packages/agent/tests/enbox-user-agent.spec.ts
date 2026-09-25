@@ -10,6 +10,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { SyncEngineNext } from '../src/sync-next/engine.js';
 import { testDwnUrl } from './utils/test-config.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
@@ -43,6 +44,7 @@ describe('EnboxUserAgent', () => {
       expect(userAgent.keyManager).toBeDefined();
       expect(userAgent.rpc).toBeDefined();
       expect(userAgent.sync).toBeDefined();
+      expect(userAgent.sync).toBeInstanceOf(SyncEngineNext);
       expect(userAgent.vault).toBeDefined();
     });
 

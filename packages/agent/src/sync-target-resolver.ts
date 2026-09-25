@@ -4,7 +4,6 @@ import type { PermissionsApi } from './types/permissions.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type {
   NonEmptyStringArray,
-  ReplicationLinkState,
   SyncAuthorization,
   SyncIdentityOptions,
   SyncScope,
@@ -25,20 +24,13 @@ export interface SyncEndpointDiscovery {
  * A canonical replication target for one identity, endpoint, scope, and
  * authorization epoch.
  *
- * Naming caveat, because it costs readers time: this type and the durable
- * {@link ReplicationLinkState} describe the same tenant and endpoint under
- * different field names — `did` here is `tenantDid` there, and `dwnUrl`
- * here is `remoteEndpoint` there. {@link syncTargetFromLink} is that
- * mapping and nothing more. The names are NOT converged because `did` and
- * `dwnUrl` are also the field names on the push-request
- * types, so renaming only this type's fields would need per-site judgment
- * across ~500 occurrences, many of them in untyped test literals the
- * compiler cannot check.
+ * Targets are resolved from the durable registration catalog immediately
+ * before link work starts.
  */
 export type SyncTarget = {
-  /** Tenant DID. Same value as `ReplicationLinkState.tenantDid`. */
+  /** Tenant DID. */
   did: string;
-  /** Remote DWN URL. Same value as `ReplicationLinkState.remoteEndpoint`. */
+  /** Remote DWN URL. */
   dwnUrl: string;
   delegateDid?: string;
   projectionId: string;
@@ -49,22 +41,6 @@ export type SyncTarget = {
   authorDelegatedGrant?: DwnDataEncodedRecordsWriteMessage;
   permissionGrantIds?: NonEmptyStringArray;
 };
-
-/** Recreate the canonical target represented by one durable link. */
-export function syncTargetFromLink(link: ReplicationLinkState): SyncTarget {
-  return {
-    did                : link.tenantDid,
-    dwnUrl             : link.remoteEndpoint,
-    delegateDid        : link.delegateDid,
-    projectionId       : link.projectionId,
-    scope              : link.scope,
-    authorization      : link.authorization,
-    authorizationEpoch : link.authorizationEpoch,
-    permissionGrantIds : link.authorization.kind === 'delegate'
-      ? link.authorization.permissionGrantIds
-      : undefined,
-  };
-}
 
 /** Scope and authorization details common to every endpoint for an identity. */
 export type SyncTargetResolution = Pick<
@@ -196,6 +172,12 @@ export class SyncTargetResolver {
       messageType  : DwnInterface.MessagesQuery,
       protocol     : target.scope.kind === 'context' ? target.scope.protocol : undefined,
     });
+    if (message === undefined) {
+      throw new Error(
+        `SyncTargetResolver: delegate '${target.delegateDid}' has no MessagesQuery grant from ` +
+        `'${target.authorization.actorDid}' for '${target.scope.kind === 'context' ? target.scope.protocol : 'all'}'.`,
+      );
+    }
     return { ...target, authorDelegatedGrant: message };
   }
 
@@ -262,7 +244,7 @@ export class SyncTargetResolver {
         // is only used to avoid scheduling an equivalent endpoint twice.
       }
       if (!endpointsByKey.has(key)) {
-        endpointsByKey.set(key, endpoint);
+        endpointsByKey.set(key, key);
       }
     }
     return [...endpointsByKey.values()];

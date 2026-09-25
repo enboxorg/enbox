@@ -22,6 +22,10 @@ export class FollowedSyncSourceStoreLevel implements FollowedSyncSourceStore {
     return this._db.sublevel('followedSyncSources');
   }
 
+  public async clear(): Promise<void> {
+    await this.sources.clear();
+  }
+
   public async delete(id: string): Promise<void> {
     await this.sources.del(id);
   }

@@ -59,7 +59,7 @@ describe('Sync scope closure — delegated protocol history', () => {
 
   beforeEach(async () => {
     sinon.restore();
-    await syncEngine.clear();
+    await syncEngine.reset();
     await testHarness.clearDwnStores();
 
     const owner = await testHarness.agent.identity.create({

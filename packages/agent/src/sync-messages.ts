@@ -45,7 +45,7 @@ import {
   newestProtocolConfig,
   recordsWriteRequiresData,
 } from './sync-fetch-helpers.js';
-import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
+import { DwnRpcError, isQuotaExceededError, RateLimitError } from '@enbox/dwn-clients';
 import { getRoleKey, orderMessagesForAdmission } from './sync-admission-order.js';
 import { isNonRetryableSyncAuthorizationFailure, syncErrorMessage } from './sync-runtime-errors.js';
 
@@ -55,6 +55,8 @@ const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
 /** Entry type for fetched messages with optional data stream and retry buffer. */
 export type SyncMessageEntry = {
   message: GenericMessage;
+  /** Pre-verified CID supplied by a page intake boundary to avoid repeated hashing. */
+  messageCid?: string;
   dataStream?: ReadableStream<Uint8Array>;
   dataStreamConsumed?: boolean;
   dataStreamFactory?: () => Promise<ReadableStream<Uint8Array> | undefined>;
@@ -114,10 +116,12 @@ type MessageFeedQuery = {
   cursor?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
+  signal?: AbortSignal;
+  timeoutMs?: number;
   agent: EnboxPlatformAgent;
 };
 
-type MessageFeedParams = Omit<MessageFeedQuery, 'authorDid' | 'did' | 'delegateDid' | 'agent'>;
+type MessageFeedParams = Omit<MessageFeedQuery, 'authorDid' | 'did' | 'delegateDid' | 'signal' | 'timeoutMs' | 'agent'>;
 
 type FetchLocalMessageResult =
   | { kind: 'found'; entry: SyncMessageEntry }
@@ -384,6 +388,8 @@ export async function queryRemoteMessageFeed({
   cursor,
   limit,
   cidsOnly,
+  signal,
+  timeoutMs,
   agent,
 }: MessageFeedQuery & { dwnUrl: string }): Promise<MessagesQueryReply> {
   const messagesQuery = await agent.processDwnRequest({
@@ -407,6 +413,8 @@ export async function queryRemoteMessageFeed({
     dwnUrl,
     targetDid : did,
     message   : messagesQuery.message,
+    signal,
+    timeoutMs,
   }) as MessagesQueryReply;
 }
 
@@ -448,12 +456,16 @@ export async function queryLocalMessageFeed({
 /**
  * Fetches messages from a remote DWN by their CIDs using MessagesRead.
  */
-export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent }: {
+export async function fetchRemoteMessages({
+  did, dwnUrl, delegateDid, permissionGrantIds, messageCids, signal, timeoutMs, agent,
+}: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
   permissionGrantIds?: string[];
   messageCids: string[];
+  signal?: AbortSignal;
+  timeoutMs?: number;
   agent: EnboxPlatformAgent;
 }): Promise<SyncMessageEntry[]> {
   const results: SyncMessageEntry[] = [];
@@ -484,8 +496,13 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permission
           dwnUrl,
           targetDid : did,
           message   : messagesRead.message,
+          signal,
+          timeoutMs,
         }) as MessagesReadReply;
       } catch (error: any) {
+        if (signal?.aborted === true) {
+          return undefined;
+        }
         console.error(`SyncMessages: pull - failed to read ${messageCid} from ${dwnUrl}:`, error.message ?? error);
         return undefined;
       }
@@ -531,6 +548,8 @@ export async function pushMessages({
   agent,
   permissionsApi,
   onBeforeApply,
+  signal,
+  timeoutMs,
 }: {
   did: string;
   dwnUrl: string;
@@ -540,6 +559,8 @@ export async function pushMessages({
   agent: EnboxPlatformAgent;
   permissionsApi?: PermissionsApi;
   onBeforeApply?: (messageCid: string) => void;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<PushResult> {
   const context = new RemoteApplyPushContext({
     did,
@@ -549,6 +570,8 @@ export async function pushMessages({
     agent,
     permissionsApi,
     onBeforeApply,
+    signal,
+    timeoutMs,
   });
   return context.push(messageCids);
 }
@@ -646,6 +669,8 @@ export class RemoteApplyPushContext {
     agent: EnboxPlatformAgent;
     permissionsApi?: PermissionsApi;
     onBeforeApply?: (messageCid: string) => void;
+    signal?: AbortSignal;
+    timeoutMs?: number;
   }) {}
 
   public async push(rootCids: string[]): Promise<PushResult> {
@@ -796,6 +821,8 @@ export class RemoteApplyPushContext {
         targetDid : this.deps.did,
         data,
         message   : entry.message,
+        signal    : this.deps.signal,
+        timeoutMs : this.deps.timeoutMs,
         ...(ancestryOnly ? { ancestryOnly: true } : {}),
       });
     } catch (error: any) {
@@ -811,8 +838,19 @@ export class RemoteApplyPushContext {
         // this is an expected, surfaced condition, not an error.
         return { kind: 'failed', failure: this.quotaBlockedFailure(rootCid, cid, detail) };
       }
+      if (error instanceof RateLimitError) {
+        return {
+          kind    : 'failed',
+          failure : this.retryableFailure(rootCid, cid, detail, {
+            retryAfter: new Date(Date.now() + error.retryAfterSec * 1000).toISOString(),
+          }),
+        };
+      }
       if (error instanceof DwnRpcError && error.terminal) {
-        return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, 'Invalid') };
+        return {
+          kind    : 'failed',
+          failure : { ...this.terminalFailure(rootCid, cid, detail, 'Invalid'), endpointRejected: true },
+        };
       }
       return { kind: 'failed', failure: this.retryableFailure(rootCid, cid, detail) };
     }
@@ -947,12 +985,14 @@ export class RemoteApplyPushContext {
     cid: string,
     detail: string,
     context: {
+      endpointRejected?: boolean;
       localMissing?: boolean;
       localStatusCode?: number;
       remoteResult?: RemoteRetryableResult;
+      retryAfter?: string;
     } = {},
   ): PushFailure {
-    const { localMissing, localStatusCode, remoteResult } = context;
+    const { endpointRejected, localMissing, localStatusCode, remoteResult, retryAfter } = context;
     const deferred = remoteResult?.kind === 'Deferred' ? remoteResult : undefined;
     return {
       cid    : rootCid,
@@ -960,8 +1000,10 @@ export class RemoteApplyPushContext {
       ...(remoteResult === undefined ? {} : { kind: remoteResult.kind, remoteResult }),
       ...(deferred === undefined ? {} : { reason: deferred.reason }),
       ...(deferred?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
+      ...(endpointRejected === true ? { endpointRejected: true } : {}),
       ...(localMissing === true && cid === rootCid ? { localMissing: true } : {}),
       ...(localStatusCode === undefined ? {} : { localStatusCode }),
+      ...(retryAfter === undefined ? {} : { retryAfter }),
       detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
     };
   }

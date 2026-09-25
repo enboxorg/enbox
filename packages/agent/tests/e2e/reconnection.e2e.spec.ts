@@ -99,7 +99,7 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
 
     // Start live sync and establish the pull WebSocket subscription.
     await harness.agent.sync.startSync({ interval: '30s' });
-    expect(harness.agent.sync.hasActiveSubscriptions).toBe(true);
+    expect((await harness.agent.sync.getReplicationLinks(did)).some(link => link.status === 'live')).toBe(true);
   }, 30_000);
 
   afterAll(async () => {
@@ -198,7 +198,7 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
   }, 45_000);
 
   it('should report healthy sync after pull subscription recovery', async () => {
-    const health = await harness.agent.sync.getSyncHealth();
-    expect(health.failedMessageCount).toBe(0);
+    const status = await harness.agent.sync.getIdentitySyncStatus(did);
+    expect(status.remotes.every(remote => remote.state === 'healthy')).toBe(true);
   });
 });

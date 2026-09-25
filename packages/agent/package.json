@@ -61,6 +61,10 @@
       "types": "./dist/types/level.d.ts",
       "import": "./dist/esm/level.js"
     },
+    "./sync-internal": {
+      "types": "./dist/types/sync-internal.d.ts",
+      "import": "./dist/esm/sync-internal.js"
+    },
     "./test": {
       "types": "./dist/types/test.d.ts",
       "import": "./dist/esm/test.js"
