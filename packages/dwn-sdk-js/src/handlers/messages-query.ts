@@ -10,7 +10,6 @@ import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesQuery } from '../interfaces/messages-query.js';
 import { MessagesRoleAuthorization } from '../core/messages-role-authorization.js';
-import { Replication } from '../utils/replication.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
@@ -41,23 +40,13 @@ export class MessagesQueryHandler implements MethodHandler {
       return messageReplyFromError(e, 401);
     }
 
-    const replicationFeedReader = Replication.asFeedReader(this.deps.messageStore);
-    if (replicationFeedReader === undefined) {
-      return {
-        status: {
-          code   : 501,
-          detail : `${DwnErrorCode.MessagesQueryReplicationFeedUnimplemented}: MessagesQuery requires a replication feed reader`,
-        }
-      };
-    }
-
     try {
       const filters = MessagesQueryHandler.convertFilters(
         message.descriptor.filters,
         this.deps,
         authorization.includeShadowFilters,
       );
-      const result = await replicationFeedReader.logRead(tenant, {
+      const result = await this.deps.messageStore.logRead(tenant, {
         cursor : message.descriptor.cursor,
         filters,
         limit  : message.descriptor.limit,
@@ -82,7 +71,7 @@ export class MessagesQueryHandler implements MethodHandler {
 
       const fingerprintScopes = Messages.computeFingerprintScopes(message.descriptor.filters);
       if (fingerprintScopes !== undefined) {
-        reply.fingerprint = await replicationFeedReader.fingerprint(tenant, fingerprintScopes);
+        reply.fingerprint = await this.deps.messageStore.fingerprint(tenant, fingerprintScopes);
       }
 
       return reply;

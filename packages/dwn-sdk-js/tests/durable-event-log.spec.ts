@@ -9,6 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 
 import { BroadcastChannelWakePublisher } from '../src/event-stream/broadcast-channel-wake-publisher.js';
 import { DurableEventLog } from '../src/event-stream/durable-event-log.js';
+import { Encoder } from '../src/utils/encoder.js';
 import { EventEmitterWakePublisher } from '../src/event-stream/event-emitter-wake-publisher.js';
 import { Message } from '../src/core/message.js';
 import { MessageStoreLevel } from '../src/store/message-store-level.js';
@@ -234,6 +235,47 @@ describe('DurableEventLog', () => {
       messageCid : second.messageCid,
     }));
     expect(liveEvent.cursor.position).toBe('2');
+
+    await subscription.close();
+  });
+
+  it('should push a completed same-CID row at its new position', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
+    const message = { ...record.message } as RecordsWriteMessage & { encodedData?: string };
+    const encodedData = Encoder.bytesToBase64Url(record.dataBytes!);
+    delete message.encodedData;
+
+    const messageCid = await Message.getCid(message);
+    const indexes = await record.recordsWrite.constructIndexes(true);
+    const initialPut = await messageStore.put(alice.did, message, {
+      ...indexes,
+      isLatestBaseState: false,
+    });
+    const received: SubscriptionMessage[] = [];
+    const subscription = await eventLog.subscribe(alice.did, 'completion-move', (event): void => {
+      received.push(event);
+    }, { cursor: initialPut.position! });
+
+    expect(received).toEqual([expect.objectContaining({ type: 'eose' })]);
+    const completion = await messageStore.completeData(alice.did, messageCid, indexes, encodedData);
+    expect(completion).toEqual(expect.objectContaining({ status: 'completed' }));
+
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(received.filter(({ type }) => type === 'event')).toHaveLength(1);
+    });
+    const completionEvent = received.find(({ type }) => type === 'event');
+    expect(completionEvent).toEqual(expect.objectContaining({
+      type : 'event',
+      seq  : '2',
+      messageCid,
+      encodedData,
+    }));
+    if (completionEvent?.type !== 'event' || completion.status !== 'completed') {
+      throw new Error('expected completion event');
+    }
+    expect(completionEvent.cursor.position).toBe(completion.position?.position);
+    expect((completionEvent.event.message as RecordsWriteMessage & { encodedData?: string }).encodedData).toBeUndefined();
 
     await subscription.close();
   });

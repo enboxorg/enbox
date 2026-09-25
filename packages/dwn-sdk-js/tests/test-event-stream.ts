@@ -1,4 +1,4 @@
-import type { DurableEventLogStore, EventLog } from '../src/index.js';
+import type { EventLog } from '../src/index.js';
 
 import { DurableEventLog } from '../src/index.js';
 import { TestStores } from './test-stores.js';
@@ -26,7 +26,7 @@ export class TestEventLog {
     if (TestEventLog.eventLog === undefined) {
       const { messageStore } = TestStores.get();
       TestEventLog.eventLog = new DurableEventLog(
-        messageStore as unknown as DurableEventLogStore,
+        messageStore,
         TestStores.getWakePublisher(),
         { idleRedrainIntervalMs: 0 },
       );

@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../src/store/level.js';
 import {
   DataStream,
+  DwnConstant,
   DwnErrorCode,
   DwnMethodName,
   Jws,
@@ -179,6 +180,260 @@ export function testDwnClass(): void {
         const result = await dwn.applyReplicatedMessage(alice.did, message);
 
         expect(result).toEqual({ kind: 'Duplicate' });
+      });
+
+      it('deduplicates exact protocol configurations and tombstones', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : defaultTestProtocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, protocol.message)).status.code).toBe(202);
+        expect(await dwn.applyReplicatedMessage(alice.did, protocol.message)).toEqual({ kind: 'Duplicate' });
+
+        const write = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        expect((await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream })).status.code).toBe(202);
+        const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+          author   : alice,
+          recordId : write.message.recordId,
+        });
+        expect((await dwn.processMessage(alice.did, recordsDelete.message)).status.code).toBe(202);
+        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Duplicate' });
+      });
+
+      it('completes a zero-byte ancestry-only initial write without changing its CID', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const dataBytes = new Uint8Array();
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
+
+        const ancestry = await dwn.applyReplicatedMessage(alice.did, message);
+        expect(ancestry).toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+        if (ancestry.kind !== 'Applied' || ancestry.position === undefined) {
+          throw new Error('expected ancestry position');
+        }
+
+        const completed = await dwn.applyReplicatedMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(dataBytes),
+        });
+        expect(completed).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+        const read = await RecordsRead.create({
+          filter : { recordId: message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        const readReply = await dwn.processMessage(alice.did, read.message);
+        expect(readReply.status.code).toBe(200);
+        expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(dataBytes);
+
+        const completionPage = await messageStore.logRead(alice.did, { cursor: ancestry.position });
+        expect(completionPage.events.map((entry) => entry.messageCid)).toEqual([await Message.getCid(message)]);
+        expect(completionPage.events[0].position).toBe(completed.kind === 'Applied' ? completed.position?.position : undefined);
+
+        expect(await dwn.applyReplicatedMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(dataBytes),
+        })).toEqual({ kind: 'Duplicate' });
+      });
+
+      it('uses the same completion rule for ordinary processing and replicated replay', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const { message, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+        expect((await dwn.processMessage(alice.did, message)).status.code).toBe(204);
+        expect((await dwn.processMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(dataBytes!),
+        })).status.code).toBe(202);
+        expect(await dwn.applyReplicatedMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(dataBytes!),
+        })).toEqual({ kind: 'Duplicate' });
+      });
+
+      it('completes data-store-backed ancestry data', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
+
+        expect(await dwn.applyReplicatedMessage(alice.did, message))
+          .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+        expect(await dwn.applyReplicatedMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(data),
+        })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+        const read = await RecordsRead.create({
+          filter : { recordId: message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        const reply = await dwn.processMessage(alice.did, read.message);
+        expect(await DataStream.toBytes(reply.entry!.data!)).toEqual(data);
+      });
+
+      it('does not overwrite external data already stored for an ancestry write', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
+
+        expect(await dwn.applyReplicatedMessage(alice.did, message))
+          .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+        await dataStore.put(
+          alice.did,
+          message.recordId,
+          message.descriptor.dataCid,
+          DataStream.fromBytes(data),
+        );
+
+        // Simulates the cross-store crash window tracked by #1752. Existing
+        // data is not overwritten, and message-state recovery remains deferred.
+        expect(await dwn.applyReplicatedMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(new Uint8Array(data.length)),
+        })).toEqual({ kind: 'Duplicate' });
+
+        const stored = await dataStore.get(alice.did, message.recordId, message.descriptor.dataCid);
+        if (stored === undefined) {
+          throw new Error('expected stored record data');
+        }
+        expect(await DataStream.toBytes(stored.dataStream)).toEqual(data);
+      });
+
+      it('coalesces concurrent ancestry completion into one feed move', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const { message, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const ancestry = await dwn.applyReplicatedMessage(alice.did, message);
+        if (ancestry.kind !== 'Applied' || ancestry.position === undefined) {
+          throw new Error('expected ancestry position');
+        }
+
+        const results = await Promise.all([
+          dwn.applyReplicatedMessage(alice.did, message, { dataStream: DataStream.fromBytes(dataBytes!) }),
+          dwn.applyReplicatedMessage(alice.did, message, { dataStream: DataStream.fromBytes(dataBytes!) }),
+        ]);
+        expect(results.map(({ kind }) => kind).sort()).toEqual(['Applied', 'Duplicate']);
+
+        expect((await messageStore.logRead(alice.did, { cursor: ancestry.position })).events).toHaveLength(1);
+      });
+
+      it('does not complete an ancestry write superseded by a newer write', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        expect(await dwn.applyReplicatedMessage(alice.did, initial.message))
+          .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+
+        await Time.minimalSleep();
+        const updateData = TestDataGenerator.randomBytes(32);
+        const update = await RecordsWrite.createFrom({
+          recordsWriteMessage : initial.message,
+          data                : updateData,
+          signer              : Jws.createSigner(alice),
+        });
+        expect(await dwn.applyReplicatedMessage(alice.did, update.message, {
+          dataStream: DataStream.fromBytes(updateData),
+        })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+        expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
+          dataStream: DataStream.fromBytes(initial.dataBytes!),
+        })).toEqual({ kind: 'Duplicate' });
+
+        const read = await RecordsRead.create({
+          filter : { recordId: initial.message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        const reply = await dwn.processMessage(alice.did, read.message);
+        expect(await DataStream.toBytes(reply.entry!.data!)).toEqual(updateData);
+      });
+
+      it('does not complete an ancestry write after the record is deleted', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        expect(await dwn.applyReplicatedMessage(alice.did, initial.message))
+          .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+
+        const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+          author   : alice,
+          recordId : initial.message.recordId,
+        });
+        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message))
+          .toEqual(expect.objectContaining({ kind: 'Applied' }));
+        expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
+          dataStream: DataStream.fromBytes(initial.dataBytes!),
+        })).toEqual({ kind: 'Duplicate' });
+
+        const read = await RecordsRead.create({
+          filter : { recordId: initial.message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        expect((await dwn.processMessage(alice.did, read.message)).status.code).toBe(404);
+      });
+
+      it('settles completion when a concurrent parent prune removes the target', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocolDefinition = nestedProtocol as ProtocolDefinition;
+        const protocol = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+        expect((await dwn.processMessage(alice.did, protocol.message)).status.code).toBe(202);
+
+        const parent = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'foo',
+          schema       : protocolDefinition.types.foo.schema,
+        });
+        expect(await dwn.applyReplicatedMessage(alice.did, parent.message, { dataStream: parent.dataStream }))
+          .toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+        const child = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          dataFormat      : protocolDefinition.types.bar.dataFormats![0],
+          parentContextId : parent.message.contextId,
+          protocol        : protocolDefinition.protocol,
+          protocolPath    : 'foo/bar',
+          schema          : protocolDefinition.types.bar.schema,
+        });
+        expect(await dwn.applyReplicatedMessage(alice.did, child.message))
+          .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+
+        const parentDelete = await RecordsDelete.create({
+          prune    : true,
+          recordId : parent.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+        const completeData = messageStore.completeData.bind(messageStore);
+        const completionStub = sinon.stub(messageStore, 'completeData').callsFake(async (...args) => {
+          completionStub.restore();
+          expect((await dwn.processMessage(alice.did, parentDelete.message)).status.code).toBe(202);
+          return completeData(...args);
+        });
+
+        expect(await dwn.applyReplicatedMessage(alice.did, child.message, {
+          dataStream: DataStream.fromBytes(child.dataBytes!),
+        })).toEqual({ kind: 'Duplicate' });
+
+        const read = await RecordsRead.create({
+          filter : { recordId: child.message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        expect((await dwn.processMessage(alice.did, read.message)).status.code).toBe(404);
+      });
+
+      it('rejects invalid data without completing ancestry state', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const { message, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        expect(await dwn.applyReplicatedMessage(alice.did, message))
+          .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+
+        const invalid = await dwn.applyReplicatedMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(new Uint8Array(dataBytes!.length)),
+        });
+        expect(invalid.kind).toBe('Invalid');
+
+        expect(await dwn.applyReplicatedMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(dataBytes!),
+        })).toEqual(expect.objectContaining({ kind: 'Applied' }));
       });
 
       it('returns resolved cross-protocol role dependencies for replicated role-authorized queries', async () => {

@@ -7,7 +7,6 @@ import type {
   ProgressGapInfo,
   ProgressGapReason,
   ProgressToken,
-  ReplicationFeedReader,
   WakePublisher,
 } from '../types/subscriptions.js';
 import type { Filter, KeyValues, PaginationCursor, QueryOptions } from '../types/query-types.js';
@@ -15,6 +14,7 @@ import type { GenericMessage, MessageSort, Pagination } from '../types/message-t
 import type { LevelDatabase, LevelWrapperBatchOperation } from './level-wrapper.js';
 import type {
   MessageStore,
+  MessageStoreCompleteDataResult,
   MessageStoreLatestStateTransition,
   MessageStoreOptions,
   MessageStorePutResult,
@@ -172,7 +172,7 @@ type RecordLimitPageInput = Omit<RecordLimitOccupantInput, 'item'> & {
 };
 
 /**
- * A {@link MessageStore} and {@link ReplicationFeedReader} implementation that works in both the
+ * A {@link MessageStore} implementation that works in both the
  * browser and server-side, backed by a SINGLE LevelDB root: message blocks, query indexes, the
  * per-tenant replication log, the cid→seq index, fingerprint domains, the tenant counters, and
  * the store epoch are all sublevels of one Level instance, so every mutation commits as one fully
@@ -184,7 +184,7 @@ type RecordLimitPageInput = Omit<RecordLimitOccupantInput, 'item'> & {
  * while the readable log stays sparse after compaction and under filters — readers never assume
  * contiguity.
  */
-export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
+export class MessageStoreLevel implements MessageStore {
   config: MessageStoreLevelConfig;
 
   private readonly wakePublisher?: WakePublisher;
@@ -886,6 +886,96 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       ];
 
       await partitions.root.batch(operations);
+    });
+  }
+
+  public async completeData(
+    tenant: string,
+    cidString: string,
+    indexes: KeyValues,
+    encodedData?: string,
+    options?: MessageStoreOptions
+  ): Promise<MessageStoreCompleteDataResult> {
+    options?.signal?.throwIfAborted();
+
+    const messageCid = Cid.parseCid(cidString).toString();
+    const partitions = await executeUnlessAborted(this.partitions(), options?.signal);
+    const index = await executeUnlessAborted(this.index(), options?.signal);
+
+    return this.withTenantWriteLock(tenant, async (): Promise<MessageStoreCompleteDataResult> => {
+      const { entry, positionKey, tenantLog } = await this.getLogEntryForMutation(
+        partitions, tenant, messageCid, DwnErrorCode.MessageStoreCompleteDataInvalidTarget
+      );
+      const storedMessage = await this.readStoredMessage(
+        partitions, tenant, messageCid, DwnErrorCode.MessageStoreCompleteDataInvalidTarget, options
+      );
+      const recordId = (storedMessage as { recordId?: unknown }).recordId;
+      if (
+        storedMessage.descriptor.interface !== DwnInterfaceName.Records ||
+        storedMessage.descriptor.method !== DwnMethodName.Write ||
+        typeof recordId !== 'string'
+      ) {
+        throw new DwnError(
+          DwnErrorCode.MessageStoreCompleteDataInvalidTarget,
+          `message ${messageCid} is not a RecordsWrite`
+        );
+      }
+      if (entry.indexes.isLatestBaseState === true) {
+        return { status: 'duplicate' };
+      }
+
+      const recordMessages = await index.query(tenant, [{
+        interface: DwnInterfaceName.Records,
+        recordId,
+      }], { sortProperty: 'messageTimestamp' }, options);
+      if (recordMessages.some(({ messageCid: otherCid }) => otherCid !== messageCid)) {
+        return { status: 'superseded' };
+      }
+
+      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, storedMessage, messageCid, indexes);
+
+      // Moving the row lets resumed readers observe completion while fresh
+      // readers still see this CID only once.
+      const head = await this.getHead(partitions, tenant);
+      const completionSeq = head + 1n;
+      const updatedEntry: LogEntryValue = {
+        ...entry,
+        indexes,
+        seq: completionSeq.toString(),
+      };
+
+      const blockOperations: LevelWrapperBatchOperation<string>[] = [];
+      if (encodedData !== undefined) {
+        const tenantBlocks = await partitions.blocks.partition(tenant);
+        const completedMessage = { ...storedMessage, encodedData };
+        const encodedBlock = await block.encode({ value: completedMessage, codec: cbor, hasher: sha256 });
+        blockOperations.push(tenantBlocks.createOperation({
+          type  : 'put',
+          key   : messageCid,
+          value : encodedBlock.bytes,
+        }) as unknown as LevelWrapperBatchOperation<string>);
+      }
+
+      const tenantCidToSeq = await partitions.cidToSeq.partition(tenant);
+      await partitions.root.batch([
+        ...blockOperations,
+        ...await index.createDeleteOperations(tenant, messageCid),
+        ...await index.createPutOperations(tenant, messageCid, indexes),
+        tenantLog.createOperation({ type: 'del', key: positionKey }),
+        tenantLog.createOperation({
+          type  : 'put',
+          key   : Replication.encodePositionKey(completionSeq),
+          value : JSON.stringify(updatedEntry),
+        }),
+        tenantCidToSeq.createOperation({ type: 'put', key: messageCid, value: completionSeq.toString() }),
+        partitions.heads.createOperation({ type: 'put', key: tenant, value: completionSeq.toString() }),
+      ]);
+
+      this.publishWake(tenant, completionSeq);
+      return {
+        status   : 'completed',
+        position : await this.buildToken(tenant, completionSeq, messageCid),
+      };
     });
   }
 

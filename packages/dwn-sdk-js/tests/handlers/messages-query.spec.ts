@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ReplicationFeedReader, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ResumableTaskStore } from '../../src/index.js';
 
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 
@@ -12,19 +12,8 @@ import { Message } from '../../src/core/message.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Jws, PermissionsProtocol, Replication, Time } from '../../src/index.js';
-
-function getFeedReader(messageStore: MessageStore): ReplicationFeedReader | undefined {
-  const candidate = messageStore as Partial<ReplicationFeedReader>;
-  if (
-    typeof candidate.logRead === 'function' &&
-    typeof candidate.logBounds === 'function' &&
-    typeof candidate.fingerprint === 'function' &&
-    typeof candidate.epoch === 'function'
-  ) {
-    return candidate as ReplicationFeedReader;
-  }
-}
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../../src/store/level.js';
+import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Jws, PermissionsProtocol, RecordsRead, Replication, Time } from '../../src/index.js';
 
 async function fingerprintFromCids(messageCids: string[]): Promise<string> {
   let fingerprint = Replication.emptyFingerprint();
@@ -42,14 +31,6 @@ export function testMessagesQueryHandler(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let dwn: Dwn;
-
-    // Registration-time probe of the injected message store, so feed-dependent
-    // tests can register as skipped via `it.skipIf()` when the store under
-    // test does not implement the replication feed reader interface.
-    // `TestSuite.runInjectableDependentTests()` applies store overrides
-    // synchronously before invoking this suite, so the probe sees the same
-    // store implementation that `beforeAll` resolves at run time.
-    const supportsReplicationFeed = getFeedReader(TestStores.get().messageStore) !== undefined;
 
     beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
@@ -72,21 +53,7 @@ export function testMessagesQueryHandler(): void {
       await dwn.close();
     });
 
-    it('returns 501 when the message store does not provide a replication feed reader', async () => {
-      const alice = await TestDataGenerator.generateDidKeyPersona();
-      const { message } = await TestDataGenerator.generateMessagesQuery({ author: alice });
-
-      const reply = await dwn.processMessage(alice.did, message);
-      if (getFeedReader(messageStore) !== undefined) {
-        expect(reply.status.code).toBe(200);
-        return;
-      }
-
-      expect(reply.status.code).toBe(501);
-      expect(reply.status.detail).toContain(DwnErrorCode.MessagesQueryReplicationFeedUnimplemented);
-    });
-
-    it.skipIf(!supportsReplicationFeed)('returns full log entries with inline RecordsWrite data detached from the message', async () => {
+    it('returns full log entries with inline RecordsWrite data detached from the message', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -116,7 +83,135 @@ export function testMessagesQueryHandler(): void {
       expect(reply.cursor).toBeDefined();
     });
 
-    it.skipIf(!supportsReplicationFeed)('supports cidsOnly pagination with high-water cursors', async () => {
+    it('returns one completed RecordsWrite despite its unchanged CID fingerprint', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
+      const ancestry = await dwn.applyReplicatedMessage(alice.did, record.message);
+      if (ancestry.kind !== 'Applied' || ancestry.position === undefined) {
+        throw new Error('expected ancestry position');
+      }
+      const feedReader = messageStore;
+      const ancestryFingerprint = await feedReader.fingerprint(alice.did, [Replication.globalDomain]);
+
+      const completion = await dwn.applyReplicatedMessage(alice.did, record.message, {
+        dataStream: record.dataStream!,
+      });
+      if (completion.kind !== 'Applied' || completion.position === undefined) {
+        throw new Error('expected completion position');
+      }
+
+      const { message: freshQuery } = await TestDataGenerator.generateMessagesQuery({
+        author  : alice,
+        filters : [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
+      });
+      const freshReply = await dwn.processMessage(alice.did, freshQuery);
+
+      expect(freshReply.status.code).toBe(200);
+      expect(freshReply.entries).toHaveLength(1);
+      expect(freshReply.entries![0].messageCid).toBe(await Message.getCid(record.message));
+      expect(freshReply.entries![0].seq).toBe(completion.position.position);
+      expect(freshReply.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(record.dataBytes!));
+      expect(await feedReader.fingerprint(alice.did, [Replication.globalDomain])).toBe(ancestryFingerprint);
+
+      const { message: query } = await TestDataGenerator.generateMessagesQuery({
+        author  : alice,
+        cursor  : ancestry.position,
+        filters : [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
+      });
+      const reply = await dwn.processMessage(alice.did, query);
+
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries).toHaveLength(1);
+      expect(reply.entries![0].messageCid).toBe(await Message.getCid(record.message));
+      expect(reply.entries![0].seq).toBe(completion.position.position);
+      expect(reply.cursor?.position).toBe(completion.position.position);
+    });
+
+    it('allows a later page to repair a dependency moved behind its child', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocolDefinition = freeForAll as ProtocolDefinition;
+      const config = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+      expect((await dwn.processMessage(alice.did, config.message)).status.code).toBe(202);
+
+      const parent = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'post',
+        schema       : 'post',
+      });
+      expect(await dwn.applyReplicatedMessage(alice.did, parent.message))
+        .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+
+      const child = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        parentContextId : parent.message.contextId,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'post/attachment',
+      });
+      expect(await dwn.applyReplicatedMessage(alice.did, child.message, { dataStream: child.dataStream }))
+        .toEqual(expect.objectContaining({ kind: 'Applied' }));
+      expect(await dwn.applyReplicatedMessage(alice.did, parent.message, { dataStream: parent.dataStream }))
+        .toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+      const filter = [{
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Write,
+        protocol  : protocolDefinition.protocol,
+      }];
+      const firstQuery = await TestDataGenerator.generateMessagesQuery({ author: alice, filters: filter, limit: 1 });
+      const firstPage = await dwn.processMessage(alice.did, firstQuery.message);
+      expect(firstPage.entries?.map(({ messageCid }) => messageCid)).toEqual([await Message.getCid(child.message)]);
+      expect(firstPage.drained).toBe(false);
+
+      const secondQuery = await TestDataGenerator.generateMessagesQuery({
+        author  : alice,
+        cursor  : firstPage.cursor,
+        filters : filter,
+      });
+      const secondPage = await dwn.processMessage(alice.did, secondQuery.message);
+      expect(secondPage.entries?.map(({ messageCid }) => messageCid)).toEqual([await Message.getCid(parent.message)]);
+      expect(secondPage.drained).toBe(true);
+
+      const suffix = crypto.randomUUID();
+      const destination = await Dwn.create({
+        didResolver,
+        dataStore: new DataStoreLevel({
+          blockstoreLocation: `__TESTDATA__/completion-order-data-${suffix}`,
+        }),
+        messageStore: new MessageStoreLevel({
+          location: `__TESTDATA__/completion-order-message-${suffix}`,
+        }),
+        resumableTaskStore: new ResumableTaskStoreLevel({
+          location: `__TESTDATA__/completion-order-task-${suffix}`,
+        }),
+      });
+
+      try {
+        expect((await destination.processMessage(alice.did, config.message)).status.code).toBe(202);
+        expect(await destination.applyReplicatedMessage(alice.did, child.message, {
+          dataStream: DataStream.fromBytes(child.dataBytes!),
+        })).toEqual(expect.objectContaining({ kind: 'Incomplete' }));
+        expect(await destination.applyReplicatedMessage(alice.did, parent.message, {
+          dataStream: DataStream.fromBytes(parent.dataBytes!),
+        })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+        expect(await destination.applyReplicatedMessage(alice.did, child.message, {
+          dataStream: DataStream.fromBytes(child.dataBytes!),
+        })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+        const read = await RecordsRead.create({
+          filter : { recordId: child.message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        const readReply = await destination.processMessage(alice.did, read.message);
+        expect(readReply.status.code).toBe(200);
+        expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(child.dataBytes!);
+      } finally {
+        await destination.close();
+      }
+    });
+
+    it('supports cidsOnly pagination with high-water cursors', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -153,8 +248,8 @@ export function testMessagesQueryHandler(): void {
       expect(secondReply.drained).toBe(true);
     });
 
-    it.skipIf(!supportsReplicationFeed)('includes fingerprints only for canonical sync scopes', async () => {
-      const feedReader = getFeedReader(messageStore)!;
+    it('includes fingerprints only for canonical sync scopes', async () => {
+      const feedReader = messageStore;
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -237,7 +332,7 @@ export function testMessagesQueryHandler(): void {
       expect(nonCanonicalReply.fingerprint).toBeUndefined();
     });
 
-    it.skipIf(!supportsReplicationFeed)('maps progress gaps to a 410 response with structured metadata', async () => {
+    it('maps progress gaps to a 410 response with structured metadata', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -296,7 +391,7 @@ export function testMessagesQueryHandler(): void {
       expect(reply.status.detail).toContain(DwnErrorCode.SchemaValidatorFailure);
     });
 
-    it.skipIf(!supportsReplicationFeed)('applies broad and subtree grant visibility to delegated queries', async () => {
+    it('applies broad and subtree grant visibility to delegated queries', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: false, protocol: 'http://messages-query-delegated' };
@@ -466,7 +561,7 @@ export function testMessagesQueryHandler(): void {
       expect(coreReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
     });
 
-    it.skipIf(!supportsReplicationFeed)('authorizes exact context feeds through a protocol role and author delegate', async () => {
+    it('authorizes exact context feeds through a protocol role and author delegate', async () => {
       const { delegate, member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
       const chat = await TestDataGenerator.generateRecordsWrite({
         author          : source,
@@ -518,7 +613,7 @@ export function testMessagesQueryHandler(): void {
       expect(delegatedReply.entries?.[0].encodedData).toBeUndefined();
     });
 
-    it.skipIf(!supportsReplicationFeed)('rejects mixed unauthorized paths and the wrong role context', async () => {
+    it('rejects mixed unauthorized paths and the wrong role context', async () => {
       const { member, otherThread, protocolDefinition, source, thread } = await createMessagesRoleContext(dwn);
       const exactFilter = {
         contextIdPrefix : thread.message.contextId!,
@@ -543,7 +638,7 @@ export function testMessagesQueryHandler(): void {
       expect(wrongContextReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
     });
 
-    it.skipIf(!supportsReplicationFeed)('includes the initial write with an exact-context delete entry', async () => {
+    it('includes the initial write with an exact-context delete entry', async () => {
       const { member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
       const chat = await TestDataGenerator.generateRecordsWrite({
         author          : source,
@@ -575,8 +670,8 @@ export function testMessagesQueryHandler(): void {
       expect((reply.entries?.[0].initialWrite as { encodedData?: string }).encodedData).toBeUndefined();
     });
 
-    it.skipIf(!supportsReplicationFeed)('transports delivery control events and accumulator fingerprints for delegated MessagesQuery', async () => {
-      const feedReader = getFeedReader(messageStore)!;
+    it('transports delivery control events and accumulator fingerprints for delegated MessagesQuery', async () => {
+      const feedReader = messageStore;
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
@@ -690,7 +785,7 @@ export function testMessagesQueryHandler(): void {
       expect(fullReply.fingerprint).toBe(ownerReply.fingerprint);
     });
 
-    it.skipIf(!supportsReplicationFeed)('rejects unfiltered delegated queries with a protocol-scoped grant', async () => {
+    it('rejects unfiltered delegated queries with a protocol-scoped grant', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: false, protocol: 'http://messages-query-unfiltered-delegated' };

@@ -282,7 +282,8 @@ export class Dwn {
    * outcome instead of an HTTP-like handler status. Normal authoring still
    * uses `processMessage`; sync uses this entry point so missing local
    * dependencies can be fetched and retried without treating the replicated
-   * message as permanently invalid.
+   * message as permanently invalid. RecordsWrite handling applies the same
+   * exact-message data-completion rule for authored and replicated delivery.
    */
   public async applyReplicatedMessage(
     tenant: string,
@@ -299,11 +300,19 @@ export class Dwn {
       return { kind: 'Invalid', reason: integrityError.status.detail };
     }
 
-    if (await this.replicatedMessageAlreadyStored(tenant, rawMessage)) {
+    const messageAlreadyStored = await this.replicatedMessageAlreadyStored(tenant, rawMessage);
+    const isRecordsWriteWithData = Records.isRecordsWrite(rawMessage) && options.dataStream !== undefined;
+    if (messageAlreadyStored && !isRecordsWriteWithData) {
       return { kind: 'Duplicate' };
     }
 
     const reply = await this.processMessage(tenant, rawMessage, options);
+    // A stored RecordsWrite with newly supplied data deliberately enters the
+    // handler. Its 409 means the CID was already complete or is no longer
+    // current, which remains an idempotent Duplicate to replication callers.
+    if (messageAlreadyStored && reply.status.code === 409) {
+      return { kind: 'Duplicate' };
+    }
     const replicatedWriteBeatenByDeleteResult = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
     if (replicatedWriteBeatenByDeleteResult !== undefined) {
       return replicatedWriteBeatenByDeleteResult;
@@ -584,73 +593,9 @@ export class Dwn {
       message.descriptor.method === DwnMethodName.Write;
   }
 
-  private async replicatedMessageAlreadyStored(
-    tenant: string,
-    message: GenericMessage,
-  ): Promise<boolean> {
-    const existingMessages = await this.getExistingMessagesForReplicationDedup(tenant, message);
-    if (existingMessages.length === 0) {
-      return false;
-    }
-
+  private async replicatedMessageAlreadyStored(tenant: string, message: GenericMessage): Promise<boolean> {
     const incomingCid = await Message.getCid(message);
-    for (const existing of existingMessages) {
-      if (await Message.getCid(existing) !== incomingCid) {
-        continue;
-      }
-
-      return true;
-    }
-
-    return false;
-  }
-
-  private async getExistingMessagesForReplicationDedup(
-    tenant: string,
-    message: GenericMessage,
-  ): Promise<GenericMessage[]> {
-    const { descriptor } = message;
-    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
-      const recordId = (message as { recordId?: unknown }).recordId;
-      if (typeof recordId !== 'string') {
-        return [];
-      }
-
-      const { messages } = await this.messageStore.query(tenant, [{
-        interface: DwnInterfaceName.Records,
-        recordId,
-      }]);
-      return messages;
-    }
-
-    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Delete) {
-      const recordId = (descriptor as { recordId?: unknown }).recordId;
-      if (typeof recordId !== 'string') {
-        return [];
-      }
-
-      const { messages } = await this.messageStore.query(tenant, [{
-        interface: DwnInterfaceName.Records,
-        recordId,
-      }]);
-      return messages;
-    }
-
-    if (descriptor.interface === DwnInterfaceName.Protocols && descriptor.method === DwnMethodName.Configure) {
-      const protocol = (descriptor as { definition?: { protocol?: unknown } }).definition?.protocol;
-      if (typeof protocol !== 'string') {
-        return [];
-      }
-
-      const { messages } = await this.messageStore.query(tenant, [{
-        interface : DwnInterfaceName.Protocols,
-        method    : DwnMethodName.Configure,
-        protocol,
-      }]);
-      return messages;
-    }
-
-    return [];
+    return (await this.messageStore.get(tenant, incomingCid)) !== undefined;
   }
 
   /**

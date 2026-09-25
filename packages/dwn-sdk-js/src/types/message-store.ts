@@ -1,6 +1,6 @@
-import type { ProgressToken } from './subscriptions.js';
 import type { Filter, KeyValues, PaginationCursor } from './query-types.js';
 import type { GenericMessage, MessageSort, Pagination } from './message-types.js';
+import type { ProgressToken, ReplicationFeedReader } from './subscriptions.js';
 
 export interface MessageStoreOptions {
   signal?: AbortSignal;
@@ -46,11 +46,16 @@ export type MessageStorePutResult = {
 
   /**
    * The inserted row's log position. Present for stores that maintain a
-   * replication log; omitted for duplicates and store implementations whose
-   * durable log support has not landed.
+   * replication log; omitted for duplicates or implementations that do not
+   * return the committed position from the mutation.
    */
   position?: ProgressToken;
 };
+
+/** Result of completing a previously data-less RecordsWrite. */
+export type MessageStoreCompleteDataResult =
+  | { status: 'completed'; position: ProgressToken }
+  | { status: 'duplicate' | 'superseded' };
 
 /**
  * A latest-state transition applied by {@link MessageStore.commitLatestState}: the insert of a new
@@ -74,7 +79,8 @@ export type MessageStoreLatestStateTransition = {
   deletes?: string[];
 };
 
-export interface MessageStore {
+/** Durable message storage together with its ordered replication feed. */
+export interface MessageStore extends ReplicationFeedReader {
   /**
    * opens a connection to the underlying store
    */
@@ -163,6 +169,24 @@ export interface MessageStore {
     indexes: KeyValues,
     options?: MessageStoreOptions
   ): Promise<void>;
+
+  /**
+   * Completes an existing ancestry-only RecordsWrite and atomically moves its live feed row to a
+   * new position. Readers past the old position can observe the completion, while a fresh replay
+   * sees the completed row only once. The target must be the record's only stored message; the
+   * operation is idempotent and refuses to promote state after the record has advanced.
+   *
+   * The caller must validate the body against the signed `dataCid` and `dataSize`, persist external
+   * data when applicable, and derive `indexes` from the exact write. This low-level operation trusts
+   * `encodedData` and `indexes`; it does not repeat RecordsWrite validation.
+   */
+  completeData(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+    encodedData?: string,
+    options?: MessageStoreOptions
+  ): Promise<MessageStoreCompleteDataResult>;
 
   /**
    * Deletes the message associated with the id provided.

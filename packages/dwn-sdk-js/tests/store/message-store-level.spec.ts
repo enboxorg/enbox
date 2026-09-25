@@ -402,6 +402,75 @@ describe('MessageStoreLevel Test Suite', () => {
     });
   });
 
+  describe('completeData', () => {
+    it('should move a completed row so fresh and resumed readers each see it once', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const { message, messageCid, indexes } = await generateStoredMessage();
+      const ancestryIndexes = { ...indexes, isLatestBaseState: false };
+      const ancestry = await messageStore.put(alice.did, message, ancestryIndexes);
+      const other = await generateStoredMessage();
+      const otherPut = await messageStore.put(alice.did, other.message, other.indexes);
+      const fingerprint = await messageStore.fingerprint(alice.did, [Replication.globalDomain]);
+
+      expect((await messageStore.logRead(alice.did)).events.map((entry) => entry.messageCid))
+        .toEqual([messageCid, other.messageCid]);
+
+      const completed = await messageStore.completeData(alice.did, messageCid, indexes, 'aGVsbG8');
+      expect(completed).toEqual(expect.objectContaining({ status: 'completed' }));
+      expect(await messageStore.completeData(alice.did, messageCid, indexes, 'aGVsbG8'))
+        .toEqual({ status: 'duplicate' });
+
+      const page = await messageStore.logRead(alice.did);
+      expect(page.events.map((entry) => entry.messageCid)).toEqual([other.messageCid, messageCid]);
+      expect(page.events.map((entry) => entry.position)).toEqual(['2', '3']);
+      expect(page.events.map((entry) => entry.seq)).toEqual(['2', '3']);
+      expect(wakes.map(({ seq }) => seq)).toEqual(['1', '2', '3']);
+      expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(fingerprint);
+
+      const resumedAfterAncestry = await messageStore.logRead(alice.did, { cursor: ancestry.position });
+      expect(resumedAfterAncestry.events.map((entry) => entry.messageCid)).toEqual([other.messageCid, messageCid]);
+
+      const resumedAfterOther = await messageStore.logRead(alice.did, { cursor: otherPut.position });
+      expect(resumedAfterOther.events.map((entry) => entry.messageCid)).toEqual([messageCid]);
+      expect(resumedAfterOther.events[0].position).toBe('3');
+
+      const firstPage = await messageStore.logRead(alice.did, { limit: 1 });
+      expect(firstPage.events.map((entry) => entry.messageCid)).toEqual([other.messageCid]);
+      expect(firstPage.cursor?.position).toBe('2');
+      expect(firstPage.drained).toBe(false);
+      const secondPage = await messageStore.logRead(alice.did, { cursor: firstPage.cursor });
+      expect(secondPage.events.map((entry) => entry.messageCid)).toEqual([messageCid]);
+      expect(secondPage.cursor?.position).toBe('3');
+      expect(secondPage.drained).toBe(true);
+
+      await messageStore.delete(alice.did, messageCid);
+      expect((await messageStore.logRead(alice.did)).events.map((entry) => entry.messageCid))
+        .toEqual([other.messageCid]);
+    });
+
+    it('should not promote a row when another non-latest message exists', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const first = await generateStoredMessage();
+      const firstIndexes = { ...first.indexes, recordId: first.message.recordId };
+      await expect(messageStore.completeData(alice.did, first.messageCid, firstIndexes, 'aGVsbG8'))
+        .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataInvalidTarget);
+      const newer = structuredClone(first.message);
+      newer.descriptor.messageTimestamp = '9999-01-01T00:00:00.000000Z';
+      const newerCid = await Message.getCid(newer);
+      await messageStore.put(alice.did, first.message, { ...firstIndexes, isLatestBaseState: false });
+      await messageStore.put(alice.did, newer, {
+        ...firstIndexes,
+        isLatestBaseState : false,
+        messageTimestamp  : newer.descriptor.messageTimestamp,
+      });
+
+      expect(await messageStore.completeData(alice.did, first.messageCid, firstIndexes, 'aGVsbG8'))
+        .toEqual({ status: 'superseded' });
+      expect((await messageStore.logRead(alice.did)).events.map((entry) => entry.messageCid))
+        .toEqual([first.messageCid, newerCid]);
+    });
+  });
+
   describe('fingerprints', () => {
     it('should fold global, protocol, permission, and encryption domains and unfold deletes', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();

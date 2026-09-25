@@ -586,7 +586,7 @@ describe('validation read closure', () => {
       snapshot('replicated: initial write accepted by timestamped config');
     }
 
-    // ---- scenario: replicated same-CID data retry of a dataless stub ----
+    // ---- scenario: replicated completion of a dataless stub ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -601,11 +601,11 @@ describe('validation read closure', () => {
       });
       expect((await dwn.applyReplicatedMessage(alice.did, stubMessage)).kind).toBe('Applied');
 
-      // same-CID retry with data is an idempotent replay; fetch-first sync applies once.
+      // Same-CID replicated data completes the already-admitted ancestry record.
       const retryResult = await dwn.applyReplicatedMessage(alice.did, stubMessage, { dataStream: DataStream.fromBytes(stubDataBytes!) });
-      expect(retryResult.kind).toBe('Duplicate');
+      expect(retryResult.kind).toBe('Applied');
 
-      snapshot('replicated: same-CID data retry of dataless stub');
+      snapshot('replicated: same-CID completion of dataless stub');
     }
 
     // ---- scenario: replicated tombstone-beaten dataless update missing compacted data ----

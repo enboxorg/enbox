@@ -128,7 +128,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
 
   /**
    * Attaches the replication feed's `head` token and scope `fingerprint` to a
-   * successful subscribe reply, when the message store exposes the feed.
+   * successful subscribe reply.
    *
    * Ordering is load-bearing: both values are observed AFTER the subscription
    * became active, so every event past `head` is either replayable from it or
@@ -145,10 +145,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
     filters: MessagesFilter[],
     deps: HandlerDependencies,
   ): Promise<void> {
-    const feedReader = Replication.asFeedReader(deps.messageStore);
-    if (feedReader === undefined) {
-      return;
-    }
+    const feedReader = deps.messageStore;
 
     // Build the complete snapshot before attaching anything: a partial
     // snapshot (a head without its fingerprint) would read to consumers as
