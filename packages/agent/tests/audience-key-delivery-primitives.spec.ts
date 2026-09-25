@@ -4,6 +4,7 @@ import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, Re
 import type { AudienceKeyDeliveryOutcome } from '../src/types/dwn.js';
 import type { AudienceKeyDeliveryState } from '../src/audience-key-delivery.js';
 import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { SyncEvent } from '../src/types/sync.js';
 
 import sinon from 'sinon';
 import { X25519 } from '@enbox/crypto';
@@ -317,6 +318,11 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const getLinks = sinon.stub(testHarness.agent.sync, 'getReplicationLinks').callsFake(async () => [
         { ...link, connectivity, isPullCurrent: currentReads.shift() ?? true },
       ]);
+      let emitSync!: (event: SyncEvent) => void;
+      sinon.stub(testHarness.agent.sync, 'on').callsFake((listener) => {
+        emitSync = listener;
+        return (): void => {};
+      });
       const reprovision = sinon.spy(testHarness.agent.dwn, 'reprovisionAudienceKeyDelivery');
       const pullCurrentEvent = {
         type           : 'pull:currentness-change',
@@ -339,19 +345,19 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
       connectivity = 'online';
       currentReads.push(true, false);
-      (testHarness.agent.sync as any).emitEvent(pullCurrentEvent);
+      emitSync(pullCurrentEvent);
       await Poller.pollUntilSuccessOrTimeout(async () => { expect(currentReads).toHaveLength(0); });
       expect(reprovision.notCalled).toBe(true);
 
       currentReads.push(false);
-      (testHarness.agent.sync as any).emitEvent({
+      emitSync({
         ...pullCurrentEvent,
         type : 'link:connectivity-change',
         from : 'offline',
         to   : 'online',
       });
       await Poller.pollUntilSuccessOrTimeout(async () => { expect(currentReads).toHaveLength(0); });
-      (testHarness.agent.sync as any).emitEvent(pullCurrentEvent);
+      emitSync(pullCurrentEvent);
       await Poller.pollUntilSuccessOrTimeout(async () => {
         expect(reprovision.calledOnce).toBe(true);
       });

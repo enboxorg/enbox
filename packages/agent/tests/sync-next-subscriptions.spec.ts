@@ -39,8 +39,7 @@ describe('openSyncNextSubscriptions', () => {
       addSubscription        : sinon.stub(),
       noteRemoteDisconnected : sinon.stub(),
       removeSubscription     : sinon.stub(),
-      requestPull            : sinon.stub(),
-      requestPush            : sinon.stub(),
+      request                : sinon.stub(),
     };
 
     const resolver = { withCurrentRoleGrant: sinon.stub().resolves(target) };
@@ -71,8 +70,7 @@ describe('openSyncNextSubscriptions', () => {
       addSubscription        : sinon.stub(),
       noteRemoteDisconnected : sinon.stub(),
       removeSubscription     : sinon.stub(),
-      requestPull            : sinon.stub(),
-      requestPush            : sinon.stub(),
+      request                : sinon.stub(),
     };
     const terminal = sinon.stub();
     const resolver = { withCurrentRoleGrant: sinon.stub().resolves(target) };
@@ -105,8 +103,7 @@ describe('openSyncNextSubscriptions', () => {
       addSubscription        : sinon.stub(),
       noteRemoteDisconnected : sinon.stub(),
       removeSubscription     : sinon.stub(),
-      requestPull            : sinon.stub(),
-      requestPush            : sinon.stub(),
+      request                : sinon.stub(),
     };
     const resolver = { withCurrentRoleGrant: sinon.stub().resolves(target) };
     await openSyncNextSubscriptions(
@@ -120,12 +117,16 @@ describe('openSyncNextSubscriptions', () => {
     await handler({ type: 'disconnected' });
 
     expect(session.noteRemoteDisconnected.calledOnce).toBe(true);
-    expect(session.requestPull.notCalled).toBe(true);
+    expect(session.request.notCalled).toBe(true);
 
     const subscription = sendDwnRequest.firstCall.args[0].subscription;
     await subscription.resubscribeFactory();
-    expect(session.requestPull.notCalled).toBe(true);
+    expect(session.request.notCalled).toBe(true);
     await subscription.handler({ type: 'reconnected' });
-    expect(session.requestPull.calledOnceWithExactly(true)).toBe(true);
+    expect(session.request.calledOnceWithExactly('pull')).toBe(true);
+
+    const cursor = { epoch: 'epoch', position: '7', streamId: 'stream' };
+    await subscription.handler({ type: 'event', cursor, event: { message: { descriptor: {} } } });
+    expect(session.request.secondCall.calledWithExactly('pull', true, cursor)).toBe(true);
   });
 });

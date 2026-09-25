@@ -678,7 +678,7 @@ the live APIs. Use `records.observe()` for bounded collection truth and
 `records.subscribe()` for incremental histories; use one-shot `query()` calls
 for searches and snapshots. Do not add timers that repeatedly query for
 current state. The agent sync engine and record subscriptions use WebSocket
-transports, while durable-feed reconciliation repairs gaps after disconnects or
+transports, while durable watermark pages fill gaps after disconnects or
 suspension.
 
 For browser dapps, [`docs/architecture/browser-dapps.md`](docs/architecture/browser-dapps.md)
@@ -699,7 +699,7 @@ result compatibility, or worker-hosted session patterns from older apps.
 
 ## Sync engine vocabulary
 
-The sync subsystem has a canonical vocabulary — one name per concept, one meaning per word — in [`docs/architecture/sync-vocabulary.md`](docs/architecture/sync-vocabulary.md). Read it before adding to or renaming anything in `packages/agent/src/sync-*.ts`. It also records the two splits left knowingly unconverged, and why. A synonym you find in the code is a bug in the code, not a missing entry in the table.
+The sync subsystem has a canonical vocabulary — one name per concept, one meaning per word — in [`docs/architecture/sync-vocabulary.md`](docs/architecture/sync-vocabulary.md). Read it before adding to or renaming anything in `packages/agent/src/sync-*.ts`. A synonym you find in the code is a bug in the code, not a missing entry in the table.
 
 ## SQL schema migrations
 

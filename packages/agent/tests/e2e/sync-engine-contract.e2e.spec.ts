@@ -20,18 +20,13 @@ const protocol: ProtocolDefinition = {
 
 type EngineCase = {
   createAgent(dataPath: string): Promise<EnboxUserAgent>;
-  name: 'legacy' | 'next';
+  name: 'next';
 };
 
 const engineCases: EngineCase[] = [
   {
     createAgent: async (dataPath: string): Promise<EnboxUserAgent> =>
-      EnboxUserAgent.create({ dataPath, syncEngine: 'legacy' }),
-    name: 'legacy',
-  },
-  {
-    createAgent: async (dataPath: string): Promise<EnboxUserAgent> =>
-      EnboxUserAgent.create({ dataPath, syncEngine: 'next' }),
+      EnboxUserAgent.create({ dataPath }),
     name: 'next',
   },
 ];

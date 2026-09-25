@@ -323,12 +323,8 @@ describe('shared context public API integration', () => {
     expect(await typed.contexts.invitations.list()).toHaveLength(2);
     offlineInbox.restore();
 
-    const accepted = await Promise.all(pending.map(async (invitation) => ({
-      context   : await invitation.accept(),
-      contextId : invitation.contextId,
-    })));
-    const contextA = accepted.find(({ contextId }) => contextId === contextIds[0])!.context;
-    const contextB = accepted.find(({ contextId }) => contextId === contextIds[1])!.context;
+    const contextA = await pending.find(({ contextId }) => contextId === contextIds[0])!.accept();
+    const contextB = await pending.find(({ contextId }) => contextId === contextIds[1])!.accept();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(inbox.getSnapshot()).toMatchObject({ status: 'ready', records: [] });
     }, Poller.pollRetrySleep, 30_000);
@@ -405,6 +401,7 @@ describe('shared context public API integration', () => {
       parentContextId : peerAssignments.records[0].contextId,
       protocolRole    : 'notebook/page/member',
     });
+    await memberHarness.agent.sync.sync('pull');
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       const [rootRoleChanges, roleDescendantChanges] = await Promise.all([
         contextA.records.query('notebook/page/change', { pagination: { limit: 100 } }),

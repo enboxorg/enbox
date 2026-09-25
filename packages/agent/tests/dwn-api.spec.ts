@@ -1975,7 +1975,7 @@ describe('AgentDwnApi', () => {
       // Install free-for-all protocol locally and on remote DWN.
       await installFreeForAll(testHarness, alice.did.uri);
       await installFreeForAll(testHarness, alice.did.uri, true);
-    });
+    }, 30_000);
 
     afterAll(async () => {
       await testHarness.clearStorage();

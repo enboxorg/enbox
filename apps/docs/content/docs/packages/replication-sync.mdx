@@ -149,7 +149,7 @@ On the agent push side, data is materialized by `pushData(entry)`: buffered byte
 
 ## The consumer: bounded fetch-and-retry
 
-The agent's pull path is `admitClosure()` (`packages/agent/src/sync-admit-closure.ts`); the push path is its mirror in `SyncEngineLevel` (`packages/agent/src/sync-messages.ts`). Both follow the same loop:
+The agent's pull path is `admitClosure()` (`packages/agent/src/sync-admit-closure.ts`); the push path is its mirror in `sync-next/push-page.ts` using `sync-messages.ts`. Both follow the same loop:
 
 1. Apply the root message via `applyReplicatedMessage()`.
 2. Branch on the result:

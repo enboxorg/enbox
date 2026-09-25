@@ -18,7 +18,7 @@ import type {
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { AuthEventEmitter, AuthSession, ConnectDeniedError, isConnectDeniedError } from '@enbox/auth';
-import { EnboxUserAgent, projectReplicationCurrentness, resolveSyncConnectivityState } from '@enbox/agent';
+import { EnboxUserAgent, projectReplicationCurrentness } from '@enbox/agent';
 
 import type { ApplicationManifest } from '../src/application-manifest.js';
 import type { ConnectionSnapshot, ConnectionStore, ConnectionStoreOptions } from '../src/connection-store.js';
@@ -110,7 +110,6 @@ async function waitFor(assertion: () => void): Promise<void> {
 }
 
 type FakeSyncStatusEngine = {
-  connectivityState: SyncConnectivityState;
   emit(event: SyncEvent): void;
   linkReads: number;
   links: ReplicationLinkSnapshot[];
@@ -126,8 +125,7 @@ type FakeSyncStatusEngine = {
 function createSyncStatusEngine(): FakeSyncStatusEngine {
   const listeners = new Set<SyncEventListener>();
   const state: FakeSyncStatusEngine = {
-    connectivityState : 'unknown',
-    emit              : (event): void => {
+    emit: (event): void => {
       for (const listener of listeners) {
         listener(event);
       }
@@ -143,11 +141,10 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
     sync             : undefined as unknown as SyncEngine,
   };
   state.sync = {
-    get connectivityState(): SyncConnectivityState { return state.connectivityState; },
     getIdentityOptions    : async (): Promise<SyncIdentityOptions | undefined> => state.options,
     getIdentitySyncStatus : async (): Promise<SyncIdentityStatus> => {
       const links = await readLinks();
-      return identitySyncStatus(state.options, links, state.remotes, state.connectivityState);
+      return identitySyncStatus(state.options, links, state.remotes);
     },
     retryRemoteNow : async (): Promise<void> => {},
     on             : (listener: SyncEventListener): (() => void) => {
@@ -223,7 +220,6 @@ function remoteStatus(overrides: Partial<RemoteSyncStatus> = {}): RemoteSyncStat
     state                    : 'healthy',
     connectivity             : 'online',
     quotaBlockedMessageCount : 0,
-    failedMessageCount       : 0,
     ...overrides,
   };
 }
@@ -238,17 +234,18 @@ function identitySyncStatus(
     .flatMap(({ lastActivityAt }): string[] => lastActivityAt === undefined ? [] : [lastActivityAt])
     .sort()
     .at(-1);
+  const connectivity = links.some(link => link.connectivity === 'online')
+    ? 'online'
+    : links.some(link => link.connectivity === 'offline')
+      ? 'offline'
+      : links.length === 0 ? fallbackConnectivity : 'unknown';
   return {
     registration,
-    connectivity: resolveSyncConnectivityState(
-      links.map(({ connectivity }): SyncConnectivityState => connectivity),
-      fallbackConnectivity,
-    ),
+    connectivity,
     currentness : projectReplicationCurrentness(links),
     health      : {
       connectivity             : 'unknown',
       degradedLinkCount        : 0,
-      failedMessageCount       : 0,
       quotaBlockedMessageCount : 0,
       syncHealthy              : true,
     },
@@ -476,7 +473,7 @@ describe('createConnectionStore()', () => {
   describe('sync status', () => {
     it('should project the selected identity without exposing link topology', async () => {
       const engine = createSyncStatusEngine();
-      engine.connectivityState = 'offline';
+      engine.links = [syncLink({ connectivity: 'offline' })];
       const { store } = await connectWithSync(engine);
       await waitFor(() => {
         expect(store.getSnapshot().sync).toMatchObject({ state: 'syncing', connectivity: 'offline' });
@@ -514,10 +511,9 @@ describe('createConnectionStore()', () => {
 
       const settledReads = engine.settledLinkReads;
       engine.emit({
-        type           : 'checkpoint:pull-advance',
+        type           : 'link:activity',
         tenantDid      : OWNER_DID,
         remoteEndpoint : 'https://dwn.example',
-        position       : '1',
       });
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
       expect(store.getSnapshot().sync).toBe(caughtUp);
@@ -555,10 +551,6 @@ describe('createConnectionStore()', () => {
       engine.links = [syncLink({
         status       : 'paused',
         connectivity : 'offline',
-        recovery     : {
-          error    : 'authority endpoint unavailable',
-          failedAt : '2026-09-11T12:00:00.000Z',
-        },
       })];
       engine.emit({
         type           : 'link:status-change',
@@ -569,7 +561,6 @@ describe('createConnectionStore()', () => {
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('error'); });
       expect(store.getSnapshot().sync?.error?.message).toContain('paused');
-      expect(store.getSnapshot().sync?.error?.message).toContain('authority endpoint unavailable');
     });
 
     it('should treat an identity without a sync registration as locally caught up', async () => {
@@ -601,10 +592,9 @@ describe('createConnectionStore()', () => {
         throw new Error('local status unavailable');
       };
       engine.emit({
-        type           : 'checkpoint:push-advance',
+        type           : 'link:activity',
         tenantDid      : OWNER_DID,
         remoteEndpoint : 'https://dwn.example',
-        position       : '2',
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('error'); });
 
@@ -627,10 +617,9 @@ describe('createConnectionStore()', () => {
       const readsBeforeOtherIdentity = engine.linkReads;
 
       engine.emit({
-        type           : 'checkpoint:pull-advance',
+        type           : 'link:activity',
         tenantDid      : 'did:dht:someone-else',
         remoteEndpoint : 'https://dwn.example',
-        position       : '1',
       });
       await Promise.resolve();
       expect(engine.linkReads).toBe(readsBeforeOtherIdentity);
@@ -696,10 +685,7 @@ describe('createConnectionStore()', () => {
         remoteStatus({ remoteEndpoint: 'https://old.example' }),
         remoteStatus({ remoteEndpoint: 'https://backup.example', state: 'degraded' }),
         remoteStatus({
-          nextProbeAt    : '2026-07-29T12:00:00.000Z',
-          nextRetryAt    : '2026-07-29T11:30:00.000Z',
-          lastError      : 'Quota exceeded',
-          lastActivityAt : '2026-07-29T11:00:00.000Z',
+          lastActivityAt: '2026-07-29T11:00:00.000Z',
         }),
       ];
       getDwnEndpointStatus.resolves({
@@ -722,22 +708,28 @@ describe('createConnectionStore()', () => {
       const stable = store.getSnapshot();
       const settledReads = engine.settledLinkReads;
       engine.emit({
-        type: 'dead-letter:change', tenantDid: OWNER_DID, remoteEndpoint: 'https://dwn.example',
+        type           : 'link:activity',
+        tenantDid      : OWNER_DID,
+        remoteEndpoint : 'https://dwn.example',
       });
       await waitFor(() => { expect(engine.settledLinkReads).toBeGreaterThan(settledReads); });
       expect(store.getSnapshot()).toBe(stable);
 
-      engine.remotes[2] = remoteStatus({ nextRetryAt: '2026-07-29T11:45:00.000Z' });
+      engine.remotes[2] = remoteStatus({ lastActivityAt: '2026-07-29T11:45:00.000Z' });
       engine.emit({
-        type: 'dead-letter:change', tenantDid: OWNER_DID, remoteEndpoint: 'https://dwn.example',
+        type           : 'link:activity',
+        tenantDid      : OWNER_DID,
+        remoteEndpoint : 'https://dwn.example',
       });
       await waitFor(() => {
-        expect(store.getSnapshot().sync?.remotes[0]?.nextRetryAt).toBe('2026-07-29T11:45:00.000Z');
+        expect(store.getSnapshot().sync?.remotes[0]?.lastActivityAt).toBe('2026-07-29T11:45:00.000Z');
       });
 
       engine.remotes = [remoteStatus()];
       engine.emit({
-        type: 'dead-letter:change', tenantDid: OWNER_DID, remoteEndpoint: 'https://dwn.example',
+        type           : 'link:activity',
+        tenantDid      : OWNER_DID,
+        remoteEndpoint : 'https://dwn.example',
       });
       await waitFor(() => { expect(store.getSnapshot().sync?.remotes).toHaveLength(1); });
     });
@@ -2763,7 +2755,6 @@ describe('createConnectionStore()', () => {
         password               : 'pw',
         requireHostedReadiness : true,
         sync                   : 'off',
-        syncEngine             : 'next',
         monitor                : false,
         restore                : { password: 'restore-pw' },
       });
@@ -2772,7 +2763,7 @@ describe('createConnectionStore()', () => {
       await store.initialize();
 
       expect(create.calledOnce).toBe(true);
-      expect(create.firstCall.args[0]).toEqual({ password: 'pw', sync: 'off', syncEngine: 'next' });
+      expect(create.firstCall.args[0]).toEqual({ password: 'pw', sync: 'off' });
       expect(fake.restoreSession.firstCall.args[0]).toEqual({ password: 'restore-pw' });
     });
 

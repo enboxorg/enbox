@@ -5,40 +5,27 @@ import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type {
-  SyncNextLinkIdentity,
   SyncNextQuarantineInput,
-  SyncNextQuarantineReason,
-  SyncNextSettledSource,
+  SyncNextSourceReceipt,
 } from './types.js';
 
-import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
-
 import { admitClosure } from '../sync-admit-closure.js';
-import { compareSyncNextPosition } from './ledger-key.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { sealSyncNextQuarantinePayload } from './quarantine-codec.js';
+import { syncNextLinkIdentity } from './ledger-key.js';
+import { assertPageCursorAdvanced, sourceTokenFromFeedEntry, syncEntriesFromFeedEntries } from './feed-entry.js';
+import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { getLocalMessage, queryRemoteMessageFeed } from '../sync-messages.js';
-import { sourceTokenFromFeedEntry, syncEntriesFromFeedEntries } from './feed-entry.js';
 
 const PULL_PAGE_SIZE = 100;
 
-export type SyncNextPullPageResult = {
-  aborted?: true;
-  handledThrough?: ProgressToken;
+export type SyncNextPullPageResult = { aborted: true } | {
+  aborted?: false;
+  handledThrough: ProgressToken;
   hasMore: boolean;
   materializedCids: string[];
   quarantined: number;
-};
-
-export type SyncNextPullPageOptions = {
-  signal?: AbortSignal;
-  shouldContinue?: () => boolean;
-};
-
-export type SyncNextPullPageObserver = {
-  onApplied?: (target: SyncTarget, entries: readonly SyncFreshEntry[]) => void;
-  onCheckpoint?: (target: SyncTarget, token: ProgressToken) => void;
 };
 
 /** Consumes exactly one remote feed page through normal local DWN admission. */
@@ -47,25 +34,25 @@ export class SyncNextPullPage {
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _echoSuppressor?: SyncEchoSuppressor,
-    private readonly _observer: SyncNextPullPageObserver = {},
+    private readonly _onApplied?: (target: SyncTarget, entries: readonly SyncFreshEntry[]) => void,
     private readonly _resolveTarget: (target: SyncTarget) => Promise<SyncTarget> = async target => target,
   ) {}
 
   public async consume(
     target: SyncTarget,
-    options: SyncNextPullPageOptions = {},
+    options: { signal?: AbortSignal; shouldContinue?: () => boolean } = {},
   ): Promise<SyncNextPullPageResult> {
     const shouldContinue = options.shouldContinue ?? ((): boolean => true);
-    const identity = SyncNextPullPage.identity(target);
+    const identity = syncNextLinkIdentity(target);
     const link = await this._ledger.getLink(identity);
-    if (link === undefined || link.status !== 'active' || !shouldContinue()) {
-      return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
+    if (link === undefined || !shouldContinue()) {
+      return { aborted: true };
     }
     const current = await this._resolveTarget(target);
 
     const reply = await this.query(current, link.pullHandledThrough, options.signal);
     if (!shouldContinue()) {
-      return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
+      return { aborted: true };
     }
     SyncNextPullPage.assertSuccessfulPage(reply, current);
 
@@ -75,7 +62,12 @@ export class SyncNextPullPage {
         `SyncNextPullPage: ${target.did} -> ${target.dwnUrl} returned no cursor for a successful page.`,
       );
     }
-    SyncNextPullPage.assertCursorAdvanced(link.pullHandledThrough, handledThrough, reply.drained === true);
+    assertPageCursorAdvanced(
+      link.pullHandledThrough,
+      handledThrough,
+      reply.drained === true,
+      'SyncNextPullPage',
+    );
     const entries = reply.entries ?? [];
     for (const entry of entries) {
       if (entry.message === undefined || await Message.getCid(entry.message) !== entry.messageCid) {
@@ -85,12 +77,12 @@ export class SyncNextPullPage {
     }
     const prefetched = syncEntriesFromFeedEntries(entries);
     const quarantine: SyncNextQuarantineInput[] = [];
-    const settled: SyncNextSettledSource[] = [];
+    const settled: SyncNextSourceReceipt[] = [];
     const materializedCids = new Set<string>();
 
     for (const entry of entries) {
       if (!shouldContinue()) {
-        return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
+        return { aborted: true };
       }
       const source = sourceTokenFromFeedEntry(handledThrough, entry);
       if (
@@ -104,7 +96,7 @@ export class SyncNextPullPage {
       }
       const isPushEcho = await this.hasDurableLocalPullEcho(current, entry);
       if (!shouldContinue()) {
-        return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
+        return { aborted: true };
       }
       if (isPushEcho) {
         settled.push({ messageCid: entry.messageCid, source });
@@ -119,14 +111,14 @@ export class SyncNextPullPage {
         onBeforeApply : (messageCid): void => {
           this._echoSuppressor?.trackPulled(current.did, messageCid, current.dwnUrl);
         },
-        permissionGrantIds : current.permissionGrantIds,
+        permissionGrantIds   : current.permissionGrantIds,
         prefetched,
-        remoteHydration    : 'defer',
-        scope              : current.scope,
+        deferRemoteHydration : true,
+        scope                : current.scope,
         shouldContinue,
       });
       if (!shouldContinue()) {
-        return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
+        return { aborted: true };
       }
 
       if (outcome.kind === 'admitted') {
@@ -135,7 +127,7 @@ export class SyncNextPullPage {
           materializedCids.add(messageCid);
         }
         if (outcome.freshEntries.length > 0) {
-          this._observer.onApplied?.(current, outcome.freshEntries);
+          this._onApplied?.(current, outcome.freshEntries);
         }
         continue;
       }
@@ -144,15 +136,10 @@ export class SyncNextPullPage {
         identity,
         messageCid: entry.messageCid,
         source,
-      }, {
-        entry,
-      });
+      }, entry);
       quarantine.push({
         encryptedPayload,
-        messageCid : entry.messageCid,
-        outcome    : {
-          reason: SyncNextPullPage.quarantineReason(outcome),
-        },
+        messageCid: entry.messageCid,
         source,
       });
     }
@@ -163,10 +150,8 @@ export class SyncNextPullPage {
       settled,
     });
     if (!committed) {
-      return { aborted: true, hasMore: false, materializedCids: [], quarantined: 0 };
+      return { aborted: true };
     }
-    this._observer.onCheckpoint?.(current, handledThrough);
-
     return {
       handledThrough,
       hasMore          : reply.drained !== true,
@@ -224,15 +209,6 @@ export class SyncNextPullPage {
       hasStoredData;
   }
 
-  private static quarantineReason(
-    outcome: Exclude<Awaited<ReturnType<typeof admitClosure>>, { kind: 'admitted' }>,
-  ): SyncNextQuarantineReason {
-    if (outcome.kind === 'failed') {
-      return 'admission-unresolved';
-    }
-    return outcome.reason ?? 'admission-unresolved';
-  }
-
   private static async assertInlineData(entry: MessagesQueryReplyEntry): Promise<void> {
     if (
       entry.encodedData === undefined ||
@@ -270,28 +246,4 @@ export class SyncNextPullPage {
     }
   }
 
-  private static assertCursorAdvanced(
-    previous: ProgressToken | undefined,
-    next: ProgressToken,
-    drained: boolean,
-  ): void {
-    if (
-      previous !== undefined &&
-      previous.streamId === next.streamId &&
-      previous.epoch === next.epoch &&
-      compareSyncNextPosition(next, previous) === 0 &&
-      !drained
-    ) {
-      throw new Error('SyncNextPullPage: non-drained query cursor did not advance.');
-    }
-  }
-
-  private static identity(target: SyncTarget): SyncNextLinkIdentity {
-    return {
-      authorizationEpoch : target.authorizationEpoch,
-      projectionId       : target.projectionId,
-      remoteEndpoint     : target.dwnUrl,
-      tenantDid          : target.did,
-    };
-  }
 }

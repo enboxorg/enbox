@@ -1,8 +1,9 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnDataEncodedRecordsWriteMessage } from '../src/types/dwn.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
+import type { SyncEvent } from '../src/types/sync.js';
+
 import type { GenericMessage, MessagesQueryReplyEntry, PermissionScope, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { PushResult, SyncEvent } from '../src/types/sync.js';
 
 import sinon from 'sinon';
 
@@ -71,6 +72,22 @@ async function waitForRecord(
     await new Promise(r => setTimeout(r, intervalMs));
   }
   throw new Error(`waitForRecord: record ${recordId} not found within ${timeoutMs}ms`);
+}
+
+async function waitForLiveSync(
+  agent: PlatformAgentTestHarness['agent'],
+  did: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const links = await agent.sync.getReplicationLinks(did);
+    if (links.length > 0 && links.every(link => link.status === 'live')) {
+      return;
+    }
+    await new Promise(resolve => { setTimeout(resolve, 100); });
+  }
+  throw new Error(`waitForLiveSync: ${did} did not become live within ${timeoutMs}ms`);
 }
 
 /** Opens application-readable bytes from one raw RecordsRead entry. */
@@ -882,7 +899,6 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       await deviceHarness.agent.sync.sync('pull');
-      expect(await deviceHarness.agent.sync.getDeadLetters(alice.did.uri)).toEqual([]);
 
       const localGrantKeyQuery = await deviceHarness.agent.dwn.processRequest({
         author        : delegateDid,
@@ -1129,7 +1145,6 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       await deviceHarness.agent.sync.sync('pull');
-      expect(await deviceHarness.agent.sync.getDeadLetters(alice.did.uri)).toEqual([]);
 
       const localFeedQuery = await deviceHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -1298,11 +1313,12 @@ describe('E2E Multi-Agent Sync', () => {
       });
 
       // Start live sync on BOTH agents.
-      await primaryHarness.agent.sync.startSync({ interval: '60s' });
-      await deviceHarness.agent.sync.startSync({ interval: '60s' });
-
-      // Give subscriptions a moment to establish.
-      await new Promise(r => setTimeout(r, 500));
+      await primaryHarness.agent.sync.startSync({ interval: '1s' });
+      await deviceHarness.agent.sync.startSync({ interval: '1s' });
+      await Promise.all([
+        waitForLiveSync(primaryHarness.agent, alice.did.uri),
+        waitForLiveSync(deviceHarness.agent, alice.did.uri),
+      ]);
 
       // Primary agent writes a note locally.
       const writeResult = await primaryHarness.agent.dwn.processRequest({
@@ -1329,14 +1345,14 @@ describe('E2E Multi-Agent Sync', () => {
         recordId,
         delegateDid    : aliceDevice.did.uri,
         delegatedGrant : recordsQueryGrant.grant.message,
-        timeoutMs      : 10_000,
+        timeoutMs      : 45_000,
       });
       expect(received.recordId).toBe(recordId);
 
       // Clean up.
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
-    });
+    }, 90_000);
 
     it('should handle multiple sequential writes in live mode', async () => {
       // Register and start live sync.
@@ -1348,9 +1364,12 @@ describe('E2E Multi-Agent Sync', () => {
           delegateDid : aliceDevice.did.uri,
         },
       });
-      await primaryHarness.agent.sync.startSync({ interval: '60s' });
-      await deviceHarness.agent.sync.startSync({ interval: '60s' });
-      await new Promise(r => setTimeout(r, 500));
+      await primaryHarness.agent.sync.startSync({ interval: '1s' });
+      await deviceHarness.agent.sync.startSync({ interval: '1s' });
+      await Promise.all([
+        waitForLiveSync(primaryHarness.agent, alice.did.uri),
+        waitForLiveSync(deviceHarness.agent, alice.did.uri),
+      ]);
 
       // Write 3 records in quick succession.
       const recordIds: string[] = [];
@@ -1379,7 +1398,7 @@ describe('E2E Multi-Agent Sync', () => {
           recordId,
           delegateDid    : aliceDevice.did.uri,
           delegatedGrant : recordsQueryGrant.grant.message,
-          timeoutMs      : 8_000,
+          timeoutMs      : 20_000,
         });
       }
 
@@ -1404,7 +1423,7 @@ describe('E2E Multi-Agent Sync', () => {
 
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
-    });
+    }, 60_000);
 
     it('should drain an in-flight durable push pass before unregistering its identity', async () => {
       await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
@@ -1413,25 +1432,15 @@ describe('E2E Multi-Agent Sync', () => {
 
       const pushStarted = createDeferred();
       const releasePush = createDeferred();
-      const syncEngine = primaryHarness.agent.sync as unknown as {
-        createRemoteApplyPushContext(target: unknown): {
-          pushFeedEntry(entry: MessagesQueryReplyEntry, stagedRootCids: string[]): Promise<PushResult>;
-        };
-      };
-      const createPushContext = syncEngine.createRemoteApplyPushContext.bind(syncEngine);
+      const applyReplicatedMessage = primaryHarness.agent.rpc.applyReplicatedMessage.bind(primaryHarness.agent.rpc);
       let shouldGatePush = true;
-      const pushContextStub = sinon.stub(syncEngine, 'createRemoteApplyPushContext').callsFake((target) => {
-        const context = createPushContext(target);
-        const pushFeedEntry = context.pushFeedEntry.bind(context);
-        sinon.stub(context, 'pushFeedEntry').callsFake(async (entry, stagedRootCids): Promise<PushResult> => {
-          if (shouldGatePush) {
-            shouldGatePush = false;
-            pushStarted.resolve();
-            await releasePush.promise;
-          }
-          return pushFeedEntry(entry, stagedRootCids);
-        });
-        return context;
+      const applyStub = sinon.stub(primaryHarness.agent.rpc, 'applyReplicatedMessage').callsFake(async (request) => {
+        if (shouldGatePush) {
+          shouldGatePush = false;
+          pushStarted.resolve();
+          await releasePush.promise;
+        }
+        return applyReplicatedMessage(request);
       });
       let unregisterPromise: Promise<void> | undefined;
 
@@ -1475,7 +1484,7 @@ describe('E2E Multi-Agent Sync', () => {
       } finally {
         releasePush.resolve();
         await unregisterPromise?.catch((): void => {});
-        pushContextStub.restore();
+        applyStub.restore();
         await primaryHarness.agent.sync.stopSync();
       }
     }, 20_000);

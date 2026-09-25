@@ -185,7 +185,7 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
 
     expect((await queryLocal(alice.did.uri)).entries).toHaveLength(1);
     expect(events).toContain('delivery:applied');
-    expect(events).toContain('checkpoint:pull-advance');
+    expect(events).toContain('link:activity');
   }, 120_000);
 
   it('pulls remote changes and publishes local changes for an existing dapp', async () => {
@@ -303,7 +303,7 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
     }
   }, 120_000);
 
-  it('drains a selected endpoint only after sparse work and fingerprints converge', async () => {
+  it('drains a selected endpoint only after pages and sparse work settle', async () => {
     const alice = await identity('Sync next drain');
     await configureLocal(alice.did.uri);
     await writeLocal(alice.did.uri, 'drained-local-history');
@@ -313,9 +313,6 @@ describe('E2E: SyncEngineNext common dapp modes', () => {
 
     expect(result.completed).toBe(true);
     expect(result.cancelled).toBe(false);
-    expect(result.topologyChanged).toBe(false);
-    const target = result.targets.find(candidate => candidate.tenantDid === alice.did.uri);
-    expect(target).toMatchObject({ completed: true, converged: true });
-    expect(target?.localFingerprint).toBe(target?.remoteFingerprint);
+    expect(result.error).toBeUndefined();
   }, 120_000);
 });

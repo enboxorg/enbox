@@ -1,6 +1,6 @@
-# Sync engine next
+# Sync engine architecture
 
-Status: implementation contract for the temporary `SyncEngineNext` PR stack.
+Status: implementation contract for the watermark-based sync engine.
 
 Parent design work: [#1722](https://github.com/enboxorg/enbox/issues/1722) and
 [#1727](https://github.com/enboxorg/enbox/issues/1727).
@@ -28,10 +28,9 @@ tenant DID + normalized endpoint + canonical projection ID + authorization epoch
 Each normalized link has two domain-qualified progress tokens:
 
 - `pullHandledThrough`: every remote-feed entry through the token was
-  materialized, quarantined, or given a precise terminal outcome.
+  materialized or quarantined.
 - `pushHandledThrough`: every local-feed entry through the token was delivered,
-  retained as an endpoint-specific delivery obligation, or given a precise
-  terminal outcome.
+  or retained as an endpoint-specific delivery obligation.
 
 These are handled-through tokens, not claims that every sparse obligation is
 complete.
@@ -43,10 +42,12 @@ complete.
 The central quarantine store owns exact-source rows. "Central" means one store
 and lifecycle owner, not one row that merges authority from different remotes.
 
-A quarantine row identifies its exact link and source position, but also keeps a
-stable logical target so locally materializing the CID can settle duplicate
-receipts from other links. It stores an encrypted, versioned envelope containing
-only the received input required after the pull token advances.
+A quarantine row identifies its exact link and source position. Its logical
+target is derived from the tenant and projection, so locally materializing the
+CID can settle duplicate receipts from other links without persisting another
+identifier. The row stores an encrypted, versioned envelope containing only the
+received input required after the pull token advances, plus a last-attempt
+timestamp for retry eligibility.
 
 ### Outbound delivery obligations
 
@@ -60,8 +61,8 @@ remain owed while later independent local roots continue to the same endpoint.
 There is deliberately no third terminal/dead-letter ledger. A broad `Invalid`,
 authorization failure, retry count, elapsed time, or malformed retained payload
 does not prove that skipping a signed source entry is safe. Such entries remain
-visible sparse work until they settle or an explicit rebuild resets the source
-before purging them.
+visible sparse work until they settle or an explicit full reset removes all
+progress before the application registers its sources again.
 
 ## Page-forward invariant
 
@@ -100,7 +101,7 @@ remain independent, so a blocked push cannot stop pull. Commit operations use a
 short cross-context link lock, reread the latest link record, reject stale
 lifetimes/domains, and preserve the opposite direction's progress.
 
-Network work is capped at two operations per normalized endpoint. The gate
+Network work is serialized per normalized endpoint. The gate
 opens a short in-memory circuit after a connection failure, so already queued
 links are deferred without adding a persisted endpoint scheduler. Failed
 subscription establishment remains unsubscribed and requests one coalesced
@@ -110,9 +111,13 @@ the socket.
 This bounds an outage to a small probe count instead of multiplying it by the
 number of protocols, contexts, or identities at that endpoint.
 
-Subscriptions are wake signals. Establishment and reconnect always schedule a
-page from durable progress; a cursorless subscription is never treated as
-coverage. A wake arriving during work remains as trailing work.
+Subscriptions are wake signals. Concurrent refreshes share one in-flight
+subscription open per link. Establishment and reconnect schedule a page from
+durable progress; a cursorless subscription is never treated as coverage. An
+event cursor is a pushed lower bound: the link cannot report current until its
+durable pull checkpoint reaches that cursor. A drained query behind the pushed
+cursor retries at the ordinary one-second backoff, while a wake arriving during
+work remains as trailing work.
 
 A bounded in-memory echo cache is shared across link sessions but scoped by
 tenant, CID, and endpoint. Pulling a CID suppresses an immediate push back to
@@ -126,24 +131,24 @@ never durable progress.
 
 - **Settle:** success or a verified complete duplicate deletes the sparse row.
 - **Retry:** stop at the first unresolved receipt. Eligibility is derived from
-  the row's persisted attempt time/count and optional `Retry-After`; wakes,
+  the row's persisted last-attempt time and optional `Retry-After`; wakes,
   manual operations, and the periodic pass provide retry opportunities without
-  per-receipt timers.
-- **Rebuild:** reset the affected checkpoint to zero before removing sparse
-  rows, then replay the current authorized source.
+  per-receipt timers. A covering pull may override a deferred quarantine row
+  once after the feed drains; advancing pages never multiply that retry.
+- **Reset:** clear all checkpoints before removing sparse rows, then require the
+  application to register its authorized sources again.
 - **Remove:** deleting an identity or accepted followed context is explicit
   owner intent and removes the sparse state that only that owner can recover.
 
-Push is rebuildable while the local feed exists. Pull is rebuildable only while
+Push can be replayed while the local feed exists. Pull can be replayed only while
 an authorized remote retains the source. If no source remains, the quarantine
 row may be the only recoverable copy and must not be silently purged.
 
 Corrupt or unreadable encrypted quarantine follows the same rule. Ordinary
-retry backs it off and leaves it visible. `rebuildRemoteDirection()` is the
-explicit disaster-recovery path: it refuses an incomplete target plan or a
-missing current source, resets every current checkpoint for the logical target,
-then purges quarantine and replays. Vault lock prevents a commit that needs
-encryption; the engine never falls back to plaintext.
+retry backs it off and leaves it visible. `reset()` is the explicit
+disaster-recovery path; it clears the complete sync catalog and ledger, after
+which the application reconnects and re-registers. Vault lock prevents a commit
+that needs encryption; the engine never falls back to plaintext.
 
 ## Covering operations
 
@@ -162,34 +167,22 @@ work. A continuously growing feed can therefore keep a covering call active,
 but cannot prevent other work from progressing; no snapshot-style query head
 is part of the base design.
 
-## Temporary legacy/next coexistence
+## Cutover
 
-Exactly one engine is selected when an agent is created:
+The comparison stack ran the legacy and watermark engines independently against
+equivalent fixtures. After that matrix passed, the selector and legacy
+checkpoint namespace were removed. `SyncEngineLevel` remains as the public
+compatibility name, backed by the watermark engine; `syncNextV1/*` is the only
+active transfer namespace.
 
-```text
-legacy | next
-```
+The registration and followed-context catalog remains shared across browser
+contexts through a content-free invalidation wake. Durable catalog state is
+authoritative; transfer checkpoints and sparse rows require no dual writes or
+checkpoint translation.
 
-One agent instance runs exactly one engine, and the engines never share
-checkpoint namespaces. Next uses `syncNextV1/*`; switching modes therefore
-rescans from its own state and needs no dual writes or checkpoint translation.
-The temporary selector does not yet prevent two independently constructed
-agents over the same profile from choosing different modes concurrently. Hosts
-must keep that configuration consistent; cross-context mode exclusion remains
-a cutover gate before next can become the default.
-
-The selector is forwarded by `AuthManager` and `ConnectionStore`, so a real
-dapp can compare engines without constructing a private agent. Next owns the
-small shared registration/followed-context catalog directly; it does not
-instantiate the legacy transfer engine as a hidden control plane.
-
-Apples-to-apples comparison uses cloned deterministic fixtures. Running one
-engine and then the other against the same mutable remotes is not a comparison,
-because the first run changes the inputs.
-
-Legacy code is deleted after next passes the comparison matrix and becomes the
-default. The mode switch and legacy namespace are temporary migration tools,
-not permanent product surface.
+A confirmed expired or revoked delegated approval removes its sync registration
+and exact-link state. Followed-source acceptances remain cataloged; reapproval
+re-registers the actor and safely rescans from source feeds.
 
 ## Required application modes
 
@@ -205,10 +198,10 @@ Every stack layer must preserve these four modes:
 4. **Existing dapp hydrates a new empty remote:** local history reaches the new
    endpoint, including required bodies, while pull and other links remain live.
 
-## Comparison matrix
+## Validation matrix
 
-The reusable scenario runner executes legacy and next separately from identical
-local/remote snapshots and fault scripts. It records:
+The pre-cutover comparison used identical local/remote snapshots and fault
+scripts. The retained watermark scenarios continue to record:
 
 - final local and remote fingerprints;
 - link progress and sparse obligations;
@@ -235,7 +228,7 @@ Required fault scenarios include:
 - generic authorization failure versus proven immutable invalidity;
 - authorization-epoch replacement;
 - sparse selected context in a large unrelated tenant;
-- explicit checkpoint-reset/rescan recovery.
+- explicit full reset followed by source registration and rescan.
 
 ## Abstraction budget
 
@@ -285,6 +278,11 @@ cutover:
   separately instead of settling all page CIDs in one sparse scan;
 - a covering run retried only one of several healthy streamed obligations;
 - terminal subscription errors left a link permanently marked subscribed;
+- concurrent live refreshes opened duplicate subscriptions for one link;
+- wake-only handling discarded the pushed cursor and could report current one
+  position before a just-delivered event became query-visible;
+- covering pull could skip newly recoverable quarantine during its retry delay,
+  while a naive fix would have retried it once per advancing page;
 - equivalent endpoint spellings created distinct durable links;
 - next still constructed the complete legacy engine for catalog operations;
 - corrupt quarantine had an internal reset primitive but no safe replay entry
@@ -292,19 +290,20 @@ cutover:
 
 Regression coverage now includes delayed retry ownership, continuous-feed
 pending fairness, concurrent same-link directions, non-advancing cursors,
-cross-endpoint quarantine settlement, atomic rebuild, pooled-socket request
+cross-endpoint quarantine settlement, reset-before-replay recovery, pooled-socket request
 cancellation, broad `Invalid` outcomes remaining non-terminal, and replay after
 apply-before-ledger crashes. Public one-shot callers now coalesce into at most
 one merged follow-up, independent endpoints remain concurrent, and covering
 page turns interleave behind the endpoint gate so target count cannot become an
 HTTP burst or let one continuously active target starve its peers. Drain
-requires two unchanged fingerprint observations before success and rechecks
-cancellation or topology between phases.
+requires both covering directions to observe drain with no sparse work and
+rechecks cancellation or topology before reporting completion. Fingerprints
+remain test evidence, not a second runtime completion mechanism.
 
 The corrective pass retains one bounded pass over consecutively successful
 sparse work, normalized link identity, transactional subscription pairs with
 terminal-drop reporting, direct catalog ownership with one structured
-cross-context wake channel, and reset-before-purge rebuild. Quarantine remains
+cross-context invalidation wake, and explicit full reset. Quarantine remains
 sparse and is scanned once for all materialized CIDs in a page instead of
 maintaining a fourth durable index. Transport-disconnect notifications mark
 currentness stale without launching an HTTP query; reconnect or the periodic
@@ -312,32 +311,26 @@ backstop requests catch-up.
 
 The real-transport matrix covers the four required dapp modes, wake-only live
 updates, non-inline bodies followed by independent tiny roots, one offline and
-one healthy exact link, and isolated legacy/next comparison. A 579-root unit
-fixture proves six watermark-driven remote page queries without point reads.
+one healthy exact link. A 579-root unit fixture proves six watermark-driven
+remote page queries without point reads.
 
 ### Deliberate remaining boundaries
 
-- Legacy remains the default. `next` is opt-in until the stacked reviews and CI
-  complete.
 - Followed-source acceptance currently reuses the established catalog ceremony;
-  replica transfer and all next-engine checkpoints remain isolated. The
+  replica transfer and all checkpoints remain isolated. The
   multi-binding/revocation redesign is still a separate security slice.
 - Owner-authorized historical import remains a separate security protocol and
   is not hidden inside page classification.
 - Terminal classification is intentionally conservative: uncertain or broad
   `Invalid` outcomes stay sparse/retryable until a typed allowlist proves
   permanence.
-- Constructor-time selection prevents two engines in one agent. Cross-context
-  legacy-versus-next exclusion must be solved before changing the default.
-- Per-endpoint network work is capped at two operations. Page pumps return to
+- Per-endpoint network work is serialized. Page pumps return to
   the endpoint queue after every turn, so a continuously growing target cannot
-  retain the endpoint indefinitely. Change that small fixed concurrency only
-  from measured workloads, not by returning to unbounded transport fan-out.
+  retain the endpoint indefinitely. Add concurrency only from measured
+  workloads, not by returning to unbounded transport fan-out.
 - Drain cancellation is cooperative between committed pages, exact-link runs,
   and drain phases. Local admission and an in-flight request are never
   preempted halfway through; the next page is not requested after cancellation.
-- The next engine currently emits registration, durable checkpoint, and fresh
-  delivery events used by application readiness/data refresh. The legacy
-  repair/quota lifecycle event vocabulary still needs a consumer audit before
-  next becomes the default; it must not be mechanically recreated as another
-  state machine without a demonstrated consumer.
+- The engine emits registration, link activity, and fresh delivery events used
+  by application readiness and data refresh. Removed repair/quota event
+  vocabulary is not recreated without a demonstrated consumer.

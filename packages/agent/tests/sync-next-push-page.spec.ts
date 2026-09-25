@@ -128,12 +128,21 @@ describe('SyncNextPushPage', () => {
     await db.close();
   });
 
+  it('should normalize a retry deadline once when classifying delivery failure', () => {
+    const retryAfter = '2026-09-22T12:00:17.000Z';
+
+    expect(SyncNextPushPage.deliveryOutcome({ retryAfter } as never)).toEqual({
+      blockScope : 'endpoint',
+      reason     : 'transport',
+      retryAt    : Date.parse(retryAfter),
+    });
+  });
+
   async function createLink(): Promise<void> {
     const syncTarget = target();
     await ledger.getOrCreateLink({
       authorization      : syncTarget.authorization,
       authorizationEpoch : syncTarget.authorizationEpoch,
-      logicalTargetId    : `${syncTarget.did}^${syncTarget.projectionId}`,
       projectionId       : syncTarget.projectionId,
       remoteEndpoint     : syncTarget.dwnUrl,
       scope              : syncTarget.scope,
@@ -230,7 +239,7 @@ describe('SyncNextPushPage', () => {
 
     expect(await ledger.getDeliveryForLink(linkIdentity())).toMatchObject([{
       messageCid : root.messageCid,
-      outcome    : { detail: 'Unauthorized', reason: 'remote-rejected' },
+      outcome    : { reason: 'remote-rejected' },
     }]);
   });
 
@@ -241,17 +250,14 @@ describe('SyncNextPushPage', () => {
     const commit = sinon.stub(ledger, 'commitPushPage');
     commit.onFirstCall().rejects(new Error('injected batch failure'));
     commit.callThrough();
-    const onCheckpoint = sinon.stub();
-    const processor = new SyncNextPushPage(fixture.agent, ledger, undefined, { onCheckpoint });
+    const processor = new SyncNextPushPage(fixture.agent, ledger);
 
     await expect(processor.consume(target())).rejects.toThrow('injected batch failure');
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough).toBeUndefined();
-    expect(onCheckpoint.notCalled).toBe(true);
 
     fixture.apply.resolves({ kind: 'Duplicate' });
     await expect(processor.consume(target())).resolves.toMatchObject({ delivered: 1 });
     expect(fixture.apply.calledTwice).toBe(true);
-    expect(onCheckpoint.calledOnce).toBe(true);
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
   });
 
@@ -265,18 +271,6 @@ describe('SyncNextPushPage', () => {
     expect(result.hasMore).toBe(true);
     expect(fixture.process.calledOnce).toBe(true);
     expect((await ledger.getLink(linkIdentity()))?.pushHandledThrough?.position).toBe('1');
-  });
-
-  it('should publish a push checkpoint observation only after the ledger commits', async () => {
-    const root = await feedEntry(protocolMessage('observed'), 1);
-    const fixture = fakeAgent(page([root]));
-    const onCheckpoint = sinon.stub();
-    await createLink();
-
-    await new SyncNextPushPage(fixture.agent, ledger, undefined, { onCheckpoint }).consume(target());
-
-    expect(onCheckpoint.calledOnce).toBe(true);
-    expect(onCheckpoint.firstCall.args[1].position).toBe('1');
   });
 
   it('should suppress only the source endpoint echo after a pull', async () => {

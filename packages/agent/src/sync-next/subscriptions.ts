@@ -93,11 +93,15 @@ async function openRemoteSubscription(
       return;
     }
     if (message.type === 'error') {
-      session.requestPull();
+      session.request('pull');
       await onTerminal(message.error);
       return;
     }
-    session.requestPull(message.type === 'reconnected');
+    if (message.type === 'event' || message.type === 'eose') {
+      session.request('pull', true, message.cursor);
+    } else {
+      session.request('pull');
+    }
   };
   const resubscribeFactory: ResubscribeFactory = async () => {
     const { message: next } = await agent.dwn.processRequest(await createRequest());
@@ -147,7 +151,7 @@ async function openLocalSubscription(
         await onTerminal(message.error);
         return;
       }
-      session.requestPush();
+      session.request('push');
     },
     target: target.did,
   });

@@ -889,38 +889,15 @@ describe('vaultConnect', () => {
     expect(session.did).toBe('did:dht:testagent');
   });
 
-  test('skips startSync when sync is already running (hot-add path)', async () => {
-    const emitter = new AuthEventEmitter();
-    const storage = new MemoryStorage();
-    const startSyncCalls: any[] = [];
-
-    const agent = createMockAgent({
-      firstLaunch                : async () => false,
-      identityList               : async () => [createMockIdentity()],
-      syncStartSync              : async (params) => { startSyncCalls.push(params); },
-      syncHasActiveSubscriptions : true,
-    });
-
-    await vaultConnect(
-      { userAgent: agent, emitter, storage },
-      { password: 'test-pass' },
-    );
-
-    // startSync should NOT have been called because sync is already running.
-    // setIdentityOptions would have hot-added the identity inline.
-    expect(startSyncCalls).toHaveLength(0);
-  });
-
   test('calls startSync when sync is not yet running', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const startSyncCalls: any[] = [];
 
     const agent = createMockAgent({
-      firstLaunch                : async () => false,
-      identityList               : async () => [createMockIdentity()],
-      syncStartSync              : async (params) => { startSyncCalls.push(params); },
-      syncHasActiveSubscriptions : false,
+      firstLaunch   : async () => false,
+      identityList  : async () => [createMockIdentity()],
+      syncStartSync : async (params) => { startSyncCalls.push(params); },
     });
 
     await vaultConnect(

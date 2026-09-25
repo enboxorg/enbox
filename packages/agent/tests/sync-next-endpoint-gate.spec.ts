@@ -1,15 +1,13 @@
 import sinon from 'sinon';
-import { SocketUnavailableError } from '@enbox/dwn-clients';
-import { describe, expect, it } from 'bun:test';
 
-import {
-  SyncNextEndpointBackoffError,
-  SyncNextEndpointGate,
-} from '../src/sync-next/endpoint-gate.js';
+import { SyncNextEndpointGate } from '../src/sync-next/endpoint-gate.js';
+
+import { describe, expect, it } from 'bun:test';
+import { RateLimitError, SocketUnavailableError } from '@enbox/dwn-clients';
 
 describe('SyncNextEndpointGate', () => {
   it('should bound one endpoint while allowing another endpoint to proceed', async () => {
-    const gate = new SyncNextEndpointGate(2);
+    const gate = new SyncNextEndpointGate();
     let activeShared = 0;
     let maxShared = 0;
     let independentRan = false;
@@ -27,14 +25,14 @@ describe('SyncNextEndpointGate', () => {
 
     await independent;
     expect(independentRan).toBe(true);
-    expect(maxShared).toBe(2);
+    expect(maxShared).toBe(1);
     release();
     await Promise.all(shared);
   });
 
   it('should turn one connection failure into a bounded circuit instead of a queued wave', async () => {
     const clock = sinon.useFakeTimers({ now: Date.parse('2026-09-22T12:00:00.000Z') });
-    const gate = new SyncNextEndpointGate(1);
+    const gate = new SyncNextEndpointGate();
     let release!: () => void;
     const blocked = new Promise<void>(resolve => { release = resolve; });
     let queuedRan = false;
@@ -52,7 +50,7 @@ describe('SyncNextEndpointGate', () => {
     expect(firstOutcome).toMatchObject({ status: 'rejected' });
     expect((firstOutcome as PromiseRejectedResult).reason).toBeInstanceOf(SocketUnavailableError);
     expect(queuedOutcome).toMatchObject({ status: 'rejected' });
-    expect((queuedOutcome as PromiseRejectedResult).reason).toBeInstanceOf(SyncNextEndpointBackoffError);
+    expect((queuedOutcome as PromiseRejectedResult).reason).toBeInstanceOf(RateLimitError);
     expect(queuedRan).toBe(false);
 
     await clock.tickAsync(5_000);

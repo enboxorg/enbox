@@ -250,7 +250,6 @@ export class AuthManager {
       didDhtNetwork    : options.didDhtNetwork,
       localDwnStrategy : options.localDwnStrategy,
       localDwnEndpoint,
-      syncEngine       : options.syncEngine,
       rpcClient        : localDwnEndpoint === undefined || localDwnPairing === undefined
         ? undefined
         : createLocalDwnRpcClient(localDwnPairing),
@@ -1445,7 +1444,7 @@ export class AuthManager {
 
     if (status.state === 'expired' || status.state === 'revoked') {
       const session = this._session;
-      const confirmed = await this._userAgent.sync.pauseIdentity({
+      const confirmed = await this._userAgent.sync.removeIdentityIfApprovalInactive({
         did              : status.connectedDid!,
         delegateDid      : status.delegateDid!,
         connectSessionId : status.connectSessionId!,
