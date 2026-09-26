@@ -1,5 +1,16 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.28
+
+### Patch Changes
+
+- [#1756](https://github.com/enboxorg/enbox/pull/1756) [`d435c4f`](https://github.com/enboxorg/enbox/commit/d435c4fadbeb64aae824a4c1f0497ebc49c378b3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Keep empty inline record data outside the canonical DWN message CID.
+
+- [#1751](https://github.com/enboxorg/enbox/pull/1751) [`8f06093`](https://github.com/enboxorg/enbox/commit/8f0609317f1097e922db0b8a903ecf3454732827) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Allow valid RecordsWrite data to complete an already-admitted ancestry-only initial write, move it to a new durable feed position, and require every MessageStore to expose the ordered replication feed.
+
+- Updated dependencies [[`05b4177`](https://github.com/enboxorg/enbox/commit/05b41776e92bd1f42462726d7a7d4bb2a0fcb9de), [`0bcd330`](https://github.com/enboxorg/enbox/commit/0bcd330cb59649e6fcf3a858f636d286a9c26bf3)]:
+  - @enbox/dids@0.1.13
+
 ## 0.4.27
 
 ### Patch Changes
