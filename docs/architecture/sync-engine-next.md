@@ -57,6 +57,19 @@ resource boundary, any page needing more quarantine stops before advancement.
 A failed validation, capacity check, or batch leaves the previous token in
 place.
 
+## One-page pull intake
+
+One pull invocation queries at most 100 remote feed roots after the link's
+durable token. It captures every raw source receipt before classification,
+verifies message CIDs and inline record data for the entire page, and then
+admits roots using only received or already-local support. Missing bodies and
+dependencies do not trigger point reads during intake.
+
+Every returned root is either settled or encrypted into quarantine before the
+page token advances. A later independent root in the same page is still
+processed. The primitive returns after this one commit; pagination,
+quarantine retry, wake handling, and scheduling remain runtime concerns.
+
 ## Sparse recovery state
 
 Quarantine retains the received input needed to retry a pull after the page
