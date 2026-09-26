@@ -99,10 +99,14 @@ function page(
 function fakeAgent(reply: MessagesQueryReply): {
   agent: EnboxPlatformAgent;
   apply: sinon.SinonStub;
+  encrypt: sinon.SinonStub;
   prepare: sinon.SinonStub;
   send: sinon.SinonStub;
 } {
   const apply = sinon.stub().resolves({ kind: 'Applied' });
+  const encrypt = sinon.stub().callsFake(async ({ plaintext }: { plaintext: Uint8Array }): Promise<string> =>
+    Buffer.from(plaintext).toString('base64url')
+  );
   const prepare = sinon.stub().resolves({ message: protocolMessage('query') });
   const send = sinon.stub().resolves(reply);
   const agent = {
@@ -115,11 +119,10 @@ function fakeAgent(reply: MessagesQueryReply): {
     vault             : {
       decryptData: async ({ jwe }: { jwe: string }): Promise<Uint8Array> =>
         Buffer.from(jwe, 'base64url'),
-      encryptData: async ({ plaintext }: { plaintext: Uint8Array }): Promise<string> =>
-        Buffer.from(plaintext).toString('base64url'),
+      encryptData: encrypt,
     },
   } as unknown as EnboxPlatformAgent;
-  return { agent, apply, prepare, send };
+  return { agent, apply, encrypt, prepare, send };
 }
 
 describe('SyncNextPullPage', () => {
@@ -199,6 +202,21 @@ describe('SyncNextPullPage', () => {
     }]);
   });
 
+  it('should stop the page before later admission when quarantine cannot be encrypted', async () => {
+    const missingBody = await feedEntry(missingBodyMessage(), 1);
+    const independent = await feedEntry(protocolMessage('independent'), 2);
+    const fixture = fakeAgent(page([missingBody, independent]));
+    fixture.encrypt.rejects(new Error('vault locked'));
+    await createLink();
+
+    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
+      .rejects.toThrow('vault locked');
+
+    expect(fixture.apply.notCalled).toBe(true);
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+  });
+
   it('should consume one non-drained page and report trailing work', async () => {
     const fixture = fakeAgent(page([await feedEntry(protocolMessage('first'), 1)], false));
     await createLink();
@@ -230,6 +248,50 @@ describe('SyncNextPullPage', () => {
 
     await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
       .rejects.toThrow('failed CID verification');
+
+    expect(fixture.apply.notCalled).toBe(true);
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+  });
+
+  it('should reject malformed source accounting before applying any entry', async () => {
+    const first = await feedEntry(protocolMessage('first'), 1);
+    const duplicate = await feedEntry(protocolMessage('duplicate'), 1);
+    const future = await feedEntry(protocolMessage('future'), 2);
+    const missingLatest = { ...first } as Partial<MessagesQueryReplyEntry>;
+    delete missingLatest.isLatestBaseState;
+    const fixture = fakeAgent(page([]));
+    await createLink();
+    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    const cases: Array<{ detail: string; reply: MessagesQueryReply }> = [
+      {
+        detail : 'invalid cursor',
+        reply  : {
+          ...page([]),
+          cursor: { epoch: 'remote-epoch', position: 'invalid', streamId: 'remote-stream' },
+        },
+      },
+      { detail: 'invalid source metadata', reply: page([missingLatest as MessagesQueryReplyEntry]) },
+      { detail: 'repeats source position 1', reply: page([first, duplicate]) },
+      { detail: 'invalid source position', reply: page([future], true, '1') },
+      {
+        detail : 'cursor CID does not identify',
+        reply  : {
+          ...page([first]),
+          cursor: {
+            epoch      : 'remote-epoch',
+            messageCid : 'different-cid',
+            position   : '1',
+            streamId   : 'remote-stream',
+          },
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      fixture.send.resolves(testCase.reply);
+      await expect(processor.consume(target())).rejects.toThrow(testCase.detail);
+    }
 
     expect(fixture.apply.notCalled).toBe(true);
     expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
@@ -324,6 +386,27 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
   });
 
+  it('should not retain quarantine encrypted after its caller becomes stale', async () => {
+    const root = await feedEntry(missingBodyMessage(), 1);
+    const fixture = fakeAgent(page([root]));
+    await createLink();
+    let current = true;
+    fixture.encrypt.callsFake(async ({ plaintext }: { plaintext: Uint8Array }): Promise<string> => {
+      current = false;
+      return Buffer.from(plaintext).toString('base64url');
+    });
+
+    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(
+      target(),
+      (): boolean => current,
+    );
+
+    expect(result).toEqual({ kind: 'aborted' });
+    expect(fixture.encrypt.calledOnce).toBe(true);
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+  });
+
   it('should return stale when its exact link is absent or replaced before commit', async () => {
     const root = await feedEntry(protocolMessage('stale'), 1);
     const fixture = fakeAgent(page([root]));
@@ -401,6 +484,9 @@ describe('SyncNextPullPage', () => {
 
     fixture.send.resolves(page([], false, '1'));
     await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
+
+    fixture.send.resolves(page([first], true, '2'));
+    await expect(processor.consume(target())).rejects.toThrow('behind its checkpoint');
 
     fixture.send.resolves(page([first], true));
     await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');

@@ -201,32 +201,7 @@ class AdmitClosureContext {
 
     const dataStream = await replayableDataStream(entry);
     if (entryRequiresDataBeforeApply(entry) && dataStream === undefined) {
-      if (this.deps.remoteHydration === 'defer') {
-        return {
-          kind    : 'done',
-          outcome : {
-            kind   : 'deferred',
-            rootCid,
-            detail : 'latest records write data is not present in the received page',
-          },
-        };
-      }
-      const support = await this.fetchReplicationSupport(rootCid);
-      if (support !== undefined) {
-        return { kind: 'retry', entries: support };
-      }
-      if (entry.dataStreamFactory !== undefined) {
-        return {
-          kind    : 'done',
-          outcome : { kind: 'deferred', rootCid, detail: 'latest records write data fetch returned no data' },
-        };
-      }
-      return {
-        kind    : 'done',
-        outcome : this.deps.fetchReplicationSupport === undefined
-          ? { kind: 'failed', rootCid, reason: 'terminal', detail: 'latest records write data is unavailable' }
-          : { kind: 'deferred', rootCid, detail: 'role replication support did not provide current record data' },
-      };
+      return this.admissionResultFromMissingData(rootCid, entry);
     }
 
     try {
@@ -242,6 +217,38 @@ class AdmitClosureContext {
 
       throw error;
     }
+  }
+
+  private async admissionResultFromMissingData(
+    rootCid: string,
+    entry: SyncMessageEntry,
+  ): Promise<AdmissionEntryResult> {
+    if (this.deps.remoteHydration === 'defer') {
+      return {
+        kind    : 'done',
+        outcome : {
+          kind   : 'deferred',
+          rootCid,
+          detail : 'latest records write data is not present in the received page',
+        },
+      };
+    }
+    const support = await this.fetchReplicationSupport(rootCid);
+    if (support !== undefined) {
+      return { kind: 'retry', entries: support };
+    }
+    if (entry.dataStreamFactory !== undefined) {
+      return {
+        kind    : 'done',
+        outcome : { kind: 'deferred', rootCid, detail: 'latest records write data fetch returned no data' },
+      };
+    }
+    return {
+      kind    : 'done',
+      outcome : this.deps.fetchReplicationSupport === undefined
+        ? { kind: 'failed', rootCid, reason: 'terminal', detail: 'latest records write data is unavailable' }
+        : { kind: 'deferred', rootCid, detail: 'role replication support did not provide current record data' },
+    };
   }
 
   private async admissionResultFromApply(

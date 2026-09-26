@@ -14,7 +14,7 @@ import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { queryRemoteMessageFeed } from '../sync-messages.js';
 import { sealSyncNextQuarantinePayload } from './quarantine-codec.js';
 import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
-import { compareSyncNextPosition, syncNextLinkIdentity } from './ledger-key.js';
+import { compareSyncNextPosition, isValidSyncNextToken, syncNextLinkIdentity } from './ledger-key.js';
 
 const PULL_PAGE_SIZE = 100;
 
@@ -73,7 +73,9 @@ export class SyncNextPullPage {
     }
     const entries = reply.entries ?? [];
     SyncNextPullPage.assertCursorProgress(link.pullHandledThrough, handledThrough, reply.drained === true, entries.length);
-    const { admissionEntries, pageReceipts } = await SyncNextPullPage.preparePage(handledThrough, entries);
+    const { admissionEntries, pageReceipts } = await SyncNextPullPage.preparePage(
+      link.pullHandledThrough, handledThrough, entries,
+    );
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
@@ -84,9 +86,6 @@ export class SyncNextPullPage {
       return { kind: 'aborted' };
     }
 
-    if (!shouldContinue()) {
-      return { kind: 'aborted' };
-    }
     const committed = await this._ledger.commitPullPage(link, {
       handledThrough,
       pageReceipts,
@@ -174,42 +173,86 @@ export class SyncNextPullPage {
     return classified;
   }
 
+  /** Validate the untrusted page before admission; the ledger rechecks these receipts at commit. */
   private static async preparePage(
+    previous: ProgressToken | undefined,
     cursor: ProgressToken,
     entries: readonly MessagesQueryReplyEntry[],
   ): Promise<PreparedPage> {
     const admissionEntries: SyncMessageEntry[] = [];
     const pageReceipts: SyncNextSourceReceipt[] = [];
+    const positions = new Set<string>();
     for (const entry of entries) {
-      pageReceipts.push({
-        messageCid : entry.messageCid,
-        source     : {
-          epoch      : cursor.epoch,
-          messageCid : entry.messageCid,
-          position   : entry.seq,
-          streamId   : cursor.streamId,
-        },
-      });
-      if (entry.message === undefined || await Message.getCid(entry.message) !== entry.messageCid) {
-        throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} failed CID verification.`);
-      }
-      if (entry.initialWrite !== undefined) {
-        admissionEntries.push({
-          isLatestBaseState  : false,
-          message            : entry.initialWrite,
-          verifiedMessageCid : await Message.getCid(entry.initialWrite),
-        });
-      }
+      pageReceipts.push(SyncNextPullPage.sourceReceipt(previous, cursor, entry, positions));
+      admissionEntries.push(...await SyncNextPullPage.prepareAdmissionEntries(entry));
+    }
+    SyncNextPullPage.assertCursorReceipt(cursor, pageReceipts);
+    return { admissionEntries, pageReceipts };
+  }
 
-      const bufferedData = await SyncNextPullPage.verifyInlineData(entry);
-      admissionEntries.push({
-        ...(bufferedData === undefined ? {} : { bufferedData }),
-        isLatestBaseState  : entry.isLatestBaseState,
-        message            : entry.message,
-        verifiedMessageCid : entry.messageCid,
+  private static sourceReceipt(
+    previous: ProgressToken | undefined,
+    cursor: ProgressToken,
+    entry: MessagesQueryReplyEntry,
+    positions: Set<string>,
+  ): SyncNextSourceReceipt {
+    if (
+      typeof entry.messageCid !== 'string' ||
+      typeof entry.seq !== 'string' ||
+      typeof entry.isLatestBaseState !== 'boolean'
+    ) {
+      throw new TypeError('SyncNextPullPage: feed entry has invalid source metadata.');
+    }
+    const source: ProgressToken = {
+      epoch      : cursor.epoch,
+      messageCid : entry.messageCid,
+      position   : entry.seq,
+      streamId   : cursor.streamId,
+    };
+    if (!isValidSyncNextToken(source) || compareSyncNextPosition(source, cursor) > 0) {
+      throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} has an invalid source position.`);
+    }
+    if (previous !== undefined && compareSyncNextPosition(source, previous) <= 0) {
+      throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} is behind its checkpoint.`);
+    }
+    if (positions.has(entry.seq)) {
+      throw new Error(`SyncNextPullPage: feed page repeats source position ${entry.seq}.`);
+    }
+    positions.add(entry.seq);
+    return { messageCid: entry.messageCid, source };
+  }
+
+  private static async prepareAdmissionEntries(entry: MessagesQueryReplyEntry): Promise<SyncMessageEntry[]> {
+    if (entry.message === undefined || await Message.getCid(entry.message) !== entry.messageCid) {
+      throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} failed CID verification.`);
+    }
+    const entries: SyncMessageEntry[] = [];
+    if (entry.initialWrite !== undefined) {
+      entries.push({
+        isLatestBaseState  : false,
+        message            : entry.initialWrite,
+        verifiedMessageCid : await Message.getCid(entry.initialWrite),
       });
     }
-    return { admissionEntries, pageReceipts };
+    const bufferedData = await SyncNextPullPage.verifyInlineData(entry);
+    entries.push({
+      ...(bufferedData === undefined ? {} : { bufferedData }),
+      isLatestBaseState  : entry.isLatestBaseState,
+      message            : entry.message,
+      verifiedMessageCid : entry.messageCid,
+    });
+    return entries;
+  }
+
+  private static assertCursorReceipt(
+    cursor: ProgressToken,
+    pageReceipts: readonly SyncNextSourceReceipt[],
+  ): void {
+    if (cursor.messageCid !== undefined && !pageReceipts.some(receipt =>
+      receipt.source.position === cursor.position && receipt.messageCid === cursor.messageCid
+    )) {
+      throw new Error('SyncNextPullPage: query cursor CID does not identify its page entry.');
+    }
   }
 
   private static async verifyInlineData(entry: MessagesQueryReplyEntry): Promise<Uint8Array | undefined> {
@@ -253,6 +296,9 @@ export class SyncNextPullPage {
     drained: boolean,
     entryCount: number,
   ): void {
+    if (!isValidSyncNextToken(next)) {
+      throw new Error('SyncNextPullPage: query returned an invalid cursor.');
+    }
     if (previous === undefined) {
       return;
     }
