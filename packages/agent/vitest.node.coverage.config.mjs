@@ -15,6 +15,8 @@ export default defineConfig({
     include: [
       'tests/sync-durable-feed-reconciler.spec.ts',
       'tests/sync-link-recovery-coordinator.spec.ts',
+      'tests/sync-next-ledger-store.spec.ts',
+      'tests/sync-next-quarantine-codec.spec.ts',
       'tests/sync-messages.spec.ts',
     ],
     testTimeout : 10_000,
@@ -22,6 +24,9 @@ export default defineConfig({
       include: [
         'src/sync-durable-feed-reconciler.ts',
         'src/sync-link-recovery-coordinator.ts',
+        'src/sync-next/ledger-key.ts',
+        'src/sync-next/ledger-store.ts',
+        'src/sync-next/quarantine-codec.ts',
         'src/sync-messages.ts',
       ],
       provider         : 'istanbul',
