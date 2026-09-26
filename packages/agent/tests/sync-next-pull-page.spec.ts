@@ -64,6 +64,23 @@ function missingBodyMessage(): RecordsWriteMessage {
   } as RecordsWriteMessage;
 }
 
+function dependencyRecord(recordId: string, parentId?: string): GenericMessage {
+  const timestamp = `2026-09-20T00:00:0${parentId === undefined ? '1' : '2'}.000000Z`;
+  return {
+    descriptor: {
+      dataFormat       : 'application/json',
+      dateCreated      : timestamp,
+      interface        : 'Records',
+      messageTimestamp : timestamp,
+      method           : 'Write',
+      protocol         : 'https://example.com/dependencies',
+      protocolPath     : parentId === undefined ? 'parent' : 'parent/child',
+      ...(parentId === undefined ? {} : { parentId }),
+    },
+    recordId,
+  } as GenericMessage;
+}
+
 async function feedEntry(
   message: GenericMessage,
   seq: number,
@@ -99,10 +116,14 @@ function page(
 function fakeAgent(reply: MessagesQueryReply): {
   agent: EnboxPlatformAgent;
   apply: sinon.SinonStub;
+  encrypt: sinon.SinonStub;
   prepare: sinon.SinonStub;
   send: sinon.SinonStub;
 } {
   const apply = sinon.stub().resolves({ kind: 'Applied' });
+  const encrypt = sinon.stub().callsFake(async ({ plaintext }: { plaintext: Uint8Array }): Promise<string> =>
+    Buffer.from(plaintext).toString('base64url')
+  );
   const prepare = sinon.stub().resolves({ message: protocolMessage('query') });
   const send = sinon.stub().resolves(reply);
   const agent = {
@@ -115,11 +136,10 @@ function fakeAgent(reply: MessagesQueryReply): {
     vault             : {
       decryptData: async ({ jwe }: { jwe: string }): Promise<Uint8Array> =>
         Buffer.from(jwe, 'base64url'),
-      encryptData: async ({ plaintext }: { plaintext: Uint8Array }): Promise<string> =>
-        Buffer.from(plaintext).toString('base64url'),
+      encryptData: encrypt,
     },
   } as unknown as EnboxPlatformAgent;
-  return { agent, apply, prepare, send };
+  return { agent, apply, encrypt, prepare, send };
 }
 
 describe('SyncNextPullPage', () => {
@@ -199,6 +219,49 @@ describe('SyncNextPullPage', () => {
     }]);
   });
 
+  it('should admit a later page parent before its earlier child without point reads', async () => {
+    const parent = dependencyRecord('parent');
+    const child = dependencyRecord('child', 'parent');
+    const childEntry = await feedEntry(child, 1);
+    const parentEntry = await feedEntry(parent, 2);
+    const fixture = fakeAgent(page([childEntry, parentEntry]));
+    const admissionOrder: string[] = [];
+    let parentApplied = false;
+    fixture.apply.callsFake(async (_tenant: string, message: GenericMessage): Promise<unknown> => {
+      const recordId = (message as GenericMessage & { recordId: string }).recordId;
+      admissionOrder.push(recordId);
+      if (recordId === 'child' && !parentApplied) {
+        return { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: 'parent' }] };
+      }
+      parentApplied ||= recordId === 'parent';
+      return { kind: 'Applied' };
+    });
+    await createLink();
+
+    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(target());
+
+    expect(result).toMatchObject({ kind: 'committed', quarantined: 0 });
+    expect(admissionOrder).toEqual(['parent', 'child']);
+    expect(fixture.send.calledOnce).toBe(true);
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('2');
+  });
+
+  it('should stop the page before later admission when quarantine cannot be encrypted', async () => {
+    const missingBody = await feedEntry(missingBodyMessage(), 1);
+    const independent = await feedEntry(protocolMessage('independent'), 2);
+    const fixture = fakeAgent(page([missingBody, independent]));
+    fixture.encrypt.rejects(new Error('vault locked'));
+    await createLink();
+
+    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
+      .rejects.toThrow('vault locked');
+
+    expect(fixture.apply.notCalled).toBe(true);
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+  });
+
   it('should consume one non-drained page and report trailing work', async () => {
     const fixture = fakeAgent(page([await feedEntry(protocolMessage('first'), 1)], false));
     await createLink();
@@ -236,7 +299,51 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
   });
 
-  it('should reject unverified inline bytes before retaining them', async () => {
+  it('should reject malformed source accounting before applying any entry', async () => {
+    const first = await feedEntry(protocolMessage('first'), 1);
+    const duplicate = await feedEntry(protocolMessage('duplicate'), 1);
+    const future = await feedEntry(protocolMessage('future'), 2);
+    const missingLatest = { ...first } as Partial<MessagesQueryReplyEntry>;
+    delete missingLatest.isLatestBaseState;
+    const fixture = fakeAgent(page([]));
+    await createLink();
+    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    const cases: Array<{ detail: string; reply: MessagesQueryReply }> = [
+      {
+        detail : 'invalid cursor',
+        reply  : {
+          ...page([]),
+          cursor: { epoch: 'remote-epoch', position: 'invalid', streamId: 'remote-stream' },
+        },
+      },
+      { detail: 'invalid source metadata', reply: page([missingLatest as MessagesQueryReplyEntry]) },
+      { detail: 'repeats source position 1', reply: page([first, duplicate]) },
+      { detail: 'invalid source position', reply: page([future], true, '1') },
+      {
+        detail : 'cursor CID does not identify',
+        reply  : {
+          ...page([first]),
+          cursor: {
+            epoch      : 'remote-epoch',
+            messageCid : 'different-cid',
+            position   : '1',
+            streamId   : 'remote-stream',
+          },
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      fixture.send.resolves(testCase.reply);
+      await expect(processor.consume(target())).rejects.toThrow(testCase.detail);
+    }
+
+    expect(fixture.apply.notCalled).toBe(true);
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+  });
+
+  it('should reject invalid inline data before retaining it', async () => {
     const entry = await feedEntry(missingBodyMessage(), 1);
     entry.encodedData = Buffer.from('wrong-bytes').toString('base64url');
     const fixture = fakeAgent(page([entry]));
@@ -246,6 +353,15 @@ describe('SyncNextPullPage', () => {
       .rejects.toThrow('data CID');
 
     expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+
+    const nonRecord = await feedEntry(protocolMessage('unexpected-data'), 1);
+    nonRecord.encodedData = Buffer.from('unexpected').toString('base64url');
+    fixture.send.resolves(page([nonRecord]));
+    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
+      .rejects.toThrow('non-RecordsWrite');
+
+    expect(fixture.apply.notCalled).toBe(true);
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
   });
 
@@ -324,6 +440,27 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
   });
 
+  it('should not retain quarantine encrypted after its caller becomes stale', async () => {
+    const root = await feedEntry(missingBodyMessage(), 1);
+    const fixture = fakeAgent(page([root]));
+    await createLink();
+    let current = true;
+    fixture.encrypt.callsFake(async ({ plaintext }: { plaintext: Uint8Array }): Promise<string> => {
+      current = false;
+      return Buffer.from(plaintext).toString('base64url');
+    });
+
+    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(
+      target(),
+      (): boolean => current,
+    );
+
+    expect(result).toEqual({ kind: 'aborted' });
+    expect(fixture.encrypt.calledOnce).toBe(true);
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+  });
+
   it('should return stale when its exact link is absent or replaced before commit', async () => {
     const root = await feedEntry(protocolMessage('stale'), 1);
     const fixture = fakeAgent(page([root]));
@@ -380,6 +517,36 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
   });
 
+  it('should reject malformed or oversized successful pages before admission', async () => {
+    const fixture = fakeAgent({
+      cursor  : { epoch: 'remote-epoch', position: '100', streamId: 'remote-stream' },
+      drained : true,
+      status  : { code: 200, detail: 'OK' },
+    });
+    await createLink();
+    const processor = new SyncNextPullPage(fixture.agent, ledger);
+
+    await expect(processor.consume(target())).rejects.toThrow('omitted its entries array');
+
+    fixture.send.resolves({ ...page([]), drained: undefined });
+    await expect(processor.consume(target())).rejects.toThrow('requires a boolean drained value');
+
+    fixture.send.resolves({ ...page([]), drained: 'true' } as unknown as MessagesQueryReply);
+    await expect(processor.consume(target())).rejects.toThrow('requires a boolean drained value');
+
+    const oversized = Array.from({ length: 101 }, (_, index): MessagesQueryReplyEntry => ({
+      isLatestBaseState : true,
+      message           : protocolMessage(`oversized-${index}`),
+      messageCid        : `cid-${index}`,
+      seq               : String(index + 1),
+    }));
+    fixture.send.resolves(page(oversized));
+    await expect(processor.consume(target())).rejects.toThrow('101 entries; maximum is 100');
+
+    expect(fixture.apply.notCalled).toBe(true);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+  });
+
   it('should reject failed queries and invalid cursor movement without changing progress', async () => {
     const first = await feedEntry(protocolMessage('first'), 1);
     const fixture = fakeAgent(page([first]));
@@ -401,6 +568,9 @@ describe('SyncNextPullPage', () => {
 
     fixture.send.resolves(page([], false, '1'));
     await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
+
+    fixture.send.resolves(page([first], true, '2'));
+    await expect(processor.consume(target())).rejects.toThrow('behind its checkpoint');
 
     fixture.send.resolves(page([first], true));
     await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');

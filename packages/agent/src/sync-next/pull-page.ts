@@ -3,6 +3,7 @@ import type { SyncMessageEntry } from '../sync-messages.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type {
+  GenericMessage,
   MessagesQueryReply,
   MessagesQueryReplyEntry,
   ProgressToken,
@@ -11,22 +12,35 @@ import type { SyncNextLinkIdentity, SyncNextQuarantineInput, SyncNextSourceRecei
 
 import { admitClosure } from '../sync-admit-closure.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
+import { orderMessagesForAdmission } from '../sync-admission-order.js';
 import { queryRemoteMessageFeed } from '../sync-messages.js';
 import { sealSyncNextQuarantinePayload } from './quarantine-codec.js';
 import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
-import { compareSyncNextPosition, syncNextLinkIdentity } from './ledger-key.js';
+import { compareSyncNextPosition, isValidSyncNextToken, syncNextLinkIdentity } from './ledger-key.js';
 
 const PULL_PAGE_SIZE = 100;
 
 type PreparedPage = {
-  admissionEntries: SyncMessageEntry[];
+  entries: PreparedPageEntry[];
   pageReceipts: SyncNextSourceReceipt[];
+  rootEntries: SyncMessageEntry[];
+};
+
+type PreparedPageEntry = {
+  entry: MessagesQueryReplyEntry;
+  message: GenericMessage;
+  receipt: SyncNextSourceReceipt;
 };
 
 type ClassifiedPage = {
   materializedCids: Set<string>;
   quarantine: SyncNextQuarantineInput[];
   settled: SyncNextSourceReceipt[];
+};
+
+type SuccessfulPage = {
+  drained: boolean;
+  entries: MessagesQueryReplyEntry[];
 };
 
 export type SyncNextPullPageResult =
@@ -63,7 +77,7 @@ export class SyncNextPullPage {
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
-    SyncNextPullPage.assertSuccessfulPage(reply, target);
+    const { drained, entries } = SyncNextPullPage.successfulPage(reply, target);
 
     const handledThrough = reply.cursor;
     if (handledThrough === undefined) {
@@ -71,27 +85,25 @@ export class SyncNextPullPage {
         `SyncNextPullPage: ${target.did} -> ${target.dwnUrl} returned no cursor for a successful page.`,
       );
     }
-    const entries = reply.entries ?? [];
-    SyncNextPullPage.assertCursorProgress(link.pullHandledThrough, handledThrough, reply.drained === true, entries.length);
-    const { admissionEntries, pageReceipts } = await SyncNextPullPage.preparePage(handledThrough, entries);
+    SyncNextPullPage.assertCursorProgress(link.pullHandledThrough, handledThrough, drained, entries.length);
+    const prepared = await SyncNextPullPage.preparePage(
+      link.pullHandledThrough, handledThrough, entries,
+    );
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
     const classified = await this.classifyPage(
-      target, identity, entries, pageReceipts, admissionEntries, shouldContinue,
+      target, identity, prepared.entries, prepared.rootEntries, shouldContinue,
     );
     if (classified === undefined) {
       return { kind: 'aborted' };
     }
 
-    if (!shouldContinue()) {
-      return { kind: 'aborted' };
-    }
     const committed = await this._ledger.commitPullPage(link, {
       handledThrough,
-      pageReceipts,
-      quarantine : classified.quarantine,
-      settled    : classified.settled,
+      pageReceipts : prepared.pageReceipts,
+      quarantine   : classified.quarantine,
+      settled      : classified.settled,
     });
     if (!committed) {
       return { kind: 'stale' };
@@ -99,7 +111,7 @@ export class SyncNextPullPage {
 
     return {
       handledThrough,
-      hasMore          : reply.drained !== true,
+      hasMore          : !drained,
       kind             : 'committed',
       materializedCids : [...classified.materializedCids],
       quarantined      : classified.quarantine.length,
@@ -126,9 +138,8 @@ export class SyncNextPullPage {
   private async classifyPage(
     target: SyncTarget,
     identity: SyncNextLinkIdentity,
-    entries: readonly MessagesQueryReplyEntry[],
-    pageReceipts: readonly SyncNextSourceReceipt[],
-    admissionEntries: SyncMessageEntry[],
+    entries: PreparedPageEntry[],
+    rootEntries: SyncMessageEntry[],
     shouldContinue: () => boolean,
   ): Promise<ClassifiedPage | undefined> {
     const classified: ClassifiedPage = {
@@ -136,16 +147,14 @@ export class SyncNextPullPage {
       quarantine       : [],
       settled          : [],
     };
-    for (let index = 0; index < entries.length; index++) {
-      const entry = entries[index];
-      const receipt = pageReceipts[index];
+    for (const { entry, receipt } of orderMessagesForAdmission(entries)) {
       const outcome = await admitClosure(entry.messageCid, {
         agent              : this._agent,
         did                : target.did,
         dwnUrl             : target.dwnUrl,
         delegateDid        : target.delegateDid,
         permissionGrantIds : target.permissionGrantIds,
-        prefetched         : admissionEntries,
+        prefetched         : rootEntries,
         remoteHydration    : 'defer',
         scope              : target.scope,
         shouldContinue,
@@ -174,62 +183,109 @@ export class SyncNextPullPage {
     return classified;
   }
 
+  /** Validate the untrusted page before admission; the ledger rechecks these receipts at commit. */
   private static async preparePage(
+    previous: ProgressToken | undefined,
     cursor: ProgressToken,
     entries: readonly MessagesQueryReplyEntry[],
   ): Promise<PreparedPage> {
-    const admissionEntries: SyncMessageEntry[] = [];
+    const preparedEntries: PreparedPageEntry[] = [];
     const pageReceipts: SyncNextSourceReceipt[] = [];
+    const rootEntries: SyncMessageEntry[] = [];
+    const positions = new Set<string>();
     for (const entry of entries) {
-      pageReceipts.push({
-        messageCid : entry.messageCid,
-        source     : {
-          epoch      : cursor.epoch,
-          messageCid : entry.messageCid,
-          position   : entry.seq,
-          streamId   : cursor.streamId,
-        },
-      });
-      if (entry.message === undefined || await Message.getCid(entry.message) !== entry.messageCid) {
-        throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} failed CID verification.`);
-      }
-      if (entry.initialWrite !== undefined) {
-        admissionEntries.push({
-          isLatestBaseState  : false,
-          message            : entry.initialWrite,
-          verifiedMessageCid : await Message.getCid(entry.initialWrite),
-        });
-      }
-
-      const bufferedData = await SyncNextPullPage.verifyInlineData(entry);
-      admissionEntries.push({
-        ...(bufferedData === undefined ? {} : { bufferedData }),
-        isLatestBaseState  : entry.isLatestBaseState,
-        message            : entry.message,
-        verifiedMessageCid : entry.messageCid,
-      });
+      const receipt = SyncNextPullPage.sourceReceipt(previous, cursor, entry, positions);
+      const admissionEntry = await SyncNextPullPage.prepareAdmissionEntry(entry);
+      rootEntries.push(admissionEntry);
+      pageReceipts.push(receipt);
+      preparedEntries.push({ entry, message: admissionEntry.message, receipt });
     }
-    return { admissionEntries, pageReceipts };
+    SyncNextPullPage.assertCursorReceipt(cursor, pageReceipts);
+    return { entries: preparedEntries, pageReceipts, rootEntries };
   }
 
-  private static async verifyInlineData(entry: MessagesQueryReplyEntry): Promise<Uint8Array | undefined> {
+  private static sourceReceipt(
+    previous: ProgressToken | undefined,
+    cursor: ProgressToken,
+    entry: MessagesQueryReplyEntry,
+    positions: Set<string>,
+  ): SyncNextSourceReceipt {
+    if (
+      typeof entry.messageCid !== 'string' ||
+      typeof entry.seq !== 'string' ||
+      typeof entry.isLatestBaseState !== 'boolean'
+    ) {
+      throw new TypeError('SyncNextPullPage: feed entry has invalid source metadata.');
+    }
+    const source: ProgressToken = {
+      epoch      : cursor.epoch,
+      messageCid : entry.messageCid,
+      position   : entry.seq,
+      streamId   : cursor.streamId,
+    };
+    if (!isValidSyncNextToken(source) || compareSyncNextPosition(source, cursor) > 0) {
+      throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} has an invalid source position.`);
+    }
+    if (previous !== undefined && compareSyncNextPosition(source, previous) <= 0) {
+      throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} is behind its checkpoint.`);
+    }
+    if (positions.has(entry.seq)) {
+      throw new Error(`SyncNextPullPage: feed page repeats source position ${entry.seq}.`);
+    }
+    positions.add(entry.seq);
+    return { messageCid: entry.messageCid, source };
+  }
+
+  private static async prepareAdmissionEntry(entry: MessagesQueryReplyEntry): Promise<SyncMessageEntry> {
+    const message = entry.message;
+    if (message === undefined || await Message.getCid(message) !== entry.messageCid) {
+      throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} failed CID verification.`);
+    }
+    const bufferedData = await SyncNextPullPage.verifyInlineData(entry, message);
+    return {
+      ...(bufferedData === undefined ? {} : { bufferedData }),
+      isLatestBaseState  : entry.isLatestBaseState,
+      message,
+      verifiedMessageCid : entry.messageCid,
+    };
+  }
+
+  private static assertCursorReceipt(
+    cursor: ProgressToken,
+    pageReceipts: readonly SyncNextSourceReceipt[],
+  ): void {
+    if (cursor.messageCid !== undefined && !pageReceipts.some(receipt =>
+      receipt.source.position === cursor.position && receipt.messageCid === cursor.messageCid
+    )) {
+      throw new Error('SyncNextPullPage: query cursor CID does not identify its page entry.');
+    }
+  }
+
+  private static async verifyInlineData(
+    entry: MessagesQueryReplyEntry,
+    message: GenericMessage,
+  ): Promise<Uint8Array | undefined> {
     if (entry.encodedData === undefined) {
       return undefined;
     }
-    const data = Encoder.base64UrlToBytes(entry.encodedData);
-    if (entry.message !== undefined && Records.isRecordsWrite(entry.message)) {
-      const dataCid = await Cid.computeDagPbCidFromBytes(data);
-      RecordsWrite.validateDataIntegrity(
-        entry.message.descriptor.dataCid,
-        entry.message.descriptor.dataSize,
-        dataCid,
-        data.byteLength,
-      );
+    if (!Records.isRecordsWrite(message)) {
+      throw new TypeError(`SyncNextPullPage: non-RecordsWrite entry ${entry.messageCid} included record data.`);
     }
+    const data = Encoder.base64UrlToBytes(entry.encodedData);
+    const dataCid = await Cid.computeDagPbCidFromBytes(data);
+    RecordsWrite.validateDataIntegrity(
+      message.descriptor.dataCid,
+      message.descriptor.dataSize,
+      dataCid,
+      data.byteLength,
+    );
     return data;
   }
 
-  private static assertSuccessfulPage(reply: MessagesQueryReply, target: SyncTarget): void {
+  private static successfulPage(
+    reply: MessagesQueryReply,
+    target: SyncTarget,
+  ): SuccessfulPage {
     if (reply.status.code !== 200) {
       throw new Error(
         `SyncNextPullPage: query failed for ${target.did} -> ${target.dwnUrl}: ` +
@@ -245,6 +301,18 @@ export class SyncNextPullPage {
         `${target.authorization.roleRecordId}.`,
       );
     }
+    if (!Array.isArray(reply.entries)) {
+      throw new TypeError('SyncNextPullPage: successful query omitted its entries array.');
+    }
+    if (typeof reply.drained !== 'boolean') {
+      throw new TypeError('SyncNextPullPage: successful query requires a boolean drained value.');
+    }
+    if (reply.entries.length > PULL_PAGE_SIZE) {
+      throw new RangeError(
+        `SyncNextPullPage: query returned ${reply.entries.length} entries; maximum is ${PULL_PAGE_SIZE}.`,
+      );
+    }
+    return { drained: reply.drained, entries: reply.entries };
   }
 
   private static assertCursorProgress(
@@ -253,6 +321,9 @@ export class SyncNextPullPage {
     drained: boolean,
     entryCount: number,
   ): void {
+    if (!isValidSyncNextToken(next)) {
+      throw new Error('SyncNextPullPage: query returned an invalid cursor.');
+    }
     if (previous === undefined) {
       return;
     }

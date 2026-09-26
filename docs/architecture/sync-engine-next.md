@@ -61,9 +61,13 @@ place.
 
 One pull invocation queries at most 100 remote feed roots after the link's
 durable token. It captures every raw source receipt before classification,
-verifies message CIDs and inline record data for the entire page, and then
-admits roots using only received or already-local support. Missing bodies and
-dependencies do not trigger point reads during intake.
+verifies feed-root CIDs and inline record data for the entire page, and then
+admits roots using only received or already-local support. Known feed-root
+dependencies are ordered before their dependents, including a parent whose
+completion moved behind its child. Missing bodies and dependencies not resolved
+from feed roots enter quarantine without point reads; the retry slice must
+demonstrate their eventual convergence. A successful reply without an entries
+array, cursor, or boolean `drained` value is rejected before admission.
 
 Every returned root is either settled or encrypted into quarantine before the
 page token advances. A later independent root in the same page is still

@@ -16,6 +16,7 @@ export default defineConfig({
       'tests/sync-durable-feed-reconciler.spec.ts',
       'tests/sync-link-recovery-coordinator.spec.ts',
       'tests/sync-next-ledger-store.spec.ts',
+      'tests/sync-next-pull-page-integration.spec.ts',
       'tests/sync-next-pull-page.spec.ts',
       'tests/sync-next-quarantine-codec.spec.ts',
       'tests/sync-messages.spec.ts',
