@@ -1,5 +1,18 @@
 # @enbox/auth
 
+## 0.6.95
+
+### Patch Changes
+
+- [#1726](https://github.com/enboxorg/enbox/pull/1726) [`0bcd330`](https://github.com/enboxorg/enbox/commit/0bcd330cb59649e6fcf3a858f636d286a9c26bf3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add immutable per-instance DID DHT gateway configuration across creation, resolution, publication, auth, anonymous reads, and browser DRLs, and keep failed DID updates out of local cache and storage.
+
+- Updated dependencies [[`05b4177`](https://github.com/enboxorg/enbox/commit/05b41776e92bd1f42462726d7a7d4bb2a0fcb9de), [`d435c4f`](https://github.com/enboxorg/enbox/commit/d435c4fadbeb64aae824a4c1f0497ebc49c378b3), [`da63515`](https://github.com/enboxorg/enbox/commit/da6351568741aa6e5c194eb0600e3f0ab2a1185e), [`0bcd330`](https://github.com/enboxorg/enbox/commit/0bcd330cb59649e6fcf3a858f636d286a9c26bf3), [`aeee9f2`](https://github.com/enboxorg/enbox/commit/aeee9f272825812e6fd0b6ba805b4b9099f20ad2), [`8f06093`](https://github.com/enboxorg/enbox/commit/8f0609317f1097e922db0b8a903ecf3454732827)]:
+  - @enbox/dids@0.1.13
+  - @enbox/dwn-sdk-js@0.4.28
+  - @enbox/agent@0.8.49
+  - @enbox/connect@0.1.24
+  - @enbox/dwn-clients@0.4.36
+
 ## 0.6.94
 
 ### Patch Changes
