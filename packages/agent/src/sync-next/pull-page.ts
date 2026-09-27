@@ -8,13 +8,12 @@ import type {
   MessagesQueryReplyEntry,
   ProgressToken,
 } from '@enbox/dwn-sdk-js';
-import type { SyncNextLinkIdentity, SyncNextQuarantineInput, SyncNextSourceReceipt } from './types.js';
+import type { SyncNextQuarantineInput, SyncNextSourceReceipt } from './types.js';
 
 import { admitClosure } from '../sync-admit-closure.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { orderMessagesForAdmission } from '../sync-admission-order.js';
 import { queryRemoteMessageFeed } from '../sync-messages.js';
-import { sealSyncNextQuarantinePayload } from './quarantine-codec.js';
 import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { compareSyncNextPosition, isValidSyncNextToken, syncNextLinkIdentity } from './ledger-key.js';
 
@@ -64,8 +63,7 @@ export class SyncNextPullPage {
     target: SyncTarget,
     shouldContinue: () => boolean = (): boolean => true,
   ): Promise<SyncNextPullPageResult> {
-    const identity = syncNextLinkIdentity(target);
-    const link = await this._ledger.getLink(identity);
+    const link = await this._ledger.getLink(syncNextLinkIdentity(target));
     if (link === undefined) {
       return { kind: 'stale' };
     }
@@ -93,7 +91,7 @@ export class SyncNextPullPage {
       return { kind: 'aborted' };
     }
     const classified = await this.classifyPage(
-      target, identity, prepared.entries, prepared.rootEntries, shouldContinue,
+      target, prepared.entries, prepared.rootEntries, shouldContinue,
     );
     if (classified === undefined) {
       return { kind: 'aborted' };
@@ -137,7 +135,6 @@ export class SyncNextPullPage {
 
   private async classifyPage(
     target: SyncTarget,
-    identity: SyncNextLinkIdentity,
     entries: PreparedPageEntry[],
     rootEntries: SyncMessageEntry[],
     shouldContinue: () => boolean,
@@ -170,15 +167,7 @@ export class SyncNextPullPage {
         continue;
       }
 
-      const encryptedPayload = await sealSyncNextQuarantinePayload(this._agent.vault, {
-        identity,
-        messageCid : receipt.messageCid,
-        source     : receipt.source,
-      }, entry);
-      if (!shouldContinue()) {
-        return undefined;
-      }
-      classified.quarantine.push({ encryptedPayload, ...receipt });
+      classified.quarantine.push({ entry, ...receipt });
     }
     return classified;
   }
