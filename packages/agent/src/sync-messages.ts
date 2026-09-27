@@ -55,6 +55,8 @@ const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
 /** Entry type for fetched messages with optional data stream and retry buffer. */
 export type SyncMessageEntry = {
   message: GenericMessage;
+  /** CID already verified by the boundary that received this message. */
+  verifiedMessageCid?: string;
   dataStream?: ReadableStream<Uint8Array>;
   dataStreamConsumed?: boolean;
   dataStreamFactory?: () => Promise<ReadableStream<Uint8Array> | undefined>;
