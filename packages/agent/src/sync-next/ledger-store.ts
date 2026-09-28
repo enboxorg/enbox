@@ -475,11 +475,9 @@ export class SyncNextLedgerStore {
       row.lastAttemptAt, row.messageCid, source?.epoch, source?.position, source?.streamId,
     ];
     if (!strings.every(item => typeof item === 'string') ||
-        !Number.isSafeInteger(row.entrySize) || Number(row.entrySize) < 0) {
+        typeof row.entrySize !== 'number' || !Number.isSafeInteger(row.entrySize) ||
+        row.entrySize < 0 || row.entrySize > SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES) {
       throw new TypeError('SyncNextLedgerStore: quarantine row has an invalid schema.');
-    }
-    if (Number(row.entrySize) > SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES) {
-      throw new Error('SyncNextLedgerStore: stored quarantine entry exceeds its per-row limit.');
     }
     return row as SyncNextQuarantineEntry;
   }

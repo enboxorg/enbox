@@ -92,8 +92,10 @@ for resource accounting. Retry must validate the retained message and data
 again before DWN admission.
 
 No production runtime wrote the earlier encrypted row format. The first pull
-commit for each link still rejects such a row with instructions to clear the
-complete next-engine ledger, so its checkpoint cannot advance without it.
+commit for an existing exact link checks quarantine owned by that exact key and
+rejects an encrypted row with instructions to clear the complete next-engine
+ledger. Quarantine retained under a retired link is checked when recovery reads
+that central queue; a different replacement link advances independently.
 
 An outbound obligation retains the source receipt and retry outcome. It does
 not duplicate the message or body; a later delivery attempt reads those from
