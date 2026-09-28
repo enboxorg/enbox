@@ -132,6 +132,58 @@ describe('websocket api', function () {
     expect(readBytes).toEqual(dataBytes);
   });
 
+  it('completes a stored ancestry-only write with the same CID over HTTP', async function () {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    const data = new Uint8Array(31_000).fill(9);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const client = new HttpDwnRpcClient();
+    const request = {
+      dwnUrl    : httpUrl,
+      targetDid : alice.did,
+      message   : recordsWrite.toJSON(),
+    };
+
+    const ancestry = await client.applyReplicatedMessage(request);
+    expect(ancestry).toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+
+    const completion = await client.applyReplicatedMessage({ ...request, data: DataStream.fromBytes(data) });
+    expect(completion.kind).toBe('Applied');
+    const recordsRead = await RecordsRead.create({
+      signer : alice.signer,
+      filter : { recordId: recordsWrite.message.recordId },
+    });
+    const readReply = await dwn.processMessage(alice.did, recordsRead.toJSON());
+    expect(readReply.status.code).toBe(200);
+    expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(data);
+  });
+
+  it('completes a stored ancestry-only write with the same CID over WebSocket', async function () {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    const data = new Uint8Array([9, 10, 11, 12]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const client = new WebSocketDwnRpcClient();
+    const request = {
+      dwnUrl    : wsUrl,
+      targetDid : alice.did,
+      message   : recordsWrite.toJSON(),
+    };
+
+    const ancestry = await client.applyReplicatedMessage({ ...request, ancestryOnly: true });
+    expect(ancestry).toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+
+    const completion = await client.applyReplicatedMessage({ ...request, data: DataStream.fromBytes(data) });
+    expect(completion.kind).toBe('Applied');
+    const recordsRead = await RecordsRead.create({
+      signer : alice.signer,
+      filter : { recordId: recordsWrite.message.recordId },
+    });
+    const readReply = await dwn.processMessage(alice.did, recordsRead.toJSON());
+    expect(readReply.status.code).toBe(200);
+    expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(data);
+  });
+
   it('applies replicated RecordsWrite messages with large data over WebSocket', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);

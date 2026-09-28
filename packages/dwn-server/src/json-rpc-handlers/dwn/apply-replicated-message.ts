@@ -9,7 +9,8 @@ import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodNam
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { enforceQuota, enforceTenantRateLimit, validateInboundDwnMessageTransport } from './inbound-message.js';
 
-type StoredReplayState = 'complete' | 'missing-data' | 'not-stored';
+/** `stored` adds no body bytes; it does not imply that the write is queryable. */
+type StoredReplayState = 'stored' | 'completable' | 'missing-data' | 'not-stored' | 'superseded';
 
 export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   dwnRequest,
@@ -69,7 +70,7 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     }
 
     const storedReplayState = await getStoredReplayState(context, target, message, hasInboundData);
-    if (storedReplayState === 'missing-data' && await hasDifferentStoredLatestRecordState(context, target, message)) {
+    if (storedReplayState === 'superseded') {
       await dataStream?.cancel().catch((): void => {
         // A proven obsolete replay does not need its inbound body.
       });
@@ -83,7 +84,7 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     const quotaResult = await enforceApplyReplicatedMessageQuota({
       context,
       hasInboundData,
-      isFullyStoredDuplicate: storedReplayState === 'complete',
+      storedReplayState,
       message,
       target,
     });
@@ -257,17 +258,17 @@ function capDataStreamAtDescriptorSize(
 async function enforceApplyReplicatedMessageQuota({
   context,
   hasInboundData,
-  isFullyStoredDuplicate,
+  storedReplayState,
   message,
   target,
 }: {
   context: Parameters<JsonRpcHandler>[1];
   hasInboundData: boolean;
-  isFullyStoredDuplicate: boolean;
+  storedReplayState: StoredReplayState;
   message: GenericMessage;
   target: string;
 }): Promise<ReturnType<typeof validateInboundDwnMessageTransport>> {
-  if (isFullyStoredDuplicate) {
+  if (storedReplayState === 'stored') {
     return undefined;
   }
 
@@ -280,7 +281,10 @@ async function enforceApplyReplicatedMessageQuota({
     const storageBytesToAdd = hasInboundData
       ? (message.descriptor as { dataSize?: number }).dataSize ?? 0
       : 0;
-    return enforceQuota(target, message, context, { storageBytesToAdd });
+    return enforceQuota(target, message, context, {
+      storageBytesToAdd,
+      skipMessageCount: storedReplayState === 'completable',
+    });
   }
 
   return undefined;
@@ -298,9 +302,11 @@ async function getStoredReplayState(
     return 'not-stored';
   }
 
-  return !hasInboundData || await storedRecordsWriteHasData(context, target, existingMessage)
-    ? 'complete'
-    : 'missing-data';
+  if (!hasInboundData || await storedRecordsWriteHasData(context, target, existingMessage)) {
+    return 'stored';
+  }
+
+  return classifyStoredWriteWithoutData(context, target, existingMessage, messageCid);
 }
 
 async function storedRecordsWriteHasData(
@@ -339,35 +345,40 @@ async function storedRecordsWriteHasData(
   return storedData !== undefined;
 }
 
-/** Whether the DWN's committed latest-state index proves that this stored data-less write is obsolete. */
-async function hasDifferentStoredLatestRecordState(
+/** Distinguishes a sole ancestry write from a committed but body-missing or superseded write. */
+async function classifyStoredWriteWithoutData(
   context: Parameters<JsonRpcHandler>[1],
   tenant: string,
   message: GenericMessage,
-): Promise<boolean> {
+  messageCid: string,
+): Promise<StoredReplayState> {
   if (
     message.descriptor.interface !== DwnInterfaceName.Records ||
     message.descriptor.method !== DwnMethodName.Write
   ) {
-    return false;
+    return 'missing-data';
   }
 
   const recordId = (message as { recordId?: unknown }).recordId;
   if (typeof recordId !== 'string') {
-    return false;
+    return 'missing-data';
   }
 
   const { messages } = await context.dwn.storage.messageStore.query(tenant, [{
     interface         : DwnInterfaceName.Records,
     isLatestBaseState : true,
     recordId,
-  }]);
+  }], undefined, { limit: 2 });
   if (messages.length === 0) {
-    return false;
+    // completeData rechecks that this is still the sole ancestry row under the store write lock.
+    return await RecordsWrite.isInitialWrite(message) ? 'completable' : 'missing-data';
   }
 
-  const messageCid = await Cid.computeCid(message);
-  return await Cid.computeCid(messages[0]) !== messageCid;
+  if (messages.length === 1 && await Cid.computeCid(messages[0]) !== messageCid) {
+    return 'superseded';
+  }
+
+  return 'missing-data';
 }
 
 function recordApplyActivity(

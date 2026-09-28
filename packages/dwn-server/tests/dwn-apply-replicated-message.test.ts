@@ -749,50 +749,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
-  it('should enforce quota before a data-bearing replay of a dataless stored write', async () => {
-    const alice = await TestDataGenerator.generateDidKeyPersona();
-    const data = new Uint8Array([9, 10, 11, 12]);
-    const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
-    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
-      message : recordsWrite.toJSON(),
-      target  : alice.did,
-    });
-    const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-
-    const datalessApply = await handleDwnApplyReplicatedMessage(
-      dwnRequest,
-      {
-        dwn,
-        transport: 'http',
-      },
-    );
-    expect(datalessApply.jsonRpcResponse.error).toBeUndefined();
-    expect((datalessApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
-
-    const completingApply = await handleDwnApplyReplicatedMessage(
-      dwnRequest,
-      {
-        dwn,
-        transport  : 'http',
-        dataStream,
-        adminStore : {
-          getTenantMessageCount : async (): Promise<number> => 1,
-          getTenantStorageSize  : async (): Promise<number> => 0,
-        } as any,
-        config: {
-          quotaMaxMessages     : 1,
-          quotaMaxStorageBytes : 0,
-        } as any,
-      },
-    );
-
-    expect(completingApply.jsonRpcResponse.error).toBeDefined();
-    expect(completingApply.jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
-    await dwn.close();
-  });
-
-  it('should defer rather than falsely acknowledge data for an ancestry-only stored CID', async () => {
+  it('completes stored ancestry data at the message and storage quota limits', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([9, 10, 11, 12]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
@@ -814,6 +771,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
         kind         : 'Applied',
         ancestryOnly : true,
       }));
+      const messageCount = await adminStore.getTenantMessageCount(alice.did);
 
       const replay = await handleDwnApplyReplicatedMessage(dwnRequest, {
         dwn,
@@ -821,14 +779,90 @@ describe('handleDwnApplyReplicatedMessage', () => {
         dataStream : DataStream.fromBytes(data),
         adminStore,
         config     : {
-          quotaMaxMessages     : 100,
+          quotaMaxMessages     : messageCount,
           quotaMaxStorageBytes : data.length,
         } as any,
       });
 
       expect(replay.jsonRpcResponse.error).toBeUndefined();
-      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Deferred', reason: 'storage' });
+      expect(replay.jsonRpcResponse.result.result).toEqual(expect.objectContaining({ kind: 'Applied' }));
+      expect(await adminStore.getTenantMessageCount(alice.did)).toBe(messageCount);
+      expect(await adminStore.getTenantStorageSize(alice.did)).toBe(data.length);
+      const recordsRead = await RecordsRead.create({
+        filter : { recordId: recordsWrite.message.recordId },
+        signer : Jws.createSigner(alice),
+      });
+      const readReply = await dwn.processMessage(alice.did, recordsRead.message);
+      expect(readReply.status.code).toBe(200);
+      expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(data);
+    } finally {
+      await dwn.close();
+      await adminStore.close();
+    }
+  });
+
+  it('rejects stored ancestry completion when the new body exceeds storage quota', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([9, 10, 11, 12]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn, dialect } = await getTestDwn();
+    const adminStore = AdminStore.createFromDialect(dialect, 0);
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      expect((await handleDwnApplyReplicatedMessage(request, { dwn, transport: 'http' })).jsonRpcResponse.result.result)
+        .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+
+      const replay = await handleDwnApplyReplicatedMessage(request, {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(data),
+        adminStore,
+        config     : {
+          quotaMaxMessages     : 100,
+          quotaMaxStorageBytes : data.length - 1,
+        } as any,
+      });
+
+      expect(replay.jsonRpcResponse.error?.message).toContain(DwnServerErrorCode.TenantStorageQuotaExceeded);
       expect(await adminStore.getTenantStorageSize(alice.did)).toBe(0);
+    } finally {
+      await dwn.close();
+      await adminStore.close();
+    }
+  });
+
+  it('rejects invalid body bytes without completing stored ancestry', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([9, 10, 11, 12]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      expect((await handleDwnApplyReplicatedMessage(request, { dwn, transport: 'http' })).jsonRpcResponse.result.result)
+        .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+
+      const replay = await handleDwnApplyReplicatedMessage(request, {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(new Uint8Array([1, 2, 3, 4])),
+      });
+
+      const result = replay.jsonRpcResponse.result.result as ReplicationApplyResult;
+      expect(result.kind).toBe('Invalid');
+      if (result.kind !== 'Invalid') {
+        throw new Error(`expected Invalid replication result, received ${result.kind}`);
+      }
+      expect(result.reason).toContain(DwnErrorCode.RecordsWriteDataCidMismatch);
       const recordsRead = await RecordsRead.create({
         filter : { recordId: recordsWrite.message.recordId },
         signer : Jws.createSigner(alice),
@@ -836,7 +870,38 @@ describe('handleDwnApplyReplicatedMessage', () => {
       expect((await dwn.processMessage(alice.did, recordsRead.message)).status.code).toBe(404);
     } finally {
       await dwn.close();
-      await adminStore.close();
+    }
+  });
+
+  it('defers an indexed write whose external body is unexpectedly missing', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array(31_000).fill(7);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      const initial = await handleDwnApplyReplicatedMessage(request, {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(data),
+      });
+      expect(initial.jsonRpcResponse.result.result).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+      await dwn.storage.dataStore.delete(alice.did, recordsWrite.message.recordId, recordsWrite.message.descriptor.dataCid);
+      const replay = await handleDwnApplyReplicatedMessage(request, {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(data),
+      });
+      expect(replay.jsonRpcResponse.error).toBeUndefined();
+      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Deferred', reason: 'storage' });
+    } finally {
+      await dwn.close();
     }
   });
 
