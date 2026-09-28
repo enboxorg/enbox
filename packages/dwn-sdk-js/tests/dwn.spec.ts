@@ -208,6 +208,21 @@ export function testDwnClass(): void {
           .toEqual({ kind: 'Duplicate' });
       });
 
+      it('does not prove external data whose stored size differs from its descriptor', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
+        expect((await dwn.processMessage(alice.did, message, { dataStream: DataStream.fromBytes(data) })).status.code).toBe(202);
+
+        sinon.stub(dataStore, 'get').resolves({
+          dataSize   : data.length - 1,
+          dataStream : DataStream.fromBytes(data),
+        });
+        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationProof: true }))
+          .toEqual({ kind: 'Duplicate' });
+      });
+
       it('keeps ordinary duplicate replay successful when proof stream cancellation fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
