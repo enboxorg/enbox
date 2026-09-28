@@ -94,8 +94,9 @@ async function retrySelectedRoot(
     return { freshEntries: [], kind: 'pending' };
   }
 
-  // A non-latest RecordsWrite can be freshly applied as ancestry without its body.
-  const rootWasCompleted = root.isLatestBaseState === true &&
+  // A fresh apply proves completion only when this attempt supplied the body.
+  const rootWasCompleted =
+    (root.bufferedData !== undefined || root.dataStreamFactory !== undefined) &&
     outcome.freshEntries.some(entry => entry.messageCid === selected.messageCid);
   if (recordsWriteRequiresData(root.message) && !rootWasCompleted) {
     return { freshEntries: outcome.freshEntries, kind: 'pending' };

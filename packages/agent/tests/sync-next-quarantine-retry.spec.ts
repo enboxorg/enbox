@@ -264,11 +264,12 @@ describe('retryOneQuarantinedRoot', () => {
     expect(fixture.apply.notCalled).toBe(true);
   });
 
-  it('reuses a retained inline body without a remote read', async () => {
+  it('settles a non-latest retained inline body after a fresh apply', async () => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
     const entry = {
       ...await feedEntry(generated.message, 1),
-      encodedData: Encoder.bytesToBase64Url(generated.dataBytes!),
+      encodedData       : Encoder.bytesToBase64Url(generated.dataBytes!),
+      isLatestBaseState : false,
     };
     const fixture = fakeAgent();
     await retain(target(), [entry]);
