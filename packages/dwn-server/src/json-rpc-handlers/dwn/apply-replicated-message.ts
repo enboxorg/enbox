@@ -81,6 +81,17 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       };
     }
 
+    if (storedReplayState === 'missing-data') {
+      await dataStream?.cancel().catch((): void => {
+        // No body is admitted for this stored state.
+      });
+      return {
+        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, {
+          result: { kind: 'Deferred', reason: 'storage' } satisfies ReplicationApplyResult,
+        }),
+      };
+    }
+
     const quotaResult = await enforceApplyReplicatedMessageQuota({
       context,
       hasInboundData,
@@ -90,17 +101,6 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     });
     if (quotaResult !== undefined) {
       return quotaResult;
-    }
-
-    if (storedReplayState === 'missing-data') {
-      await dataStream?.cancel().catch((): void => {
-        // The body is unnecessary for either settled or deferred replay.
-      });
-      return {
-        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, {
-          result: { kind: 'Deferred', reason: 'storage' } satisfies ReplicationApplyResult,
-        }),
-      };
     }
 
     const dataStreamForApply = getDataStreamForApply({ dataStream, encodedData, message });

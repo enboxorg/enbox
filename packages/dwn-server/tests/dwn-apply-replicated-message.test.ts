@@ -873,7 +873,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     }
   });
 
-  it('defers an indexed write whose external body is unexpectedly missing', async () => {
+  it('defers an indexed write with missing body even at the message quota', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array(31_000).fill(7);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
@@ -881,7 +881,8 @@ describe('handleDwnApplyReplicatedMessage', () => {
       message : recordsWrite.toJSON(),
       target  : alice.did,
     });
-    const { dwn } = await getTestDwn();
+    const { dwn, dialect } = await getTestDwn();
+    const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
@@ -892,16 +893,23 @@ describe('handleDwnApplyReplicatedMessage', () => {
       });
       expect(initial.jsonRpcResponse.result.result).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
+      const messageCount = await adminStore.getTenantMessageCount(alice.did);
       await dwn.storage.dataStore.delete(alice.did, recordsWrite.message.recordId, recordsWrite.message.descriptor.dataCid);
       const replay = await handleDwnApplyReplicatedMessage(request, {
         dwn,
         transport  : 'http',
         dataStream : DataStream.fromBytes(data),
+        adminStore,
+        config     : {
+          quotaMaxMessages     : messageCount,
+          quotaMaxStorageBytes : 0,
+        } as any,
       });
       expect(replay.jsonRpcResponse.error).toBeUndefined();
       expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Deferred', reason: 'storage' });
     } finally {
       await dwn.close();
+      await adminStore.close();
     }
   });
 
