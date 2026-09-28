@@ -39,7 +39,8 @@ export async function retryOneQuarantinedRoot({
   if (!shouldContinue()) {
     return { kind: 'aborted' };
   }
-  const selected = entries.sort(compareAttempts)[0];
+  entries.sort(compareAttempts);
+  const selected = entries[0];
   if (selected === undefined) {
     return { kind: 'empty' };
   }
@@ -172,5 +173,11 @@ function compareAttempts(left: SyncNextQuarantineEntry, right: SyncNextQuarantin
   }
   const leftKey = syncNextReceiptKey(left, left);
   const rightKey = syncNextReceiptKey(right, right);
-  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  if (leftKey < rightKey) {
+    return -1;
+  }
+  if (leftKey > rightKey) {
+    return 1;
+  }
+  return 0;
 }
