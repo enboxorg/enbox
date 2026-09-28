@@ -1,4 +1,4 @@
-import type { ProgressToken } from '@enbox/dwn-sdk-js';
+import type { MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { SyncAuthorization, SyncScope } from '../types/sync.js';
 
@@ -31,12 +31,13 @@ export type SyncNextSourceReceipt = {
 
 /** Exact-source inbound input retained after pull progress advances. */
 export type SyncNextQuarantineEntry = SyncNextLinkIdentity & SyncNextSourceReceipt & {
-  encryptedPayload: string;
+  entry: MessagesQueryReplyEntry;
+  entrySize: number;
   lastAttemptAt: string;
 };
 
 export type SyncNextQuarantineInput = SyncNextSourceReceipt & {
-  encryptedPayload: string;
+  entry: MessagesQueryReplyEntry;
 };
 
 /** Why one exact remote endpoint still owes a local feed entry. */

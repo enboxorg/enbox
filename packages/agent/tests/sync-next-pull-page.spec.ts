@@ -116,14 +116,10 @@ function page(
 function fakeAgent(reply: MessagesQueryReply): {
   agent: EnboxPlatformAgent;
   apply: sinon.SinonStub;
-  encrypt: sinon.SinonStub;
   prepare: sinon.SinonStub;
   send: sinon.SinonStub;
 } {
   const apply = sinon.stub().resolves({ kind: 'Applied' });
-  const encrypt = sinon.stub().callsFake(async ({ plaintext }: { plaintext: Uint8Array }): Promise<string> =>
-    Buffer.from(plaintext).toString('base64url')
-  );
   const prepare = sinon.stub().resolves({ message: protocolMessage('query') });
   const send = sinon.stub().resolves(reply);
   const agent = {
@@ -133,13 +129,8 @@ function fakeAgent(reply: MessagesQueryReply): {
     },
     processDwnRequest : prepare,
     rpc               : { sendDwnRequest: send },
-    vault             : {
-      decryptData: async ({ jwe }: { jwe: string }): Promise<Uint8Array> =>
-        Buffer.from(jwe, 'base64url'),
-      encryptData: encrypt,
-    },
   } as unknown as EnboxPlatformAgent;
-  return { agent, apply, encrypt, prepare, send };
+  return { agent, apply, prepare, send };
 }
 
 describe('SyncNextPullPage', () => {
@@ -168,7 +159,7 @@ describe('SyncNextPullPage', () => {
     });
   }
 
-  it('should quarantine a missing body, apply a later root, and commit every raw receipt', async () => {
+  it('should quarantine a missing body without a vault and commit every raw receipt', async () => {
     const missingBody = await feedEntry(missingBodyMessage(), 1);
     const independent = await feedEntry(protocolMessage('independent'), 2);
     const fixture = fakeAgent(page([missingBody, independent]));
@@ -190,6 +181,7 @@ describe('SyncNextPullPage', () => {
       { messageCid: independent.messageCid, source: { position: '2' } },
     ]);
     expect(await ledger.getQuarantineForLink(linkIdentity())).toMatchObject([{
+      entry      : missingBody,
       messageCid : missingBody.messageCid,
       source     : { position: '1' },
     }]);
@@ -245,21 +237,6 @@ describe('SyncNextPullPage', () => {
     expect(fixture.send.calledOnce).toBe(true);
     expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('2');
-  });
-
-  it('should stop the page before later admission when quarantine cannot be encrypted', async () => {
-    const missingBody = await feedEntry(missingBodyMessage(), 1);
-    const independent = await feedEntry(protocolMessage('independent'), 2);
-    const fixture = fakeAgent(page([missingBody, independent]));
-    fixture.encrypt.rejects(new Error('vault locked'));
-    await createLink();
-
-    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
-      .rejects.toThrow('vault locked');
-
-    expect(fixture.apply.notCalled).toBe(true);
-    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
   });
 
   it('should consume one non-drained page and report trailing work', async () => {
@@ -421,8 +398,9 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should stop after local admission without committing when its caller becomes stale', async () => {
-    const root = await feedEntry(protocolMessage('cancelled-after-apply'), 1);
-    const fixture = fakeAgent(page([root]));
+    const missingBody = await feedEntry(missingBodyMessage(), 1);
+    const root = await feedEntry(protocolMessage('cancelled-after-apply'), 2);
+    const fixture = fakeAgent(page([missingBody, root]));
     await createLink();
     let current = true;
     fixture.apply.callsFake(async (): Promise<{ kind: 'Applied' }> => {
@@ -437,26 +415,6 @@ describe('SyncNextPullPage', () => {
 
     expect(result).toEqual({ kind: 'aborted' });
     expect(fixture.apply.calledOnce).toBe(true);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
-  });
-
-  it('should not retain quarantine encrypted after its caller becomes stale', async () => {
-    const root = await feedEntry(missingBodyMessage(), 1);
-    const fixture = fakeAgent(page([root]));
-    await createLink();
-    let current = true;
-    fixture.encrypt.callsFake(async ({ plaintext }: { plaintext: Uint8Array }): Promise<string> => {
-      current = false;
-      return Buffer.from(plaintext).toString('base64url');
-    });
-
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(
-      target(),
-      (): boolean => current,
-    );
-
-    expect(result).toEqual({ kind: 'aborted' });
-    expect(fixture.encrypt.calledOnce).toBe(true);
     expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
   });

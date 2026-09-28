@@ -10,6 +10,7 @@ import type {
   SyncNextPullPageCommit,
   SyncNextPushPageCommit,
   SyncNextQuarantineEntry,
+  SyncNextQuarantineInput,
   SyncNextSourceReceipt,
 } from './types.js';
 
@@ -29,10 +30,12 @@ type LevelKey = string | Buffer | Uint8Array;
 type SyncNextDatabase = AbstractLevel<LevelKey>;
 type SyncNextBatchOperation = AbstractBatchOperation<SyncNextDatabase, string, string>;
 type SyncNextSparseEntry = SyncNextDeliveryObligation | SyncNextQuarantineEntry;
+type PreparedQuarantineInput = SyncNextQuarantineInput & { entrySize: number };
 
 const SYNC_NEXT_DEFAULT_MAX_DELIVERY_PER_LINK = 10_000;
 const SYNC_NEXT_DEFAULT_MAX_QUARANTINE_BYTES_PER_TENANT = 64 * 1024 * 1024;
 const SYNC_NEXT_DEFAULT_MAX_QUARANTINE_PER_TENANT = 10_000;
+const SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES = 1024 * 1024;
 
 type SyncNextLedgerStoreOptions = {
   maxDeliveryPerLink?: number;
@@ -47,6 +50,7 @@ type SyncNextLedgerStoreOptions = {
  * delivery obligations occupy sparse rows.
  */
 export class SyncNextLedgerStore {
+  private readonly _compatibleQuarantineLinks = new Set<string>();
   private readonly _delivery: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
   private readonly _links: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
   private readonly _lockNamespace: string;
@@ -148,12 +152,14 @@ export class SyncNextLedgerStore {
     commit: SyncNextPullPageCommit,
   ): Promise<boolean> {
     SyncNextLedgerStore.assertValidToken(commit.handledThrough, 'pull handled-through token');
+    const preparedQuarantine = commit.quarantine.map(SyncNextLedgerStore.prepareQuarantineInput);
     const key = syncNextLinkKey(queriedLink);
     return this.runMutation(async (): Promise<boolean> => {
       const link = await this.getValue<SyncNextLink>(this._links, key);
       if (link?.lifetimeId !== queriedLink.lifetimeId) {
         return false;
       }
+      await this.assertCompatibleQuarantine(link);
       if (!SyncNextLedgerStore.sameToken(link.pullHandledThrough, queriedLink.pullHandledThrough)) {
         return false;
       }
@@ -168,11 +174,14 @@ export class SyncNextLedgerStore {
       );
 
       const operations: SyncNextBatchOperation[] = [];
-      const quarantined = commit.quarantine.map(input => this.nextSparseState(link, input, {
-        encryptedPayload: input.encryptedPayload,
+      const quarantined = preparedQuarantine.map(input => this.nextSparseState(link, input, {
+        entry     : input.entry,
+        entrySize : input.entrySize,
       }));
       if (quarantined.length > 0) {
-        const retained = new Map((await this.getQuarantineForTenant(link.tenantDid)).map(
+        const retained = new Map((await this.readQuarantine(
+          this._quarantine.iterator(syncNextTenantRange(link.tenantDid)),
+        )).map(
           (entry): [string, SyncNextQuarantineEntry] => [syncNextReceiptKey(entry, entry), entry],
         ));
         for (const state of quarantined) {
@@ -252,11 +261,11 @@ export class SyncNextLedgerStore {
   }
 
   public async getQuarantineForLink(identity: SyncNextLinkIdentity): Promise<SyncNextQuarantineEntry[]> {
-    return this.readValues(this._quarantine.iterator(syncNextLinkRange(identity)));
+    return this.readQuarantine(this._quarantine.iterator(syncNextLinkRange(identity)));
   }
 
   public async getQuarantineForTenant(tenantDid: string): Promise<SyncNextQuarantineEntry[]> {
-    return this.readValues(this._quarantine.iterator(syncNextTenantRange(tenantDid)));
+    return this.readQuarantine(this._quarantine.iterator(syncNextTenantRange(tenantDid)));
   }
 
   public async getDeliveryForLink(identity: SyncNextLinkIdentity): Promise<SyncNextDeliveryObligation[]> {
@@ -272,6 +281,7 @@ export class SyncNextLedgerStore {
       const range = syncNextTenantRange(tenantDid);
       await this._links.clear(range);
       await Promise.all([this._delivery.clear(range), this._quarantine.clear(range)]);
+      this._compatibleQuarantineLinks.clear();
     });
   }
 
@@ -321,6 +331,7 @@ export class SyncNextLedgerStore {
     await this.runMutation(async (): Promise<void> => {
       await this._links.clear();
       await Promise.all([this._delivery.clear(), this._quarantine.clear()]);
+      this._compatibleQuarantineLinks.clear();
     });
   }
 
@@ -395,6 +406,20 @@ export class SyncNextLedgerStore {
     return values;
   }
 
+  private async readQuarantine(entries: AsyncIterable<[string, string]>): Promise<SyncNextQuarantineEntry[]> {
+    const rows = await this.readValues<unknown>(entries);
+    return rows.map(SyncNextLedgerStore.validateQuarantineAccounting);
+  }
+
+  /** One-time format check prevents an old encrypted row from outliving its checkpoint. */
+  private async assertCompatibleQuarantine(link: SyncNextLink): Promise<void> {
+    const key = syncNextLinkKey(link);
+    if (!this._compatibleQuarantineLinks.has(key)) {
+      await this.readQuarantine(this._quarantine.iterator(syncNextLinkRange(link)));
+      this._compatibleQuarantineLinks.add(key);
+    }
+  }
+
   /** Serialize ledger mutations that must not interleave with reset. */
   private runMutation<T>(operation: () => Promise<T>): Promise<T> {
     return runWithCrossContextLock(
@@ -408,7 +433,7 @@ export class SyncNextLedgerStore {
     let bytes = 0;
     for (const entry of entries) {
       count++;
-      bytes += entry.encryptedPayload.length;
+      bytes += entry.entrySize;
     }
     if (count > this._maxQuarantinePerTenant) {
       throw new Error(
@@ -420,6 +445,51 @@ export class SyncNextLedgerStore {
         `SyncNextLedgerStore: tenant quarantine byte capacity ${this._maxQuarantineBytesPerTenant} exceeded.`,
       );
     }
+  }
+
+  private static prepareQuarantineInput(input: SyncNextQuarantineInput): PreparedQuarantineInput {
+    const entry = structuredClone(input.entry);
+    if (entry.messageCid !== input.messageCid) {
+      throw new Error('SyncNextLedgerStore: quarantine entry CID does not match its receipt.');
+    }
+    if (entry.seq !== input.source.position) {
+      throw new Error('SyncNextLedgerStore: quarantine entry position does not match its receipt.');
+    }
+    return { ...input, entry, entrySize: SyncNextLedgerStore.serializedEntrySize(entry) };
+  }
+
+  /** Validate only fields used by the ledger; retry owns payload validation. */
+  private static validateQuarantineAccounting(value: unknown): SyncNextQuarantineEntry {
+    if (typeof value === 'object' && value !== null && 'encryptedPayload' in value) {
+      throw new Error(
+        'SyncNextLedgerStore: encrypted quarantine rows are obsolete; clear the complete sync-next ledger.',
+      );
+    }
+    if (typeof value !== 'object' || value === null) {
+      throw new TypeError('SyncNextLedgerStore: quarantine row has an invalid schema.');
+    }
+    const row = value as Partial<SyncNextQuarantineEntry>;
+    const source = row.source as Partial<ProgressToken> | undefined;
+    const strings = [
+      row.authorizationEpoch, row.projectionId, row.remoteEndpoint, row.tenantDid,
+      row.lastAttemptAt, row.messageCid, source?.epoch, source?.position, source?.streamId,
+    ];
+    if (!strings.every(item => typeof item === 'string') ||
+        typeof row.entrySize !== 'number' || !Number.isSafeInteger(row.entrySize) ||
+        row.entrySize < 0 || row.entrySize > SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES) {
+      throw new TypeError('SyncNextLedgerStore: quarantine row has an invalid schema.');
+    }
+    return row as SyncNextQuarantineEntry;
+  }
+
+  private static serializedEntrySize(entry: SyncNextQuarantineInput['entry']): number {
+    const size = new TextEncoder().encode(JSON.stringify(entry)).byteLength;
+    if (size > SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES) {
+      throw new Error(
+        `SyncNextLedgerStore: quarantine entry exceeds ${SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES} bytes.`,
+      );
+    }
+    return size;
   }
 
   private static validatePageCommit(

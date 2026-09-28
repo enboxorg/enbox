@@ -60,11 +60,6 @@ describe('SyncNextPullPage integration', () => {
         process.env.DID_DHT_GATEWAY_URI = gatewayUri;
       }
     }
-    sinon.stub(harness.agent.vault, 'encryptData').callsFake(
-      async ({ plaintext }: { plaintext: Uint8Array }): Promise<string> =>
-        Buffer.from(plaintext).toString('base64url')
-    );
-
     remoteDwn = await AgentDwnApi.createDwn({
       dataPath    : `__TESTDATA__/sync-next-pull-page-integration/remote-${crypto.randomUUID()}`,
       didResolver : harness.agent.did,
