@@ -78,8 +78,7 @@ async function retrySelectedRoot(
   if (target.authorization.kind === 'role') {
     return { freshEntries: [], kind: 'pending' };
   }
-  const prefetched = await prepareRetainedRoot(agent, target, selected);
-  const root = prefetched.at(-1)!;
+  const root = await prepareRetainedRoot(agent, target, selected);
   const outcome = await admitClosure(selected.messageCid, {
     agent,
     did                : target.did,
@@ -87,7 +86,7 @@ async function retrySelectedRoot(
     delegateDid        : target.delegateDid,
     permissionGrantIds : target.permissionGrantIds,
     permissionsApi     : agent.permissions,
-    prefetched,
+    prefetched         : [root],
     scope              : target.scope,
     shouldContinue,
   });
@@ -95,11 +94,10 @@ async function retrySelectedRoot(
     return { freshEntries: [], kind: 'pending' };
   }
 
-  const rootWasApplied = outcome.freshEntries.some(entry => entry.messageCid === selected.messageCid);
-  if (
-    recordsWriteRequiresData(root.message) &&
-    (root.isLatestBaseState !== true || !rootWasApplied)
-  ) {
+  // A non-latest RecordsWrite can be freshly applied as ancestry without its body.
+  const rootWasCompleted = root.isLatestBaseState === true &&
+    outcome.freshEntries.some(entry => entry.messageCid === selected.messageCid);
+  if (recordsWriteRequiresData(root.message) && !rootWasCompleted) {
     return { freshEntries: outcome.freshEntries, kind: 'pending' };
   }
   return { freshEntries: outcome.freshEntries, kind: 'settled' };
@@ -109,7 +107,7 @@ async function prepareRetainedRoot(
   agent: EnboxPlatformAgent,
   target: SyncTarget,
   row: SyncNextQuarantineEntry,
-): Promise<SyncMessageEntry[]> {
+): Promise<SyncMessageEntry> {
   const entry = row.entry;
   if (new TextEncoder().encode(JSON.stringify(entry)).byteLength !== row.entrySize ||
       entry.messageCid !== row.messageCid || entry.seq !== row.source.position ||
@@ -119,12 +117,10 @@ async function prepareRetainedRoot(
     throw new Error('SyncNextQuarantineRetry: retained entry does not match its durable receipt.');
   }
 
-  const prefetched: SyncMessageEntry[] = entry.initialWrite === undefined
-    ? []
-    : [{ message: entry.initialWrite, isLatestBaseState: false }];
   const root: SyncMessageEntry = {
-    isLatestBaseState : entry.isLatestBaseState,
-    message           : entry.message,
+    isLatestBaseState  : entry.isLatestBaseState,
+    message            : entry.message,
+    verifiedMessageCid : row.messageCid,
   };
   if (entry.encodedData !== undefined) {
     if (!Records.isRecordsWrite(entry.message)) {
@@ -146,8 +142,7 @@ async function prepareRetainedRoot(
     root.dataStreamFactory = (): Promise<ReadableStream<Uint8Array> | undefined> =>
       fetchRootData(agent, target, row.messageCid);
   }
-  prefetched.push(root);
-  return prefetched;
+  return root;
 }
 
 async function fetchRootData(

@@ -3,12 +3,11 @@ import type { GenericMessage, MessagesQueryReplyEntry, ProgressToken } from '@en
 import { Level } from 'level';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { Encoder, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, Encoder, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
-import type { SyncNextLink } from '../src/sync-next/types.js';
-import type { SyncNextQuarantineEntry } from '../src/sync-next/types.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
+import type { SyncNextLink, SyncNextQuarantineEntry } from '../src/sync-next/types.js';
 
 import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
@@ -265,6 +264,23 @@ describe('retryOneQuarantinedRoot', () => {
     expect(fixture.apply.notCalled).toBe(true);
   });
 
+  it('reuses a retained inline body without a remote read', async () => {
+    const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
+    const entry = {
+      ...await feedEntry(generated.message, 1),
+      encodedData: Encoder.bytesToBase64Url(generated.dataBytes!),
+    };
+    const fixture = fakeAgent();
+    await retain(target(), [entry]);
+
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+      .toMatchObject({ kind: 'settled' });
+    expect(fixture.prepare.notCalled).toBe(true);
+    expect(fixture.send.notCalled).toBe(true);
+    expect(await DataStream.toBytes(fixture.apply.firstCall.args[2].dataStream)).toEqual(generated.dataBytes!);
+    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
+  });
+
   it('hydrates a retained detached write and settles only after a fresh apply', async () => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
     const entry = await feedEntry(generated.message, 1);
@@ -315,7 +331,8 @@ describe('retryOneQuarantinedRoot', () => {
       },
       status: { code: 200, detail: 'OK' },
     });
-    await retain(target(), [ancestryEntry, completionEntry]);
+    await retain(target(), [ancestryEntry]);
+    await retain(target(), [completionEntry]);
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
       .toEqual({ kind: 'pending' });
@@ -380,14 +397,14 @@ describe('retryOneQuarantinedRoot', () => {
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
   });
 
-  it('hydrates a missing parent and retries the retained child', async () => {
+  it('keeps a dataless parent\'s receipt while retrying its child', async () => {
     const protocol = 'https://example.com/dependencies';
     const parent = await TestDataGenerator.generateRecordsWrite({
-      data: new Uint8Array([1]),
+      data: new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(1),
       protocol,
     });
     const child = await TestDataGenerator.generateRecordsWrite({
-      data     : new Uint8Array([2]),
+      data     : new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(2),
       parentId : parent.message.recordId,
       protocol,
     });
@@ -454,12 +471,14 @@ describe('retryOneQuarantinedRoot', () => {
     expect(fixture.send.notCalled).toBe(true);
   });
 
-  it('rotates equal-time pending rows even when the clock does not move', async () => {
+  it('rotates a pending row behind a newer peer when the clock does not move', async () => {
     const clock = sinon.useFakeTimers(new Date('2026-09-28T12:00:00.000Z'));
     const fixture = fakeAgent();
     const first = await feedEntry(protocolMessage('first'), 1);
     const second = await feedEntry(protocolMessage('second'), 2);
-    await retain(roleTarget(), [first, second]);
+    await retain(roleTarget(), [first]);
+    clock.tick(1);
+    await retain(roleTarget(), [second]);
     const update = sinon.spy(ledger, 'updateQuarantine');
     try {
       await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: roleTarget() });

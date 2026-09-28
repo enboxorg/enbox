@@ -379,7 +379,7 @@ export class SyncNextLedgerStore {
     const previousAttempt = Date.parse(current.lastAttemptAt);
     const nextAttempt = Number.isNaN(previousAttempt)
       ? Date.now() + 1
-      : Math.max(Date.now(), previousAttempt + 1);
+      : Math.max(Date.now() + 1, previousAttempt + 1);
     await store.put(key, JSON.stringify({
       ...current,
       lastAttemptAt: new Date(nextAttempt).toISOString(),

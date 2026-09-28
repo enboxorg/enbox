@@ -113,9 +113,10 @@ cannot retain a checkpoint after deleting the work it covers.
 For an ordinary owner or delegate target, one explicit retry call selects the
 oldest retained row for a tenant and projection, validates its stored receipt,
 message CID, and inline data, then reuses normal dependency admission. It
-attempts one root and never paginates, schedules itself, or purges a failed
-row. Pending and failed attempts advance their timestamp so another row gets
-the next turn, including when attempts land within the same millisecond.
+attempts one root, performs no catch-up pagination of its own, and does not
+schedule itself or purge failed rows. Pending and failed attempts advance their
+timestamp so another row gets the next turn, including when attempts land
+within the same millisecond.
 
 This slice recovers ordinary owner and delegated roots. A latest data-bearing
 write is removed only after a genuinely fresh apply; Duplicate or Superseded
