@@ -34,7 +34,7 @@ import type {
   RecordsWriteMessage,
   RecordsWriteMessageOptions
 } from './types/records-types.js';
-import type { RecordsWriteReplicationState, ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
+import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
 import { Cid } from './utils/cid.js';
@@ -303,15 +303,15 @@ export class Dwn {
     const messageAlreadyStored = await this.replicatedMessageAlreadyStored(tenant, rawMessage);
     const isRecordsWriteWithData = Records.isRecordsWrite(rawMessage) && options.dataStream !== undefined;
     if (messageAlreadyStored && !isRecordsWriteWithData) {
-      return { kind: 'Duplicate' };
+      return this.replicatedDuplicateResult(tenant, rawMessage);
     }
 
     const reply = await this.processMessage(tenant, rawMessage, options);
     // A stored RecordsWrite with newly supplied data deliberately enters the
-    // handler. Its 409 means the CID was already complete or is no longer
-    // current, which remains an idempotent Duplicate to replication callers.
+    // handler. Its 409 can mean the CID is complete, still ancestry-only, or
+    // superseded, so only the current indexed state can prove materialization.
     if (messageAlreadyStored && reply.status.code === 409) {
-      return { kind: 'Duplicate' };
+      return this.replicatedDuplicateResult(tenant, rawMessage);
     }
     const replicatedWriteBeatenByDeleteResult = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
     if (replicatedWriteBeatenByDeleteResult !== undefined) {
@@ -328,51 +328,34 @@ export class Dwn {
     });
   }
 
-  /**
-   * Checks whether a replicated RecordsWrite has a readable local state, or a newer
-   * committed state makes it unnecessary. This never admits the supplied message.
-   */
-  public async getRecordsWriteReplicationState(
-    tenant: string,
-    rawMessage: RecordsWriteMessage,
-  ): Promise<RecordsWriteReplicationState> {
-    const { message } = await RecordsWrite.parse(rawMessage);
+  /** A stored CID is not proof that a RecordsWrite became queryable with data. */
+  private async replicatedDuplicateResult(tenant: string, message: GenericMessage): Promise<ReplicationApplyResult> {
+    if (!Records.isRecordsWrite(message)) {
+      return { kind: 'Duplicate' };
+    }
+
     const { messages } = await this.messageStore.query(tenant, [{
       interface         : DwnInterfaceName.Records,
       isLatestBaseState : true,
       recordId          : message.recordId,
     }], undefined, { limit: 2 });
-
-    if (messages.length === 0) {
-      return 'pending';
-    }
-    if (messages.length > 1) {
-      throw new Error(`Dwn: multiple latest states for record ${message.recordId}.`);
+    if (messages.length !== 1 || await Message.getCid(messages[0]) !== await Message.getCid(message)) {
+      return { kind: 'Duplicate' };
     }
 
-    const latest = messages[0];
-    const isExact = await Message.getCid(latest) === await Message.getCid(message);
-    if (!isExact && !await Message.isNewer(latest, message)) {
-      return 'pending';
-    }
-
-    if (Records.isRecordsWrite(latest)) {
-      const stored = latest as RecordsQueryReplyEntry;
-      if (stored.encodedData === undefined) {
-        const data = await this.dataStore.get(tenant, latest.recordId, latest.descriptor.dataCid);
-        if (data === undefined) {
-          return 'pending';
-        }
-        await data.dataStream.cancel();
-        if (data.dataSize !== latest.descriptor.dataSize) {
-          return 'pending';
-        }
+    const current = messages[0] as RecordsQueryReplyEntry;
+    if (current.encodedData === undefined) {
+      const data = await this.dataStore.get(tenant, current.recordId, current.descriptor.dataCid);
+      if (data === undefined) {
+        return { kind: 'Duplicate' };
       }
-    } else if (latest.descriptor.method !== DwnMethodName.Delete) {
-      return 'pending';
+      await data.dataStream.cancel();
+      if (data.dataSize !== current.descriptor.dataSize) {
+        return { kind: 'Duplicate' };
+      }
     }
 
-    return isExact ? 'materialized' : 'superseded';
+    return { kind: 'Duplicate', materialized: true };
   }
 
   /**

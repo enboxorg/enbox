@@ -17,9 +17,6 @@ export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
 };
 
-/** Local, read-only proof of whether a replicated RecordsWrite still needs recovery. */
-export type RecordsWriteReplicationState = 'pending' | 'materialized' | 'superseded';
-
 export type ReplicationApplyResult =
   | {
       kind: 'Applied';
@@ -28,7 +25,11 @@ export type ReplicationApplyResult =
       /** Local admission position, when the receiving store has a durable replication log. */
       position?: ProgressToken;
     }
-  | { kind: 'Duplicate' }
+  | {
+      kind: 'Duplicate';
+      /** The exact RecordsWrite is the current indexed state and its body is available locally. */
+      materialized?: true;
+    }
   | { kind: 'Superseded' }
   | { kind: 'Incomplete'; missing: DependencyRef[] }
   | { kind: 'Invalid'; reason: string }
