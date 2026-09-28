@@ -15,6 +15,8 @@ import { getRoleAudienceContextId, getRoleContextPrefix, isCrossProtocolRef, par
 
 export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
+  /** Include proof that an exact duplicate RecordsWrite is current and its data is available. */
+  includeMaterializationProof?: boolean;
 };
 
 export type ReplicationApplyResult =
@@ -27,7 +29,7 @@ export type ReplicationApplyResult =
     }
   | {
       kind: 'Duplicate';
-      /** The exact RecordsWrite is the current indexed state and its body is available locally. */
+      /** Present only when requested and the exact RecordsWrite is current with available data. */
       materialized?: true;
     }
   | { kind: 'Superseded' }
