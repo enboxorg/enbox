@@ -15,6 +15,8 @@ import { getRoleAudienceContextId, getRoleContextPrefix, isCrossProtocolRef, par
 
 export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
+  /** Request best-effort proof that an exact duplicate RecordsWrite is current and its data is available. */
+  includeMaterializationProof?: boolean;
 };
 
 export type ReplicationApplyResult =
@@ -25,7 +27,11 @@ export type ReplicationApplyResult =
       /** Local admission position, when the receiving store has a durable replication log. */
       position?: ProgressToken;
     }
-  | { kind: 'Duplicate' }
+  | {
+      kind: 'Duplicate';
+      /** True only when requested and proven; absence is inconclusive. */
+      materialized?: true;
+    }
   | { kind: 'Superseded' }
   | { kind: 'Incomplete'; missing: DependencyRef[] }
   | { kind: 'Invalid'; reason: string }
