@@ -87,6 +87,10 @@ confidentiality, if required, must cover the complete local profile rather
 than only this recovery queue. Remote mode may place the ledger and local DWN
 in separate stores; both remain inside that accepted trust boundary.
 
+Ledger scans validate only queue routing metadata and the stored size needed
+for resource accounting. Retry must validate the retained message and data
+again before DWN admission.
+
 No production runtime wrote the earlier encrypted row format. The first pull
 commit for each link still rejects such a row with instructions to clear the
 complete next-engine ledger, so its checkpoint cannot advance without it.

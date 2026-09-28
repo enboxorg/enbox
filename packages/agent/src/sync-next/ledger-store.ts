@@ -1,5 +1,5 @@
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { AbstractBatchOperation, AbstractLevel, AbstractSublevel } from 'abstract-level';
-import type { MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type {
   SyncNextDeliveryObligation,
@@ -180,7 +180,7 @@ export class SyncNextLedgerStore {
       }));
       if (quarantined.length > 0) {
         const retained = new Map((await this.readQuarantine(
-          this._quarantine.iterator(syncNextTenantRange(link.tenantDid)), false,
+          this._quarantine.iterator(syncNextTenantRange(link.tenantDid)),
         )).map(
           (entry): [string, SyncNextQuarantineEntry] => [syncNextReceiptKey(entry, entry), entry],
         ));
@@ -261,11 +261,11 @@ export class SyncNextLedgerStore {
   }
 
   public async getQuarantineForLink(identity: SyncNextLinkIdentity): Promise<SyncNextQuarantineEntry[]> {
-    return this.readQuarantine(this._quarantine.iterator(syncNextLinkRange(identity)), true);
+    return this.readQuarantine(this._quarantine.iterator(syncNextLinkRange(identity)));
   }
 
   public async getQuarantineForTenant(tenantDid: string): Promise<SyncNextQuarantineEntry[]> {
-    return this.readQuarantine(this._quarantine.iterator(syncNextTenantRange(tenantDid)), true);
+    return this.readQuarantine(this._quarantine.iterator(syncNextTenantRange(tenantDid)));
   }
 
   public async getDeliveryForLink(identity: SyncNextLinkIdentity): Promise<SyncNextDeliveryObligation[]> {
@@ -406,18 +406,16 @@ export class SyncNextLedgerStore {
     return values;
   }
 
-  private async readQuarantine(
-    entries: AsyncIterable<[string, string]>, verifySize: boolean,
-  ): Promise<SyncNextQuarantineEntry[]> {
+  private async readQuarantine(entries: AsyncIterable<[string, string]>): Promise<SyncNextQuarantineEntry[]> {
     const rows = await this.readValues<unknown>(entries);
-    return rows.map(row => SyncNextLedgerStore.validateQuarantineEntry(row, verifySize));
+    return rows.map(SyncNextLedgerStore.validateQuarantineAccounting);
   }
 
   /** One-time format check prevents an old encrypted row from outliving its checkpoint. */
   private async assertCompatibleQuarantine(link: SyncNextLink): Promise<void> {
     const key = syncNextLinkKey(link);
     if (!this._compatibleQuarantineLinks.has(key)) {
-      await this.readQuarantine(this._quarantine.iterator(syncNextLinkRange(link)), false);
+      await this.readQuarantine(this._quarantine.iterator(syncNextLinkRange(link)));
       this._compatibleQuarantineLinks.add(key);
     }
   }
@@ -451,14 +449,17 @@ export class SyncNextLedgerStore {
 
   private static prepareQuarantineInput(input: SyncNextQuarantineInput): PreparedQuarantineInput {
     const entry = structuredClone(input.entry);
-    SyncNextLedgerStore.validateQuarantinePayload(input, entry);
+    if (entry.messageCid !== input.messageCid) {
+      throw new Error('SyncNextLedgerStore: quarantine entry CID does not match its receipt.');
+    }
+    if (entry.seq !== input.source.position) {
+      throw new Error('SyncNextLedgerStore: quarantine entry position does not match its receipt.');
+    }
     return { ...input, entry, entrySize: SyncNextLedgerStore.serializedEntrySize(entry) };
   }
 
-  private static validateQuarantineEntry(
-    value: unknown,
-    verifySize: boolean,
-  ): SyncNextQuarantineEntry {
+  /** Validate only fields used by the ledger; retry owns payload validation. */
+  private static validateQuarantineAccounting(value: unknown): SyncNextQuarantineEntry {
     if (typeof value === 'object' && value !== null && 'encryptedPayload' in value) {
       throw new Error(
         'SyncNextLedgerStore: encrypted quarantine rows are obsolete; clear the complete sync-next ledger.',
@@ -473,49 +474,17 @@ export class SyncNextLedgerStore {
       row.authorizationEpoch, row.projectionId, row.remoteEndpoint, row.tenantDid,
       row.lastAttemptAt, row.messageCid, source?.epoch, source?.position, source?.streamId,
     ];
-    if (
-      !strings.every(item => typeof item === 'string') ||
-      (source?.messageCid !== undefined && typeof source.messageCid !== 'string') ||
-      !Number.isSafeInteger(row.entrySize) || Number(row.entrySize) < 0
-    ) {
+    if (!strings.every(item => typeof item === 'string') ||
+        !Number.isSafeInteger(row.entrySize) || Number(row.entrySize) < 0) {
       throw new TypeError('SyncNextLedgerStore: quarantine row has an invalid schema.');
     }
     if (Number(row.entrySize) > SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES) {
       throw new Error('SyncNextLedgerStore: stored quarantine entry exceeds its per-row limit.');
     }
-    const entry = SyncNextLedgerStore.validateQuarantinePayload(row as SyncNextSourceReceipt, row.entry);
-    if (verifySize && SyncNextLedgerStore.serializedEntrySize(entry) !== row.entrySize) {
-      throw new Error('SyncNextLedgerStore: stored quarantine entry size does not match its contents.');
-    }
     return row as SyncNextQuarantineEntry;
   }
 
-  private static validateQuarantinePayload(
-    receipt: SyncNextSourceReceipt, value: unknown,
-  ): MessagesQueryReplyEntry {
-    const entry = value as Partial<MessagesQueryReplyEntry> | undefined;
-    if (
-      typeof entry !== 'object' || entry === null ||
-      typeof entry.messageCid !== 'string' || typeof entry.seq !== 'string' ||
-      typeof entry.isLatestBaseState !== 'boolean' ||
-      typeof entry.message !== 'object' || entry.message === null || Array.isArray(entry.message) ||
-      (entry.encodedData !== undefined && typeof entry.encodedData !== 'string')
-    ) {
-      throw new TypeError('SyncNextLedgerStore: quarantine entry has an invalid schema.');
-    }
-    if (entry.messageCid !== receipt.messageCid) {
-      throw new Error('SyncNextLedgerStore: quarantine entry CID does not match its receipt.');
-    }
-    if (entry.seq !== receipt.source.position) {
-      throw new Error('SyncNextLedgerStore: quarantine entry position does not match its receipt.');
-    }
-    if (receipt.source.messageCid !== undefined && receipt.source.messageCid !== receipt.messageCid) {
-      throw new Error('SyncNextLedgerStore: quarantine source token CID does not match its receipt.');
-    }
-    return entry as MessagesQueryReplyEntry;
-  }
-
-  private static serializedEntrySize(entry: MessagesQueryReplyEntry): number {
+  private static serializedEntrySize(entry: SyncNextQuarantineInput['entry']): number {
     const size = new TextEncoder().encode(JSON.stringify(entry)).byteLength;
     if (size > SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES) {
       throw new Error(

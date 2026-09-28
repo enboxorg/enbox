@@ -403,7 +403,7 @@ describe('SyncNextLedgerStore', () => {
     expect(await store.getQuarantineForLogicalTarget(first.tenantDid, first.projectionId)).toEqual([]);
   });
 
-  it('should reject obsolete or modified durable quarantine state', async () => {
+  it('should reject obsolete rows and invalid queue metadata', async () => {
     const link = await store.getOrCreateLink(linkCreate());
     const receipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     const quarantine = (store as unknown as {
@@ -437,11 +437,11 @@ describe('SyncNextLedgerStore', () => {
       settled        : [],
     });
     const [retained] = await store.getQuarantineForLink(link);
-    await quarantine.put(key, JSON.stringify({ ...retained, entrySize: retained.entrySize + 1 }));
-    await expect(store.getQuarantineForLink(link)).rejects.toThrow('size does not match its contents');
+    await quarantine.put(key, JSON.stringify({ ...retained, entrySize: -1 }));
+    await expect(store.getQuarantineForLink(link)).rejects.toThrow('quarantine row has an invalid schema');
 
-    await quarantine.put(key, JSON.stringify({ ...retained, entry: undefined }));
-    await expect(store.getQuarantineForLink(link)).rejects.toThrow('quarantine entry has an invalid schema');
+    await quarantine.put(key, JSON.stringify({ ...retained, projectionId: undefined }));
+    await expect(store.getQuarantineForLink(link)).rejects.toThrow('quarantine row has an invalid schema');
   });
 
   it('should preserve checkpoints and sparse obligations after Level reopens', async () => {
@@ -527,20 +527,17 @@ describe('SyncNextLedgerStore', () => {
     const sibling = new SyncNextLedgerStore(db, 'sync-next-ledger-store-spec');
     const receipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     const internal = store as unknown as {
-      readQuarantine(
-        entries: AsyncIterable<[string, string]>,
-        verifySize: boolean,
-      ): Promise<SyncNextQuarantineEntry[]>;
+      readQuarantine(entries: AsyncIterable<[string, string]>): Promise<SyncNextQuarantineEntry[]>;
     };
     const originalRead = internal.readQuarantine.bind(store);
     let releaseRead!: () => void;
     let enteredRead!: () => void;
     const held = new Promise<void>(resolve => { releaseRead = resolve; });
     const entered = new Promise<void>(resolve => { enteredRead = resolve; });
-    const read = sinon.stub(internal, 'readQuarantine').callsFake(async (entries, verifySize) => {
+    const read = sinon.stub(internal, 'readQuarantine').callsFake(async (entries) => {
       enteredRead();
       await held;
-      return originalRead(entries, verifySize);
+      return originalRead(entries);
     });
     const links = (sibling as unknown as { _links: { clear(): Promise<void> } })._links;
     const linksClear = sinon.spy(links, 'clear');
