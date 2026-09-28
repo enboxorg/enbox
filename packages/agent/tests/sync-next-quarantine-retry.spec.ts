@@ -290,6 +290,45 @@ describe('retryOneQuarantinedRoot', () => {
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(delegateTarget()))).toEqual([]);
   });
 
+  it('keeps an ancestry receipt until the later completion receipt supplies its body', async () => {
+    const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
+    const messageCid = await Message.getCid(generated.message);
+    const ancestryEntry: MessagesQueryReplyEntry = {
+      isLatestBaseState : false,
+      message           : generated.message,
+      messageCid,
+      seq               : '1',
+    };
+    const completionEntry: MessagesQueryReplyEntry = {
+      ...ancestryEntry,
+      isLatestBaseState : true,
+      seq               : '2',
+    };
+    const fixture = fakeAgent();
+    fixture.apply
+      .onFirstCall().resolves({ ancestryOnly: true, kind: 'Applied' })
+      .onSecondCall().resolves({ kind: 'Applied' });
+    fixture.send.resolves({
+      entry: {
+        data    : new Blob([generated.dataBytes!]).stream(),
+        message : generated.message,
+      },
+      status: { code: 200, detail: 'OK' },
+    });
+    await retain(target(), [ancestryEntry, completionEntry]);
+
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+      .toEqual({ kind: 'pending' });
+    expect(fixture.apply.firstCall.args[2].dataStream).toBeUndefined();
+    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(2);
+
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+      .toMatchObject({ kind: 'settled' });
+    expect(fixture.apply.secondCall.args[2].dataStream).toBeDefined();
+    expect(fixture.send.calledOnce).toBe(true);
+    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
+  });
+
   it('keeps an unavailable or duplicate latest body pending', async () => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
     const entry = await feedEntry(generated.message, 1);
@@ -353,13 +392,14 @@ describe('retryOneQuarantinedRoot', () => {
       protocol,
     });
     const childEntry = await feedEntry(child.message, 1);
+    const parentEntry = await feedEntry(parent.message, 2);
     const fixture = fakeAgent();
     fixture.apply
       .onFirstCall().resolves({
         kind    : 'Incomplete',
         missing : [{ type: 'Parent', protocol, recordId: parent.message.recordId }],
       })
-      .onSecondCall().resolves({ kind: 'Applied' })
+      .onSecondCall().resolves({ ancestryOnly: true, kind: 'Applied' })
       .onThirdCall().resolves({ kind: 'Applied' });
     fixture.send.callsFake(async ({ message }: {
       message: { descriptor: { interface: string } };
@@ -372,13 +412,13 @@ describe('retryOneQuarantinedRoot', () => {
         status: { code: 200, detail: 'OK' },
       }
       : {
-        entries: [{
-          ...parent.message,
-          encodedData: Encoder.bytesToBase64Url(parent.dataBytes!),
-        }],
-        status: { code: 200, detail: 'OK' },
+        entries : [parent.message],
+        status  : { code: 200, detail: 'OK' },
       });
-    await retain(target(), [childEntry]);
+    await retain(target(), [childEntry, parentEntry]);
+    const childRow = (await ledger.getQuarantineForLink(syncNextLinkIdentity(target())))
+      .find(row => row.messageCid === childEntry.messageCid)!;
+    await rewriteQuarantine(childRow, { lastAttemptAt: 'invalid' });
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
       .toMatchObject({ kind: 'settled' });
@@ -386,7 +426,10 @@ describe('retryOneQuarantinedRoot', () => {
     expect(fixture.prepare.calledTwice).toBe(true);
     expect(fixture.send.callCount).toBe(3);
     expect(fixture.apply.callCount).toBe(3);
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
+    expect(fixture.apply.secondCall.args[2].dataStream).toBeUndefined();
+    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toMatchObject([{
+      messageCid: parentEntry.messageCid,
+    }]);
   });
 
   it('retains a terminal admission outcome instead of purging it', async () => {

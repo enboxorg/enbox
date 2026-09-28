@@ -18,7 +18,6 @@ export type SyncNextQuarantineRetryResult =
 type RetryAttempt = {
   freshEntries: SyncFreshEntry[];
   kind: 'pending' | 'settled';
-  settledCids: string[];
 };
 
 /** Select and retry one retained root without owning scheduling or pagination. */
@@ -50,14 +49,13 @@ export async function retryOneQuarantinedRoot({
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
-    if (attempt.settledCids.length > 0) {
+    if (attempt.kind === 'settled') {
       await ledger.settleQuarantineForLogicalTarget(
         target.did,
         target.projectionId,
-        attempt.settledCids,
+        selected.messageCid,
       );
-    }
-    if (attempt.kind === 'pending') {
+    } else {
       await ledger.updateQuarantine(selected);
       return { kind: 'pending' };
     }
@@ -78,7 +76,7 @@ async function retrySelectedRoot(
   shouldContinue: () => boolean,
 ): Promise<RetryAttempt> {
   if (target.authorization.kind === 'role') {
-    return { freshEntries: [], kind: 'pending', settledCids: [] };
+    return { freshEntries: [], kind: 'pending' };
   }
   const prefetched = await prepareRetainedRoot(agent, target, selected);
   const root = prefetched.at(-1)!;
@@ -94,17 +92,17 @@ async function retrySelectedRoot(
     shouldContinue,
   });
   if (outcome.kind !== 'admitted') {
-    return { freshEntries: [], kind: 'pending', settledCids: [] };
+    return { freshEntries: [], kind: 'pending' };
   }
 
-  const freshCids = new Set(outcome.freshEntries.map(entry => entry.messageCid));
-  const settledCids = [...freshCids];
-  const rootNeedsProof = root.isLatestBaseState === true && recordsWriteRequiresData(root.message);
-  if (rootNeedsProof && !freshCids.has(selected.messageCid)) {
-    return { freshEntries: outcome.freshEntries, kind: 'pending', settledCids };
+  const rootWasApplied = outcome.freshEntries.some(entry => entry.messageCid === selected.messageCid);
+  if (
+    recordsWriteRequiresData(root.message) &&
+    (root.isLatestBaseState !== true || !rootWasApplied)
+  ) {
+    return { freshEntries: outcome.freshEntries, kind: 'pending' };
   }
-  settledCids.push(selected.messageCid);
-  return { freshEntries: outcome.freshEntries, kind: 'settled', settledCids: [...new Set(settledCids)] };
+  return { freshEntries: outcome.freshEntries, kind: 'settled' };
 }
 
 async function prepareRetainedRoot(

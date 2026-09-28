@@ -120,9 +120,13 @@ the next turn, including when attempts land within the same millisecond.
 This slice recovers ordinary owner and delegated roots. A latest data-bearing
 write is removed only after a genuinely fresh apply; Duplicate or Superseded
 remains pending until the later local-completion-proof slice can establish that
-the record is queryable. Role-authorized rows also remain pending for the
-separate exact-or-newer role-support slice. These conservative outcomes keep
-the queue safe while those authority-specific proofs are reviewed separately.
+the record is queryable. Applying a dataless, non-latest write also leaves its
+receipt pending for a later body-bearing receipt. A retry settles only its
+selected root CID: dependencies applied along the way never clear their own
+quarantine receipts as a side effect. Role-authorized rows also remain pending
+for the separate exact-or-newer role-support slice. These conservative outcomes
+keep the queue safe while those authority-specific proofs are reviewed
+separately.
 
 The push page processor, retry scheduling, subscriptions, catalog, and eventual
 runtime cutover belong to later stack layers. They must preserve this ledger
