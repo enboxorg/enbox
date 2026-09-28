@@ -418,7 +418,8 @@ export function testDwnClass(): void {
         })).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
-          dataStream: DataStream.fromBytes(initial.dataBytes!),
+          dataStream                  : DataStream.fromBytes(initial.dataBytes!),
+          includeMaterializationProof : true,
         })).toEqual({ kind: 'Duplicate' });
 
         const read = await RecordsRead.create({
@@ -443,7 +444,8 @@ export function testDwnClass(): void {
         expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message))
           .toEqual(expect.objectContaining({ kind: 'Applied' }));
         expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
-          dataStream: DataStream.fromBytes(initial.dataBytes!),
+          dataStream                  : DataStream.fromBytes(initial.dataBytes!),
+          includeMaterializationProof : true,
         })).toEqual({ kind: 'Duplicate' });
 
         const read = await RecordsRead.create({
