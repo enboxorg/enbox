@@ -11,11 +11,13 @@ import { AgentDwnApi } from '../src/dwn-api.js';
 import { createLocalDwnRpc } from './utils/local-dwn-rpc-shim.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { SyncNextPullPage } from '../src/sync-next/pull-page.js';
 import { TestAgent } from './utils/test-agent.js';
 import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/sync.js';
 
+const ledgerPath = '__TESTDATA__/sync-next-pull-page-integration/ledger';
 const remoteEndpoint = 'http://localhost:9999/dwn';
 const protocol: ProtocolDefinition = {
   protocol  : 'https://sync-next.example/notes',
@@ -29,7 +31,7 @@ const protocol: ProtocolDefinition = {
   structure: { note: {} },
 };
 
-describe('SyncNextPullPage integration', () => {
+describe('SyncNext pull and quarantine retry integration', () => {
   let db: Level<string, string>;
   let harness: PlatformAgentTestHarness;
   let ledger: SyncNextLedgerStore;
@@ -65,7 +67,7 @@ describe('SyncNextPullPage integration', () => {
       didResolver : harness.agent.did,
     });
     harness.agent.rpc = createLocalDwnRpc(remoteDwn);
-    db = new Level<string, string>('__TESTDATA__/sync-next-pull-page-integration/ledger');
+    db = new Level<string, string>(ledgerPath);
     ledger = new SyncNextLedgerStore(db, 'sync-next-pull-page-integration');
     await ledger.clear();
   });
@@ -79,7 +81,7 @@ describe('SyncNextPullPage integration', () => {
     await harness?.closeStorage();
   });
 
-  it('should advance past a real non-inline body and apply a later record with one query', async () => {
+  it('should advance past a non-inline body and recover it after a ledger restart', async () => {
     const configured = await harness.agent.dwn.sendRequest({
       author        : tenantDid,
       target        : tenantDid,
@@ -88,6 +90,7 @@ describe('SyncNextPullPage integration', () => {
     });
     expect(configured.reply.status.code).toBe(202);
 
+    const largeBytes = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
     const large = await harness.agent.dwn.sendRequest({
       author        : tenantDid,
       target        : tenantDid,
@@ -98,7 +101,7 @@ describe('SyncNextPullPage integration', () => {
         protocolPath : 'note',
         schema       : protocol.types.note.schema,
       },
-      dataStream: new Blob([new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1)]),
+      dataStream: new Blob([largeBytes]),
     });
     expect(large.reply.status.code).toBe(202);
     const largeCid = await Message.getCid(large.message!);
@@ -177,5 +180,30 @@ describe('SyncNextPullPage integration', () => {
     });
     expect(smallLocal.status.code).toBe(200);
     expect(new TextDecoder().decode(await DataStream.toBytes(smallLocal.entry!.data!))).toBe(smallText);
+
+    const checkpoint = (await ledger.getLink(link))?.pullHandledThrough;
+    await db.close();
+    db = new Level<string, string>(ledgerPath);
+    ledger = new SyncNextLedgerStore(db, 'sync-next-pull-page-integration');
+
+    expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target: syncTarget }))
+      .toMatchObject({ kind: 'settled' });
+    expect(send.callCount).toBe(2);
+    expect(apply.callCount).toBe(3);
+    expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+    expect((await ledger.getLink(link))?.pullHandledThrough).toEqual(checkpoint);
+
+    const { reply: recovered } = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: large.message!.recordId } },
+    });
+    expect(recovered.status.code).toBe(200);
+    expect(await DataStream.toBytes(recovered.entry!.data!)).toEqual(largeBytes);
+
+    expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target: syncTarget }))
+      .toEqual({ kind: 'empty' });
+    expect(send.callCount).toBe(2);
   });
 });
