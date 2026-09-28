@@ -21,6 +21,15 @@ export class SyncCheckpoint {
     return 0;
   }
 
+  /** Whether durable progress already covers a head in the same token domain. */
+  public static covers(checkpoint: DirectionCheckpoint, head: ProgressToken): boolean {
+    const token = checkpoint.contiguousAppliedToken;
+    return token !== undefined &&
+      token.streamId === head.streamId &&
+      token.epoch === head.epoch &&
+      SyncCheckpoint.comparePosition(token, head) >= 0;
+  }
+
   /** Commit a contiguous token without regressing within one token domain. */
   public static commitContiguousToken(checkpoint: DirectionCheckpoint, token: ProgressToken): void {
     if (

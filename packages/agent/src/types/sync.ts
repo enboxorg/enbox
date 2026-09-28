@@ -293,9 +293,10 @@ export type DirectionCheckpoint = {
    * been durably settled. This is the resume point after crash or reconnect.
    *
    * A completed durable-feed page, or an authenticated socket event admitted
-   * through the same closure policy, advances it. An equal paired-subscription
-   * snapshot may establish the initial baseline. A lifecycle notification or
-   * unprocessed event alone is never checkpoint evidence.
+   * through the same closure policy, advances it. Paired position-zero
+   * snapshots may establish an empty baseline. A lifecycle notification,
+   * CID-fingerprint match, or unprocessed event alone is never checkpoint
+   * evidence.
    * Positions may be sparse for filtered feeds.
    */
   contiguousAppliedToken?: ProgressToken;
@@ -385,6 +386,9 @@ export type ReplicationLinkState = {
 
   /** Current link status. */
   status: LinkStatus;
+
+  /** Version of the invariants under which the directional checkpoints were established. */
+  checkpointVersion?: number;
 
   /** Latest recovery failure. Cleared after the failed operation succeeds. */
   recovery?: SyncLinkRecoveryState;

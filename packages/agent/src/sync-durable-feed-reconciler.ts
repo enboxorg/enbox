@@ -30,6 +30,8 @@ export type SyncDurableFeedReconcileResult = {
   localFingerprint?: string;
   /** The pull direction reached the remote-feed head captured by its final query. */
   pullDrained?: true;
+  /** The push direction reached the local-feed head captured by its final query. */
+  pushDrained?: true;
   /**
    * The first remote root whose dependencies are not yet available. Its page
    * and checkpoint remain unsettled; a later wake or settle pass retries from
@@ -132,7 +134,7 @@ type ProcessFeedPageResult =
 type ProcessFeedPageParams = {
   cursor: ProgressToken | undefined;
   entries: MessagesQueryReplyEntry[];
-  knownCids?: Set<string>;
+  knownEntries?: Map<string, boolean>;
   link: ReplicationLinkState;
   reply: MessagesQueryReply;
   shouldContinue?: () => boolean;
@@ -386,21 +388,21 @@ export class SyncDurableFeedReconciler {
     link: ReplicationLinkState,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult | undefined> {
-    const localCids = await this.collectFeedCids(target, 'local', shouldContinue);
-    if (localCids === undefined) {
+    const localEntries = await this.collectFeedInventory(target, 'local', shouldContinue);
+    if (localEntries === undefined) {
       return { aborted: true };
     }
-    if (localCids.size === 0) {
+    if (localEntries.size === 0) {
       return undefined;
     }
 
-    return this.pullRemoteDiffPages(target, link, localCids, shouldContinue);
+    return this.pullRemoteDiffPages(target, link, localEntries, shouldContinue);
   }
 
   private async pullRemoteDiffPages(
     target: SyncTarget,
     link: ReplicationLinkState,
-    localCids: Set<string>,
+    localEntries: Map<string, boolean>,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
     let cursor: ProgressToken | undefined;
@@ -426,7 +428,7 @@ export class SyncDurableFeedReconciler {
       }
 
       SyncDurableFeedReconciler.assertQuerySucceeded(reply, target, 'pull');
-      const missingEntries = SyncDurableFeedReconciler.entriesMissingFrom(localCids, reply.entries ?? []);
+      const missingEntries = SyncDurableFeedReconciler.entriesMissingFrom(localEntries, reply.entries ?? []);
       if (cidsOnly && missingEntries.length > 1) {
         // Avoid issuing one MessagesRead per missing CID. Re-read from the
         // same cursor and commit only the complete page's own progress; the
@@ -437,8 +439,8 @@ export class SyncDurableFeedReconciler {
       const result = await this.processPullPage({
         target,
         cursor,
-        entries   : missingEntries,
-        knownCids : localCids,
+        entries      : missingEntries,
+        knownEntries : localEntries,
         link,
         reply,
         shouldContinue,
@@ -513,18 +515,18 @@ export class SyncDurableFeedReconciler {
       return { pushFailures: grantBootstrap.failures };
     }
 
-    const remoteCids = await this.collectFeedCids(target, 'remote', shouldContinue);
-    if (remoteCids === undefined) {
+    const remoteEntries = await this.collectFeedInventory(target, 'remote', shouldContinue);
+    if (remoteEntries === undefined) {
       return { aborted: true };
     }
 
-    return this.pushLocalDiffPages(target, link, remoteCids, shouldContinue);
+    return this.pushLocalDiffPages(target, link, remoteEntries, shouldContinue);
   }
 
   private async pushLocalDiffPages(
     target: SyncTarget,
     link: ReplicationLinkState,
-    remoteCids: Set<string>,
+    remoteEntries: Map<string, boolean>,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
     let cursor: ProgressToken | undefined;
@@ -543,12 +545,12 @@ export class SyncDurableFeedReconciler {
       }
 
       SyncDurableFeedReconciler.assertQuerySucceeded(reply, target, 'push');
-      const missingEntries = SyncDurableFeedReconciler.entriesMissingFrom(remoteCids, reply.entries ?? []);
+      const missingEntries = SyncDurableFeedReconciler.entriesMissingFrom(remoteEntries, reply.entries ?? []);
       const result = await this.processPushPage({
         target,
         cursor,
-        entries   : missingEntries,
-        knownCids : remoteCids,
+        entries      : missingEntries,
+        knownEntries : remoteEntries,
         link,
         reply,
         shouldContinue,
@@ -566,7 +568,17 @@ export class SyncDurableFeedReconciler {
     source: 'local' | 'remote',
     shouldContinue?: () => boolean,
   ): Promise<Set<string> | undefined> {
-    const cids = new Set<string>();
+    const inventory = await this.collectFeedInventory(target, source, shouldContinue);
+    return inventory === undefined ? undefined : new Set(inventory.keys());
+  }
+
+  /** Collect CID and body-completeness state from one feed. */
+  private async collectFeedInventory(
+    target: SyncTarget,
+    source: 'local' | 'remote',
+    shouldContinue?: () => boolean,
+  ): Promise<Map<string, boolean> | undefined> {
+    const inventory = new Map<string, boolean>();
     let cursor: ProgressToken | undefined;
 
     while (true) {
@@ -577,12 +589,12 @@ export class SyncDurableFeedReconciler {
       const reply = await this.queryCidsPage(target, source, cursor);
       SyncDurableFeedReconciler.assertQuerySucceeded(reply, target, source === 'local' ? 'push' : 'pull');
       for (const entry of reply.entries ?? []) {
-        cids.add(entry.messageCid);
+        inventory.set(entry.messageCid, entry.isLatestBaseState);
       }
 
       const advance = SyncDurableFeedReconciler.nextEnumerationCursor(reply, target, source);
       if (advance.drained) {
-        return cids;
+        return inventory;
       }
       cursor = advance.cursor;
     }
@@ -628,7 +640,7 @@ export class SyncDurableFeedReconciler {
   private async processPullPage({
     cursor,
     entries,
-    knownCids,
+    knownEntries,
     link,
     reply,
     shouldContinue,
@@ -639,9 +651,12 @@ export class SyncDurableFeedReconciler {
       return { result: { aborted: true } };
     }
 
-    if (knownCids !== undefined) {
-      for (const messageCid of pageResult.admittedCids) {
-        knownCids.add(messageCid);
+    if (knownEntries !== undefined) {
+      const admittedCids = new Set(pageResult.admittedCids);
+      for (const entry of entries) {
+        if (admittedCids.has(entry.messageCid)) {
+          knownEntries.set(entry.messageCid, entry.isLatestBaseState);
+        }
       }
     }
 
@@ -672,7 +687,7 @@ export class SyncDurableFeedReconciler {
   private async processPushPage({
     cursor,
     entries,
-    knownCids,
+    knownEntries,
     link,
     reply,
     shouldContinue,
@@ -691,15 +706,21 @@ export class SyncDurableFeedReconciler {
       return { result: { pushFailures: pageResult.failures } };
     }
 
-    if (knownCids !== undefined) {
+    if (knownEntries !== undefined) {
       for (const entry of entries) {
-        knownCids.add(entry.messageCid);
+        knownEntries.set(entry.messageCid, entry.isLatestBaseState);
       }
     }
 
     const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
     if (cursorAdvance.drained) {
-      return { result: { localFingerprint: reply.fingerprint, pushFailures: [] } };
+      return {
+        result: {
+          localFingerprint : reply.fingerprint,
+          pushDrained      : true,
+          pushFailures     : [],
+        },
+      };
     }
     return { nextCursor: cursorAdvance.cursor };
   }
@@ -867,10 +888,12 @@ export class SyncDurableFeedReconciler {
   }
 
   private static entriesMissingFrom(
-    knownCids: Set<string>,
+    knownEntries: Map<string, boolean>,
     entries: MessagesQueryReplyEntry[],
   ): MessagesQueryReplyEntry[] {
-    return entries.filter(entry => !knownCids.has(entry.messageCid));
+    return entries.filter(entry =>
+      !knownEntries.has(entry.messageCid) || knownEntries.get(entry.messageCid) !== entry.isLatestBaseState
+    );
   }
 
   private static fingerprintsConverged(result: SyncDurableFeedReconcileResult): boolean {
@@ -896,6 +919,7 @@ export class SyncDurableFeedReconciler {
     target.quotaBlocked ||= source.quotaBlocked === true;
     target.localFingerprint = source.localFingerprint ?? target.localFingerprint;
     target.pullDrained ||= source.pullDrained;
+    target.pushDrained ||= source.pushDrained;
     target.remoteFingerprint = source.remoteFingerprint ?? target.remoteFingerprint;
 
     if (

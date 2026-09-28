@@ -3,9 +3,9 @@ import type { MessagesQueryReply } from '@enbox/dwn-sdk-js';
 import type { PermissionGrantEntry } from '../src/types/permissions.js';
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { RoleReplicationSupportBatch } from '../src/sync-role-replication-support.js';
+import type { SyncDurableFeedQuery } from '../src/sync-durable-feed-reconciler.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '../src/followed-sync-source.js';
-import type { SyncDurableFeedQuery, SyncDurableFeedReconcileResult } from '../src/sync-durable-feed-reconciler.js';
 
 import sinon from 'sinon';
 
@@ -131,7 +131,7 @@ describe('SyncEngineLevel — followed sources', () => {
     await db.close();
   });
 
-  it.each(['planning', 'cached signing', 'cached local query', 'partial endpoint'])(
+  it.each(['planning', 'cached signing', 'cached query', 'partial endpoint'])(
     'should defer a %s outage and recover retained endpoints and followed contexts at the next settle', async (scenario) => {
       const engine = new SyncEngineLevel({ db });
       const sources = [source(), source('role-b', 'notebook-b')];
@@ -161,24 +161,33 @@ describe('SyncEngineLevel — followed sources', () => {
       }];
       const grants = sinon.stub(engine['_permissionsApi'], 'fetchGrants').resolves(validGrants);
       const reconciler = engine['_durableFeedReconciler'];
-      const goodReply = { status: { code: 200, detail: 'OK' }, fingerprint: 'unchanged' };
+      const goodReply = { status: { code: 200, detail: 'OK' }, drained: true, fingerprint: 'unchanged' };
       const query = sinon.stub(reconciler['_operations'], 'queryFeed').resolves(goodReply);
+      sinon.stub(reconciler['_operations'], 'admitRemotePage').resolves({ kind: 'processed', admittedCids: [] });
+      sinon.stub(reconciler['_operations'], 'bootstrapRemotePermissionGrants').resolves({
+        kind         : 'processed',
+        failures     : [],
+        quotaBlocked : false,
+      });
+      sinon.stub(reconciler['_operations'], 'probeQuotaBlocks').resolves();
+      sinon.stub(reconciler['_operations'], 'pushLocalPage').resolves({ kind: 'processed' });
       // Exercise the real query error conversion; role admission has separate coverage.
-      const probe = sinon.stub(engine as never, 'probeFeedConvergence').callsFake(
-        (target: SyncTarget): Promise<SyncDurableFeedReconcileResult> => reconciler.verifyConvergence(target),
-      );
+      const reconcile = sinon.spy(reconciler, 'reconcile');
       if (scenario === 'planning') {
         grants.rejects(unavailable);
       } else {
         await engine['getSyncTargets']();
-        query.callsFake(async ({ source, target }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+        query.callsFake(async ({ target }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
           if (scenario === 'partial endpoint' && target.dwnUrl === endpoints[1]) {
             return goodReply;
           }
           if (scenario === 'cached signing') {
             throw unavailable;
           }
-          return source === 'local' ? { status: unavailableStatus } : goodReply;
+          if (scenario === 'cached query') {
+            throw unavailable;
+          }
+          return goodReply;
         });
       }
       const initialize = sinon.stub(engine as never, 'initializeLinkTarget').resolves();
@@ -191,9 +200,9 @@ describe('SyncEngineLevel — followed sources', () => {
       try {
         await engine['runSettleCheck'](engine['_runtime']);
         expect(grants.callCount).toBe(1);
-        expect(probe.callCount).toBe(scenario === 'planning' ? 0 : 3);
-        expect(query.callCount).toBe(scenario === 'planning' ? 0 : 6);
-        expect(initialize.notCalled).toBe(true);
+        expect(reconcile.callCount).toBe(scenario === 'planning' ? 0 : scenario === 'partial endpoint' ? 4 : 3);
+        expect(query.callCount).toBe(scenario === 'planning' ? 0 : scenario === 'partial endpoint' ? 10 : 3);
+        expect(initialize.callCount).toBe(scenario === 'partial endpoint' ? 4 : 0);
         expect(refresh.notCalled).toBe(true);
         expect(warn.notCalled).toBe(true);
         expect(report.notCalled).toBe(true);
@@ -208,12 +217,12 @@ describe('SyncEngineLevel — followed sources', () => {
 
         grants.resolves(validGrants);
         query.resolves(goodReply);
-        probe.resetHistory();
+        reconcile.resetHistory();
         await engine['runSettleCheck'](engine['_runtime']);
-        expect(probe.callCount).toBe(4);
-        expect(initialize.callCount).toBe(4);
+        expect(reconcile.callCount).toBe(4);
+        expect(initialize.callCount).toBe(scenario === 'partial endpoint' ? 8 : 4);
         expect(engine.connectivityState).toBe('online');
-        expect(report.notCalled).toBe(true);
+        expect(report.args).toEqual([]);
       } finally {
         await engine.stopSync();
       }
@@ -266,7 +275,6 @@ describe('SyncEngineLevel — followed sources', () => {
         return controller.setLocalSubscription({ close });
       });
       const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({ pullDrained: true });
-      const probe = sinon.stub(engine['_durableFeedReconciler'], 'verifyConvergence').resolves({ converged: true });
       const authority = sinon.stub(engine as never, 'resolveFollowedSourceAtEndpoint');
       const validate = sinon.stub(engine['_scopeClosureValidator'], 'validateClosure').resolves();
       const warn = sinon.stub(console, 'warn');
@@ -315,7 +323,6 @@ describe('SyncEngineLevel — followed sources', () => {
         fetch.resetHistory();
         endpoints.resetHistory();
         reconcile.resetHistory();
-        probe.resetHistory();
         authority.resetHistory();
         await engine['runSettleCheck'](engine['_runtime']);
         await engine['reconcileFollowedSources'](engine['_runtime']);
@@ -323,8 +330,7 @@ describe('SyncEngineLevel — followed sources', () => {
         expect(callsAfterPause).toBe(scenario.startsWith('planner') ? 5 : 4);
         expect(fetch.notCalled).toBe(true);
         expect(authority.notCalled).toBe(true);
-        expect(reconcile.notCalled).toBe(true);
-        expect(probe.calledOnceWithMatch({ did: healthyDid })).toBe(true);
+        expect(reconcile.calledOnceWithMatch({ did: healthyDid })).toBe(true);
         expect(endpoints.getCalls().every(call => call.args[0] === healthyDid)).toBe(true);
         expect(await engine.getIdentityOptions(actorDid)).toEqual(options);
         for (const followed of sources) {

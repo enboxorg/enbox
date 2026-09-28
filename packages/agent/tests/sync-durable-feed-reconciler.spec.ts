@@ -456,7 +456,7 @@ describe('SyncDurableFeedReconciler', () => {
     ).flat());
   });
 
-  it('should not re-admit a dependency applied by an earlier inventory-diff page', async () => {
+  it('should replay a dependency whose completeness was not present in the earlier inventory page', async () => {
     const fixture = createReconciler();
     fixture.queryFeed.callsFake(async ({ cursor, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
       if (source === 'local') {
@@ -491,8 +491,49 @@ describe('SyncDurableFeedReconciler', () => {
     });
     expect(fixture.operations.admitRemotePage.callCount).toBe(2);
     expect(fixture.operations.admitRemotePage.firstCall.args[1]).toEqual([{ messageCid: 'root' }]);
-    expect(fixture.operations.admitRemotePage.secondCall.args[1]).toEqual([]);
+    expect(fixture.operations.admitRemotePage.secondCall.args[1]).toEqual([{ messageCid: 'later-dependency' }]);
     expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(2));
+  });
+
+  it('should pull a completed body when the local inventory has the same ancestry-only CID', async () => {
+    const fixture = createReconciler();
+    const ancestryEntry: MessagesQueryReplyEntry = {
+      isLatestBaseState : false,
+      messageCid        : 'shared-cid',
+      seq               : '1',
+    };
+    const completedEntry = { ...ancestryEntry, isLatestBaseState: true, seq: '2' };
+    fixture.queryFeed.callsFake(async ({ source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> =>
+      source === 'local'
+        ? reply({ cursor: token(1), entries: [ancestryEntry] })
+        : reply({ cursor: token(2), entries: [completedEntry] })
+    );
+    fixture.operations.admitRemotePage.resolves({ kind: 'processed', admittedCids: ['shared-cid'] });
+
+    const result = await fixture.reconciler.pull(target(), fixture.link);
+
+    expect(result.pullDrained).toBe(true);
+    expect(fixture.operations.admitRemotePage.calledOnceWithExactly(target(), [completedEntry], undefined)).toBe(true);
+  });
+
+  it('should push a completed body when the remote inventory has the same ancestry-only CID', async () => {
+    const fixture = createReconciler();
+    const ancestryEntry: MessagesQueryReplyEntry = {
+      isLatestBaseState : false,
+      messageCid        : 'shared-cid',
+      seq               : '1',
+    };
+    const completedEntry = { ...ancestryEntry, isLatestBaseState: true, seq: '2' };
+    fixture.queryFeed.callsFake(async ({ source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> =>
+      source === 'remote'
+        ? reply({ cursor: token(1), entries: [ancestryEntry] })
+        : reply({ cursor: token(2), entries: [completedEntry] })
+    );
+
+    const result = await fixture.reconciler.push(target(), fixture.link);
+
+    expect(result.pushDrained).toBe(true);
+    expect(fixture.operations.pushLocalPage.calledOnceWithExactly(target(), [completedEntry], undefined)).toBe(true);
   });
 
   it('should fetch a dense missing page inline and commit the refreshed page rather than its stale inventory', async () => {
@@ -657,6 +698,7 @@ describe('SyncDurableFeedReconciler', () => {
     expect(fixture.operations.probeQuotaBlocks.calledOnce).toBe(true);
     expect(result).toEqual({
       localFingerprint : 'local-final',
+      pushDrained      : true,
       pushFailures     : [],
     });
   });
@@ -688,6 +730,7 @@ describe('SyncDurableFeedReconciler', () => {
 
     expect(await fixture.reconciler.push(target(), fixture.link)).toEqual({
       localFingerprint : 'fingerprint',
+      pushDrained      : true,
       pushFailures     : [],
     });
     expect(fixture.queryFeed.getCalls().map(({ args }) => args[0].cursor)).toEqual([

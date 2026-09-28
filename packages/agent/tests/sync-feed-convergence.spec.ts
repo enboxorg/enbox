@@ -212,6 +212,68 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(await localFingerprint()).toBe(await remoteFingerprint());
   });
 
+  it('repairs same-CID bodies in both directions after a sync-engine restart', async () => {
+    await configureLocalProtocol(feedHarnessProtocolV1);
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.sync();
+
+    const localText = 'body completed from the local replica';
+    const localWrite = await writeLocalRecord({
+      data         : localText,
+      protocolPath : 'note',
+      schema       : feedHarnessProtocolV1.types.note.schema,
+    });
+    expect(await remoteStores.dwn.applyReplicatedMessage(tenantDid, localWrite.message)).toMatchObject({
+      ancestryOnly : true,
+      kind         : 'Applied',
+    });
+    await expectRemoteRecordCount(localWrite.message.recordId, 0);
+
+    const remoteText = 'body completed from the remote replica';
+    const remoteData = new TextEncoder().encode(remoteText);
+    const remoteWrite = await RecordsWrite.create({
+      data         : remoteData,
+      dataFormat   : 'text/plain',
+      protocol     : feedHarnessProtocolV1.protocol,
+      protocolPath : 'note',
+      schema       : feedHarnessProtocolV1.types.note.schema,
+      signer       : await (testHarness.agent.dwn as any).getSigner(tenantDid),
+    });
+    expect((await remoteStores.dwn.processMessage(tenantDid, remoteWrite.message, {
+      dataStream: DataStream.fromBytes(remoteData),
+    })).status.code).toBe(202);
+    expect(await testHarness.agent.dwn.applyReplicatedMessage(tenantDid, remoteWrite.message)).toMatchObject({
+      ancestryOnly : true,
+      kind         : 'Applied',
+    });
+    await expectLocalRecordCount(remoteWrite.message.recordId, 0);
+
+    // CID-only fingerprints deliberately match despite the opposite body state.
+    expect(await harnessFingerprint()).toBe(await remoteHarnessFingerprint());
+
+    const localApply = sinon.spy(testHarness.agent.dwn, 'applyReplicatedMessage');
+    const remoteApply = sinon.spy(testHarness.agent.rpc, 'applyReplicatedMessage');
+    const restartedSyncEngine = new SyncEngineLevel({
+      agent : testHarness.agent,
+      db    : testHarness.syncStore,
+    });
+
+    await (restartedSyncEngine as any)._runCoordinator.settle();
+
+    expect(await readRemoteRecordText(localWrite.message.recordId)).toBe(localText);
+    expect(await readLocalRecordText(remoteWrite.message.recordId)).toBe(remoteText);
+    expect(await harnessFingerprint()).toBe(await remoteHarnessFingerprint());
+    const localApplyCount = localApply.callCount;
+    const remoteApplyCount = remoteApply.callCount;
+    expect(localApplyCount).toBeGreaterThan(0);
+    expect(remoteApplyCount).toBeGreaterThan(0);
+
+    await (restartedSyncEngine as any)._runCoordinator.settle();
+
+    expect(localApply.callCount).toBe(localApplyCount);
+    expect(remoteApply.callCount).toBe(remoteApplyCount);
+  });
+
   it('retries a temporarily unavailable large catch-up payload without dead-lettering it', async () => {
     const config = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
@@ -787,9 +849,9 @@ describe('SyncEngineLevel durable feed convergence', () => {
       state                    : 'quota-blocked',
     });
 
-    // Inventory equality likewise proves only CID presence. The remote copy is
-    // still non-latest and has no payload, so push verification must not clear
-    // the block or report the link healthy.
+    // The inventory now exposes that the remote copy is non-latest and lacks
+    // its payload. Ordinary sync must still respect the active quota block;
+    // only an acknowledged retry may clear it.
     await syncEngine.sync('push', { verifyConvergence: true });
 
     expect(gate.attempts()).toBe(1);

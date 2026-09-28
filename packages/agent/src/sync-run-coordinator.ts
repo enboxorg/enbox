@@ -11,7 +11,6 @@ export type { SyncRunOptions } from './types/sync.js';
 
 export interface SyncRunCoordinatorOperations {
   getTargets(): Promise<SyncTarget[]>;
-  probeFeedConvergence(target: SyncTarget): Promise<SyncDurableFeedReconcileResult>;
   reconcileTarget(
     target: SyncTarget,
     direction: SyncDirection | undefined,
@@ -99,7 +98,7 @@ export class SyncRunCoordinator {
     SyncRunCoordinator.assertTargetGroupsSucceeded(summary);
   }
 
-  /** Probe all current targets and reconcile only feeds whose exact fingerprints differ. */
+  /** Drain all current targets, then verify any remaining fingerprint mismatch. */
   public async settle(): Promise<void> {
     const targets = await this.getTargets();
     const summary = await this.runTargetGroups(
@@ -185,14 +184,7 @@ export class SyncRunCoordinator {
       options?.verifyConvergence,
     );
 
-    if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
-      await handleSyncPushFailures(
-        target,
-        result.pushFailures,
-        (pushTarget, failures): Promise<PushFailure[]> =>
-          this._operations.recordPushFailures(pushTarget, failures),
-      );
-    }
+    await this.handlePushFailures(target, result);
 
     if (options?.verifyConvergence !== true) {
       return result.aborted !== true && result.paused !== true;
@@ -206,16 +198,42 @@ export class SyncRunCoordinator {
   }
 
   private async settleTarget(target: SyncTarget): Promise<boolean> {
-    const probe = await this._operations.probeFeedConvergence(target);
-    if (probe.aborted === true || probe.paused === true) {
+    const result = await this._operations.reconcileTarget(target, undefined, false);
+    await this.handlePushFailures(target, result);
+    if (result.aborted === true || result.paused === true) {
       return false;
     }
-    if (probe.converged === true) {
+    const drained = result.pullDrained === true &&
+      (target.authorization.kind === 'role' || result.pushDrained === true);
+    if (!drained) {
+      return true;
+    }
+    if (
+      target.authorization.kind === 'role' ||
+      (
+        result.localFingerprint !== undefined &&
+        result.localFingerprint === result.remoteFingerprint
+      )
+    ) {
       await this._feedConvergenceManager.clear(target);
       return true;
     }
-
     return this.runTarget(target, undefined, { verifyConvergence: true });
+  }
+
+  private async handlePushFailures(
+    target: SyncTarget,
+    result: SyncDurableFeedReconcileResult,
+  ): Promise<void> {
+    if (result.pushFailures === undefined || result.pushFailures.length === 0) {
+      return;
+    }
+    await handleSyncPushFailures(
+      target,
+      result.pushFailures,
+      (pushTarget, failures): Promise<PushFailure[]> =>
+        this._operations.recordPushFailures(pushTarget, failures),
+    );
   }
 
   private static summarizeTargetGroupResults(
