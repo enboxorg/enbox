@@ -34,7 +34,7 @@ import type {
   RecordsWriteMessage,
   RecordsWriteMessageOptions
 } from './types/records-types.js';
-import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
+import type { RecordsWriteReplicationState, ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
 import { Cid } from './utils/cid.js';
@@ -326,6 +326,53 @@ export class Dwn {
       missingAncestorRecordIds,
       parentRecordPruned,
     });
+  }
+
+  /**
+   * Checks whether a replicated RecordsWrite has a readable local state, or a newer
+   * committed state makes it unnecessary. This never admits the supplied message.
+   */
+  public async getRecordsWriteReplicationState(
+    tenant: string,
+    rawMessage: RecordsWriteMessage,
+  ): Promise<RecordsWriteReplicationState> {
+    const { message } = await RecordsWrite.parse(rawMessage);
+    const { messages } = await this.messageStore.query(tenant, [{
+      interface         : DwnInterfaceName.Records,
+      isLatestBaseState : true,
+      recordId          : message.recordId,
+    }], undefined, { limit: 2 });
+
+    if (messages.length === 0) {
+      return 'pending';
+    }
+    if (messages.length > 1) {
+      throw new Error(`Dwn: multiple latest states for record ${message.recordId}.`);
+    }
+
+    const latest = messages[0];
+    const isExact = await Message.getCid(latest) === await Message.getCid(message);
+    if (!isExact && !await Message.isNewer(latest, message)) {
+      return 'pending';
+    }
+
+    if (Records.isRecordsWrite(latest)) {
+      const stored = latest as RecordsQueryReplyEntry;
+      if (stored.encodedData === undefined) {
+        const data = await this.dataStore.get(tenant, latest.recordId, latest.descriptor.dataCid);
+        if (data === undefined) {
+          return 'pending';
+        }
+        await data.dataStream.cancel();
+        if (data.dataSize !== latest.descriptor.dataSize) {
+          return 'pending';
+        }
+      }
+    } else if (latest.descriptor.method !== DwnMethodName.Delete) {
+      return 'pending';
+    }
+
+    return isExact ? 'materialized' : 'superseded';
   }
 
   /**

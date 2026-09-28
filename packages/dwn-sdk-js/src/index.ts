@@ -2,7 +2,7 @@
 export type { DwnConfig } from './dwn.js';
 export type { EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, ReplicationFeedReader, SubscriptionEose, SubscriptionError, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply, Wake, WakePublisher, WakeSubscriber } from './types/subscriptions.js';
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
-export type { DependencyRef, ReplicationApplyOptions, ReplicationApplyResult, ReplicationApplyResultContext } from './core/replication-apply.js';
+export type { DependencyRef, RecordsWriteReplicationState, ReplicationApplyOptions, ReplicationApplyResult, ReplicationApplyResultContext } from './core/replication-apply.js';
 export { replicationApplyResultFromReply } from './core/replication-apply.js';
 export type { ValidationStateReader } from './types/validation-state-reader.js';
 export { StoreValidationStateReader } from './core/validation-state-reader.js';

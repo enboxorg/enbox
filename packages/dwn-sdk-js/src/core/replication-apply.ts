@@ -17,6 +17,9 @@ export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
 };
 
+/** Local, read-only proof of whether a replicated RecordsWrite still needs recovery. */
+export type RecordsWriteReplicationState = 'pending' | 'materialized' | 'superseded';
+
 export type ReplicationApplyResult =
   | {
       kind: 'Applied';
