@@ -132,7 +132,7 @@ describe('websocket api', function () {
     expect(readBytes).toEqual(dataBytes);
   });
 
-  it('completes a stored ancestry-only write with the same CID over HTTP', async function () {
+  it('completes and proves a stored ancestry-only write over HTTP', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
     const data = new Uint8Array(31_000).fill(9);
@@ -146,9 +146,15 @@ describe('websocket api', function () {
 
     const ancestry = await client.applyReplicatedMessage(request);
     expect(ancestry).toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+    expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
+      .toEqual({ kind: 'Duplicate' });
 
     const completion = await client.applyReplicatedMessage({ ...request, data: DataStream.fromBytes(data) });
     expect(completion.kind).toBe('Applied');
+    expect(await client.applyReplicatedMessage(request))
+      .toEqual({ kind: 'Duplicate' });
+    expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
+      .toEqual({ kind: 'Duplicate', materialized: true });
     const recordsRead = await RecordsRead.create({
       signer : alice.signer,
       filter : { recordId: recordsWrite.message.recordId },
@@ -158,7 +164,7 @@ describe('websocket api', function () {
     expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(data);
   });
 
-  it('completes a stored ancestry-only write with the same CID over WebSocket', async function () {
+  it('completes and proves a stored ancestry-only write over WebSocket', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
     const data = new Uint8Array([9, 10, 11, 12]);
@@ -172,9 +178,15 @@ describe('websocket api', function () {
 
     const ancestry = await client.applyReplicatedMessage({ ...request, ancestryOnly: true });
     expect(ancestry).toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+    expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
+      .toEqual({ kind: 'Duplicate' });
 
     const completion = await client.applyReplicatedMessage({ ...request, data: DataStream.fromBytes(data) });
     expect(completion.kind).toBe('Applied');
+    expect(await client.applyReplicatedMessage({ ...request, data: DataStream.fromBytes(data) }))
+      .toEqual({ kind: 'Duplicate' });
+    expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
+      .toEqual({ kind: 'Duplicate', materialized: true });
     const recordsRead = await RecordsRead.create({
       signer : alice.signer,
       filter : { recordId: recordsWrite.message.recordId },

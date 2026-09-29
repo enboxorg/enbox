@@ -551,15 +551,51 @@ describe('WebSocketDwnRpcClient', () => {
         expect((client.getServerInfo as sinon.SinonStub).called).toBe(false);
       });
 
-      it('uses the server advertised raw record limit for replicated apply WebSocket framing', async () => {
+      it('sends a materialization proof request without record data', async () => {
+        const requests: any[] = [];
+        const socket = {
+          request: async (request: any): Promise<any> => {
+            requests.push(request);
+            return {
+              jsonrpc : '2.0',
+              id      : request.id,
+              result  : { result: { kind: 'Duplicate', materialized: true } },
+            };
+          },
+        };
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
+        (WebSocketDwnRpcClient as any)['connections'].set(connectionKey, {
+          socket,
+          subscriptions : new Map(),
+          url           : socketDwnUrl,
+        });
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        (client.getServerInfo as sinon.SinonStub).resetHistory();
+
+        const result = await client.applyReplicatedMessage({
+          dwnUrl                      : socketDwnUrl,
+          includeMaterializationProof : true,
+          targetDid                   : alice.did,
+          message,
+        });
+
+        expect(result).toEqual({ kind: 'Duplicate', materialized: true });
+        expect(requests).toHaveLength(1);
+        expect(requests[0].params.includeMaterializationProof).toBe(true);
+        expect(requests[0].params.encodedData).toBeUndefined();
+        expect((client.getServerInfo as sinon.SinonStub).called).toBe(false);
+      });
+
+      it('uses the server advertised raw record limit when a proof request carries data', async () => {
         (client.getServerInfo as sinon.SinonStub).resolves(testServerInfo(2));
         const data = new Uint8Array([1, 2, 3, 4, 5]);
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
 
         try {
           await client.applyReplicatedMessage({
-            dwnUrl    : socketDwnUrl,
-            targetDid : alice.did,
+            dwnUrl                      : socketDwnUrl,
+            includeMaterializationProof : true,
+            targetDid                   : alice.did,
             message,
             data,
           });

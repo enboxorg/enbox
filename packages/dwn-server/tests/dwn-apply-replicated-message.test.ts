@@ -134,6 +134,28 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
+  it('rejects a non-boolean materialization proof option before applying', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const { recordsWrite } = await createRecordsWriteMessage(alice);
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      includeMaterializationProof : 'yes',
+      message                     : recordsWrite.toJSON(),
+      target                      : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage');
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport: 'http',
+    });
+
+    expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error?.message).toContain('includeMaterializationProof must be a boolean');
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
   it('decodes encoded RecordsWrite data over non-HTTP transports', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const dataBytes = new Uint8Array(1_048_577);

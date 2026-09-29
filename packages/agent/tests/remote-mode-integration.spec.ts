@@ -79,6 +79,20 @@ describe('Agent remote mode integration', () => {
     context = undefined;
   });
 
+  it('round-trips materialization proof through the local DWN server', async () => {
+    context = await setupRemoteModeContext('materialization-proof');
+    const { alice, testHarness } = context;
+
+    await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
+    const write = await writeLocalRecord(testHarness.agent, alice.did.uri, 'materialized body');
+
+    expect(await testHarness.agent.dwn.applyReplicatedMessage(alice.did.uri, write))
+      .toEqual({ kind: 'Duplicate' });
+    expect(await testHarness.agent.dwn.applyReplicatedMessage(alice.did.uri, write, {
+      includeMaterializationProof: true,
+    })).toEqual({ kind: 'Duplicate', materialized: true });
+  });
+
   it('syncs push and pull through a real local DWN server and persists checkpoints', async () => {
     context = await setupRemoteModeContext('durable');
     const { alice, bob, localServer, remoteServer, testHarness } = context;

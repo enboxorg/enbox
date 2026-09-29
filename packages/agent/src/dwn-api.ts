@@ -14,6 +14,7 @@ import type {
   ProtocolType,
   RecordsWriteDescriptor,
   RecordsWriteMessage,
+  ReplicationApplyOptions,
   ReplicationApplyResult,
   SourceRoleAudienceKeyEncryptionInput,
 } from '@enbox/dwn-sdk-js';
@@ -1022,7 +1023,7 @@ export class AgentDwnApi {
   public async applyReplicatedMessage(
     tenant: string,
     message: GenericMessage,
-    options?: { dataStream?: ReadableStream<Uint8Array> },
+    options?: ReplicationApplyOptions,
   ): Promise<ReplicationApplyResult> {
     let result: ReplicationApplyResult;
     if (this._dwn) {
@@ -1033,6 +1034,7 @@ export class AgentDwnApi {
         dwnUrl    : this._localDwnEndpoint!,
         message,
         data      : options?.dataStream,
+        ...(options?.includeMaterializationProof === true ? { includeMaterializationProof: true } : {}),
       });
     }
 

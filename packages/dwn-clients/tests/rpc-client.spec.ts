@@ -444,9 +444,10 @@ describe('RPC Clients', () => {
       const data = new Blob([new Uint8Array([1, 2, 3])]);
 
       const result = await rpcClient.applyReplicatedMessage({
-        dwnUrl    : httpEndpoint,
-        targetDid : 'did:example:alice',
-        message   : replicatedWriteMessage(data.size) as never,
+        dwnUrl                      : httpEndpoint,
+        includeMaterializationProof : true,
+        targetDid                   : 'did:example:alice',
+        message                     : replicatedWriteMessage(data.size) as never,
         data,
       });
 
@@ -454,6 +455,7 @@ describe('RPC Clients', () => {
       expect(socketRequest.calledOnce).toBe(true);
       expect(socketRequest.firstCall.args[0].method).toBe('dwn.applyReplicatedMessage');
       expect(socketRequest.firstCall.args[0].params.encodedData).toBe('AQID');
+      expect(socketRequest.firstCall.args[0].params.includeMaterializationProof).toBe(true);
       expect(applied).toHaveLength(0);
     });
 
@@ -486,6 +488,25 @@ describe('RPC Clients', () => {
 
       expect(socketRequest.called).toBe(false);
       expect(applied).toHaveLength(1);
+    });
+
+    it('routes a bodyless materialization proof over the pooled socket', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+
+      const result = await rpcClient.applyReplicatedMessage({
+        dwnUrl                      : httpEndpoint,
+        includeMaterializationProof : true,
+        targetDid                   : 'did:example:alice',
+        message                     : replicatedWriteMessage(3) as never,
+      });
+
+      expect(result).toEqual({ kind: 'Applied' });
+      expect(socketRequest.calledOnce).toBe(true);
+      expect(socketRequest.firstCall.args[0].params.includeMaterializationProof).toBe(true);
+      expect(socketRequest.firstCall.args[0].params.encodedData).toBeUndefined();
+      expect(applied).toHaveLength(0);
     });
 
     it('routes an explicit ancestry-only apply over the pooled socket', async () => {

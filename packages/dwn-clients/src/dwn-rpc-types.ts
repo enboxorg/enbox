@@ -180,6 +180,12 @@ export type DwnReplicationApplyRequest = {
   /** Optional data to be sent with the request. */
   data?: any;
 
+  /**
+   * Request best-effort proof that an exact duplicate RecordsWrite is current and has its data.
+   * No record bytes are returned; absence of `materialized: true` is inconclusive.
+   */
+  includeMaterializationProof?: boolean;
+
   /** The URL of the DWN server to which the request is sent. */
   dwnUrl: string;
 

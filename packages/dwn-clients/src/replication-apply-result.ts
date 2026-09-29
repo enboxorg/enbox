@@ -16,6 +16,7 @@ export function parseReplicationApplyResult(value: unknown): ReplicationApplyRes
     case 'Applied':
       return parseAppliedResult(value);
     case 'Duplicate':
+      return parseDuplicateResult(value);
     case 'Superseded':
       return { kind: value.kind };
     case 'Incomplete':
@@ -36,6 +37,17 @@ export function parseReplicationApplyResult(value: unknown): ReplicationApplyRes
     default:
       throw malformedReplicationApplyResult(`unknown result kind ${value.kind}`);
   }
+}
+
+function parseDuplicateResult(value: Record<string, unknown>): Extract<ReplicationApplyResult, { kind: 'Duplicate' }> {
+  if (value.materialized === undefined) {
+    return { kind: 'Duplicate' };
+  }
+  if (value.materialized !== true) {
+    throw malformedReplicationApplyResult('Duplicate result materialized must be true when present');
+  }
+
+  return { kind: 'Duplicate', materialized: true };
 }
 
 function parseAppliedResult(value: Record<string, unknown>): Extract<ReplicationApplyResult, { kind: 'Applied' }> {

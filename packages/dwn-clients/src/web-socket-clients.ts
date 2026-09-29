@@ -341,11 +341,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     const encodedData = wireRequest.data === undefined ? undefined : await dataToBase64Url(wireRequest.data);
     return WebSocketDwnRpcClient.applyReplicatedMessage(
       connection,
-      request.targetDid,
-      wireRequest.message,
+      wireRequest,
       encodedData,
       maxPayloadBytes,
-      wireRequest.ancestryOnly,
     );
   }
 
@@ -368,7 +366,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       declaredDataSize !== undefined &&
       declaredDataSize > 0 &&
       wireRequest.data === undefined &&
-      wireRequest.ancestryOnly !== true
+      !isDatalessReplicatedApply(wireRequest)
     ) {
       return undefined;
     }
@@ -378,6 +376,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       target  : wireRequest.targetDid,
       message : wireRequest.message,
       ...(wireRequest.ancestryOnly === true ? { ancestryOnly: true } : {}),
+      ...(wireRequest.includeMaterializationProof === true ? { includeMaterializationProof: true } : {}),
       ...(wireRequest.data === undefined ? {} : { encodedData: '' }),
     });
     const payloadBytes = estimatedJsonRpcPayloadBytes(frame, encodedDataBytes);
@@ -392,11 +391,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     }
     return WebSocketDwnRpcClient.applyReplicatedMessage(
       currentConnection,
-      wireRequest.targetDid,
-      wireRequest.message,
+      wireRequest,
       encodedData,
       WS_JSON_RPC_ENVELOPE_BYTES,
-      wireRequest.ancestryOnly,
     );
   }
 
@@ -405,7 +402,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private async maxPayloadBytesForReplicatedApply(request: DwnReplicationApplyRequest): Promise<number> {
-    if (request.ancestryOnly === true || recordsWriteDataSize(request.message) === undefined) {
+    if (isDatalessReplicatedApply(request) || recordsWriteDataSize(request.message) === undefined) {
       return DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES;
     }
 
@@ -575,17 +572,16 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   private static async applyReplicatedMessage(
     connection: SocketConnection,
-    target: string,
-    message: DwnReplicationApplyRequest['message'],
+    wireRequest: DwnReplicationApplyRequest,
     encodedData?: string,
     maxPayloadBytes: number = DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES,
-    ancestryOnly?: true,
   ): Promise<ReplicationApplyResult> {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
-      target,
-      message,
-      ...(ancestryOnly === true ? { ancestryOnly: true } : {}),
+      target  : wireRequest.targetDid,
+      message : wireRequest.message,
+      ...(wireRequest.ancestryOnly === true ? { ancestryOnly: true } : {}),
+      ...(wireRequest.includeMaterializationProof === true ? { includeMaterializationProof: true } : {}),
       ...(encodedData === undefined ? {} : { encodedData }),
     });
     WebSocketDwnRpcClient.assertPayloadFitsFrame(request, encodedData, maxPayloadBytes);
@@ -921,7 +917,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   private static assertReplicatedApplyDataIsPresent(request: DwnReplicationApplyRequest): void {
     const dataSize = recordsWriteDataSize(request.message);
-    if (dataSize !== undefined && dataSize > 0 && request.data === undefined && request.ancestryOnly !== true) {
+    if (dataSize !== undefined && dataSize > 0 && request.data === undefined && !isDatalessReplicatedApply(request)) {
       throw new DwnRpcError(
         JsonRpcErrorCodes.InvalidParams,
         'data-bearing RecordsWrite replicated apply over WebSocket requires encoded data',
@@ -930,7 +926,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private static assertReplicatedApplyDataSizeIsSupported(request: DwnReplicationApplyRequest, maxPayloadBytes: number): void {
-    if (request.ancestryOnly === true) {
+    if (isDatalessReplicatedApply(request)) {
       return;
     }
     const dataSize = recordsWriteDataSize(request.message);
@@ -1012,6 +1008,11 @@ function replayableDataByteLength(data: DwnReplicationApplyRequest['data']): num
     return data.byteLength;
   }
   return undefined;
+}
+
+function isDatalessReplicatedApply(request: DwnReplicationApplyRequest): boolean {
+  return request.data === undefined &&
+    (request.ancestryOnly === true || request.includeMaterializationProof === true);
 }
 
 function toWireDwnMessage(message: DwnRpcRequest['message']): Partial<GenericMessage> {
