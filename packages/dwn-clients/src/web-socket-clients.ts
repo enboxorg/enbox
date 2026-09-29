@@ -501,13 +501,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // Notify all subscription handlers of disconnection. Invocation is
         // normalized so one throwing handler cannot skip the rest.
         for (const tracked of subscriptions.values()) {
-          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'disconnected' });
+          void WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'disconnected' });
         }
       },
 
       onreconnecting: (attempt: number): void => {
         for (const tracked of subscriptions.values()) {
-          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnecting', attempt });
+          void WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnecting', attempt });
         }
       },
 
@@ -540,8 +540,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         const conn = { socket, subscriptions, url: url.toString() };
         WebSocketDwnRpcClient.connections.set(key, conn);
 
-        // Resubscribe all tracked subscriptions with their last known cursor.
-        WebSocketDwnRpcClient.resubscribeAll(conn);
+        // Resubscribe all tracked subscriptions with their last known cursor;
+        // resubscribeAll reports each failed subscription to its handler.
+        void WebSocketDwnRpcClient.resubscribeAll(conn);
       },
     });
 
@@ -838,7 +839,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     }
 
     // Notify the handler that reconnection is complete for this subscription.
-    WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
+    void WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
   }
 
   /**
@@ -854,7 +855,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     tracked.closed = true;
 
     const detail = error instanceof Error ? error.message : String(error);
-    WebSocketDwnRpcClient.invokeHandler(tracked.handler, {
+    void WebSocketDwnRpcClient.invokeHandler(tracked.handler, {
       type   : 'error',
       cursor : tracked.lastCursor,
       error  : {
