@@ -33,7 +33,7 @@ export type RequestContext = {
   config?: DwnServerConfig;
   /** Per-tenant rate limiter (optional). */
   tenantRateLimiter?: RateLimiter;
-  /** Whether local-node pairing authenticated this HTTP request or WebSocket connection. */
+  /** Whether local-node pairing authenticated this HTTP request. */
   isLocalNodeAuthenticated?: boolean;
   /** Hooks invoked after every `dwn.processMessage()` call (fire-and-forget). */
   messageProcessedHooks?: MessageProcessedHook[];
