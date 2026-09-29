@@ -1019,6 +1019,9 @@ export class AgentDwnApi {
    * server mode calls the server's matching replication RPC so duplicate replay
    * and replication-index repair stay server-side instead of falling back to the
    * normal authoring path.
+   * `includeMaterializationProof` can enrich a duplicate result, but this call
+   * still applies a missing message. A bodyless initial write may therefore
+   * return `Applied` with `ancestryOnly: true`, which is not a completed record.
    */
   public async applyReplicatedMessage(
     tenant: string,

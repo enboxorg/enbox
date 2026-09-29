@@ -51,7 +51,8 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return ancestryResult;
     }
 
-    // Proof is still apply-or-prove, so authenticated local clients may deliberately replay without a body.
+    // ancestryOnly marks a bodyless initial write. Proof also permits a bodyless replay,
+    // but the call can still apply a missing message; it is not a read-only check.
     const transportResult = validateInboundDwnMessageTransport({
       allowDatalessRecordsWriteOverNonHttp : ancestryOnly === true || includeMaterializationProof === true,
       allowRecordsWriteOverNonHttp         : true,
