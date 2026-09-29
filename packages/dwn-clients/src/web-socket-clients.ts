@@ -1010,6 +1010,7 @@ function replayableDataByteLength(data: DwnReplicationApplyRequest['data']): num
   return undefined;
 }
 
+/** Proof replay remains apply-capable; the server permits this bodyless path only for a local client. */
 function isDatalessReplicatedApply(request: DwnReplicationApplyRequest): boolean {
   return request.data === undefined &&
     (request.ancestryOnly === true || request.includeMaterializationProof === true);

@@ -156,6 +156,83 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
+  it('rejects materialization proof on an unauthenticated public RPC', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const { recordsWrite } = await createRecordsWriteMessage(alice);
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      includeMaterializationProof : true,
+      message                     : recordsWrite.toJSON(),
+      target                      : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage');
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport: 'http',
+    });
+
+    expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.Forbidden);
+    expect(jsonRpcResponse.error?.message).toContain('authenticated local-node connection');
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('keeps authenticated proof replay apply-capable for missing initial writes and bodyless updates', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([9, 10, 11, 12]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      includeMaterializationProof : true,
+      message                     : recordsWrite.toJSON(),
+      target                      : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      const initial = await handleDwnApplyReplicatedMessage(initialRequest, {
+        dwn,
+        isLocalNodeAuthenticated : true,
+        transport                : 'ws',
+      });
+      expect(initial.jsonRpcResponse.result.result).toEqual(expect.objectContaining({
+        ancestryOnly : true,
+        kind         : 'Applied',
+      }));
+
+      expect(await dwn.applyReplicatedMessage(alice.did, recordsWrite.message, {
+        dataStream: DataStream.fromBytes(data),
+      })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+      const update = await RecordsWrite.createFrom({
+        recordsWriteMessage : recordsWrite.message,
+        messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, recordsWrite.message.descriptor.messageTimestamp),
+        signer              : Jws.createSigner(alice),
+      });
+      const updateRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+        includeMaterializationProof : true,
+        message                     : update.toJSON(),
+        target                      : alice.did,
+      });
+      const updateResult = await handleDwnApplyReplicatedMessage(updateRequest, {
+        dwn,
+        isLocalNodeAuthenticated : true,
+        transport                : 'ws',
+      });
+      expect(updateResult.jsonRpcResponse.result.result).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+      const recordsRead = await RecordsRead.create({
+        filter : { recordId: recordsWrite.message.recordId },
+        signer : Jws.createSigner(alice),
+      });
+      const readReply = await dwn.processMessage(alice.did, recordsRead.message);
+      expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(data);
+    } finally {
+      await dwn.close();
+    }
+  });
+
   it('decodes encoded RecordsWrite data over non-HTTP transports', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const dataBytes = new Uint8Array(1_048_577);

@@ -276,15 +276,16 @@ export class SocketConnection {
     const { params, method, subscription } = request;
 
     const requestContext: RequestContext = {
-      transport             : 'ws',
-      dwn                   : this.dwn,
-      socketConnection      : this,
-      activityLog           : this.activityLog,
-      adminStore            : this.adminStore,
-      registrationStore     : this.registrationStore,
-      config                : this.serverConfig,
-      tenantRateLimiter     : this.tenantRateLimiter,
-      messageProcessedHooks : this.messageProcessedHooks,
+      transport                : 'ws',
+      dwn                      : this.dwn,
+      socketConnection         : this,
+      activityLog              : this.activityLog,
+      adminStore               : this.adminStore,
+      registrationStore        : this.registrationStore,
+      config                   : this.serverConfig,
+      tenantRateLimiter        : this.tenantRateLimiter,
+      isLocalNodeAuthenticated : this.socket.data.localNodeSession !== undefined,
+      messageProcessedHooks    : this.messageProcessedHooks,
     };
 
     // methods that expect a long-running subscription begin with `rpc.subscribe.`

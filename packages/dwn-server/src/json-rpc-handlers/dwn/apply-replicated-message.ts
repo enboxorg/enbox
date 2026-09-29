@@ -51,6 +51,7 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return ancestryResult;
     }
 
+    // Proof is still apply-or-prove, so authenticated local clients may deliberately replay without a body.
     const transportResult = validateInboundDwnMessageTransport({
       allowDatalessRecordsWriteOverNonHttp : ancestryOnly === true || includeMaterializationProof === true,
       allowRecordsWriteOverNonHttp         : true,
@@ -67,6 +68,16 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     const rateLimitResult = enforceTenantRateLimit({ context, message, requestId, target });
     if (rateLimitResult !== undefined) {
       return rateLimitResult;
+    }
+
+    if (includeMaterializationProof === true && context.isLocalNodeAuthenticated !== true) {
+      return {
+        jsonRpcResponse: createJsonRpcErrorResponse(
+          requestId,
+          JsonRpcErrorCodes.Forbidden,
+          'includeMaterializationProof requires an authenticated local-node connection',
+        ),
+      };
     }
 
     const encodedDataResult = validateEncodedData({ context, encodedData, message, requestId });

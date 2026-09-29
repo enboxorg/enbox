@@ -182,7 +182,9 @@ export type DwnReplicationApplyRequest = {
 
   /**
    * Request best-effort proof that an exact duplicate RecordsWrite is current and has its data.
-   * No record bytes are returned; absence of `materialized: true` is inconclusive.
+   * Servers expose this only to authenticated local-node clients. This remains an apply operation:
+   * a message that is not already stored follows normal replicated admission. No record bytes are
+   * returned, and absence of `materialized: true` is inconclusive.
    */
   includeMaterializationProof?: boolean;
 

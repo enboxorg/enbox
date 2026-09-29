@@ -11,8 +11,9 @@ import { DataStream, Message, RecordsRead, TestDataGenerator } from '@enbox/dwn-
 import { config } from '../src/config.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
+import { LocalNodePairingManager } from '../src/local-node-pairing.js';
 import { WsApi } from '../src/ws-api.js';
-import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, HttpDwnRpcClient, JsonRpcErrorCodes, JsonRpcSocket, WebSocketDwnRpcClient } from '@enbox/dwn-clients';
+import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, DwnRpcError, HttpDwnRpcClient, JsonRpcErrorCodes, JsonRpcSocket, WebSocketDwnRpcClient } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage, expectAppliedResultWithPosition, sendHttpMessage, sendWsMessage, waitUntil } from './utils.js';
 
 describe('websocket api', function () {
@@ -132,68 +133,73 @@ describe('websocket api', function () {
     expect(readBytes).toEqual(dataBytes);
   });
 
-  it('completes and proves a stored ancestry-only write over HTTP', async function () {
+  it('rejects materialization proof over public HTTP and WebSocket', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-    const data = new Uint8Array(31_000).fill(9);
-    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
-    const client = new HttpDwnRpcClient();
-    const request = {
-      dwnUrl    : httpUrl,
-      targetDid : alice.did,
-      message   : recordsWrite.toJSON(),
-    };
+    const { recordsWrite } = await createRecordsWriteMessage(alice);
 
-    const ancestry = await client.applyReplicatedMessage(request);
-    expect(ancestry).toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
-    expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
-      .toEqual({ kind: 'Duplicate' });
+    for (const [client, dwnUrl] of [
+      [new HttpDwnRpcClient(), httpUrl],
+      [new WebSocketDwnRpcClient(), wsUrl],
+    ] as const) {
+      const error = await client.applyReplicatedMessage({
+        dwnUrl,
+        includeMaterializationProof : true,
+        targetDid                   : alice.did,
+        message                     : recordsWrite.toJSON(),
+      }).catch((caught: unknown): unknown => caught);
 
-    const completion = await client.applyReplicatedMessage({ ...request, data: DataStream.fromBytes(data) });
-    expect(completion.kind).toBe('Applied');
-    expect(await client.applyReplicatedMessage(request))
-      .toEqual({ kind: 'Duplicate' });
-    expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
-      .toEqual({ kind: 'Duplicate', materialized: true });
-    const recordsRead = await RecordsRead.create({
-      signer : alice.signer,
-      filter : { recordId: recordsWrite.message.recordId },
-    });
-    const readReply = await dwn.processMessage(alice.did, recordsRead.toJSON());
-    expect(readReply.status.code).toBe(200);
-    expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(data);
+      expect(error).toBeInstanceOf(DwnRpcError);
+      expect((error as DwnRpcError).code).toBe(JsonRpcErrorCodes.Forbidden);
+    }
+
+    expect(await dwn.storage.messageStore.get(alice.did, await Message.getCid(recordsWrite.message))).toBeUndefined();
   });
 
-  it('completes and proves a stored ancestry-only write over WebSocket', async function () {
+  it('completes and proves stored ancestry over authenticated local-node HTTP and WebSocket', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-    const data = new Uint8Array([9, 10, 11, 12]);
-    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
-    const client = new WebSocketDwnRpcClient();
-    const request = {
-      dwnUrl    : wsUrl,
-      targetDid : alice.did,
-      message   : recordsWrite.toJSON(),
-    };
+    const localNode = await startAuthenticatedLocalNodeServer(dwn, dialect);
 
-    const ancestry = await client.applyReplicatedMessage({ ...request, ancestryOnly: true });
-    expect(ancestry).toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
-    expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
-      .toEqual({ kind: 'Duplicate' });
+    try {
+      for (const transport of ['http', 'ws'] as const) {
+        const data = transport === 'http' ? new Uint8Array(31_000).fill(9) : new Uint8Array([9, 10, 11, 12]);
+        const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+        const client = transport === 'http' ? localNode.httpClient : localNode.wsClient;
+        const request = {
+          dwnUrl    : transport === 'http' ? localNode.httpUrl : localNode.wsUrl,
+          targetDid : alice.did,
+          message   : recordsWrite.toJSON(),
+        };
 
-    const completion = await client.applyReplicatedMessage({ ...request, data: DataStream.fromBytes(data) });
-    expect(completion.kind).toBe('Applied');
-    expect(await client.applyReplicatedMessage({ ...request, data: DataStream.fromBytes(data) }))
-      .toEqual({ kind: 'Duplicate' });
-    expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
-      .toEqual({ kind: 'Duplicate', materialized: true });
-    const recordsRead = await RecordsRead.create({
-      signer : alice.signer,
-      filter : { recordId: recordsWrite.message.recordId },
-    });
-    const readReply = await dwn.processMessage(alice.did, recordsRead.toJSON());
-    expect(readReply.status.code).toBe(200);
-    expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(data);
+        const ancestry = await client.applyReplicatedMessage({
+          ...request,
+          ...(transport === 'ws' ? { ancestryOnly: true as const } : {}),
+        });
+        expect(ancestry).toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
+        expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
+          .toEqual({ kind: 'Duplicate' });
+
+        const completion = await client.applyReplicatedMessage({ ...request, data: DataStream.fromBytes(data) });
+        expect(completion.kind).toBe('Applied');
+        expect(await client.applyReplicatedMessage({
+          ...request,
+          ...(transport === 'ws' ? { data: DataStream.fromBytes(data) } : {}),
+        })).toEqual({ kind: 'Duplicate' });
+        expect(await client.applyReplicatedMessage({ ...request, includeMaterializationProof: true }))
+          .toEqual({ kind: 'Duplicate', materialized: true });
+
+        const recordsRead = await RecordsRead.create({
+          signer : alice.signer,
+          filter : { recordId: recordsWrite.message.recordId },
+        });
+        const readReply = await dwn.processMessage(alice.did, recordsRead.toJSON());
+        expect(readReply.status.code).toBe(200);
+        expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(data);
+      }
+    } finally {
+      await localNode.close();
+    }
   });
 
   it('applies replicated RecordsWrite messages with large data over WebSocket', async function () {
@@ -632,6 +638,46 @@ describe('websocket api', function () {
     expect([...records].sort()).toEqual(expectedMembers);
   });
 });
+
+async function startAuthenticatedLocalNodeServer(dwn: Dwn, dialect: Dialect): Promise<{
+  close(): Promise<void>;
+  httpClient: HttpDwnRpcClient;
+  httpUrl: string;
+  wsClient: WebSocketDwnRpcClient;
+  wsUrl: string;
+}> {
+  const localNodePairingManager = new LocalNodePairingManager();
+  const token = localNodePairingManager.createSession(undefined);
+  const localConfig = {
+    ...config,
+    hostname                : '127.0.0.1',
+    localNodeProfileEnabled : true,
+  };
+  const httpApi = await HttpApi.create(
+    localConfig,
+    dwn,
+    undefined,
+    undefined,
+    undefined,
+    { localNodePairingManager, ttlCacheDialect: dialect },
+  );
+  await httpApi.start(0);
+  const wsApi = new WsApi(httpApi, dwn, { config: localConfig });
+  wsApi.start();
+
+  const port = httpApi.server.port;
+  const auth = { getBearerToken: (): string => token };
+  return {
+    close: async (): Promise<void> => {
+      await wsApi.close();
+      await httpApi.close();
+    },
+    httpClient : new HttpDwnRpcClient(undefined, undefined, auth),
+    httpUrl    : `http://127.0.0.1:${port}`,
+    wsClient   : new WebSocketDwnRpcClient(undefined, auth),
+    wsUrl      : `ws://127.0.0.1:${port}`,
+  };
+}
 
 describe('websocket backpressure (rpc.ack)', function () {
   let httpApi: HttpApi;
