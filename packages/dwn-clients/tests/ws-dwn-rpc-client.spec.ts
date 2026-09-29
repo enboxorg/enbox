@@ -516,6 +516,18 @@ describe('WebSocketDwnRpcClient', () => {
         }
       });
 
+      it('rejects materialization proof over WebSocket without opening a connection', async () => {
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+        await expect(client.applyReplicatedMessage({
+          dwnUrl                      : socketDwnUrl,
+          includeMaterializationProof : true,
+          targetDid                   : alice.did,
+          message,
+        })).rejects.toThrow('materialization proof requires HTTP transport');
+        expect((client.getServerInfo as sinon.SinonStub).called).toBe(false);
+      });
+
       it('sends an explicit ancestry-only apply without record data', async () => {
         const requests: any[] = [];
         const socket = {
@@ -551,51 +563,15 @@ describe('WebSocketDwnRpcClient', () => {
         expect((client.getServerInfo as sinon.SinonStub).called).toBe(false);
       });
 
-      it('sends a materialization proof request without record data', async () => {
-        const requests: any[] = [];
-        const socket = {
-          request: async (request: any): Promise<any> => {
-            requests.push(request);
-            return {
-              jsonrpc : '2.0',
-              id      : request.id,
-              result  : { result: { kind: 'Duplicate', materialized: true } },
-            };
-          },
-        };
-        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
-        (WebSocketDwnRpcClient as any)['connections'].set(connectionKey, {
-          socket,
-          subscriptions : new Map(),
-          url           : socketDwnUrl,
-        });
-        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-        (client.getServerInfo as sinon.SinonStub).resetHistory();
-
-        const result = await client.applyReplicatedMessage({
-          dwnUrl                      : socketDwnUrl,
-          includeMaterializationProof : true,
-          targetDid                   : alice.did,
-          message,
-        });
-
-        expect(result).toEqual({ kind: 'Duplicate', materialized: true });
-        expect(requests).toHaveLength(1);
-        expect(requests[0].params.includeMaterializationProof).toBe(true);
-        expect(requests[0].params.encodedData).toBeUndefined();
-        expect((client.getServerInfo as sinon.SinonStub).called).toBe(false);
-      });
-
-      it('uses the server advertised raw record limit when a proof request carries data', async () => {
+      it('uses the server advertised raw record limit for replicated apply WebSocket framing', async () => {
         (client.getServerInfo as sinon.SinonStub).resolves(testServerInfo(2));
         const data = new Uint8Array([1, 2, 3, 4, 5]);
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
 
         try {
           await client.applyReplicatedMessage({
-            dwnUrl                      : socketDwnUrl,
-            includeMaterializationProof : true,
-            targetDid                   : alice.did,
+            dwnUrl    : socketDwnUrl,
+            targetDid : alice.did,
             message,
             data,
           });

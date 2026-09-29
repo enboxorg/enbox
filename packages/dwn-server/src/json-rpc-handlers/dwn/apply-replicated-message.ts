@@ -40,6 +40,20 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     if (includeMaterializationProof !== undefined && typeof includeMaterializationProof !== 'boolean') {
       return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof must be a boolean when present');
     }
+    if (includeMaterializationProof === true) {
+      if (context.transport !== 'http') {
+        return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof requires HTTP transport');
+      }
+      if (context.isLocalNodeAuthenticated !== true) {
+        return {
+          jsonRpcResponse: createJsonRpcErrorResponse(
+            requestId,
+            JsonRpcErrorCodes.Forbidden,
+            'includeMaterializationProof requires an authenticated local-node connection',
+          ),
+        };
+      }
+    }
 
     const ancestryResult = await validateAncestryOnlyRequest({
       ancestryOnly,
@@ -51,10 +65,8 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return ancestryResult;
     }
 
-    // ancestryOnly marks a bodyless initial write. Proof also permits a bodyless replay,
-    // but the call can still apply a missing message; it is not a read-only check.
     const transportResult = validateInboundDwnMessageTransport({
-      allowDatalessRecordsWriteOverNonHttp : ancestryOnly === true || includeMaterializationProof === true,
+      allowDatalessRecordsWriteOverNonHttp : ancestryOnly === true,
       allowRecordsWriteOverNonHttp         : true,
       context,
       hasEncodedData                       : encodedData !== undefined,
@@ -69,16 +81,6 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     const rateLimitResult = enforceTenantRateLimit({ context, message, requestId, target });
     if (rateLimitResult !== undefined) {
       return rateLimitResult;
-    }
-
-    if (includeMaterializationProof === true && context.isLocalNodeAuthenticated !== true) {
-      return {
-        jsonRpcResponse: createJsonRpcErrorResponse(
-          requestId,
-          JsonRpcErrorCodes.Forbidden,
-          'includeMaterializationProof requires an authenticated local-node connection',
-        ),
-      };
     }
 
     const encodedDataResult = validateEncodedData({ context, encodedData, message, requestId });

@@ -86,7 +86,8 @@ describe('Agent remote mode integration', () => {
     const { alice, testHarness } = context;
 
     await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
-    const write = await writeLocalRecord(testHarness.agent, alice.did.uri, 'materialized body');
+    // Exercise a DataStore-backed body; small records are embedded in the write message.
+    const write = await writeLocalRecord(testHarness.agent, alice.did.uri, 'x'.repeat(31_000));
 
     expect(await testHarness.agent.dwn.applyReplicatedMessage(alice.did.uri, write))
       .toEqual({ kind: 'Duplicate' });

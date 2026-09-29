@@ -34,7 +34,7 @@ export function validateInboundDwnMessageTransport(params: InboundDwnMessagePara
 
   // Normal RecordsWrite is HTTP-only because its data stream lives in the
   // request body. Replicated apply may opt in to non-HTTP when it carries the
-  // data in JSON-RPC params or has validated an explicitly bodyless mode.
+  // record data in JSON-RPC params or has already validated an ancestry-only write.
   if (
     context.transport !== 'http' &&
     message.descriptor.interface === DwnInterfaceName.Records &&

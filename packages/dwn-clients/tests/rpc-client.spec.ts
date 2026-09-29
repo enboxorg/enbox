@@ -444,10 +444,9 @@ describe('RPC Clients', () => {
       const data = new Blob([new Uint8Array([1, 2, 3])]);
 
       const result = await rpcClient.applyReplicatedMessage({
-        dwnUrl                      : httpEndpoint,
-        includeMaterializationProof : true,
-        targetDid                   : 'did:example:alice',
-        message                     : replicatedWriteMessage(data.size) as never,
+        dwnUrl    : httpEndpoint,
+        targetDid : 'did:example:alice',
+        message   : replicatedWriteMessage(data.size) as never,
         data,
       });
 
@@ -455,7 +454,6 @@ describe('RPC Clients', () => {
       expect(socketRequest.calledOnce).toBe(true);
       expect(socketRequest.firstCall.args[0].method).toBe('dwn.applyReplicatedMessage');
       expect(socketRequest.firstCall.args[0].params.encodedData).toBe('AQID');
-      expect(socketRequest.firstCall.args[0].params.includeMaterializationProof).toBe(true);
       expect(applied).toHaveLength(0);
     });
 
@@ -490,7 +488,7 @@ describe('RPC Clients', () => {
       expect(applied).toHaveLength(1);
     });
 
-    it('routes a bodyless materialization proof over the pooled socket', async () => {
+    it('keeps materialization proof on HTTP even with a pooled socket', async () => {
       const { applied, client: httpStub } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
       const socketRequest = seedConnectedSocket();
@@ -503,10 +501,8 @@ describe('RPC Clients', () => {
       });
 
       expect(result).toEqual({ kind: 'Applied' });
-      expect(socketRequest.calledOnce).toBe(true);
-      expect(socketRequest.firstCall.args[0].params.includeMaterializationProof).toBe(true);
-      expect(socketRequest.firstCall.args[0].params.encodedData).toBeUndefined();
-      expect(applied).toHaveLength(0);
+      expect(socketRequest.called).toBe(false);
+      expect(applied).toEqual([expect.objectContaining({ includeMaterializationProof: true })]);
     });
 
     it('routes an explicit ancestry-only apply over the pooled socket', async () => {
@@ -548,34 +544,6 @@ describe('RPC Clients', () => {
       expect(result).toEqual({ kind: 'Applied' });
       expect(socketRequest.calledOnce).toBe(true);
       expect(applied).toEqual([expect.objectContaining({ ancestryOnly: true })]);
-    });
-
-    it('falls back to HTTP when an older server rejects bodyless proof socket transport', async () => {
-      const { client: httpStub } = recordingHttpClient();
-      const httpApply = HttpDwnRpcClient.prototype.applyReplicatedMessage as sinon.SinonStub;
-      httpApply.resolves({ kind: 'Duplicate' });
-      const rpcClient = new EnboxRpcClient([httpStub]);
-      const socketRequest = seedConnectedSocket();
-      socketRequest.resolves({
-        error: {
-          code    : JsonRpcErrorCodes.InvalidParams,
-          message : 'RecordsWrite is not supported via ws',
-        },
-      });
-
-      const result = await rpcClient.applyReplicatedMessage({
-        dwnUrl                      : httpEndpoint,
-        includeMaterializationProof : true,
-        targetDid                   : 'did:example:alice',
-        message                     : replicatedWriteMessage(3) as never,
-      });
-
-      expect(result).toEqual({ kind: 'Duplicate' });
-      expect(socketRequest.calledOnce).toBe(true);
-      expect(httpApply.calledOnce).toBe(true);
-      expect(httpApply.firstCall.args[0]).toEqual(expect.objectContaining({
-        includeMaterializationProof: true,
-      }));
     });
 
     it('does not fall back after another ancestry-only socket rejection', async () => {

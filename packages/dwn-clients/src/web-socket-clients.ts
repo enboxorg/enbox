@@ -333,6 +333,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
+    if (request.includeMaterializationProof === true) {
+      throw new DwnRpcError(JsonRpcErrorCodes.InvalidParams, 'materialization proof requires HTTP transport');
+    }
+
     const wireRequest = toWireReplicationApplyRequest(request);
     WebSocketDwnRpcClient.assertReplicatedApplyDataIsPresent(wireRequest);
     const maxPayloadBytes = await this.maxPayloadBytesForReplicatedApply(wireRequest);
@@ -341,9 +345,11 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     const encodedData = wireRequest.data === undefined ? undefined : await dataToBase64Url(wireRequest.data);
     return WebSocketDwnRpcClient.applyReplicatedMessage(
       connection,
-      wireRequest,
+      request.targetDid,
+      wireRequest.message,
       encodedData,
       maxPayloadBytes,
+      wireRequest.ancestryOnly,
     );
   }
 
@@ -351,6 +357,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   public async applyReplicatedMessageIfConnected(
     request: DwnReplicationApplyRequest,
   ): Promise<ReplicationApplyResult | undefined> {
+    if (request.includeMaterializationProof === true) {
+      return undefined;
+    }
+
     if (this.getConnectedConnection(request.dwnUrl) === undefined) {
       return undefined;
     }
@@ -366,7 +376,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       declaredDataSize !== undefined &&
       declaredDataSize > 0 &&
       wireRequest.data === undefined &&
-      !isDatalessReplicatedApply(wireRequest)
+      wireRequest.ancestryOnly !== true
     ) {
       return undefined;
     }
@@ -376,7 +386,6 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       target  : wireRequest.targetDid,
       message : wireRequest.message,
       ...(wireRequest.ancestryOnly === true ? { ancestryOnly: true } : {}),
-      ...(wireRequest.includeMaterializationProof === true ? { includeMaterializationProof: true } : {}),
       ...(wireRequest.data === undefined ? {} : { encodedData: '' }),
     });
     const payloadBytes = estimatedJsonRpcPayloadBytes(frame, encodedDataBytes);
@@ -391,9 +400,11 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     }
     return WebSocketDwnRpcClient.applyReplicatedMessage(
       currentConnection,
-      wireRequest,
+      wireRequest.targetDid,
+      wireRequest.message,
       encodedData,
       WS_JSON_RPC_ENVELOPE_BYTES,
+      wireRequest.ancestryOnly,
     );
   }
 
@@ -402,7 +413,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private async maxPayloadBytesForReplicatedApply(request: DwnReplicationApplyRequest): Promise<number> {
-    if (isDatalessReplicatedApply(request) || recordsWriteDataSize(request.message) === undefined) {
+    if (request.ancestryOnly === true || recordsWriteDataSize(request.message) === undefined) {
       return DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES;
     }
 
@@ -501,13 +512,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // Notify all subscription handlers of disconnection. Invocation is
         // normalized so one throwing handler cannot skip the rest.
         for (const tracked of subscriptions.values()) {
-          void WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'disconnected' });
+          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'disconnected' });
         }
       },
 
       onreconnecting: (attempt: number): void => {
         for (const tracked of subscriptions.values()) {
-          void WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnecting', attempt });
+          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnecting', attempt });
         }
       },
 
@@ -540,9 +551,8 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         const conn = { socket, subscriptions, url: url.toString() };
         WebSocketDwnRpcClient.connections.set(key, conn);
 
-        // Resubscribe all tracked subscriptions with their last known cursor;
-        // resubscribeAll reports each failed subscription to its handler.
-        void WebSocketDwnRpcClient.resubscribeAll(conn);
+        // Resubscribe all tracked subscriptions with their last known cursor.
+        WebSocketDwnRpcClient.resubscribeAll(conn);
       },
     });
 
@@ -573,16 +583,17 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   private static async applyReplicatedMessage(
     connection: SocketConnection,
-    wireRequest: DwnReplicationApplyRequest,
+    target: string,
+    message: DwnReplicationApplyRequest['message'],
     encodedData?: string,
     maxPayloadBytes: number = DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES,
+    ancestryOnly?: true,
   ): Promise<ReplicationApplyResult> {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
-      target  : wireRequest.targetDid,
-      message : wireRequest.message,
-      ...(wireRequest.ancestryOnly === true ? { ancestryOnly: true } : {}),
-      ...(wireRequest.includeMaterializationProof === true ? { includeMaterializationProof: true } : {}),
+      target,
+      message,
+      ...(ancestryOnly === true ? { ancestryOnly: true } : {}),
       ...(encodedData === undefined ? {} : { encodedData }),
     });
     WebSocketDwnRpcClient.assertPayloadFitsFrame(request, encodedData, maxPayloadBytes);
@@ -839,7 +850,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     }
 
     // Notify the handler that reconnection is complete for this subscription.
-    void WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
+    WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
   }
 
   /**
@@ -855,7 +866,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     tracked.closed = true;
 
     const detail = error instanceof Error ? error.message : String(error);
-    void WebSocketDwnRpcClient.invokeHandler(tracked.handler, {
+    WebSocketDwnRpcClient.invokeHandler(tracked.handler, {
       type   : 'error',
       cursor : tracked.lastCursor,
       error  : {
@@ -918,7 +929,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   private static assertReplicatedApplyDataIsPresent(request: DwnReplicationApplyRequest): void {
     const dataSize = recordsWriteDataSize(request.message);
-    if (dataSize !== undefined && dataSize > 0 && request.data === undefined && !isDatalessReplicatedApply(request)) {
+    if (dataSize !== undefined && dataSize > 0 && request.data === undefined && request.ancestryOnly !== true) {
       throw new DwnRpcError(
         JsonRpcErrorCodes.InvalidParams,
         'data-bearing RecordsWrite replicated apply over WebSocket requires encoded data',
@@ -927,7 +938,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private static assertReplicatedApplyDataSizeIsSupported(request: DwnReplicationApplyRequest, maxPayloadBytes: number): void {
-    if (isDatalessReplicatedApply(request)) {
+    if (request.ancestryOnly === true) {
       return;
     }
     const dataSize = recordsWriteDataSize(request.message);
@@ -1009,12 +1020,6 @@ function replayableDataByteLength(data: DwnReplicationApplyRequest['data']): num
     return data.byteLength;
   }
   return undefined;
-}
-
-/** Proof replay remains apply-capable; the server permits this bodyless path only for a local client. */
-function isDatalessReplicatedApply(request: DwnReplicationApplyRequest): boolean {
-  return request.data === undefined &&
-    (request.ancestryOnly === true || request.includeMaterializationProof === true);
 }
 
 function toWireDwnMessage(message: DwnRpcRequest['message']): Partial<GenericMessage> {

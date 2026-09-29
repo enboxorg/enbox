@@ -1022,6 +1022,7 @@ export class AgentDwnApi {
    * `includeMaterializationProof` can enrich a duplicate result, but this call
    * still applies a missing message. A bodyless initial write may therefore
    * return `Applied` with `ancestryOnly: true`, which is not a completed record.
+   * A paired local-node proof travels over HTTP even when a socket is pooled.
    */
   public async applyReplicatedMessage(
     tenant: string,
