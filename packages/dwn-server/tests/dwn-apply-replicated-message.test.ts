@@ -218,28 +218,24 @@ describe('handleDwnApplyReplicatedMessage', () => {
       target                      : alice.did,
     });
     const { dwn } = await getTestDwn();
+    const context: RequestContext = { dwn, isLocalNodeAuthenticated: true, transport: 'http' };
 
     try {
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-      const initial = await handleDwnApplyReplicatedMessage(initialRequest, {
-        dwn,
-        isLocalNodeAuthenticated : true,
-        transport                : 'http',
-      });
+      const initial = await handleDwnApplyReplicatedMessage(initialRequest, context);
       expect(initial.jsonRpcResponse.result.result).toEqual(expect.objectContaining({
         ancestryOnly : true,
         kind         : 'Applied',
       }));
 
+      const pending = await handleDwnApplyReplicatedMessage(initialRequest, context);
+      expect(pending.jsonRpcResponse.result.result).toEqual({ kind: 'Duplicate' });
+
       expect(await dwn.applyReplicatedMessage(alice.did, recordsWrite.message, {
         dataStream: DataStream.fromBytes(data),
       })).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
-      const proof = await handleDwnApplyReplicatedMessage(initialRequest, {
-        dwn,
-        isLocalNodeAuthenticated : true,
-        transport                : 'http',
-      });
+      const proof = await handleDwnApplyReplicatedMessage(initialRequest, context);
       expect(proof.jsonRpcResponse.result.result).toEqual({ kind: 'Duplicate', materialized: true });
     } finally {
       await dwn.close();
