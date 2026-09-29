@@ -10,6 +10,7 @@ import { DidJwk } from '@enbox/dids';
 
 import { config as defaultDwnServerConfig } from '../../dwn-server/src/config.js';
 import { HttpApi } from '../../dwn-server/src/http-api.js';
+import { LocalNodePairingManager } from '../../dwn-server/src/local-node-pairing.js';
 import { runServerMigrationsIfNeeded } from '../../dwn-server/src/storage.js';
 import { WsApi } from '../../dwn-server/src/ws-api.js';
 
@@ -25,6 +26,7 @@ type TestDwnRpcServer = {
   dwn: Dwn;
   httpApi: HttpApi;
   httpUrl: string;
+  localNodeToken?: string;
   wsApi: WsApi;
 };
 
@@ -77,6 +79,21 @@ describe('Agent remote mode integration', () => {
     await context?.testHarness.clearStorage();
     await context?.testHarness.closeStorage();
     context = undefined;
+  });
+
+  it('round-trips materialization proof through the local DWN server', async () => {
+    context = await setupRemoteModeContext('materialization-proof', { authenticatedLocalNode: true });
+    const { alice, testHarness } = context;
+
+    await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
+    // Exercise a DataStore-backed body; small records are embedded in the write message.
+    const write = await writeLocalRecord(testHarness.agent, alice.did.uri, 'x'.repeat(31_000));
+
+    expect(await testHarness.agent.dwn.applyReplicatedMessage(alice.did.uri, write))
+      .toEqual({ kind: 'Duplicate' });
+    expect(await testHarness.agent.dwn.applyReplicatedMessage(alice.did.uri, write, {
+      includeMaterializationProof: true,
+    })).toEqual({ kind: 'Duplicate', materialized: true });
   });
 
   it('syncs push and pull through a real local DWN server and persists checkpoints', async () => {
@@ -269,7 +286,10 @@ describe('Agent remote mode integration', () => {
   });
 });
 
-async function setupRemoteModeContext(name: string): Promise<RemoteModeContext> {
+async function setupRemoteModeContext(
+  name: string,
+  options: { authenticatedLocalNode?: boolean } = {},
+): Promise<RemoteModeContext> {
   const testHarness = await PlatformAgentTestHarness.setup({
     agentClass       : TestAgent,
     agentStores      : 'memory',
@@ -286,8 +306,11 @@ async function setupRemoteModeContext(name: string): Promise<RemoteModeContext> 
     metadata  : { name: `${name} Bob` },
   });
 
-  const localServer = await startTestServer(`${name}-local`);
+  const localServer = await startTestServer(`${name}-local`, { localNodeProfile: options.authenticatedLocalNode });
   const remoteServer = await startTestServer(`${name}-remote`);
+  if (localServer.localNodeToken !== undefined) {
+    testHarness.agent.rpc.setDwnEndpointBearerToken?.(localServer.httpUrl, localServer.localNodeToken);
+  }
   testHarness.agent.dwn = new AgentDwnApi({
     agent            : testHarness.agent,
     localDwnEndpoint : localServer.httpUrl,
@@ -299,13 +322,27 @@ async function setupRemoteModeContext(name: string): Promise<RemoteModeContext> 
   return { alice, bob, localServer, remoteServer, testHarness };
 }
 
-async function startTestServer(name: string): Promise<TestDwnRpcServer> {
-  const config = createTestServerConfig();
+async function startTestServer(
+  name: string,
+  options: { localNodeProfile?: boolean } = {},
+): Promise<TestDwnRpcServer> {
+  const config = {
+    ...createTestServerConfig(),
+    ...(options.localNodeProfile === true ? {
+      hostname                : '127.0.0.1',
+      localNodeProfileEnabled : true,
+    } : {}),
+  };
   const ttlCacheDialect = await runServerMigrationsIfNeeded(config);
   const dwn = await AgentDwnApi.createDwn({
     dataPath: `__TESTDATA__/remote-mode-integration/server-${name}-${crypto.randomUUID()}`,
   });
-  const httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect });
+  const localNodePairingManager = options.localNodeProfile === true ? new LocalNodePairingManager() : undefined;
+  const localNodeToken = localNodePairingManager?.createSession(undefined);
+  const httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, {
+    localNodePairingManager,
+    ttlCacheDialect,
+  });
 
   await httpApi.start(0);
   const wsApi = new WsApi(httpApi, dwn, { config });
@@ -315,6 +352,7 @@ async function startTestServer(name: string): Promise<TestDwnRpcServer> {
     dwn,
     httpApi,
     httpUrl: `http://127.0.0.1:${httpApi.server.port}`,
+    localNodeToken,
     wsApi,
   };
 }

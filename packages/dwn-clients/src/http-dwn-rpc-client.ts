@@ -258,6 +258,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       target  : request.targetDid,
       message : request.message,
       ...(request.ancestryOnly === true ? { ancestryOnly: true } : {}),
+      ...(request.includeMaterializationProof === true ? { includeMaterializationProof: true } : {}),
     });
 
     const { fetchOpts, isRequestBodyReplayable } = await this.createDwnRequestInit({

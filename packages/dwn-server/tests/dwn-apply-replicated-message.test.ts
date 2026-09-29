@@ -134,6 +134,114 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
+  it('rejects a non-boolean materialization proof option before applying', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const { recordsWrite } = await createRecordsWriteMessage(alice);
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      includeMaterializationProof : 'yes',
+      message                     : recordsWrite.toJSON(),
+      target                      : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage');
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
+      dwn,
+      transport: 'http',
+    });
+
+    expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error?.message).toContain('includeMaterializationProof must be a boolean');
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('rejects public proof for both missing and stored writes', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const missing = await createRecordsWriteMessage(alice);
+    const stored = await createRecordsWriteMessage(alice);
+    const { dwn } = await getTestDwn();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    expect(await dwn.applyReplicatedMessage(alice.did, stored.recordsWrite.message, {
+      dataStream: stored.dataStream,
+    })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage');
+
+    for (const recordsWrite of [missing.recordsWrite, stored.recordsWrite]) {
+      const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+        includeMaterializationProof : true,
+        message                     : recordsWrite.toJSON(),
+        target                      : alice.did,
+      });
+      const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(request, {
+        dwn,
+        transport: 'http',
+      });
+
+      expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.Forbidden);
+      expect(jsonRpcResponse.error?.message).toContain('authenticated local-node connection');
+    }
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('rejects materialization proof over WebSocket before applying', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const { recordsWrite } = await createRecordsWriteMessage(alice);
+    const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      includeMaterializationProof : true,
+      message                     : recordsWrite.toJSON(),
+      target                      : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage');
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(request, {
+      dwn,
+      isLocalNodeAuthenticated : true,
+      transport                : 'ws',
+    });
+
+    expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error?.message).toContain('requires HTTP transport');
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('applies a missing write before later proving its completed duplicate', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([9, 10, 11, 12]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+      includeMaterializationProof : true,
+      message                     : recordsWrite.toJSON(),
+      target                      : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    const context: RequestContext = { dwn, isLocalNodeAuthenticated: true, transport: 'http' };
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      const initial = await handleDwnApplyReplicatedMessage(initialRequest, context);
+      expect(initial.jsonRpcResponse.result.result).toEqual(expect.objectContaining({
+        ancestryOnly : true,
+        kind         : 'Applied',
+      }));
+
+      const pending = await handleDwnApplyReplicatedMessage(initialRequest, context);
+      expect(pending.jsonRpcResponse.result.result).toEqual({ kind: 'Duplicate' });
+
+      expect(await dwn.applyReplicatedMessage(alice.did, recordsWrite.message, {
+        dataStream: DataStream.fromBytes(data),
+      })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+      const proof = await handleDwnApplyReplicatedMessage(initialRequest, context);
+      expect(proof.jsonRpcResponse.result.result).toEqual({ kind: 'Duplicate', materialized: true });
+    } finally {
+      await dwn.close();
+    }
+  });
+
   it('decodes encoded RecordsWrite data over non-HTTP transports', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const dataBytes = new Uint8Array(1_048_577);

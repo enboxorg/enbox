@@ -449,7 +449,7 @@ describe('AgentDwnApi', () => {
     });
 
     it('routes replicated apply through RPC in remote mode', async () => {
-      const rpcApplyStub = sinon.stub().resolves({ kind: 'Duplicate' });
+      const rpcApplyStub = sinon.stub().resolves({ kind: 'Duplicate', materialized: true });
       const mockAgent: any = {
         rpc: {
           applyReplicatedMessage : rpcApplyStub,
@@ -476,10 +476,10 @@ describe('AgentDwnApi', () => {
       const result = await dwnApi.applyReplicatedMessage(
         'did:dht:testtenant',
         fakeMessage,
-        { dataStream },
+        { dataStream, includeMaterializationProof: true },
       );
 
-      expect(result).toEqual({ kind: 'Duplicate' });
+      expect(result).toEqual({ kind: 'Duplicate', materialized: true });
       expect(rpcApplyStub.calledOnce).toBe(true);
       expect(rpcApplyStub.firstCall.args[0]).toMatchObject({
         dwnUrl    : 'http://127.0.0.1:55557',
@@ -487,6 +487,7 @@ describe('AgentDwnApi', () => {
         targetDid : 'did:dht:testtenant',
       });
       expect(rpcApplyStub.firstCall.args[0].data).toBe(dataStream);
+      expect(rpcApplyStub.firstCall.args[0].includeMaterializationProof).toBe(true);
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
     });
 

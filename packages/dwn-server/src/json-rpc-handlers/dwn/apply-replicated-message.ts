@@ -17,9 +17,10 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   context,
 ) => {
   const { dwn, dataStream } = context;
-  const { ancestryOnly, encodedData, target, message } = dwnRequest.params as {
+  const { ancestryOnly, encodedData, includeMaterializationProof, target, message } = dwnRequest.params as {
     ancestryOnly?: unknown;
     encodedData?: string;
+    includeMaterializationProof?: unknown;
     target: string;
     message: GenericMessage;
   };
@@ -36,6 +37,11 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   const hasInboundData = encodedData !== undefined || dataStream !== undefined;
 
   try {
+    const proofValidation = validateMaterializationProofRequest({ includeMaterializationProof, context, requestId });
+    if (proofValidation !== undefined) {
+      return proofValidation;
+    }
+
     const ancestryResult = await validateAncestryOnlyRequest({
       ancestryOnly,
       hasInboundData,
@@ -105,7 +111,8 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
 
     const dataStreamForApply = getDataStreamForApply({ dataStream, encodedData, message });
     const result = await dwn.applyReplicatedMessage(target, message, {
-      dataStream: dataStreamForApply,
+      dataStream                  : dataStreamForApply,
+      includeMaterializationProof : includeMaterializationProof === true,
     });
     if (result.kind === 'Duplicate') {
       await dataStreamForApply?.cancel().catch((): void => {
@@ -133,6 +140,35 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   }
 };
 
+function validateMaterializationProofRequest({
+  includeMaterializationProof,
+  context,
+  requestId,
+}: {
+  includeMaterializationProof: unknown;
+  context: Parameters<JsonRpcHandler>[1];
+  requestId: Parameters<typeof createJsonRpcErrorResponse>[0];
+}): HandlerResponse | undefined {
+  if (includeMaterializationProof !== undefined && typeof includeMaterializationProof !== 'boolean') {
+    return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof must be a boolean when present');
+  }
+  if (includeMaterializationProof !== true) {
+    return undefined;
+  }
+  if (context.transport !== 'http') {
+    return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof requires HTTP transport');
+  }
+  if (context.isLocalNodeAuthenticated !== true) {
+    return {
+      jsonRpcResponse: createJsonRpcErrorResponse(
+        requestId,
+        JsonRpcErrorCodes.Forbidden,
+        'includeMaterializationProof requires an authenticated local-node connection',
+      ),
+    };
+  }
+}
+
 async function validateAncestryOnlyRequest({
   ancestryOnly,
   hasInboundData,
@@ -157,7 +193,7 @@ async function validateAncestryOnlyRequest({
     descriptor.dataSize >= 0;
 
   if (ancestryOnly !== undefined && ancestryOnly !== true) {
-    return invalidAncestryOnlyResponse(requestId, 'ancestryOnly must be true when present');
+    return invalidReplicationOptionResponse(requestId, 'ancestryOnly must be true when present');
   }
   if (ancestryOnly === true) {
     let isInitialWrite = false;
@@ -167,7 +203,7 @@ async function validateAncestryOnlyRequest({
       // Malformed messages carrying the marker are invalid input, not server failures.
     }
     if (!isInitialWrite || hasInboundData) {
-      return invalidAncestryOnlyResponse(
+      return invalidReplicationOptionResponse(
         requestId,
         'ancestryOnly requires a data-less initial RecordsWrite with a payload descriptor',
       );
@@ -176,7 +212,7 @@ async function validateAncestryOnlyRequest({
   }
 }
 
-function invalidAncestryOnlyResponse(
+function invalidReplicationOptionResponse(
   requestId: Parameters<typeof createJsonRpcErrorResponse>[0],
   message: string,
 ): HandlerResponse {

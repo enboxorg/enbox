@@ -516,6 +516,18 @@ describe('WebSocketDwnRpcClient', () => {
         }
       });
 
+      it('rejects materialization proof over WebSocket without opening a connection', async () => {
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+        await expect(client.applyReplicatedMessage({
+          dwnUrl                      : socketDwnUrl,
+          includeMaterializationProof : true,
+          targetDid                   : alice.did,
+          message,
+        })).rejects.toThrow('materialization proof requires HTTP transport');
+        expect((client.getServerInfo as sinon.SinonStub).called).toBe(false);
+      });
+
       it('sends an explicit ancestry-only apply without record data', async () => {
         const requests: any[] = [];
         const socket = {

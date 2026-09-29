@@ -488,6 +488,23 @@ describe('RPC Clients', () => {
       expect(applied).toHaveLength(1);
     });
 
+    it('keeps materialization proof on HTTP even with a pooled socket', async () => {
+      const { applied, client: httpStub } = recordingHttpClient();
+      const rpcClient = new EnboxRpcClient([httpStub]);
+      const socketRequest = seedConnectedSocket();
+
+      const result = await rpcClient.applyReplicatedMessage({
+        dwnUrl                      : httpEndpoint,
+        includeMaterializationProof : true,
+        targetDid                   : 'did:example:alice',
+        message                     : replicatedWriteMessage(3) as never,
+      });
+
+      expect(result).toEqual({ kind: 'Applied' });
+      expect(socketRequest.called).toBe(false);
+      expect(applied).toEqual([expect.objectContaining({ includeMaterializationProof: true })]);
+    });
+
     it('routes an explicit ancestry-only apply over the pooled socket', async () => {
       const { applied, client: httpStub } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);

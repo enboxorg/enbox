@@ -4,6 +4,19 @@ import { DwnRpcError } from '../src/index.js';
 import { parseReplicationApplyResult } from '../src/replication-apply-result.js';
 
 describe('parseReplicationApplyResult', () => {
+  it('preserves only a proven materialized duplicate', () => {
+    expect(parseReplicationApplyResult({ kind: 'Duplicate' })).toEqual({ kind: 'Duplicate' });
+    expect(parseReplicationApplyResult({ kind: 'Duplicate', materialized: true }))
+      .toEqual({ kind: 'Duplicate', materialized: true });
+  });
+
+  it('rejects an invalid duplicate materialization proof', () => {
+    for (const materialized of [false, 'true', 1]) {
+      expect(() => parseReplicationApplyResult({ kind: 'Duplicate', materialized }))
+        .toThrow('Duplicate result materialized must be true when present');
+    }
+  });
+
   it('should accept encryption control dependency refs for both reserved paths', () => {
     for (const protocolPath of ['$encryption/audience', '$encryption/delivery']) {
       const result = parseReplicationApplyResult({
