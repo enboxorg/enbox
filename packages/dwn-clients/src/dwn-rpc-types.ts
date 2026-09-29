@@ -184,8 +184,8 @@ export type DwnReplicationApplyRequest = {
   data?: any;
 
   /**
-   * On an exact duplicate RecordsWrite, request `materialized: true` only when
-   * that write is current and has its data. This is independent of `ancestryOnly`:
+   * For an exact duplicate RecordsWrite, the result includes `materialized: true`
+   * only when that write is current and has its data. This is independent of `ancestryOnly`:
    * a missing message still follows normal replicated admission, including
    * ancestry-only admission for a bodyless initial write. Servers expose the
    * proof only to authenticated local-node clients. No record bytes are returned;
