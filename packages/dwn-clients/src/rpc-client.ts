@@ -272,7 +272,7 @@ export class EnboxRpcClient implements EnboxRpc {
     return socketClient.applyReplicatedMessageIfConnected(socketRequest)
       .then((result) => result ?? this.applyReplicatedMessageOverScheme(request, url))
       .catch((error: unknown) => {
-        if (error instanceof SocketUnavailableError || isUnsupportedAncestrySocketApply(request, error)) {
+        if (error instanceof SocketUnavailableError || isUnsupportedDatalessSocketApply(request, error)) {
           return this.applyReplicatedMessageOverScheme(request, url);
         }
         throw error;
@@ -304,9 +304,10 @@ export class EnboxRpcClient implements EnboxRpc {
   }
 }
 
-/** Whether an older server definitively rejected ancestry-only apply before DWN admission. */
-function isUnsupportedAncestrySocketApply(request: DwnReplicationApplyRequest, error: unknown): boolean {
-  return request.ancestryOnly === true &&
+/** Whether an older server definitively rejected a supported bodyless apply before DWN admission. */
+function isUnsupportedDatalessSocketApply(request: DwnReplicationApplyRequest, error: unknown): boolean {
+  return request.data === undefined &&
+    (request.ancestryOnly === true || request.includeMaterializationProof === true) &&
     error instanceof DwnRpcError &&
     error.code === JsonRpcErrorCodes.InvalidParams &&
     error.message.endsWith('RecordsWrite is not supported via ws');
