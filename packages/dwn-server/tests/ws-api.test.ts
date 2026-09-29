@@ -133,27 +133,34 @@ describe('websocket api', function () {
     expect(readBytes).toEqual(dataBytes);
   });
 
-  it('rejects materialization proof over public HTTP and WebSocket', async function () {
+  it('rejects materialization proof for missing and stored records over public HTTP and WebSocket', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-    const { recordsWrite } = await createRecordsWriteMessage(alice);
+    const missing = await createRecordsWriteMessage(alice);
+    const stored = await createRecordsWriteMessage(alice);
+    expect((await dwn.processMessage(alice.did, stored.recordsWrite.toJSON(), {
+      dataStream: stored.dataStream,
+    })).status.code).toBe(202);
 
     for (const [client, dwnUrl] of [
-      [new HttpDwnRpcClient(), httpUrl],
+      [new HttpDwnRpcClient(undefined, { maxRetries: 0 }), httpUrl],
       [new WebSocketDwnRpcClient(), wsUrl],
     ] as const) {
-      const error = await client.applyReplicatedMessage({
-        dwnUrl,
-        includeMaterializationProof : true,
-        targetDid                   : alice.did,
-        message                     : recordsWrite.toJSON(),
-      }).catch((caught: unknown): unknown => caught);
+      for (const recordsWrite of [missing.recordsWrite, stored.recordsWrite]) {
+        const error = await client.applyReplicatedMessage({
+          dwnUrl,
+          includeMaterializationProof : true,
+          targetDid                   : alice.did,
+          message                     : recordsWrite.toJSON(),
+        }).catch((caught: unknown): unknown => caught);
 
-      expect(error).toBeInstanceOf(DwnRpcError);
-      expect((error as DwnRpcError).code).toBe(JsonRpcErrorCodes.Forbidden);
+        expect(error).toBeInstanceOf(DwnRpcError);
+        expect((error as DwnRpcError).code).toBe(JsonRpcErrorCodes.Forbidden);
+      }
     }
 
-    expect(await dwn.storage.messageStore.get(alice.did, await Message.getCid(recordsWrite.message))).toBeUndefined();
+    expect(await dwn.storage.messageStore.get(alice.did, await Message.getCid(missing.recordsWrite.message))).toBeUndefined();
+    expect(await dwn.storage.messageStore.get(alice.did, await Message.getCid(stored.recordsWrite.message))).toBeDefined();
   });
 
   it('completes and proves stored ancestry over authenticated local-node HTTP and WebSocket', async function () {

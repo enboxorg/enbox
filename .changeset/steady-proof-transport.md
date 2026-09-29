@@ -4,4 +4,4 @@
 "@enbox/dwn-server": patch
 ---
 
-Carry opt-in RecordsWrite materialization proofs through local and remote replication transports.
+Carry opt-in RecordsWrite materialization proofs through agent remote mode and authenticated local-node HTTP/WebSocket transport.
