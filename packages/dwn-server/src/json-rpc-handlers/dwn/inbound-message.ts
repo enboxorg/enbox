@@ -18,6 +18,8 @@ type InboundDwnMessageParams = {
 
 type QuotaOptions = {
   storageBytesToAdd?: number;
+  /** Same-CID data completion moves an existing row instead of adding a message. */
+  skipMessageCount?: boolean;
 };
 
 export function validateInboundDwnMessageTransport(params: InboundDwnMessageParams): HandlerResponse | undefined {
@@ -127,7 +129,7 @@ export async function enforceQuota(
   }
 
   // Check message count quota.
-  if (maxMessages > 0) {
+  if (maxMessages > 0 && options.skipMessageCount !== true) {
     const currentMessages = await adminStore!.getTenantMessageCount(target);
     if (currentMessages >= maxMessages) {
       return {
