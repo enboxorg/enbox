@@ -37,22 +37,9 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   const hasInboundData = encodedData !== undefined || dataStream !== undefined;
 
   try {
-    if (includeMaterializationProof !== undefined && typeof includeMaterializationProof !== 'boolean') {
-      return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof must be a boolean when present');
-    }
-    if (includeMaterializationProof === true) {
-      if (context.transport !== 'http') {
-        return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof requires HTTP transport');
-      }
-      if (context.isLocalNodeAuthenticated !== true) {
-        return {
-          jsonRpcResponse: createJsonRpcErrorResponse(
-            requestId,
-            JsonRpcErrorCodes.Forbidden,
-            'includeMaterializationProof requires an authenticated local-node connection',
-          ),
-        };
-      }
+    const proofValidation = validateMaterializationProofRequest({ includeMaterializationProof, context, requestId });
+    if (proofValidation !== undefined) {
+      return proofValidation;
     }
 
     const ancestryResult = await validateAncestryOnlyRequest({
@@ -152,6 +139,35 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     };
   }
 };
+
+function validateMaterializationProofRequest({
+  includeMaterializationProof,
+  context,
+  requestId,
+}: {
+  includeMaterializationProof: unknown;
+  context: Parameters<JsonRpcHandler>[1];
+  requestId: Parameters<typeof createJsonRpcErrorResponse>[0];
+}): HandlerResponse | undefined {
+  if (includeMaterializationProof !== undefined && typeof includeMaterializationProof !== 'boolean') {
+    return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof must be a boolean when present');
+  }
+  if (includeMaterializationProof !== true) {
+    return undefined;
+  }
+  if (context.transport !== 'http') {
+    return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof requires HTTP transport');
+  }
+  if (context.isLocalNodeAuthenticated !== true) {
+    return {
+      jsonRpcResponse: createJsonRpcErrorResponse(
+        requestId,
+        JsonRpcErrorCodes.Forbidden,
+        'includeMaterializationProof requires an authenticated local-node connection',
+      ),
+    };
+  }
+}
 
 async function validateAncestryOnlyRequest({
   ancestryOnly,
