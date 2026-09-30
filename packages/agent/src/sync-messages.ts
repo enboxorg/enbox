@@ -131,6 +131,7 @@ type FetchDependencyResult =
       kind: 'failed';
       dependencyCid?: string;
       detail: string;
+      localDataUnavailable?: boolean;
       localMissing?: boolean;
       localStatusCode?: number;
     };
@@ -788,7 +789,12 @@ export class RemoteApplyPushContext {
       if (isRequiredPushPayloadMissing(entry, data)) {
         return {
           kind    : 'failed',
-          failure : this.retryableFailure(rootCid, cid, 'required payload is unavailable for current message'),
+          failure : this.retryableFailure(
+            rootCid,
+            cid,
+            'required payload is unavailable for current message',
+            { localDataUnavailable: true },
+          ),
         };
       }
       this.deps.onBeforeApply?.(cid);
@@ -885,9 +891,10 @@ export class RemoteApplyPushContext {
           dependencies.dependencyCid ?? cid,
           dependencies.detail,
           {
-            localMissing    : dependencies.localMissing,
-            localStatusCode : dependencies.localStatusCode,
-            remoteResult    : { kind: 'Incomplete', missing },
+            localDataUnavailable : dependencies.localDataUnavailable,
+            localMissing         : dependencies.localMissing,
+            localStatusCode      : dependencies.localStatusCode,
+            remoteResult         : { kind: 'Incomplete', missing },
           },
         ),
       };
@@ -949,12 +956,13 @@ export class RemoteApplyPushContext {
     cid: string,
     detail: string,
     context: {
+      localDataUnavailable?: boolean;
       localMissing?: boolean;
       localStatusCode?: number;
       remoteResult?: RemoteRetryableResult;
     } = {},
   ): PushFailure {
-    const { localMissing, localStatusCode, remoteResult } = context;
+    const { localDataUnavailable, localMissing, localStatusCode, remoteResult } = context;
     const deferred = remoteResult?.kind === 'Deferred' ? remoteResult : undefined;
     return {
       cid    : rootCid,
@@ -962,6 +970,7 @@ export class RemoteApplyPushContext {
       ...(remoteResult === undefined ? {} : { kind: remoteResult.kind, remoteResult }),
       ...(deferred === undefined ? {} : { reason: deferred.reason }),
       ...(deferred?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
+      ...(localDataUnavailable === true ? { localDataUnavailable: true } : {}),
       ...(localMissing === true && cid === rootCid ? { localMissing: true } : {}),
       ...(localStatusCode === undefined ? {} : { localStatusCode }),
       detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
@@ -978,6 +987,7 @@ export class RemoteApplyPushContext {
         (failure.dependencyCid === undefined || failure.dependencyCid === rootCid)
         ? { localMissing: true }
         : {}),
+      ...(failure.localDataUnavailable === true ? { localDataUnavailable: true } : {}),
       ...(failure.localStatusCode === undefined ? {} : { localStatusCode: failure.localStatusCode }),
       detail: failure.detail,
     };
@@ -1246,11 +1256,19 @@ export class RemoteApplyPushContext {
     });
 
     const recordsReply = reply as RecordsReadReply;
-    if (recordsReply.status.code !== 200 || recordsReply.entry?.recordsWrite === undefined || recordsReply.entry.data === undefined) {
+    if (recordsReply.status.code !== 200 || recordsReply.entry?.recordsWrite === undefined) {
       return {
         kind            : 'failed',
         localStatusCode : recordsReply.status.code,
         detail          : `local record data read failed for ${ref.recordId}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
+      };
+    }
+    if (recordsReply.entry.data === undefined) {
+      return {
+        kind                 : 'failed',
+        localDataUnavailable : true,
+        localStatusCode      : recordsReply.status.code,
+        detail               : `local record data read returned no data for ${ref.recordId}`,
       };
     }
 
@@ -1367,9 +1385,10 @@ export class RemoteApplyPushContext {
 
     if (hydrated.entry.dataStream === undefined) {
       return {
-        kind          : 'failed',
-        dependencyCid : payloadCid,
-        detail        : `local payload read returned no data for current message ${payloadCid}`,
+        kind                 : 'failed',
+        dependencyCid        : payloadCid,
+        localDataUnavailable : true,
+        detail               : `local payload read returned no data for current message ${payloadCid}`,
       };
     }
 
