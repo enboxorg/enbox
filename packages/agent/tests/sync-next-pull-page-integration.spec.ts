@@ -213,7 +213,7 @@ describe('SyncNext pull and quarantine retry integration', () => {
     expect(send.callCount).toBe(2);
   });
 
-  it('settles a locally completed write after a settlement failure without the source', async () => {
+  it('settles a locally completed write after failed settlement and ledger restart without the source', async () => {
     const crashProtocol = { ...protocol, protocol: 'https://sync-next.example/crash-retry' };
     expect((await harness.agent.dwn.sendRequest({
       author        : tenantDid,
@@ -282,6 +282,11 @@ describe('SyncNext pull and quarantine retry integration', () => {
     expect(await DataStream.toBytes(local.entry!.data!)).toEqual(data);
 
     const send = sinon.stub(harness.agent.rpc, 'sendDwnRequest').rejects(new Error('source offline'));
+    await db.close();
+    db = new Level<string, string>(ledgerPath);
+    ledger = new SyncNextLedgerStore(db, 'sync-next-pull-page-integration');
+    expect(await ledger.getQuarantineForLink(link)).toHaveLength(1);
+
     expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target }))
       .toEqual({ kind: 'settled', freshEntries: [] });
     expect(send.notCalled).toBe(true);
