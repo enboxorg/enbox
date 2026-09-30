@@ -4,7 +4,6 @@ import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
 import { attachBearerToken } from './rpc-auth.js';
 import { CryptoUtils } from '@enbox/crypto';
-import { DwnRpcError } from './dwn-rpc-error.js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
 import { normalizeReadableStream } from './readable-stream.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
@@ -16,6 +15,7 @@ import {
   HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
 } from './http-dwn-rpc-framing.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
+import { DwnRpcError, isTerminalJsonRpcErrorCode } from './dwn-rpc-error.js';
 import { executeUnlessAborted, type ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
@@ -128,8 +128,22 @@ function createAttemptInit(init: RequestInit | undefined, requestTimeoutMs: numb
   return { ...init, signal: AbortSignal.any([init.signal, timeoutSignal]) };
 }
 
-function shouldReturnResponse(response: Response, attempt: number, maxRetriesForRequest: number): boolean {
-  return !RETRYABLE_STATUS_CODES.has(response.status) || attempt === maxRetriesForRequest;
+async function shouldReturnResponse(response: Response, attempt: number, maxRetriesForRequest: number): Promise<boolean> {
+  if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt === maxRetriesForRequest) {
+    return true;
+  }
+  if (response.status !== 500) {
+    return false;
+  }
+
+  try {
+    const jsonRpcResponse = parseJson(await response.clone().text()) as JsonRpcResponse;
+    const error = jsonRpcResponse?.error;
+    return error !== undefined && isTerminalJsonRpcErrorCode(error.code, error.message, error.data);
+  } catch {
+    // An unreadable response body is not evidence of a terminal RPC error.
+    return false;
+  }
 }
 
 function shouldRethrowFetchError(error: unknown, attempt: number, maxRetriesForRequest: number): boolean {
@@ -481,7 +495,7 @@ export class HttpDwnRpcClient implements DwnRpc {
         // If the caller already supplied a signal, combine it with the timeout
         // via AbortSignal.any(); otherwise create a fresh timeout signal.
         const response = await fetch(url, createAttemptInit(init, requestTimeoutMs));
-        if (shouldReturnResponse(response, attempt, maxRetriesForRequest)) {
+        if (await shouldReturnResponse(response, attempt, maxRetriesForRequest)) {
           return response;
         }
 
