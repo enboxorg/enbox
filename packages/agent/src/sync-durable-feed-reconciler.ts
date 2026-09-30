@@ -49,8 +49,8 @@ export type SyncDurableFeedReconcileResult = {
 /** Result of applying one remote feed page through engine-owned admission policy. */
 export type SyncDurableFeedPageAdmissionResult =
   | { kind: 'aborted' }
-  | { kind: 'deferred'; admittedCids: string[]; detail?: string; messageCid: string }
-  | { kind: 'processed'; admittedCids: string[] };
+  | { kind: 'deferred'; handledCids: string[]; detail?: string; messageCid: string }
+  | { kind: 'processed'; handledCids: string[] };
 
 /** Result of pushing one local feed page through engine-owned push policy. */
 export type SyncDurableFeedPagePushResult =
@@ -640,7 +640,7 @@ export class SyncDurableFeedReconciler {
     }
 
     if (knownCids !== undefined) {
-      for (const messageCid of pageResult.admittedCids) {
+      for (const messageCid of pageResult.handledCids) {
         knownCids.add(messageCid);
       }
     }

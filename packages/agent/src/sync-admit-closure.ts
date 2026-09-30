@@ -43,8 +43,8 @@ import {
 } from './sync-fetch-helpers.js';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 
-/** One freshly-applied message admitted by a closure, with its CID. */
-export type SyncFreshEntry = {
+/** One message whose DWN outcome was Applied, with its CID. */
+export type SyncAppliedEntry = {
   messageCid: string;
   message: GenericMessage;
 };
@@ -57,11 +57,11 @@ export type AdmitOutcome =
       /**
        * The subset of `handledCids` the DWN reported as genuinely `Applied`
        * (new local state) — `Duplicate`/`Superseded` outcomes are excluded —
-       * with each entry's message, so callers can describe every fresh
+       * with each entry's message, so callers can describe every newly applied
        * change (the closure root AND any fetched dependencies it admitted)
        * without re-reading the store.
        */
-      freshEntries: SyncFreshEntry[];
+      appliedEntries: SyncAppliedEntry[];
     }
   | { kind: 'deferred'; rootCid: string; detail?: string }
   | { kind: 'failed'; rootCid: string; reason: 'invalid' | 'terminal'; detail?: string };
@@ -87,11 +87,11 @@ export type AdmitClosureDeps = {
 };
 
 type AdmissionPassResult =
-  | { kind: 'continue'; handledCids: string[]; freshEntries: SyncFreshEntry[]; retry: SyncMessageEntry[] }
+  | { kind: 'continue'; handledCids: string[]; appliedEntries: SyncAppliedEntry[]; retry: SyncMessageEntry[] }
   | { kind: 'done'; outcome: AdmitOutcome };
 
 type AdmissionEntryResult =
-  | { kind: 'handled'; cid: string; fresh: boolean }
+  | { kind: 'handled'; cid: string; isApplied: boolean }
   | { kind: 'retry'; entries: SyncMessageEntry[] }
   | { kind: 'done'; outcome: AdmitOutcome };
 
@@ -131,7 +131,7 @@ class AdmitClosureContext {
     await this.rememberEntries(this.prefetchedEntries);
     let pending = await this.initialPending(rootCid);
     const handledCids: string[] = [];
-    const freshEntries: SyncFreshEntry[] = [];
+    const appliedEntries: SyncAppliedEntry[] = [];
     if (pending.length === 0) {
       return { kind: 'deferred', rootCid, detail: 'root message not available' };
     }
@@ -144,19 +144,19 @@ class AdmitClosureContext {
       }
 
       handledCids.push(...passResult.handledCids);
-      freshEntries.push(...passResult.freshEntries);
+      appliedEntries.push(...passResult.appliedEntries);
       pending = await dedupeSyncMessageEntries(passResult.retry);
     }
 
     return pending.length === 0
-      ? { kind: 'admitted', handledCids, freshEntries }
+      ? { kind: 'admitted', handledCids, appliedEntries }
       : { kind: 'deferred', rootCid, detail: 'dependency admission pass budget exhausted' };
   }
 
   private async admitPass(rootCid: string, pending: SyncMessageEntry[]): Promise<AdmissionPassResult> {
     const retry: SyncMessageEntry[] = [];
     const handledCids: string[] = [];
-    const freshEntries: SyncFreshEntry[] = [];
+    const appliedEntries: SyncAppliedEntry[] = [];
 
     for (const entry of orderMessagesForAdmission(pending)) {
       this.assertShouldContinue();
@@ -164,8 +164,8 @@ class AdmitClosureContext {
       switch (result.kind) {
         case 'handled':
           handledCids.push(result.cid);
-          if (result.fresh) {
-            freshEntries.push({ messageCid: result.cid, message: entry.message });
+          if (result.isApplied) {
+            appliedEntries.push({ messageCid: result.cid, message: entry.message });
           }
           break;
         case 'retry':
@@ -176,7 +176,7 @@ class AdmitClosureContext {
       }
     }
 
-    return { kind: 'continue', handledCids, freshEntries, retry };
+    return { kind: 'continue', handledCids, appliedEntries, retry };
   }
 
   private async admitEntry(rootCid: string, entry: SyncMessageEntry): Promise<AdmissionEntryResult> {
@@ -260,10 +260,10 @@ class AdmitClosureContext {
   ): Promise<AdmissionEntryResult> {
     switch (result.kind) {
       case 'Applied':
-        return { kind: 'handled', cid, fresh: true };
+        return { kind: 'handled', cid, isApplied: true };
       case 'Duplicate':
       case 'Superseded':
-        return { kind: 'handled', cid, fresh: false };
+        return { kind: 'handled', cid, isApplied: false };
       case 'Deferred':
         return { kind: 'done', outcome: { kind: 'deferred', rootCid, detail: result.reason } };
       case 'Invalid':

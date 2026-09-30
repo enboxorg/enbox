@@ -53,6 +53,7 @@ the code, not an entry missing from this table.
 | Dependency-aware topological ordering of messages before DWN processing | **admission order** — `orderMessagesForAdmission` | feed order, direction reconciliation order |
 | Positive local observation that an exact duplicate `RecordsWrite` is current and has data; absence is inconclusive | **materialization confirmation** — `includeMaterializationConfirmation` requests `materialized: true` | materialization proof |
 | Closure messages accounted for as `Applied`, `Duplicate`, or `Superseded` | **handled CIDs** — `handledCids` | materialized CIDs |
+| Closure messages whose DWN outcome was `Applied` | **applied entries** — `SyncAppliedEntry`, `appliedEntries` | fresh entries |
 | Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `getDeadLetters`, `recordDeadLetter`, `hasDeadLetter` | `getFailedMessages`, `clearFailedMessage`, `clearAllFailedMessages`, `hasAdmissionDeadLetter` |
 | Automatically clearing one healed `(tenant, cid, remote)` dead letter | **`clearDeadLetterForTenant`** | public/manual dead-letter deletion, or the quota ops key `clearFailedMessage` |
 | A cycle that did not run because the link is parked | **`paused`** on the reconcile result | reporting `converged: true` for a link nothing compared |

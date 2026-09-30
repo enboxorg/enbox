@@ -5,4 +5,4 @@
 "@enbox/dwn-server": patch
 ---
 
-Rename the opt-in replication field from `includeMaterializationProof` to `includeMaterializationConfirmation`. Rename admission and pull-page CID lists to `handledCids` because they also include duplicate and superseded outcomes.
+Expose opt-in `includeMaterializationConfirmation` for replicated writes. Report `handledCids` for Applied, Duplicate, and Superseded outcomes, and `appliedEntries` only for Applied outcomes.

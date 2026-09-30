@@ -10,7 +10,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 
 /** CIDs of freshly-applied entries, in admission order ([] for non-admitted outcomes). */
 function freshCidsOf(outcome: AdmitOutcome): string[] {
-  return outcome.kind === 'admitted' ? outcome.freshEntries.map(entry => entry.messageCid) : [];
+  return outcome.kind === 'admitted' ? outcome.appliedEntries.map(entry => entry.messageCid) : [];
 }
 
 describe('admitClosure', () => {

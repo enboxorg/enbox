@@ -283,7 +283,7 @@ describe('SyncNext pull and quarantine retry integration', () => {
 
     const send = sinon.stub(harness.agent.rpc, 'sendDwnRequest').rejects(new Error('source offline'));
     expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target }))
-      .toEqual({ kind: 'settled', freshEntries: [] });
+      .toEqual({ kind: 'settled', appliedEntries: [] });
     expect(send.notCalled).toBe(true);
     expect(await ledger.getQuarantineForLink(link)).toEqual([]);
   });

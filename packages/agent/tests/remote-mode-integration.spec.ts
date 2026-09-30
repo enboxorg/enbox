@@ -180,7 +180,7 @@ describe('Agent remote mode integration', () => {
 
       const send = sinon.stub(agent.rpc, 'sendDwnRequest').rejects(new Error('source offline'));
       expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
-        .toEqual({ kind: 'settled', freshEntries: [] });
+        .toEqual({ kind: 'settled', appliedEntries: [] });
       expect(send.notCalled).toBe(true);
       expect(await ledger.getQuarantineForLink(link)).toEqual([]);
     } finally {

@@ -226,8 +226,8 @@ describe('retryOneQuarantinedRoot', () => {
     ]);
 
     expect(results.map(result => result.kind)).toEqual(['settled', 'settled']);
-    const fresh = results.flatMap(result => result.kind === 'settled' ? result.freshEntries : []);
-    expect(fresh).toEqual([{ message: entry.message, messageCid: entry.messageCid }]);
+    const applied = results.flatMap(result => result.kind === 'settled' ? result.appliedEntries : []);
+    expect(applied).toEqual([{ message: entry.message, messageCid: entry.messageCid }]);
     expect(fixture.apply.calledTwice).toBe(true);
     expect(await ledger.getQuarantineForLogicalTarget(target().did, target().projectionId)).toEqual([]);
   });
@@ -281,7 +281,7 @@ describe('retryOneQuarantinedRoot', () => {
     await retain(target(), [entry]);
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
-      .toEqual({ kind: 'settled', freshEntries: [{ message: entry.message, messageCid: entry.messageCid }] });
+      .toEqual({ kind: 'settled', appliedEntries: [{ message: entry.message, messageCid: entry.messageCid }] });
     expect(fixture.prepare.notCalled).toBe(true);
     expect(fixture.send.notCalled).toBe(true);
     expect(await DataStream.toBytes(fixture.apply.firstCall.args[2].dataStream)).toEqual(generated.dataBytes!);
@@ -289,7 +289,7 @@ describe('retryOneQuarantinedRoot', () => {
   });
 
   const unavailableConfirmationCases: [string, JsonRpcErrorCodes, string][] = [
-    ['an unpaired local server', JsonRpcErrorCodes.Forbidden,
+    ['an ordinary local server', JsonRpcErrorCodes.Forbidden,
       'includeMaterializationConfirmation requires an authenticated local-node connection'],
     ['a socket local endpoint', JsonRpcErrorCodes.InvalidParams,
       'materialization confirmation requires HTTP transport'],
@@ -454,7 +454,7 @@ describe('retryOneQuarantinedRoot', () => {
     fixture.send.rejects(new Error('source offline'));
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
-      .toEqual({ kind: 'settled', freshEntries: [] });
+      .toEqual({ kind: 'settled', appliedEntries: [] });
     expect(fixture.apply.calledThrice).toBe(true);
     expect(fixture.send.calledOnce).toBe(true);
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);

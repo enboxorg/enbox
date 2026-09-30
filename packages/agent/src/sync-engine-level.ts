@@ -11,9 +11,9 @@ import { RateLimitError, SubscriptionHandlerTerminalError } from '@enbox/dwn-cli
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { SyncAppliedEntry } from './sync-admit-closure.js';
 import type { SyncDeferredPullState } from './sync-deferred-pull-store-level.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
-import type { SyncFreshEntry } from './sync-admit-closure.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncLinkRepairRetryOptions } from './sync-link-recovery-coordinator.js';
 import type { SyncMessageEntry } from './sync-messages.js';
@@ -4566,7 +4566,7 @@ export class SyncEngineLevel implements SyncEngine {
     entries: MessagesQueryReplyEntry[],
     shouldContinue?: () => boolean,
   ): Promise<FeedPageAdmissionResult> {
-    const admittedCids: string[] = [];
+    const handledCids: string[] = [];
 
     for (const entry of entries) {
       if (target.authorization.kind !== 'role' &&
@@ -4581,7 +4581,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (outcome.kind === 'deferred') {
         if (!await this.tryRetireDeferredPull(target, entry, outcome.detail)) {
-          return { kind: 'deferred', admittedCids, detail: outcome.detail, messageCid: entry.messageCid };
+          return { kind: 'deferred', handledCids, detail: outcome.detail, messageCid: entry.messageCid };
         }
         continue;
       }
@@ -4593,15 +4593,15 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       if (outcome.kind === 'admitted') {
-        admittedCids.push(...outcome.handledCids);
+        handledCids.push(...outcome.handledCids);
         await this.trackRemoteFeedHandledCids(outcome.handledCids, target);
-        for (const freshEntry of outcome.freshEntries) {
-          this.emitDeliveryApplied(target, freshEntry.messageCid, freshEntry.message);
+        for (const appliedEntry of outcome.appliedEntries) {
+          this.emitDeliveryApplied(target, appliedEntry.messageCid, appliedEntry.message);
         }
       }
     }
 
-    return { kind: 'processed', admittedCids };
+    return { kind: 'processed', handledCids };
   }
 
   private async trackRemoteFeedHandledCids(messageCids: string[], target: SyncTarget): Promise<void> {
@@ -4802,7 +4802,7 @@ export class SyncEngineLevel implements SyncEngine {
     shouldContinue?: () => boolean,
   ): Promise<
     | { kind: 'aborted' }
-    | { kind: 'admitted'; handledCids: string[]; freshEntries: SyncFreshEntry[] }
+    | { kind: 'admitted'; handledCids: string[]; appliedEntries: SyncAppliedEntry[] }
     | { kind: 'dead-lettered' }
     | { kind: 'deferred'; detail?: string }
     | { kind: 'echo' }
@@ -4849,7 +4849,7 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     if (outcome.kind === 'admitted') {
-      return { kind: 'admitted', handledCids: outcome.handledCids, freshEntries: outcome.freshEntries };
+      return { kind: 'admitted', handledCids: outcome.handledCids, appliedEntries: outcome.appliedEntries };
     }
 
     if (outcome.kind === 'deferred') {

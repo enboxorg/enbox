@@ -22,7 +22,7 @@ describe('SyncEngineLevel quota routing', () => {
       projectionId       : 'projection-id',
       scope              : { kind: 'full' },
     };
-    const admittedCids = ['dependency-cid', 'successor-cid'];
+    const handledCids = ['dependency-cid', 'successor-cid'];
     sinon.stub(internal, 'clearDeadLetterForTenant').resolves();
     sinon.stub(internal, 'clearDeferredPull').resolves();
     const resolveSuperseded = sinon.stub(
@@ -31,11 +31,11 @@ describe('SyncEngineLevel quota routing', () => {
     ).resolves();
     const clearBlock = sinon.spy(internal._quotaManager, 'clearBlock');
 
-    await internal.trackRemoteFeedHandledCids(admittedCids, target);
+    await internal.trackRemoteFeedHandledCids(handledCids, target);
 
-    expect(resolveSuperseded.callCount).toBe(admittedCids.length);
-    expect(resolveSuperseded.firstCall.calledWithExactly(target, admittedCids[0])).toBe(true);
-    expect(resolveSuperseded.secondCall.calledWithExactly(target, admittedCids[1])).toBe(true);
+    expect(resolveSuperseded.callCount).toBe(handledCids.length);
+    expect(resolveSuperseded.firstCall.calledWithExactly(target, handledCids[0])).toBe(true);
+    expect(resolveSuperseded.secondCall.calledWithExactly(target, handledCids[1])).toBe(true);
     expect(clearBlock.notCalled).toBe(true);
   });
 });
