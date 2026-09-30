@@ -6,9 +6,11 @@ import type { SyncNextQuarantineEntry } from './types.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 
 import { admitClosure } from '../sync-admit-closure.js';
+import { classifySyncMessageScope } from '../sync-scope-acceptance.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { syncNextReceiptKey } from './ledger-key.js';
-import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { Cid, DataStream, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { fetchRemoteMessages, SyncPullAbortedError } from '../sync-messages.js';
 
 export type SyncNextQuarantineRetryResult =
@@ -80,6 +82,40 @@ async function retrySelectedRoot(
     return { freshEntries: [], kind: 'pending' };
   }
   const root = await prepareRetainedRoot(agent, target, selected);
+  if (!shouldContinue()) {
+    return { freshEntries: [], kind: 'pending' };
+  }
+
+  if (recordsWriteRequiresData(root.message) &&
+      classifySyncMessageScope({ message: root.message, scope: target.scope }) === 'in-scope') {
+    // An exact local duplicate with a body needs no remote read. This call may
+    // also apply a missing write, so only a complete apply can settle it.
+    const proof = await agent.dwn.applyReplicatedMessage(target.did, root.message, {
+      includeMaterializationProof: true,
+      ...(root.bufferedData === undefined ? {} : { dataStream: DataStream.fromBytes(root.bufferedData) }),
+    }).catch((error: unknown) => {
+      // Remote mode can still retry normally when its local server is unpaired
+      // or its configured endpoint uses a socket, where proof is unavailable.
+      if (error instanceof DwnRpcError &&
+          ((error.code === JsonRpcErrorCodes.Forbidden &&
+            error.message.includes('includeMaterializationProof requires an authenticated local-node connection')) ||
+           (error.code === JsonRpcErrorCodes.InvalidParams &&
+            error.message.includes('materialization proof requires HTTP transport')))) {
+        return undefined;
+      }
+      throw error;
+    });
+    if (proof?.kind === 'Duplicate' && proof.materialized === true) {
+      return { freshEntries: [], kind: 'settled' };
+    }
+    if (proof?.kind === 'Applied' && proof.ancestryOnly !== true) {
+      return {
+        freshEntries : [{ message: root.message, messageCid: selected.messageCid }],
+        kind         : 'settled',
+      };
+    }
+  }
+
   const outcome = await admitClosure(selected.messageCid, {
     agent,
     did                : target.did,

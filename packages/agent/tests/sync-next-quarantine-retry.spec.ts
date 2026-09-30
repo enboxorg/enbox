@@ -4,6 +4,7 @@ import { Level } from 'level';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DataStream, DwnConstant, Encoder, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
@@ -98,7 +99,12 @@ function fakeAgent(): {
   query: sinon.SinonStub;
   send: sinon.SinonStub;
   } {
-  const apply = sinon.stub().resolves({ kind: 'Applied' });
+  const apply = sinon.stub().callsFake((_did: string, _message: GenericMessage, options?: {
+    dataStream?: ReadableStream<Uint8Array>;
+    includeMaterializationProof?: boolean;
+  }): Promise<unknown> => Promise.resolve(options?.includeMaterializationProof === true && options.dataStream === undefined
+    ? { ancestryOnly: true, kind: 'Applied' }
+    : { kind: 'Applied' }));
   const prepare = sinon.stub().resolves({
     message: { descriptor: { interface: 'Messages', method: 'Read' } },
   });
@@ -275,17 +281,24 @@ describe('retryOneQuarantinedRoot', () => {
     await retain(target(), [entry]);
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
-      .toMatchObject({ kind: 'settled' });
+      .toEqual({ kind: 'settled', freshEntries: [{ message: entry.message, messageCid: entry.messageCid }] });
     expect(fixture.prepare.notCalled).toBe(true);
     expect(fixture.send.notCalled).toBe(true);
     expect(await DataStream.toBytes(fixture.apply.firstCall.args[2].dataStream)).toEqual(generated.dataBytes!);
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
 
-  it('hydrates a retained detached write and settles only after a fresh apply', async () => {
+  const unavailableProofCases: [string, JsonRpcErrorCodes, string][] = [
+    ['an unpaired local server', JsonRpcErrorCodes.Forbidden,
+      'includeMaterializationProof requires an authenticated local-node connection'],
+    ['a socket local endpoint', JsonRpcErrorCodes.InvalidParams,
+      'materialization proof requires HTTP transport'],
+  ];
+  it.each(unavailableProofCases)('hydrates a detached write when %s cannot prove it', async (_reason, code, message) => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
     const entry = await feedEntry(generated.message, 1);
     const fixture = fakeAgent();
+    fixture.apply.onFirstCall().rejects(new DwnRpcError(code, message));
     fixture.send.resolves({
       entry: {
         data    : new Blob([generated.dataBytes!]).stream(),
@@ -303,7 +316,8 @@ describe('retryOneQuarantinedRoot', () => {
       messageParams : { permissionGrantIds: ['messages-read-grant'] },
     });
     expect(fixture.send.calledOnce).toBe(true);
-    expect(fixture.apply.firstCall.args[2].dataStream).toBeDefined();
+    expect(fixture.apply.firstCall.args[2]).toEqual({ includeMaterializationProof: true });
+    expect(fixture.apply.secondCall.args[2].dataStream).toBeDefined();
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(delegateTarget()))).toEqual([]);
   });
 
@@ -322,9 +336,11 @@ describe('retryOneQuarantinedRoot', () => {
       seq               : '2',
     };
     const fixture = fakeAgent();
-    fixture.apply
-      .onFirstCall().resolves({ ancestryOnly: true, kind: 'Applied' })
-      .onSecondCall().resolves({ kind: 'Applied' });
+    fixture.apply.callsFake((_did: string, _message: GenericMessage, options?: {
+      dataStream?: ReadableStream<Uint8Array>;
+    }): Promise<unknown> => Promise.resolve(options?.dataStream === undefined
+      ? { ancestryOnly: true, kind: 'Applied' }
+      : { kind: 'Applied' }));
     fixture.send.resolves({
       entry: {
         data    : new Blob([generated.dataBytes!]).stream(),
@@ -342,7 +358,7 @@ describe('retryOneQuarantinedRoot', () => {
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
       .toMatchObject({ kind: 'settled' });
-    expect(fixture.apply.secondCall.args[2].dataStream).toBeDefined();
+    expect(fixture.apply.lastCall.args[2].dataStream).toBeDefined();
     expect(fixture.send.calledOnce).toBe(true);
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
@@ -356,7 +372,9 @@ describe('retryOneQuarantinedRoot', () => {
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
       .toEqual({ kind: 'pending' });
-    expect(fixture.apply.notCalled).toBe(true);
+    expect(fixture.apply.calledOnceWithExactly(target().did, entry.message, {
+      includeMaterializationProof: true,
+    })).toBe(true);
 
     fixture.send.resolves({
       entry: {
@@ -371,6 +389,36 @@ describe('retryOneQuarantinedRoot', () => {
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
   });
 
+  it('does not probe or apply an out-of-scope retained write', async () => {
+    const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
+    const scopedTarget: SyncTarget = {
+      ...target(),
+      scope: { kind: 'protocolSet', protocols: ['https://example.com/other'] },
+    };
+    const entry = await feedEntry(generated.message, 1);
+    const fixture = fakeAgent();
+    await retain(scopedTarget, [entry]);
+
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: scopedTarget }))
+      .toEqual({ kind: 'pending' });
+    expect(fixture.apply.notCalled).toBe(true);
+    expect(fixture.send.notCalled).toBe(true);
+    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(scopedTarget))).toHaveLength(1);
+  });
+
+  it('does not mask a different local proof rejection', async () => {
+    const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
+    const entry = await feedEntry(generated.message, 1);
+    const fixture = fakeAgent();
+    fixture.apply.onFirstCall().rejects(new DwnRpcError(JsonRpcErrorCodes.Forbidden, 'tenant not registered'));
+    await retain(target(), [entry]);
+
+    await expect(retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+      .rejects.toThrow('tenant not registered');
+    expect(fixture.send.notCalled).toBe(true);
+    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
+  });
+
   it('replays safely after local apply succeeds but settlement fails', async () => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
     const entry = await feedEntry(generated.message, 1);
@@ -382,7 +430,19 @@ describe('retryOneQuarantinedRoot', () => {
       },
       status: { code: 200, detail: 'OK' },
     }));
-    fixture.apply.onFirstCall().resolves({ kind: 'Applied' }).onSecondCall().resolves({ kind: 'Duplicate' });
+    let materialized = false;
+    fixture.apply.callsFake((_did: string, _message: GenericMessage, options?: {
+      dataStream?: ReadableStream<Uint8Array>;
+      includeMaterializationProof?: boolean;
+    }): Promise<unknown> => {
+      if (options?.includeMaterializationProof === true) {
+        return Promise.resolve(materialized
+          ? { kind: 'Duplicate', materialized: true }
+          : { ancestryOnly: true, kind: 'Applied' });
+      }
+      materialized = options?.dataStream !== undefined;
+      return Promise.resolve({ kind: 'Applied' });
+    });
     await retain(target(), [entry]);
     const settle = sinon.stub(ledger, 'settleQuarantineForLogicalTarget');
     settle.onFirstCall().rejects(new Error('injected settlement failure'));
@@ -391,11 +451,13 @@ describe('retryOneQuarantinedRoot', () => {
     await expect(retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
       .rejects.toThrow('injected settlement failure');
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
+    fixture.send.rejects(new Error('source offline'));
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
-      .toEqual({ kind: 'pending' });
-    expect(fixture.apply.calledTwice).toBe(true);
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
+      .toEqual({ kind: 'settled', freshEntries: [] });
+    expect(fixture.apply.calledThrice).toBe(true);
+    expect(fixture.send.calledOnce).toBe(true);
+    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
 
   it('keeps a dataless parent\'s receipt while retrying its child', async () => {
@@ -412,13 +474,22 @@ describe('retryOneQuarantinedRoot', () => {
     const childEntry = await feedEntry(child.message, 1);
     const parentEntry = await feedEntry(parent.message, 2);
     const fixture = fakeAgent();
-    fixture.apply
-      .onFirstCall().resolves({
-        kind    : 'Incomplete',
-        missing : [{ type: 'Parent', protocol, recordId: parent.message.recordId }],
-      })
-      .onSecondCall().resolves({ ancestryOnly: true, kind: 'Applied' })
-      .onThirdCall().resolves({ kind: 'Applied' });
+    let admitted = 0;
+    fixture.apply.callsFake((_did: string, _message: GenericMessage, options?: {
+      includeMaterializationProof?: boolean;
+    }): Promise<unknown> => {
+      if (options?.includeMaterializationProof === true) {
+        return Promise.resolve({ kind: 'Duplicate' });
+      }
+      admitted += 1;
+      if (admitted === 1) {
+        return Promise.resolve({
+          kind    : 'Incomplete',
+          missing : [{ type: 'Parent', protocol, recordId: parent.message.recordId }],
+        });
+      }
+      return Promise.resolve(admitted === 2 ? { ancestryOnly: true, kind: 'Applied' } : { kind: 'Applied' });
+    });
     fixture.send.callsFake(async ({ message }: {
       message: { descriptor: { interface: string } };
     }): Promise<unknown> => message.descriptor.interface === 'Messages'
@@ -443,8 +514,8 @@ describe('retryOneQuarantinedRoot', () => {
     expect(fixture.query.calledOnce).toBe(true);
     expect(fixture.prepare.calledTwice).toBe(true);
     expect(fixture.send.callCount).toBe(3);
-    expect(fixture.apply.callCount).toBe(3);
-    expect(fixture.apply.secondCall.args[2].dataStream).toBeUndefined();
+    expect(fixture.apply.callCount).toBe(4);
+    expect(fixture.apply.thirdCall.args[2].dataStream).toBeUndefined();
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toMatchObject([{
       messageCid: parentEntry.messageCid,
     }]);

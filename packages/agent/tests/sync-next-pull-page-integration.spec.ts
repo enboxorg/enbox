@@ -2,7 +2,7 @@ import type { Dwn, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import sinon from 'sinon';
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DataStream, DwnConstant, Message } from '@enbox/dwn-sdk-js';
 
 import type { SyncTarget } from '../src/sync-target-resolver.js';
@@ -13,6 +13,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
+import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
 import { SyncNextPullPage } from '../src/sync-next/pull-page.js';
 import { TestAgent } from './utils/test-agent.js';
 import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/sync.js';
@@ -73,12 +74,15 @@ describe('SyncNext pull and quarantine retry integration', () => {
   });
 
   afterAll(async () => {
-    sinon.restore();
     await ledger?.clear();
     await db?.close();
     await remoteDwn?.close();
     await harness?.clearStorage();
     await harness?.closeStorage();
+  });
+
+  afterEach(() => {
+    sinon.restore();
   });
 
   it('should advance past a non-inline body and recover it after a ledger restart', async () => {
@@ -189,7 +193,9 @@ describe('SyncNext pull and quarantine retry integration', () => {
     expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target: syncTarget }))
       .toMatchObject({ kind: 'settled' });
     expect(send.callCount).toBe(2);
-    expect(apply.callCount).toBe(3);
+    expect(apply.callCount).toBe(4);
+    expect(apply.thirdCall.args[2]).toEqual({ includeMaterializationProof: true });
+    expect(await apply.thirdCall.returnValue).toMatchObject({ ancestryOnly: true, kind: 'Applied' });
     expect(await ledger.getQuarantineForLink(link)).toEqual([]);
     expect((await ledger.getLink(link))?.pullHandledThrough).toEqual(checkpoint);
 
@@ -205,5 +211,80 @@ describe('SyncNext pull and quarantine retry integration', () => {
     expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target: syncTarget }))
       .toEqual({ kind: 'empty' });
     expect(send.callCount).toBe(2);
+  });
+
+  it('settles a locally completed write after a settlement failure without the source', async () => {
+    const crashProtocol = { ...protocol, protocol: 'https://sync-next.example/crash-retry' };
+    expect((await harness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: crashProtocol },
+    })).reply.status.code).toBe(202);
+    expect((await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: crashProtocol },
+    })).reply.status.code).toBe(202);
+    const data = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(7);
+    const sent = await harness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        dataFormat   : 'text/plain',
+        protocol     : crashProtocol.protocol,
+        protocolPath : 'note',
+        schema       : crashProtocol.types.note.schema,
+      },
+      dataStream: new Blob([data]),
+    });
+    expect(sent.reply.status.code).toBe(202);
+    const message = sent.message!;
+    const messageCid = await Message.getCid(message);
+    const scope = { kind: 'full' as const };
+    const target: SyncTarget = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
+      did                : tenantDid,
+      dwnUrl             : remoteEndpoint,
+      projectionId       : await computeProjectionId(tenantDid, scope),
+      scope,
+    };
+    const link = await ledger.getOrCreateLink({
+      ...syncNextLinkIdentity(target),
+      authorization: target.authorization,
+      scope,
+    });
+    const source = { epoch: 'remote-epoch', position: '1', streamId: 'remote-stream', messageCid };
+    const entry = { isLatestBaseState: true, message, messageCid, seq: '1' };
+    await ledger.commitPullPage(link, {
+      handledThrough : source,
+      pageReceipts   : [{ messageCid, source }],
+      quarantine     : [{ entry, messageCid, source }],
+      settled        : [],
+    });
+    const settle = sinon.stub(ledger, 'settleQuarantineForLogicalTarget');
+    settle.onFirstCall().rejects(new Error('injected settlement failure'));
+    settle.callThrough();
+
+    await expect(retryOneQuarantinedRoot({ agent: harness.agent, ledger, target }))
+      .rejects.toThrow('injected settlement failure');
+    expect(await ledger.getQuarantineForLink(link)).toHaveLength(1);
+    const { reply: local } = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: message.recordId } },
+    });
+    expect(local.status.code).toBe(200);
+    expect(await DataStream.toBytes(local.entry!.data!)).toEqual(data);
+
+    const send = sinon.stub(harness.agent.rpc, 'sendDwnRequest').rejects(new Error('source offline'));
+    expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target }))
+      .toEqual({ kind: 'settled', freshEntries: [] });
+    expect(send.notCalled).toBe(true);
+    expect(await ledger.getQuarantineForLink(link)).toEqual([]);
   });
 });
