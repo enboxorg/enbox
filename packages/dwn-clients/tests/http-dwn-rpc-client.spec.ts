@@ -935,8 +935,8 @@ describe('HttpDwnRpcClient', () => {
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
       await expect(retryClient.applyReplicatedMessage({
-        dwnUrl                      : testDwnUrl,
-        targetDid                   : alice.did,
+        dwnUrl                             : testDwnUrl,
+        targetDid                          : alice.did,
         message,
         includeMaterializationConfirmation : true,
       })).rejects.toMatchObject({ code: JsonRpcErrorCodes.Forbidden });

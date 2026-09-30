@@ -116,7 +116,7 @@ async function retrySelectedRoot(
   return { appliedEntries: outcome.appliedEntries, kind: 'settled' };
 }
 
-/** Establish complete local state before fetching a retained write's body from its source. */
+/** Try to establish complete local state before fetching a retained write's body from its source. */
 async function tryEstablishLocalWriteCompletion(
   agent: EnboxPlatformAgent,
   target: SyncTarget,
