@@ -8,6 +8,7 @@ import sinon from 'sinon';
 
 import { DidJwk } from '@enbox/dids';
 import { Level } from 'level';
+import { parseHttpDwnRpcRequestBody } from '@enbox/dwn-clients';
 
 import { config as defaultDwnServerConfig } from '../../dwn-server/src/config.js';
 import { HttpApi } from '../../dwn-server/src/http-api.js';
@@ -182,6 +183,65 @@ describe('Agent remote mode integration', () => {
       expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
         .toEqual({ kind: 'settled', freshEntries: [] });
       expect(send.notCalled).toBe(true);
+      expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('hydrates through an ordinary local server after one rejected confirmation POST', async () => {
+    context = await setupRemoteModeContext('ordinary-quarantine');
+    const { alice, localServer, remoteServer, testHarness } = context;
+    const agent = testHarness.agent;
+    await configureLocalProtocol(agent, alice.did.uri, notesProtocol);
+    await configureProtocolOnServer(agent, remoteServer.httpUrl, alice.did, notesProtocol);
+
+    const body = 'ordinary server body '.repeat(3000);
+    const write = await writeRecordToServer(agent, remoteServer.httpUrl, alice.did, body);
+    const messageCid = await Message.getCid(write);
+    const scope = { kind: 'protocolSet' as const, protocols: [notesProtocol.protocol] as [string] };
+    const target: SyncTarget = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
+      did                : alice.did.uri,
+      dwnUrl             : remoteServer.httpUrl,
+      projectionId       : await computeProjectionId(alice.did.uri, scope),
+      scope,
+    };
+    const db = new Level<string, string>(`__TESTDATA__/remote-mode-integration/ordinary-ledger-${crypto.randomUUID()}`);
+    const ledger = new SyncNextLedgerStore(db, 'ordinary-quarantine');
+    try {
+      const link = await ledger.getOrCreateLink({
+        ...syncNextLinkIdentity(target),
+        authorization: target.authorization,
+        scope,
+      });
+      const source = { epoch: 'source-epoch', position: '1', streamId: 'source-stream', messageCid };
+      await ledger.commitPullPage(link, {
+        handledThrough : source,
+        pageReceipts   : [{ messageCid, source }],
+        quarantine     : [{ entry: { isLatestBaseState: true, message: write, messageCid, seq: '1' }, messageCid, source }],
+        settled        : [],
+      });
+
+      const fetchSpy = sinon.spy(globalThis, 'fetch');
+      expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
+        .toMatchObject({ kind: 'settled' });
+
+      let confirmationPosts = 0;
+      for (const call of fetchSpy.getCalls()) {
+        const [url, init] = call.args;
+        if (url !== localServer.httpUrl || init?.method !== 'POST' || !(init.body instanceof Blob)) {
+          continue;
+        }
+        const { jsonRpcRequest } = await parseHttpDwnRpcRequestBody(init.body.stream());
+        if (jsonRpcRequest.method === 'dwn.applyReplicatedMessage' &&
+            jsonRpcRequest.params?.includeMaterializationProof === true) {
+          confirmationPosts += 1;
+        }
+      }
+      expect(confirmationPosts).toBe(1);
+      expect(await readLocalRecordText(agent, alice.did.uri, write.recordId)).toBe(body);
       expect(await ledger.getQuarantineForLink(link)).toEqual([]);
     } finally {
       await db.close();

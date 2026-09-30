@@ -289,7 +289,7 @@ describe('retryOneQuarantinedRoot', () => {
   });
 
   const unavailableProofCases: [string, JsonRpcErrorCodes, string][] = [
-    ['an unpaired local server', JsonRpcErrorCodes.Forbidden,
+    ['an ordinary local server', JsonRpcErrorCodes.Forbidden,
       'includeMaterializationProof requires an authenticated local-node connection'],
     ['a socket local endpoint', JsonRpcErrorCodes.InvalidParams,
       'materialization proof requires HTTP transport'],

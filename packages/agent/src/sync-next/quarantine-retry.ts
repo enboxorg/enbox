@@ -134,8 +134,8 @@ async function tryCompleteRetainedWriteLocally(
     includeMaterializationProof: true,
     ...(root.bufferedData === undefined ? {} : { dataStream: DataStream.fromBytes(root.bufferedData) }),
   }).catch((error: unknown) => {
-    // Remote mode can still retry normally when its local server is unpaired
-    // or its configured endpoint uses a socket, where proof is unavailable.
+    // Remote mode can still retry normally with an ordinary local server or a
+    // socket endpoint, where this confirmation is unavailable.
     if (error instanceof DwnRpcError &&
         ((error.code === JsonRpcErrorCodes.Forbidden &&
           error.message.includes('includeMaterializationProof requires an authenticated local-node connection')) ||
