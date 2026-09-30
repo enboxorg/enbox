@@ -318,10 +318,10 @@ describe('HttpDwnRpcClient', () => {
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
       const result = await legacyClient.applyReplicatedMessage({
-        ancestryOnly                : true,
-        dwnUrl                      : testDwnUrl,
-        includeMaterializationProof : true,
-        targetDid                   : alice.did,
+        ancestryOnly                       : true,
+        dwnUrl                             : testDwnUrl,
+        includeMaterializationConfirmation : true,
+        targetDid                          : alice.did,
         message,
       });
 
@@ -333,7 +333,7 @@ describe('HttpDwnRpcClient', () => {
       const dwnRequest = JSON.parse(headers['dwn-request']);
       expect(dwnRequest.method).toBe('dwn.applyReplicatedMessage');
       expect(dwnRequest.params.ancestryOnly).toBe(true);
-      expect(dwnRequest.params.includeMaterializationProof).toBe(true);
+      expect(dwnRequest.params.includeMaterializationConfirmation).toBe(true);
       expect(dwnRequest.params.target).toBe(alice.did);
       expect(dwnRequest.params.message).toEqual(message);
     });

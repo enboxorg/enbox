@@ -31,7 +31,7 @@ describe('SyncEngineLevel quota routing', () => {
     ).resolves();
     const clearBlock = sinon.spy(internal._quotaManager, 'clearBlock');
 
-    await internal.trackRemoteFeedAppliedCids(admittedCids, target);
+    await internal.trackRemoteFeedHandledCids(admittedCids, target);
 
     expect(resolveSuperseded.callCount).toBe(admittedCids.length);
     expect(resolveSuperseded.firstCall.calledWithExactly(target, admittedCids[0])).toBe(true);

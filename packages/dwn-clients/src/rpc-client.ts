@@ -252,7 +252,7 @@ export class EnboxRpcClient implements EnboxRpc {
     request: DwnReplicationApplyRequest,
     url: URL,
   ): Promise<ReplicationApplyResult> | undefined {
-    if (request.includeMaterializationProof === true ||
+    if (request.includeMaterializationConfirmation === true ||
       (url.protocol !== 'http:' && url.protocol !== 'https:') ||
       request.signal !== undefined || request.timeoutMs !== undefined) {
       return undefined;

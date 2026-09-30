@@ -1019,10 +1019,10 @@ export class AgentDwnApi {
    * server mode calls the server's matching replication RPC so duplicate replay
    * and replication-index repair stay server-side instead of falling back to the
    * normal authoring path.
-   * `includeMaterializationProof` can enrich a duplicate result, but this call
+   * `includeMaterializationConfirmation` can enrich a duplicate result, but this call
    * still applies a missing message. A bodyless initial write may therefore
    * return `Applied` with `ancestryOnly: true`, which is not a completed record.
-   * A paired local-node proof travels over HTTP even when a socket is pooled.
+   * A paired local-node confirmation travels over HTTP even when a socket is pooled.
    */
   public async applyReplicatedMessage(
     tenant: string,
@@ -1038,7 +1038,7 @@ export class AgentDwnApi {
         dwnUrl    : this._localDwnEndpoint!,
         message,
         data      : options?.dataStream,
-        ...(options?.includeMaterializationProof === true ? { includeMaterializationProof: true } : {}),
+        ...(options?.includeMaterializationConfirmation === true ? { includeMaterializationConfirmation: true } : {}),
       });
     }
 

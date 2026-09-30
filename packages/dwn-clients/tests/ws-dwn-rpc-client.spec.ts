@@ -516,15 +516,15 @@ describe('WebSocketDwnRpcClient', () => {
         }
       });
 
-      it('rejects materialization proof over WebSocket without opening a connection', async () => {
+      it('rejects materialization confirmation over WebSocket without opening a connection', async () => {
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
         await expect(client.applyReplicatedMessage({
-          dwnUrl                      : socketDwnUrl,
-          includeMaterializationProof : true,
-          targetDid                   : alice.did,
+          dwnUrl                             : socketDwnUrl,
+          includeMaterializationConfirmation : true,
+          targetDid                          : alice.did,
           message,
-        })).rejects.toThrow('materialization proof requires HTTP transport');
+        })).rejects.toThrow('materialization confirmation requires HTTP transport');
         expect((client.getServerInfo as sinon.SinonStub).called).toBe(false);
       });
 

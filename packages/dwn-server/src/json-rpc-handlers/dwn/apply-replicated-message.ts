@@ -17,10 +17,10 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   context,
 ) => {
   const { dwn, dataStream } = context;
-  const { ancestryOnly, encodedData, includeMaterializationProof, target, message } = dwnRequest.params as {
+  const { ancestryOnly, encodedData, includeMaterializationConfirmation, target, message } = dwnRequest.params as {
     ancestryOnly?: unknown;
     encodedData?: string;
-    includeMaterializationProof?: unknown;
+    includeMaterializationConfirmation?: unknown;
     target: string;
     message: GenericMessage;
   };
@@ -37,9 +37,9 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   const hasInboundData = encodedData !== undefined || dataStream !== undefined;
 
   try {
-    const proofValidation = validateMaterializationProofRequest({ includeMaterializationProof, context, requestId });
-    if (proofValidation !== undefined) {
-      return proofValidation;
+    const confirmationValidation = validateMaterializationConfirmationRequest({ includeMaterializationConfirmation, context, requestId });
+    if (confirmationValidation !== undefined) {
+      return confirmationValidation;
     }
 
     const ancestryResult = await validateAncestryOnlyRequest({
@@ -111,8 +111,8 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
 
     const dataStreamForApply = getDataStreamForApply({ dataStream, encodedData, message });
     const result = await dwn.applyReplicatedMessage(target, message, {
-      dataStream                  : dataStreamForApply,
-      includeMaterializationProof : includeMaterializationProof === true,
+      dataStream                         : dataStreamForApply,
+      includeMaterializationConfirmation : includeMaterializationConfirmation === true,
     });
     if (result.kind === 'Duplicate') {
       await dataStreamForApply?.cancel().catch((): void => {
@@ -140,30 +140,30 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   }
 };
 
-function validateMaterializationProofRequest({
-  includeMaterializationProof,
+function validateMaterializationConfirmationRequest({
+  includeMaterializationConfirmation,
   context,
   requestId,
 }: {
-  includeMaterializationProof: unknown;
+  includeMaterializationConfirmation: unknown;
   context: Parameters<JsonRpcHandler>[1];
   requestId: Parameters<typeof createJsonRpcErrorResponse>[0];
 }): HandlerResponse | undefined {
-  if (includeMaterializationProof !== undefined && typeof includeMaterializationProof !== 'boolean') {
-    return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof must be a boolean when present');
+  if (includeMaterializationConfirmation !== undefined && typeof includeMaterializationConfirmation !== 'boolean') {
+    return invalidReplicationOptionResponse(requestId, 'includeMaterializationConfirmation must be a boolean when present');
   }
-  if (includeMaterializationProof !== true) {
+  if (includeMaterializationConfirmation !== true) {
     return undefined;
   }
   if (context.transport !== 'http') {
-    return invalidReplicationOptionResponse(requestId, 'includeMaterializationProof requires HTTP transport');
+    return invalidReplicationOptionResponse(requestId, 'includeMaterializationConfirmation requires HTTP transport');
   }
   if (context.isLocalNodeAuthenticated !== true) {
     return {
       jsonRpcResponse: createJsonRpcErrorResponse(
         requestId,
         JsonRpcErrorCodes.Forbidden,
-        'includeMaterializationProof requires an authenticated local-node connection',
+        'includeMaterializationConfirmation requires an authenticated local-node connection',
       ),
     };
   }

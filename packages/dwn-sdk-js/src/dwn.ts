@@ -303,7 +303,7 @@ export class Dwn {
     const messageAlreadyStored = await this.replicatedMessageAlreadyStored(tenant, rawMessage);
     const isRecordsWriteWithData = Records.isRecordsWrite(rawMessage) && options.dataStream !== undefined;
     const duplicateResult: Extract<ReplicationApplyResult, { kind: 'Duplicate' }> =
-      messageAlreadyStored && options.includeMaterializationProof === true
+      messageAlreadyStored && options.includeMaterializationConfirmation === true
         ? await this.replicatedDuplicateResult(tenant, rawMessage)
         : { kind: 'Duplicate' };
     if (messageAlreadyStored && (!isRecordsWriteWithData || duplicateResult.materialized === true)) {
@@ -316,7 +316,7 @@ export class Dwn {
     const reply = await this.processMessage(tenant, rawMessage, options);
     // A stored RecordsWrite with newly supplied data deliberately enters the
     // handler. A concurrent completion can make its 409 a false negative for
-    // the earlier proof, which is safe: this caller can retry later.
+    // the earlier confirmation, which is safe: this caller can retry later.
     if (messageAlreadyStored && reply.status.code === 409) {
       return duplicateResult;
     }
@@ -335,7 +335,7 @@ export class Dwn {
     });
   }
 
-  /** A stored CID is not proof that a RecordsWrite became queryable with data. */
+  /** A stored CID alone does not confirm that a RecordsWrite became queryable with data. */
   private async replicatedDuplicateResult(
     tenant: string,
     message: GenericMessage,

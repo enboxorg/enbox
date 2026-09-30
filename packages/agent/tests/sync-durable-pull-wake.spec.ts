@@ -190,14 +190,14 @@ describe('SyncEngineLevel durable pull admission', () => {
     const dependency = protocolMessage('2026-07-20T00:00:00.000000Z');
     sinon.stub(internal, 'admitRemoteFeedEntry').resolves({
       kind         : 'admitted',
-      appliedCids  : ['cid-root', 'cid-dependency'],
+      handledCids  : ['cid-root', 'cid-dependency'],
       freshEntries : [
         { message: root, messageCid: 'cid-root' },
         { message: dependency, messageCid: 'cid-dependency' },
       ],
     });
     sinon.stub(internal, 'hasDeadLetter').resolves(false);
-    const trackApplied = sinon.stub(internal, 'trackRemoteFeedAppliedCids').resolves();
+    const trackHandled = sinon.stub(internal, 'trackRemoteFeedHandledCids').resolves();
     const events: unknown[] = [];
     engine.on((event): void => { events.push(event); });
 
@@ -221,7 +221,7 @@ describe('SyncEngineLevel durable pull admission', () => {
         messageCid : 'cid-dependency',
       }),
     ]);
-    expect(trackApplied.calledOnceWithExactly(['cid-root', 'cid-dependency'], syncTarget)).toBe(true);
+    expect(trackHandled.calledOnceWithExactly(['cid-root', 'cid-dependency'], syncTarget)).toBe(true);
   });
 
   it('does not attach a payload fetcher to retained non-latest writes', async () => {
@@ -241,11 +241,11 @@ describe('SyncEngineLevel durable pull admission', () => {
     const syncTarget = target();
     sinon.stub(internal, 'admitRemoteFeedEntry').resolves({
       kind         : 'admitted',
-      appliedCids  : ['cid-existing'],
+      handledCids  : ['cid-existing'],
       freshEntries : [],
     });
     sinon.stub(internal, 'hasDeadLetter').resolves(false);
-    const trackApplied = sinon.stub(internal, 'trackRemoteFeedAppliedCids').resolves();
+    const trackHandled = sinon.stub(internal, 'trackRemoteFeedHandledCids').resolves();
     const events: unknown[] = [];
     engine.on((event): void => { events.push(event); });
 
@@ -255,7 +255,7 @@ describe('SyncEngineLevel durable pull admission', () => {
       kind         : 'processed',
       admittedCids : ['cid-existing'],
     });
-    expect(trackApplied.calledOnceWithExactly(['cid-existing'], syncTarget)).toBe(true);
+    expect(trackHandled.calledOnceWithExactly(['cid-existing'], syncTarget)).toBe(true);
     expect(events.filter((event: any) => event.type === 'delivery:applied')).toEqual([]);
   });
 
@@ -306,7 +306,7 @@ describe('SyncEngineLevel durable pull admission', () => {
       messageCid,
     });
 
-    expect(result).toEqual({ kind: 'admitted', appliedCids: [messageCid], freshEntries: [] });
+    expect(result).toEqual({ kind: 'admitted', handledCids: [messageCid], freshEntries: [] });
     expect(recordDeadLetter.notCalled).toBe(true);
   });
 

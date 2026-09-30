@@ -90,25 +90,25 @@ async function retrySelectedRoot(
       classifySyncMessageScope({ message: root.message, scope: target.scope }) === 'in-scope') {
     // An exact local duplicate with a body needs no remote read. This call may
     // also apply a missing write, so only a complete apply can settle it.
-    const proof = await agent.dwn.applyReplicatedMessage(target.did, root.message, {
-      includeMaterializationProof: true,
+    const applyResult = await agent.dwn.applyReplicatedMessage(target.did, root.message, {
+      includeMaterializationConfirmation: true,
       ...(root.bufferedData === undefined ? {} : { dataStream: DataStream.fromBytes(root.bufferedData) }),
     }).catch((error: unknown) => {
       // Remote mode can still retry normally when its local server is unpaired
-      // or its configured endpoint uses a socket, where proof is unavailable.
+      // or its configured endpoint uses a socket, where confirmation is unavailable.
       if (error instanceof DwnRpcError &&
           ((error.code === JsonRpcErrorCodes.Forbidden &&
-            error.message.includes('includeMaterializationProof requires an authenticated local-node connection')) ||
+            error.message.includes('includeMaterializationConfirmation requires an authenticated local-node connection')) ||
            (error.code === JsonRpcErrorCodes.InvalidParams &&
-            error.message.includes('materialization proof requires HTTP transport')))) {
+            error.message.includes('materialization confirmation requires HTTP transport')))) {
         return undefined;
       }
       throw error;
     });
-    if (proof?.kind === 'Duplicate' && proof.materialized === true) {
+    if (applyResult?.kind === 'Duplicate' && applyResult.materialized === true) {
       return { freshEntries: [], kind: 'settled' };
     }
-    if (proof?.kind === 'Applied' && proof.ancestryOnly !== true) {
+    if (applyResult?.kind === 'Applied' && applyResult.ancestryOnly !== true) {
       return {
         freshEntries : [{ message: root.message, messageCid: selected.messageCid }],
         kind         : 'settled',
@@ -131,7 +131,7 @@ async function retrySelectedRoot(
     return { freshEntries: [], kind: 'pending' };
   }
 
-  // A fresh apply proves completion only when this attempt supplied the body.
+  // A fresh apply establishes completion only when this attempt supplied the body.
   const rootWasCompleted =
     (root.bufferedData !== undefined || root.dataStreamFactory !== undefined) &&
     outcome.freshEntries.some(entry => entry.messageCid === selected.messageCid);

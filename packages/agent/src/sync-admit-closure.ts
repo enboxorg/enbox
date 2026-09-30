@@ -52,10 +52,11 @@ export type SyncFreshEntry = {
 export type AdmitOutcome =
   | {
       kind: 'admitted';
-      appliedCids: string[];
+      /** CIDs whose DWN outcome was Applied, Duplicate, or Superseded. */
+      handledCids: string[];
       /**
-       * The subset of `appliedCids` the DWN reported as genuinely `Applied`
-       * (new local state) — `Duplicate`/`Superseded` applies are excluded —
+       * The subset of `handledCids` the DWN reported as genuinely `Applied`
+       * (new local state) — `Duplicate`/`Superseded` outcomes are excluded —
        * with each entry's message, so callers can describe every fresh
        * change (the closure root AND any fetched dependencies it admitted)
        * without re-reading the store.
@@ -86,11 +87,11 @@ export type AdmitClosureDeps = {
 };
 
 type AdmissionPassResult =
-  | { kind: 'continue'; appliedCids: string[]; freshEntries: SyncFreshEntry[]; retry: SyncMessageEntry[] }
+  | { kind: 'continue'; handledCids: string[]; freshEntries: SyncFreshEntry[]; retry: SyncMessageEntry[] }
   | { kind: 'done'; outcome: AdmitOutcome };
 
 type AdmissionEntryResult =
-  | { kind: 'applied'; cid: string; fresh: boolean }
+  | { kind: 'handled'; cid: string; fresh: boolean }
   | { kind: 'retry'; entries: SyncMessageEntry[] }
   | { kind: 'done'; outcome: AdmitOutcome };
 
@@ -129,7 +130,7 @@ class AdmitClosureContext {
   public async admit(rootCid: string): Promise<AdmitOutcome> {
     await this.rememberEntries(this.prefetchedEntries);
     let pending = await this.initialPending(rootCid);
-    const appliedCids: string[] = [];
+    const handledCids: string[] = [];
     const freshEntries: SyncFreshEntry[] = [];
     if (pending.length === 0) {
       return { kind: 'deferred', rootCid, detail: 'root message not available' };
@@ -142,27 +143,27 @@ class AdmitClosureContext {
         return passResult.outcome;
       }
 
-      appliedCids.push(...passResult.appliedCids);
+      handledCids.push(...passResult.handledCids);
       freshEntries.push(...passResult.freshEntries);
       pending = await dedupeSyncMessageEntries(passResult.retry);
     }
 
     return pending.length === 0
-      ? { kind: 'admitted', appliedCids, freshEntries }
+      ? { kind: 'admitted', handledCids, freshEntries }
       : { kind: 'deferred', rootCid, detail: 'dependency admission pass budget exhausted' };
   }
 
   private async admitPass(rootCid: string, pending: SyncMessageEntry[]): Promise<AdmissionPassResult> {
     const retry: SyncMessageEntry[] = [];
-    const appliedCids: string[] = [];
+    const handledCids: string[] = [];
     const freshEntries: SyncFreshEntry[] = [];
 
     for (const entry of orderMessagesForAdmission(pending)) {
       this.assertShouldContinue();
       const result = await this.admitEntry(rootCid, entry);
       switch (result.kind) {
-        case 'applied':
-          appliedCids.push(result.cid);
+        case 'handled':
+          handledCids.push(result.cid);
           if (result.fresh) {
             freshEntries.push({ messageCid: result.cid, message: entry.message });
           }
@@ -175,7 +176,7 @@ class AdmitClosureContext {
       }
     }
 
-    return { kind: 'continue', appliedCids, freshEntries, retry };
+    return { kind: 'continue', handledCids, freshEntries, retry };
   }
 
   private async admitEntry(rootCid: string, entry: SyncMessageEntry): Promise<AdmissionEntryResult> {
@@ -259,10 +260,10 @@ class AdmitClosureContext {
   ): Promise<AdmissionEntryResult> {
     switch (result.kind) {
       case 'Applied':
-        return { kind: 'applied', cid, fresh: true };
+        return { kind: 'handled', cid, fresh: true };
       case 'Duplicate':
       case 'Superseded':
-        return { kind: 'applied', cid, fresh: false };
+        return { kind: 'handled', cid, fresh: false };
       case 'Deferred':
         return { kind: 'done', outcome: { kind: 'deferred', rootCid, detail: result.reason } };
       case 'Invalid':

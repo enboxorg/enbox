@@ -4,13 +4,13 @@ import { DwnRpcError } from '../src/index.js';
 import { parseReplicationApplyResult } from '../src/replication-apply-result.js';
 
 describe('parseReplicationApplyResult', () => {
-  it('preserves only a proven materialized duplicate', () => {
+  it('preserves only a confirmed materialized duplicate', () => {
     expect(parseReplicationApplyResult({ kind: 'Duplicate' })).toEqual({ kind: 'Duplicate' });
     expect(parseReplicationApplyResult({ kind: 'Duplicate', materialized: true }))
       .toEqual({ kind: 'Duplicate', materialized: true });
   });
 
-  it('rejects an invalid duplicate materialization proof', () => {
+  it('rejects an invalid duplicate materialization confirmation', () => {
     for (const materialized of [false, 'true', 1]) {
       expect(() => parseReplicationApplyResult({ kind: 'Duplicate', materialized }))
         .toThrow('Duplicate result materialized must be true when present');

@@ -56,9 +56,9 @@ describe('SyncEngineLevel dead letter tracking', () => {
     const events: unknown[] = [];
     const unsubscribe = syncEngine.on((event): void => { events.push(event); });
     const internal = syncEngine as unknown as {
-      trackRemoteFeedAppliedCids(messageCids: string[], target: unknown): Promise<void>;
+      trackRemoteFeedHandledCids(messageCids: string[], target: unknown): Promise<void>;
     };
-    await internal.trackRemoteFeedAppliedCids(['cid-shared'], {
+    await internal.trackRemoteFeedHandledCids(['cid-shared'], {
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'owner',
       did                : 'did:example:alice',
@@ -197,7 +197,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     const gate = gateStoreGet(store);
 
     const admissionInternal = admissionEngine as unknown as {
-      trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
+      trackRemoteFeedHandledCids(messageCids: string[], target: SyncTarget): Promise<void>;
     };
     const expiry = expiryOf(syncEngine)(
       target(tenantDid),
@@ -207,7 +207,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await gate.started;
 
     let admissionCompleted = false;
-    const admission = admissionInternal.trackRemoteFeedAppliedCids([messageCid], target(tenantDid)).then((): void => {
+    const admission = admissionInternal.trackRemoteFeedHandledCids([messageCid], target(tenantDid)).then((): void => {
       admissionCompleted = true;
     });
     await Promise.resolve();

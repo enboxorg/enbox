@@ -88,8 +88,8 @@ describe('Agent remote mode integration', () => {
     context = undefined;
   });
 
-  it('round-trips materialization proof through the local DWN server', async () => {
-    context = await setupRemoteModeContext('materialization-proof', { authenticatedLocalNode: true });
+  it('round-trips materialization confirmation through the local DWN server', async () => {
+    context = await setupRemoteModeContext('materialization-confirmation', { authenticatedLocalNode: true });
     const { alice, testHarness } = context;
 
     await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
@@ -99,12 +99,12 @@ describe('Agent remote mode integration', () => {
     expect(await testHarness.agent.dwn.applyReplicatedMessage(alice.did.uri, write))
       .toEqual({ kind: 'Duplicate' });
     expect(await testHarness.agent.dwn.applyReplicatedMessage(alice.did.uri, write, {
-      includeMaterializationProof: true,
+      includeMaterializationConfirmation: true,
     })).toEqual({ kind: 'Duplicate', materialized: true });
   });
 
   it('settles a delegated retry through a paired local DWN after source access is lost', async () => {
-    context = await setupRemoteModeContext('quarantine-proof', { authenticatedLocalNode: true });
+    context = await setupRemoteModeContext('quarantine-confirmation', { authenticatedLocalNode: true });
     const { alice, bob, remoteServer, testHarness } = context;
     const agent = testHarness.agent;
     await configureLocalProtocol(agent, alice.did.uri, notesProtocol);
@@ -154,7 +154,7 @@ describe('Agent remote mode integration', () => {
       scope,
     };
     const db = new Level<string, string>(`__TESTDATA__/remote-mode-integration/quarantine-ledger-${crypto.randomUUID()}`);
-    const ledger = new SyncNextLedgerStore(db, 'quarantine-proof');
+    const ledger = new SyncNextLedgerStore(db, 'quarantine-confirmation');
     try {
       const link = await ledger.getOrCreateLink({
         ...syncNextLinkIdentity(target),

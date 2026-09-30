@@ -172,7 +172,7 @@ describe('SyncNextPullPage', () => {
     if (result.kind !== 'committed') {
       throw new Error('expected the pull page to commit');
     }
-    expect(result.materializedCids).toContain(independent.messageCid);
+    expect(result.handledCids).toContain(independent.messageCid);
     expect(fixture.send.calledOnce).toBe(true);
     expect(fixture.prepare.calledOnce).toBe(true);
     expect(fixture.apply.calledOnce).toBe(true);
@@ -372,7 +372,8 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
 
     fixture.apply.resolves({ kind: 'Duplicate' });
-    await expect(processor.consume(target())).resolves.toMatchObject({ kind: 'committed' });
+    const replay = await processor.consume(target());
+    expect(replay).toMatchObject({ kind: 'committed', handledCids: [root.messageCid] });
     expect(fixture.apply.calledTwice).toBe(true);
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
   });

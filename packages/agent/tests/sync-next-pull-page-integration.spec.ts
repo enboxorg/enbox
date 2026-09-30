@@ -160,7 +160,7 @@ describe('SyncNext pull and quarantine retry integration', () => {
     if (result.kind !== 'committed') {
       throw new Error('expected the real pull page to commit');
     }
-    expect(result.materializedCids).toContain(smallCid);
+    expect(result.handledCids).toContain(smallCid);
     expect(send.calledOnce).toBe(true);
     expect(apply.callCount).toBe(2);
     expect(await ledger.getQuarantineForLink(link)).toMatchObject([{
@@ -194,7 +194,7 @@ describe('SyncNext pull and quarantine retry integration', () => {
       .toMatchObject({ kind: 'settled' });
     expect(send.callCount).toBe(2);
     expect(apply.callCount).toBe(4);
-    expect(apply.thirdCall.args[2]).toEqual({ includeMaterializationProof: true });
+    expect(apply.thirdCall.args[2]).toEqual({ includeMaterializationConfirmation: true });
     expect(await apply.thirdCall.returnValue).toMatchObject({ ancestryOnly: true, kind: 'Applied' });
     expect(await ledger.getQuarantineForLink(link)).toEqual([]);
     expect((await ledger.getLink(link))?.pullHandledThrough).toEqual(checkpoint);

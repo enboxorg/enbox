@@ -4593,8 +4593,8 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       if (outcome.kind === 'admitted') {
-        admittedCids.push(...outcome.appliedCids);
-        await this.trackRemoteFeedAppliedCids(outcome.appliedCids, target);
+        admittedCids.push(...outcome.handledCids);
+        await this.trackRemoteFeedHandledCids(outcome.handledCids, target);
         for (const freshEntry of outcome.freshEntries) {
           this.emitDeliveryApplied(target, freshEntry.messageCid, freshEntry.message);
         }
@@ -4604,7 +4604,7 @@ export class SyncEngineLevel implements SyncEngine {
     return { kind: 'processed', admittedCids };
   }
 
-  private async trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void> {
+  private async trackRemoteFeedHandledCids(messageCids: string[], target: SyncTarget): Promise<void> {
     for (const cid of messageCids) {
       this._echoSuppressor.trackPulled(target.did, cid, target.dwnUrl);
       await this.runDeferredPullLifecycle(target.did, async (): Promise<void> => {
@@ -4802,7 +4802,7 @@ export class SyncEngineLevel implements SyncEngine {
     shouldContinue?: () => boolean,
   ): Promise<
     | { kind: 'aborted' }
-    | { kind: 'admitted'; appliedCids: string[]; freshEntries: SyncFreshEntry[] }
+    | { kind: 'admitted'; handledCids: string[]; freshEntries: SyncFreshEntry[] }
     | { kind: 'dead-lettered' }
     | { kind: 'deferred'; detail?: string }
     | { kind: 'echo' }
@@ -4849,7 +4849,7 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     if (outcome.kind === 'admitted') {
-      return { kind: 'admitted', appliedCids: outcome.appliedCids, freshEntries: outcome.freshEntries };
+      return { kind: 'admitted', handledCids: outcome.handledCids, freshEntries: outcome.freshEntries };
     }
 
     if (outcome.kind === 'deferred') {
