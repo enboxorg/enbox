@@ -7,6 +7,8 @@ import type { Dwn, MessageSigner, ProtocolDefinition, RecordsWriteMessage } from
 import sinon from 'sinon';
 
 import { DidJwk } from '@enbox/dids';
+import { Level } from 'level';
+import { parseHttpDwnRpcRequestBody } from '@enbox/dwn-clients';
 
 import { config as defaultDwnServerConfig } from '../../dwn-server/src/config.js';
 import { HttpApi } from '../../dwn-server/src/http-api.js';
@@ -17,10 +19,16 @@ import { WsApi } from '../../dwn-server/src/ws-api.js';
 import { AgentDwnApi } from '../src/dwn-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
+import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
+import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
 import { TestAgent } from './utils/test-agent.js';
+import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/sync.js';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DataStream, DwnInterfaceName, DwnMethodName, Message, MessagesQuery, ProtocolsConfigure, RecordsRead, RecordsWrite, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, Encoder, Message, MessagesQuery, ProtocolsConfigure, RecordsRead, RecordsWrite, Time } from '@enbox/dwn-sdk-js';
+
+import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 type TestDwnRpcServer = {
   dwn: Dwn;
@@ -94,6 +102,150 @@ describe('Agent remote mode integration', () => {
     expect(await testHarness.agent.dwn.applyReplicatedMessage(alice.did.uri, write, {
       includeMaterializationProof: true,
     })).toEqual({ kind: 'Duplicate', materialized: true });
+  });
+
+  it('settles a delegated retry through a paired local DWN after source access is lost', async () => {
+    context = await setupRemoteModeContext('quarantine-proof', { authenticatedLocalNode: true });
+    const { alice, bob, remoteServer, testHarness } = context;
+    const agent = testHarness.agent;
+    await configureLocalProtocol(agent, alice.did.uri, notesProtocol);
+    await configureProtocolOnServer(agent, remoteServer.httpUrl, alice.did, notesProtocol);
+
+    const grant = await agent.permissions.createGrant({
+      author      : alice.did.uri,
+      dateExpires : Time.createOffsetTimestamp({ seconds: 3600 }),
+      grantedTo   : bob.did.uri,
+      scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+      store       : true,
+    });
+    const { encodedData, ...grantMessage } = grant.message;
+    expect((await agent.rpc.sendDwnRequest({
+      dwnUrl    : remoteServer.httpUrl,
+      targetDid : alice.did.uri,
+      message   : grantMessage,
+      data      : DataStream.fromBytes(Encoder.base64UrlToBytes(encodedData)),
+    })).status.code).toBe(202);
+
+    const body = 'detached body '.repeat(3000);
+    const write = await writeRecordToServer(agent, remoteServer.httpUrl, alice.did, body);
+    const messageCid = await Message.getCid(write);
+    const permissionGrantIds: [string] = [grant.message.recordId];
+    const authorization = {
+      delegateDid : bob.did.uri,
+      kind        : 'delegate' as const,
+      permissionGrantIds,
+    };
+    const scope = { kind: 'protocolSet' as const, protocols: [notesProtocol.protocol] as [string] };
+    const target: SyncTarget = {
+      authorization,
+      authorizationEpoch: await computeAuthorizationEpoch({
+        delegateDid : bob.did.uri,
+        grants      : [{
+          id          : grant.message.recordId,
+          dateExpires : grant.grant.dateExpires,
+          dateGranted : grant.grant.dateGranted,
+        }],
+        kind: 'delegate',
+      }),
+      delegateDid        : bob.did.uri,
+      did                : alice.did.uri,
+      dwnUrl             : remoteServer.httpUrl,
+      permissionGrantIds : authorization.permissionGrantIds,
+      projectionId       : await computeProjectionId(alice.did.uri, scope),
+      scope,
+    };
+    const db = new Level<string, string>(`__TESTDATA__/remote-mode-integration/quarantine-ledger-${crypto.randomUUID()}`);
+    const ledger = new SyncNextLedgerStore(db, 'quarantine-proof');
+    try {
+      const link = await ledger.getOrCreateLink({
+        ...syncNextLinkIdentity(target),
+        authorization,
+        scope,
+      });
+      const source = { epoch: 'source-epoch', position: '1', streamId: 'source-stream', messageCid };
+      const entry = { isLatestBaseState: true, message: write, messageCid, seq: '1' };
+      await ledger.commitPullPage(link, {
+        handledThrough : source,
+        pageReceipts   : [{ messageCid, source }],
+        quarantine     : [{ entry, messageCid, source }],
+        settled        : [],
+      });
+      const settle = sinon.stub(ledger, 'settleQuarantineForLogicalTarget');
+      settle.onFirstCall().rejects(new Error('injected settlement failure'));
+      settle.callThrough();
+
+      await expect(retryOneQuarantinedRoot({ agent, ledger, target }))
+        .rejects.toThrow('injected settlement failure');
+      expect(await readLocalRecordText(agent, alice.did.uri, write.recordId)).toBe(body);
+      expect(await ledger.getQuarantineForLink(link)).toHaveLength(1);
+
+      const send = sinon.stub(agent.rpc, 'sendDwnRequest').rejects(new Error('source offline'));
+      expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
+        .toEqual({ kind: 'settled', freshEntries: [] });
+      expect(send.notCalled).toBe(true);
+      expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('hydrates through an ordinary local server after one rejected confirmation POST', async () => {
+    context = await setupRemoteModeContext('ordinary-quarantine');
+    const { alice, localServer, remoteServer, testHarness } = context;
+    const agent = testHarness.agent;
+    await configureLocalProtocol(agent, alice.did.uri, notesProtocol);
+    await configureProtocolOnServer(agent, remoteServer.httpUrl, alice.did, notesProtocol);
+
+    const body = 'ordinary server body '.repeat(3000);
+    const write = await writeRecordToServer(agent, remoteServer.httpUrl, alice.did, body);
+    const messageCid = await Message.getCid(write);
+    const scope = { kind: 'protocolSet' as const, protocols: [notesProtocol.protocol] as [string] };
+    const target: SyncTarget = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
+      did                : alice.did.uri,
+      dwnUrl             : remoteServer.httpUrl,
+      projectionId       : await computeProjectionId(alice.did.uri, scope),
+      scope,
+    };
+    const db = new Level<string, string>(`__TESTDATA__/remote-mode-integration/ordinary-ledger-${crypto.randomUUID()}`);
+    const ledger = new SyncNextLedgerStore(db, 'ordinary-quarantine');
+    try {
+      const link = await ledger.getOrCreateLink({
+        ...syncNextLinkIdentity(target),
+        authorization: target.authorization,
+        scope,
+      });
+      const source = { epoch: 'source-epoch', position: '1', streamId: 'source-stream', messageCid };
+      await ledger.commitPullPage(link, {
+        handledThrough : source,
+        pageReceipts   : [{ messageCid, source }],
+        quarantine     : [{ entry: { isLatestBaseState: true, message: write, messageCid, seq: '1' }, messageCid, source }],
+        settled        : [],
+      });
+
+      const fetchSpy = sinon.spy(globalThis, 'fetch');
+      expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
+        .toMatchObject({ kind: 'settled' });
+
+      let confirmationPosts = 0;
+      for (const call of fetchSpy.getCalls()) {
+        const [url, init] = call.args;
+        if (url !== localServer.httpUrl || init?.method !== 'POST' || !(init.body instanceof Blob)) {
+          continue;
+        }
+        const { jsonRpcRequest } = await parseHttpDwnRpcRequestBody(init.body.stream());
+        if (jsonRpcRequest.method === 'dwn.applyReplicatedMessage' &&
+            jsonRpcRequest.params?.includeMaterializationProof === true) {
+          confirmationPosts += 1;
+        }
+      }
+      expect(confirmationPosts).toBe(1);
+      expect(await readLocalRecordText(agent, alice.did.uri, write.recordId)).toBe(body);
+      expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+    } finally {
+      await db.close();
+    }
   });
 
   it('syncs push and pull through a real local DWN server and persists checkpoints', async () => {

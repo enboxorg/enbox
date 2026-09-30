@@ -925,6 +925,47 @@ describe('HttpDwnRpcClient', () => {
   });
 
   describe('retry with exponential backoff', () => {
+    it('does not retry a terminal JSON-RPC error returned as HTTP 500', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(Response.json({
+        error   : { code: JsonRpcErrorCodes.Forbidden, message: 'local confirmation is unavailable' },
+        id      : 'test',
+        jsonrpc : '2.0',
+      }, { status: 500 }));
+      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 3 });
+      const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+      await expect(retryClient.applyReplicatedMessage({
+        dwnUrl                      : testDwnUrl,
+        targetDid                   : alice.did,
+        message,
+        includeMaterializationProof : true,
+      })).rejects.toMatchObject({ code: JsonRpcErrorCodes.Forbidden });
+      expect(fetchStub.calledOnce).toBe(true);
+    });
+
+    it('still retries a transient JSON-RPC error returned as HTTP 500', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.onFirstCall().resolves(Response.json({
+        error   : { code: JsonRpcErrorCodes.InternalError, message: 'temporary failure' },
+        id      : 'test',
+        jsonrpc : '2.0',
+      }, { status: 500 }));
+      fetchStub.onSecondCall().resolves(Response.json({
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { result: { kind: 'Duplicate' } },
+      }));
+      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 2, baseDelayMs: 10 });
+      const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+      expect(await retryClient.applyReplicatedMessage({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      })).toEqual({ kind: 'Duplicate' });
+      expect(fetchStub.calledTwice).toBe(true);
+    });
+
     it('should retry on 503 and succeed on subsequent attempt', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
 

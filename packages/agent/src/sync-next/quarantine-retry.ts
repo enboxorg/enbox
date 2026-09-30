@@ -6,9 +6,11 @@ import type { SyncNextQuarantineEntry } from './types.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 
 import { admitClosure } from '../sync-admit-closure.js';
+import { classifySyncMessageScope } from '../sync-scope-acceptance.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { syncNextReceiptKey } from './ledger-key.js';
-import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { Cid, DataStream, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { fetchRemoteMessages, SyncPullAbortedError } from '../sync-messages.js';
 
 export type SyncNextQuarantineRetryResult =
@@ -80,6 +82,15 @@ async function retrySelectedRoot(
     return { freshEntries: [], kind: 'pending' };
   }
   const root = await prepareRetainedRoot(agent, target, selected);
+  if (!shouldContinue()) {
+    return { freshEntries: [], kind: 'pending' };
+  }
+
+  const localCompletion = await tryCompleteRetainedWriteLocally(agent, target, selected.messageCid, root);
+  if (localCompletion !== undefined) {
+    return localCompletion;
+  }
+
   const outcome = await admitClosure(selected.messageCid, {
     agent,
     did                : target.did,
@@ -103,6 +114,47 @@ async function retrySelectedRoot(
     return { freshEntries: outcome.freshEntries, kind: 'pending' };
   }
   return { freshEntries: outcome.freshEntries, kind: 'settled' };
+}
+
+/** Try the local DWN before fetching a retained write's body from its source. */
+async function tryCompleteRetainedWriteLocally(
+  agent: EnboxPlatformAgent,
+  target: SyncTarget,
+  messageCid: string,
+  root: SyncMessageEntry,
+): Promise<RetryAttempt | undefined> {
+  if (!recordsWriteRequiresData(root.message) ||
+      classifySyncMessageScope({ message: root.message, scope: target.scope }) !== 'in-scope') {
+    return undefined;
+  }
+
+  // A materialized duplicate needs no source read. A missing write may also be
+  // applied here, but only its complete Applied result can settle it.
+  const result = await agent.dwn.applyReplicatedMessage(target.did, root.message, {
+    includeMaterializationProof: true,
+    ...(root.bufferedData === undefined ? {} : { dataStream: DataStream.fromBytes(root.bufferedData) }),
+  }).catch((error: unknown) => {
+    // Remote mode can still retry normally with an ordinary local server or a
+    // socket endpoint, where this confirmation is unavailable.
+    if (error instanceof DwnRpcError &&
+        ((error.code === JsonRpcErrorCodes.Forbidden &&
+          error.message.includes('includeMaterializationProof requires an authenticated local-node connection')) ||
+         (error.code === JsonRpcErrorCodes.InvalidParams &&
+          error.message.includes('materialization proof requires HTTP transport')))) {
+      return undefined;
+    }
+    throw error;
+  });
+  if (result?.kind === 'Duplicate' && result.materialized === true) {
+    return { freshEntries: [], kind: 'settled' };
+  }
+  if (result?.kind === 'Applied' && result.ancestryOnly !== true) {
+    return {
+      freshEntries : [{ message: root.message, messageCid }],
+      kind         : 'settled',
+    };
+  }
+  return undefined;
 }
 
 async function prepareRetainedRoot(
