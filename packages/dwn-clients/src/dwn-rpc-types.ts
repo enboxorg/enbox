@@ -187,11 +187,11 @@ export type DwnReplicationApplyRequest = {
    * For an exact duplicate RecordsWrite, the result includes `materialized: true`
    * only when that write is current and has its data. This is independent of `ancestryOnly`:
    * a missing message still follows normal replicated admission, including
-   * ancestry-only admission for a bodyless initial write. The proof is available
+   * ancestry-only admission for a bodyless initial write. Confirmation is available
    * only over HTTP(S) to authenticated local-node clients. No record bytes are returned;
    * absence of `materialized: true` is inconclusive.
    */
-  includeMaterializationProof?: boolean;
+  includeMaterializationConfirmation?: boolean;
 
   /** The URL of the DWN server to which the request is sent. */
   dwnUrl: string;

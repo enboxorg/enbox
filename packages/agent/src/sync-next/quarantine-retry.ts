@@ -1,5 +1,5 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
-import type { SyncFreshEntry } from '../sync-admit-closure.js';
+import type { SyncAppliedEntry } from '../sync-admit-closure.js';
 import type { SyncMessageEntry } from '../sync-messages.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextQuarantineEntry } from './types.js';
@@ -15,10 +15,10 @@ import { fetchRemoteMessages, SyncPullAbortedError } from '../sync-messages.js';
 
 export type SyncNextQuarantineRetryResult =
   | { kind: 'aborted' | 'empty' | 'pending' }
-  | { kind: 'settled'; freshEntries: SyncFreshEntry[] };
+  | { kind: 'settled'; appliedEntries: SyncAppliedEntry[] };
 
 type RetryAttempt = {
-  freshEntries: SyncFreshEntry[];
+  appliedEntries: SyncAppliedEntry[];
   kind: 'pending' | 'settled';
 };
 
@@ -62,7 +62,7 @@ export async function retryOneQuarantinedRoot({
       await ledger.updateQuarantine(selected);
       return { kind: 'pending' };
     }
-    return { kind: 'settled', freshEntries: attempt.freshEntries };
+    return { kind: 'settled', appliedEntries: attempt.appliedEntries };
   } catch (error: unknown) {
     if (error instanceof SyncPullAbortedError || !shouldContinue()) {
       return { kind: 'aborted' };
@@ -79,14 +79,14 @@ async function retrySelectedRoot(
   shouldContinue: () => boolean,
 ): Promise<RetryAttempt> {
   if (target.authorization.kind === 'role') {
-    return { freshEntries: [], kind: 'pending' };
+    return { appliedEntries: [], kind: 'pending' };
   }
   const root = await prepareRetainedRoot(agent, target, selected);
   if (!shouldContinue()) {
-    return { freshEntries: [], kind: 'pending' };
+    return { appliedEntries: [], kind: 'pending' };
   }
 
-  const localCompletion = await tryCompleteRetainedWriteLocally(agent, target, selected.messageCid, root);
+  const localCompletion = await tryEstablishLocalWriteCompletion(agent, target, selected.messageCid, root);
   if (localCompletion !== undefined) {
     return localCompletion;
   }
@@ -103,21 +103,21 @@ async function retrySelectedRoot(
     shouldContinue,
   });
   if (outcome.kind !== 'admitted') {
-    return { freshEntries: [], kind: 'pending' };
+    return { appliedEntries: [], kind: 'pending' };
   }
 
-  // A fresh apply proves completion only when this attempt supplied the body.
+  // A fresh apply establishes completion only when this attempt supplied the body.
   const rootWasCompleted =
     (root.bufferedData !== undefined || root.dataStreamFactory !== undefined) &&
-    outcome.freshEntries.some(entry => entry.messageCid === selected.messageCid);
+    outcome.appliedEntries.some(entry => entry.messageCid === selected.messageCid);
   if (recordsWriteRequiresData(root.message) && !rootWasCompleted) {
-    return { freshEntries: outcome.freshEntries, kind: 'pending' };
+    return { appliedEntries: outcome.appliedEntries, kind: 'pending' };
   }
-  return { freshEntries: outcome.freshEntries, kind: 'settled' };
+  return { appliedEntries: outcome.appliedEntries, kind: 'settled' };
 }
 
-/** Try the local DWN before fetching a retained write's body from its source. */
-async function tryCompleteRetainedWriteLocally(
+/** Try to establish complete local state before fetching a retained write's body from its source. */
+async function tryEstablishLocalWriteCompletion(
   agent: EnboxPlatformAgent,
   target: SyncTarget,
   messageCid: string,
@@ -130,28 +130,28 @@ async function tryCompleteRetainedWriteLocally(
 
   // A materialized duplicate needs no source read. A missing write may also be
   // applied here, but only its complete Applied result can settle it.
-  const result = await agent.dwn.applyReplicatedMessage(target.did, root.message, {
-    includeMaterializationProof: true,
+  const applyResult = await agent.dwn.applyReplicatedMessage(target.did, root.message, {
+    includeMaterializationConfirmation: true,
     ...(root.bufferedData === undefined ? {} : { dataStream: DataStream.fromBytes(root.bufferedData) }),
   }).catch((error: unknown) => {
     // Remote mode can still retry normally with an ordinary local server or a
     // socket endpoint, where this confirmation is unavailable.
     if (error instanceof DwnRpcError &&
         ((error.code === JsonRpcErrorCodes.Forbidden &&
-          error.message.includes('includeMaterializationProof requires an authenticated local-node connection')) ||
+          error.message.includes('includeMaterializationConfirmation requires an authenticated local-node connection')) ||
          (error.code === JsonRpcErrorCodes.InvalidParams &&
-          error.message.includes('materialization proof requires HTTP transport')))) {
+          error.message.includes('materialization confirmation requires HTTP transport')))) {
       return undefined;
     }
     throw error;
   });
-  if (result?.kind === 'Duplicate' && result.materialized === true) {
-    return { freshEntries: [], kind: 'settled' };
+  if (applyResult?.kind === 'Duplicate' && applyResult.materialized === true) {
+    return { appliedEntries: [], kind: 'settled' };
   }
-  if (result?.kind === 'Applied' && result.ancestryOnly !== true) {
+  if (applyResult?.kind === 'Applied' && applyResult.ancestryOnly !== true) {
     return {
-      freshEntries : [{ message: root.message, messageCid }],
-      kind         : 'settled',
+      appliedEntries : [{ message: root.message, messageCid }],
+      kind           : 'settled',
     };
   }
   return undefined;

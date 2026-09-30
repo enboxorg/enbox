@@ -134,13 +134,13 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
-  it('rejects a non-boolean materialization proof option before applying', async () => {
+  it('rejects a non-boolean materialization confirmation option before applying', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const { recordsWrite } = await createRecordsWriteMessage(alice);
     const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
-      includeMaterializationProof : 'yes',
-      message                     : recordsWrite.toJSON(),
-      target                      : alice.did,
+      includeMaterializationConfirmation : 'yes',
+      message                            : recordsWrite.toJSON(),
+      target                             : alice.did,
     });
     const { dwn } = await getTestDwn();
     const applySpy = spyOn(dwn, 'applyReplicatedMessage');
@@ -151,12 +151,12 @@ describe('handleDwnApplyReplicatedMessage', () => {
     });
 
     expect(jsonRpcResponse.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
-    expect(jsonRpcResponse.error?.message).toContain('includeMaterializationProof must be a boolean');
+    expect(jsonRpcResponse.error?.message).toContain('includeMaterializationConfirmation must be a boolean');
     expect(applySpy).toHaveBeenCalledTimes(0);
     await dwn.close();
   });
 
-  it('rejects public proof for both missing and stored writes', async () => {
+  it('rejects public confirmation for both missing and stored writes', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const missing = await createRecordsWriteMessage(alice);
     const stored = await createRecordsWriteMessage(alice);
@@ -169,9 +169,9 @@ describe('handleDwnApplyReplicatedMessage', () => {
 
     for (const recordsWrite of [missing.recordsWrite, stored.recordsWrite]) {
       const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
-        includeMaterializationProof : true,
-        message                     : recordsWrite.toJSON(),
-        target                      : alice.did,
+        includeMaterializationConfirmation : true,
+        message                            : recordsWrite.toJSON(),
+        target                             : alice.did,
       });
       const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(request, {
         dwn,
@@ -185,13 +185,13 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
-  it('rejects materialization proof over WebSocket before applying', async () => {
+  it('rejects materialization confirmation over WebSocket before applying', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const { recordsWrite } = await createRecordsWriteMessage(alice);
     const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
-      includeMaterializationProof : true,
-      message                     : recordsWrite.toJSON(),
-      target                      : alice.did,
+      includeMaterializationConfirmation : true,
+      message                            : recordsWrite.toJSON(),
+      target                             : alice.did,
     });
     const { dwn } = await getTestDwn();
     const applySpy = spyOn(dwn, 'applyReplicatedMessage');
@@ -208,14 +208,14 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
-  it('applies a missing write before later proving its completed duplicate', async () => {
+  it('applies a missing write before later confirming its completed duplicate', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([9, 10, 11, 12]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
     const initialRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
-      includeMaterializationProof : true,
-      message                     : recordsWrite.toJSON(),
-      target                      : alice.did,
+      includeMaterializationConfirmation : true,
+      message                            : recordsWrite.toJSON(),
+      target                             : alice.did,
     });
     const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, isLocalNodeAuthenticated: true, transport: 'http' };
@@ -235,8 +235,8 @@ describe('handleDwnApplyReplicatedMessage', () => {
         dataStream: DataStream.fromBytes(data),
       })).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
-      const proof = await handleDwnApplyReplicatedMessage(initialRequest, context);
-      expect(proof.jsonRpcResponse.result.result).toEqual({ kind: 'Duplicate', materialized: true });
+      const confirmation = await handleDwnApplyReplicatedMessage(initialRequest, context);
+      expect(confirmation.jsonRpcResponse.result.result).toEqual({ kind: 'Duplicate', materialized: true });
     } finally {
       await dwn.close();
     }

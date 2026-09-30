@@ -172,7 +172,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     });
 
     await engine.startSync({ interval: '30s' });
-    sinon.stub(engine as never, 'admitRemoteFeedPage').resolves({ admittedCids: [], kind: 'processed' });
+    sinon.stub(engine as never, 'admitRemoteFeedPage').resolves({ handledCids: [], kind: 'processed' });
 
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();

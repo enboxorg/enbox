@@ -120,7 +120,7 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
   quotaManager.clearResolvedOmissionsForTarget.resolves();
   quotaManager.getActiveBlocksForTarget.resolves([]);
   const operations: StubbedReconcilerOperations = {
-    admitRemotePage                 : sinon.stub().resolves({ kind: 'processed', admittedCids: [] }),
+    admitRemotePage                 : sinon.stub().resolves({ kind: 'processed', handledCids: [] }),
     bootstrapRemotePermissionGrants : sinon.stub().resolves({ kind: 'processed', failures: [], quotaBlocked: false }),
     commitCheckpoint                : sinon.stub().resolves(),
     probeQuotaBlocks                : sinon.stub().resolves(),
@@ -306,8 +306,8 @@ describe('SyncDurableFeedReconciler', () => {
       fingerprint : 'page-2',
     }));
     fixture.operations.admitRemotePage.callsFake(async (_target, entries) => ({
-      kind         : 'processed' as const,
-      admittedCids : entries.map(({ messageCid }) => messageCid),
+      kind        : 'processed' as const,
+      handledCids : entries.map(({ messageCid }) => messageCid),
     }));
 
     const result = await fixture.reconciler.pull(target(), fixture.link);
@@ -384,13 +384,13 @@ describe('SyncDurableFeedReconciler', () => {
       entries : [{ messageCid: 'deferred' }],
     }));
     fixture.operations.admitRemotePage.onFirstCall().resolves({
-      kind         : 'processed',
-      admittedCids : ['applied'],
+      kind        : 'processed',
+      handledCids : ['applied'],
     });
     fixture.operations.admitRemotePage.onSecondCall().resolves({
-      kind         : 'deferred',
-      admittedCids : [],
-      messageCid   : 'deferred',
+      kind        : 'deferred',
+      handledCids : [],
+      messageCid  : 'deferred',
     });
 
     const result = await fixture.reconciler.pull(target(), fixture.link);
@@ -405,7 +405,7 @@ describe('SyncDurableFeedReconciler', () => {
     const entryCount = 1_000;
     const pageSize = 100;
     const expectedCids = Array.from({ length: entryCount }, (_, index): string => `remote-${index + 1}`);
-    const admittedCids: string[] = [];
+    const handledCids: string[] = [];
     const operations: string[] = [];
     fixture.link.pull.contiguousAppliedToken = token(0);
     fixture.queryFeed.callsFake(async ({ cursor, limit, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
@@ -423,11 +423,11 @@ describe('SyncDurableFeedReconciler', () => {
     });
     fixture.operations.admitRemotePage.callsFake(async (_target, entries) => {
       const pageCids = entries.map(({ messageCid }) => messageCid);
-      admittedCids.push(...pageCids);
+      handledCids.push(...pageCids);
       operations.push(`admit:${pageCids.at(-1)?.slice('remote-'.length)}`);
       return {
-        kind         : 'processed' as const,
-        admittedCids : pageCids,
+        kind        : 'processed' as const,
+        handledCids : pageCids,
       };
     });
     fixture.operations.commitCheckpoint.callsFake(async (storedLink, direction) => {
@@ -441,8 +441,8 @@ describe('SyncDurableFeedReconciler', () => {
       pullDrained       : true,
       remoteFingerprint : 'fingerprint-1000',
     });
-    expect(admittedCids).toEqual(expectedCids);
-    expect(new Set(admittedCids).size).toBe(entryCount);
+    expect(handledCids).toEqual(expectedCids);
+    expect(new Set(handledCids).size).toBe(entryCount);
     expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(entryCount));
     expect(fixture.queryFeed.callCount).toBe(entryCount / pageSize);
     expect(fixture.operations.admitRemotePage.callCount).toBe(entryCount / pageSize);
@@ -475,12 +475,12 @@ describe('SyncDurableFeedReconciler', () => {
       });
     });
     fixture.operations.admitRemotePage.onFirstCall().resolves({
-      kind         : 'processed',
-      admittedCids : ['root', 'later-dependency'],
+      kind        : 'processed',
+      handledCids : ['root', 'later-dependency'],
     });
     fixture.operations.admitRemotePage.onSecondCall().resolves({
-      kind         : 'processed',
-      admittedCids : [],
+      kind        : 'processed',
+      handledCids : [],
     });
 
     const result = await fixture.reconciler.pull(target(), fixture.link);
@@ -619,10 +619,10 @@ describe('SyncDurableFeedReconciler', () => {
       entries : [{ messageCid: 'applied' }, { messageCid: 'deferred' }],
     }));
     fixture.operations.admitRemotePage.resolves({
-      kind         : 'deferred',
-      admittedCids : ['applied'],
-      detail       : 'dependency missing',
-      messageCid   : 'deferred',
+      kind        : 'deferred',
+      handledCids : ['applied'],
+      detail      : 'dependency missing',
+      messageCid  : 'deferred',
     });
 
     const result = await fixture.reconciler.pull(target(), fixture.link);

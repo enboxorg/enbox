@@ -448,8 +448,8 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       streamId : 'event-stream',
     };
     const admitRemoteFeedPage = sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
-      admittedCids : [messageCid],
-      kind         : 'processed',
+      handledCids : [messageCid],
+      kind        : 'processed',
     });
     const persistStarted = deferred();
     const releasePersist = deferred();
@@ -537,9 +537,9 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       streamId : 'event-stream',
     };
     sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
-      admittedCids : [],
-      detail       : 'waiting for replication support',
-      kind         : 'deferred',
+      handledCids : [],
+      detail      : 'waiting for replication support',
+      kind        : 'deferred',
       messageCid,
     });
     const persistCheckpoint = sinon.stub().resolves();
@@ -622,7 +622,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       position : '10',
       streamId : 'event-stream',
     };
-    sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({ admittedCids: [], kind: 'processed' });
+    sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({ handledCids: [], kind: 'processed' });
     const persistStarted = deferred();
     const rejectPersist = deferred();
     (engine as any)._replicationLinkStore = {
@@ -764,8 +764,8 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       streamId : 'event-stream',
     };
     const admitRemoteFeedPage = sinon.stub(engine as any, 'admitRemoteFeedPage').resolves({
-      admittedCids : [messageCid],
-      kind         : 'processed',
+      handledCids : [messageCid],
+      kind        : 'processed',
     });
     const persistCheckpoint = sinon.stub().resolves();
     (engine as any)._replicationLinkStore = { persistCheckpoint };

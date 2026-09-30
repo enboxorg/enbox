@@ -32,7 +32,7 @@ type PreparedPageEntry = {
 };
 
 type ClassifiedPage = {
-  materializedCids: Set<string>;
+  handledCids: Set<string>;
   quarantine: SyncNextQuarantineInput[];
   settled: SyncNextSourceReceipt[];
 };
@@ -48,7 +48,8 @@ export type SyncNextPullPageResult =
       kind: 'committed';
       handledThrough: ProgressToken;
       hasMore: boolean;
-      materializedCids: string[];
+      /** Closure messages handled as Applied, Duplicate, or Superseded. */
+      handledCids: string[];
       quarantined: number;
     };
 
@@ -109,10 +110,10 @@ export class SyncNextPullPage {
 
     return {
       handledThrough,
-      hasMore          : !drained,
-      kind             : 'committed',
-      materializedCids : [...classified.materializedCids],
-      quarantined      : classified.quarantine.length,
+      hasMore     : !drained,
+      kind        : 'committed',
+      handledCids : [...classified.handledCids],
+      quarantined : classified.quarantine.length,
     };
   }
 
@@ -140,9 +141,9 @@ export class SyncNextPullPage {
     shouldContinue: () => boolean,
   ): Promise<ClassifiedPage | undefined> {
     const classified: ClassifiedPage = {
-      materializedCids : new Set<string>(),
-      quarantine       : [],
-      settled          : [],
+      handledCids : new Set<string>(),
+      quarantine  : [],
+      settled     : [],
     };
     for (const { entry, receipt } of orderMessagesForAdmission(entries)) {
       const outcome = await admitClosure(entry.messageCid, {
@@ -161,8 +162,8 @@ export class SyncNextPullPage {
       }
       if (outcome.kind === 'admitted') {
         classified.settled.push(receipt);
-        for (const messageCid of outcome.appliedCids) {
-          classified.materializedCids.add(messageCid);
+        for (const messageCid of outcome.handledCids) {
+          classified.handledCids.add(messageCid);
         }
         continue;
       }

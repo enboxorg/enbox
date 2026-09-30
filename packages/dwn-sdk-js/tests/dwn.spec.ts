@@ -169,7 +169,7 @@ export function testDwnClass(): void {
     });
 
     describe('applyReplicatedMessage()', () => {
-      it('proves that an exact current write with data was materialized', async () => {
+      it('confirms an exact current write has data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -180,19 +180,19 @@ export function testDwnClass(): void {
         const querySpy = sinon.spy(messageStore, 'query');
         expect(await dwn.applyReplicatedMessage(alice.did, message)).toEqual({ kind: 'Duplicate' });
         expect(querySpy.called).toBe(false);
-        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationProof: true }))
+        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationConfirmation: true }))
           .toEqual({ kind: 'Duplicate', materialized: true });
         expect(querySpy.calledOnce).toBe(true);
       });
 
-      it('keeps ordinary duplicate replay successful when the optional proof query fails', async () => {
+      it('keeps ordinary duplicate replay successful when the optional confirmation query fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect((await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream })).status.code).toBe(202);
 
         sinon.stub(messageStore, 'query').rejects(new Error('transient index read failure'));
-        expect(await dwn.applyReplicatedMessage(alice.did, write.message, { includeMaterializationProof: true }))
+        expect(await dwn.applyReplicatedMessage(alice.did, write.message, { includeMaterializationConfirmation: true }))
           .toEqual({ kind: 'Duplicate' });
       });
 
@@ -204,11 +204,11 @@ export function testDwnClass(): void {
         expect((await dwn.processMessage(alice.did, message, { dataStream: DataStream.fromBytes(data) })).status.code).toBe(202);
 
         sinon.stub(dataStore, 'get').rejects(new Error('transient body read failure'));
-        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationProof: true }))
+        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationConfirmation: true }))
           .toEqual({ kind: 'Duplicate' });
       });
 
-      it('does not prove external data whose stored size differs from its descriptor', async () => {
+      it('does not confirm external data whose stored size differs from its descriptor', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -219,11 +219,11 @@ export function testDwnClass(): void {
           dataSize   : data.length - 1,
           dataStream : DataStream.fromBytes(data),
         });
-        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationProof: true }))
+        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationConfirmation: true }))
           .toEqual({ kind: 'Duplicate' });
       });
 
-      it('keeps ordinary duplicate replay successful when proof stream cancellation fails', async () => {
+      it('keeps ordinary duplicate replay successful when confirmation stream cancellation fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -236,11 +236,11 @@ export function testDwnClass(): void {
             cancel(): void { throw new Error('body stream cancellation failed'); }
           }),
         });
-        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationProof: true }))
+        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationConfirmation: true }))
           .toEqual({ kind: 'Duplicate' });
       });
 
-      it('proves a body-bearing duplicate with one local body lookup', async () => {
+      it('confirms a body-bearing duplicate with one local body lookup', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -251,8 +251,8 @@ export function testDwnClass(): void {
         const replayStream = DataStream.fromBytes(data);
         const cancelSpy = sinon.spy(replayStream, 'cancel');
         expect(await dwn.applyReplicatedMessage(alice.did, message, {
-          dataStream                  : replayStream,
-          includeMaterializationProof : true,
+          dataStream                         : replayStream,
+          includeMaterializationConfirmation : true,
         })).toEqual({ kind: 'Duplicate', materialized: true });
         expect(getSpy.calledOnce).toBe(true);
         expect(cancelSpy.calledOnce).toBe(true);
@@ -307,8 +307,8 @@ export function testDwnClass(): void {
         expect(completionPage.events[0].position).toBe(completed.kind === 'Applied' ? completed.position?.position : undefined);
 
         expect(await dwn.applyReplicatedMessage(alice.did, message, {
-          dataStream                  : DataStream.fromBytes(dataBytes),
-          includeMaterializationProof : true,
+          dataStream                         : DataStream.fromBytes(dataBytes),
+          includeMaterializationConfirmation : true,
         })).toEqual({ kind: 'Duplicate', materialized: true });
       });
 
@@ -322,8 +322,8 @@ export function testDwnClass(): void {
           dataStream: DataStream.fromBytes(dataBytes!),
         })).status.code).toBe(202);
         expect(await dwn.applyReplicatedMessage(alice.did, message, {
-          dataStream                  : DataStream.fromBytes(dataBytes!),
-          includeMaterializationProof : true,
+          dataStream                         : DataStream.fromBytes(dataBytes!),
+          includeMaterializationConfirmation : true,
         })).toEqual({ kind: 'Duplicate', materialized: true });
       });
 
@@ -362,14 +362,14 @@ export function testDwnClass(): void {
           DataStream.fromBytes(data),
         );
 
-        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationProof: true }))
+        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationConfirmation: true }))
           .toEqual({ kind: 'Duplicate' });
 
         // Simulates the cross-store crash window tracked by #1752. Existing
         // data is not overwritten, and message-state recovery remains deferred.
         expect(await dwn.applyReplicatedMessage(alice.did, message, {
-          dataStream                  : DataStream.fromBytes(new Uint8Array(data.length)),
-          includeMaterializationProof : true,
+          dataStream                         : DataStream.fromBytes(new Uint8Array(data.length)),
+          includeMaterializationConfirmation : true,
         })).toEqual({ kind: 'Duplicate' });
 
         const stored = await dataStore.get(alice.did, message.recordId, message.descriptor.dataCid);
@@ -379,7 +379,7 @@ export function testDwnClass(): void {
         expect(await DataStream.toBytes(stored.dataStream)).toEqual(data);
       });
 
-      it('does not prove materialization after the current write loses its external data', async () => {
+      it('does not confirm materialization after the current write loses its external data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -388,11 +388,11 @@ export function testDwnClass(): void {
         expect(await dwn.applyReplicatedMessage(alice.did, message, {
           dataStream: DataStream.fromBytes(data),
         })).toEqual(expect.objectContaining({ kind: 'Applied' }));
-        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationProof: true }))
+        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationConfirmation: true }))
           .toEqual({ kind: 'Duplicate', materialized: true });
 
         await dataStore.delete(alice.did, message.recordId, message.descriptor.dataCid);
-        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationProof: true }))
+        expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationConfirmation: true }))
           .toEqual({ kind: 'Duplicate' });
       });
 
@@ -433,8 +433,8 @@ export function testDwnClass(): void {
         })).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
-          dataStream                  : DataStream.fromBytes(initial.dataBytes!),
-          includeMaterializationProof : true,
+          dataStream                         : DataStream.fromBytes(initial.dataBytes!),
+          includeMaterializationConfirmation : true,
         })).toEqual({ kind: 'Duplicate' });
 
         const read = await RecordsRead.create({
@@ -459,8 +459,8 @@ export function testDwnClass(): void {
         expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message))
           .toEqual(expect.objectContaining({ kind: 'Applied' }));
         expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
-          dataStream                  : DataStream.fromBytes(initial.dataBytes!),
-          includeMaterializationProof : true,
+          dataStream                         : DataStream.fromBytes(initial.dataBytes!),
+          includeMaterializationConfirmation : true,
         })).toEqual({ kind: 'Duplicate' });
 
         const read = await RecordsRead.create({

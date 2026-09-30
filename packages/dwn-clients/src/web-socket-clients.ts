@@ -333,8 +333,8 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
-    if (request.includeMaterializationProof === true) {
-      throw new DwnRpcError(JsonRpcErrorCodes.InvalidParams, 'materialization proof requires HTTP transport');
+    if (request.includeMaterializationConfirmation === true) {
+      throw new DwnRpcError(JsonRpcErrorCodes.InvalidParams, 'materialization confirmation requires HTTP transport');
     }
 
     const wireRequest = toWireReplicationApplyRequest(request);
@@ -357,7 +357,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   public async applyReplicatedMessageIfConnected(
     request: DwnReplicationApplyRequest,
   ): Promise<ReplicationApplyResult | undefined> {
-    if (request.includeMaterializationProof === true) {
+    if (request.includeMaterializationConfirmation === true) {
       return undefined;
     }
 

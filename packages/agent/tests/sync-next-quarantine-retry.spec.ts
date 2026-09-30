@@ -101,8 +101,8 @@ function fakeAgent(): {
   } {
   const apply = sinon.stub().callsFake((_did: string, _message: GenericMessage, options?: {
     dataStream?: ReadableStream<Uint8Array>;
-    includeMaterializationProof?: boolean;
-  }): Promise<unknown> => Promise.resolve(options?.includeMaterializationProof === true && options.dataStream === undefined
+    includeMaterializationConfirmation?: boolean;
+  }): Promise<unknown> => Promise.resolve(options?.includeMaterializationConfirmation === true && options.dataStream === undefined
     ? { ancestryOnly: true, kind: 'Applied' }
     : { kind: 'Applied' }));
   const prepare = sinon.stub().resolves({
@@ -226,8 +226,8 @@ describe('retryOneQuarantinedRoot', () => {
     ]);
 
     expect(results.map(result => result.kind)).toEqual(['settled', 'settled']);
-    const fresh = results.flatMap(result => result.kind === 'settled' ? result.freshEntries : []);
-    expect(fresh).toEqual([{ message: entry.message, messageCid: entry.messageCid }]);
+    const applied = results.flatMap(result => result.kind === 'settled' ? result.appliedEntries : []);
+    expect(applied).toEqual([{ message: entry.message, messageCid: entry.messageCid }]);
     expect(fixture.apply.calledTwice).toBe(true);
     expect(await ledger.getQuarantineForLogicalTarget(target().did, target().projectionId)).toEqual([]);
   });
@@ -281,20 +281,20 @@ describe('retryOneQuarantinedRoot', () => {
     await retain(target(), [entry]);
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
-      .toEqual({ kind: 'settled', freshEntries: [{ message: entry.message, messageCid: entry.messageCid }] });
+      .toEqual({ kind: 'settled', appliedEntries: [{ message: entry.message, messageCid: entry.messageCid }] });
     expect(fixture.prepare.notCalled).toBe(true);
     expect(fixture.send.notCalled).toBe(true);
     expect(await DataStream.toBytes(fixture.apply.firstCall.args[2].dataStream)).toEqual(generated.dataBytes!);
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
 
-  const unavailableProofCases: [string, JsonRpcErrorCodes, string][] = [
+  const unavailableConfirmationCases: [string, JsonRpcErrorCodes, string][] = [
     ['an ordinary local server', JsonRpcErrorCodes.Forbidden,
-      'includeMaterializationProof requires an authenticated local-node connection'],
+      'includeMaterializationConfirmation requires an authenticated local-node connection'],
     ['a socket local endpoint', JsonRpcErrorCodes.InvalidParams,
-      'materialization proof requires HTTP transport'],
+      'materialization confirmation requires HTTP transport'],
   ];
-  it.each(unavailableProofCases)('hydrates a detached write when %s cannot prove it', async (_reason, code, message) => {
+  it.each(unavailableConfirmationCases)('hydrates a detached write when %s cannot confirm it', async (_reason, code, message) => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
     const entry = await feedEntry(generated.message, 1);
     const fixture = fakeAgent();
@@ -316,7 +316,7 @@ describe('retryOneQuarantinedRoot', () => {
       messageParams : { permissionGrantIds: ['messages-read-grant'] },
     });
     expect(fixture.send.calledOnce).toBe(true);
-    expect(fixture.apply.firstCall.args[2]).toEqual({ includeMaterializationProof: true });
+    expect(fixture.apply.firstCall.args[2]).toEqual({ includeMaterializationConfirmation: true });
     expect(fixture.apply.secondCall.args[2].dataStream).toBeDefined();
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(delegateTarget()))).toEqual([]);
   });
@@ -373,7 +373,7 @@ describe('retryOneQuarantinedRoot', () => {
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
       .toEqual({ kind: 'pending' });
     expect(fixture.apply.calledOnceWithExactly(target().did, entry.message, {
-      includeMaterializationProof: true,
+      includeMaterializationConfirmation: true,
     })).toBe(true);
 
     fixture.send.resolves({
@@ -406,7 +406,7 @@ describe('retryOneQuarantinedRoot', () => {
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(scopedTarget))).toHaveLength(1);
   });
 
-  it('does not mask a different local proof rejection', async () => {
+  it('does not mask a different local confirmation rejection', async () => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
     const entry = await feedEntry(generated.message, 1);
     const fixture = fakeAgent();
@@ -433,9 +433,9 @@ describe('retryOneQuarantinedRoot', () => {
     let materialized = false;
     fixture.apply.callsFake((_did: string, _message: GenericMessage, options?: {
       dataStream?: ReadableStream<Uint8Array>;
-      includeMaterializationProof?: boolean;
+      includeMaterializationConfirmation?: boolean;
     }): Promise<unknown> => {
-      if (options?.includeMaterializationProof === true) {
+      if (options?.includeMaterializationConfirmation === true) {
         return Promise.resolve(materialized
           ? { kind: 'Duplicate', materialized: true }
           : { ancestryOnly: true, kind: 'Applied' });
@@ -454,7 +454,7 @@ describe('retryOneQuarantinedRoot', () => {
     fixture.send.rejects(new Error('source offline'));
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
-      .toEqual({ kind: 'settled', freshEntries: [] });
+      .toEqual({ kind: 'settled', appliedEntries: [] });
     expect(fixture.apply.calledThrice).toBe(true);
     expect(fixture.send.calledOnce).toBe(true);
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
@@ -476,9 +476,9 @@ describe('retryOneQuarantinedRoot', () => {
     const fixture = fakeAgent();
     let admitted = 0;
     fixture.apply.callsFake((_did: string, _message: GenericMessage, options?: {
-      includeMaterializationProof?: boolean;
+      includeMaterializationConfirmation?: boolean;
     }): Promise<unknown> => {
-      if (options?.includeMaterializationProof === true) {
+      if (options?.includeMaterializationConfirmation === true) {
         return Promise.resolve({ kind: 'Duplicate' });
       }
       admitted += 1;

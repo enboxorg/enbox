@@ -476,7 +476,7 @@ describe('AgentDwnApi', () => {
       const result = await dwnApi.applyReplicatedMessage(
         'did:dht:testtenant',
         fakeMessage,
-        { dataStream, includeMaterializationProof: true },
+        { dataStream, includeMaterializationConfirmation: true },
       );
 
       expect(result).toEqual({ kind: 'Duplicate', materialized: true });
@@ -487,7 +487,7 @@ describe('AgentDwnApi', () => {
         targetDid : 'did:dht:testtenant',
       });
       expect(rpcApplyStub.firstCall.args[0].data).toBe(dataStream);
-      expect(rpcApplyStub.firstCall.args[0].includeMaterializationProof).toBe(true);
+      expect(rpcApplyStub.firstCall.args[0].includeMaterializationConfirmation).toBe(true);
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
     });
 
