@@ -276,7 +276,7 @@ export class HttpApi {
         // --- Route matching ---
         let response: Response;
         try {
-          response = await this.#route(req, url, path, method);
+          response = await this.#route(req, url, path, method, localNodeSession !== undefined);
         } catch (error) {
           log.error(`Unhandled error on ${method} ${path}:`, error);
           response = new Response('Internal Server Error', { status: 500 });
@@ -384,7 +384,13 @@ export class HttpApi {
   // Router
   // ---------------------------------------------------------------------------
 
-  async #route(req: Request, url: URL, path: string, method: string): Promise<Response> {
+  async #route(
+    req: Request,
+    url: URL,
+    path: string,
+    method: string,
+    isLocalNodeAuthenticated: boolean,
+  ): Promise<Response> {
     // --- CORS preflight ---
     if (method === 'OPTIONS') {
       return new Response(null, { status: 204 });
@@ -404,7 +410,7 @@ export class HttpApi {
 
     // --- JSON-RPC POST ---
     if (method === 'POST' && path === '/') {
-      return this.#handleJsonRpcPost(req);
+      return this.#handleJsonRpcPost(req, isLocalNodeAuthenticated);
     }
 
     // --- Admin routes ---
@@ -917,7 +923,7 @@ export class HttpApi {
     return { dwnRpcRequest };
   }
 
-  async #handleJsonRpcPost(req: Request): Promise<Response> {
+  async #handleJsonRpcPost(req: Request, isLocalNodeAuthenticated: boolean): Promise<Response> {
     const decoded = await this.#decodeJsonRpcPost(req);
     if ('errorResponse' in decoded) {
       return decoded.errorResponse;
@@ -933,6 +939,7 @@ export class HttpApi {
       registrationStore     : this.#registrationStore,
       config                : this.#config,
       tenantRateLimiter     : this.#tenantRateLimiter,
+      isLocalNodeAuthenticated,
       messageProcessedHooks : this.#messageProcessedHooks,
     };
     let routerResult: Awaited<ReturnType<typeof jsonRpcRouter.handle>>;

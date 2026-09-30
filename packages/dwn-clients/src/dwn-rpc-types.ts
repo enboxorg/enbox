@@ -174,11 +174,24 @@ export type DwnRpcRequest = {
  * server-side replication entry point.
  */
 export type DwnReplicationApplyRequest = {
-  /** Explicitly identifies a retained non-latest initial RecordsWrite whose payload was discarded. */
+  /**
+   * Marks an intentionally bodyless initial RecordsWrite for ancestry admission.
+   * `Applied` with `ancestryOnly: true` does not mean its data is available.
+   */
   ancestryOnly?: true;
 
   /** Optional data to be sent with the request. */
   data?: any;
+
+  /**
+   * For an exact duplicate RecordsWrite, the result includes `materialized: true`
+   * only when that write is current and has its data. This is independent of `ancestryOnly`:
+   * a missing message still follows normal replicated admission, including
+   * ancestry-only admission for a bodyless initial write. The proof is available
+   * only over HTTP(S) to authenticated local-node clients. No record bytes are returned;
+   * absence of `materialized: true` is inconclusive.
+   */
+  includeMaterializationProof?: boolean;
 
   /** The URL of the DWN server to which the request is sent. */
   dwnUrl: string;

@@ -333,6 +333,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
+    if (request.includeMaterializationProof === true) {
+      throw new DwnRpcError(JsonRpcErrorCodes.InvalidParams, 'materialization proof requires HTTP transport');
+    }
+
     const wireRequest = toWireReplicationApplyRequest(request);
     WebSocketDwnRpcClient.assertReplicatedApplyDataIsPresent(wireRequest);
     const maxPayloadBytes = await this.maxPayloadBytesForReplicatedApply(wireRequest);
@@ -353,6 +357,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   public async applyReplicatedMessageIfConnected(
     request: DwnReplicationApplyRequest,
   ): Promise<ReplicationApplyResult | undefined> {
+    if (request.includeMaterializationProof === true) {
+      return undefined;
+    }
+
     if (this.getConnectedConnection(request.dwnUrl) === undefined) {
       return undefined;
     }
@@ -504,13 +512,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // Notify all subscription handlers of disconnection. Invocation is
         // normalized so one throwing handler cannot skip the rest.
         for (const tracked of subscriptions.values()) {
-          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'disconnected' });
+          void WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'disconnected' });
         }
       },
 
       onreconnecting: (attempt: number): void => {
         for (const tracked of subscriptions.values()) {
-          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnecting', attempt });
+          void WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnecting', attempt });
         }
       },
 
@@ -543,8 +551,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         const conn = { socket, subscriptions, url: url.toString() };
         WebSocketDwnRpcClient.connections.set(key, conn);
 
-        // Resubscribe all tracked subscriptions with their last known cursor.
-        WebSocketDwnRpcClient.resubscribeAll(conn);
+        // Resubscribe all tracked subscriptions with their last known cursor;
+        // resubscribeAll reports each failed subscription to its handler.
+        void WebSocketDwnRpcClient.resubscribeAll(conn);
       },
     });
 
@@ -842,7 +851,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     }
 
     // Notify the handler that reconnection is complete for this subscription.
-    WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
+    void WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
   }
 
   /**
@@ -858,7 +867,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     tracked.closed = true;
 
     const detail = error instanceof Error ? error.message : String(error);
-    WebSocketDwnRpcClient.invokeHandler(tracked.handler, {
+    void WebSocketDwnRpcClient.invokeHandler(tracked.handler, {
       type   : 'error',
       cursor : tracked.lastCursor,
       error  : {
