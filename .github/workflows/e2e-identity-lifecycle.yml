@@ -39,14 +39,14 @@ jobs:
         ports:
           - 5433:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd="pg_isready -U dwn_user -d dwn"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -54,7 +54,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -62,7 +62,7 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Build
         run: bun run build
@@ -98,7 +98,9 @@ jobs:
           export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0
           export DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND=0
 
-          bun packages/dwn-server/dist/esm/src/main.js &
+          bun packages/dwn-server/dist/esm/src/main.js > /tmp/dwn-server.log 2>&1 &
+          dwn_server_pid=$!
+          echo "DWN_SERVER_PID=$dwn_server_pid" >> "$GITHUB_ENV"
 
           echo "Waiting for dwn-server..."
           for i in $(seq 1 30); do
@@ -106,29 +108,39 @@ jobs:
               echo "dwn-server is ready"
               exit 0
             fi
+            if ! kill -0 "$dwn_server_pid" 2>/dev/null; then
+              cat /tmp/dwn-server.log
+              exit 1
+            fi
             sleep 2
           done
+          cat /tmp/dwn-server.log
           exit 1
 
       - name: Determine DWN URL
         id: dwn
+        env:
+          INPUT_DWN_URL: ${{ inputs.dwn_url }}
         run: |
           if [ "${{ inputs.use_local_server }}" = "true" ]; then
-            echo "url=http://localhost:3000" >> $GITHUB_OUTPUT
+            echo "url=http://localhost:3000" >> "$GITHUB_OUTPUT"
           else
-            echo "url=${{ inputs.dwn_url }}" >> $GITHUB_OUTPUT
+            printf 'url=%s\n' "$INPUT_DWN_URL" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Verify DWN server is reachable
+        env:
+          TEST_DWN_URL: ${{ steps.dwn.outputs.url }}
         run: |
-          echo "Testing DWN at ${{ steps.dwn.outputs.url }}..."
-          curl -sf "${{ steps.dwn.outputs.url }}/info" | head -c 200
+          echo "Testing DWN at $TEST_DWN_URL..."
+          curl -sf "$TEST_DWN_URL/info" | head -c 200
           echo ""
 
       - name: Run E2E Identity Lifecycle test
+        env:
+          DWN_ADMIN_TOKEN: ${{ secrets.DWN_ADMIN_TOKEN }}
+          TEST_DWN_URL: ${{ steps.dwn.outputs.url }}
         run: |
-          export TEST_DWN_URL="${{ steps.dwn.outputs.url }}"
-
           # For local server: use the local Pkarr relay for DID resolution and explicitly opt in
           # to private gateways. For remote server: use the production DHT gateway (default) so
           # the remote DWN can resolve the DIDs we publish.
@@ -139,8 +151,8 @@ jobs:
 
           # Admin token is needed when the remote DWN has tenant registration
           # enabled. It allows the test to register new DIDs as tenants.
-          if [ -n "${{ secrets.DWN_ADMIN_TOKEN }}" ]; then
-            export TEST_DWN_ADMIN_TOKEN="${{ secrets.DWN_ADMIN_TOKEN }}"
+          if [ -n "$DWN_ADMIN_TOKEN" ]; then
+            export TEST_DWN_ADMIN_TOKEN="$DWN_ADMIN_TOKEN"
           fi
 
           bun run packages/api/tests/e2e-identity-lifecycle.ts
@@ -155,3 +167,11 @@ jobs:
         run: |
           echo "=== dwn-server stdout ==="
           cat /tmp/dwn-server.log 2>/dev/null || echo "No log file found"
+
+      - name: Stop local services
+        if: ${{ always() && inputs.use_local_server }}
+        run: |
+          if [ -n "$DWN_SERVER_PID" ]; then
+            kill "$DWN_SERVER_PID" 2>/dev/null || true
+          fi
+          docker rm -f pkarr-relay 2>/dev/null || true

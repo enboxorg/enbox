@@ -28,19 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
-      # Runner routing: same-repo runs send the compute-only jobs (lint,
-      # build, test-lightweight, test-dwn-sdk) to the org's self-hosted
-      # ephemeral DinD fleet, where they are measurably faster than hosted
-      # runners. Fork PRs resolve to GitHub-hosted so untrusted code never
-      # executes on the fleet. Deliberately on ubuntu-latest: the
-      # service-backed test jobs (agent shards, api-clients, e2e,
-      # sql-store, dwn-server — DB/fsync-heavy, 2-4x slower under the
-      # fleet's shared-core concurrency and tight against their
-      # timeout-minutes), test-browser (9-way matrix; hosted parallelism,
-      # Playwright apt setup assumes the hosted image), and the
-      # changes/ci-passed orchestration jobs (docs-only PRs and the branch
-      # protection gate must not depend on self-hosted availability).
-      runner: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || 'self-hosted' }}
       src: ${{ steps.src-filter.outputs.src }}
       needs_common_crypto: ${{ steps.propagate.outputs.needs_common_crypto }}
       needs_lightweight: ${{ steps.propagate.outputs.needs_lightweight }}
@@ -58,14 +45,14 @@ jobs:
       needs_e2e: ${{ steps.propagate.outputs.needs_e2e }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Two filter steps: 'src' needs predicate-quantifier 'every' so that
       # negation patterns (e.g. !**/*.md) work correctly.  Per-package filters
       # need the default 'some' (match ANY pattern) since each filter lists
       # multiple inclusion globs for the same package.
       - name: Check for source changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         id: src-filter
         with:
           base: main
@@ -80,7 +67,7 @@ jobs:
               - '!.changeset/**'
 
       - name: Detect per-package changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         id: filter
         with:
           base: main
@@ -286,14 +273,14 @@ jobs:
   # ---------------------------------------------------------------------------
   lint:
     name: Lint
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: changes
     if: needs.changes.outputs.src == 'true'
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -301,7 +288,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -309,7 +296,7 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Lint
         run: bun run lint
@@ -320,14 +307,14 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     name: Build
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: changes
     if: needs.changes.outputs.src == 'true'
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -335,7 +322,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -343,7 +330,7 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       # Persist Turbo's local cache across runs so an unchanged package restores
       # its dist/ from cache instead of rebuilding. The sha-suffixed key never
@@ -354,7 +341,7 @@ jobs:
       # inputs (root tsconfig, build/); the lockfile and turbo.json are hashed
       # by Turbo automatically.
       - name: Restore Turbo build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .turbo/cache
           key: ${{ runner.os }}-turbo-build-${{ github.sha }}
@@ -364,12 +351,13 @@ jobs:
       - name: Build
         run: bun run build
 
+      # Keep build and coverage artifacts available for delayed job reruns.
       - name: Upload build outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: workspace-build
           path: packages/*/dist/
-          retention-days: 1
+          retention-days: 7
 
   # ---------------------------------------------------------------------------
   # Lightweight packages: common, crypto, connect, auth, protocol-codegen, cli, local-node, protocols
@@ -378,14 +366,14 @@ jobs:
   # ---------------------------------------------------------------------------
   test-lightweight:
     name: 'Test: common / crypto / connect / auth / cli'
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: [build, changes]
     if: needs.changes.outputs.needs_lightweight == 'true'
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -393,7 +381,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -401,10 +389,10 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Download build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: workspace-build
           path: packages
@@ -435,11 +423,11 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-lightweight
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -447,14 +435,14 @@ jobs:
   # ---------------------------------------------------------------------------
   test-dwn-sdk:
     name: 'Test: dwn-sdk-js'
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: [build, changes]
     if: needs.changes.outputs.needs_dwn_sdk == 'true'
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -462,7 +450,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -470,10 +458,10 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Download build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: workspace-build
           path: packages
@@ -489,11 +477,11 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-dwn-sdk
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -524,14 +512,14 @@ jobs:
         ports:
           - 5433:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd="pg_isready -U dwn_user -d dwn"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -539,7 +527,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -547,10 +535,10 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Download build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: workspace-build
           path: packages
@@ -633,11 +621,11 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-agent-shard-${{ matrix.shard }}
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
       - name: Stop services
@@ -670,14 +658,14 @@ jobs:
         ports:
           - 5433:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd="pg_isready -U dwn_user -d dwn"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -685,7 +673,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -693,10 +681,10 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Download build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: workspace-build
           path: packages
@@ -770,11 +758,11 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-api-clients
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
       - name: Stop services
@@ -806,14 +794,14 @@ jobs:
         ports:
           - 5433:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd="pg_isready -U dwn_user -d dwn"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -821,7 +809,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -829,10 +817,10 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Download build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: workspace-build
           path: packages
@@ -916,7 +904,7 @@ jobs:
           - 5432:5432
         options: >-
           --tmpfs /var/lib/postgresql/data:rw
-          --health-cmd pg_isready
+          --health-cmd="pg_isready -U root -d dwn"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -942,7 +930,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -950,7 +938,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -958,10 +946,10 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Download build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: workspace-build
           path: packages
@@ -992,11 +980,11 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-sql-store
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -1011,7 +999,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -1019,7 +1007,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -1027,10 +1015,10 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Download build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: workspace-build
           path: packages
@@ -1059,11 +1047,11 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-dwn-server
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -1086,7 +1074,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -1113,7 +1101,7 @@ jobs:
 
       - name: Download coverage artifacts
         if: steps.have_coverage.outputs.value == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: coverage-*
           path: .
@@ -1125,11 +1113,11 @@ jobs:
 
       - name: Upload merged coverage
         if: steps.have_coverage.outputs.value == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-merged
           path: coverage/merged/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: error
 
       - name: Build coverage badges
@@ -1278,12 +1266,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Restore Sonar cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar-${{ hashFiles('sonar-project.properties') }}
@@ -1291,11 +1279,13 @@ jobs:
             ${{ runner.os }}-sonar-
 
       - name: Download merged coverage
-        uses: actions/download-artifact@v4
-        continue-on-error: true
+        uses: actions/download-artifact@v8
         with:
           name: coverage-merged
           path: coverage/merged
+
+      - name: Validate merged coverage
+        run: test -s coverage/merged/lcov.info
 
       - name: Validate SonarCloud secrets
         env:
@@ -1307,7 +1297,7 @@ jobs:
           fi
 
       - name: Run SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@v6
+        uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_HOST_URL: https://sonarcloud.io
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -1341,12 +1331,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Restore Sonar cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar-${{ hashFiles('sonar-project.properties') }}
@@ -1354,11 +1344,13 @@ jobs:
             ${{ runner.os }}-sonar-
 
       - name: Download merged coverage
-        uses: actions/download-artifact@v4
-        continue-on-error: true
+        uses: actions/download-artifact@v8
         with:
           name: coverage-merged
           path: coverage/merged
+
+      - name: Validate merged coverage
+        run: test -s coverage/merged/lcov.info
 
       - name: Validate SonarCloud secrets
         env:
@@ -1370,7 +1362,7 @@ jobs:
           fi
 
       - name: Run SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@v6
+        uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_HOST_URL: https://sonarcloud.io
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -1425,7 +1417,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -1433,7 +1425,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -1441,35 +1433,51 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Download build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: workspace-build
           path: packages
 
-      - name: Cache Playwright browser & system deps
-        id: playwright-cache
-        uses: actions/cache@v4
+      - name: Record runner image
+        id: runner-image
+        run: echo "os=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser
+        id: playwright-browser-cache
+        uses: actions/cache@v6
         with:
-          path: |
-            ~/.cache/ms-playwright
-            ~/playwright-apt-cache
-          # v4 suffix busts stale caches after Ubuntu runner package revs
-          # created exact-version Mesa dependency skew for WebKit.
-          key: ${{ runner.os }}-playwright-v4-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-playwright-browser-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+
+      - name: Cache Playwright system deps
+        id: playwright-deps-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/playwright-apt-cache
+          # Keep apt packages within one Ubuntu image family. The restore key
+          # migrates the previous combined cache without another cold download.
+          key: ${{ runner.os }}-${{ runner.arch }}-playwright-deps-${{ steps.runner-image.outputs.os }}-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-v4-${{ matrix.browser }}-${{ hashFiles('package.json') }}
 
       - name: Install Playwright system deps (from cache)
         # On cache hit the .deb files are already saved in ~/playwright-apt-cache.
         # Install them directly with dpkg — no network needed, takes ~5s.
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        if: steps.playwright-deps-cache.outputs.cache-hit != ''
         run: |
           if [ -d ~/playwright-apt-cache ] && ls ~/playwright-apt-cache/*.deb 1>/dev/null 2>&1; then
             echo "Installing $(ls ~/playwright-apt-cache/*.deb | wc -l) cached .deb packages"
-            sudo dpkg -i ~/playwright-apt-cache/*.deb || true
-            sudo apt-get update -qq
-            sudo apt-get install -f -y
+            if ! sudo dpkg -i ~/playwright-apt-cache/*.deb; then
+              if ! (sudo apt-get update -qq && sudo apt-get install -f -y); then
+                echo "::warning::Cached Playwright dependencies were incompatible; repairing from apt"
+                bunx playwright install-deps ${{ matrix.browser }}
+              fi
+            fi
+          else
+            bunx playwright install-deps ${{ matrix.browser }}
           fi
 
       - name: Install Playwright system deps (fresh)
@@ -1481,7 +1489,7 @@ jobs:
         # We snapshot /var/cache/apt/archives before and after so we only
         # cache the .deb files that Playwright actually installed — not the
         # hundreds of pre-existing system packages.
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        if: steps.playwright-deps-cache.outputs.cache-hit == ''
         run: |
           ls /var/cache/apt/archives/*.deb 2>/dev/null | sort > /tmp/apt-before.txt || true
           sudo apt-get update -qq
@@ -1493,10 +1501,10 @@ jobs:
         timeout-minutes: 15
 
       - name: Install Playwright browser
-        # playwright@1.45.3 is pinned in root devDependencies to match the
-        # version resolved for @vitest/browser-playwright's peer dependency.
+        # Playwright is pinned in root devDependencies to match the version
+        # resolved for @vitest/browser-playwright's peer dependency.
         # On cache hit the binary is already present — this is a no-op.
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        if: steps.playwright-browser-cache.outputs.cache-hit != 'true'
         timeout-minutes: 3
         run: bunx playwright install ${{ matrix.browser }}
 
@@ -1560,10 +1568,11 @@ jobs:
 
       - name: Upload browser coverage
         if: always() && matrix.browser == 'chromium'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-browser-${{ matrix.shard.name }}-${{ matrix.browser }}
           path: coverage-staging/
+          retention-days: 7
           if-no-files-found: warn
 
       - name: Fail if browser tests failed

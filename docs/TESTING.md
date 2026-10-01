@@ -137,7 +137,9 @@ export DWN_STORAGE_RESUMABLE_TASKS="postgres://dwn_user:dwn_password@localhost:5
 bun packages/dwn-server/dist/esm/src/main.js &
 ```
 
-Alternatively, `./scripts/test-with-server.sh` automates the full cycle (start containers, build, run tests, tear down).
+Alternatively, `./scripts/test-with-server.sh` starts the shared containers,
+builds the workspace, runs the requested tests, and stops its DWN server. The
+containers stay available for later runs; stop them with `scripts/dev.sh infra down`.
 
 ## Browser Tests
 
@@ -191,9 +193,10 @@ CI runs a **3x3 matrix** (3 package shards x 3 browsers = 9 parallel jobs):
 | `dwn-sdk-js` | `@enbox/dwn-sdk-js` |
 | `dids-agent-api` | `@enbox/dids`, `@enbox/browser`, `@enbox/agent`, `@enbox/api` |
 
-Browser test failures block merging. Browser coverage is collected per-browser
-so the LCOV output can be merged with Node coverage for SonarCloud; CI does not
-post a separate browser-coverage PR comment.
+Browser test failures block merging. Browser coverage is collected on Chromium;
+Firefox and WebKit run the same suites without instrumentation. The Chromium
+LCOV output is merged with Node coverage for SonarCloud; CI does not post a
+separate browser-coverage PR comment.
 
 ## Coverage
 

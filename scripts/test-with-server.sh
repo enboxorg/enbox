@@ -4,9 +4,9 @@ set -euo pipefail
 # ------------------------------------------------------------------
 # test-with-server.sh
 #
-# Spins up Postgres, MySQL, and Pkarr relay via docker compose,
-# starts a local dwn-server, runs the full test suite, then tears
-# everything down.
+# Spins up the shared test services via docker compose,
+# starts a local dwn-server, runs the full test suite, then stops the
+# server. Shared test containers remain available for later runs.
 #
 # Usage:
 #   ./scripts/test-with-server.sh              # run all tests
@@ -16,9 +16,8 @@ set -euo pipefail
 # ------------------------------------------------------------------
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-COMPOSE_FILE="$ROOT_DIR/docker-compose.test.yaml"
 DWN_SERVER_PID=""
-FILTER=""
+PACKAGE_FILTER=""
 
 cleanup() {
   echo ""
@@ -28,8 +27,7 @@ cleanup() {
     kill "$DWN_SERVER_PID" 2>/dev/null || true
     wait "$DWN_SERVER_PID" 2>/dev/null || true
   fi
-  echo "    Stopping docker containers..."
-  docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans 2>/dev/null || true
+  echo "    Shared test containers remain available for later runs."
   echo "==> Done."
 }
 
@@ -38,31 +36,30 @@ trap cleanup EXIT
 # ---- Parse arguments ----
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --agent)  FILTER="--filter @enbox/agent"; shift ;;
-    --api)    FILTER="--filter @enbox/api"; shift ;;
-    --filter) FILTER="--filter $2"; shift 2 ;;
+    --agent)  PACKAGE_FILTER="@enbox/agent"; shift ;;
+    --api)    PACKAGE_FILTER="@enbox/api"; shift ;;
+    --filter) PACKAGE_FILTER="$2"; shift 2 ;;
     *)        echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
 # ---- Step 1: Start databases ----
 echo "==> Starting database containers..."
-docker compose -f "$COMPOSE_FILE" up -d --wait
+"$ROOT_DIR/scripts/dev.sh" infra
 
 echo "==> Databases and Pkarr relay are ready."
 
-# ---- Step 2: Build (if needed) ----
-if [ ! -d "$ROOT_DIR/packages/dwn-server/dist" ]; then
-  echo "==> Building packages (no dist found)..."
-  cd "$ROOT_DIR"
-  bun run --filter '*' build
-fi
+# ---- Step 2: Build ----
+echo "==> Building packages..."
+cd "$ROOT_DIR"
+bun run build
 
 # ---- Step 3: Start dwn-server ----
 echo "==> Starting dwn-server..."
 
 # Configure DID DHT to use the local Pkarr relay
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 
 export DS_PORT=3000
 export DWN_BASE_URL=http://localhost:3000
@@ -72,7 +69,7 @@ export DWN_STORAGE_DATA="postgres://dwn_user:dwn_password@localhost:5433/dwn"
 export DWN_STORAGE_RESUMABLE_TASKS="postgres://dwn_user:dwn_password@localhost:5433/dwn"
 
 cd "$ROOT_DIR/packages/dwn-server"
-node dist/esm/src/main.js &
+bun dist/esm/src/main.js &
 DWN_SERVER_PID=$!
 cd "$ROOT_DIR"
 
@@ -109,14 +106,21 @@ export MYSQL_PORT=3306
 export MYSQL_USER=root
 export MYSQL_PASSWORD=dwn
 export MYSQL_DATABASE=dwn
+export NATS_URL=nats://localhost:4222
+export S3_ENDPOINT=http://localhost:9000
 
 cd "$ROOT_DIR"
-# When no --filter is specified, run all packages
-if [ -z "$FILTER" ]; then
-  FILTER="--filter '*'"
+# The root test task omits dwn-sql-store because that package exposes `test`
+# rather than `test:node`, so include it explicitly for a full run.
+if [ -z "$PACKAGE_FILTER" ]; then
+  bun run test:node
+  bun run --filter @enbox/dwn-sql-store test
+  bun run --filter @enbox/agent test:e2e
+elif [ "$PACKAGE_FILTER" = "@enbox/dwn-sql-store" ]; then
+  bun run --filter "$PACKAGE_FILTER" test
+elif [ "$PACKAGE_FILTER" = "@enbox/agent" ]; then
+  bun run --filter "$PACKAGE_FILTER" test:node
+  bun run --filter "$PACKAGE_FILTER" test:e2e
+else
+  bun run --filter "$PACKAGE_FILTER" test:node
 fi
-# shellcheck disable=SC2086
-bun run $FILTER test:node
-TEST_EXIT=$?
-
-exit $TEST_EXIT

@@ -78,16 +78,44 @@ dc() { docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" "$@"; }
 container_running() { docker ps    --format '{{.Names}}' 2>/dev/null | grep -qx "$1"; }
 container_exists()  { docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$1"; }
 
+wait_for_service() {
+  local cname="$1"
+  local status
+  for _ in $(seq 1 60); do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cname" 2>/dev/null || true)"
+    case "$status" in
+      healthy|running) return 0 ;;
+      unhealthy|exited|dead)
+        err "Container $cname entered state '$status'."
+        docker logs --tail 50 "$cname" >&2 || true
+        return 1
+        ;;
+    esac
+    sleep 1
+  done
+  err "Container $cname did not become healthy within 60s."
+  docker logs --tail 50 "$cname" >&2 || true
+  return 1
+}
+
 # Bring a single service up by name: start an existing (stopped) container, or
 # create it via compose if it has never existed. Avoids name-conflict errors
 # when the stack was first created from a different directory/project.
+start_service_container() {
+  local cname="$1" svc="$2"
+  if ! container_running "$cname"; then
+    if container_exists "$cname"; then
+      docker start "$cname" >/dev/null
+    else
+      dc up -d "$svc" >/dev/null
+    fi
+  fi
+}
+
 start_service() {
   local cname="$1" svc="$2"
-  if container_running "$cname"; then return 0; fi
-  if container_exists "$cname"; then
-    docker start "$cname" >/dev/null 2>&1 && return 0
-  fi
-  dc up -d "$svc" >/dev/null 2>&1 || true
+  start_service_container "$cname" "$svc"
+  wait_for_service "$cname"
 }
 
 # ---- gateway (did:dht) — external; ensure reachable only ----------
@@ -97,13 +125,13 @@ ensure_gateway() {
     return 0
   fi
   if [ "$MANAGE_INFRA" -eq 0 ]; then
-    warn "did:dht gateway not reachable at $GATEWAY_URI (--no-infra: not starting it)"
-    return 0
+    err "did:dht gateway not reachable at $GATEWAY_URI (--no-infra: not starting it)"
+    return 1
   fi
   if ! have docker; then
-    warn "did:dht gateway not reachable and docker is not installed."
+    err "did:dht gateway not reachable and docker is not installed."
     hint "Start a Pkarr relay on $GATEWAY_URI yourself, or install docker."
-    return 0
+    return 1
   fi
   say "Starting did:dht gateway (Pkarr relay) container…"
   start_service enbox-test-pkarr pkarr-relay
@@ -111,8 +139,9 @@ ensure_gateway() {
   if gateway_up; then
     ok "did:dht gateway reachable at $GATEWAY_URI"
   else
-    warn "did:dht gateway still not reachable at $GATEWAY_URI — agent/api/dids tests will fail."
+    err "did:dht gateway still not reachable at $GATEWAY_URI."
     hint "Inspect with: docker logs enbox-test-pkarr"
+    return 1
   fi
 }
 
@@ -241,17 +270,15 @@ infra() {
     ok "Containers stopped."
   else
     say "Starting the full docker-compose stack (Postgres x2, MySQL, NATS, MinIO, Pkarr)…"
-    # Reuse already-created containers (any project); compose-create the rest.
-    if container_exists enbox-test-postgres; then
-      start_service enbox-test-postgres    postgres
-      start_service enbox-test-postgres-sdk postgres-sdk
-      start_service enbox-test-mysql        mysql
-      start_service enbox-test-nats         nats
-      start_service enbox-test-minio        minio
-      start_service enbox-test-pkarr        pkarr-relay
-    else
-      dc up -d --wait
-    fi
+    # Reuse already-created containers from any worktree, create missing ones,
+    # then wait after all services have begun initializing in parallel.
+    start_service_container enbox-test-postgres     postgres
+    start_service_container enbox-test-postgres-sdk postgres-sdk
+    start_service_container enbox-test-mysql        mysql
+    start_service_container enbox-test-nats         nats
+    start_service_container enbox-test-minio        minio
+    start_service_container enbox-test-pkarr        pkarr-relay
+    for c in $INFRA_CONTAINERS; do wait_for_service "$c"; done
     ok "Containers up."
     hint "Needed for @enbox/dwn-sql-store and @enbox/dwn-server DB tests."
   fi

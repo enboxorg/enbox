@@ -5,10 +5,11 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
+    "deploy": "wrangler pages deploy out --project-name=enbox-docs",
     "start": "serve out",
     "types:check": "fumadocs-mdx && next typegen && tsc --noEmit",
     "postinstall": "fumadocs-mdx",
-    "lint": "biome check",
+    "lint": "biome lint --error-on-warnings",
     "format": "biome format --write"
   },
   "dependencies": {
@@ -32,6 +33,7 @@
     "serve": "14.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
+    "wrangler": "3.90.0",
     "@biomejs/biome": "2.4.6"
   }
 }
