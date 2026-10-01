@@ -1,8 +1,8 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { PushResult } from '../types/sync.js';
-import type { SyncNextDeliveryOutcome } from './types.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
+import type { SyncNextDeliveryObligation, SyncNextDeliveryOutcome, SyncNextLink } from './types.js';
 
 import { RemoteApplyPushContext } from '../sync-messages.js';
 import { syncNextDeliveryOutcome } from './delivery-outcome.js';
@@ -72,6 +72,15 @@ export async function retryOneDeliveryObligation({
     return { kind: 'aborted' };
   }
 
+  return finishDeliveryResult(ledger, link, selected, result);
+}
+
+async function finishDeliveryResult(
+  ledger: SyncNextLedgerStore,
+  link: SyncNextLink,
+  selected: SyncNextDeliveryObligation,
+  result: PushResult,
+): Promise<SyncNextDeliveryRetryResult> {
   if (result.succeeded.includes(selected.messageCid)) {
     return await ledger.finishDeliveryAttempt(link, selected)
       ? { kind: 'settled' }

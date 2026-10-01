@@ -334,7 +334,7 @@ export class SyncNextLedgerStore {
       }
       const receiptKey = syncNextReceiptKey(queriedLink, selected);
       const current = await this.getValue<SyncNextDeliveryObligation>(this._delivery, receiptKey);
-      if (current === undefined || current.lastAttemptAt !== selected.lastAttemptAt ||
+      if (current?.lastAttemptAt !== selected.lastAttemptAt ||
           current.wasLatestBaseState !== selected.wasLatestBaseState) {
         return false;
       }
