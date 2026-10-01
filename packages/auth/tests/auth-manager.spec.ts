@@ -1,12 +1,13 @@
 import type { DwnProtocolDefinition, EnboxUserAgent } from '@enbox/agent';
 
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 
 import { AuthManager } from '../src/auth-manager.js';
 import { Convert } from '@enbox/common';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { PasswordProvider } from '../src/password-provider.js';
 import { STORAGE_KEYS } from '../src/types.js';
+import { WalletConnect } from '../src/wallet-connect-client.js';
 import { ConnectDeniedError, isConnectDeniedError } from '../src/errors.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
@@ -2252,21 +2253,19 @@ describe('AuthManager', () => {
       });
       const provider = PasswordProvider.fromCallback(async () => 'wallet-pw');
       const manager = createTestManager(agent, { passwordProvider: provider });
+      const initClient = spyOn(WalletConnect, 'initClient').mockRejectedValue(new Error('relay deliberately stopped'));
 
-      // walletConnect requires specific options — we mock the flow
-      // by testing that the password resolution happens before the
-      // walletConnect flow starts (which we can verify via start() calls)
       try {
-        await manager.walletConnect({
+        await expect(manager.walletConnect({
           displayName        : 'Test',
           connectServerUrl   : 'https://relay.example.com',
           permissionRequests : [],
           onWalletUriReady   : () => {},
           validatePin        : async () => '1234',
-        });
-      } catch {
-        // walletConnect flow will fail since we're using mocks,
-        // but the password resolution should have happened
+        })).rejects.toThrow('relay deliberately stopped');
+        expect(initClient).toHaveBeenCalledTimes(1);
+      } finally {
+        initClient.mockRestore();
       }
 
       expect(startCalls).toHaveLength(1);
