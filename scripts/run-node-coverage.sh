@@ -2,19 +2,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-COMPOSE_FILE="$ROOT_DIR/docker-compose.test.yaml"
 DWN_SERVER_PID=""
 
 cleanup() {
   echo ""
-  echo "==> Cleaning up coverage infrastructure..."
+  echo "==> Stopping coverage server..."
 
   if [ -n "$DWN_SERVER_PID" ] && kill -0 "$DWN_SERVER_PID" 2>/dev/null; then
     kill "$DWN_SERVER_PID" 2>/dev/null || true
     wait "$DWN_SERVER_PID" 2>/dev/null || true
   fi
 
-  docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans 2>/dev/null || true
+  echo "    Shared test containers remain available for later runs."
 }
 
 wait_for_http() {
@@ -43,13 +42,11 @@ wait_for_http() {
 trap cleanup EXIT
 
 echo "==> Starting shared test infrastructure..."
-docker compose -f "$COMPOSE_FILE" up -d --wait
+"$ROOT_DIR/scripts/dev.sh" infra
 
-if [ ! -d "$ROOT_DIR/packages/dwn-server/dist" ]; then
-  echo "==> Building packages (no dist found)..."
-  cd "$ROOT_DIR"
-  bun run build
-fi
+echo "==> Building packages..."
+cd "$ROOT_DIR"
+bun run build
 
 export DB_HOST=localhost
 export DB_PORT=5432
@@ -64,6 +61,7 @@ export MYSQL_DATABASE=dwn
 export NATS_URL=nats://localhost:4222
 export S3_ENDPOINT=http://localhost:9000
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 
 node_packages=(
   "@enbox/common"
@@ -106,6 +104,7 @@ server_packages=(
   "@enbox/dwn-clients"
   "@enbox/agent"
   "@enbox/api"
+  "@enbox/browser"
 )
 
 for pkg in "${server_packages[@]}"; do

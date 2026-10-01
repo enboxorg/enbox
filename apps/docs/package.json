@@ -9,7 +9,7 @@
     "start": "serve out",
     "types:check": "fumadocs-mdx && next typegen && tsc --noEmit",
     "postinstall": "fumadocs-mdx",
-    "lint": "biome check",
+    "lint": "biome lint --error-on-warnings",
     "format": "biome format --write"
   },
   "dependencies": {

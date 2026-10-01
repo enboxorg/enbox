@@ -77,11 +77,11 @@ function CopyButton({ text }: Readonly<{ text: string }>) {
       aria-label={copied ? 'Copied' : 'Copy to clipboard'}
     >
       {copied ? (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M20 6 9 17l-5-5" />
         </svg>
       ) : (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
@@ -169,18 +169,9 @@ function CodeBlock({ language, filename, children }: Readonly<{ language: string
 function FeatureCard({ title, description }: Readonly<{ title: string; description: string }>) {
   return (
     <div
-      className="flex flex-col gap-4 p-8 rounded-2xl transition-all duration-200"
+      className="flex flex-col gap-4 p-8 rounded-2xl border border-[rgba(255,255,255,0.06)] transition-all duration-200 hover:border-[rgba(255,255,255,0.10)] hover:shadow-[0_4px_24px_rgba(0,0,0,0.3)]"
       style={{
         background: 'var(--enbox-gray-900)',
-        border: '1px solid rgba(255, 255, 255, 0.06)',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.10)';
-        e.currentTarget.style.boxShadow = '0 4px 24px rgba(0, 0, 0, 0.3)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.06)';
-        e.currentTarget.style.boxShadow = 'none';
       }}
     >
       <h3 className="text-lg font-semibold" style={{ color: 'var(--enbox-gray-50)' }}>{title}</h3>

@@ -9,7 +9,7 @@ bun run clean || true
 
 # Install dependencies
 echo "Installing dependencies..."
-bun install --frozen-lockfile
+./scripts/ci-install.sh
 
 # Build all packages
 echo "Building packages..."

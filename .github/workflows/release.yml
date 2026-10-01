@@ -42,7 +42,7 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Persist App credentials so any `git push` performed by the
           # `version` / `release` scripts uses the App identity, not
@@ -55,7 +55,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Restore bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -63,19 +63,21 @@ jobs:
             ${{ runner.os }}-bun-store-
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: ./scripts/ci-install.sh
 
       - name: Build packages
         run: bun run build
 
       - name: Create Release PR or Publish
         id: changesets
+        # changesets/action@v2 requires Changesets CLI v3; this repository
+        # intentionally remains on action v1 while it uses CLI v2.
         uses: changesets/action@v1
         with:
           # Uses bun pack + npm publish (via scripts/publish.sh) instead of
