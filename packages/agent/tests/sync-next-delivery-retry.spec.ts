@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
+import { recordIdForRecordsMessage } from '../src/sync-messages.js';
 import { retryOneDeliveryObligation } from '../src/sync-next/delivery-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/ledger-key.js';
@@ -92,9 +93,11 @@ describe('retryOneDeliveryObligation', () => {
     });
     const delivery = await Promise.all(messages.map(async (message, index) => {
       const messageCid = await Message.getCid(message);
+      const recordId = recordIdForRecordsMessage(message);
       return {
         messageCid,
         outcome : { reason: 'transport' as const },
+        ...(recordId === undefined ? {} : { recordId }),
         source  : token(index + 1, messageCid),
         wasLatestBaseState,
       };
@@ -102,6 +105,7 @@ describe('retryOneDeliveryObligation', () => {
     expect(await ledger.commitPushPage(link, {
       delivery,
       handledThrough : delivery.at(-1)!.source,
+      handledRecords : [],
       pageReceipts   : delivery,
       settled        : [],
     })).toBe(true);
@@ -235,6 +239,26 @@ describe('retryOneDeliveryObligation', () => {
     });
     expect(fixture.apply.notCalled).toBe(true);
     expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
+  });
+
+  it('should settle an unreadable write after a newer current record mutation is delivered', async () => {
+    const initial = await TestDataGenerator.generateRecordsWrite();
+    const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+      author   : initial.author,
+      recordId : initial.message.recordId,
+    });
+    const link = await retain(target(), [initial.message, recordsDelete.message]);
+    const fixture = fakeAgent();
+    fixture.localMessages.set(await Message.getCid(recordsDelete.message), recordsDelete.message);
+
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() })).toEqual({
+      kind    : 'pending',
+      outcome : { reason: 'dependency' },
+    });
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+      .toEqual({ kind: 'settled' });
+    expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+    expect(fixture.apply.calledOnce).toBe(true);
   });
 
   it('should send a retained non-latest initial write as ancestry without its body', async () => {

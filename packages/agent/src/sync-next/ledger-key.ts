@@ -92,3 +92,10 @@ export function compareSyncNextPosition(a: ProgressToken, b: ProgressToken): num
   if (difference > BigInt(0)) { return 1; }
   return 0;
 }
+
+/** Whether one source position is covered by another position in the same token domain. */
+export function syncNextSourceAtOrBefore(source: ProgressToken, through: ProgressToken): boolean {
+  return source.streamId === through.streamId &&
+    source.epoch === through.epoch &&
+    compareSyncNextPosition(source, through) <= 0;
+}

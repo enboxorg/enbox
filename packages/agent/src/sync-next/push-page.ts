@@ -6,18 +6,21 @@ import type { MessagesQueryReply, ProgressToken } from '@enbox/dwn-sdk-js';
 import type {
   SyncNextDeliveryInput,
   SyncNextDeliveryOutcome,
+  SyncNextHandledRecord,
   SyncNextSourceReceipt,
 } from './types.js';
 
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { syncNextDeliveryOutcome } from './delivery-outcome.js';
-import { syncNextLinkIdentity } from './ledger-key.js';
 import { prepareSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
-import { queryLocalMessageFeed, RemoteApplyPushContext } from '../sync-messages.js';
+import { queryLocalMessageFeed, recordIdForRecordsMessage, RemoteApplyPushContext } from '../sync-messages.js';
+import { syncNextLinkIdentity, syncNextSourceAtOrBefore } from './ledger-key.js';
 
 type ClassifiedPushPage = {
+  acknowledged: number;
   blocked?: SyncNextDeliveryOutcome;
   delivery: SyncNextDeliveryInput[];
+  handledRecords: SyncNextHandledRecord[];
   settled: SyncNextSourceReceipt[];
 };
 
@@ -73,6 +76,7 @@ export class SyncNextPushPage {
     const committed = await this._ledger.commitPushPage(link, {
       delivery       : classified.delivery,
       handledThrough : page.handledThrough,
+      handledRecords : classified.handledRecords,
       pageReceipts   : page.pageReceipts,
       settled        : classified.settled,
     });
@@ -82,7 +86,7 @@ export class SyncNextPushPage {
 
     return {
       ...(classified.blocked === undefined ? {} : { blocked: classified.blocked }),
-      acknowledged   : classified.settled.length,
+      acknowledged   : classified.acknowledged,
       handledThrough : page.handledThrough,
       hasMore        : !page.drained,
       kind           : 'committed',
@@ -117,15 +121,17 @@ export class SyncNextPushPage {
       permissionsApi     : this._agent.permissions,
     });
     const delivery: SyncNextDeliveryInput[] = [];
+    const handledRecords = new Map<string, SyncNextHandledRecord>();
     const settled: SyncNextSourceReceipt[] = [];
     let blocked: SyncNextDeliveryOutcome | undefined;
 
-    for (const { entry, receipt } of entries) {
+    for (const prepared of entries) {
+      const { entry, receipt } = prepared;
       if (!shouldContinue()) {
         return undefined;
       }
       if (blocked !== undefined) {
-        delivery.push({ ...receipt, outcome: blocked, wasLatestBaseState: entry.isLatestBaseState });
+        delivery.push(deliveryInput(prepared, blocked));
         continue;
       }
 
@@ -135,6 +141,7 @@ export class SyncNextPushPage {
       }
       if (result.succeeded.includes(entry.messageCid)) {
         settled.push(receipt);
+        rememberHandledRecord(handledRecords, prepared);
         continue;
       }
 
@@ -143,17 +150,69 @@ export class SyncNextPushPage {
         throw new Error(`SyncNextPushPage: push returned no disposition for ${entry.messageCid}.`);
       }
       const outcome = syncNextDeliveryOutcome(failure);
-      delivery.push({ ...receipt, outcome, wasLatestBaseState: entry.isLatestBaseState });
+      delivery.push(deliveryInput(prepared, outcome));
       if (outcome.blockScope !== undefined) {
         blocked = outcome;
       }
     }
 
+    const partitioned = partitionCoveredDelivery(delivery, handledRecords);
+    const acknowledged = settled.length;
+    settled.push(...partitioned.covered);
+
     return {
       ...(blocked === undefined ? {} : { blocked }),
-      delivery,
+      acknowledged,
+      delivery       : partitioned.pending,
+      handledRecords : [...handledRecords.values()],
       settled,
     };
   }
 
+}
+
+function deliveryInput(
+  prepared: SyncNextPreparedFeedEntry,
+  outcome: SyncNextDeliveryOutcome,
+): SyncNextDeliveryInput {
+  const recordId = recordIdForRecordsMessage(prepared.message);
+  return {
+    ...prepared.receipt,
+    outcome,
+    ...(recordId === undefined ? {} : { recordId }),
+    wasLatestBaseState: prepared.entry.isLatestBaseState,
+  };
+}
+
+function rememberHandledRecord(
+  handledRecords: Map<string, SyncNextHandledRecord>,
+  prepared: SyncNextPreparedFeedEntry,
+): void {
+  const recordId = prepared.entry.isLatestBaseState
+    ? recordIdForRecordsMessage(prepared.message)
+    : undefined;
+  if (recordId === undefined) {
+    return;
+  }
+  const previous = handledRecords.get(recordId);
+  if (previous === undefined || syncNextSourceAtOrBefore(previous.receipt.source, prepared.receipt.source)) {
+    handledRecords.set(recordId, { recordId, receipt: prepared.receipt });
+  }
+}
+
+function partitionCoveredDelivery(
+  delivery: SyncNextDeliveryInput[],
+  handledRecords: ReadonlyMap<string, SyncNextHandledRecord>,
+): { covered: SyncNextSourceReceipt[]; pending: SyncNextDeliveryInput[] } {
+  const covered: SyncNextSourceReceipt[] = [];
+  const pending: SyncNextDeliveryInput[] = [];
+  for (const input of delivery) {
+    const handled = input.recordId === undefined ? undefined : handledRecords.get(input.recordId);
+    if (handled !== undefined && syncNextSourceAtOrBefore(input.source, handled.receipt.source)) {
+      covered.push(input);
+    } else {
+      pending.push(input);
+    }
+  }
+  return { covered, pending };
 }

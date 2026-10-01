@@ -276,7 +276,7 @@ describe('SyncNext push-page integration', () => {
     }
   });
 
-  it('should retain a pruned update receipt while a newer update still delivers', async () => {
+  it('should settle a pruned update receipt when a newer current update delivers', async () => {
     const updateProtocol = { ...protocol, protocol: 'https://sync-next-push.example/supersession' };
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
@@ -377,6 +377,6 @@ describe('SyncNext push-page integration', () => {
     });
     expect(remoteRead.reply.status.code).toBe(200);
     expect(await DataStream.toBytes(remoteRead.reply.entry!.data!)).toEqual(latestData);
-    expect((await ledger.getDeliveryForLink(link)).map(entry => entry.messageCid)).toEqual([firstUpdateCid]);
+    expect(await ledger.getDeliveryForLink(link)).toEqual([]);
   });
 });

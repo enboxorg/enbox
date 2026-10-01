@@ -11,7 +11,7 @@ import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { Encoder, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { Encoder, Jws, Message, RecordsWrite, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 
 function target(): SyncTarget {
   return {
@@ -170,6 +170,53 @@ describe('SyncNextPushPage', () => {
       outcome    : { reason: 'remote-rejected' },
     }]);
     expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough?.position).toBe('2');
+  });
+
+  it('should let only a handled current update cover an older same-page failure', async () => {
+    const first = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1]) });
+    const secondData = new Uint8Array([2]);
+    const second = await RecordsWrite.createFrom({
+      recordsWriteMessage : first.message,
+      data                : secondData,
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, first.message.descriptor.messageTimestamp),
+      signer              : Jws.createSigner(first.author),
+    });
+    const firstEntry = {
+      ...await feedEntry(first.message, 1),
+      encodedData: Encoder.bytesToBase64Url(first.dataBytes!),
+    };
+    const secondEntry = {
+      ...await feedEntry(second.message, 2),
+      encodedData: Encoder.bytesToBase64Url(secondData),
+    };
+    const fixture = fakeAgent(page([firstEntry, secondEntry]));
+    fixture.apply.onFirstCall().resolves({ kind: 'Deferred', reason: 'record-data-unavailable' });
+    await createLink();
+
+    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+      acknowledged : 1,
+      kind         : 'committed',
+      retained     : 0,
+    });
+    expect(fixture.apply.calledTwice).toBe(true);
+    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toEqual([]);
+
+    await ledger.clear();
+    await createLink();
+    const nonLatestFixture = fakeAgent(page([
+      firstEntry,
+      { ...secondEntry, isLatestBaseState: false },
+    ]));
+    nonLatestFixture.apply.onFirstCall().resolves({ kind: 'Deferred', reason: 'record-data-unavailable' });
+    expect(await new SyncNextPushPage(nonLatestFixture.agent, ledger).consume(target())).toMatchObject({
+      acknowledged : 1,
+      kind         : 'committed',
+      retained     : 1,
+    });
+    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
+      messageCid : firstEntry.messageCid,
+      recordId   : first.message.recordId,
+    }]);
   });
 
   it('should retain a root with an unavailable dependency while delivering the independent tail', async () => {

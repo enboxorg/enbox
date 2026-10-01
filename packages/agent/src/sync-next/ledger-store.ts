@@ -4,6 +4,7 @@ import type { AbstractBatchOperation, AbstractLevel, AbstractSublevel } from 'ab
 import type {
   SyncNextDeliveryObligation,
   SyncNextDeliveryOutcome,
+  SyncNextHandledRecord,
   SyncNextLink,
   SyncNextLinkCreate,
   SyncNextLinkIdentity,
@@ -23,6 +24,7 @@ import {
   syncNextLinkKey,
   syncNextLinkRange,
   syncNextReceiptKey,
+  syncNextSourceAtOrBefore,
   syncNextTenantRange,
 } from './ledger-key.js';
 
@@ -222,7 +224,7 @@ export class SyncNextLedgerStore {
         return false;
       }
       if (!SyncNextLedgerStore.canAdvance(link.pushHandledThrough, commit.handledThrough)) {
-        return SyncNextLedgerStore.isEmptyReplay(
+        return commit.handledRecords.length === 0 && SyncNextLedgerStore.isEmptyReplay(
           link.pushHandledThrough, commit.handledThrough, commit.pageReceipts, commit.delivery, commit.settled,
         );
       }
@@ -233,14 +235,31 @@ export class SyncNextLedgerStore {
       if (commit.delivery.some(input => typeof input.wasLatestBaseState !== 'boolean')) {
         throw new TypeError('SyncNextLedgerStore: delivery source state must be a boolean.');
       }
+      if (commit.delivery.some(input => input.recordId !== undefined &&
+        (typeof input.recordId !== 'string' || input.recordId.length === 0))) {
+        throw new TypeError('SyncNextLedgerStore: delivery record ID must be a non-empty string.');
+      }
+      const handledRecords = SyncNextLedgerStore.validateHandledRecords(commit.handledRecords, commit.settled);
 
       const operations: SyncNextBatchOperation[] = [];
-      const retained = new Set((await this.getDeliveryForLink(link)).map(
+      const existingDelivery = await this.getDeliveryForLink(link);
+      const retained = new Set(existingDelivery.map(
         entry => syncNextReceiptKey(link, entry)
       ));
+      for (const entry of existingDelivery) {
+        if (SyncNextLedgerStore.deliveryIsCovered(entry, handledRecords)) {
+          const receiptKey = syncNextReceiptKey(link, entry);
+          retained.delete(receiptKey);
+          operations.push(this.deleteOperation(this._delivery, receiptKey));
+        }
+      }
       for (const input of commit.delivery) {
+        if (SyncNextLedgerStore.deliveryIsCovered(input, handledRecords)) {
+          continue;
+        }
         const state = this.nextSparseState(link, input, {
           outcome            : structuredClone(input.outcome),
+          ...(input.recordId === undefined ? {} : { recordId: input.recordId }),
           wasLatestBaseState : input.wasLatestBaseState,
         });
         const receiptKey = syncNextReceiptKey(link, state);
@@ -335,11 +354,20 @@ export class SyncNextLedgerStore {
       const receiptKey = syncNextReceiptKey(queriedLink, selected);
       const current = await this.getValue<SyncNextDeliveryObligation>(this._delivery, receiptKey);
       if (current?.lastAttemptAt !== selected.lastAttemptAt ||
+          current.recordId !== selected.recordId ||
           current.wasLatestBaseState !== selected.wasLatestBaseState) {
         return false;
       }
       if (outcome === undefined) {
-        await this._delivery.del(receiptKey);
+        if (current.wasLatestBaseState && current.recordId !== undefined) {
+          const operations = (await this.getDeliveryForLink(link))
+            .filter(entry => entry.recordId === current.recordId &&
+              syncNextSourceAtOrBefore(entry.source, current.source))
+            .map(entry => this.deleteOperation(this._delivery, syncNextReceiptKey(link, entry)));
+          await this._db.batch(operations);
+        } else {
+          await this._delivery.del(receiptKey);
+        }
       } else {
         await this._delivery.put(receiptKey, JSON.stringify({
           ...current,
@@ -413,6 +441,31 @@ export class SyncNextLedgerStore {
       ? Date.now() + 1
       : Math.max(Date.now() + 1, previousAttempt + 1);
     return new Date(nextAttempt).toISOString();
+  }
+
+  private static deliveryIsCovered(
+    delivery: Pick<SyncNextDeliveryObligation, 'recordId' | 'source'>,
+    handledRecords: ReadonlyMap<string, SyncNextHandledRecord>,
+  ): boolean {
+    const handled = delivery.recordId === undefined ? undefined : handledRecords.get(delivery.recordId);
+    return handled !== undefined && syncNextSourceAtOrBefore(delivery.source, handled.receipt.source);
+  }
+
+  private static validateHandledRecords(
+    handledRecords: readonly SyncNextHandledRecord[],
+    settled: readonly SyncNextSourceReceipt[],
+  ): Map<string, SyncNextHandledRecord> {
+    const settledReceipts = new Set(settled.map(SyncNextLedgerStore.receiptIdentity));
+    const byRecordId = new Map<string, SyncNextHandledRecord>();
+    for (const handled of handledRecords) {
+      if (typeof handled.recordId !== 'string' || handled.recordId.length === 0 ||
+          !settledReceipts.has(SyncNextLedgerStore.receiptIdentity(handled.receipt)) ||
+          byRecordId.has(handled.recordId)) {
+        throw new TypeError('SyncNextLedgerStore: handled record state is invalid.');
+      }
+      byRecordId.set(handled.recordId, handled);
+    }
+    return byRecordId;
   }
 
   private putOperation(
