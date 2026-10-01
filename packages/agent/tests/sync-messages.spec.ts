@@ -2314,7 +2314,10 @@ describe('sync-messages', () => {
           [deferredCid, { message: deferred.message }],
           [inactiveCid, { message: inactive.message }],
         ]),
-        applyResults: [{ kind: 'Deferred', reason: 'storage' }, { kind: 'Deferred', reason: 'tenant-inactive' }],
+        applyResults: [
+          { kind: 'Deferred', reason: 'record-data-unavailable' },
+          { kind: 'Deferred', reason: 'tenant-inactive' },
+        ],
       });
 
       const result = await pushMessages({
@@ -2327,6 +2330,7 @@ describe('sync-messages', () => {
       expect(result.succeeded).toEqual([]);
       expect(result.failed.map(failure => failure.cid).sort()).toEqual([deferredCid, inactiveCid].sort());
       expect(result.failed.find(failure => failure.cid === deferredCid)?.terminal).toBeUndefined();
+      expect(result.failed.find(failure => failure.cid === deferredCid)?.reason).toBe('record-data-unavailable');
       expect(result.failed.find(failure => failure.cid === inactiveCid)?.tenantInactive).toBe(true);
     });
 

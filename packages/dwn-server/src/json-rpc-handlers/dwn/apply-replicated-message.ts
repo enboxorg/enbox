@@ -5,12 +5,12 @@ import log from 'loglevel';
 
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
-import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { enforceQuota, enforceTenantRateLimit, validateInboundDwnMessageTransport } from './inbound-message.js';
 
 /** `stored` adds no body bytes; it does not imply that the write is queryable. */
-type StoredReplayState = 'stored' | 'completable' | 'missing-data' | 'not-stored' | 'superseded';
+type StoredReplayState = 'stored' | 'completable' | 'not-stored' | 'superseded';
 
 export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   dwnRequest,
@@ -84,17 +84,6 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       recordApplyActivity(target, message, result, context);
       return {
         jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
-      };
-    }
-
-    if (storedReplayState === 'missing-data') {
-      await dataStream?.cancel().catch((): void => {
-        // No body is admitted for this stored state.
-      });
-      return {
-        jsonRpcResponse: createJsonRpcSuccessResponse(requestId, {
-          result: { kind: 'Deferred', reason: 'storage' } satisfies ReplicationApplyResult,
-        }),
       };
     }
 
@@ -332,57 +321,21 @@ async function getStoredReplayState(
   message: GenericMessage,
   hasInboundData: boolean,
 ): Promise<StoredReplayState> {
-  const messageCid = await Cid.computeCid(message);
+  const messageCid = await Message.getCid(message);
   const existingMessage = await context.dwn.storage.messageStore.get(target, messageCid);
   if (existingMessage === undefined) {
     return 'not-stored';
   }
 
-  if (!hasInboundData || await storedRecordsWriteHasData(context, target, existingMessage)) {
+  if (!hasInboundData) {
     return 'stored';
   }
 
-  return classifyStoredWriteWithoutData(context, target, existingMessage, messageCid);
+  return classifyStoredReplayWithData(context, target, existingMessage, messageCid);
 }
 
-async function storedRecordsWriteHasData(
-  context: Parameters<JsonRpcHandler>[1],
-  tenant: string,
-  message: GenericMessage,
-): Promise<boolean> {
-  const descriptor = message.descriptor as {
-    dataCid?: unknown;
-    dataSize?: unknown;
-    interface?: unknown;
-    method?: unknown;
-  };
-  if (
-    descriptor.interface !== DwnInterfaceName.Records ||
-    descriptor.method !== DwnMethodName.Write ||
-    typeof descriptor.dataSize !== 'number' ||
-    descriptor.dataSize <= 0
-  ) {
-    return true;
-  }
-
-  if (typeof (message as { encodedData?: unknown }).encodedData === 'string') {
-    return true;
-  }
-
-  const recordId = (message as { recordId?: unknown }).recordId;
-  if (typeof recordId !== 'string' || typeof descriptor.dataCid !== 'string') {
-    return false;
-  }
-
-  const storedData = await context.dwn.storage.dataStore.get(tenant, recordId, descriptor.dataCid);
-  await storedData?.dataStream.cancel().catch((): void => {
-    // The existence probe is enough; cancellation is best-effort.
-  });
-  return storedData !== undefined;
-}
-
-/** Distinguishes a sole ancestry write from a committed but body-missing or superseded write. */
-async function classifyStoredWriteWithoutData(
+/** Distinguishes a completable ancestry write from committed or superseded state. */
+async function classifyStoredReplayWithData(
   context: Parameters<JsonRpcHandler>[1],
   tenant: string,
   message: GenericMessage,
@@ -392,12 +345,12 @@ async function classifyStoredWriteWithoutData(
     message.descriptor.interface !== DwnInterfaceName.Records ||
     message.descriptor.method !== DwnMethodName.Write
   ) {
-    return 'missing-data';
+    return 'stored';
   }
 
   const recordId = (message as { recordId?: unknown }).recordId;
   if (typeof recordId !== 'string') {
-    return 'missing-data';
+    return 'stored';
   }
 
   const { messages } = await context.dwn.storage.messageStore.query(tenant, [{
@@ -407,14 +360,14 @@ async function classifyStoredWriteWithoutData(
   }], undefined, { limit: 2 });
   if (messages.length === 0) {
     // completeData rechecks that this is still the sole ancestry row under the store write lock.
-    return await RecordsWrite.isInitialWrite(message) ? 'completable' : 'missing-data';
+    return await RecordsWrite.isInitialWrite(message) ? 'completable' : 'stored';
   }
 
-  if (messages.length === 1 && await Cid.computeCid(messages[0]) !== messageCid) {
+  if (messages.length === 1 && await Message.getCid(messages[0]) !== messageCid) {
     return 'superseded';
   }
 
-  return 'missing-data';
+  return 'stored';
 }
 
 function recordApplyActivity(

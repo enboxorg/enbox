@@ -208,6 +208,44 @@ export function testDwnClass(): void {
           .toEqual({ kind: 'Duplicate' });
       });
 
+      it('defers a body-bearing indexed update when its body probe fails', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const initialData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice, data: initialData });
+        expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
+          dataStream: DataStream.fromBytes(initialData),
+        })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+        const updateData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+        const update = await RecordsWrite.createFrom({
+          recordsWriteMessage : initial.message,
+          data                : updateData,
+          signer              : Jws.createSigner(alice),
+        });
+        expect(await dwn.applyReplicatedMessage(alice.did, update.message, {
+          dataStream: DataStream.fromBytes(updateData),
+        })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+        await dataStore.delete(alice.did, update.message.recordId, update.message.descriptor.dataCid);
+
+        const getStub = sinon.stub(dataStore, 'get');
+        getStub.onFirstCall().rejects(new Error('transient body read failure'));
+        getStub.callThrough();
+        const replayStream = DataStream.fromBytes(updateData);
+        const cancelSpy = sinon.spy(replayStream, 'cancel');
+        expect(await dwn.applyReplicatedMessage(alice.did, update.message, {
+          dataStream: replayStream,
+        })).toEqual({ kind: 'Deferred', reason: 'storage' });
+        expect(getStub.calledOnce).toBe(true);
+        expect(cancelSpy.calledOnce).toBe(true);
+
+        const read = await RecordsRead.create({
+          filter : { recordId: update.message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        expect((await dwn.processMessage(alice.did, read.message)).status.code).toBe(410);
+      });
+
       it('does not confirm external data whose stored size differs from its descriptor', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
@@ -379,7 +417,7 @@ export function testDwnClass(): void {
         expect(await DataStream.toBytes(stored.dataStream)).toEqual(data);
       });
 
-      it('does not confirm materialization after the current write loses its external data', async () => {
+      it('defers a data replay after the current write loses its external data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -394,6 +432,9 @@ export function testDwnClass(): void {
         await dataStore.delete(alice.did, message.recordId, message.descriptor.dataCid);
         expect(await dwn.applyReplicatedMessage(alice.did, message, { includeMaterializationConfirmation: true }))
           .toEqual({ kind: 'Duplicate' });
+        expect(await dwn.applyReplicatedMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(data),
+        })).toEqual({ kind: 'Deferred', reason: 'record-data-unavailable' });
       });
 
       it('coalesces concurrent ancestry completion into one feed move', async () => {

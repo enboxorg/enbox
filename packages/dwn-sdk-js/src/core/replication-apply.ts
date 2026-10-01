@@ -35,7 +35,10 @@ export type ReplicationApplyResult =
   | { kind: 'Superseded' }
   | { kind: 'Incomplete'; missing: DependencyRef[] }
   | { kind: 'Invalid'; reason: string }
-  | { kind: 'Deferred'; reason: 'tenant-inactive' | 'resolver-unavailable' | 'storage' };
+  | {
+      kind: 'Deferred';
+      reason: 'record-data-unavailable' | 'resolver-unavailable' | 'storage' | 'tenant-inactive';
+    };
 
 export type ReplicationApplyResultContext = {
   protocolDefinition?: ProtocolDefinition;

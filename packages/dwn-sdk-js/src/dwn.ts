@@ -84,6 +84,8 @@ type ReplicationApplyProtocolDefinitionLookup = {
   messageTimestamp?: string;
 };
 
+type ReplicatedDuplicateState = 'materialized' | 'record-data-unavailable' | 'storage-unavailable' | 'unconfirmed';
+
 type DwnStorage = {
   dataStore: DataStore;
   messageStore: MessageStore;
@@ -302,9 +304,21 @@ export class Dwn {
 
     const messageAlreadyStored = await this.replicatedMessageAlreadyStored(tenant, rawMessage);
     const isRecordsWriteWithData = Records.isRecordsWrite(rawMessage) && options.dataStream !== undefined;
+    const duplicateState = messageAlreadyStored &&
+      (isRecordsWriteWithData || options.includeMaterializationConfirmation === true)
+      ? await this.replicatedDuplicateState(tenant, rawMessage)
+      : 'unconfirmed';
+    if (isRecordsWriteWithData && duplicateState === 'record-data-unavailable') {
+      await options.dataStream?.cancel().catch((): void => {});
+      return { kind: 'Deferred', reason: 'record-data-unavailable' };
+    }
+    if (isRecordsWriteWithData && duplicateState === 'storage-unavailable') {
+      await options.dataStream?.cancel().catch((): void => {});
+      return { kind: 'Deferred', reason: 'storage' };
+    }
     const duplicateResult: Extract<ReplicationApplyResult, { kind: 'Duplicate' }> =
-      messageAlreadyStored && options.includeMaterializationConfirmation === true
-        ? await this.replicatedDuplicateResult(tenant, rawMessage)
+      options.includeMaterializationConfirmation === true && duplicateState === 'materialized'
+        ? { kind: 'Duplicate', materialized: true }
         : { kind: 'Duplicate' };
     if (messageAlreadyStored && (!isRecordsWriteWithData || duplicateResult.materialized === true)) {
       if (duplicateResult.materialized === true) {
@@ -336,12 +350,12 @@ export class Dwn {
   }
 
   /** A stored CID alone does not confirm that a RecordsWrite became queryable with data. */
-  private async replicatedDuplicateResult(
+  private async replicatedDuplicateState(
     tenant: string,
     message: GenericMessage,
-  ): Promise<Extract<ReplicationApplyResult, { kind: 'Duplicate' }>> {
+  ): Promise<ReplicatedDuplicateState> {
     if (!Records.isRecordsWrite(message)) {
-      return { kind: 'Duplicate' };
+      return 'unconfirmed';
     }
 
     try {
@@ -350,25 +364,30 @@ export class Dwn {
         isLatestBaseState : true,
         recordId          : message.recordId,
       }], undefined, { limit: 2 });
+      if (messages.length === 0) {
+        return await RecordsWrite.isInitialWrite(message)
+          ? 'unconfirmed'
+          : 'record-data-unavailable';
+      }
       if (messages.length !== 1 || await Message.getCid(messages[0]) !== await Message.getCid(message)) {
-        return { kind: 'Duplicate' };
+        return 'unconfirmed';
       }
 
       const current = messages[0] as RecordsQueryReplyEntry;
       if (current.encodedData === undefined) {
         const data = await this.dataStore.get(tenant, current.recordId, current.descriptor.dataCid);
         if (data === undefined) {
-          return { kind: 'Duplicate' };
+          return 'record-data-unavailable';
         }
         await data.dataStream.cancel();
         if (data.dataSize !== current.descriptor.dataSize) {
-          return { kind: 'Duplicate' };
+          return 'record-data-unavailable';
         }
       }
 
-      return { kind: 'Duplicate', materialized: true };
+      return 'materialized';
     } catch {
-      return { kind: 'Duplicate' };
+      return 'storage-unavailable';
     }
   }
 
