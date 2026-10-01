@@ -2,7 +2,7 @@ import type { Dwn, ProtocolDefinition, ReplicationApplyResult } from '@enbox/dwn
 
 import { Level } from 'level';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { DataStream, DwnConstant, Message } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, Message, Time } from '@enbox/dwn-sdk-js';
 
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
@@ -274,5 +274,109 @@ describe('SyncNext push-page integration', () => {
     } finally {
       harness.agent.rpc.applyReplicatedMessage = originalApply;
     }
+  });
+
+  it('should retain a pruned update receipt while a newer update still delivers', async () => {
+    const updateProtocol = { ...protocol, protocol: 'https://sync-next-push.example/supersession' };
+    expect((await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: updateProtocol },
+    })).reply.status.code).toBe(202);
+
+    const initial = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        dataFormat   : 'application/octet-stream',
+        protocol     : updateProtocol.protocol,
+        protocolPath : 'note',
+        schema       : updateProtocol.types.note.schema,
+      },
+      dataStream: new Blob(['initial note']),
+    });
+    expect(initial.reply.status.code).toBe(202);
+
+    const syncTarget = await createSyncTarget(tenantDid, updateProtocol.protocol);
+    const link = await ledger.getOrCreateLink({
+      ...syncNextLinkIdentity(syncTarget),
+      authorization : syncTarget.authorization,
+      scope         : syncTarget.scope,
+    });
+    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+      .toMatchObject({ kind: 'committed', retained: 0 });
+
+    const updateParams = {
+      dataFormat   : 'application/octet-stream',
+      dateCreated  : initial.message!.descriptor.dateCreated,
+      protocol     : updateProtocol.protocol,
+      protocolPath : 'note',
+      recordId     : initial.message!.recordId,
+      schema       : updateProtocol.types.note.schema,
+    };
+    const firstUpdate = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        ...updateParams,
+        messageTimestamp: Time.createOffsetTimestamp({ seconds: 1 }, initial.message!.descriptor.messageTimestamp),
+      },
+      dataStream: new Blob(['draft one']),
+    });
+    expect(firstUpdate.reply.status.code).toBe(202);
+    const firstUpdateCid = await Message.getCid(firstUpdate.message!);
+
+    const originalApply = harness.agent.rpc.applyReplicatedMessage.bind(harness.agent.rpc);
+    let failedOnce = false;
+    harness.agent.rpc.applyReplicatedMessage = async (request): Promise<ReplicationApplyResult> => {
+      if (!failedOnce && await Message.getCid(request.message) === firstUpdateCid) {
+        failedOnce = true;
+        throw new TypeError('temporary remote disconnect');
+      }
+      return originalApply(request);
+    };
+    try {
+      expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+        .toMatchObject({ kind: 'committed', retained: 1 });
+    } finally {
+      harness.agent.rpc.applyReplicatedMessage = originalApply;
+    }
+
+    const latestData = new TextEncoder().encode('draft two');
+    const secondUpdate = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        ...updateParams,
+        messageTimestamp: Time.createOffsetTimestamp({ seconds: 1 }, firstUpdate.message!.descriptor.messageTimestamp),
+      },
+      dataStream: new Blob([latestData]),
+    });
+    expect(secondUpdate.reply.status.code).toBe(202);
+    const oldLocalRead = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.MessagesRead,
+      messageParams : { messageCid: firstUpdateCid },
+    });
+    expect(oldLocalRead.reply.status.code).toBe(404);
+
+    expect(await retryOneDeliveryObligation({ agent: harness.agent, ledger, target: syncTarget }))
+      .toEqual({ kind: 'pending', outcome: { reason: 'dependency' } });
+    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+      .toMatchObject({ kind: 'committed', retained: 0 });
+    const remoteRead = await harness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: initial.message!.recordId } },
+    });
+    expect(remoteRead.reply.status.code).toBe(200);
+    expect(await DataStream.toBytes(remoteRead.reply.entry!.data!)).toEqual(latestData);
+    expect((await ledger.getDeliveryForLink(link)).map(entry => entry.messageCid)).toEqual([firstUpdateCid]);
   });
 });

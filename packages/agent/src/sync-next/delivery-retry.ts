@@ -44,9 +44,6 @@ export async function retryOneDeliveryObligation({
   if (selected === undefined) {
     return { kind: 'empty' };
   }
-  if (typeof selected.wasLatestBaseState !== 'boolean') {
-    throw new TypeError('SyncNextDeliveryRetry: retained source state is missing.');
-  }
 
   const context = new RemoteApplyPushContext({
     agent,
@@ -58,6 +55,9 @@ export async function retryOneDeliveryObligation({
   });
   let result: PushResult;
   try {
+    if (typeof selected.wasLatestBaseState !== 'boolean') {
+      throw new TypeError('SyncNextDeliveryRetry: retained source state is missing.');
+    }
     result = await context.pushRetainedRoot(selected.messageCid, selected.wasLatestBaseState);
   } catch (error: unknown) {
     if (!shouldContinue()) {

@@ -12,7 +12,7 @@ import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { retryOneDeliveryObligation } from '../src/sync-next/delivery-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
+import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/ledger-key.js';
 
 function target(endpoint = 'https://dwn.example.com'): SyncTarget {
   return {
@@ -163,6 +163,34 @@ describe('retryOneDeliveryObligation', () => {
       .toEqual({ kind: 'settled' });
     expect((await ledger.getDeliveryForLink(link)).map(entry => entry.messageCid))
       .toEqual([await Message.getCid(messages[0])]);
+  });
+
+  it('should rotate a malformed oldest row so a healthy receipt can retry next', async () => {
+    const messages = [protocolMessage('malformed'), protocolMessage('healthy')];
+    const link = await retain(target(), messages);
+    const [oldest] = await ledger.getDeliveryForLink(link);
+    const delivery = (ledger as unknown as {
+      _delivery: { put(key: string, value: string): Promise<void> };
+    })._delivery;
+    await delivery.put(syncNextReceiptKey(link, oldest), JSON.stringify({
+      ...oldest,
+      wasLatestBaseState: undefined,
+    }));
+    const fixture = fakeAgent();
+    for (const message of messages) {
+      fixture.localMessages.set(await Message.getCid(message), message);
+    }
+
+    await expect(retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+      .rejects.toThrow('retained source state is missing');
+    const [rotated] = await ledger.getDeliveryForLink(link);
+    expect(Date.parse(rotated.lastAttemptAt)).toBeGreaterThan(Date.parse(oldest.lastAttemptAt));
+    expect(fixture.apply.notCalled).toBe(true);
+
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+      .toEqual({ kind: 'settled' });
+    expect((await ledger.getDeliveryForLink(link)).map(entry => entry.messageCid))
+      .toEqual([oldest.messageCid]);
   });
 
   it('should retain a root while a remote dependency is unavailable, then settle its retry', async () => {
