@@ -28,19 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
-      # Runner routing: same-repo runs send the compute-only jobs (lint,
-      # build, test-lightweight, test-dwn-sdk) to the org's self-hosted
-      # ephemeral DinD fleet, where they are measurably faster than hosted
-      # runners. Fork PRs resolve to GitHub-hosted so untrusted code never
-      # executes on the fleet. Deliberately on ubuntu-latest: the
-      # service-backed test jobs (agent shards, api-clients, e2e,
-      # sql-store, dwn-server — DB/fsync-heavy, 2-4x slower under the
-      # fleet's shared-core concurrency and tight against their
-      # timeout-minutes), test-browser (9-way matrix; hosted parallelism,
-      # Playwright apt setup assumes the hosted image), and the
-      # changes/ci-passed orchestration jobs (docs-only PRs and the branch
-      # protection gate must not depend on self-hosted availability).
-      runner: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || 'self-hosted' }}
       src: ${{ steps.src-filter.outputs.src }}
       needs_common_crypto: ${{ steps.propagate.outputs.needs_common_crypto }}
       needs_lightweight: ${{ steps.propagate.outputs.needs_lightweight }}
@@ -286,7 +273,7 @@ jobs:
   # ---------------------------------------------------------------------------
   lint:
     name: Lint
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: changes
     if: needs.changes.outputs.src == 'true'
@@ -320,7 +307,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     name: Build
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: changes
     if: needs.changes.outputs.src == 'true'
@@ -364,12 +351,13 @@ jobs:
       - name: Build
         run: bun run build
 
+      # Keep build and coverage artifacts available for delayed job reruns.
       - name: Upload build outputs
         uses: actions/upload-artifact@v4
         with:
           name: workspace-build
           path: packages/*/dist/
-          retention-days: 1
+          retention-days: 7
 
   # ---------------------------------------------------------------------------
   # Lightweight packages: common, crypto, connect, auth, protocol-codegen, cli, local-node, protocols
@@ -378,7 +366,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-lightweight:
     name: 'Test: common / crypto / connect / auth / cli'
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: [build, changes]
     if: needs.changes.outputs.needs_lightweight == 'true'
@@ -439,7 +427,7 @@ jobs:
         with:
           name: coverage-lightweight
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -447,7 +435,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-dwn-sdk:
     name: 'Test: dwn-sdk-js'
-    runs-on: ${{ needs.changes.outputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: [build, changes]
     if: needs.changes.outputs.needs_dwn_sdk == 'true'
@@ -493,7 +481,7 @@ jobs:
         with:
           name: coverage-dwn-sdk
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -637,7 +625,7 @@ jobs:
         with:
           name: coverage-agent-shard-${{ matrix.shard }}
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
       - name: Stop services
@@ -774,7 +762,7 @@ jobs:
         with:
           name: coverage-api-clients
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
       - name: Stop services
@@ -996,7 +984,7 @@ jobs:
         with:
           name: coverage-sql-store
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -1063,7 +1051,7 @@ jobs:
         with:
           name: coverage-dwn-server
           path: coverage-staging/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -1129,7 +1117,7 @@ jobs:
         with:
           name: coverage-merged
           path: coverage/merged/
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: error
 
       - name: Build coverage badges

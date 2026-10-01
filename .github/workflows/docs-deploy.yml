@@ -37,13 +37,16 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Verify deployment CLI
+        working-directory: apps/docs
+        run: bun run deploy --help
+
       - name: Build docs
         run: bun run docs:build
 
       - name: Deploy to Cloudflare Pages
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/docs/out --project-name=enbox-docs
+        run: bun run --filter @enbox/docs deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

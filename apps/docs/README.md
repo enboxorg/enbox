@@ -30,4 +30,4 @@ The Fumadocs theme is overridden in `src/app/global.css` to map `--color-fd-*` C
 
 ## Deployment
 
-CI workflow `.github/workflows/docs-deploy.yml` triggers on changes to `apps/docs/`, `docs/`, or `packages/*/src/**`. On push to `main`, it builds and deploys to Cloudflare Pages via `wrangler pages deploy`. Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets.
+CI workflow `.github/workflows/docs-deploy.yml` triggers on changes to `apps/docs/`, `docs/`, or `packages/*/src/**`. On push to `main`, it builds and deploys to Cloudflare Pages with `bun run --filter @enbox/docs deploy`, using the exact Wrangler version installed from `bun.lock`. Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets.
