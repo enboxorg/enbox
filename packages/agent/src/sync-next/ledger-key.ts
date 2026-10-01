@@ -59,6 +59,25 @@ export function syncNextReceiptKey(
   ].map(encodePart).join('')}`;
 }
 
+/** Oldest attempted sparse receipt first, with a stable exact-receipt tie break. */
+export function compareSyncNextSparseAttempts(
+  left: SyncNextLinkIdentity & SyncNextSourceReceipt & { lastAttemptAt: string },
+  right: SyncNextLinkIdentity & SyncNextSourceReceipt & { lastAttemptAt: string },
+): number {
+  const leftTime = Date.parse(left.lastAttemptAt);
+  const rightTime = Date.parse(right.lastAttemptAt);
+  const comparableLeft = Number.isNaN(leftTime) ? -Infinity : leftTime;
+  const comparableRight = Number.isNaN(rightTime) ? -Infinity : rightTime;
+  if (comparableLeft !== comparableRight) {
+    return comparableLeft < comparableRight ? -1 : 1;
+  }
+  const leftKey = syncNextReceiptKey(left, left);
+  const rightKey = syncNextReceiptKey(right, right);
+  if (leftKey < rightKey) { return -1; }
+  if (leftKey > rightKey) { return 1; }
+  return 0;
+}
+
 /** Whether a progress token is safe for exact integer/domain comparison. */
 export function isValidSyncNextToken(token: ProgressToken): boolean {
   return token.streamId.length > 0 &&

@@ -658,6 +658,16 @@ export class RemoteApplyPushContext {
     return this.pushEntries(rootEntries, failedByRoot);
   }
 
+  /** Retry one retained feed root with the source state captured when it was retained. */
+  public async pushRetainedRoot(messageCid: string, wasLatestBaseState: boolean): Promise<PushResult> {
+    const failedByRoot = new Map<string, PushFailure>();
+    const rootEntries = await this.fetchRootEntries([messageCid], failedByRoot);
+    for (const entry of rootEntries) {
+      entry.isLatestBaseState = wasLatestBaseState;
+    }
+    return this.pushEntries(rootEntries, failedByRoot);
+  }
+
   /** Push one complete local-feed root alongside any explicitly staged roots. */
   public async pushFeedEntry(
     entry: NonNullable<MessagesQueryReply['entries']>[number],

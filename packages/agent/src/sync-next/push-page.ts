@@ -1,5 +1,4 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
-import type { PushFailure } from '../types/sync.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextPreparedFeedEntry } from './feed-page.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
@@ -11,6 +10,7 @@ import type {
 } from './types.js';
 
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
+import { syncNextDeliveryOutcome } from './delivery-outcome.js';
 import { syncNextLinkIdentity } from './ledger-key.js';
 import { prepareSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
 import { queryLocalMessageFeed, RemoteApplyPushContext } from '../sync-messages.js';
@@ -125,7 +125,7 @@ export class SyncNextPushPage {
         return undefined;
       }
       if (blocked !== undefined) {
-        delivery.push({ ...receipt, outcome: blocked });
+        delivery.push({ ...receipt, outcome: blocked, wasLatestBaseState: entry.isLatestBaseState });
         continue;
       }
 
@@ -142,8 +142,8 @@ export class SyncNextPushPage {
       if (failure === undefined) {
         throw new Error(`SyncNextPushPage: push returned no disposition for ${entry.messageCid}.`);
       }
-      const outcome = SyncNextPushPage.deliveryOutcome(failure);
-      delivery.push({ ...receipt, outcome });
+      const outcome = syncNextDeliveryOutcome(failure);
+      delivery.push({ ...receipt, outcome, wasLatestBaseState: entry.isLatestBaseState });
       if (outcome.blockScope !== undefined) {
         blocked = outcome;
       }
@@ -156,35 +156,4 @@ export class SyncNextPushPage {
     };
   }
 
-  private static deliveryOutcome(failure: PushFailure): SyncNextDeliveryOutcome {
-    if (failure.quotaBlocked === true) {
-      return { blockScope: 'link', reason: 'quota' };
-    }
-    if (failure.tenantInactive === true) {
-      return { blockScope: 'link', reason: 'authorization-unresolved' };
-    }
-    if (failure.kind === 'Invalid' || failure.terminal === true) {
-      return { reason: 'remote-rejected' };
-    }
-    if (failure.localStatusCode === 401 || failure.localStatusCode === 403) {
-      return { blockScope: 'link', reason: 'authorization-unresolved' };
-    }
-    const localStatusCode = failure.localStatusCode;
-    if (localStatusCode !== undefined && (localStatusCode === 408 || localStatusCode === 429 || localStatusCode >= 500)) {
-      return { blockScope: 'link', reason: 'transport' };
-    }
-    if (failure.localDataUnavailable === true) {
-      return { reason: 'dependency' };
-    }
-    if (failure.localMissing === true || failure.localStatusCode !== undefined || failure.kind === 'Incomplete') {
-      return { reason: 'dependency' };
-    }
-    if (failure.reason === 'record-data-unavailable') {
-      return { reason: 'remote-incomplete' };
-    }
-    if (failure.kind === 'Deferred') {
-      return { blockScope: 'link', reason: 'remote-incomplete' };
-    }
-    return { blockScope: 'endpoint', reason: 'transport' };
-  }
 }

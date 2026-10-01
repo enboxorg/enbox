@@ -1,7 +1,7 @@
 # Watermark sync ledger
 
-Status: durable storage foundation for the proposed watermark sync engine. This
-slice does not select or run a new sync engine.
+Status: durable ledger, bounded pull and push pages, and explicit one-row retry
+primitives. The replacement runtime and public engine selection are still to be built.
 
 ## Purpose
 
@@ -97,10 +97,11 @@ rejects an encrypted row with instructions to clear the complete next-engine
 ledger. Quarantine retained under a retired link is checked when recovery reads
 that central queue; a different replacement link advances independently.
 
-An outbound obligation retains the source receipt and retry outcome. It does
-not duplicate the message or body; a later delivery attempt reads those from
-the local DWN. Removing an obsolete link retires its outbound obligations
-while preserving inbound quarantine that another authorized link for the same
+An outbound obligation retains the source receipt, retry outcome, and whether
+the feed entry was latest when retained. It does not duplicate the message or
+body; a later delivery attempt reads those from the local DWN. Removing an
+obsolete link retires its outbound obligations while preserving inbound
+quarantine that another authorized link for the same
 logical target may still resolve. Retired rows count toward the tenant quota;
 they are not purged merely because endpoint discovery temporarily loses a
 binding. Explicit tenant removal clears them.
@@ -129,6 +130,33 @@ for the separate exact-or-newer role-support slice. These conservative outcomes
 keep the queue safe while those authority-specific proofs are reviewed
 separately.
 
-The push page processor, retry scheduling, subscriptions, catalog, and eventual
-runtime cutover belong to later stack layers. They must preserve this ledger
-contract when deciding whether a source entry is handled or owed.
+## One-page push intake
+
+One push invocation queries at most 100 local feed entries for one exact link.
+It reuses the dependency-aware remote apply path and advances the push token
+only after every returned receipt is acknowledged or retained as an outbound
+obligation. A record-local failure leaves that receipt pending while independent
+entries continue; a link-wide or endpoint-wide failure stops further requests
+and retains the rest of the page.
+
+## One-row delivery retry
+
+One explicit retry selects the oldest outbound obligation for an exact link and
+reads its message and data from the local DWN by CID. A write that was latest
+when retained still requires its body; a non-latest initial write may be sent
+without data as ancestry. A verified remote acknowledgement settles only that
+endpoint's receipt. Failure updates its outcome and attempt time so another row
+can be tried next. Settlement checks the link lifetime and selected attempt,
+preventing a stale retry from changing a replacement link or newer retry state.
+If a crash follows remote acknowledgement but precedes ledger settlement, the
+next attempt safely replays the message. This primitive owns no timer.
+
+A retained current update can later be displaced and deleted from the local
+message store. Its receipt remains pending when retry can no longer read that
+historical message, even if a newer update delivers. Safe settlement from the
+newer state is required before default cutover; a dataless duplicate alone does
+not prove it.
+
+Retry scheduling, subscriptions, catalog, and runtime cutover belong to later
+stack layers. They must preserve this ledger contract when deciding whether a
+source entry is handled or owed.
