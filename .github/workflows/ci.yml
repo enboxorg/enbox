@@ -1443,7 +1443,7 @@ jobs:
 
       - name: Record runner image
         id: runner-image
-        run: echo "version=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+        run: echo "os=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browser
         id: playwright-browser-cache
@@ -1457,20 +1457,27 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/playwright-apt-cache
-          # Apt packages must match the hosted runner image. Reusing them after
-          # an image refresh can introduce exact-version dependency conflicts.
-          key: ${{ runner.os }}-${{ runner.arch }}-playwright-deps-${{ steps.runner-image.outputs.version }}-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+          # Keep apt packages within one Ubuntu image family. The restore key
+          # migrates the previous combined cache without another cold download.
+          key: ${{ runner.os }}-${{ runner.arch }}-playwright-deps-${{ steps.runner-image.outputs.os }}-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-v4-${{ matrix.browser }}-${{ hashFiles('package.json') }}
 
       - name: Install Playwright system deps (from cache)
         # On cache hit the .deb files are already saved in ~/playwright-apt-cache.
         # Install them directly with dpkg — no network needed, takes ~5s.
-        if: steps.playwright-deps-cache.outputs.cache-hit == 'true'
+        if: steps.playwright-deps-cache.outputs.cache-hit != ''
         run: |
           if [ -d ~/playwright-apt-cache ] && ls ~/playwright-apt-cache/*.deb 1>/dev/null 2>&1; then
             echo "Installing $(ls ~/playwright-apt-cache/*.deb | wc -l) cached .deb packages"
-            sudo dpkg -i ~/playwright-apt-cache/*.deb || true
-            sudo apt-get update -qq
-            sudo apt-get install -f -y
+            if ! sudo dpkg -i ~/playwright-apt-cache/*.deb; then
+              if ! (sudo apt-get update -qq && sudo apt-get install -f -y); then
+                echo "::warning::Cached Playwright dependencies were incompatible; repairing from apt"
+                bunx playwright install-deps ${{ matrix.browser }}
+              fi
+            fi
+          else
+            bunx playwright install-deps ${{ matrix.browser }}
           fi
 
       - name: Install Playwright system deps (fresh)
@@ -1482,7 +1489,7 @@ jobs:
         # We snapshot /var/cache/apt/archives before and after so we only
         # cache the .deb files that Playwright actually installed — not the
         # hundreds of pre-existing system packages.
-        if: steps.playwright-deps-cache.outputs.cache-hit != 'true'
+        if: steps.playwright-deps-cache.outputs.cache-hit == ''
         run: |
           ls /var/cache/apt/archives/*.deb 2>/dev/null | sort > /tmp/apt-before.txt || true
           sudo apt-get update -qq
