@@ -441,6 +441,8 @@ export type PushFailure = {
   quotaBlocked?: boolean;
   /** True when the requested root CID was definitively absent from the local DWN. */
   localMissing?: boolean;
+  /** True when the local message exists but its required record data is unavailable. */
+  localDataUnavailable?: boolean;
   /** Local DWN status code when a local read/query produced this failure. */
   localStatusCode?: number;
   /** Complete structured result returned by the remote replication apply, when available. */

@@ -883,8 +883,9 @@ describe('sync-messages', () => {
       expect(failed.succeeded).toEqual([]);
       expect(failed.acknowledged).toEqual([{ cid: protocolCid, resolution: 'applied' }]);
       expect(failed.failed).toEqual([{
-        cid    : messageCid,
-        detail : 'required payload is unavailable for current message',
+        cid                  : messageCid,
+        localDataUnavailable : true,
+        detail               : 'required payload is unavailable for current message',
       }]);
       expect(rootAttempts).toBe(1);
       expect(protocolAttempts).toBe(1);
@@ -927,8 +928,9 @@ describe('sync-messages', () => {
       expect(result.succeeded).toEqual([]);
       expect(result.acknowledged).toEqual([]);
       expect(result.failed).toEqual([{
-        cid    : messageCid,
-        detail : `local payload read returned no data for current message ${messageCid}`,
+        cid                  : messageCid,
+        localDataUnavailable : true,
+        detail               : `local payload read returned no data for current message ${messageCid}`,
       }]);
       expect(applyStub.called).toBe(false);
     });
@@ -1009,9 +1011,10 @@ describe('sync-messages', () => {
 
       expect(consumedPayload.succeeded).toEqual([]);
       expect(consumedPayload.failed).toEqual([expect.objectContaining({
-        cid           : rootCid,
-        dependencyCid : parentCid,
-        detail        : expect.stringContaining('required payload is unavailable'),
+        cid                  : rootCid,
+        dependencyCid        : parentCid,
+        localDataUnavailable : true,
+        detail               : expect.stringContaining('required payload is unavailable'),
       })]);
       expect(parentAttempts).toBe(1);
       expect(protocolAttempts).toBe(1);
@@ -2221,6 +2224,42 @@ describe('sync-messages', () => {
         Message.getCid(call.args[0].message)))).toEqual([rootCid, dependencyCid, rootCid]);
       const dependencyData = applyStub.secondCall.args[0].data as Blob;
       expect(new Uint8Array(await dependencyData.arrayBuffer())).toEqual(dataBytes);
+    });
+
+    it('should identify a RecordData dependency whose local body is unavailable', async () => {
+      const root = await TestDataGenerator.generateRecordsWrite();
+      const dependency = await TestDataGenerator.generateRecordsWrite({ author: root.author });
+      const rootCid = await Message.getCid(root.message);
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid         : new Map([[rootCid, { message: root.message }]]),
+        recordsReadByRecordId : new Map([[
+          dependency.message.recordId,
+          { recordsWrite: dependency.message },
+        ]]),
+        applyResults: [{
+          kind    : 'Incomplete',
+          missing : [{
+            type     : 'RecordData',
+            recordId : dependency.message.recordId,
+            dataCid  : dependency.message.descriptor.dataCid!,
+          }],
+        }],
+      });
+
+      const result = await pushMessages({
+        did         : root.author.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [rootCid],
+        agent,
+      });
+
+      expect(result.succeeded).toEqual([]);
+      expect(result.failed).toEqual([expect.objectContaining({
+        cid                  : rootCid,
+        kind                 : 'Incomplete',
+        localDataUnavailable : true,
+      })]);
+      expect(applyStub.calledOnce).toBe(true);
     });
 
     it('should re-fetch large RecordData dependency streams when a remote repeats the dependency ref', async () => {

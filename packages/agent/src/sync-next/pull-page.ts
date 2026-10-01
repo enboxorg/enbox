@@ -1,6 +1,7 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncMessageEntry } from '../sync-messages.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
+import type { SyncNextPreparedFeedEntry } from './feed-page.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type {
   GenericMessage,
@@ -14,32 +15,14 @@ import { admitClosure } from '../sync-admit-closure.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { orderMessagesForAdmission } from '../sync-admission-order.js';
 import { queryRemoteMessageFeed } from '../sync-messages.js';
-import { Cid, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
-import { compareSyncNextPosition, isValidSyncNextToken, syncNextLinkIdentity } from './ledger-key.js';
-
-const PULL_PAGE_SIZE = 100;
-
-type PreparedPage = {
-  entries: PreparedPageEntry[];
-  pageReceipts: SyncNextSourceReceipt[];
-  rootEntries: SyncMessageEntry[];
-};
-
-type PreparedPageEntry = {
-  entry: MessagesQueryReplyEntry;
-  message: GenericMessage;
-  receipt: SyncNextSourceReceipt;
-};
+import { syncNextLinkIdentity } from './ledger-key.js';
+import { Cid, Encoder, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { prepareSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
 
 type ClassifiedPage = {
   handledCids: Set<string>;
   quarantine: SyncNextQuarantineInput[];
   settled: SyncNextSourceReceipt[];
-};
-
-type SuccessfulPage = {
-  drained: boolean;
-  entries: MessagesQueryReplyEntry[];
 };
 
 export type SyncNextPullPageResult =
@@ -76,44 +59,40 @@ export class SyncNextPullPage {
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
-    const { drained, entries } = SyncNextPullPage.successfulPage(reply, target);
-
-    const handledThrough = reply.cursor;
-    if (handledThrough === undefined) {
-      throw new Error(
-        `SyncNextPullPage: ${target.did} -> ${target.dwnUrl} returned no cursor for a successful page.`,
-      );
-    }
-    SyncNextPullPage.assertCursorProgress(link.pullHandledThrough, handledThrough, drained, entries.length);
-    const prepared = await SyncNextPullPage.preparePage(
-      link.pullHandledThrough, handledThrough, entries,
-    );
+    const feedPage = await prepareSyncNextFeedPage({
+      label    : 'SyncNextPullPage',
+      previous : link.pullHandledThrough,
+      reply,
+      target   : `query for ${target.did} -> ${target.dwnUrl}`,
+    });
+    SyncNextPullPage.assertRoleRecord(reply, target);
+    const rootEntries = await SyncNextPullPage.prepareAdmissionEntries(feedPage.entries);
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
     const classified = await this.classifyPage(
-      target, prepared.entries, prepared.rootEntries, shouldContinue,
+      target, feedPage.entries, rootEntries, shouldContinue,
     );
     if (classified === undefined) {
       return { kind: 'aborted' };
     }
 
     const committed = await this._ledger.commitPullPage(link, {
-      handledThrough,
-      pageReceipts : prepared.pageReceipts,
-      quarantine   : classified.quarantine,
-      settled      : classified.settled,
+      handledThrough : feedPage.handledThrough,
+      pageReceipts   : feedPage.pageReceipts,
+      quarantine     : classified.quarantine,
+      settled        : classified.settled,
     });
     if (!committed) {
       return { kind: 'stale' };
     }
 
     return {
-      handledThrough,
-      hasMore     : !drained,
-      kind        : 'committed',
-      handledCids : [...classified.handledCids],
-      quarantined : classified.quarantine.length,
+      handledThrough : feedPage.handledThrough,
+      hasMore        : !feedPage.drained,
+      kind           : 'committed',
+      handledCids    : [...classified.handledCids],
+      quarantined    : classified.quarantine.length,
     };
   }
 
@@ -128,7 +107,7 @@ export class SyncNextPullPage {
       did                : target.did,
       dwnUrl             : target.dwnUrl,
       filters            : messageFeedFiltersForSyncScope(target.scope),
-      limit              : PULL_PAGE_SIZE,
+      limit              : SYNC_NEXT_PAGE_SIZE,
       permissionGrantIds : target.permissionGrantIds,
       protocolRole       : role?.protocolRole,
     });
@@ -136,7 +115,7 @@ export class SyncNextPullPage {
 
   private async classifyPage(
     target: SyncTarget,
-    entries: PreparedPageEntry[],
+    entries: SyncNextPreparedFeedEntry[],
     rootEntries: SyncMessageEntry[],
     shouldContinue: () => boolean,
   ): Promise<ClassifiedPage | undefined> {
@@ -173,64 +152,21 @@ export class SyncNextPullPage {
     return classified;
   }
 
-  /** Validate the untrusted page before admission; the ledger rechecks these receipts at commit. */
-  private static async preparePage(
-    previous: ProgressToken | undefined,
-    cursor: ProgressToken,
-    entries: readonly MessagesQueryReplyEntry[],
-  ): Promise<PreparedPage> {
-    const preparedEntries: PreparedPageEntry[] = [];
-    const pageReceipts: SyncNextSourceReceipt[] = [];
+  private static async prepareAdmissionEntries(
+    entries: SyncNextPreparedFeedEntry[],
+  ): Promise<SyncMessageEntry[]> {
     const rootEntries: SyncMessageEntry[] = [];
-    const positions = new Set<string>();
-    for (const entry of entries) {
-      const receipt = SyncNextPullPage.sourceReceipt(previous, cursor, entry, positions);
-      const admissionEntry = await SyncNextPullPage.prepareAdmissionEntry(entry);
+    for (const { entry, message } of entries) {
+      const admissionEntry = await SyncNextPullPage.prepareAdmissionEntry(entry, message);
       rootEntries.push(admissionEntry);
-      pageReceipts.push(receipt);
-      preparedEntries.push({ entry, message: admissionEntry.message, receipt });
     }
-    SyncNextPullPage.assertCursorReceipt(cursor, pageReceipts);
-    return { entries: preparedEntries, pageReceipts, rootEntries };
+    return rootEntries;
   }
 
-  private static sourceReceipt(
-    previous: ProgressToken | undefined,
-    cursor: ProgressToken,
-    entry: MessagesQueryReplyEntry,
-    positions: Set<string>,
-  ): SyncNextSourceReceipt {
-    if (
-      typeof entry.messageCid !== 'string' ||
-      typeof entry.seq !== 'string' ||
-      typeof entry.isLatestBaseState !== 'boolean'
-    ) {
-      throw new TypeError('SyncNextPullPage: feed entry has invalid source metadata.');
-    }
-    const source: ProgressToken = {
-      epoch      : cursor.epoch,
-      messageCid : entry.messageCid,
-      position   : entry.seq,
-      streamId   : cursor.streamId,
-    };
-    if (!isValidSyncNextToken(source) || compareSyncNextPosition(source, cursor) > 0) {
-      throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} has an invalid source position.`);
-    }
-    if (previous !== undefined && compareSyncNextPosition(source, previous) <= 0) {
-      throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} is behind its checkpoint.`);
-    }
-    if (positions.has(entry.seq)) {
-      throw new Error(`SyncNextPullPage: feed page repeats source position ${entry.seq}.`);
-    }
-    positions.add(entry.seq);
-    return { messageCid: entry.messageCid, source };
-  }
-
-  private static async prepareAdmissionEntry(entry: MessagesQueryReplyEntry): Promise<SyncMessageEntry> {
-    const message = entry.message;
-    if (message === undefined || await Message.getCid(message) !== entry.messageCid) {
-      throw new Error(`SyncNextPullPage: feed entry ${entry.messageCid} failed CID verification.`);
-    }
+  private static async prepareAdmissionEntry(
+    entry: SyncNextPreparedFeedEntry['entry'],
+    message: GenericMessage,
+  ): Promise<SyncMessageEntry> {
     const bufferedData = await SyncNextPullPage.verifyInlineData(entry, message);
     return {
       ...(bufferedData === undefined ? {} : { bufferedData }),
@@ -238,17 +174,6 @@ export class SyncNextPullPage {
       message,
       verifiedMessageCid : entry.messageCid,
     };
-  }
-
-  private static assertCursorReceipt(
-    cursor: ProgressToken,
-    pageReceipts: readonly SyncNextSourceReceipt[],
-  ): void {
-    if (cursor.messageCid !== undefined && !pageReceipts.some(receipt =>
-      receipt.source.position === cursor.position && receipt.messageCid === cursor.messageCid
-    )) {
-      throw new Error('SyncNextPullPage: query cursor CID does not identify its page entry.');
-    }
   }
 
   private static async verifyInlineData(
@@ -272,16 +197,7 @@ export class SyncNextPullPage {
     return data;
   }
 
-  private static successfulPage(
-    reply: MessagesQueryReply,
-    target: SyncTarget,
-  ): SuccessfulPage {
-    if (reply.status.code !== 200) {
-      throw new Error(
-        `SyncNextPullPage: query failed for ${target.did} -> ${target.dwnUrl}: ` +
-        `${reply.status.code} ${reply.status.detail}`,
-      );
-    }
+  private static assertRoleRecord(reply: MessagesQueryReply, target: SyncTarget): void {
     if (
       target.authorization.kind === 'role' &&
       reply.roleRecordId !== target.authorization.roleRecordId
@@ -290,42 +206,6 @@ export class SyncNextPullPage {
         `SyncNextPullPage: role feed resolved ${reply.roleRecordId ?? 'no role'} instead of ` +
         `${target.authorization.roleRecordId}.`,
       );
-    }
-    if (!Array.isArray(reply.entries)) {
-      throw new TypeError('SyncNextPullPage: successful query omitted its entries array.');
-    }
-    if (typeof reply.drained !== 'boolean') {
-      throw new TypeError('SyncNextPullPage: successful query requires a boolean drained value.');
-    }
-    if (reply.entries.length > PULL_PAGE_SIZE) {
-      throw new RangeError(
-        `SyncNextPullPage: query returned ${reply.entries.length} entries; maximum is ${PULL_PAGE_SIZE}.`,
-      );
-    }
-    return { drained: reply.drained, entries: reply.entries };
-  }
-
-  private static assertCursorProgress(
-    previous: ProgressToken | undefined,
-    next: ProgressToken,
-    drained: boolean,
-    entryCount: number,
-  ): void {
-    if (!isValidSyncNextToken(next)) {
-      throw new Error('SyncNextPullPage: query returned an invalid cursor.');
-    }
-    if (previous === undefined) {
-      return;
-    }
-    if (previous.streamId !== next.streamId || previous.epoch !== next.epoch) {
-      throw new Error('SyncNextPullPage: query cursor changed progress-token domain.');
-    }
-    const comparison = compareSyncNextPosition(next, previous);
-    if (comparison < 0) {
-      throw new Error('SyncNextPullPage: query cursor regressed.');
-    }
-    if (comparison === 0 && (!drained || entryCount > 0)) {
-      throw new Error('SyncNextPullPage: query cursor did not advance.');
     }
   }
 }
