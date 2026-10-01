@@ -60,10 +60,13 @@ export type SyncNextDeliveryOutcome = {
 export type SyncNextDeliveryObligation = SyncNextLinkIdentity & SyncNextSourceReceipt & {
   lastAttemptAt: string;
   outcome: SyncNextDeliveryOutcome;
+  /** Source feed state at intake; a current write must not be replayed without its body. */
+  wasLatestBaseState: boolean;
 };
 
 export type SyncNextDeliveryInput = SyncNextSourceReceipt & {
   outcome: SyncNextDeliveryOutcome;
+  wasLatestBaseState: boolean;
 };
 
 export type SyncNextPullPageCommit = {

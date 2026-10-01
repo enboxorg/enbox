@@ -1,4 +1,4 @@
-import type { Dwn, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { Dwn, ProtocolDefinition, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -10,6 +10,7 @@ import { AgentDwnApi } from '../src/dwn-api.js';
 import { createLocalDwnRpc } from './utils/local-dwn-rpc-shim.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { retryOneDeliveryObligation } from '../src/sync-next/delivery-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
@@ -29,8 +30,8 @@ const protocol: ProtocolDefinition = {
   structure: { note: {} },
 };
 
-async function createSyncTarget(tenantDid: string): Promise<SyncTarget> {
-  const scope = { kind: 'protocolSet' as const, protocols: [protocol.protocol] as [string] };
+async function createSyncTarget(tenantDid: string, protocolUri = protocol.protocol): Promise<SyncTarget> {
+  const scope = { kind: 'protocolSet' as const, protocols: [protocolUri] as [string] };
   return {
     authorization      : { kind: 'owner' },
     authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
@@ -205,5 +206,73 @@ describe('SyncNext push-page integration', () => {
       messageParams : { filter: { recordId: write.message!.recordId } },
     });
     expect(remoteRead.reply.status.code).toBe(410);
+    expect(await retryOneDeliveryObligation({ agent: harness.agent, ledger, target: syncTarget }))
+      .toEqual({ kind: 'pending', outcome: { reason: 'remote-incomplete' } });
+    expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
+  });
+
+  it('should deliver a retained detached body after a transient remote failure', async () => {
+    const retryProtocol = { ...protocol, protocol: 'https://sync-next-push.example/retry' };
+    expect((await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: retryProtocol },
+    })).reply.status.code).toBe(202);
+
+    const data = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(9);
+    const write = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        dataFormat   : 'application/octet-stream',
+        protocol     : retryProtocol.protocol,
+        protocolPath : 'note',
+        schema       : retryProtocol.types.note.schema,
+      },
+      dataStream: new Blob([data]),
+    });
+    expect(write.reply.status.code).toBe(202);
+
+    const syncTarget = await createSyncTarget(tenantDid, retryProtocol.protocol);
+    const link = await ledger.getOrCreateLink({
+      ...syncNextLinkIdentity(syncTarget),
+      authorization : syncTarget.authorization,
+      scope         : syncTarget.scope,
+    });
+    const originalApply = harness.agent.rpc.applyReplicatedMessage.bind(harness.agent.rpc);
+    let attempts = 0;
+    harness.agent.rpc.applyReplicatedMessage = async (request): Promise<ReplicationApplyResult> => {
+      attempts++;
+      if (attempts === 2) {
+        throw new TypeError('temporary remote disconnect');
+      }
+      return originalApply(request);
+    };
+    try {
+      expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget)).toMatchObject({
+        acknowledged : 1,
+        kind         : 'committed',
+        retained     : 1,
+      });
+      expect(await ledger.getDeliveryForLink(link)).toMatchObject([{
+        messageCid         : await Message.getCid(write.message!),
+        wasLatestBaseState : true,
+      }]);
+      expect(await retryOneDeliveryObligation({ agent: harness.agent, ledger, target: syncTarget }))
+        .toEqual({ kind: 'settled' });
+      expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+      const remoteRead = await harness.agent.dwn.sendRequest({
+        author        : tenantDid,
+        target        : tenantDid,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId: write.message!.recordId } },
+      });
+      expect(remoteRead.reply.status.code).toBe(200);
+      expect(await DataStream.toBytes(remoteRead.reply.entry!.data!)).toEqual(data);
+    } finally {
+      harness.agent.rpc.applyReplicatedMessage = originalApply;
+    }
   });
 });

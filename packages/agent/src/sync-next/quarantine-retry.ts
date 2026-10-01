@@ -7,8 +7,8 @@ import type { SyncTarget } from '../sync-target-resolver.js';
 
 import { admitClosure } from '../sync-admit-closure.js';
 import { classifySyncMessageScope } from '../sync-scope-acceptance.js';
+import { compareSyncNextSparseAttempts } from './ledger-key.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
-import { syncNextReceiptKey } from './ledger-key.js';
 import { Cid, DataStream, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { fetchRemoteMessages, SyncPullAbortedError } from '../sync-messages.js';
@@ -41,7 +41,7 @@ export async function retryOneQuarantinedRoot({
   if (!shouldContinue()) {
     return { kind: 'aborted' };
   }
-  entries.sort(compareAttempts);
+  entries.sort(compareSyncNextSparseAttempts);
   const selected = entries[0];
   if (selected === undefined) {
     return { kind: 'empty' };
@@ -213,23 +213,4 @@ async function fetchRootData(
     permissionGrantIds : target.permissionGrantIds,
   });
   return entry?.dataStream;
-}
-
-function compareAttempts(left: SyncNextQuarantineEntry, right: SyncNextQuarantineEntry): number {
-  const leftTime = Date.parse(left.lastAttemptAt);
-  const rightTime = Date.parse(right.lastAttemptAt);
-  const comparableLeft = Number.isNaN(leftTime) ? -Infinity : leftTime;
-  const comparableRight = Number.isNaN(rightTime) ? -Infinity : rightTime;
-  if (comparableLeft !== comparableRight) {
-    return comparableLeft < comparableRight ? -1 : 1;
-  }
-  const leftKey = syncNextReceiptKey(left, left);
-  const rightKey = syncNextReceiptKey(right, right);
-  if (leftKey < rightKey) {
-    return -1;
-  }
-  if (leftKey > rightKey) {
-    return 1;
-  }
-  return 0;
 }

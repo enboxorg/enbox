@@ -230,6 +230,9 @@ export class SyncNextLedgerStore {
         commit.handledThrough, commit.pageReceipts, commit.delivery, commit.settled,
         link.pushHandledThrough, 'push',
       );
+      if (commit.delivery.some(input => typeof input.wasLatestBaseState !== 'boolean')) {
+        throw new TypeError('SyncNextLedgerStore: delivery source state must be a boolean.');
+      }
 
       const operations: SyncNextBatchOperation[] = [];
       const retained = new Set((await this.getDeliveryForLink(link)).map(
@@ -237,7 +240,8 @@ export class SyncNextLedgerStore {
       ));
       for (const input of commit.delivery) {
         const state = this.nextSparseState(link, input, {
-          outcome: structuredClone(input.outcome),
+          outcome            : structuredClone(input.outcome),
+          wasLatestBaseState : input.wasLatestBaseState,
         });
         const receiptKey = syncNextReceiptKey(link, state);
         retained.add(receiptKey);
@@ -313,18 +317,38 @@ export class SyncNextLedgerStore {
     });
   }
 
-  public settleDelivery(
-    identity: SyncNextLinkIdentity,
-    receipt: SyncNextSourceReceipt,
-  ): Promise<void> {
-    return this.runMutation((): Promise<void> => this._delivery.del(syncNextReceiptKey(identity, receipt)));
-  }
-
-  public updateDelivery(
-    entry: SyncNextDeliveryObligation,
-    outcome: SyncNextDeliveryOutcome,
-  ): Promise<void> {
-    return this.runMutation((): Promise<void> => this.updateSparse(this._delivery, entry, outcome));
+  /** Settle or rotate one exact outbound row only while its link and attempt are current. */
+  public async finishDeliveryAttempt(
+    queriedLink: SyncNextLink,
+    selected: SyncNextDeliveryObligation,
+    outcome?: SyncNextDeliveryOutcome,
+  ): Promise<boolean> {
+    const linkKey = syncNextLinkKey(queriedLink);
+    if (syncNextLinkKey(selected) !== linkKey) {
+      return false;
+    }
+    return this.runMutation(async (): Promise<boolean> => {
+      const link = await this.getValue<SyncNextLink>(this._links, linkKey);
+      if (link?.lifetimeId !== queriedLink.lifetimeId) {
+        return false;
+      }
+      const receiptKey = syncNextReceiptKey(queriedLink, selected);
+      const current = await this.getValue<SyncNextDeliveryObligation>(this._delivery, receiptKey);
+      if (current === undefined || current.lastAttemptAt !== selected.lastAttemptAt ||
+          current.wasLatestBaseState !== selected.wasLatestBaseState) {
+        return false;
+      }
+      if (outcome === undefined) {
+        await this._delivery.del(receiptKey);
+      } else {
+        await this._delivery.put(receiptKey, JSON.stringify({
+          ...current,
+          lastAttemptAt : SyncNextLedgerStore.nextAttemptAt(current.lastAttemptAt),
+          outcome       : structuredClone(outcome),
+        }));
+      }
+      return true;
+    });
   }
 
   public async clear(): Promise<void> {
@@ -376,15 +400,19 @@ export class SyncNextLedgerStore {
     if (current === undefined) {
       return;
     }
-    const previousAttempt = Date.parse(current.lastAttemptAt);
+    await store.put(key, JSON.stringify({
+      ...current,
+      lastAttemptAt: SyncNextLedgerStore.nextAttemptAt(current.lastAttemptAt),
+      ...(outcome === undefined ? {} : { outcome: structuredClone(outcome) }),
+    }));
+  }
+
+  private static nextAttemptAt(previous: string): string {
+    const previousAttempt = Date.parse(previous);
     const nextAttempt = Number.isNaN(previousAttempt)
       ? Date.now() + 1
       : Math.max(Date.now() + 1, previousAttempt + 1);
-    await store.put(key, JSON.stringify({
-      ...current,
-      lastAttemptAt: new Date(nextAttempt).toISOString(),
-      ...(outcome === undefined ? {} : { outcome: structuredClone(outcome) }),
-    }));
+    return new Date(nextAttempt).toISOString();
   }
 
   private putOperation(

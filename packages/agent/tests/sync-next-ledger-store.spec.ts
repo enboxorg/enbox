@@ -188,9 +188,10 @@ describe('SyncNextLedgerStore', () => {
 
     expect(await commitPush(store, create, {
       delivery: [{
-        messageCid : 'cid-1',
-        outcome    : { reason: 'transport' },
+        messageCid         : 'cid-1',
+        outcome            : { reason: 'transport' },
         source,
+        wasLatestBaseState : true,
       }],
       handledThrough : token(2, 'push'),
       settled        : [{ messageCid: 'cid-2', source: token(2, 'push', 'cid-2') }],
@@ -209,6 +210,27 @@ describe('SyncNextLedgerStore', () => {
       settled        : [],
     })).toBe(true);
     expect(await store.getLink(identity(create))).toEqual(current);
+  });
+
+  it('should not settle a delivery row after another retry has updated it', async () => {
+    const create = linkCreate();
+    const link = await store.getOrCreateLink(create);
+    const source = token(1, 'push', 'cid-1');
+    await commitPush(store, create, {
+      delivery: [{
+        messageCid         : 'cid-1',
+        outcome            : { reason: 'transport' },
+        source,
+        wasLatestBaseState : true,
+      }],
+      handledThrough : source,
+      settled        : [],
+    });
+    const [selected] = await store.getDeliveryForLink(link);
+
+    expect(await store.finishDeliveryAttempt(link, selected, { reason: 'dependency' })).toBe(true);
+    expect(await store.finishDeliveryAttempt(link, selected)).toBe(false);
+    expect(await store.getDeliveryForLink(link)).toMatchObject([{ outcome: { reason: 'dependency' } }]);
   });
 
   it('should preserve concurrent pull and push progress through the ledger mutation lock', async () => {
@@ -323,9 +345,10 @@ describe('SyncNextLedgerStore', () => {
     });
     await commitPush(store, create, {
       delivery: [{
-        messageCid : 'push-cid',
-        outcome    : { blockScope: 'endpoint', reason: 'transport' },
-        source     : token(1, 'push', 'push-cid'),
+        messageCid         : 'push-cid',
+        outcome            : { blockScope: 'endpoint', reason: 'transport' },
+        source             : token(1, 'push', 'push-cid'),
+        wasLatestBaseState : true,
       }],
       handledThrough : token(1, 'push'),
       settled        : [],
@@ -356,9 +379,10 @@ describe('SyncNextLedgerStore', () => {
     }
     await commitPush(store, first, {
       delivery: [{
-        messageCid : 'push-cid',
-        outcome    : { reason: 'transport' },
-        source     : token(1, 'push', 'push-cid'),
+        messageCid         : 'push-cid',
+        outcome            : { reason: 'transport' },
+        source             : token(1, 'push', 'push-cid'),
+        wasLatestBaseState : true,
       }],
       handledThrough : token(1, 'push'),
       settled        : [],
@@ -453,9 +477,10 @@ describe('SyncNextLedgerStore', () => {
     const link = await original.getOrCreateLink(create);
     await commitPush(original, create, {
       delivery: [{
-        messageCid : 'cid-1',
-        outcome    : { reason: 'transport' },
-        source     : token(1, 'push', 'cid-1'),
+        messageCid         : 'cid-1',
+        outcome            : { reason: 'transport' },
+        source             : token(1, 'push', 'cid-1'),
+        wasLatestBaseState : true,
       }],
       handledThrough : token(1, 'push'),
       settled        : [],
@@ -615,9 +640,10 @@ describe('SyncNextLedgerStore', () => {
     await limited.getOrCreateLink(create);
     await commitPush(limited, create, {
       delivery: [{
-        messageCid : 'cid-1',
-        outcome    : { reason: 'transport' },
-        source     : token(1, 'push', 'cid-1'),
+        messageCid         : 'cid-1',
+        outcome            : { reason: 'transport' },
+        source             : token(1, 'push', 'cid-1'),
+        wasLatestBaseState : true,
       }],
       handledThrough : token(1, 'push'),
       settled        : [],
@@ -625,9 +651,10 @@ describe('SyncNextLedgerStore', () => {
 
     await expect(commitPush(limited, create, {
       delivery: [{
-        messageCid : 'cid-2',
-        outcome    : { reason: 'transport' },
-        source     : token(2, 'push', 'cid-2'),
+        messageCid         : 'cid-2',
+        outcome            : { reason: 'transport' },
+        source             : token(2, 'push', 'cid-2'),
+        wasLatestBaseState : true,
       }],
       handledThrough : token(2, 'push'),
       settled        : [],
@@ -707,9 +734,10 @@ describe('SyncNextLedgerStore', () => {
     }
     await commitPush(store, alice, {
       delivery: [{
-        messageCid : 'push-cid',
-        outcome    : { reason: 'transport' },
-        source     : token(1, 'push', 'push-cid'),
+        messageCid         : 'push-cid',
+        outcome            : { reason: 'transport' },
+        source             : token(1, 'push', 'push-cid'),
+        wasLatestBaseState : true,
       }],
       handledThrough : token(1, 'push'),
       settled        : [],
@@ -718,7 +746,9 @@ describe('SyncNextLedgerStore', () => {
     const [quarantine] = await store.getQuarantineForTenant(alice.tenantDid);
     const [delivery] = await store.getDeliveryForTenant(alice.tenantDid);
     await store.updateQuarantine(quarantine);
-    await store.updateDelivery(delivery, { reason: 'dependency' });
+    expect(await store.finishDeliveryAttempt(
+      (await store.getLink(identity(alice)))!, delivery, { reason: 'dependency' },
+    )).toBe(true);
     expect((await store.getQuarantineForLink(identity(alice)))[0].entry.messageCid).toBe('pull-cid');
     expect((await store.getDeliveryForLink(identity(alice)))[0].outcome).toEqual({ reason: 'dependency' });
 
