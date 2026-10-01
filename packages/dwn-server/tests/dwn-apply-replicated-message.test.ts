@@ -981,7 +981,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     }
   });
 
-  it('defers an indexed write with missing body even at the message quota', async () => {
+  it('defers only the indexed write whose record data is unavailable', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array(31_000).fill(7);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
@@ -1014,7 +1014,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
         } as any,
       });
       expect(replay.jsonRpcResponse.error).toBeUndefined();
-      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Deferred', reason: 'storage' });
+      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Deferred', reason: 'record-data-unavailable' });
     } finally {
       await dwn.close();
       await adminStore.close();

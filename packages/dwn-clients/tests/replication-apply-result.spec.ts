@@ -4,6 +4,14 @@ import { DwnRpcError } from '../src/index.js';
 import { parseReplicationApplyResult } from '../src/replication-apply-result.js';
 
 describe('parseReplicationApplyResult', () => {
+  it.each(['record-data-unavailable', 'resolver-unavailable', 'storage', 'tenant-inactive'])(
+    'preserves the Deferred reason %s',
+    (reason) => {
+      expect(parseReplicationApplyResult({ kind: 'Deferred', reason }))
+        .toEqual({ kind: 'Deferred', reason });
+    },
+  );
+
   it('preserves only a confirmed materialized duplicate', () => {
     expect(parseReplicationApplyResult({ kind: 'Duplicate' })).toEqual({ kind: 'Duplicate' });
     expect(parseReplicationApplyResult({ kind: 'Duplicate', materialized: true }))

@@ -5,7 +5,7 @@ import { isEncryptionControlPath } from '@enbox/dwn-sdk-js';
 import { DwnRpcError } from './dwn-rpc-error.js';
 import { JsonRpcErrorCodes } from './json-rpc.js';
 
-const deferredReasons = new Set(['tenant-inactive', 'resolver-unavailable', 'storage']);
+const deferredReasons = new Set(['record-data-unavailable', 'resolver-unavailable', 'storage', 'tenant-inactive']);
 
 export function parseReplicationApplyResult(value: unknown): ReplicationApplyResult {
   if (!isObject(value) || typeof value.kind !== 'string') {

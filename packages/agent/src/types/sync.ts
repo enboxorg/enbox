@@ -426,7 +426,7 @@ export type PushFailure = {
   /** Structured remote apply result kind that produced the failure. */
   kind?: PushFailureKind;
   /** Remote `Deferred.reason`, when `kind` is `Deferred`. */
-  reason?: 'tenant-inactive' | 'resolver-unavailable' | 'storage';
+  reason?: Extract<ReplicationApplyResult, { kind: 'Deferred' }>['reason'];
   /** True only for Invalid or terminal dependency outcomes. */
   terminal?: boolean;
   /** True when the remote tenant is inactive and retrying the same message would hot-loop. */
