@@ -189,18 +189,21 @@ export class SyncNextWorkPump {
 
   private async drainOwned(budget: WorkBudget): Promise<SyncNextWorkPumpResult> {
     await this.seedSparseWork();
-    while (this.hasEligibleWork()) {
-      if (!budget.canStartWork()) {
-        break;
-      }
-      const work = this.takeRound();
-      if (work.length === 0) {
-        break;
-      }
-      await Promise.all(work.map(({ state, kind }) => this.runWork(state, kind, budget)));
-    }
-
+    await this.drainRounds(budget);
     return this.buildResult(budget);
+  }
+
+  /** Run one concurrent endpoint round at a time so later rounds observe its results. */
+  private async drainRounds(budget: WorkBudget): Promise<void> {
+    if (!this.hasEligibleWork() || !budget.canStartWork()) {
+      return;
+    }
+    const work = this.takeRound();
+    if (work.length === 0) {
+      return;
+    }
+    await Promise.all(work.map(({ state, kind }) => this.runWork(state, kind, budget)));
+    return this.drainRounds(budget);
   }
 
   private hasEligibleWork(): boolean {
@@ -460,18 +463,23 @@ export class SyncNextWorkPump {
   }
 
   private async seedSparseWork(): Promise<void> {
-    for (const state of this._states.values()) {
-      if (state.queue.includes('pullPage') && (await this._ledger.getQuarantineForLogicalTarget(
-        state.target.did, state.target.projectionId,
-      )).length > 0) {
-        this.enqueue(state, 'quarantine', true);
-      }
-      if (state.queue.includes('pushPage')) {
-        const link = await this._ledger.getLink(syncNextLinkIdentity(state.target));
-        if (link !== undefined && (await this._ledger.getDeliveryForLink(link)).length > 0) {
-          this.enqueue(state, 'delivery');
-        }
-      }
+    await Promise.all([...this._states.values()].map(state => this.seedTargetSparseWork(state)));
+  }
+
+  private async seedTargetSparseWork(state: TargetState): Promise<void> {
+    const [quarantine, link] = await Promise.all([
+      state.queue.includes('pullPage')
+        ? this._ledger.getQuarantineForLogicalTarget(state.target.did, state.target.projectionId)
+        : undefined,
+      state.queue.includes('pushPage')
+        ? this._ledger.getLink(syncNextLinkIdentity(state.target))
+        : undefined,
+    ]);
+    if (quarantine !== undefined && quarantine.length > 0) {
+      this.enqueue(state, 'quarantine', true);
+    }
+    if (link !== undefined && (await this._ledger.getDeliveryForLink(link)).length > 0) {
+      this.enqueue(state, 'delivery');
     }
   }
 
@@ -504,31 +512,7 @@ export class SyncNextWorkPump {
   }
 
   private async buildResult(budget: WorkBudget): Promise<SyncNextWorkPumpResult> {
-    const targets: SyncNextWorkTargetStatus[] = [];
-    for (const state of this._states.values()) {
-      const link = await this._ledger.getLink(syncNextLinkIdentity(state.target));
-      const pendingDelivery = link === undefined ? 0 : (await this._ledger.getDeliveryForLink(link)).length;
-      const pendingQuarantine = (await this._ledger.getQuarantineForLogicalTarget(
-        state.target.did, state.target.projectionId,
-      )).length;
-      targets.push({
-        authorizationEpoch : state.target.authorizationEpoch,
-        projectionId       : state.target.projectionId,
-        pull               : {
-          ...errorProperty(state.errors.pullPage ?? state.errors.quarantine),
-          feedCovered: state.pullCovered && !state.queue.includes('pullPage'),
-          pendingQuarantine,
-        },
-        push: {
-          enabled     : state.target.authorization.kind !== 'role',
-          ...errorProperty(state.errors.pushPage ?? state.errors.delivery),
-          feedCovered : state.pushCovered && !state.queue.includes('pushPage'),
-          pendingDelivery,
-        },
-        remoteEndpoint : normalizeDwnEndpoint(state.target.dwnUrl),
-        tenantDid      : state.target.did,
-      });
-    }
+    const targets = await Promise.all([...this._states.values()].map(state => this.buildTargetStatus(state)));
 
     const nextRun = this.nextRunAt();
     const sparseWork = targets.some(status =>
@@ -541,6 +525,31 @@ export class SyncNextWorkPump {
       remoteRequests  : budget.requests,
       targets,
       workRemaining   : sparseWork || [...this._states.values()].some(state => state.queue.length > 0),
+    };
+  }
+
+  private async buildTargetStatus(state: TargetState): Promise<SyncNextWorkTargetStatus> {
+    const [link, quarantine] = await Promise.all([
+      this._ledger.getLink(syncNextLinkIdentity(state.target)),
+      this._ledger.getQuarantineForLogicalTarget(state.target.did, state.target.projectionId),
+    ]);
+    const pendingDelivery = link === undefined ? 0 : (await this._ledger.getDeliveryForLink(link)).length;
+    return {
+      authorizationEpoch : state.target.authorizationEpoch,
+      projectionId       : state.target.projectionId,
+      pull               : {
+        ...errorProperty(state.errors.pullPage ?? state.errors.quarantine),
+        feedCovered       : state.pullCovered && !state.queue.includes('pullPage'),
+        pendingQuarantine : quarantine.length,
+      },
+      push: {
+        enabled     : state.target.authorization.kind !== 'role',
+        ...errorProperty(state.errors.pushPage ?? state.errors.delivery),
+        feedCovered : state.pushCovered && !state.queue.includes('pushPage'),
+        pendingDelivery,
+      },
+      remoteEndpoint : normalizeDwnEndpoint(state.target.dwnUrl),
+      tenantDid      : state.target.did,
     };
   }
 

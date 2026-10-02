@@ -501,9 +501,7 @@ export async function fetchRemoteMessages({
           }) as MessagesReadReply
         );
       } catch (error: any) {
-        if (error instanceof SyncPullAbortedError) {
-          throw error;
-        }
+        rethrowSyncPullAbort(error);
         console.error(`SyncMessages: pull - failed to read ${messageCid} from ${dwnUrl}:`, error.message ?? error);
         return undefined;
       }
@@ -836,9 +834,7 @@ export class RemoteApplyPushContext {
         })
       );
     } catch (error: any) {
-      if (error instanceof SyncPullAbortedError) {
-        throw error;
-      }
+      rethrowSyncPullAbort(error);
       const detail = error.message ?? String(error);
       if (error instanceof SyncDataSizeLimitExceededError) {
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, 'Invalid') };
@@ -1443,6 +1439,12 @@ export class RemoteApplyPushContext {
     const cid = await Message.getCid(entry.message);
     this.entryCids.set(entry, cid);
     return cid;
+  }
+}
+
+function rethrowSyncPullAbort(error: unknown): void {
+  if (error instanceof SyncPullAbortedError) {
+    throw error;
   }
 }
 
