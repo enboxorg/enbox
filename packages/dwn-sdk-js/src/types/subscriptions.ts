@@ -143,9 +143,10 @@ export type SubscriptionMessage = SubscriptionEvent | SubscriptionEose | Subscri
  * markers, or subscription-level errors that stop delivery.
  *
  * A listener may return a promise to signal when the message has been fully
- * processed; transports that support backpressure (e.g. the WebSocket client)
- * gate their acknowledgements on it. Emitters that cannot exert backpressure
- * simply ignore the returned value.
+ * processed. Durable event delivery awaits it before advancing the cursor or
+ * delivering the next message. Transports may instead complete this callback
+ * when they accept a message into their own flow-control buffer; the WebSocket
+ * client gates its acknowledgements on its consumer's completion.
  */
 export type SubscriptionListener = (message: SubscriptionMessage) => void | Promise<void>;
 
@@ -254,6 +255,8 @@ export interface EventLog {
    * from that cursor through the listener, delivers an EOSE marker, then
    * continues with live events. The catch-up → live transition (including
    * buffering and deduplication) is owned by the implementation.
+   * Replay listeners run before this promise resolves and must not wait for
+   * the returned subscription handle. Durable replay awaits their completion.
    *
    * When `options.cursor` is omitted, only live events are delivered.
    *

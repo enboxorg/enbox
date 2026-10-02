@@ -1,7 +1,14 @@
 import type { DurableEventLogStore } from '../src/event-stream/durable-event-log.js';
 import type { Filter } from '../src/types/query-types.js';
 import type { GenericMessage } from '../src/types/message-types.js';
-import type { EventLogEntry, EventLogReadOptions, EventLogReadResult, ProgressGapInfo, ProgressToken } from '../src/types/subscriptions.js';
+import type {
+  EventLogEntry,
+  EventLogReadOptions,
+  EventLogReadResult,
+  EventSubscription,
+  ProgressGapInfo,
+  ProgressToken,
+} from '../src/types/subscriptions.js';
 import type { GenerateRecordsWriteOutput, Persona } from './utils/test-data-generator.js';
 import type { RecordsWriteMessage, SubscriptionMessage } from '../src/index.js';
 
@@ -23,10 +30,22 @@ type StoredRecord = GenerateRecordsWriteOutput & {
   position: string;
 };
 
+type DeliveryGate = {
+  promise: Promise<void>;
+  resolve: () => void;
+};
+
+function createDeliveryGate(): DeliveryGate {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise): void => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
 class ScriptedFeedStore implements DurableEventLogStore {
   private readonly epochValue: string = crypto.randomUUID();
   private wakeDuringNextRead?: EventLogEntry;
   public throwGapOnNextRead: boolean = false;
+  public readCount: number = 0;
 
   public constructor(
     private readonly tenant: string,
@@ -70,6 +89,7 @@ class ScriptedFeedStore implements DurableEventLogStore {
   }
 
   public async logRead(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
+    this.readCount++;
     this.assertTenant(tenant);
     await this.validateCursor(options.cursor);
 
@@ -220,6 +240,8 @@ describe('DurableEventLog', () => {
       messageCid : first.messageCid,
     }));
     expect(received[0].cursor.position).toBe('1');
+    expect(received[0].cursor.streamId).toBe(bounds!.latest.streamId);
+    expect(received[0].cursor.epoch).toBe(bounds!.latest.epoch);
     expect(received[1]).toEqual(expect.objectContaining({ type: 'eose' }));
     expect(received[1].cursor.position).toBe('1');
 
@@ -238,6 +260,306 @@ describe('DurableEventLog', () => {
 
     await subscription.close();
   });
+
+  it('should finish each replay listener before the next event, EOSE, and live delivery', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await storeRecord(alice);
+    await storeRecord(alice);
+    const bounds = await eventLog.getReplayBounds(alice.did);
+    const blocked = createDeliveryGate();
+    const started = createDeliveryGate();
+    const liveDelivered = createDeliveryGate();
+    const received: string[] = [];
+    let opened = false;
+    const opening = eventLog.subscribe(alice.did, 'ordered-replay', async (message): Promise<void> => {
+      received.push(`${message.type}:${message.cursor.position}:start`);
+      if (message.type === 'event' && message.cursor.position === '1') {
+        started.resolve();
+        await blocked.promise;
+      }
+      received.push(`${message.type}:${message.cursor.position}:done`);
+      if (message.type === 'event' && message.cursor.position === '3') {
+        liveDelivered.resolve();
+      }
+    }, { cursor: bounds!.oldest }).then((subscription): EventSubscription => {
+      opened = true;
+      return subscription;
+    });
+
+    try {
+      await started.promise;
+      // A committed write and its wake must complete while the replay listener is blocked.
+      await storeRecord(alice);
+      expect(received).toEqual(['event:1:start']);
+      expect(opened).toBe(false);
+      blocked.resolve();
+      await opening;
+      await liveDelivered.promise;
+      expect(received).toEqual([
+        'event:1:start', 'event:1:done',
+        'event:2:start', 'event:2:done',
+        'eose:2:start', 'eose:2:done',
+        'event:3:start', 'event:3:done',
+      ]);
+    } finally {
+      blocked.resolve();
+      await (await opening).close();
+    }
+  });
+
+  it('should finish an async EOSE listener before opening and draining accumulated wakes', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await storeRecord(alice);
+    const bounds = await eventLog.getReplayBounds(alice.did);
+    const blocked = createDeliveryGate();
+    const started = createDeliveryGate();
+    const liveDelivered = createDeliveryGate();
+    const received: string[] = [];
+    let opened = false;
+    const opening = eventLog.subscribe(alice.did, 'blocked-eose', async (message): Promise<void> => {
+      received.push(`${message.type}:${message.cursor.position}:start`);
+      if (message.type === 'eose') {
+        started.resolve();
+        await blocked.promise;
+      }
+      received.push(`${message.type}:${message.cursor.position}:done`);
+      if (message.type === 'event' && message.cursor.position === '2') {
+        liveDelivered.resolve();
+      }
+    }, { cursor: bounds!.oldest }).then((subscription): EventSubscription => {
+      opened = true;
+      return subscription;
+    });
+
+    try {
+      await started.promise;
+      await storeRecord(alice);
+      expect(received).toEqual(['event:1:start', 'event:1:done', 'eose:1:start']);
+      expect(opened).toBe(false);
+      blocked.resolve();
+      await opening;
+      await liveDelivered.promise;
+      expect(received).toEqual([
+        'event:1:start', 'event:1:done', 'eose:1:start', 'eose:1:done', 'event:2:start', 'event:2:done',
+      ]);
+    } finally {
+      blocked.resolve();
+      await (await opening).close();
+    }
+  });
+
+  it('should keep writes and other subscriptions progressing while a listener is blocked', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const blocked = createDeliveryGate();
+    const started = createDeliveryGate();
+    const slowDelivered = createDeliveryGate();
+    const fastDelivered = createDeliveryGate();
+    const slowReceived: string[] = [];
+    const fastReceived: string[] = [];
+    const slow = await eventLog.subscribe(alice.did, 'slow-listener', async (message): Promise<void> => {
+      slowReceived.push(message.cursor.position);
+      if (message.cursor.position === '1') {
+        started.resolve();
+        await blocked.promise;
+      } else {
+        slowDelivered.resolve();
+      }
+    });
+    const fast = await eventLog.subscribe(alice.did, 'fast-listener', (message): void => {
+      fastReceived.push(message.cursor.position);
+      if (message.cursor.position === '2') {
+        fastDelivered.resolve();
+      }
+    });
+
+    try {
+      await storeRecord(alice);
+      await started.promise;
+      await storeRecord(alice);
+      // Coalesced wakes must not start concurrent delivery to the blocked subscription.
+      for (let index = 0; index < 100; index++) {
+        wakePublisher.publish({ tenant: alice.did, seq: '2' });
+      }
+      await fastDelivered.promise;
+      expect(slowReceived).toEqual(['1']);
+      expect(fastReceived).toEqual(['1', '2']);
+      blocked.resolve();
+      await slowDelivered.promise;
+      expect(slowReceived).toEqual(['1', '2']);
+    } finally {
+      blocked.resolve();
+      await slow.close();
+      await fast.close();
+    }
+  });
+
+  for (const failingType of ['event', 'eose'] as const) {
+    it(`should reject and remove a cursor subscription when its ${failingType} listener rejects`, async (): Promise<void> => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const localWakePublisher = new EventEmitterWakePublisher();
+      const entry = await createLogEntry(alice, '1');
+      const scriptedStore = new ScriptedFeedStore(alice.did, [entry], localWakePublisher);
+      const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, { idleRedrainIntervalMs: 0 });
+      const failure = new Error('replay listener failed');
+
+      await scriptedLog.open();
+      try {
+        await expect(scriptedLog.subscribe(alice.did, 'rejected-replay', async (message): Promise<void> => {
+          if (message.type === failingType) {
+            await Promise.resolve();
+            throw failure;
+          }
+        }, { cursor: await scriptedStore.createToken('0') })).rejects.toBe(failure);
+        const readCount = scriptedStore.readCount;
+        localWakePublisher.publish({ tenant: alice.did, seq: '1' });
+        expect(scriptedStore.readCount).toBe(readCount);
+      } finally {
+        await scriptedLog.close();
+      }
+    });
+  }
+
+  it('should report a rejected live listener and retry from its unadvanced cursor', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const first = await createLogEntry(alice, '1');
+    const second = await createLogEntry(alice, '2');
+    const third = await createLogEntry(alice, '3');
+    const scriptedStore = new ScriptedFeedStore(alice.did, [first], localWakePublisher);
+    const reported = createDeliveryGate();
+    const completed = createDeliveryGate();
+    const errors: unknown[] = [];
+    const attempted: string[] = [];
+    const failure = new Error('live listener failed');
+    const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, {
+      idleRedrainIntervalMs : 0,
+      errorHandler          : (error): void => { errors.push(error); reported.resolve(); },
+    });
+
+    await scriptedLog.open();
+    try {
+      await scriptedLog.subscribe(alice.did, 'rejected-live', async (message): Promise<void> => {
+        attempted.push(message.cursor.position);
+        if (attempted.length === 1) {
+          await Promise.resolve();
+          throw failure;
+        }
+        if (message.cursor.position === '3') {
+          completed.resolve();
+        }
+      });
+      scriptedStore.append(second);
+      scriptedStore.append(third);
+      localWakePublisher.publish({ tenant: alice.did, seq: '3' });
+      await reported.promise;
+      expect(errors).toEqual([failure]);
+      expect(attempted).toEqual(['2']);
+      localWakePublisher.publish({ tenant: alice.did, seq: '3' });
+      await completed.promise;
+      expect(attempted).toEqual(['2', '2', '3']);
+    } finally {
+      await scriptedLog.close();
+    }
+  });
+
+  it('should keep a subscription closed when the event log closes during async EOSE delivery', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const scriptedStore = new ScriptedFeedStore(alice.did, [await createLogEntry(alice, '1')], localWakePublisher);
+    const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const blocked = createDeliveryGate();
+    const started = createDeliveryGate();
+    const received: string[] = [];
+    await scriptedLog.open();
+    const opening = scriptedLog.subscribe(alice.did, 'close-during-eose', async (message): Promise<void> => {
+      received.push(message.type);
+      if (message.type === 'eose') {
+        started.resolve();
+        await blocked.promise;
+      }
+    }, { cursor: await scriptedStore.createToken('0') });
+
+    try {
+      await started.promise;
+      const readCount = scriptedStore.readCount;
+      localWakePublisher.publish({ tenant: alice.did, seq: '2' });
+      await scriptedLog.close();
+      blocked.resolve();
+      await opening;
+      expect(scriptedStore.readCount).toBe(readCount);
+      expect(received).toEqual(['event', 'eose']);
+    } finally {
+      blocked.resolve();
+      await (await opening).close();
+      await scriptedLog.close();
+    }
+  });
+
+  it('should let an async live listener await its own close and stop the rest of the page', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const first = await createLogEntry(alice, '1');
+    const second = await createLogEntry(alice, '2');
+    const third = await createLogEntry(alice, '3');
+    const scriptedStore = new ScriptedFeedStore(alice.did, [first], localWakePublisher);
+    const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const closed = createDeliveryGate();
+    const received: string[] = [];
+    await scriptedLog.open();
+    const subscription = await scriptedLog.subscribe(alice.did, 'await-own-close', async (message): Promise<void> => {
+      received.push(message.cursor.position);
+      await subscription.close();
+      closed.resolve();
+    });
+
+    try {
+      scriptedStore.append(second);
+      scriptedStore.append(third);
+      localWakePublisher.publish({ tenant: alice.did, seq: '3' });
+      await closed.promise;
+      localWakePublisher.publish({ tenant: alice.did, seq: '3' });
+      expect(received).toEqual(['2']);
+    } finally {
+      await scriptedLog.close();
+    }
+  });
+
+  for (const asynchronous of [false, true]) {
+    it(`should report a ${asynchronous ? 'rejected' : 'throwing'} progress-gap listener after closing`, async (): Promise<void> => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const localWakePublisher = new EventEmitterWakePublisher();
+      const scriptedStore = new ScriptedFeedStore(alice.did, [await createLogEntry(alice, '1')], localWakePublisher);
+      const failure = new Error('gap notification failed');
+      const reported = createDeliveryGate();
+      const errors: unknown[] = [];
+      const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, {
+        idleRedrainIntervalMs : 0,
+        errorHandler          : (error): void => { errors.push(error); reported.resolve(); },
+      });
+      await scriptedLog.open();
+      try {
+        await scriptedLog.subscribe(alice.did, 'rejected-gap', (message): void | Promise<void> => {
+          expect(message.type).toBe('error');
+          const readCount = scriptedStore.readCount;
+          localWakePublisher.publish({ tenant: alice.did, seq: '1' });
+          expect(scriptedStore.readCount).toBe(readCount);
+          if (asynchronous) {
+            return Promise.reject(failure);
+          }
+          throw failure;
+        });
+        scriptedStore.throwGapOnNextRead = true;
+        localWakePublisher.publish({ tenant: alice.did, seq: '1' });
+        await reported.promise;
+        expect(errors).toEqual([failure]);
+        const readCount = scriptedStore.readCount;
+        localWakePublisher.publish({ tenant: alice.did, seq: '1' });
+        expect(scriptedStore.readCount).toBe(readCount);
+      } finally {
+        await scriptedLog.close();
+      }
+    });
+  }
 
   it('should push a completed same-CID row at its new position', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -444,6 +766,34 @@ describe('DurableEventLog', () => {
     expect(received).toHaveLength(1);
     expect(received[0].cursor.position).toBe('2');
     await scriptedLog.close();
+  });
+
+  it('should close for a changed store epoch while retaining the tenant stream identity', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await storeRecord(alice);
+    const beforeReset = await eventLog.getReplayBounds(alice.did);
+    const notified = createDeliveryGate();
+    const received: SubscriptionMessage[] = [];
+    const subscription = await eventLog.subscribe(alice.did, 'reset-epoch', (message): void => {
+      received.push(message);
+      notified.resolve();
+    });
+
+    try {
+      await messageStore.clear();
+      await storeRecord(alice);
+      await notified.promise;
+      const afterReset = await eventLog.getReplayBounds(alice.did);
+      expect(afterReset!.latest.streamId).toBe(beforeReset!.latest.streamId);
+      expect(afterReset!.latest.epoch).not.toBe(beforeReset!.latest.epoch);
+      expect(received).toEqual([expect.objectContaining({
+        type   : 'error',
+        cursor : beforeReset!.latest,
+        error  : expect.objectContaining({ code: 'ProgressGap' }),
+      })]);
+    } finally {
+      await subscription.close();
+    }
   });
 
   it('should attach initial writes to non-initial RecordsWrite events', async () => {

@@ -573,6 +573,68 @@ describe('runConnectModal', () => {
     expect(relay.calls).toHaveLength(2);
   });
 
+  const popupRoutes = [
+    { name: 'phone alternative', method: 'phone', unavailable: false, retry: false, selector: '.method-link' },
+    { name: 'browser prompt', method: 'browser', unavailable: false, retry: false, selector: '.stage-btn' },
+    { name: 'unavailable relay fallback', method: 'phone', unavailable: true, retry: false, selector: '.stage-btn' },
+    { name: 'blocked popup retry', method: 'browser', unavailable: false, retry: true, selector: '.stage-btn' },
+  ] as const;
+
+  for (const route of popupRoutes) {
+    it(`starts the ${route.name} popup in the click stack and ignores completion after cancellation`, async (): Promise<void> => {
+      const relay = createFakeRelay();
+      let popupCalls = 0;
+      let rejectPopup: ((error: Error) => void) | undefined;
+      const promise = runConnectModal({
+        wallets            : WALLETS,
+        permissionRequests : PERMISSIONS,
+        preferredMethod    : route.method,
+        deps               : deps({
+          runRelay                 : relay.runRelay,
+          discoverConnectServerUrl : async (): Promise<string | undefined> => route.unavailable ? undefined : 'https://relay.example.com/connect',
+          runPopup                 : (): Promise<ConnectResult | undefined> => {
+            popupCalls++;
+            if (route.retry && popupCalls === 1) {
+              return Promise.reject(new Error('Popup blocked by browser'));
+            }
+            return new Promise<ConnectResult | undefined>((_resolve, reject): void => { rejectPopup = reject; });
+          },
+        }),
+      });
+      promise.catch((): void => {});
+
+      try {
+        await flush();
+        const launch = shadowRoot().querySelector<HTMLButtonElement>(route.selector);
+        if (launch === null) { throw new Error('expected popup launch button'); }
+        launch.click();
+        // No await before this assertion: the popup must open in this user gesture.
+        expect(popupCalls).toBe(1);
+        let activeLaunch = launch;
+        if (route.retry) {
+          await flush();
+          const retry = shadowRoot().querySelector<HTMLButtonElement>('.stage-btn');
+          if (retry === null) { throw new Error('expected popup retry button'); }
+          activeLaunch = retry;
+          activeLaunch.click();
+          expect(popupCalls).toBe(2);
+        }
+        // A second click while the handshake is pending must not start another popup.
+        activeLaunch.click();
+        expect(popupCalls).toBe(route.retry ? 2 : 1);
+        shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+        await expect(promise).rejects.toThrow(/cancelled/i);
+        rejectPopup?.(new Error('popup completed after modal cancellation'));
+        await flush();
+        expect(document.querySelector('#enbox-connect-modal')).toBeNull();
+      } finally {
+        document.querySelector('#enbox-connect-modal')?.shadowRoot?.querySelector<HTMLButtonElement>('.close-btn')?.click();
+        rejectPopup?.(new Error('popup test cleanup'));
+        await flush();
+      }
+    });
+  }
+
   it('offers popup recovery when the browser rejects the popup open', async () => {
     const relay = createFakeRelay();
     const promise = runConnectModal({

@@ -51,6 +51,7 @@ type DurableSubscription = {
   id: string;
   tenant: string;
   listener: SubscriptionListener;
+  readonly streamId: string;
   filters?: Filter[];
   cursor?: ProgressToken;
   closed: boolean;
@@ -144,6 +145,7 @@ export class DurableEventLog implements EventLog {
       id,
       tenant,
       listener,
+      streamId         : await Replication.deriveStreamId(tenant),
       filters          : options.filters,
       cursor           : await this.getInitialCursor(tenant, options.cursor),
       closed           : false,
@@ -157,10 +159,12 @@ export class DurableEventLog implements EventLog {
       try {
         const eoseCursor = await this.catchUpSubscription(subscription, options.cursor);
         if (!subscription.closed) {
-          listener({ type: 'eose', cursor: eoseCursor });
-          subscription.liveReady = true;
-          if (subscription.redrainRequested) {
-            this.scheduleDrain(subscription);
+          await listener({ type: 'eose', cursor: eoseCursor });
+          if (!subscription.closed) {
+            subscription.liveReady = true;
+            if (subscription.redrainRequested) {
+              this.scheduleDrain(subscription);
+            }
           }
         }
       } catch (error) {
@@ -173,6 +177,7 @@ export class DurableEventLog implements EventLog {
     return {
       id,
       close: async (): Promise<void> => {
+        // Do not wait for the drain: a listener may await its own subscription close.
         subscription.closed = true;
         this.subscriptions.delete(id);
       }
@@ -218,12 +223,11 @@ export class DurableEventLog implements EventLog {
       return;
     }
 
-    void this.drainSubscription(subscription).catch((error): void => {
-      this.handleDrainError(subscription, error);
-    });
+    // Wakes remain detached from committed writes; only this subscription waits for its listener.
+    void this.drainSubscription(subscription).catch((error): Promise<void> => this.handleDrainError(subscription, error));
   }
 
-  private handleDrainError(subscription: DurableSubscription, error: unknown): void {
+  private async handleDrainError(subscription: DurableSubscription, error: unknown): Promise<void> {
     if (subscription.closed) {
       return;
     }
@@ -238,14 +242,18 @@ export class DurableEventLog implements EventLog {
 
       subscription.closed = true;
       this.subscriptions.delete(subscription.id);
-      subscription.listener({
-        type  : 'error',
-        cursor,
-        error : {
-          code   : 'ProgressGap',
-          detail : error.message,
-        },
-      });
+      try {
+        await subscription.listener({
+          type  : 'error',
+          cursor,
+          error : {
+            code   : 'ProgressGap',
+            detail : error.message,
+          },
+        });
+      } catch (listenerError) {
+        this.errorHandler(listenerError);
+      }
       return;
     }
 
@@ -370,7 +378,7 @@ export class DurableEventLog implements EventLog {
       return undefined;
     }
 
-    const cursor = await this.buildToken(subscription.tenant, DurableEventLog.getEntryPosition(entry), entry.messageCid);
+    const cursor = await this.buildToken(subscription.streamId, DurableEventLog.getEntryPosition(entry), entry.messageCid);
     if (subscription.closed) {
       return undefined;
     }
@@ -389,7 +397,8 @@ export class DurableEventLog implements EventLog {
       event.encodedData = entry.encodedData;
     }
 
-    subscription.listener(event);
+    // Completion owns cursor advancement and prevents an unbounded queue of pending listeners.
+    await subscription.listener(event);
     return cursor;
   }
 
@@ -444,10 +453,11 @@ export class DurableEventLog implements EventLog {
     return typeof descriptorRecordId === 'string' ? descriptorRecordId : undefined;
   }
 
-  private async buildToken(tenant: string, position: string, messageCid: string | undefined): Promise<ProgressToken> {
+  private async buildToken(streamId: string, position: string, messageCid: string | undefined): Promise<ProgressToken> {
     const token: ProgressToken = {
-      streamId : await Replication.deriveStreamId(tenant),
-      epoch    : await this.store.epoch(),
+      // The tenant hash is stable; the store epoch must remain fresh across resets.
+      streamId,
+      epoch: await this.store.epoch(),
       position,
     };
 
