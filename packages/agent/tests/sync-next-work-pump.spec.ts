@@ -315,6 +315,39 @@ describe('SyncNextWorkPump', () => {
     expect(result.nextRunAt).toBeDefined();
   });
 
+  it('should schedule eligible work immediately despite another endpoint cooldown', async () => {
+    const offline = target({ endpoint: 'https://offline.example.com' });
+    const healthy = target({ endpoint: 'https://healthy.example.com' });
+    const now = Date.parse('2026-10-02T12:00:00.000Z');
+    let healthyPages = 0;
+    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, {
+      cooldownMs : 1_000,
+      now        : (): number => now,
+      operations : operations({
+        pullPage: async (syncTarget, _shouldContinue, runRemoteRequest) => {
+          await runRemoteRequest(async () => {
+            if (syncTarget.dwnUrl === offline.dwnUrl) {
+              throw new TypeError('offline');
+            }
+          });
+          const hasMore = syncTarget.dwnUrl === healthy.dwnUrl && healthyPages++ === 0;
+          return {
+            handledCids    : [],
+            handledThrough : token(1),
+            hasMore,
+            kind           : 'committed',
+            quarantined    : 0,
+          };
+        },
+      }),
+    });
+
+    const result = await pump.run([offline, healthy], 'pull', { maxRemoteRequests: 2 });
+
+    expect(result.nextRunAt).toBe(new Date(now).toISOString());
+    expect(result.targets.find(status => status.remoteEndpoint === healthy.dwnUrl)?.pull.feedCovered).toBe(false);
+  });
+
   it('should cool an endpoint after a retryable feed status without hiding the error', async () => {
     const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, {
       operations: operations({
@@ -479,6 +512,43 @@ describe('SyncNextWorkPump', () => {
     expect(result.cancelled).toBe(true);
     expect(result.workRemaining).toBe(true);
     expect(result.targets[0].pull.feedCovered).toBe(false);
+  });
+
+  it('should not cool an endpoint when the current run reaches its elapsed budget', async () => {
+    const slow = target({ did: 'did:example:slow' });
+    const healthy = target({ did: 'did:example:healthy' });
+    const requested: string[] = [];
+    let expireFirstRequest = true;
+    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, {
+      cooldownMs : 1_000,
+      operations : operations({
+        pullPage: async (syncTarget, _shouldContinue, runRemoteRequest) => {
+          await runRemoteRequest(async (signal) => {
+            requested.push(syncTarget.did);
+            if (expireFirstRequest) {
+              expireFirstRequest = false;
+              await new Promise<void>((_resolve, reject) => {
+                signal?.addEventListener('abort', () => { reject(signal.reason); }, { once: true });
+              });
+            }
+          });
+          return {
+            handledCids    : [],
+            handledThrough : token(1),
+            hasMore        : false,
+            kind           : 'committed',
+            quarantined    : 0,
+          };
+        },
+      }),
+    });
+
+    const expired = await pump.run([slow], 'pull', { maxDurationMs: 5 });
+    const recovered = await pump.run([healthy], 'pull', { maxDurationMs: 100 });
+
+    expect(expired).toMatchObject({ budgetExhausted: true, workRemaining: true });
+    expect(requested).toContain(healthy.did);
+    expect(recovered.targets.find(status => status.tenantDid === healthy.did)?.pull.feedCovered).toBe(true);
   });
 
   it('should stop an in-flight HTTP-shaped request at the elapsed-time budget', async () => {

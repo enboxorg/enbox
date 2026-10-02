@@ -1,4 +1,5 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
+import type { PushResult } from '../types/sync.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextPreparedFeedEntry } from './feed-page.js';
 import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
@@ -15,14 +16,15 @@ import { Records } from '@enbox/dwn-sdk-js';
 
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { syncNextDeliveryOutcome } from './delivery-outcome.js';
-import { prepareSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
-import { queryLocalMessageFeed, RemoteApplyPushContext } from '../sync-messages.js';
+import { prepareSyncNextFeedPage, sliceSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
+import { queryLocalMessageFeed, RemoteApplyPushContext, SyncPullAbortedError } from '../sync-messages.js';
 import { syncNextLinkIdentity, syncNextSourceAtOrBefore } from './ledger-key.js';
 
 type ClassifiedPushPage = {
   acknowledged: number;
   blocked?: SyncNextDeliveryOutcome;
   delivery: SyncNextDeliveryInput[];
+  entryCount: number;
   handledWrites: SyncNextHandledWrite[];
   settled: SyncNextSourceReceipt[];
 };
@@ -50,6 +52,7 @@ export class SyncNextPushPage {
   public async consume(
     target: SyncTarget,
     shouldContinue: () => boolean = (): boolean => true,
+    canStartEntry: () => boolean = (): boolean => true,
   ): Promise<SyncNextPushPageResult> {
     if (target.authorization.kind === 'role') {
       throw new Error('SyncNextPushPage: role-authorized targets are pull-only.');
@@ -72,16 +75,20 @@ export class SyncNextPushPage {
       reply,
       target   : `local query for ${target.did} -> ${target.dwnUrl}`,
     });
-    const classified = await this.classifyPage(target, page.entries, shouldContinue);
+    const classified = await this.classifyPage(target, page.entries, shouldContinue, canStartEntry);
     if (classified === undefined || !shouldContinue()) {
+      return { kind: 'aborted' };
+    }
+    const handledPage = sliceSyncNextFeedPage(page, classified.entryCount);
+    if (handledPage === undefined) {
       return { kind: 'aborted' };
     }
 
     const committed = await this._ledger.commitPushPage(link, {
       delivery       : classified.delivery,
-      handledThrough : page.handledThrough,
+      handledThrough : handledPage.handledThrough,
       handledWrites  : classified.handledWrites,
-      pageReceipts   : page.pageReceipts,
+      pageReceipts   : handledPage.pageReceipts,
       settled        : classified.settled,
     });
     if (!committed) {
@@ -91,8 +98,8 @@ export class SyncNextPushPage {
     return {
       ...(classified.blocked === undefined ? {} : { blocked: classified.blocked }),
       acknowledged   : classified.acknowledged,
-      handledThrough : page.handledThrough,
-      hasMore        : !page.drained,
+      handledThrough : handledPage.handledThrough,
+      hasMore        : !handledPage.drained,
       kind           : 'committed',
       retained       : classified.delivery.length,
     };
@@ -115,6 +122,7 @@ export class SyncNextPushPage {
     target: SyncTarget,
     entries: SyncNextPreparedFeedEntry[],
     shouldContinue: () => boolean,
+    canStartEntry: () => boolean,
   ): Promise<ClassifiedPushPage | undefined> {
     const context = new RemoteApplyPushContext({
       agent              : this._agent,
@@ -129,24 +137,38 @@ export class SyncNextPushPage {
     const handledWrites = new Map<string, SyncNextHandledWrite>();
     const settled: SyncNextSourceReceipt[] = [];
     let blocked: SyncNextDeliveryOutcome | undefined;
+    let entryCount = 0;
 
     for (const prepared of entries) {
       const { entry, receipt } = prepared;
       if (!shouldContinue()) {
         return undefined;
       }
+      if (!canStartEntry()) {
+        break;
+      }
       if (blocked !== undefined) {
         delivery.push(deliveryInput(prepared, blocked));
+        entryCount++;
         continue;
       }
 
-      const result = await context.pushFeedEntry(entry, []);
+      let result: PushResult;
+      try {
+        result = await context.pushFeedEntry(entry, []);
+      } catch (error: unknown) {
+        if (error instanceof SyncPullAbortedError && shouldContinue()) {
+          break;
+        }
+        throw error;
+      }
       if (!shouldContinue()) {
         return undefined;
       }
       if (result.succeeded.includes(entry.messageCid)) {
         settled.push(receipt);
         rememberHandledWrite(handledWrites, prepared);
+        entryCount++;
         continue;
       }
 
@@ -159,6 +181,7 @@ export class SyncNextPushPage {
       if (outcome.blockScope !== undefined) {
         blocked = outcome;
       }
+      entryCount++;
     }
 
     const partitioned = partitionCoveredDelivery(delivery, handledWrites);
@@ -169,6 +192,7 @@ export class SyncNextPushPage {
       ...(blocked === undefined ? {} : { blocked }),
       acknowledged,
       delivery      : partitioned.pending,
+      entryCount,
       handledWrites : [...handledWrites.values()],
       settled,
     };

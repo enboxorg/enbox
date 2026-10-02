@@ -61,6 +61,7 @@ type SyncNextWorkOperation<TResult> = (
   target: SyncTarget,
   shouldContinue: () => boolean,
   runRemoteRequest: SyncRemoteRequestRunner,
+  canStartWork?: () => boolean,
 ) => Promise<TResult>;
 
 export type SyncNextWorkPumpOperations = {
@@ -119,10 +120,12 @@ export class SyncNextWorkPump {
         retryOneDeliveryObligation({
           agent: this._agent, ledger: this._ledger, target, shouldContinue, runRemoteRequest,
         }),
-      pullPage: (target, shouldContinue, runRemoteRequest): Promise<SyncNextPullPageResult> =>
-        new SyncNextPullPage(this._agent, this._ledger, runRemoteRequest).consume(target, shouldContinue),
-      pushPage: (target, shouldContinue, runRemoteRequest): Promise<SyncNextPushPageResult> =>
-        new SyncNextPushPage(this._agent, this._ledger, runRemoteRequest).consume(target, shouldContinue),
+      pullPage: (target, shouldContinue, runRemoteRequest, canStartWork): Promise<SyncNextPullPageResult> =>
+        new SyncNextPullPage(this._agent, this._ledger, runRemoteRequest)
+          .consume(target, shouldContinue, canStartWork),
+      pushPage: (target, shouldContinue, runRemoteRequest, canStartWork): Promise<SyncNextPushPageResult> =>
+        new SyncNextPushPage(this._agent, this._ledger, runRemoteRequest)
+          .consume(target, shouldContinue, canStartWork),
       quarantineRetry: (
         target, shouldContinue, runRemoteRequest,
       ): Promise<SyncNextQuarantineRetryResult> => retryOneQuarantinedRoot({
@@ -161,7 +164,7 @@ export class SyncNextWorkPump {
     return this.drain(options);
   }
 
-  /** Drain eligible coalesced work. Concurrent callers join the active owner. */
+  /** Drain eligible coalesced work. Concurrent callers wait, then drain trailing work. */
   public drain(options: SyncNextWorkPumpRunOptions = {}): Promise<SyncNextWorkPumpResult> {
     if (this._drain !== undefined) {
       return this._drain.then(
@@ -189,21 +192,15 @@ export class SyncNextWorkPump {
 
   private async drainOwned(budget: WorkBudget): Promise<SyncNextWorkPumpResult> {
     await this.seedSparseWork();
-    await this.drainRounds(budget);
+    while (this.hasEligibleWork() && budget.canStartWork()) {
+      const work = this.takeRound();
+      if (work.length === 0) {
+        break;
+      }
+      // Rounds are intentionally sequential: each observes prior ledger and cooldown results.
+      await Promise.all(work.map(({ state, kind }) => this.runWork(state, kind, budget))); // NOSONAR
+    }
     return this.buildResult(budget);
-  }
-
-  /** Run one concurrent endpoint round at a time so later rounds observe its results. */
-  private async drainRounds(budget: WorkBudget): Promise<void> {
-    if (!this.hasEligibleWork() || !budget.canStartWork()) {
-      return;
-    }
-    const work = this.takeRound();
-    if (work.length === 0) {
-      return;
-    }
-    await Promise.all(work.map(({ state, kind }) => this.runWork(state, kind, budget)));
-    return this.drainRounds(budget);
   }
 
   private hasEligibleWork(): boolean {
@@ -244,18 +241,21 @@ export class SyncNextWorkPump {
     const endpoint = normalizeDwnEndpoint(state.target.dwnUrl);
     const shouldContinue = (): boolean => !budget.cancelled;
     const runRemoteRequest = this.requestRunner(endpoint, budget);
+    const canStartWork = kind === 'pullPage'
+      ? (): boolean => budget.canStartLocalWork()
+      : (): boolean => budget.canStartWork();
 
     try {
       await this.ensureLink(state.target);
       switch (kind) {
         case 'pullPage':
-          await this.runPullPage(state, shouldContinue, runRemoteRequest);
+          await this.runPullPage(state, shouldContinue, runRemoteRequest, canStartWork);
           break;
         case 'quarantine':
           await this.runQuarantine(state, shouldContinue, runRemoteRequest);
           break;
         case 'pushPage':
-          await this.runPushPage(state, shouldContinue, runRemoteRequest);
+          await this.runPushPage(state, shouldContinue, runRemoteRequest, canStartWork);
           break;
         case 'delivery':
           await this.runDelivery(state, shouldContinue, runRemoteRequest);
@@ -276,8 +276,9 @@ export class SyncNextWorkPump {
     state: TargetState,
     shouldContinue: () => boolean,
     runRemoteRequest: SyncRemoteRequestRunner,
+    canStartWork: () => boolean,
   ): Promise<void> {
-    const result = await this._operations.pullPage(state.target, shouldContinue, runRemoteRequest);
+    const result = await this._operations.pullPage(state.target, shouldContinue, runRemoteRequest, canStartWork);
     if (result.kind !== 'committed') {
       if (result.kind === 'aborted') {
         this.enqueue(state, 'pullPage');
@@ -331,8 +332,9 @@ export class SyncNextWorkPump {
     state: TargetState,
     shouldContinue: () => boolean,
     runRemoteRequest: SyncRemoteRequestRunner,
+    canStartWork: () => boolean,
   ): Promise<void> {
-    const result = await this._operations.pushPage(state.target, shouldContinue, runRemoteRequest);
+    const result = await this._operations.pushPage(state.target, shouldContinue, runRemoteRequest, canStartWork);
     if (result.kind !== 'committed') {
       if (result.kind === 'aborted') {
         this.enqueue(state, 'pushPage');
@@ -386,6 +388,9 @@ export class SyncNextWorkPump {
           return await request(signal);
         } catch (error: unknown) {
           budget.observeRequestError(signal);
+          if (signal.aborted) {
+            throw new SyncPullAbortedError();
+          }
           if (this.isEndpointFailure(error)) {
             this.coolEndpoint(endpoint);
           }
@@ -554,6 +559,9 @@ export class SyncNextWorkPump {
   }
 
   private nextRunAt(): number | undefined {
+    if (this.hasEligibleWork()) {
+      return this.now();
+    }
     const times = [...this._endpointCooldowns.values()];
     for (const state of this._states.values()) {
       times.push(...Object.values(state.notBefore));
@@ -593,7 +601,8 @@ class WorkBudget {
   }
 
   public get exhausted(): boolean {
-    return this._exhausted;
+    return this._exhausted || (!this.cancelled &&
+      (this._requests >= this.maxRequests || this.now() >= this.deadline));
   }
 
   public get requests(): number {
@@ -601,10 +610,21 @@ class WorkBudget {
   }
 
   public canStartWork(): boolean {
+    if (!this.canStartLocalWork()) {
+      return false;
+    }
+    if (this._requests >= this.maxRequests) {
+      this._exhausted = true;
+      return false;
+    }
+    return true;
+  }
+
+  public canStartLocalWork(): boolean {
     if (this.cancelled) {
       return false;
     }
-    if (this._requests >= this.maxRequests || this.now() >= this.deadline) {
+    if (this.now() >= this.deadline) {
       this._exhausted = true;
       return false;
     }

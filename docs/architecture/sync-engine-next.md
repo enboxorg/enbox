@@ -137,11 +137,12 @@ It reuses the dependency-aware remote apply path and advances the push token
 only after every returned receipt is acknowledged or retained as an outbound
 obligation. A record-local failure leaves that receipt pending while independent
 entries continue; a link-wide or endpoint-wide failure stops further requests
-and retains the rest of the page. When a current RecordsWrite is handled, the
-same atomic commit also settles older same-record write obligations through
-that source position for this exact link. A RecordsDelete does not provide that
-coverage because the newest pre-delete write can still define tombstone
-visibility.
+and retains the rest of the page. If a pump budget ends first, the page commits
+only its contiguous classified prefix and the next run resumes at the first
+unattempted receipt. When a current RecordsWrite is handled, the same atomic
+commit also settles older same-record write obligations through that source
+position for this exact link. A RecordsDelete does not provide that coverage
+because the newest pre-delete write can still define tombstone visibility.
 
 ## One-row delivery retry
 
@@ -175,8 +176,18 @@ Every remote feed query, body/dependency read, and replicated apply enters one
 shared keyed endpoint permit. The permit covers the logical RPC, including any
 transport retry or fallback, and is released when the RPC returns; a returned
 body stream does not retain it. A run also has request and elapsed-time budgets.
-Budget or caller cancellation prevents new requests while leaving committed
-progress and queued work available to the next run.
+The elapsed boundary is checked before each new feed root; an active root is
+allowed to finish atomically. A stopped page commits only a contiguous prefix,
+leaving its tail available from the resulting checkpoint. Budget or caller
+cancellation prevents new requests while leaving committed progress and queued
+work available to the next run.
+
+Gated RPCs receive an abort signal so an in-flight HTTP request cannot outlive
+the run deadline. In the current RPC client, supplying a signal is an HTTP-only
+caller contract, so catch-up requests do not use an otherwise eligible pooled
+socket in this initial slice. The transport routing tests make that tradeoff
+explicit; socket subscriptions still provide wakes. Removing it requires
+cancellable socket request semantics rather than silently dropping the signal.
 
 Endpoint-wide transport/service failures open one fixed in-memory cooldown for
 that normalized endpoint. Quota, authorization, and record-specific failures

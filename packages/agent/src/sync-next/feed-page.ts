@@ -37,6 +37,31 @@ export type SyncNextPreparedFeedPage = {
   pageReceipts: SyncNextSourceReceipt[];
 };
 
+/** Return a safely checkpointable prefix, or no page when no entry was handled. */
+export function sliceSyncNextFeedPage(
+  page: SyncNextPreparedFeedPage,
+  entryCount: number,
+): SyncNextPreparedFeedPage | undefined {
+  if (!Number.isSafeInteger(entryCount) || entryCount < 0 || entryCount > page.entries.length) {
+    throw new RangeError('SyncNextFeedPage: handled entry count is outside the prepared page.');
+  }
+  if (entryCount === page.entries.length) {
+    return page;
+  }
+  if (entryCount === 0) {
+    return undefined;
+  }
+
+  const entries = page.entries.slice(0, entryCount);
+  const pageReceipts = page.pageReceipts.slice(0, entryCount);
+  return {
+    drained        : false,
+    entries,
+    handledThrough : pageReceipts[entryCount - 1].source,
+    pageReceipts,
+  };
+}
+
 /** Validate one feed page and bind every verified message to its exact source receipt. */
 export async function prepareSyncNextFeedPage({
   label,

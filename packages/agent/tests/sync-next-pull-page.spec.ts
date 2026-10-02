@@ -239,6 +239,50 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('2');
   });
 
+  it('should finish the dependency group needed for a contiguous budgeted prefix', async () => {
+    const parent = dependencyRecord('budget-parent');
+    const child = dependencyRecord('budget-child', 'budget-parent');
+    const childEntry = await feedEntry(child, 1);
+    const parentEntry = await feedEntry(parent, 2);
+    const fixture = fakeAgent(page([childEntry, parentEntry]));
+    let budgetAvailable = true;
+    fixture.apply.callsFake(async (): Promise<{ kind: 'Applied' }> => {
+      budgetAvailable = false;
+      return { kind: 'Applied' };
+    });
+    await createLink();
+
+    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(
+      target(),
+      (): boolean => true,
+      (): boolean => budgetAvailable,
+    );
+
+    expect(result).toMatchObject({ handledThrough: { position: '2' }, kind: 'committed' });
+    expect(fixture.apply.calledTwice).toBe(true);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('2');
+  });
+
+  it('should commit only the contiguous roots started before the local-work deadline', async () => {
+    const entries = await Promise.all([
+      feedEntry(protocolMessage('budget-first'), 1),
+      feedEntry(protocolMessage('budget-second'), 2),
+      feedEntry(protocolMessage('budget-third'), 3),
+    ]);
+    const fixture = fakeAgent(page(entries));
+    await createLink();
+
+    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(
+      target(),
+      (): boolean => true,
+      (): boolean => fixture.apply.callCount === 0,
+    );
+
+    expect(result).toMatchObject({ handledThrough: { position: '1' }, hasMore: true, kind: 'committed' });
+    expect(fixture.apply.calledOnce).toBe(true);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+  });
+
   it('should consume one non-drained page and report trailing work', async () => {
     const fixture = fakeAgent(page([await feedEntry(protocolMessage('first'), 1)], false));
     await createLink();

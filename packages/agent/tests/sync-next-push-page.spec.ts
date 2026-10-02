@@ -9,6 +9,7 @@ import sinon from 'sinon';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
+import { SyncPullAbortedError } from '../src/sync-messages.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { Encoder, Jws, Message, RecordsWrite, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
@@ -472,6 +473,33 @@ describe('SyncNextPushPage', () => {
     });
     expect(fixture.query.calledOnce).toBe(true);
     expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough?.position).toBe('1');
+  });
+
+  it('should commit a handled prefix when the request budget stops before the page tail', async () => {
+    const entries = await Promise.all([
+      feedEntry(protocolMessage('budget-first'), 1),
+      feedEntry(protocolMessage('budget-second'), 2),
+      feedEntry(protocolMessage('budget-third'), 3),
+    ]);
+    const fixture = fakeAgent(page(entries));
+    let remainingRequests = 1;
+    await createLink();
+
+    const result = await new SyncNextPushPage(
+      fixture.agent,
+      ledger,
+      async (request) => {
+        if (remainingRequests-- === 0) {
+          throw new SyncPullAbortedError();
+        }
+        return request();
+      },
+    ).consume(target());
+
+    expect(result).toMatchObject({ handledThrough: { position: '1' }, hasMore: true, kind: 'committed' });
+    expect(fixture.apply.calledOnce).toBe(true);
+    expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough?.position).toBe('1');
+    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
 
   it('should not query when its link is absent or its caller is already stale', async () => {

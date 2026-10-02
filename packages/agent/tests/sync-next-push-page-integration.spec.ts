@@ -153,6 +153,53 @@ describe('SyncNext push-page integration', () => {
     expect(await DataStream.toBytes(remoteRead.reply.entry!.data!)).toEqual(data);
   });
 
+  it('should checkpoint a budgeted page prefix and deliver its tail on the next run', async () => {
+    const budgetProtocol = { ...protocol, protocol: 'https://sync-next-push.example/budget-prefix' };
+    expect((await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: budgetProtocol },
+    })).reply.status.code).toBe(202);
+    for (let index = 0; index < 33; index++) {
+      expect((await harness.agent.dwn.processRequest({
+        author        : tenantDid,
+        target        : tenantDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'application/octet-stream',
+          protocol     : budgetProtocol.protocol,
+          protocolPath : 'note',
+          schema       : budgetProtocol.types.note.schema,
+        },
+        dataStream: new Blob([`note-${index}`]),
+      })).reply.status.code).toBe(202);
+    }
+
+    const syncTarget = await createSyncTarget(tenantDid, budgetProtocol.protocol);
+    const appliedCids: string[] = [];
+    const originalApply = harness.agent.rpc.applyReplicatedMessage.bind(harness.agent.rpc);
+    harness.agent.rpc.applyReplicatedMessage = async (request): Promise<ReplicationApplyResult> => {
+      appliedCids.push(await Message.getCid(request.message));
+      return originalApply(request);
+    };
+    try {
+      const pump = new SyncNextWorkPump(harness.agent, ledger, { maxDurationMs: 30_000 });
+      const first = await pump.run([syncTarget], 'push');
+      expect(first).toMatchObject({ budgetExhausted: true, remoteRequests: 32, workRemaining: true });
+      expect(first.targets[0].push.feedCovered).toBe(false);
+
+      const second = await pump.run([syncTarget], 'push');
+      expect(second).toMatchObject({ budgetExhausted: false, remoteRequests: 2, workRemaining: false });
+      expect(second.targets[0].push).toEqual({ enabled: true, feedCovered: true, pendingDelivery: 0 });
+    } finally {
+      harness.agent.rpc.applyReplicatedMessage = originalApply;
+    }
+
+    expect(appliedCids).toHaveLength(34);
+    expect(new Set(appliedCids).size).toBe(34);
+  }, 30_000);
+
   it('should hydrate a new empty remote with a protocol and detached record body', async () => {
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
