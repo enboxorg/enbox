@@ -140,12 +140,12 @@ export class SyncNextPushPage {
     let entryCount = 0;
 
     for (const prepared of entries) {
-      const { entry, receipt } = prepared;
+      const { entry } = prepared;
       if (!shouldContinue()) {
         return undefined;
       }
       if (!canStartEntry()) {
-        break;
+        return finishClassifiedPushPage(blocked, delivery, handledWrites, settled, entryCount);
       }
       if (blocked !== undefined) {
         delivery.push(deliveryInput(prepared, blocked));
@@ -153,51 +153,78 @@ export class SyncNextPushPage {
         continue;
       }
 
-      let result: PushResult;
-      try {
-        result = await context.pushFeedEntry(entry, []);
-      } catch (error: unknown) {
-        if (error instanceof SyncPullAbortedError && shouldContinue()) {
-          break;
-        }
-        throw error;
+      const result = await SyncNextPushPage.pushWithinBudget(context, entry);
+      if (result === undefined) {
+        return shouldContinue()
+          ? finishClassifiedPushPage(blocked, delivery, handledWrites, settled, entryCount)
+          : undefined;
       }
       if (!shouldContinue()) {
         return undefined;
       }
-      if (result.succeeded.includes(entry.messageCid)) {
-        settled.push(receipt);
-        rememberHandledWrite(handledWrites, prepared);
-        entryCount++;
-        continue;
-      }
-
-      const failure = result.failed.find(candidate => candidate.cid === entry.messageCid);
-      if (failure === undefined) {
-        throw new Error(`SyncNextPushPage: push returned no disposition for ${entry.messageCid}.`);
-      }
-      const outcome = syncNextDeliveryOutcome(failure);
-      delivery.push(deliveryInput(prepared, outcome));
-      if (outcome.blockScope !== undefined) {
-        blocked = outcome;
-      }
+      blocked = SyncNextPushPage.recordDisposition(prepared, result, delivery, handledWrites, settled);
       entryCount++;
     }
 
-    const partitioned = partitionCoveredDelivery(delivery, handledWrites);
-    const acknowledged = settled.length;
-    settled.push(...partitioned.covered);
-
-    return {
-      ...(blocked === undefined ? {} : { blocked }),
-      acknowledged,
-      delivery      : partitioned.pending,
-      entryCount,
-      handledWrites : [...handledWrites.values()],
-      settled,
-    };
+    return finishClassifiedPushPage(blocked, delivery, handledWrites, settled, entryCount);
   }
 
+  private static async pushWithinBudget(
+    context: RemoteApplyPushContext,
+    entry: SyncNextPreparedFeedEntry['entry'],
+  ): Promise<PushResult | undefined> {
+    try {
+      return await context.pushFeedEntry(entry, []);
+    } catch (error: unknown) {
+      if (error instanceof SyncPullAbortedError) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private static recordDisposition(
+    prepared: SyncNextPreparedFeedEntry,
+    result: PushResult,
+    delivery: SyncNextDeliveryInput[],
+    handledWrites: Map<string, SyncNextHandledWrite>,
+    settled: SyncNextSourceReceipt[],
+  ): SyncNextDeliveryOutcome | undefined {
+    if (result.succeeded.includes(prepared.entry.messageCid)) {
+      settled.push(prepared.receipt);
+      rememberHandledWrite(handledWrites, prepared);
+      return undefined;
+    }
+    const failure = result.failed.find(candidate => candidate.cid === prepared.entry.messageCid);
+    if (failure === undefined) {
+      throw new Error(`SyncNextPushPage: push returned no disposition for ${prepared.entry.messageCid}.`);
+    }
+    const outcome = syncNextDeliveryOutcome(failure);
+    delivery.push(deliveryInput(prepared, outcome));
+    return outcome.blockScope === undefined ? undefined : outcome;
+  }
+
+}
+
+function finishClassifiedPushPage(
+  blocked: SyncNextDeliveryOutcome | undefined,
+  delivery: SyncNextDeliveryInput[],
+  handledWrites: Map<string, SyncNextHandledWrite>,
+  settled: SyncNextSourceReceipt[],
+  entryCount: number,
+): ClassifiedPushPage {
+  const partitioned = partitionCoveredDelivery(delivery, handledWrites);
+  const acknowledged = settled.length;
+  settled.push(...partitioned.covered);
+
+  return {
+    ...(blocked === undefined ? {} : { blocked }),
+    acknowledged,
+    delivery      : partitioned.pending,
+    entryCount,
+    handledWrites : [...handledWrites.values()],
+    settled,
+  };
 }
 
 function deliveryInput(

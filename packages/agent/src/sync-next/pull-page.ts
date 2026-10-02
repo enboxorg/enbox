@@ -161,29 +161,10 @@ export class SyncNextPullPage {
       dispositions.set(receipt.source.position, outcome.kind === 'admitted'
         ? { handledCids: outcome.handledCids, kind: 'settled', receipt }
         : { input: { entry, ...receipt }, kind: 'quarantine' });
-      while (entryCount < entries.length && dispositions.has(entries[entryCount].receipt.source.position)) {
-        entryCount++;
-      }
+      entryCount = classifiedPullPrefixLength(entries, dispositions, entryCount);
     }
 
-    const classified: ClassifiedPage = {
-      entryCount,
-      handledCids : new Set<string>(),
-      quarantine  : [],
-      settled     : [],
-    };
-    for (const prepared of entries.slice(0, entryCount)) {
-      const disposition = dispositions.get(prepared.receipt.source.position)!;
-      if (disposition.kind === 'settled') {
-        classified.settled.push(disposition.receipt);
-        for (const messageCid of disposition.handledCids) {
-          classified.handledCids.add(messageCid);
-        }
-      } else {
-        classified.quarantine.push(disposition.input);
-      }
-    }
-    return classified;
+    return buildClassifiedPullPage(entries, dispositions, entryCount);
   }
 
   private static async prepareAdmissionEntries(
@@ -242,4 +223,41 @@ export class SyncNextPullPage {
       );
     }
   }
+}
+
+function classifiedPullPrefixLength(
+  entries: readonly SyncNextPreparedFeedEntry[],
+  dispositions: ReadonlyMap<string, PullDisposition>,
+  start: number,
+): number {
+  let entryCount = start;
+  while (entryCount < entries.length && dispositions.has(entries[entryCount].receipt.source.position)) {
+    entryCount++;
+  }
+  return entryCount;
+}
+
+function buildClassifiedPullPage(
+  entries: readonly SyncNextPreparedFeedEntry[],
+  dispositions: ReadonlyMap<string, PullDisposition>,
+  entryCount: number,
+): ClassifiedPage {
+  const classified: ClassifiedPage = {
+    entryCount,
+    handledCids : new Set<string>(),
+    quarantine  : [],
+    settled     : [],
+  };
+  for (const prepared of entries.slice(0, entryCount)) {
+    const disposition = dispositions.get(prepared.receipt.source.position)!;
+    if (disposition.kind === 'quarantine') {
+      classified.quarantine.push(disposition.input);
+      continue;
+    }
+    classified.settled.push(disposition.receipt);
+    for (const messageCid of disposition.handledCids) {
+      classified.handledCids.add(messageCid);
+    }
+  }
+  return classified;
 }
