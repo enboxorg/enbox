@@ -14,9 +14,11 @@ import { retryOneDeliveryObligation } from '../src/sync-next/delivery-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
+import { SyncNextWorkPump } from '../src/sync-next/work-pump.js';
 import { TestAgent } from './utils/test-agent.js';
 import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/sync.js';
 
+const ledgerPath = '__TESTDATA__/sync-next-push-page-integration/ledger';
 const remoteEndpoint = 'http://localhost:9998/dwn';
 const protocol: ProtocolDefinition = {
   protocol  : 'https://sync-next-push.example/notes',
@@ -78,7 +80,7 @@ describe('SyncNext push-page integration', () => {
       didResolver : harness.agent.did,
     });
     harness.agent.rpc = createLocalDwnRpc(remoteDwn);
-    db = new Level<string, string>('__TESTDATA__/sync-next-push-page-integration/ledger');
+    db = new Level<string, string>(ledgerPath);
     ledger = new SyncNextLedgerStore(db, 'sync-next-push-page-integration');
     await ledger.clear();
   });
@@ -89,6 +91,66 @@ describe('SyncNext push-page integration', () => {
     await remoteDwn?.close();
     await harness?.clearStorage();
     await harness?.closeStorage();
+  });
+
+  it('should resume an outbound obligation after its ledger reopens', async () => {
+    const restartProtocol = { ...protocol, protocol: 'https://sync-next-push.example/work-pump-restart' };
+    expect((await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: restartProtocol },
+    })).reply.status.code).toBe(202);
+    const data = new TextEncoder().encode('restart delivery');
+    const write = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        dataFormat   : 'application/octet-stream',
+        protocol     : restartProtocol.protocol,
+        protocolPath : 'note',
+        schema       : restartProtocol.types.note.schema,
+      },
+      dataStream: new Blob([data]),
+    });
+    expect(write.reply.status.code).toBe(202);
+    const writeCid = await Message.getCid(write.message!);
+    const syncTarget = await createSyncTarget(tenantDid, restartProtocol.protocol);
+
+    const originalApply = harness.agent.rpc.applyReplicatedMessage.bind(harness.agent.rpc);
+    let failed = false;
+    harness.agent.rpc.applyReplicatedMessage = async (request): Promise<ReplicationApplyResult> => {
+      if (!failed && await Message.getCid(request.message) === writeCid) {
+        failed = true;
+        throw new TypeError('temporary endpoint failure');
+      }
+      return originalApply(request);
+    };
+    try {
+      const first = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'push');
+      expect(first.remoteRequests).toBe(2);
+      expect(first.targets[0].push).toEqual({ enabled: true, feedCovered: true, pendingDelivery: 1 });
+      expect(first.nextRunAt).toBeDefined();
+    } finally {
+      harness.agent.rpc.applyReplicatedMessage = originalApply;
+    }
+
+    await db.close();
+    db = new Level<string, string>(ledgerPath);
+    ledger = new SyncNextLedgerStore(db, 'sync-next-push-page-integration');
+    const resumed = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'push');
+
+    expect(resumed.remoteRequests).toBe(1);
+    expect(resumed.targets[0].push).toEqual({ enabled: true, feedCovered: true, pendingDelivery: 0 });
+    const remoteRead = await harness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: write.message!.recordId } },
+    });
+    expect(remoteRead.reply.status.code).toBe(200);
+    expect(await DataStream.toBytes(remoteRead.reply.entry!.data!)).toEqual(data);
   });
 
   it('should hydrate a new empty remote with a protocol and detached record body', async () => {

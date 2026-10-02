@@ -15,6 +15,7 @@ import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
 import { SyncNextPullPage } from '../src/sync-next/pull-page.js';
+import { SyncNextWorkPump } from '../src/sync-next/work-pump.js';
 import { TestAgent } from './utils/test-agent.js';
 import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/sync.js';
 
@@ -287,9 +288,78 @@ describe('SyncNext pull and quarantine retry integration', () => {
     ledger = new SyncNextLedgerStore(db, 'sync-next-pull-page-integration');
     expect(await ledger.getQuarantineForLink(link)).toHaveLength(1);
 
-    expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target }))
-      .toEqual({ kind: 'settled', appliedEntries: [] });
-    expect(send.notCalled).toBe(true);
+    const resumed = await new SyncNextWorkPump(harness.agent, ledger).run([target], 'pull');
+    expect(resumed.targets[0].pull).toMatchObject({
+      error             : 'source offline',
+      feedCovered       : false,
+      pendingQuarantine : 0,
+    });
+    expect(resumed.workRemaining).toBe(true);
+    expect(send.calledOnce).toBe(true);
     expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+  });
+
+  it('should recover missing data while an independent record progresses', async () => {
+    const pumpProtocol = { ...protocol, protocol: 'https://sync-next.example/work-pump' };
+    expect((await harness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: pumpProtocol },
+    })).reply.status.code).toBe(202);
+
+    const largeBytes = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(5);
+    const large = await harness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        dataFormat   : 'text/plain',
+        protocol     : pumpProtocol.protocol,
+        protocolPath : 'note',
+        schema       : pumpProtocol.types.note.schema,
+      },
+      dataStream: new Blob([largeBytes]),
+    });
+    expect(large.reply.status.code).toBe(202);
+    const small = await harness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        dataFormat   : 'text/plain',
+        protocol     : pumpProtocol.protocol,
+        protocolPath : 'note',
+        schema       : pumpProtocol.types.note.schema,
+      },
+      dataStream: new Blob(['independent']),
+    });
+    expect(small.reply.status.code).toBe(202);
+
+    const scope = { kind: 'protocolSet' as const, protocols: [pumpProtocol.protocol] as [string] };
+    const syncTarget: SyncTarget = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
+      did                : tenantDid,
+      dwnUrl             : remoteEndpoint,
+      projectionId       : await computeProjectionId(tenantDid, scope),
+      scope,
+    };
+    const result = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'pull');
+
+    expect(result).toMatchObject({
+      remoteRequests : 2,
+      targets        : [{ pull: { feedCovered: true, pendingQuarantine: 0 } }],
+    });
+    for (const recordId of [large.message!.recordId, small.message!.recordId]) {
+      const { reply } = await harness.agent.dwn.processRequest({
+        author        : tenantDid,
+        target        : tenantDid,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId } },
+      });
+      expect(reply.status.code).toBe(200);
+    }
+    expect(await ledger.getQuarantineForLogicalTarget(tenantDid, syncTarget.projectionId)).toEqual([]);
   });
 });
