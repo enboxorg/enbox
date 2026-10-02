@@ -2,25 +2,27 @@ import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextPreparedFeedEntry } from './feed-page.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
-import type { MessagesQueryReply, ProgressToken } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesQueryReply, ProgressToken } from '@enbox/dwn-sdk-js';
 import type {
   SyncNextDeliveryInput,
   SyncNextDeliveryOutcome,
-  SyncNextHandledRecord,
+  SyncNextHandledWrite,
   SyncNextSourceReceipt,
 } from './types.js';
+
+import { Records } from '@enbox/dwn-sdk-js';
 
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { syncNextDeliveryOutcome } from './delivery-outcome.js';
 import { prepareSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
-import { queryLocalMessageFeed, recordIdForRecordsMessage, RemoteApplyPushContext } from '../sync-messages.js';
+import { queryLocalMessageFeed, RemoteApplyPushContext } from '../sync-messages.js';
 import { syncNextLinkIdentity, syncNextSourceAtOrBefore } from './ledger-key.js';
 
 type ClassifiedPushPage = {
   acknowledged: number;
   blocked?: SyncNextDeliveryOutcome;
   delivery: SyncNextDeliveryInput[];
-  handledRecords: SyncNextHandledRecord[];
+  handledWrites: SyncNextHandledWrite[];
   settled: SyncNextSourceReceipt[];
 };
 
@@ -76,7 +78,7 @@ export class SyncNextPushPage {
     const committed = await this._ledger.commitPushPage(link, {
       delivery       : classified.delivery,
       handledThrough : page.handledThrough,
-      handledRecords : classified.handledRecords,
+      handledWrites  : classified.handledWrites,
       pageReceipts   : page.pageReceipts,
       settled        : classified.settled,
     });
@@ -121,7 +123,7 @@ export class SyncNextPushPage {
       permissionsApi     : this._agent.permissions,
     });
     const delivery: SyncNextDeliveryInput[] = [];
-    const handledRecords = new Map<string, SyncNextHandledRecord>();
+    const handledWrites = new Map<string, SyncNextHandledWrite>();
     const settled: SyncNextSourceReceipt[] = [];
     let blocked: SyncNextDeliveryOutcome | undefined;
 
@@ -141,7 +143,7 @@ export class SyncNextPushPage {
       }
       if (result.succeeded.includes(entry.messageCid)) {
         settled.push(receipt);
-        rememberHandledRecord(handledRecords, prepared);
+        rememberHandledWrite(handledWrites, prepared);
         continue;
       }
 
@@ -156,15 +158,15 @@ export class SyncNextPushPage {
       }
     }
 
-    const partitioned = partitionCoveredDelivery(delivery, handledRecords);
+    const partitioned = partitionCoveredDelivery(delivery, handledWrites);
     const acknowledged = settled.length;
     settled.push(...partitioned.covered);
 
     return {
       ...(blocked === undefined ? {} : { blocked }),
       acknowledged,
-      delivery       : partitioned.pending,
-      handledRecords : [...handledRecords.values()],
+      delivery      : partitioned.pending,
+      handledWrites : [...handledWrites.values()],
       settled,
     };
   }
@@ -175,39 +177,43 @@ function deliveryInput(
   prepared: SyncNextPreparedFeedEntry,
   outcome: SyncNextDeliveryOutcome,
 ): SyncNextDeliveryInput {
-  const recordId = recordIdForRecordsMessage(prepared.message);
+  const writeRecordId = recordIdForRecordsWrite(prepared.message);
   return {
     ...prepared.receipt,
     outcome,
-    ...(recordId === undefined ? {} : { recordId }),
+    ...(writeRecordId === undefined ? {} : { writeRecordId }),
     wasLatestBaseState: prepared.entry.isLatestBaseState,
   };
 }
 
-function rememberHandledRecord(
-  handledRecords: Map<string, SyncNextHandledRecord>,
+function rememberHandledWrite(
+  handledWrites: Map<string, SyncNextHandledWrite>,
   prepared: SyncNextPreparedFeedEntry,
 ): void {
   const recordId = prepared.entry.isLatestBaseState
-    ? recordIdForRecordsMessage(prepared.message)
+    ? recordIdForRecordsWrite(prepared.message)
     : undefined;
   if (recordId === undefined) {
     return;
   }
-  const previous = handledRecords.get(recordId);
+  const previous = handledWrites.get(recordId);
   if (previous === undefined || syncNextSourceAtOrBefore(previous.receipt.source, prepared.receipt.source)) {
-    handledRecords.set(recordId, { recordId, receipt: prepared.receipt });
+    handledWrites.set(recordId, { recordId, receipt: prepared.receipt });
   }
+}
+
+function recordIdForRecordsWrite(message: GenericMessage): string | undefined {
+  return Records.isRecordsWrite(message) ? message.recordId : undefined;
 }
 
 function partitionCoveredDelivery(
   delivery: SyncNextDeliveryInput[],
-  handledRecords: ReadonlyMap<string, SyncNextHandledRecord>,
+  handledWrites: ReadonlyMap<string, SyncNextHandledWrite>,
 ): { covered: SyncNextSourceReceipt[]; pending: SyncNextDeliveryInput[] } {
   const covered: SyncNextSourceReceipt[] = [];
   const pending: SyncNextDeliveryInput[] = [];
   for (const input of delivery) {
-    const handled = input.recordId === undefined ? undefined : handledRecords.get(input.recordId);
+    const handled = input.writeRecordId === undefined ? undefined : handledWrites.get(input.writeRecordId);
     if (handled !== undefined && syncNextSourceAtOrBefore(input.source, handled.receipt.source)) {
       covered.push(input);
     } else {

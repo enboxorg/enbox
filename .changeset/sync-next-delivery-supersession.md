@@ -2,4 +2,4 @@
 "@enbox/agent": patch
 ---
 
-Settle older sync-next delivery receipts after a newer current record state is handled by the same endpoint.
+Settle older sync-next write receipts after a newer current write is handled by the same endpoint.

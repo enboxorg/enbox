@@ -8,9 +8,8 @@ import { Level } from 'level';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { Message, Records, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
-import { recordIdForRecordsMessage } from '../src/sync-messages.js';
 import { retryOneDeliveryObligation } from '../src/sync-next/delivery-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/ledger-key.js';
@@ -93,11 +92,11 @@ describe('retryOneDeliveryObligation', () => {
     });
     const delivery = await Promise.all(messages.map(async (message, index) => {
       const messageCid = await Message.getCid(message);
-      const recordId = recordIdForRecordsMessage(message);
+      const writeRecordId = Records.isRecordsWrite(message) ? message.recordId : undefined;
       return {
         messageCid,
         outcome : { reason: 'transport' as const },
-        ...(recordId === undefined ? {} : { recordId }),
+        ...(writeRecordId === undefined ? {} : { writeRecordId }),
         source  : token(index + 1, messageCid),
         wasLatestBaseState,
       };
@@ -105,7 +104,7 @@ describe('retryOneDeliveryObligation', () => {
     expect(await ledger.commitPushPage(link, {
       delivery,
       handledThrough : delivery.at(-1)!.source,
-      handledRecords : [],
+      handledWrites  : [],
       pageReceipts   : delivery,
       settled        : [],
     })).toBe(true);
@@ -241,7 +240,7 @@ describe('retryOneDeliveryObligation', () => {
     expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
   });
 
-  it('should settle an unreadable write after a newer current record mutation is delivered', async () => {
+  it('should not let a current delete settle an older unreadable write', async () => {
     const initial = await TestDataGenerator.generateRecordsWrite();
     const recordsDelete = await TestDataGenerator.generateRecordsDelete({
       author   : initial.author,
@@ -257,7 +256,10 @@ describe('retryOneDeliveryObligation', () => {
     });
     expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
       .toEqual({ kind: 'settled' });
-    expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+    expect(await ledger.getDeliveryForLink(link)).toMatchObject([{
+      messageCid    : await Message.getCid(initial.message),
+      writeRecordId : initial.message.recordId,
+    }]);
     expect(fixture.apply.calledOnce).toBe(true);
   });
 

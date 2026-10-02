@@ -2,7 +2,7 @@ import type { Dwn, ProtocolDefinition, ReplicationApplyResult } from '@enbox/dwn
 
 import { Level } from 'level';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { DataStream, DwnConstant, Message, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Message, Time } from '@enbox/dwn-sdk-js';
 
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
@@ -378,5 +378,97 @@ describe('SyncNext push-page integration', () => {
     expect(remoteRead.reply.status.code).toBe(200);
     expect(await DataStream.toBytes(remoteRead.reply.entry!.data!)).toEqual(latestData);
     expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+  });
+
+  it('should retain a pre-delete write that the remote tombstone still needs', async () => {
+    const deleteProtocol = { ...protocol, protocol: 'https://sync-next-push.example/delete-visibility' };
+    expect((await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: deleteProtocol },
+    })).reply.status.code).toBe(202);
+
+    const data = new TextEncoder().encode('same note body');
+    const initial = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        dataFormat   : 'application/octet-stream',
+        protocol     : deleteProtocol.protocol,
+        protocolPath : 'note',
+        schema       : deleteProtocol.types.note.schema,
+        tags         : { team: 'red' },
+      },
+      dataStream: new Blob([data]),
+    });
+    expect(initial.reply.status.code).toBe(202);
+
+    const syncTarget = await createSyncTarget(tenantDid, deleteProtocol.protocol);
+    const link = await ledger.getOrCreateLink({
+      ...syncNextLinkIdentity(syncTarget),
+      authorization : syncTarget.authorization,
+      scope         : syncTarget.scope,
+    });
+    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+      .toMatchObject({ kind: 'committed', retained: 0 });
+
+    await Time.minimalSleep();
+    const update = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        dataFormat   : 'application/octet-stream',
+        dateCreated  : initial.message!.descriptor.dateCreated,
+        protocol     : deleteProtocol.protocol,
+        protocolPath : 'note',
+        recordId     : initial.message!.recordId,
+        schema       : deleteProtocol.types.note.schema,
+        tags         : { team: 'blue' },
+      },
+      dataStream: new Blob([data]),
+    });
+    expect(update.reply.status.code).toBe(202);
+    const updateCid = await Message.getCid(update.message!);
+
+    const originalApply = harness.agent.rpc.applyReplicatedMessage.bind(harness.agent.rpc);
+    harness.agent.rpc.applyReplicatedMessage = async (request): Promise<ReplicationApplyResult> => {
+      if (await Message.getCid(request.message) === updateCid) {
+        throw new TypeError('temporary update delivery failure');
+      }
+      return originalApply(request);
+    };
+    try {
+      expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+        .toMatchObject({ kind: 'committed', retained: 1 });
+    } finally {
+      harness.agent.rpc.applyReplicatedMessage = originalApply;
+    }
+
+    await Time.minimalSleep();
+    const recordsDelete = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsDelete,
+      messageParams : { recordId: initial.message!.recordId },
+    });
+    expect(recordsDelete.reply.status.code).toBe(202);
+    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+      .toMatchObject({ acknowledged: 1, kind: 'committed', retained: 0 });
+    expect(await ledger.getDeliveryForLink(link)).toMatchObject([{ messageCid: updateCid }]);
+
+    const blueTombstoneFilter = {
+      'interface' : DwnInterfaceName.Records,
+      'method'    : DwnMethodName.Delete,
+      'tag.team'  : 'blue',
+    };
+    expect((await remoteDwn.storage.messageStore.query(tenantDid, [blueTombstoneFilter])).messages)
+      .toEqual([]);
+
+    expect(await retryOneDeliveryObligation({ agent: harness.agent, ledger, target: syncTarget }))
+      .toEqual({ kind: 'pending', outcome: { reason: 'dependency' } });
+    expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
   });
 });

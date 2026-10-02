@@ -60,20 +60,20 @@ export type SyncNextDeliveryOutcome = {
 export type SyncNextDeliveryObligation = SyncNextLinkIdentity & SyncNextSourceReceipt & {
   lastAttemptAt: string;
   outcome: SyncNextDeliveryOutcome;
-  /** Record lineage used only after a newer current state is handled by this link. */
-  recordId?: string;
+  /** Write lineage used only after a newer current RecordsWrite is handled by this link. */
+  writeRecordId?: string;
   /** Source feed state at intake; a current write must not be replayed without its body. */
   wasLatestBaseState: boolean;
 };
 
 export type SyncNextDeliveryInput = SyncNextSourceReceipt & {
   outcome: SyncNextDeliveryOutcome;
-  recordId?: string;
+  writeRecordId?: string;
   wasLatestBaseState: boolean;
 };
 
-/** A current record receipt handled by the remote endpoint. */
-export type SyncNextHandledRecord = {
+/** A current RecordsWrite receipt handled by the remote endpoint. */
+export type SyncNextHandledWrite = {
   recordId: string;
   receipt: SyncNextSourceReceipt;
 };
@@ -89,7 +89,7 @@ export type SyncNextPullPageCommit = {
 export type SyncNextPushPageCommit = {
   delivery: SyncNextDeliveryInput[];
   handledThrough: ProgressToken;
-  handledRecords: SyncNextHandledRecord[];
+  handledWrites: SyncNextHandledWrite[];
   /** Exact receipts from the page, captured before classifying its entries. */
   pageReceipts: SyncNextSourceReceipt[];
   settled: SyncNextSourceReceipt[];

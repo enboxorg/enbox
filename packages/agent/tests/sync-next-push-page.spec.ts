@@ -214,8 +214,8 @@ describe('SyncNextPushPage', () => {
       retained     : 1,
     });
     expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
-      messageCid : firstEntry.messageCid,
-      recordId   : first.message.recordId,
+      messageCid    : firstEntry.messageCid,
+      writeRecordId : first.message.recordId,
     }]);
   });
 

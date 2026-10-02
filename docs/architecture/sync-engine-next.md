@@ -98,7 +98,7 @@ ledger. Quarantine retained under a retired link is checked when recovery reads
 that central queue; a different replacement link advances independently.
 
 An outbound obligation retains the source receipt, retry outcome, optional
-record ID, and whether the feed entry was latest when retained. It does not
+write record ID, and whether the feed entry was latest when retained. It does not
 duplicate the message or body; a later delivery attempt reads those from the
 local DWN. Removing an obsolete link retires its outbound obligations while
 preserving inbound quarantine that another authorized link for the same
@@ -137,9 +137,11 @@ It reuses the dependency-aware remote apply path and advances the push token
 only after every returned receipt is acknowledged or retained as an outbound
 obligation. A record-local failure leaves that receipt pending while independent
 entries continue; a link-wide or endpoint-wide failure stops further requests
-and retains the rest of the page. When a current record event is handled, the
-same atomic commit also settles older same-record obligations through that
-source position for this exact link.
+and retains the rest of the page. When a current RecordsWrite is handled, the
+same atomic commit also settles older same-record write obligations through
+that source position for this exact link. A RecordsDelete does not provide that
+coverage because the newest pre-delete write can still define tombstone
+visibility.
 
 ## One-row delivery retry
 
@@ -153,12 +155,14 @@ preventing a stale retry from changing a replacement link or newer retry state.
 If a crash follows remote acknowledgement but precedes ledger settlement, the
 next attempt safely replays the message. This primitive owns no timer.
 
-A handled current RecordsWrite or RecordsDelete covers older receipts for the
-same record and exact link. Coverage is bounded by source-token domain and
-position, so it cannot settle a later mutation or another endpoint's work. This
-lets a newer update settle an intermediate update that the local DWN has already
-pruned. A current RecordsWrite still requires its body before it can create this
-coverage; a dataless duplicate alone does not prove it.
+A handled current RecordsWrite covers older write receipts for the same record
+and exact link. Coverage is bounded by source-token domain and position, so it
+cannot settle a later mutation or another endpoint's work. This lets a newer
+update settle an intermediate update that the local DWN has already pruned. A
+current RecordsWrite still requires its body before it can create this coverage;
+a dataless duplicate alone does not prove it. Deletes settle only their own
+receipt; an older retained write may still be required to reconstruct tombstone
+visibility.
 
 Retry scheduling, subscriptions, catalog, and runtime cutover belong to later
 stack layers. They must preserve this ledger contract when deciding whether a

@@ -94,16 +94,16 @@ async function commitPull(
 async function commitPush(
   ledger: SyncNextLedgerStore,
   create: SyncNextLinkCreate,
-  commit: Omit<SyncNextPushPageCommit, 'handledRecords' | 'pageReceipts'> & {
-    handledRecords?: SyncNextPushPageCommit['handledRecords'];
+  commit: Omit<SyncNextPushPageCommit, 'handledWrites' | 'pageReceipts'> & {
+    handledWrites?: SyncNextPushPageCommit['handledWrites'];
   },
 ): Promise<boolean> {
   const link = await ledger.getLink(identity(create));
   if (link === undefined) { throw new Error('Expected a link before committing a push page.'); }
   return ledger.commitPushPage(link, {
     ...commit,
-    handledRecords : commit.handledRecords ?? [],
-    pageReceipts   : pageReceipts(commit.delivery, commit.settled),
+    handledWrites : commit.handledWrites ?? [],
+    pageReceipts  : pageReceipts(commit.delivery, commit.settled),
   });
 }
 
@@ -209,7 +209,7 @@ describe('SyncNextLedgerStore', () => {
     expect(await store.commitPushPage(current, {
       delivery       : [],
       handledThrough : current.pushHandledThrough!,
-      handledRecords : [],
+      handledWrites  : [],
       pageReceipts   : [],
       settled        : [],
     })).toBe(true);
@@ -225,8 +225,8 @@ describe('SyncNextLedgerStore', () => {
     const unrelated = { messageCid: 'unrelated', source: token(2, 'push', 'unrelated') };
     expect(await commitPush(store, create, {
       delivery: [
-        { ...oldRecord, outcome: { reason: 'transport' }, recordId: 'record-1', wasLatestBaseState: true },
-        { ...unrelated, outcome: { reason: 'transport' }, recordId: 'record-2', wasLatestBaseState: true },
+        { ...oldRecord, outcome: { reason: 'transport' }, writeRecordId: 'record-1', wasLatestBaseState: true },
+        { ...unrelated, outcome: { reason: 'transport' }, writeRecordId: 'record-2', wasLatestBaseState: true },
       ],
       handledThrough : unrelated.source,
       settled        : [],
@@ -235,7 +235,7 @@ describe('SyncNextLedgerStore', () => {
       delivery: [{
         ...oldRecord,
         outcome            : { reason: 'transport' },
-        recordId           : 'record-1',
+        writeRecordId      : 'record-1',
         wasLatestBaseState : true,
       }],
       handledThrough : oldRecord.source,
@@ -248,20 +248,20 @@ describe('SyncNextLedgerStore', () => {
       delivery: [{
         ...later,
         outcome            : { reason: 'transport' },
-        recordId           : 'record-1',
+        writeRecordId      : 'record-1',
         wasLatestBaseState : true,
       }],
-      handledRecords : [{ recordId: 'record-1', receipt: handled }],
+      handledWrites  : [{ recordId: 'record-1', receipt: handled }],
       handledThrough : later.source,
       settled        : [handled],
     })).toBe(true);
 
     expect(await store.getDeliveryForLink(identity(create))).toMatchObject([
-      { messageCid: 'unrelated', recordId: 'record-2' },
-      { messageCid: 'later-record', recordId: 'record-1' },
+      { messageCid: 'unrelated', writeRecordId: 'record-2' },
+      { messageCid: 'later-record', writeRecordId: 'record-1' },
     ]);
     expect(await store.getDeliveryForLink(identity(sibling))).toMatchObject([
-      { messageCid: 'same-record', recordId: 'record-1' },
+      { messageCid: 'same-record', writeRecordId: 'record-1' },
     ]);
   });
 
@@ -274,13 +274,13 @@ describe('SyncNextLedgerStore', () => {
       delivery: [{
         ...pending,
         outcome            : { reason: 'transport' },
-        recordId           : 'record-1',
+        writeRecordId      : 'record-1',
         wasLatestBaseState : true,
       }],
-      handledRecords : [{ recordId: 'record-1', receipt: pending }],
+      handledWrites  : [{ recordId: 'record-1', receipt: pending }],
       handledThrough : pending.source,
       settled        : [],
-    })).rejects.toThrow('handled record state is invalid');
+    })).rejects.toThrow('handled write state is invalid');
     expect((await store.getLink(identity(create)))?.pushHandledThrough).toBeUndefined();
     expect(await store.getDeliveryForLink(identity(create))).toEqual([]);
   });
