@@ -536,6 +536,26 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
   });
 
+  it('should accept an empty drained replay of the exact current cursor', async () => {
+    const first = await feedEntry(protocolMessage('first'), 1);
+    const fixture = fakeAgent(page([first]));
+    await createLink();
+    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    expect(await processor.consume(target())).toMatchObject({ kind: 'committed' });
+    fixture.send.resolves({
+      ...page([], true, '1'),
+      cursor: {
+        epoch      : 'remote-epoch',
+        messageCid : first.messageCid,
+        position   : '1',
+        streamId   : 'remote-stream',
+      },
+    });
+
+    expect(await processor.consume(target())).toMatchObject({ kind: 'committed', hasMore: false });
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+  });
+
   it('should consume 579 roots in six page queries without point reads', async () => {
     const entries = await Promise.all(Array.from({ length: 579 }, (_, index) =>
       feedEntry(protocolMessage(`page-scaled-${index}`), index + 1)

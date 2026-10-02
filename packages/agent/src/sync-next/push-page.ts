@@ -1,6 +1,7 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextPreparedFeedEntry } from './feed-page.js';
+import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { GenericMessage, MessagesQueryReply, ProgressToken } from '@enbox/dwn-sdk-js';
 import type {
@@ -43,6 +44,7 @@ export class SyncNextPushPage {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
+    private readonly _runRemoteRequest?: SyncRemoteRequestRunner,
   ) {}
 
   public async consume(
@@ -121,6 +123,7 @@ export class SyncNextPushPage {
       delegateDid        : target.delegateDid,
       permissionGrantIds : target.permissionGrantIds,
       permissionsApi     : this._agent.permissions,
+      runRemoteRequest   : this._runRemoteRequest,
     });
     const delivery: SyncNextDeliveryInput[] = [];
     const handledWrites = new Map<string, SyncNextHandledWrite>();

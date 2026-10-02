@@ -13,6 +13,17 @@ import { compareSyncNextPosition, isValidSyncNextToken } from './ledger-key.js';
 
 export const SYNC_NEXT_PAGE_SIZE = 100;
 
+/** Successful transport whose remote feed operation returned a non-success status. */
+export class SyncNextFeedQueryError extends Error {
+  public constructor(
+    public readonly statusCode: number,
+    detail: string,
+  ) {
+    super(detail);
+    this.name = 'SyncNextFeedQueryError';
+  }
+}
+
 export type SyncNextPreparedFeedEntry = {
   entry: MessagesQueryReplyEntry;
   message: GenericMessage;
@@ -57,7 +68,7 @@ export async function prepareSyncNextFeedPage({
     pageReceipts.push(receipt);
     preparedEntries.push({ entry, message, receipt });
   }
-  assertCursorReceipt(handledThrough, pageReceipts, label);
+  assertCursorReceipt(previous, handledThrough, pageReceipts, label);
 
   return { drained, entries: preparedEntries, handledThrough, pageReceipts };
 }
@@ -68,7 +79,10 @@ function successfulPage(
   target: string,
 ): { drained: boolean; entries: MessagesQueryReplyEntry[] } {
   if (reply.status.code !== 200) {
-    throw new Error(`${label}: ${target} failed: ${reply.status.code} ${reply.status.detail}`);
+    throw new SyncNextFeedQueryError(
+      reply.status.code,
+      `${label}: ${target} failed: ${reply.status.code} ${reply.status.detail}`,
+    );
   }
   if (!Array.isArray(reply.entries)) {
     throw new TypeError(`${label}: successful query omitted its entries array.`);
@@ -118,15 +132,24 @@ function sourceReceipt(
 }
 
 function assertCursorReceipt(
+  previous: ProgressToken | undefined,
   cursor: ProgressToken,
   pageReceipts: readonly SyncNextSourceReceipt[],
   label: string,
 ): void {
+  if (previous !== undefined && sameProgressToken(previous, cursor) && pageReceipts.length === 0) {
+    return;
+  }
   if (cursor.messageCid !== undefined && !pageReceipts.some(receipt =>
     receipt.source.position === cursor.position && receipt.messageCid === cursor.messageCid
   )) {
     throw new Error(`${label}: query cursor CID does not identify its page entry.`);
   }
+}
+
+function sameProgressToken(left: ProgressToken, right: ProgressToken): boolean {
+  return left.streamId === right.streamId && left.epoch === right.epoch &&
+    left.position === right.position && left.messageCid === right.messageCid;
 }
 
 function assertCursorProgress(
