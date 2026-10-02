@@ -2,8 +2,10 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { AbstractBatchOperation, AbstractLevel, AbstractSublevel } from 'abstract-level';
 
 import type {
+  SyncNextDeliveryInput,
   SyncNextDeliveryObligation,
   SyncNextDeliveryOutcome,
+  SyncNextHandledWrite,
   SyncNextLink,
   SyncNextLinkCreate,
   SyncNextLinkIdentity,
@@ -23,6 +25,7 @@ import {
   syncNextLinkKey,
   syncNextLinkRange,
   syncNextReceiptKey,
+  syncNextSourceAtOrBefore,
   syncNextTenantRange,
 } from './ledger-key.js';
 
@@ -222,7 +225,7 @@ export class SyncNextLedgerStore {
         return false;
       }
       if (!SyncNextLedgerStore.canAdvance(link.pushHandledThrough, commit.handledThrough)) {
-        return SyncNextLedgerStore.isEmptyReplay(
+        return commit.handledWrites.length === 0 && SyncNextLedgerStore.isEmptyReplay(
           link.pushHandledThrough, commit.handledThrough, commit.pageReceipts, commit.delivery, commit.settled,
         );
       }
@@ -230,17 +233,28 @@ export class SyncNextLedgerStore {
         commit.handledThrough, commit.pageReceipts, commit.delivery, commit.settled,
         link.pushHandledThrough, 'push',
       );
-      if (commit.delivery.some(input => typeof input.wasLatestBaseState !== 'boolean')) {
-        throw new TypeError('SyncNextLedgerStore: delivery source state must be a boolean.');
-      }
+      SyncNextLedgerStore.validateDeliveryInputs(commit.delivery);
+      const handledWrites = SyncNextLedgerStore.validateHandledWrites(commit.handledWrites, commit.settled);
 
       const operations: SyncNextBatchOperation[] = [];
-      const retained = new Set((await this.getDeliveryForLink(link)).map(
+      const existingDelivery = await this.getDeliveryForLink(link);
+      const retained = new Set(existingDelivery.map(
         entry => syncNextReceiptKey(link, entry)
       ));
+      for (const entry of existingDelivery) {
+        if (SyncNextLedgerStore.deliveryIsCovered(entry, handledWrites)) {
+          const receiptKey = syncNextReceiptKey(link, entry);
+          retained.delete(receiptKey);
+          operations.push(this.deleteOperation(this._delivery, receiptKey));
+        }
+      }
       for (const input of commit.delivery) {
+        if (SyncNextLedgerStore.deliveryIsCovered(input, handledWrites)) {
+          continue;
+        }
         const state = this.nextSparseState(link, input, {
           outcome            : structuredClone(input.outcome),
+          ...(input.writeRecordId === undefined ? {} : { writeRecordId: input.writeRecordId }),
           wasLatestBaseState : input.wasLatestBaseState,
         });
         const receiptKey = syncNextReceiptKey(link, state);
@@ -335,11 +349,20 @@ export class SyncNextLedgerStore {
       const receiptKey = syncNextReceiptKey(queriedLink, selected);
       const current = await this.getValue<SyncNextDeliveryObligation>(this._delivery, receiptKey);
       if (current?.lastAttemptAt !== selected.lastAttemptAt ||
+          current.writeRecordId !== selected.writeRecordId ||
           current.wasLatestBaseState !== selected.wasLatestBaseState) {
         return false;
       }
       if (outcome === undefined) {
-        await this._delivery.del(receiptKey);
+        if (current.wasLatestBaseState && current.writeRecordId !== undefined) {
+          const operations = (await this.getDeliveryForLink(link))
+            .filter(entry => entry.writeRecordId === current.writeRecordId &&
+              syncNextSourceAtOrBefore(entry.source, current.source))
+            .map(entry => this.deleteOperation(this._delivery, syncNextReceiptKey(link, entry)));
+          await this._db.batch(operations);
+        } else {
+          await this._delivery.del(receiptKey);
+        }
       } else {
         await this._delivery.put(receiptKey, JSON.stringify({
           ...current,
@@ -413,6 +436,41 @@ export class SyncNextLedgerStore {
       ? Date.now() + 1
       : Math.max(Date.now() + 1, previousAttempt + 1);
     return new Date(nextAttempt).toISOString();
+  }
+
+  private static deliveryIsCovered(
+    delivery: Pick<SyncNextDeliveryObligation, 'source' | 'writeRecordId'>,
+    handledWrites: ReadonlyMap<string, SyncNextHandledWrite>,
+  ): boolean {
+    const handled = delivery.writeRecordId === undefined ? undefined : handledWrites.get(delivery.writeRecordId);
+    return handled !== undefined && syncNextSourceAtOrBefore(delivery.source, handled.receipt.source);
+  }
+
+  private static validateDeliveryInputs(delivery: readonly SyncNextDeliveryInput[]): void {
+    if (delivery.some(input => typeof input.wasLatestBaseState !== 'boolean')) {
+      throw new TypeError('SyncNextLedgerStore: delivery source state must be a boolean.');
+    }
+    if (delivery.some(input => input.writeRecordId !== undefined &&
+      (typeof input.writeRecordId !== 'string' || input.writeRecordId.length === 0))) {
+      throw new TypeError('SyncNextLedgerStore: delivery write record ID must be a non-empty string.');
+    }
+  }
+
+  private static validateHandledWrites(
+    handledWrites: readonly SyncNextHandledWrite[],
+    settled: readonly SyncNextSourceReceipt[],
+  ): Map<string, SyncNextHandledWrite> {
+    const settledReceipts = new Set(settled.map(SyncNextLedgerStore.receiptIdentity));
+    const byRecordId = new Map<string, SyncNextHandledWrite>();
+    for (const handled of handledWrites) {
+      if (typeof handled.recordId !== 'string' || handled.recordId.length === 0 ||
+          !settledReceipts.has(SyncNextLedgerStore.receiptIdentity(handled.receipt)) ||
+          byRecordId.has(handled.recordId)) {
+        throw new TypeError('SyncNextLedgerStore: handled write state is invalid.');
+      }
+      byRecordId.set(handled.recordId, handled);
+    }
+    return byRecordId;
   }
 
   private putOperation(

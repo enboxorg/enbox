@@ -94,13 +94,16 @@ async function commitPull(
 async function commitPush(
   ledger: SyncNextLedgerStore,
   create: SyncNextLinkCreate,
-  commit: Omit<SyncNextPushPageCommit, 'pageReceipts'>,
+  commit: Omit<SyncNextPushPageCommit, 'handledWrites' | 'pageReceipts'> & {
+    handledWrites?: SyncNextPushPageCommit['handledWrites'];
+  },
 ): Promise<boolean> {
   const link = await ledger.getLink(identity(create));
   if (link === undefined) { throw new Error('Expected a link before committing a push page.'); }
   return ledger.commitPushPage(link, {
     ...commit,
-    pageReceipts: pageReceipts(commit.delivery, commit.settled),
+    handledWrites : commit.handledWrites ?? [],
+    pageReceipts  : pageReceipts(commit.delivery, commit.settled),
   });
 }
 
@@ -206,10 +209,80 @@ describe('SyncNextLedgerStore', () => {
     expect(await store.commitPushPage(current, {
       delivery       : [],
       handledThrough : current.pushHandledThrough!,
+      handledWrites  : [],
       pageReceipts   : [],
       settled        : [],
     })).toBe(true);
     expect(await store.getLink(identity(create))).toEqual(current);
+  });
+
+  it('should atomically settle older same-record delivery while retaining later and unrelated receipts', async () => {
+    const create = linkCreate();
+    const sibling = linkCreate({ remoteEndpoint: 'https://second.example.com' });
+    await store.getOrCreateLink(create);
+    await store.getOrCreateLink(sibling);
+    const oldRecord = { messageCid: 'same-record', source: token(1, 'push', 'same-record') };
+    const unrelated = { messageCid: 'unrelated', source: token(2, 'push', 'unrelated') };
+    expect(await commitPush(store, create, {
+      delivery: [
+        { ...oldRecord, outcome: { reason: 'transport' }, writeRecordId: 'record-1', wasLatestBaseState: true },
+        { ...unrelated, outcome: { reason: 'transport' }, writeRecordId: 'record-2', wasLatestBaseState: true },
+      ],
+      handledThrough : unrelated.source,
+      settled        : [],
+    })).toBe(true);
+    expect(await commitPush(store, sibling, {
+      delivery: [{
+        ...oldRecord,
+        outcome            : { reason: 'transport' },
+        writeRecordId      : 'record-1',
+        wasLatestBaseState : true,
+      }],
+      handledThrough : oldRecord.source,
+      settled        : [],
+    })).toBe(true);
+
+    const handled = { messageCid: 'same-record', source: token(3, 'push', 'same-record') };
+    const later = { messageCid: 'later-record', source: token(4, 'push', 'later-record') };
+    expect(await commitPush(store, create, {
+      delivery: [{
+        ...later,
+        outcome            : { reason: 'transport' },
+        writeRecordId      : 'record-1',
+        wasLatestBaseState : true,
+      }],
+      handledWrites  : [{ recordId: 'record-1', receipt: handled }],
+      handledThrough : later.source,
+      settled        : [handled],
+    })).toBe(true);
+
+    expect(await store.getDeliveryForLink(identity(create))).toMatchObject([
+      { messageCid: 'unrelated', writeRecordId: 'record-2' },
+      { messageCid: 'later-record', writeRecordId: 'record-1' },
+    ]);
+    expect(await store.getDeliveryForLink(identity(sibling))).toMatchObject([
+      { messageCid: 'same-record', writeRecordId: 'record-1' },
+    ]);
+  });
+
+  it('should reject record coverage that is not backed by a settled page receipt', async () => {
+    const create = linkCreate();
+    await store.getOrCreateLink(create);
+    const pending = { messageCid: 'pending', source: token(1, 'push', 'pending') };
+
+    await expect(commitPush(store, create, {
+      delivery: [{
+        ...pending,
+        outcome            : { reason: 'transport' },
+        writeRecordId      : 'record-1',
+        wasLatestBaseState : true,
+      }],
+      handledWrites  : [{ recordId: 'record-1', receipt: pending }],
+      handledThrough : pending.source,
+      settled        : [],
+    })).rejects.toThrow('handled write state is invalid');
+    expect((await store.getLink(identity(create)))?.pushHandledThrough).toBeUndefined();
+    expect(await store.getDeliveryForLink(identity(create))).toEqual([]);
   });
 
   it('should not settle a delivery row after another retry has updated it', async () => {

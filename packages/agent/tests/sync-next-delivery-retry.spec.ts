@@ -8,7 +8,7 @@ import { Level } from 'level';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { Jws, Message, Records, RecordsWrite, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 
 import { retryOneDeliveryObligation } from '../src/sync-next/delivery-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
@@ -43,15 +43,25 @@ function protocolMessage(name: string): GenericMessage {
 function fakeAgent(): {
   agent: EnboxPlatformAgent;
   apply: sinon.SinonStub;
+  localData: Map<string, Uint8Array>;
   localMessages: Map<string, GenericMessage>;
   read: sinon.SinonStub;
   } {
+  const localData = new Map<string, Uint8Array>();
   const localMessages = new Map<string, GenericMessage>();
   const read = sinon.stub().callsFake(async ({ messageParams }: { messageParams: { messageCid: string } }) => {
     const message = localMessages.get(messageParams.messageCid);
+    const data = localData.get(messageParams.messageCid);
     return { reply: message === undefined
       ? { status: { code: 404, detail: 'Not Found' } }
-      : { entry: { message, messageCid: messageParams.messageCid }, status: { code: 200, detail: 'OK' } } };
+      : {
+        entry: {
+          message,
+          messageCid: messageParams.messageCid,
+          ...(data === undefined ? {} : { data: new Blob([data]).stream() }),
+        },
+        status: { code: 200, detail: 'OK' },
+      } };
   });
   const apply = sinon.stub().resolves({ kind: 'Applied' });
   return {
@@ -61,6 +71,7 @@ function fakeAgent(): {
       rpc         : { applyReplicatedMessage: apply },
     } as unknown as EnboxPlatformAgent,
     apply,
+    localData,
     localMessages,
     read,
   };
@@ -84,7 +95,12 @@ describe('retryOneDeliveryObligation', () => {
     await db.close();
   });
 
-  async function retain(syncTarget: SyncTarget, messages: GenericMessage[], wasLatestBaseState = true): Promise<SyncNextLink> {
+  async function retain(
+    syncTarget: SyncTarget,
+    messages: GenericMessage[],
+    wasLatestBaseState = true,
+    startPosition = 1,
+  ): Promise<SyncNextLink> {
     const link = await ledger.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
@@ -92,16 +108,19 @@ describe('retryOneDeliveryObligation', () => {
     });
     const delivery = await Promise.all(messages.map(async (message, index) => {
       const messageCid = await Message.getCid(message);
+      const writeRecordId = Records.isRecordsWrite(message) ? message.recordId : undefined;
       return {
         messageCid,
         outcome : { reason: 'transport' as const },
-        source  : token(index + 1, messageCid),
+        ...(writeRecordId === undefined ? {} : { writeRecordId }),
+        source  : token(startPosition + index, messageCid),
         wasLatestBaseState,
       };
     }));
     expect(await ledger.commitPushPage(link, {
       delivery,
       handledThrough : delivery.at(-1)!.source,
+      handledWrites  : [],
       pageReceipts   : delivery,
       settled        : [],
     })).toBe(true);
@@ -235,6 +254,86 @@ describe('retryOneDeliveryObligation', () => {
     });
     expect(fixture.apply.notCalled).toBe(true);
     expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
+  });
+
+  it('should not let a current delete settle an older unreadable write', async () => {
+    const initial = await TestDataGenerator.generateRecordsWrite();
+    const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+      author   : initial.author,
+      recordId : initial.message.recordId,
+    });
+    const link = await retain(target(), [initial.message, recordsDelete.message]);
+    const fixture = fakeAgent();
+    fixture.localMessages.set(await Message.getCid(recordsDelete.message), recordsDelete.message);
+
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() })).toEqual({
+      kind    : 'pending',
+      outcome : { reason: 'dependency' },
+    });
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+      .toEqual({ kind: 'settled' });
+    expect(await ledger.getDeliveryForLink(link)).toMatchObject([{
+      messageCid    : await Message.getCid(initial.message),
+      writeRecordId : initial.message.recordId,
+    }]);
+    expect(fixture.apply.calledOnce).toBe(true);
+  });
+
+  it('should let a successful current-write retry settle only covered same-link receipts', async () => {
+    const initial = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([0]) });
+    const signer = Jws.createSigner(initial.author);
+    const firstData = new Uint8Array([1]);
+    const first = await RecordsWrite.createFrom({
+      recordsWriteMessage : initial.message,
+      data                : firstData,
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, initial.message.descriptor.messageTimestamp),
+      signer,
+    });
+    const secondData = new Uint8Array([2]);
+    const second = await RecordsWrite.createFrom({
+      recordsWriteMessage : first.message,
+      data                : secondData,
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, first.message.descriptor.messageTimestamp),
+      signer,
+    });
+    const later = await RecordsWrite.createFrom({
+      recordsWriteMessage : second.message,
+      data                : new Uint8Array([3]),
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, second.message.descriptor.messageTimestamp),
+      signer,
+    });
+    const unrelated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([4]) });
+    const primary = target();
+    const sibling = target('https://second.example.com');
+    const primaryLink = await retain(primary, [first.message]);
+    await retain(primary, [second.message, unrelated.message], true, 2);
+    await retain(primary, [later.message], true, 4);
+    const siblingLink = await retain(sibling, [first.message]);
+    await retain(sibling, [second.message], true, 2);
+
+    const firstCid = await Message.getCid(first.message);
+    const secondCid = await Message.getCid(second.message);
+    const fixture = fakeAgent();
+    fixture.localMessages.set(secondCid, second.message);
+    fixture.localData.set(secondCid, secondData);
+    const firstBeforeRetry = (await ledger.getDeliveryForLink(primaryLink))
+      .find(entry => entry.messageCid === firstCid)!;
+
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: primary }))
+      .toEqual({ kind: 'pending', outcome: { reason: 'dependency' } });
+    const firstAfterRetry = (await ledger.getDeliveryForLink(primaryLink))
+      .find(entry => entry.messageCid === firstCid)!;
+    expect(Date.parse(firstAfterRetry.lastAttemptAt)).toBeGreaterThan(Date.parse(firstBeforeRetry.lastAttemptAt));
+
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: primary }))
+      .toEqual({ kind: 'settled' });
+    expect((await ledger.getDeliveryForLink(primaryLink)).map(entry => entry.messageCid)).toEqual([
+      await Message.getCid(unrelated.message),
+      await Message.getCid(later.message),
+    ]);
+    expect((await ledger.getDeliveryForLink(siblingLink)).map(entry => entry.messageCid))
+      .toEqual([firstCid, secondCid]);
+    expect(fixture.apply.calledOnce).toBe(true);
   });
 
   it('should send a retained non-latest initial write as ancestry without its body', async () => {
