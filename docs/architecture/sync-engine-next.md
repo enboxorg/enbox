@@ -66,15 +66,19 @@ admits roots using only received or already-local support. Known feed-root
 dependencies are ordered before their dependents, including a parent whose
 completion moved behind its child. Missing bodies and dependencies not resolved
 from feed roots enter quarantine without point reads; the retry slice must
-demonstrate their eventual convergence. A successful reply without an entries
-array, cursor, or boolean `drained` value is rejected before admission.
-CID recomputation proves byte integrity; normal DWN admission still owns signer
-and authorization validation.
+demonstrate their eventual convergence. Feed receipts must be strictly
+ascending; a reordered response is rejected before admission. A successful
+reply without an entries array, cursor, or boolean `drained` value is likewise
+rejected. CID recomputation proves byte integrity; normal DWN admission still
+owns signer and authorization validation.
 
 Every returned root is either settled or retained in quarantine before the
 page token advances. A later independent root in the same page is still
-processed. The primitive returns after this one commit; pagination,
-quarantine retry, wake handling, and scheduling remain runtime concerns.
+processed while budget remains. If reordered prerequisite work consumes the
+budget before a prefix exists, the earliest receipt enters quarantine rather
+than allowing unrelated later roots to bypass the deadline. The primitive
+returns after this one commit; pagination, quarantine retry, wake handling, and
+scheduling remain runtime concerns.
 
 ## Sparse recovery state
 
@@ -117,7 +121,8 @@ message CID, and inline data, then reuses normal dependency admission. It
 attempts one root, performs no catch-up pagination of its own, and does not
 schedule itself or purge failed rows. Pending and failed attempts advance their
 timestamp so another row gets the next turn, including when attempts land
-within the same millisecond.
+within the same millisecond. A budget-interrupted attempt also advances its
+timestamp; caller cancellation does not alter retry order.
 
 This slice recovers ordinary owner and delegated roots. Before fetching a
 retained data-bearing write from its source, retry asks the local replication

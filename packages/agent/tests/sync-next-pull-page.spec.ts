@@ -239,12 +239,16 @@ describe('SyncNextPullPage', () => {
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('2');
   });
 
-  it('should finish the dependency group needed for a contiguous budgeted prefix', async () => {
+  it('should retain the earliest root instead of running unrelated reordered work past its budget', async () => {
     const parent = dependencyRecord('budget-parent');
     const child = dependencyRecord('budget-child', 'budget-parent');
     const childEntry = await feedEntry(child, 1);
     const parentEntry = await feedEntry(parent, 2);
-    const fixture = fakeAgent(page([childEntry, parentEntry]));
+    const unrelatedEntries = await Promise.all([
+      feedEntry(protocolMessage('unrelated-three'), 3),
+      feedEntry(protocolMessage('unrelated-four'), 4),
+    ]);
+    const fixture = fakeAgent(page([childEntry, parentEntry, ...unrelatedEntries]));
     let budgetAvailable = true;
     fixture.apply.callsFake(async (): Promise<{ kind: 'Applied' }> => {
       budgetAvailable = false;
@@ -258,9 +262,13 @@ describe('SyncNextPullPage', () => {
       (): boolean => budgetAvailable,
     );
 
-    expect(result).toMatchObject({ handledThrough: { position: '2' }, kind: 'committed' });
-    expect(fixture.apply.calledTwice).toBe(true);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('2');
+    expect(result).toMatchObject({ handledThrough: { position: '1' }, kind: 'committed', quarantined: 1 });
+    expect(fixture.apply.calledOnce).toBe(true);
+    expect(fixture.apply.firstCall.args[1]).toMatchObject({ recordId: 'budget-parent' });
+    expect(await ledger.getQuarantineForLink(linkIdentity())).toMatchObject([{
+      messageCid: childEntry.messageCid,
+    }]);
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
   });
 
   it('should commit only the contiguous roots started before the local-work deadline', async () => {
@@ -322,6 +330,7 @@ describe('SyncNextPullPage', () => {
 
   it('should reject malformed source accounting before applying any entry', async () => {
     const first = await feedEntry(protocolMessage('first'), 1);
+    const second = await feedEntry(protocolMessage('second'), 2);
     const duplicate = await feedEntry(protocolMessage('duplicate'), 1);
     const future = await feedEntry(protocolMessage('future'), 2);
     const missingLatest = { ...first } as Partial<MessagesQueryReplyEntry>;
@@ -339,6 +348,7 @@ describe('SyncNextPullPage', () => {
       },
       { detail: 'invalid source metadata', reply: page([missingLatest as MessagesQueryReplyEntry]) },
       { detail: 'repeats source position 1', reply: page([first, duplicate]) },
+      { detail: 'not in ascending source order', reply: page([second, first], true, '2') },
       { detail: 'invalid source position', reply: page([future], true, '1') },
       {
         detail : 'cursor CID does not identify',

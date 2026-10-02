@@ -67,7 +67,13 @@ export async function retryOneQuarantinedRoot({
     }
     return { kind: 'settled', appliedEntries: attempt.appliedEntries };
   } catch (error: unknown) {
-    if (error instanceof SyncPullAbortedError || !shouldContinue()) {
+    if (error instanceof SyncPullAbortedError) {
+      if (error.reason === 'budget' && shouldContinue()) {
+        await ledger.updateQuarantine(selected);
+      }
+      return { kind: 'aborted' };
+    }
+    if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
     await ledger.updateQuarantine(selected);

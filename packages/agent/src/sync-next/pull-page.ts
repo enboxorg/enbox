@@ -139,7 +139,8 @@ export class SyncNextPullPage {
       if (!shouldContinue()) {
         return undefined;
       }
-      if (!canStartEntry() && (dispositions.size === 0 || entryCount > 0)) {
+      if (!canStartEntry()) {
+        entryCount = retainFirstPullReceiptOnYield(entries, dispositions, entryCount);
         break;
       }
       const { entry, receipt } = prepared;
@@ -235,6 +236,22 @@ function classifiedPullPrefixLength(
     entryCount++;
   }
   return entryCount;
+}
+
+function retainFirstPullReceiptOnYield(
+  entries: readonly SyncNextPreparedFeedEntry[],
+  dispositions: Map<string, PullDisposition>,
+  entryCount: number,
+): number {
+  if (entryCount > 0 || dispositions.size === 0) {
+    return entryCount;
+  }
+  const { entry, receipt } = entries[0];
+  dispositions.set(receipt.source.position, {
+    input : { entry, ...receipt },
+    kind  : 'quarantine',
+  });
+  return 1;
 }
 
 function buildClassifiedPullPage(

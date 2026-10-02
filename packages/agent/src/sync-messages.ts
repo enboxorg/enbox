@@ -186,10 +186,12 @@ type PushRootOutcome =
  */
 export const MAX_ADMISSION_PASSES = 128;
 
-/** Raised when an in-flight pull is cancelled before local apply can continue. */
+/** Raised when current sync work must stop without classifying the active root. */
 export class SyncPullAbortedError extends Error {
-  constructor() {
-    super('Sync pull aborted because the sync target is no longer current.');
+  public constructor(public readonly reason: 'budget' | 'stopped' = 'stopped') {
+    super(reason === 'budget'
+      ? 'Sync work yielded because its run budget was exhausted.'
+      : 'Sync work stopped before the active root could be classified.');
     this.name = 'SyncPullAbortedError';
   }
 }

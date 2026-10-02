@@ -86,6 +86,10 @@ export async function prepareSyncNextFeedPage({
   const pageReceipts: SyncNextSourceReceipt[] = [];
   for (const entry of entries) {
     const receipt = sourceReceipt(previous, handledThrough, entry, positions, label);
+    const priorReceipt = pageReceipts.at(-1);
+    if (priorReceipt !== undefined && compareSyncNextPosition(receipt.source, priorReceipt.source) <= 0) {
+      throw new Error(`${label}: feed entries are not in ascending source order.`);
+    }
     const message = entry.message;
     if (message === undefined || await Message.getCid(message) !== entry.messageCid) {
       throw new Error(`${label}: feed entry ${entry.messageCid} failed CID verification.`);

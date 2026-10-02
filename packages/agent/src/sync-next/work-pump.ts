@@ -380,8 +380,11 @@ export class SyncNextWorkPump {
   private requestRunner(endpoint: string, budget: WorkBudget): SyncRemoteRequestRunner {
     return <T>(request: (signal?: AbortSignal) => Promise<T>): Promise<T> =>
       runWithCrossContextLock(`enbox:sync-next-endpoint:${endpoint}`, async (): Promise<T> => {
-        if (!this.endpointIsEligible(endpoint) || !budget.startRequest()) {
+        if (!this.endpointIsEligible(endpoint)) {
           throw new SyncPullAbortedError();
+        }
+        if (!budget.startRequest()) {
+          throw new SyncPullAbortedError(budget.cancelled ? 'stopped' : 'budget');
         }
         const signal = budget.requestSignal();
         try {
@@ -389,7 +392,7 @@ export class SyncNextWorkPump {
         } catch (error: unknown) {
           budget.observeRequestError(signal);
           if (signal.aborted) {
-            throw new SyncPullAbortedError();
+            throw new SyncPullAbortedError(budget.cancelled ? 'stopped' : 'budget');
           }
           if (this.isEndpointFailure(error)) {
             this.coolEndpoint(endpoint);

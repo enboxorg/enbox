@@ -518,20 +518,26 @@ describe('SyncNextWorkPump', () => {
     const slow = target({ did: 'did:example:slow' });
     const healthy = target({ did: 'did:example:healthy' });
     const requested: string[] = [];
+    let interruption: unknown;
     let expireFirstRequest = true;
     const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, {
       cooldownMs : 1_000,
       operations : operations({
         pullPage: async (syncTarget, _shouldContinue, runRemoteRequest) => {
-          await runRemoteRequest(async (signal) => {
-            requested.push(syncTarget.did);
-            if (expireFirstRequest) {
-              expireFirstRequest = false;
-              await new Promise<void>((_resolve, reject) => {
-                signal?.addEventListener('abort', () => { reject(signal.reason); }, { once: true });
-              });
-            }
-          });
+          try {
+            await runRemoteRequest(async (signal) => {
+              requested.push(syncTarget.did);
+              if (expireFirstRequest) {
+                expireFirstRequest = false;
+                await new Promise<void>((_resolve, reject) => {
+                  signal?.addEventListener('abort', () => { reject(signal.reason); }, { once: true });
+                });
+              }
+            });
+          } catch (error: unknown) {
+            interruption = error;
+            throw error;
+          }
           return {
             handledCids    : [],
             handledThrough : token(1),
@@ -547,6 +553,7 @@ describe('SyncNextWorkPump', () => {
     const recovered = await pump.run([healthy], 'pull', { maxDurationMs: 100 });
 
     expect(expired).toMatchObject({ budgetExhausted: true, workRemaining: true });
+    expect(interruption).toMatchObject({ name: 'SyncPullAbortedError', reason: 'budget' });
     expect(requested).toContain(healthy.did);
     expect(recovered.targets.find(status => status.tenantDid === healthy.did)?.pull.feedCovered).toBe(true);
   });
