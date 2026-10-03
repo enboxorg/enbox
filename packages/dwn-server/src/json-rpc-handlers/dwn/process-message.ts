@@ -125,7 +125,8 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
 
     const reply = await dwn.processMessage(target, message, {
       dataStream,
-      subscriptionHandler: subscriptionRequest?.subscriptionHandler,
+      subscriptionHandler : subscriptionRequest?.subscriptionHandler,
+      subscriptionSignal  : subscriptionRequest?.signal,
     });
 
 

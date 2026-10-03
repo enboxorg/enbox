@@ -9,6 +9,7 @@ export type GuardedSubscriptionHandler = {
 /** Serializes projection, fences terminal delivery, and owns exactly one subscription close. */
 export function createGuardedSubscriptionHandler(input: {
   listener: SubscriptionListener;
+  signal?: AbortSignal;
   processEvent(
     event: SubscriptionEvent,
     fail: (code: DwnErrorCode, detail: string) => void,
@@ -32,7 +33,7 @@ export function createGuardedSubscriptionHandler(input: {
   };
 
   const deliver = async (message: SubscriptionMessage): Promise<void> => {
-    if (closeRequested) {
+    if (closeRequested || input.signal?.aborted) {
       return;
     }
     if (message.type !== 'event') {
@@ -49,6 +50,10 @@ export function createGuardedSubscriptionHandler(input: {
       void closeSubscription();
     };
     const projected = await input.processEvent(message, fail);
+    // Cancellation may land while authorization or projection is reading storage.
+    if (input.signal?.aborted) {
+      return;
+    }
     if (terminalError !== undefined) {
       await input.listener(terminalError);
       return;
@@ -65,7 +70,7 @@ export function createGuardedSubscriptionHandler(input: {
     },
     setSubscription: async (eventSubscription): Promise<void> => {
       subscription = eventSubscription;
-      if (closeRequested) {
+      if (closeRequested || input.signal?.aborted) {
         await closeSubscription();
       }
     },

@@ -20,6 +20,8 @@ export type RequestContext = {
     id: JsonRpcId;
     /** The `SubscriptionMessage` handler associated with a subscription request, only used in `ws` requests */
     subscriptionHandler: SubscriptionListener;
+    /** Local connection lifetime; never sent over JSON-RPC. */
+    signal?: AbortSignal;
   }
   /** The `ReadableStream` associated with a `RecordsWrite` request only used in `http` requests */
   dataStream?: ReadableStream<Uint8Array>;

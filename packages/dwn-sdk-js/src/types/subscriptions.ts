@@ -144,7 +144,8 @@ export type SubscriptionMessage = SubscriptionEvent | SubscriptionEose | Subscri
  *
  * A listener may return a promise to signal when the message has been fully
  * processed. Durable event delivery awaits it before advancing the cursor or
- * delivering the next message. Transports may instead complete this callback
+ * delivering the next message. Aborting a subscription releases that wait;
+ * the in-flight operation may finish, but later delivery is fenced. Transports may instead complete this callback
  * when they accept a message into their own flow-control buffer; the WebSocket
  * client gates its acknowledgements on its consumer's completion.
  */
@@ -154,6 +155,9 @@ export type SubscriptionListener = (message: SubscriptionMessage) => void | Prom
  * Options for {@link EventLog.subscribe}.
  */
 export type EventLogSubscribeOptions = {
+  /** Local subscription lifetime, including initialization, replay, and live delivery. */
+  signal?: AbortSignal;
+
   /**
    * Progress token to resume from (exclusive — events after this position
    * are replayed). When provided, stored events are replayed first, followed by

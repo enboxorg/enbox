@@ -51,10 +51,12 @@ export class RecordsSubscribeHandler implements MethodHandler {
     tenant,
     message,
     subscriptionHandler,
+    subscriptionSignal,
   }: {
     tenant: string,
     message: RecordsSubscribeMessage,
     subscriptionHandler: SubscriptionListener,
+    subscriptionSignal?: AbortSignal,
   }): Promise<RecordsSubscribeReply> {
     if (this.deps.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
@@ -84,6 +86,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
       eventFilters,
       recordsSubscribe,
       subscriptionHandler,
+      subscriptionSignal,
       tenant,
     });
 
@@ -92,12 +95,12 @@ export class RecordsSubscribeHandler implements MethodHandler {
       // All catch-up, buffering, dedup, and EOSE delivery are handled by the
       // EventLog implementation. The handler just passes the cursor and filters.
       // The subscriptionHandler receives SubscriptionMessage (event + EOSE) directly.
-      return this.handleCursorSubscription(tenant, messageCid, eventFilters, eventLogCursor, guardedSubscriptionHandler);
+      return this.handleCursorSubscription(tenant, messageCid, eventFilters, eventLogCursor, guardedSubscriptionHandler, subscriptionSignal);
     }
 
     // ---- No cursor: existing behavior (initial snapshot from MessageStore) ----
     return this.handleSnapshotSubscription(
-      tenant, messageCid, recordsSubscribe, eventFilters, visibility, guardedSubscriptionHandler
+      tenant, messageCid, recordsSubscribe, eventFilters, visibility, guardedSubscriptionHandler, subscriptionSignal
     );
   }
 
@@ -189,11 +192,13 @@ export class RecordsSubscribeHandler implements MethodHandler {
     eventFilters: Filter[],
     eventLogCursor: ProgressToken,
     guardedSubscriptionHandler: GuardedSubscriptionHandler,
+    subscriptionSignal?: AbortSignal,
   ): Promise<RecordsSubscribeReply> {
     try {
       const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, guardedSubscriptionHandler.listener, {
         cursor  : eventLogCursor,
         filters : eventFilters,
+        signal  : subscriptionSignal,
       });
       await guardedSubscriptionHandler.setSubscription(subscription);
 
@@ -224,10 +229,12 @@ export class RecordsSubscribeHandler implements MethodHandler {
     eventFilters: Filter[],
     visibility: RecordsCollectionVisibility,
     guardedSubscriptionHandler: GuardedSubscriptionHandler,
+    subscriptionSignal?: AbortSignal,
   ): Promise<RecordsSubscribeReply> {
     // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
     const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, guardedSubscriptionHandler.listener, {
-      filters: eventFilters,
+      filters : eventFilters,
+      signal  : subscriptionSignal,
     });
     await guardedSubscriptionHandler.setSubscription(subscription);
 
@@ -271,6 +278,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     eventFilters: Filter[];
     recordsSubscribe: RecordsSubscribe;
     subscriptionHandler: SubscriptionListener;
+    subscriptionSignal?: AbortSignal;
     tenant: string;
   }): GuardedSubscriptionHandler {
     const { deliveryAuthorization, deps, eventFilters, recordsSubscribe, subscriptionHandler, tenant } = input;
@@ -397,6 +405,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     };
 
     return createGuardedSubscriptionHandler({
+      signal       : input.subscriptionSignal,
       listener     : subscriptionHandler,
       processEvent : deliverProjectedEvent,
     });

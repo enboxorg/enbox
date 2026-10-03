@@ -8,10 +8,12 @@ import type {
   EventSubscription,
   ProgressGapInfo,
   ProgressToken,
+  Wake,
 } from '../src/types/subscriptions.js';
 import type { GenerateRecordsWriteOutput, Persona } from './utils/test-data-generator.js';
 import type { RecordsWriteMessage, SubscriptionMessage } from '../src/index.js';
 
+import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { BroadcastChannelWakePublisher } from '../src/event-stream/broadcast-channel-wake-publisher.js';
@@ -462,6 +464,270 @@ describe('DurableEventLog', () => {
     }
   });
 
+  for (const phase of ['event', 'eose'] as const) {
+    it(`should abort pending ${phase} delivery without waiting for its listener`, async (): Promise<void> => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const localWakePublisher = new EventEmitterWakePublisher();
+      const store = new ScriptedFeedStore(alice.did, [await createLogEntry(alice, '1')], localWakePublisher);
+      const errors: unknown[] = [];
+      const log = new DurableEventLog(store, localWakePublisher, {
+        idleRedrainIntervalMs : 0,
+        errorHandler          : (error): void => { errors.push(error); },
+      });
+      const started = createDeliveryGate();
+      const blocked = createDeliveryGate();
+      const finished = createDeliveryGate();
+      const controller = new AbortController();
+      const reason = new Error('subscription cancelled');
+      const received: string[] = [];
+      await log.open();
+      const opening = log.subscribe(alice.did, 'abort-pending-replay', async (message): Promise<void> => {
+        received.push(message.type);
+        if (message.type === phase) {
+          started.resolve();
+          try {
+            await blocked.promise;
+            throw new Error('listener rejected after cancellation');
+          } finally {
+            finished.resolve();
+          }
+        }
+      }, { cursor: await store.createToken('0'), signal: controller.signal });
+
+      try {
+        await started.promise;
+        controller.abort(reason);
+        await expect(opening).rejects.toBe(reason);
+        const readCount = store.readCount;
+        localWakePublisher.publish({ tenant: alice.did, seq: '1' });
+        expect(store.readCount).toBe(readCount);
+        blocked.resolve();
+        await finished.promise;
+        expect(received).toEqual(phase === 'event' ? ['event'] : ['event', 'eose']);
+        expect(errors).toEqual([]);
+      } finally {
+        blocked.resolve();
+        await opening.catch((): void => {});
+        await log.close();
+      }
+    });
+  }
+
+  it('should reject a pre-aborted subscription without reading or registering it', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const store = new ScriptedFeedStore(alice.did, [], localWakePublisher);
+    const log = new DurableEventLog(store, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const controller = new AbortController();
+    const reason = new Error('cancelled before open');
+    controller.abort(reason);
+    await log.open();
+    try {
+      await expect(log.subscribe(alice.did, 'pre-aborted', (): void => {}, { signal: controller.signal })).rejects.toBe(reason);
+      localWakePublisher.publish({ tenant: alice.did, seq: '1' });
+      expect(store.readCount).toBe(0);
+    } finally {
+      await log.close();
+    }
+  });
+
+  it('should abort initialization while bounds are still loading', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const store = new ScriptedFeedStore(alice.did, [], localWakePublisher);
+    const log = new DurableEventLog(store, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const started = createDeliveryGate();
+    const blocked = createDeliveryGate();
+    const bounds = sinon.stub(store, 'logBounds').callsFake(async (): Promise<undefined> => {
+      started.resolve();
+      await blocked.promise;
+      return undefined;
+    });
+    const controller = new AbortController();
+    const reason = new Error('cancelled during open');
+    await log.open();
+    const opening = log.subscribe(alice.did, 'abort-init', (): void => {}, { signal: controller.signal });
+    try {
+      await started.promise;
+      controller.abort(reason);
+      await expect(opening).rejects.toBe(reason);
+      blocked.resolve();
+      localWakePublisher.publish({ tenant: alice.did, seq: '1' });
+      expect(store.readCount).toBe(0);
+    } finally {
+      blocked.resolve();
+      bounds.restore();
+      await opening.catch((): void => {});
+      await log.close();
+    }
+  });
+
+  it('should reject initialization superseded by a close and reopen', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const store = new ScriptedFeedStore(alice.did, [], localWakePublisher);
+    const log = new DurableEventLog(store, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const started = createDeliveryGate();
+    const blocked = createDeliveryGate();
+    const bounds = sinon.stub(store, 'logBounds').callsFake(async (): Promise<undefined> => {
+      started.resolve();
+      await blocked.promise;
+      return undefined;
+    });
+    await log.open();
+    const opening = log.subscribe(alice.did, 'stale-init', (): void => {});
+    try {
+      await started.promise;
+      await log.close();
+      await log.open();
+      blocked.resolve();
+      await expect(opening).rejects.toThrow(DwnErrorCode.EventLogNotOpenError);
+      localWakePublisher.publish({ tenant: alice.did, seq: '1' });
+      expect(store.readCount).toBe(0);
+    } finally {
+      blocked.resolve();
+      bounds.restore();
+      await opening.catch((): void => {});
+      await log.close();
+    }
+  });
+
+  it('should close an aborted live subscription without reporting cancellation as a drain error', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const started = createDeliveryGate();
+    const blocked = createDeliveryGate();
+    const finished = createDeliveryGate();
+    const errors: unknown[] = [];
+    const received: string[] = [];
+    const controller = new AbortController();
+    const log = new DurableEventLog(messageStore, wakePublisher, {
+      idleRedrainIntervalMs : 0,
+      errorHandler          : (error): void => { errors.push(error); },
+    });
+    await log.open();
+    await log.subscribe(alice.did, 'abort-live', async (message): Promise<void> => {
+      received.push(message.cursor.position);
+      started.resolve();
+      try {
+        await blocked.promise;
+        throw new Error('late live rejection');
+      } finally {
+        finished.resolve();
+      }
+    }, { signal: controller.signal });
+    try {
+      await storeRecord(alice);
+      await started.promise;
+      controller.abort();
+      await storeRecord(alice);
+      blocked.resolve();
+      await finished.promise;
+      expect(received).toEqual(['1']);
+      expect(errors).toEqual([]);
+    } finally {
+      blocked.resolve();
+      await log.close();
+    }
+  });
+
+  it('should retain a wake received while an async listener fails and retry without another wake', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const store = new ScriptedFeedStore(alice.did, [await createLogEntry(alice, '1')], localWakePublisher);
+    const started = createDeliveryGate();
+    const blocked = createDeliveryGate();
+    const completed = createDeliveryGate();
+    const errors: unknown[] = [];
+    const attempted: string[] = [];
+    const failure = new Error('transient listener failure');
+    const log = new DurableEventLog(store, localWakePublisher, {
+      idleRedrainIntervalMs : 0,
+      errorHandler          : (error): void => { errors.push(error); },
+    });
+    await log.open();
+    await log.subscribe(alice.did, 'queued-wake-on-error', async (message): Promise<void> => {
+      attempted.push(message.cursor.position);
+      if (attempted.length === 1) {
+        started.resolve();
+        await blocked.promise;
+        throw failure;
+      }
+      if (message.cursor.position === '3') {
+        completed.resolve();
+      }
+    });
+    try {
+      store.append(await createLogEntry(alice, '2'));
+      localWakePublisher.publish({ tenant: alice.did, seq: '2' });
+      await started.promise;
+      store.append(await createLogEntry(alice, '3'));
+      localWakePublisher.publish({ tenant: alice.did, seq: '3' });
+      blocked.resolve();
+      await completed.promise;
+      expect(attempted).toEqual(['2', '2', '3']);
+      expect(errors).toEqual([failure]);
+    } finally {
+      blocked.resolve();
+      await log.close();
+    }
+  });
+
+  it('should pace repeated failures when each failed listener produces another wake', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const store = new ScriptedFeedStore(alice.did, [await createLogEntry(alice, '1')], localWakePublisher);
+    const started = createDeliveryGate();
+    let attempts = 0;
+    const log = new DurableEventLog(store, localWakePublisher, { idleRedrainIntervalMs: 0, errorHandler: (): void => {} });
+    await log.open();
+    await log.subscribe(alice.did, 'poison-event', async (): Promise<void> => {
+      attempts++;
+      started.resolve();
+      localWakePublisher.publish({ tenant: alice.did, seq: '2' });
+      throw new Error('persistent listener failure');
+    });
+    try {
+      store.append(await createLogEntry(alice, '2'));
+      localWakePublisher.publish({ tenant: alice.did, seq: '2' });
+      await started.promise;
+      await new Promise<void>((resolve): void => { setTimeout(resolve, 250); });
+      expect(attempts).toBeGreaterThanOrEqual(1);
+      expect(attempts).toBeLessThanOrEqual(3);
+      await log.close();
+      const attemptsAfterClose = attempts;
+      await new Promise<void>((resolve): void => { setTimeout(resolve, 120); });
+      expect(attempts).toBe(attemptsAfterClose);
+    } finally {
+      await log.close();
+    }
+  });
+
+  it('should preserve a replacement subscription when an older handle closes or aborts', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const oldController = new AbortController();
+    const completed = createDeliveryGate();
+    const oldReceived: SubscriptionMessage[] = [];
+    const newReceived: SubscriptionMessage[] = [];
+    const old = await eventLog.subscribe(alice.did, 'same-message-cid', (message): void => { oldReceived.push(message); }, {
+      signal: oldController.signal,
+    });
+    const current = await eventLog.subscribe(alice.did, 'same-message-cid', (message): void => {
+      newReceived.push(message);
+      completed.resolve();
+    });
+    try {
+      oldController.abort();
+      await old.close();
+      await storeRecord(alice);
+      await completed.promise;
+      expect(oldReceived).toEqual([]);
+      expect(newReceived).toHaveLength(1);
+    } finally {
+      await old.close();
+      await current.close();
+    }
+  });
+
   it('should keep a subscription closed when the event log closes during async EOSE delivery', async (): Promise<void> => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const localWakePublisher = new EventEmitterWakePublisher();
@@ -766,6 +1032,127 @@ describe('DurableEventLog', () => {
     expect(received).toHaveLength(1);
     expect(received[0].cursor.position).toBe('2');
     await scriptedLog.close();
+  });
+
+  for (const mode of ['live', 'replay'] as const) {
+    it(`should retain the ${mode} page epoch when its first listener resets storage`, async (): Promise<void> => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      await storeRecord(alice);
+      if (mode === 'replay') {
+        await storeRecord(alice);
+      }
+      const bounds = await eventLog.getReplayBounds(alice.did);
+      const notified = createDeliveryGate();
+      const received: SubscriptionMessage[] = [];
+      const resetPosition = mode === 'live' ? '2' : '1';
+      let reset = false;
+      const subscription = await eventLog.subscribe(alice.did, `reset-${mode}-page`, async (message): Promise<void> => {
+        received.push(message);
+        if (message.type === 'event' && message.cursor.position === resetPosition && !reset) {
+          reset = true;
+          await messageStore.clear();
+          await storeRecord(alice);
+        }
+        if (message.type === 'error') {
+          notified.resolve();
+        }
+      }, mode === 'replay' ? { cursor: bounds!.oldest } : {});
+
+      try {
+        if (mode === 'live') {
+          // Coalesced post-commit wakes make both rows belong to one captured page.
+          const heldWakes: Wake[] = [];
+          const publication = sinon.stub(wakePublisher, 'publish').callsFake((wake): void => { heldWakes.push(wake); });
+          try {
+            await storeRecord(alice);
+            await storeRecord(alice);
+          } finally {
+            publication.restore();
+          }
+          wakePublisher.publish(heldWakes.at(-1)!);
+        }
+        await notified.promise;
+        expect(await messageStore.epoch()).not.toBe(bounds!.latest.epoch);
+        const events = received.filter((message) => message.type === 'event');
+        expect(events.map((message) => message.cursor.position)).toEqual(mode === 'live' ? ['2', '3'] : ['1', '2']);
+        expect(events.every((message) => message.cursor.epoch === bounds!.latest.epoch)).toBe(true);
+        expect(received.at(-1)).toEqual(expect.objectContaining({ type: 'error', error: expect.objectContaining({ code: 'ProgressGap' }) }));
+        const eose = received.find((message) => message.type === 'eose');
+        if (mode === 'replay') {
+          expect(eose?.cursor.epoch).toBe(bounds!.latest.epoch);
+        } else {
+          expect(eose).toBeUndefined();
+        }
+      } finally {
+        await subscription.close();
+      }
+    });
+  }
+
+  it('should emit a gap before delivering rows if storage resets during the read', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await storeRecord(alice);
+    const notified = createDeliveryGate();
+    const received: SubscriptionMessage[] = [];
+    const subscription = await eventLog.subscribe(alice.did, 'reset-during-read', (message): void => {
+      received.push(message);
+      notified.resolve();
+    });
+    const heldWakes: Wake[] = [];
+    const publication = sinon.stub(wakePublisher, 'publish').callsFake((wake): void => { heldWakes.push(wake); });
+    try {
+      await storeRecord(alice);
+    } finally {
+      publication.restore();
+    }
+    // Model a concurrent reset after rows are scanned, before the store captures its result token.
+    const tokenStore = messageStore as unknown as {
+      buildToken(tenant: string, position: bigint, messageCid?: string): Promise<ProgressToken>;
+    };
+    const originalBuildToken = tokenStore.buildToken.bind(tokenStore);
+    let reset = false;
+    const token = sinon.stub(tokenStore, 'buildToken').callsFake(async (tenant, position, messageCid): Promise<ProgressToken> => {
+      if (!reset && position === 2n) {
+        reset = true;
+        await messageStore.clear();
+        await storeRecord(alice);
+      }
+      return originalBuildToken(tenant, position, messageCid);
+    });
+    try {
+      wakePublisher.publish(heldWakes.at(-1)!);
+      await notified.promise;
+      expect(reset).toBe(true);
+      expect(received).toEqual([expect.objectContaining({ type: 'error', error: expect.objectContaining({ code: 'ProgressGap' }) })]);
+    } finally {
+      token.restore();
+      await subscription.close();
+    }
+  });
+
+  it('should reject a page from a different stream before delivering its events', async (): Promise<void> => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const store = new ScriptedFeedStore(alice.did, [await createLogEntry(alice, '1')], localWakePublisher);
+    const log = new DurableEventLog(store, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const originalRead = store.logRead.bind(store);
+    const read = sinon.stub(store, 'logRead').callsFake(async (tenant, options): Promise<EventLogReadResult> => {
+      const result = await originalRead(tenant, options);
+      return { ...result, cursor: { ...result.cursor!, streamId: 'different-stream' } };
+    });
+    const notified = createDeliveryGate();
+    const received: SubscriptionMessage[] = [];
+    await log.open();
+    try {
+      await log.subscribe(alice.did, 'wrong-stream-page', (message): void => { received.push(message); notified.resolve(); });
+      store.append(await createLogEntry(alice, '2'));
+      localWakePublisher.publish({ tenant: alice.did, seq: '2' });
+      await notified.promise;
+      expect(received).toEqual([expect.objectContaining({ type: 'error', error: expect.objectContaining({ code: 'ProgressGap' }) })]);
+    } finally {
+      read.restore();
+      await log.close();
+    }
   });
 
   it('should close for a changed store epoch while retaining the tenant stream identity', async (): Promise<void> => {

@@ -197,6 +197,7 @@ export type RecordEvent = {
 
 export type RecordsSubscribeMessageOptions = {
   subscriptionHandler: SubscriptionListener;
+  subscriptionSignal?: AbortSignal;
 };
 
 export type RecordsSubscribeMessage = GenericMessage & {

@@ -41,6 +41,9 @@ export class SocketConnection {
   private readonly subscriptions: Map<JsonRpcId, JsonRpcSubscription> = new Map();
   private readonly flowControllers: Map<JsonRpcId, FlowController> = new Map();
   private isAlive: boolean = true;
+  private isClosed: boolean = false;
+  private readonly subscriptionAbortController: AbortController = new AbortController();
+  private closePromise?: Promise<void>;
 
   constructor(
     private readonly socket: ServerWebSocket<WsData>,
@@ -92,6 +95,10 @@ export class SocketConnection {
    * Used for cleanup if the connection is closed.
    */
   async addSubscription(subscription: JsonRpcSubscription): Promise<void> {
+    if (this.isClosed) {
+      await subscription.close();
+      throw new DwnServerError(DwnServerErrorCode.ConnectionClosed, 'cannot add a subscription to a closed connection');
+    }
     if (this.subscriptions.has(subscription.id)) {
       throw new DwnServerError(
         DwnServerErrorCode.ConnectionSubscriptionJsonRpcIdExists,
@@ -135,9 +142,19 @@ export class SocketConnection {
   /**
    * Closes the existing connection and cleans up any listeners or subscriptions.
    */
-  async close(): Promise<void> {
+  public close(): Promise<void> {
+    if (this.closePromise !== undefined) {
+      return this.closePromise;
+    }
+    this.isClosed = true;
     clearInterval(this.heartbeatInterval);
+    // Publish ownership before abort dispatch can re-enter close(), and cancel replay before awaiting cleanup.
+    this.closePromise = Promise.resolve().then((): Promise<void> => this.closeConnection());
+    this.subscriptionAbortController.abort(new DwnServerError(DwnServerErrorCode.ConnectionClosed, 'socket connection closed'));
+    return this.closePromise;
+  }
 
+  private async closeConnection(): Promise<void> {
     const closePromises: Promise<void>[] = [];
     for (const [id, subscription] of this.subscriptions) {
       closePromises.push(subscription.close());
@@ -173,6 +190,9 @@ export class SocketConnection {
    * This is called by Bun's websocket message handler via http-api.ts.
    */
   async message(dataBuffer: Buffer): Promise<void> {
+    if (this.isClosed) {
+      return;
+    }
     const requestData = dataBuffer.toString();
     if (!requestData) {
       return this.send(createJsonRpcErrorResponse(
@@ -238,7 +258,9 @@ export class SocketConnection {
    * Sends a JSON encoded string through the WebSocket.
    */
   private send(response: JsonRpcResponse | JsonRpcErrorResponse): void {
-    this.socket.send(JSON.stringify(response));
+    if (!this.isClosed) {
+      this.socket.send(JSON.stringify(response));
+    }
   }
 
   /**
@@ -265,7 +287,9 @@ export class SocketConnection {
     this.flowControllers.set(id, fc);
 
     return (message) => {
-      fc.push(message);
+      if (!this.isClosed) {
+        fc.push(message);
+      }
     };
   }
 
@@ -294,6 +318,7 @@ export class SocketConnection {
         requestContext.subscriptionRequest = {
           id                  : subscription.id,
           subscriptionHandler : this.createSubscriptionHandler(subscription.id),
+          signal              : this.subscriptionAbortController.signal,
         };
       }
     }
