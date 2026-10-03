@@ -358,10 +358,10 @@ export class DurableEventLog implements EventLog {
         try {
           await this.drainOnce(subscription);
         } catch (error) {
-          await this.handleDrainError(subscription, error);
+          await this.handleDrainError(subscription, error); // NOSONAR: S9382 - settle failure/terminal delivery before retrying this cursor.
           if (subscription.redrainRequested && !subscription.closed) {
             // Preserve wakes received during failed delivery without spinning on a poison event.
-            await this.waitForRetry(subscription);
+            await this.waitForRetry(subscription); // NOSONAR: S9382 - pace this subscription's next attempt to prevent a failure spin.
           }
         }
       } while (subscription.redrainRequested && !subscription.closed);
