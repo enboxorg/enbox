@@ -171,10 +171,15 @@ visibility.
 
 The internal pump composes the four bounded primitives above for already
 resolved `SyncTarget`s. Each call is one turn reconstructed from durable ledger
-state. A round selects at most one link per normalized endpoint, rotates link
-order for fairness, and lets independent endpoints run concurrently. The later
-runtime owns wake coalescing and scheduling rather than duplicating that state
-inside the pump.
+state. A turn handles one explicit direction, giving each link at most one feed
+page and one corresponding sparse retry. Links run concurrently while the
+shared endpoint permit serializes their remote requests. The later runtime owns
+alternating pull and push, wake coalescing, and scheduling additional turns
+rather than duplicating that state inside the pump.
+
+Feed pages run before sparse retries so a pathological retained record cannot
+hold a checkpoint behind it. Each retry remains durable for the next turn when
+the request budget is exhausted.
 
 Every remote feed query, body/dependency read, and replicated apply enters one
 shared keyed endpoint permit. The permit covers the logical RPC, including any
@@ -191,8 +196,10 @@ record-specific failures remain scoped to their work. Inbound quarantine has
 one active retry owner per tenant and projection across all bindings; this adds
 no durable claim or second queue.
 
-The pump resumes from the ledger after restart and reports feed coverage,
-pending quarantine, and endpoint delivery obligations separately. It owns no
-target discovery, subscription setup, wake queue, timer, public status API, or
-engine selection. Those runtime and cutover layers must preserve this ledger
-contract and treat socket events only as pump wakes.
+The pump resumes from the ledger after restart and returns whether work remains,
+plus the target and operation for any failure. Detailed per-target status belongs
+to the later runtime, which can read authoritative checkpoints and sparse rows
+from the ledger. The pump owns no target discovery, subscription setup, wake
+queue, timer, public status API, or engine selection. Those runtime and cutover
+layers must preserve this ledger contract and treat socket events only as pump
+wakes.

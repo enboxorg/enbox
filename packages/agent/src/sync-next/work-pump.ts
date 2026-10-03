@@ -1,6 +1,8 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
+import type { SyncDirection } from '../types/sync.js';
 import type { SyncNextDeliveryRetryResult } from './delivery-retry.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
+import type { SyncNextLinkIdentity } from './types.js';
 import type { SyncNextPullPageResult } from './pull-page.js';
 import type { SyncNextPushPageResult } from './push-page.js';
 import type { SyncNextQuarantineRetryResult } from './quarantine-retry.js';
@@ -10,7 +12,6 @@ import type { SyncTarget } from '../sync-target-resolver.js';
 import { runWithCrossContextLock } from '@enbox/common';
 import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
 
-import { normalizeDwnEndpoint } from '../sync-target-resolver.js';
 import { retryOneDeliveryObligation } from './delivery-retry.js';
 import { retryOneQuarantinedRoot } from './quarantine-retry.js';
 import { syncErrorMessage } from '../sync-runtime-errors.js';
@@ -22,31 +23,15 @@ import { syncNextLinkIdentity, syncNextLinkKey } from './ledger-key.js';
 
 type SyncNextWorkKind = 'delivery' | 'pullPage' | 'pushPage' | 'quarantine';
 
-export type SyncNextWorkDirection = 'both' | 'pull' | 'push';
-
-export type SyncNextWorkTargetStatus = {
-  authorizationEpoch: string;
-  projectionId: string;
-  pull: {
-    error?: string;
-    feedCovered: boolean;
-    pendingQuarantine: number;
-  };
-  push: {
-    enabled: boolean;
-    error?: string;
-    feedCovered: boolean;
-    pendingDelivery: number;
-  };
-  remoteEndpoint: string;
-  tenantDid: string;
+export type SyncNextWorkFailure = {
+  message: string;
+  target: SyncNextLinkIdentity;
+  work: SyncNextWorkKind;
 };
 
 export type SyncNextWorkPumpResult = {
-  budgetExhausted: boolean;
-  cancelled: boolean;
+  failures: SyncNextWorkFailure[];
   remoteRequests: number;
-  targets: SyncNextWorkTargetStatus[];
   workRemaining: boolean;
 };
 
@@ -63,25 +48,17 @@ export type SyncNextWorkPumpOperations = {
   quarantineRetry: SyncNextWorkOperation<SyncNextQuarantineRetryResult>;
 };
 
-type SyncNextWorkPumpOptions = {
-  maxRemoteRequests?: number;
-  operations?: Partial<SyncNextWorkPumpOperations>;
-};
-
 type TargetState = {
-  errors: Partial<Record<SyncNextWorkKind, string>>;
-  pullCovered: boolean;
-  pullRequested: boolean;
-  pushCovered: boolean;
-  pushRequested: boolean;
-  queue: SyncNextWorkKind[];
+  covered: boolean;
+  failures: SyncNextWorkFailure[];
+  identity: SyncNextLinkIdentity;
   target: SyncTarget;
 };
 
 type RequestBudget = {
   maxRequests: number;
   requests: number;
-  signal?: AbortSignal;
+  signal: AbortSignal | undefined;
 };
 
 const DEFAULT_MAX_REMOTE_REQUESTS = 32;
@@ -91,119 +68,78 @@ export class SyncNextWorkPump {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
-    private readonly _options: SyncNextWorkPumpOptions = {},
+    private readonly _operations: Partial<SyncNextWorkPumpOperations> = {},
   ) {}
 
   /** Run one turn. Durable checkpoints and sparse rows carry unfinished work to the next turn. */
   public async run(
     targets: readonly SyncTarget[],
-    direction: SyncNextWorkDirection = 'both',
+    direction: SyncDirection,
     options: { maxRemoteRequests?: number; signal?: AbortSignal } = {},
   ): Promise<SyncNextWorkPumpResult> {
-    const maxRequests = options.maxRemoteRequests ?? this._options.maxRemoteRequests ?? DEFAULT_MAX_REMOTE_REQUESTS;
+    const maxRequests = options.maxRemoteRequests ?? DEFAULT_MAX_REMOTE_REQUESTS;
     if (!Number.isSafeInteger(maxRequests) || maxRequests <= 0) {
       throw new RangeError('SyncNextWorkPump: request budget must be a positive integer.');
     }
     const budget: RequestBudget = {
       maxRequests,
-      requests: 0,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      requests : 0,
+      signal   : options.signal,
     };
     const states = this.createStates(targets, direction);
-    await Promise.all(states.map(state => this.ensureLink(state.target)));
+    await Promise.all(states.map(state => this.ensureLink(state)));
     const blockedEndpoints = new Set<string>();
+    const page = direction === 'pull' ? 'pullPage' : 'pushPage';
+    const retry = direction === 'pull' ? 'quarantine' : 'delivery';
 
-    while (budget.signal?.aborted !== true && budget.requests < budget.maxRequests &&
-      states.some(state => state.queue.length > 0)) {
-      const work = this.takeRound(states, blockedEndpoints);
-      if (work.length === 0) {
-        break;
-      }
-      // Rounds are sequential so later work observes earlier ledger and endpoint results.
-      await Promise.all(work.map(({ state, kind }) => // NOSONAR
-        this.runWork(state, kind, budget, blockedEndpoints)
-      ));
-    }
+    await this.runPhase(states, page, budget, blockedEndpoints);
+    await this.runPhase(states, retry, budget, blockedEndpoints);
 
-    return this.buildResult(states, budget);
+    return this.buildResult(states, budget, direction);
   }
 
-  private createStates(targets: readonly SyncTarget[], direction: SyncNextWorkDirection): TargetState[] {
+  private createStates(targets: readonly SyncTarget[], direction: SyncDirection): TargetState[] {
     const states = new Map<string, TargetState>();
     for (const target of targets) {
-      const key = syncNextLinkKey(syncNextLinkIdentity(target));
-      const state = states.get(key) ?? {
-        errors        : {},
-        pullCovered   : false,
-        pullRequested : false,
-        pushCovered   : false,
-        pushRequested : false,
-        queue         : [],
+      if (direction === 'push' && target.authorization.kind === 'role') {
+        continue;
+      }
+      const identity = syncNextLinkIdentity(target);
+      const key = syncNextLinkKey(identity);
+      if (states.has(key)) {
+        continue;
+      }
+      const state: TargetState = {
+        covered  : false,
+        failures : [],
+        identity,
         target,
       };
-      state.target = target;
-      if (direction !== 'push') {
-        state.pullRequested = true;
-        this.enqueue(state, 'pullPage');
-        this.enqueue(state, 'quarantine', true);
-      }
-      if (direction !== 'pull' && target.authorization.kind !== 'role') {
-        state.pushRequested = true;
-        this.enqueue(state, 'delivery');
-        this.enqueue(state, 'pushPage');
-      }
       states.set(key, state);
     }
     return [...states.values()];
   }
 
-  private async ensureLink(target: SyncTarget): Promise<void> {
+  private async ensureLink(state: TargetState): Promise<void> {
     await this._ledger.getOrCreateLink({
-      ...syncNextLinkIdentity(target),
-      authorization : target.authorization,
-      scope         : target.scope,
+      ...state.identity,
+      authorization : state.target.authorization,
+      scope         : state.target.scope,
     });
   }
 
-  /** Select at most one link per endpoint and one quarantine owner per logical target. */
-  private takeRound(
+  private async runPhase(
     states: TargetState[],
-    blockedEndpoints: ReadonlySet<string>,
-  ): Array<{ kind: SyncNextWorkKind; state: TargetState }> {
-    const endpoints = new Set<string>();
-    const quarantineTargets = new Set<string>();
-    const work: Array<{ kind: SyncNextWorkKind; state: TargetState }> = [];
-    for (const state of states) {
-      const endpoint = normalizeDwnEndpoint(state.target.dwnUrl);
-      if (blockedEndpoints.has(endpoint) || endpoints.has(endpoint)) {
-        continue;
-      }
-      const kind = this.takeEligible(state, quarantineTargets);
-      if (kind !== undefined) {
-        endpoints.add(endpoint);
-        work.push({ kind, state });
-      }
+    kind: SyncNextWorkKind,
+    budget: RequestBudget,
+    blockedEndpoints: Set<string>,
+  ): Promise<void> {
+    if (budget.signal?.aborted === true || budget.requests >= budget.maxRequests) {
+      return;
     }
-    for (const { state } of work) {
-      states.splice(states.indexOf(state), 1);
-      states.push(state);
-    }
-    return work;
-  }
-
-  private takeEligible(state: TargetState, quarantineTargets: Set<string>): SyncNextWorkKind | undefined {
-    for (let index = 0; index < state.queue.length; index++) {
-      const kind = state.queue[index];
-      if (kind === 'quarantine') {
-        const logicalKey = this.logicalTargetKey(state.target);
-        if (quarantineTargets.has(logicalKey)) {
-          continue;
-        }
-        quarantineTargets.add(logicalKey);
-      }
-      state.queue.splice(index, 1);
-      return kind;
-    }
+    await Promise.all(states.map(state => // NOSONAR
+      this.runWork(state, kind, budget, blockedEndpoints)
+    ));
   }
 
   private async runWork(
@@ -212,7 +148,7 @@ export class SyncNextWorkPump {
     budget: RequestBudget,
     blockedEndpoints: Set<string>,
   ): Promise<void> {
-    const endpoint = normalizeDwnEndpoint(state.target.dwnUrl);
+    const endpoint = state.identity.remoteEndpoint;
     const shouldContinue = (): boolean => budget.signal?.aborted !== true;
     const runRemoteRequest = this.requestRunner(endpoint, budget, blockedEndpoints);
     try {
@@ -230,9 +166,10 @@ export class SyncNextWorkPump {
           await this.runDelivery(state, shouldContinue, runRemoteRequest, blockedEndpoints);
           break;
       }
-      delete state.errors[kind];
     } catch (error: unknown) {
-      state.errors[kind] = syncErrorMessage(error);
+      if (!(error instanceof SyncWorkInterruptedError)) {
+        state.failures.push({ message: syncErrorMessage(error), target: state.identity, work: kind });
+      }
       if (this.isEndpointFailure(error)) {
         blockedEndpoints.add(endpoint);
       }
@@ -244,21 +181,13 @@ export class SyncNextWorkPump {
     shouldContinue: () => boolean,
     runRemoteRequest: SyncRemoteRequestRunner,
   ): Promise<void> {
-    const result = await (this._options.operations?.pullPage?.(
+    const result = await (this._operations.pullPage?.(
       state.target, shouldContinue, runRemoteRequest,
     ) ?? new SyncNextPullPage(this._agent, this._ledger, runRemoteRequest).consume(state.target, shouldContinue));
     if (result.kind !== 'committed') {
       return;
     }
-    state.pullCovered = !result.hasMore;
-    if (result.hasMore) {
-      this.enqueue(state, 'pullPage');
-    }
-    if ((await this._ledger.getQuarantineForLogicalTarget(
-      state.target.did, state.target.projectionId,
-    )).length > 0) {
-      this.enqueue(state, 'quarantine', true);
-    }
+    state.covered = !result.hasMore;
   }
 
   private async runQuarantine(
@@ -266,16 +195,16 @@ export class SyncNextWorkPump {
     shouldContinue: () => boolean,
     runRemoteRequest: SyncRemoteRequestRunner,
   ): Promise<void> {
-    const result = await (this._options.operations?.quarantineRetry?.(
-      state.target, shouldContinue, runRemoteRequest,
-    ) ?? retryOneQuarantinedRoot({
-      agent: this._agent, ledger: this._ledger, target: state.target, shouldContinue, runRemoteRequest,
-    }));
-    if (result.kind === 'settled' && (await this._ledger.getQuarantineForLogicalTarget(
-      state.target.did, state.target.projectionId,
-    )).length > 0) {
-      this.enqueue(state, 'quarantine');
-    }
+    const lock = `enbox:sync-next-quarantine:${JSON.stringify([
+      state.identity.tenantDid, state.identity.projectionId,
+    ])}`;
+    await runWithCrossContextLock(lock, async (): Promise<void> => {
+      await (this._operations.quarantineRetry?.(
+        state.target, shouldContinue, runRemoteRequest,
+      ) ?? retryOneQuarantinedRoot({
+        agent: this._agent, ledger: this._ledger, target: state.target, shouldContinue, runRemoteRequest,
+      }));
+    });
   }
 
   private async runPushPage(
@@ -284,21 +213,15 @@ export class SyncNextWorkPump {
     runRemoteRequest: SyncRemoteRequestRunner,
     blockedEndpoints: Set<string>,
   ): Promise<void> {
-    const result = await (this._options.operations?.pushPage?.(
+    const result = await (this._operations.pushPage?.(
       state.target, shouldContinue, runRemoteRequest,
     ) ?? new SyncNextPushPage(this._agent, this._ledger, runRemoteRequest).consume(state.target, shouldContinue));
     if (result.kind !== 'committed') {
       return;
     }
-    state.pushCovered = !result.hasMore;
-    if (result.hasMore) {
-      this.enqueue(state, 'pushPage');
-    }
+    state.covered = !result.hasMore;
     if (result.blocked?.blockScope === 'endpoint') {
-      blockedEndpoints.add(normalizeDwnEndpoint(state.target.dwnUrl));
-    }
-    if ((await this._ledger.getDeliveryForLink(syncNextLinkIdentity(state.target))).length > 0) {
-      this.enqueue(state, 'delivery');
+      blockedEndpoints.add(state.identity.remoteEndpoint);
     }
   }
 
@@ -308,16 +231,13 @@ export class SyncNextWorkPump {
     runRemoteRequest: SyncRemoteRequestRunner,
     blockedEndpoints: Set<string>,
   ): Promise<void> {
-    const result = await (this._options.operations?.deliveryRetry?.(
+    const result = await (this._operations.deliveryRetry?.(
       state.target, shouldContinue, runRemoteRequest,
     ) ?? retryOneDeliveryObligation({
       agent: this._agent, ledger: this._ledger, target: state.target, shouldContinue, runRemoteRequest,
     }));
-    const remaining = (await this._ledger.getDeliveryForLink(syncNextLinkIdentity(state.target))).length;
-    if (result.kind === 'settled' && remaining > 0) {
-      this.enqueue(state, 'delivery');
-    } else if (result.kind === 'pending' && result.outcome.blockScope === 'endpoint') {
-      blockedEndpoints.add(normalizeDwnEndpoint(state.target.dwnUrl));
+    if (result.kind === 'pending' && result.outcome.blockScope === 'endpoint') {
+      blockedEndpoints.add(state.identity.remoteEndpoint);
     }
   }
 
@@ -363,60 +283,27 @@ export class SyncNextWorkPump {
     return error instanceof Error;
   }
 
-  private async buildResult(states: TargetState[], budget: RequestBudget): Promise<SyncNextWorkPumpResult> {
-    const built = await Promise.all(states.map(state => this.buildTargetStatus(state)));
+  private async buildResult(
+    states: TargetState[],
+    budget: RequestBudget,
+    direction: SyncDirection,
+  ): Promise<SyncNextWorkPumpResult> {
+    const remaining = await Promise.all(states.map(state => this.hasRemainingWork(state, direction)));
     return {
-      budgetExhausted : budget.signal?.aborted !== true && budget.requests >= budget.maxRequests,
-      cancelled       : budget.signal?.aborted === true,
-      remoteRequests  : budget.requests,
-      targets         : built.map(([status]) => status),
-      workRemaining   : built.some(([, remaining]) => remaining),
+      failures       : states.flatMap(state => state.failures),
+      remoteRequests : budget.requests,
+      workRemaining  : remaining.some(Boolean),
     };
   }
 
-  private async buildTargetStatus(state: TargetState): Promise<[SyncNextWorkTargetStatus, boolean]> {
-    const [quarantine, delivery] = await Promise.all([
-      this._ledger.getQuarantineForLogicalTarget(state.target.did, state.target.projectionId),
-      this._ledger.getDeliveryForLink(syncNextLinkIdentity(state.target)),
-    ]);
-    const status: SyncNextWorkTargetStatus = {
-      authorizationEpoch : state.target.authorizationEpoch,
-      projectionId       : state.target.projectionId,
-      pull               : {
-        ...errorProperty(state.errors.pullPage ?? state.errors.quarantine),
-        feedCovered       : state.pullCovered,
-        pendingQuarantine : quarantine.length,
-      },
-      push: {
-        enabled         : state.target.authorization.kind !== 'role',
-        ...errorProperty(state.errors.pushPage ?? state.errors.delivery),
-        feedCovered     : state.pushCovered,
-        pendingDelivery : delivery.length,
-      },
-      remoteEndpoint : normalizeDwnEndpoint(state.target.dwnUrl),
-      tenantDid      : state.target.did,
-    };
-    return [status, state.queue.length > 0 ||
-        (state.pullRequested && (!state.pullCovered || quarantine.length > 0)) ||
-        (state.pushRequested && (!state.pushCovered || delivery.length > 0))];
-  }
-
-  private enqueue(state: TargetState, kind: SyncNextWorkKind, first = false): void {
-    if (state.queue.includes(kind)) {
-      return;
+  private async hasRemainingWork(state: TargetState, direction: SyncDirection): Promise<boolean> {
+    if (!state.covered) {
+      return true;
     }
-    if (first) {
-      state.queue.unshift(kind);
-    } else {
-      state.queue.push(kind);
-    }
+    const pending = direction === 'pull'
+      ? await this._ledger.getQuarantineForLogicalTarget(state.identity.tenantDid, state.identity.projectionId)
+      : await this._ledger.getDeliveryForLink(state.identity);
+    return pending.length > 0;
   }
 
-  private logicalTargetKey(target: SyncTarget): string {
-    return `${target.did}\n${target.projectionId}`;
-  }
-}
-
-function errorProperty(error: string | undefined): { error?: string } {
-  return error === undefined ? {} : { error };
 }

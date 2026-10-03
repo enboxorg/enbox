@@ -289,11 +289,11 @@ describe('SyncNext pull and quarantine retry integration', () => {
     expect(await ledger.getQuarantineForLink(link)).toHaveLength(1);
 
     const resumed = await new SyncNextWorkPump(harness.agent, ledger).run([target], 'pull');
-    expect(resumed.targets[0].pull).toMatchObject({
-      error             : 'source offline',
-      feedCovered       : false,
-      pendingQuarantine : 0,
-    });
+    expect(resumed.failures).toEqual([{
+      message : 'source offline',
+      target  : syncNextLinkIdentity(target),
+      work    : 'pullPage',
+    }]);
     expect(resumed.workRemaining).toBe(true);
     expect(send.calledOnce).toBe(true);
     expect(await ledger.getQuarantineForLink(link)).toEqual([]);
@@ -347,10 +347,7 @@ describe('SyncNext pull and quarantine retry integration', () => {
     };
     const result = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'pull');
 
-    expect(result).toMatchObject({
-      remoteRequests : 2,
-      targets        : [{ pull: { feedCovered: true, pendingQuarantine: 0 } }],
-    });
+    expect(result).toMatchObject({ remoteRequests: 2, workRemaining: false });
     for (const recordId of [large.message!.recordId, small.message!.recordId]) {
       const { reply } = await harness.agent.dwn.processRequest({
         author        : tenantDid,

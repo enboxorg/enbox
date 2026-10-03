@@ -130,8 +130,8 @@ describe('SyncNext push-page integration', () => {
     try {
       const first = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'push');
       expect(first.remoteRequests).toBe(2);
-      expect(first.targets[0].push).toEqual({ enabled: true, feedCovered: true, pendingDelivery: 1 });
       expect(first.workRemaining).toBe(true);
+      expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(syncTarget))).toHaveLength(1);
     } finally {
       harness.agent.rpc.applyReplicatedMessage = originalApply;
     }
@@ -142,7 +142,8 @@ describe('SyncNext push-page integration', () => {
     const resumed = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'push');
 
     expect(resumed.remoteRequests).toBe(1);
-    expect(resumed.targets[0].push).toEqual({ enabled: true, feedCovered: true, pendingDelivery: 0 });
+    expect(resumed.workRemaining).toBe(false);
+    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(syncTarget))).toEqual([]);
     const remoteRead = await harness.agent.dwn.sendRequest({
       author        : tenantDid,
       target        : tenantDid,
@@ -186,12 +187,11 @@ describe('SyncNext push-page integration', () => {
     try {
       const pump = new SyncNextWorkPump(harness.agent, ledger);
       const first = await pump.run([syncTarget], 'push');
-      expect(first).toMatchObject({ budgetExhausted: true, remoteRequests: 32, workRemaining: true });
-      expect(first.targets[0].push.feedCovered).toBe(false);
+      expect(first).toMatchObject({ remoteRequests: 32, workRemaining: true });
+      expect(appliedCids).toHaveLength(32);
 
       const second = await pump.run([syncTarget], 'push');
-      expect(second).toMatchObject({ budgetExhausted: false, remoteRequests: 2, workRemaining: false });
-      expect(second.targets[0].push).toEqual({ enabled: true, feedCovered: true, pendingDelivery: 0 });
+      expect(second).toMatchObject({ remoteRequests: 2, workRemaining: false });
     } finally {
       harness.agent.rpc.applyReplicatedMessage = originalApply;
     }
