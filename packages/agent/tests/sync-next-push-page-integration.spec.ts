@@ -131,7 +131,7 @@ describe('SyncNext push-page integration', () => {
       const first = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'push');
       expect(first.remoteRequests).toBe(2);
       expect(first.targets[0].push).toEqual({ enabled: true, feedCovered: true, pendingDelivery: 1 });
-      expect(first.nextRunAt).toBeDefined();
+      expect(first.workRemaining).toBe(true);
     } finally {
       harness.agent.rpc.applyReplicatedMessage = originalApply;
     }
@@ -184,7 +184,7 @@ describe('SyncNext push-page integration', () => {
       return originalApply(request);
     };
     try {
-      const pump = new SyncNextWorkPump(harness.agent, ledger, { maxDurationMs: 30_000 });
+      const pump = new SyncNextWorkPump(harness.agent, ledger);
       const first = await pump.run([syncTarget], 'push');
       expect(first).toMatchObject({ budgetExhausted: true, remoteRequests: 32, workRemaining: true });
       expect(first.targets[0].push.feedCovered).toBe(false);

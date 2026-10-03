@@ -17,7 +17,7 @@ import { Records } from '@enbox/dwn-sdk-js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { syncNextDeliveryOutcome } from './delivery-outcome.js';
 import { prepareSyncNextFeedPage, sliceSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
-import { queryLocalMessageFeed, RemoteApplyPushContext, SyncPullAbortedError } from '../sync-messages.js';
+import { queryLocalMessageFeed, RemoteApplyPushContext, SyncWorkInterruptedError } from '../sync-messages.js';
 import { syncNextLinkIdentity, syncNextSourceAtOrBefore } from './ledger-key.js';
 
 type ClassifiedPushPage = {
@@ -52,7 +52,6 @@ export class SyncNextPushPage {
   public async consume(
     target: SyncTarget,
     shouldContinue: () => boolean = (): boolean => true,
-    canStartEntry: () => boolean = (): boolean => true,
   ): Promise<SyncNextPushPageResult> {
     if (target.authorization.kind === 'role') {
       throw new Error('SyncNextPushPage: role-authorized targets are pull-only.');
@@ -75,7 +74,7 @@ export class SyncNextPushPage {
       reply,
       target   : `local query for ${target.did} -> ${target.dwnUrl}`,
     });
-    const classified = await this.classifyPage(target, page.entries, shouldContinue, canStartEntry);
+    const classified = await this.classifyPage(target, page.entries, shouldContinue);
     if (classified === undefined || !shouldContinue()) {
       return { kind: 'aborted' };
     }
@@ -122,7 +121,6 @@ export class SyncNextPushPage {
     target: SyncTarget,
     entries: SyncNextPreparedFeedEntry[],
     shouldContinue: () => boolean,
-    canStartEntry: () => boolean,
   ): Promise<ClassifiedPushPage | undefined> {
     const context = new RemoteApplyPushContext({
       agent              : this._agent,
@@ -143,9 +141,6 @@ export class SyncNextPushPage {
       const { entry } = prepared;
       if (!shouldContinue()) {
         return undefined;
-      }
-      if (!canStartEntry()) {
-        return finishClassifiedPushPage(blocked, delivery, handledWrites, settled, entryCount);
       }
       if (blocked !== undefined) {
         delivery.push(deliveryInput(prepared, blocked));
@@ -176,7 +171,7 @@ export class SyncNextPushPage {
     try {
       return await context.pushFeedEntry(entry, []);
     } catch (error: unknown) {
-      if (error instanceof SyncPullAbortedError) {
+      if (error instanceof SyncWorkInterruptedError) {
         return undefined;
       }
       throw error;

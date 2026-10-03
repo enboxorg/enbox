@@ -187,12 +187,12 @@ type PushRootOutcome =
 export const MAX_ADMISSION_PASSES = 128;
 
 /** Raised when current sync work must stop without classifying the active root. */
-export class SyncPullAbortedError extends Error {
+export class SyncWorkInterruptedError extends Error {
   public constructor(public readonly reason: 'budget' | 'stopped' = 'stopped') {
     super(reason === 'budget'
       ? 'Sync work yielded because its run budget was exhausted.'
       : 'Sync work stopped before the active root could be classified.');
-    this.name = 'SyncPullAbortedError';
+    this.name = 'SyncWorkInterruptedError';
   }
 }
 
@@ -503,7 +503,7 @@ export async function fetchRemoteMessages({
           }) as MessagesReadReply
         );
       } catch (error: any) {
-        rethrowSyncPullAbort(error);
+        rethrowSyncWorkInterruption(error);
         console.error(`SyncMessages: pull - failed to read ${messageCid} from ${dwnUrl}:`, error.message ?? error);
         return undefined;
       }
@@ -836,7 +836,7 @@ export class RemoteApplyPushContext {
         })
       );
     } catch (error: any) {
-      rethrowSyncPullAbort(error);
+      rethrowSyncWorkInterruption(error);
       const detail = error.message ?? String(error);
       if (error instanceof SyncDataSizeLimitExceededError) {
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, 'Invalid') };
@@ -1444,8 +1444,8 @@ export class RemoteApplyPushContext {
   }
 }
 
-function rethrowSyncPullAbort(error: unknown): void {
-  if (error instanceof SyncPullAbortedError) {
+function rethrowSyncWorkInterruption(error: unknown): void {
+  if (error instanceof SyncWorkInterruptedError) {
     throw error;
   }
 }

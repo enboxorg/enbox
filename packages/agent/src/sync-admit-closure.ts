@@ -32,7 +32,7 @@ import {
   MAX_ADMISSION_PASSES,
   queryRemoteMessageFeed,
   SyncDataSizeLimitExceededError,
-  SyncPullAbortedError,
+  SyncWorkInterruptedError,
 } from './sync-messages.js';
 import {
   dependencyKey,
@@ -718,7 +718,7 @@ class AdmitClosureContext {
 
   private assertShouldContinue(): void {
     if (this.deps.shouldContinue?.() === false) {
-      throw new SyncPullAbortedError();
+      throw new SyncWorkInterruptedError();
     }
   }
 

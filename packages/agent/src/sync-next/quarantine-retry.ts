@@ -12,7 +12,7 @@ import { compareSyncNextSparseAttempts } from './ledger-key.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { Cid, DataStream, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { fetchRemoteMessages, SyncPullAbortedError } from '../sync-messages.js';
+import { fetchRemoteMessages, SyncWorkInterruptedError } from '../sync-messages.js';
 
 export type SyncNextQuarantineRetryResult =
   | { kind: 'aborted' | 'empty' | 'pending' }
@@ -67,7 +67,7 @@ export async function retryOneQuarantinedRoot({
     }
     return { kind: 'settled', appliedEntries: attempt.appliedEntries };
   } catch (error: unknown) {
-    if (error instanceof SyncPullAbortedError) {
+    if (error instanceof SyncWorkInterruptedError) {
       if (error.reason === 'budget' && shouldContinue()) {
         await ledger.updateQuarantine(selected);
       }

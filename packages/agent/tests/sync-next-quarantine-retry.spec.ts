@@ -12,7 +12,7 @@ import type { SyncNextLink, SyncNextQuarantineEntry } from '../src/sync-next/typ
 
 import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { SyncPullAbortedError } from '../src/sync-messages.js';
+import { SyncWorkInterruptedError } from '../src/sync-messages.js';
 import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/ledger-key.js';
 
 function target(endpoint = 'https://dwn.example.com'): SyncTarget {
@@ -576,7 +576,7 @@ describe('retryOneQuarantinedRoot', () => {
     await rewriteQuarantine(firstRow, { lastAttemptAt: '2026-01-01T00:00:00.000Z' });
     await rewriteQuarantine(secondRow, { lastAttemptAt: '2026-01-02T00:00:00.000Z' });
     const budgetYield = async <T>(): Promise<T> => {
-      throw new SyncPullAbortedError('budget');
+      throw new SyncWorkInterruptedError('budget');
     };
 
     expect(await retryOneQuarantinedRoot({

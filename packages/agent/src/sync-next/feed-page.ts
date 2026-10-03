@@ -42,22 +42,19 @@ export function sliceSyncNextFeedPage(
   page: SyncNextPreparedFeedPage,
   entryCount: number,
 ): SyncNextPreparedFeedPage | undefined {
-  if (!Number.isSafeInteger(entryCount) || entryCount < 0 || entryCount > page.entries.length) {
-    throw new RangeError('SyncNextFeedPage: handled entry count is outside the prepared page.');
-  }
   if (entryCount === page.entries.length) {
     return page;
   }
-  if (entryCount === 0) {
+  const pageReceipts = page.pageReceipts.slice(0, entryCount);
+  const handledThrough = pageReceipts.at(-1)?.source;
+  if (handledThrough === undefined) {
     return undefined;
   }
 
-  const entries = page.entries.slice(0, entryCount);
-  const pageReceipts = page.pageReceipts.slice(0, entryCount);
   return {
-    drained        : false,
-    entries,
-    handledThrough : pageReceipts[entryCount - 1].source,
+    drained : false,
+    entries : page.entries.slice(0, entryCount),
+    handledThrough,
     pageReceipts,
   };
 }

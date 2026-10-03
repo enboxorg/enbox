@@ -74,11 +74,8 @@ owns signer and authorization validation.
 
 Every returned root is either settled or retained in quarantine before the
 page token advances. A later independent root in the same page is still
-processed while budget remains. If reordered prerequisite work consumes the
-budget before a prefix exists, the earliest receipt enters quarantine rather
-than allowing unrelated later roots to bypass the deadline. The primitive
-returns after this one commit; pagination, quarantine retry, wake handling, and
-scheduling remain runtime concerns.
+processed. The primitive returns after this one commit; pagination, quarantine
+retry, wake handling, and scheduling remain runtime concerns.
 
 ## Sparse recovery state
 
@@ -173,35 +170,29 @@ visibility.
 ## Bounded internal work pump
 
 The internal pump composes the four bounded primitives above for already
-resolved `SyncTarget`s. Pull and push wakes are coalesced per exact link. Each
-round selects at most one link per normalized endpoint, rotates link order for
-fairness, and lets independent endpoints run concurrently.
+resolved `SyncTarget`s. Each call is one turn reconstructed from durable ledger
+state. A round selects at most one link per normalized endpoint, rotates link
+order for fairness, and lets independent endpoints run concurrently. The later
+runtime owns wake coalescing and scheduling rather than duplicating that state
+inside the pump.
 
 Every remote feed query, body/dependency read, and replicated apply enters one
 shared keyed endpoint permit. The permit covers the logical RPC, including any
 transport retry or fallback, and is released when the RPC returns; a returned
-body stream does not retain it. A run also has request and elapsed-time budgets.
-The elapsed boundary is checked before each new feed root; an active root is
-allowed to finish atomically. A stopped page commits only a contiguous prefix,
-leaving its tail available from the resulting checkpoint. Budget or caller
-cancellation prevents new requests while leaving committed progress and queued
-work available to the next run.
+body stream does not retain it. A turn has a remote-request budget; page-size
+limits and transport timeouts provide the other bounds. Request exhaustion or
+caller cancellation leaves committed progress and sparse work available to the
+next turn. Without an explicit caller signal, the pump supplies none, preserving
+socket-preferred routing for eligible requests.
 
-Gated RPCs receive an abort signal so an in-flight HTTP request cannot outlive
-the run deadline. In the current RPC client, supplying a signal is an HTTP-only
-caller contract, so catch-up requests do not use an otherwise eligible pooled
-socket in this initial slice. The transport routing tests make that tradeoff
-explicit; socket subscriptions still provide wakes. Removing it requires
-cancellable socket request semantics rather than silently dropping the signal.
-
-Endpoint-wide transport/service failures open one fixed in-memory cooldown for
-that normalized endpoint. Quota, authorization, and record-specific failures
-remain scoped to their work. Inbound quarantine has one queued/active retry
-owner per tenant and projection across all bindings; this adds no durable claim
-or second queue.
+Endpoint-wide transport/service failures stop that endpoint for the rest of
+the turn while other endpoints continue. Quota, authorization, and
+record-specific failures remain scoped to their work. Inbound quarantine has
+one active retry owner per tenant and projection across all bindings; this adds
+no durable claim or second queue.
 
 The pump resumes from the ledger after restart and reports feed coverage,
 pending quarantine, and endpoint delivery obligations separately. It owns no
-target discovery, subscription setup, timer, public status API, or engine
-selection. Those runtime and cutover layers must preserve this ledger contract
-and treat socket events only as pump wakes.
+target discovery, subscription setup, wake queue, timer, public status API, or
+engine selection. Those runtime and cutover layers must preserve this ledger
+contract and treat socket events only as pump wakes.

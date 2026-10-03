@@ -9,7 +9,7 @@ import sinon from 'sinon';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
 import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
-import { SyncPullAbortedError } from '../src/sync-messages.js';
+import { SyncWorkInterruptedError } from '../src/sync-messages.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { Encoder, Jws, Message, RecordsWrite, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
@@ -490,7 +490,7 @@ describe('SyncNextPushPage', () => {
       ledger,
       async (request) => {
         if (remainingRequests-- === 0) {
-          throw new SyncPullAbortedError();
+          throw new SyncWorkInterruptedError();
         }
         return request();
       },

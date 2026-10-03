@@ -17,18 +17,12 @@ import { syncErrorMessage } from '../sync-runtime-errors.js';
 import { SyncNextFeedQueryError } from './feed-page.js';
 import { SyncNextPullPage } from './pull-page.js';
 import { SyncNextPushPage } from './push-page.js';
-import { SyncPullAbortedError } from '../sync-messages.js';
+import { SyncWorkInterruptedError } from '../sync-messages.js';
 import { syncNextLinkIdentity, syncNextLinkKey } from './ledger-key.js';
 
 type SyncNextWorkKind = 'delivery' | 'pullPage' | 'pushPage' | 'quarantine';
 
 export type SyncNextWorkDirection = 'both' | 'pull' | 'push';
-
-export type SyncNextWorkPumpRunOptions = {
-  maxDurationMs?: number;
-  maxRemoteRequests?: number;
-  signal?: AbortSignal;
-};
 
 export type SyncNextWorkTargetStatus = {
   authorizationEpoch: string;
@@ -51,7 +45,6 @@ export type SyncNextWorkTargetStatus = {
 export type SyncNextWorkPumpResult = {
   budgetExhausted: boolean;
   cancelled: boolean;
-  nextRunAt?: string;
   remoteRequests: number;
   targets: SyncNextWorkTargetStatus[];
   workRemaining: boolean;
@@ -61,7 +54,6 @@ type SyncNextWorkOperation<TResult> = (
   target: SyncTarget,
   shouldContinue: () => boolean,
   runRemoteRequest: SyncRemoteRequestRunner,
-  canStartWork?: () => boolean,
 ) => Promise<TResult>;
 
 export type SyncNextWorkPumpOperations = {
@@ -72,202 +64,177 @@ export type SyncNextWorkPumpOperations = {
 };
 
 type SyncNextWorkPumpOptions = {
-  cooldownMs?: number;
-  maxDurationMs?: number;
   maxRemoteRequests?: number;
-  now?: () => number;
   operations?: Partial<SyncNextWorkPumpOperations>;
 };
 
 type TargetState = {
   errors: Partial<Record<SyncNextWorkKind, string>>;
-  notBefore: Partial<Record<SyncNextWorkKind, number>>;
   pullCovered: boolean;
+  pullRequested: boolean;
   pushCovered: boolean;
+  pushRequested: boolean;
   queue: SyncNextWorkKind[];
   target: SyncTarget;
 };
 
-type QuarantineAttempt = {
-  remaining: number;
-  result: SyncNextQuarantineRetryResult;
+type RequestBudget = {
+  maxRequests: number;
+  requests: number;
+  signal?: AbortSignal;
 };
 
-const DEFAULT_COOLDOWN_MS = 1_000;
-const DEFAULT_MAX_DURATION_MS = 1_000;
 const DEFAULT_MAX_REMOTE_REQUESTS = 32;
 
-/**
- * Runs bounded sync-next work for already-resolved targets.
- *
- * It owns no target discovery, subscriptions, or durable scheduling policy.
- * Callers add coalesced work marks and invoke `drain()`; a returned `nextRunAt`
- * can be handed to the later runtime timer owner.
- */
+/** Executes one request-bounded sync-next turn for already-resolved targets. */
 export class SyncNextWorkPump {
-  private _drain?: Promise<SyncNextWorkPumpResult>;
-  private readonly _endpointCooldowns = new Map<string, number>();
-  private readonly _operations: SyncNextWorkPumpOperations;
-  private readonly _states = new Map<string, TargetState>();
-
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
     private readonly _options: SyncNextWorkPumpOptions = {},
-  ) {
-    this._operations = {
-      deliveryRetry: (target, shouldContinue, runRemoteRequest): Promise<SyncNextDeliveryRetryResult> =>
-        retryOneDeliveryObligation({
-          agent: this._agent, ledger: this._ledger, target, shouldContinue, runRemoteRequest,
-        }),
-      pullPage: (target, shouldContinue, runRemoteRequest, canStartWork): Promise<SyncNextPullPageResult> =>
-        new SyncNextPullPage(this._agent, this._ledger, runRemoteRequest)
-          .consume(target, shouldContinue, canStartWork),
-      pushPage: (target, shouldContinue, runRemoteRequest, canStartWork): Promise<SyncNextPushPageResult> =>
-        new SyncNextPushPage(this._agent, this._ledger, runRemoteRequest)
-          .consume(target, shouldContinue, canStartWork),
-      quarantineRetry: (
-        target, shouldContinue, runRemoteRequest,
-      ): Promise<SyncNextQuarantineRetryResult> => retryOneQuarantinedRoot({
-        agent: this._agent, ledger: this._ledger, target, shouldContinue, runRemoteRequest,
-      }),
-      ..._options.operations,
-    };
-  }
+  ) {}
 
-  /** Add a coalesced direction wake without starting background work. */
-  public request(target: SyncTarget, direction: SyncNextWorkDirection = 'both'): void {
-    const state = this.getOrCreateState(target);
-    if (direction === 'pull' || direction === 'both') {
-      state.pullCovered = false;
-      delete state.notBefore.pullPage;
-      delete state.notBefore.quarantine;
-      this.enqueue(state, 'pullPage');
-    }
-    if ((direction === 'push' || direction === 'both') && target.authorization.kind !== 'role') {
-      state.pushCovered = false;
-      delete state.notBefore.delivery;
-      delete state.notBefore.pushPage;
-      this.enqueue(state, 'pushPage');
-    }
-  }
-
-  /** Request work for resolved targets and drain it under one bounded budget. */
+  /** Run one turn. Durable checkpoints and sparse rows carry unfinished work to the next turn. */
   public async run(
     targets: readonly SyncTarget[],
     direction: SyncNextWorkDirection = 'both',
-    options: SyncNextWorkPumpRunOptions = {},
+    options: { maxRemoteRequests?: number; signal?: AbortSignal } = {},
   ): Promise<SyncNextWorkPumpResult> {
-    for (const target of targets) {
-      this.request(target, direction);
+    const maxRequests = options.maxRemoteRequests ?? this._options.maxRemoteRequests ?? DEFAULT_MAX_REMOTE_REQUESTS;
+    if (!Number.isSafeInteger(maxRequests) || maxRequests <= 0) {
+      throw new RangeError('SyncNextWorkPump: request budget must be a positive integer.');
     }
-    return this.drain(options);
-  }
-
-  /** Drain eligible coalesced work. Concurrent callers wait, then drain trailing work. */
-  public drain(options: SyncNextWorkPumpRunOptions = {}): Promise<SyncNextWorkPumpResult> {
-    if (this._drain !== undefined) {
-      return this._drain.then(
-        (): Promise<SyncNextWorkPumpResult> => this.drain(options),
-        (): Promise<SyncNextWorkPumpResult> => this.drain(options),
-      );
-    }
-
-    const budget = new WorkBudget(
-      options.maxRemoteRequests ?? this._options.maxRemoteRequests ?? DEFAULT_MAX_REMOTE_REQUESTS,
-      options.maxDurationMs ?? this._options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS,
-      options.signal,
-      this.now,
-    );
-    const drain = this.drainOwned(budget);
-    this._drain = drain;
-    const release = (): void => {
-      if (this._drain === drain) {
-        this._drain = undefined;
-      }
+    const budget: RequestBudget = {
+      maxRequests,
+      requests: 0,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     };
-    drain.then(release, release);
-    return drain;
-  }
+    const states = this.createStates(targets, direction);
+    await Promise.all(states.map(state => this.ensureLink(state.target)));
+    const blockedEndpoints = new Set<string>();
 
-  private async drainOwned(budget: WorkBudget): Promise<SyncNextWorkPumpResult> {
-    await this.seedSparseWork();
-    while (this.hasEligibleWork() && budget.canStartWork()) {
-      const work = this.takeRound();
+    while (budget.signal?.aborted !== true && budget.requests < budget.maxRequests &&
+      states.some(state => state.queue.length > 0)) {
+      const work = this.takeRound(states, blockedEndpoints);
       if (work.length === 0) {
         break;
       }
-      // Rounds are intentionally sequential: each observes prior ledger and cooldown results.
-      await Promise.all(work.map(({ state, kind }) => this.runWork(state, kind, budget))); // NOSONAR
+      // Rounds are sequential so later work observes earlier ledger and endpoint results.
+      await Promise.all(work.map(({ state, kind }) => // NOSONAR
+        this.runWork(state, kind, budget, blockedEndpoints)
+      ));
     }
-    return this.buildResult(budget);
+
+    return this.buildResult(states, budget);
   }
 
-  private hasEligibleWork(): boolean {
-    return [...this._states.values()].some(state => {
-      const endpointReady = this.endpointIsEligible(normalizeDwnEndpoint(state.target.dwnUrl));
-      return state.queue.some(kind =>
-        (state.notBefore[kind] ?? 0) <= this.now() && (kind === 'quarantine' || endpointReady)
-      );
+  private createStates(targets: readonly SyncTarget[], direction: SyncNextWorkDirection): TargetState[] {
+    const states = new Map<string, TargetState>();
+    for (const target of targets) {
+      const key = syncNextLinkKey(syncNextLinkIdentity(target));
+      const state = states.get(key) ?? {
+        errors        : {},
+        pullCovered   : false,
+        pullRequested : false,
+        pushCovered   : false,
+        pushRequested : false,
+        queue         : [],
+        target,
+      };
+      state.target = target;
+      if (direction !== 'push') {
+        state.pullRequested = true;
+        this.enqueue(state, 'pullPage');
+        this.enqueue(state, 'quarantine', true);
+      }
+      if (direction !== 'pull' && target.authorization.kind !== 'role') {
+        state.pushRequested = true;
+        this.enqueue(state, 'delivery');
+        this.enqueue(state, 'pushPage');
+      }
+      states.set(key, state);
+    }
+    return [...states.values()];
+  }
+
+  private async ensureLink(target: SyncTarget): Promise<void> {
+    await this._ledger.getOrCreateLink({
+      ...syncNextLinkIdentity(target),
+      authorization : target.authorization,
+      scope         : target.scope,
     });
   }
 
-  /** Select at most one link per endpoint for this round. */
-  private takeRound(): Array<{ kind: SyncNextWorkKind; state: TargetState }> {
+  /** Select at most one link per endpoint and one quarantine owner per logical target. */
+  private takeRound(
+    states: TargetState[],
+    blockedEndpoints: ReadonlySet<string>,
+  ): Array<{ kind: SyncNextWorkKind; state: TargetState }> {
     const endpoints = new Set<string>();
     const quarantineTargets = new Set<string>();
     const work: Array<{ kind: SyncNextWorkKind; state: TargetState }> = [];
-    for (const state of this._states.values()) {
+    for (const state of states) {
       const endpoint = normalizeDwnEndpoint(state.target.dwnUrl);
-      if (endpoints.has(endpoint)) {
+      if (blockedEndpoints.has(endpoint) || endpoints.has(endpoint)) {
         continue;
       }
-      const kind = this.takeEligible(state, quarantineTargets, this.endpointIsEligible(endpoint));
-      if (kind === undefined) {
-        continue;
+      const kind = this.takeEligible(state, quarantineTargets);
+      if (kind !== undefined) {
+        endpoints.add(endpoint);
+        work.push({ kind, state });
       }
-      endpoints.add(endpoint);
-      work.push({ kind, state });
     }
     for (const { state } of work) {
-      const key = syncNextLinkKey(syncNextLinkIdentity(state.target));
-      this._states.delete(key);
-      this._states.set(key, state);
+      states.splice(states.indexOf(state), 1);
+      states.push(state);
     }
     return work;
   }
 
-  private async runWork(state: TargetState, kind: SyncNextWorkKind, budget: WorkBudget): Promise<void> {
-    const endpoint = normalizeDwnEndpoint(state.target.dwnUrl);
-    const shouldContinue = (): boolean => !budget.cancelled;
-    const runRemoteRequest = this.requestRunner(endpoint, budget);
-    const canStartWork = kind === 'pullPage'
-      ? (): boolean => budget.canStartLocalWork()
-      : (): boolean => budget.canStartWork();
+  private takeEligible(state: TargetState, quarantineTargets: Set<string>): SyncNextWorkKind | undefined {
+    for (let index = 0; index < state.queue.length; index++) {
+      const kind = state.queue[index];
+      if (kind === 'quarantine') {
+        const logicalKey = this.logicalTargetKey(state.target);
+        if (quarantineTargets.has(logicalKey)) {
+          continue;
+        }
+        quarantineTargets.add(logicalKey);
+      }
+      state.queue.splice(index, 1);
+      return kind;
+    }
+  }
 
+  private async runWork(
+    state: TargetState,
+    kind: SyncNextWorkKind,
+    budget: RequestBudget,
+    blockedEndpoints: Set<string>,
+  ): Promise<void> {
+    const endpoint = normalizeDwnEndpoint(state.target.dwnUrl);
+    const shouldContinue = (): boolean => budget.signal?.aborted !== true;
+    const runRemoteRequest = this.requestRunner(endpoint, budget, blockedEndpoints);
     try {
-      await this.ensureLink(state.target);
       switch (kind) {
         case 'pullPage':
-          await this.runPullPage(state, shouldContinue, runRemoteRequest, canStartWork);
+          await this.runPullPage(state, shouldContinue, runRemoteRequest);
           break;
         case 'quarantine':
           await this.runQuarantine(state, shouldContinue, runRemoteRequest);
           break;
         case 'pushPage':
-          await this.runPushPage(state, shouldContinue, runRemoteRequest, canStartWork);
+          await this.runPushPage(state, shouldContinue, runRemoteRequest, blockedEndpoints);
           break;
         case 'delivery':
-          await this.runDelivery(state, shouldContinue, runRemoteRequest);
+          await this.runDelivery(state, shouldContinue, runRemoteRequest, blockedEndpoints);
           break;
       }
       delete state.errors[kind];
     } catch (error: unknown) {
       state.errors[kind] = syncErrorMessage(error);
-      this.defer(state, kind);
-      if (kind === 'pullPage' && error instanceof SyncNextFeedQueryError &&
-          (error.statusCode === 408 || error.statusCode === 429 || error.statusCode >= 500)) {
-        this.coolEndpoint(endpoint);
+      if (this.isEndpointFailure(error)) {
+        blockedEndpoints.add(endpoint);
       }
     }
   }
@@ -276,18 +243,13 @@ export class SyncNextWorkPump {
     state: TargetState,
     shouldContinue: () => boolean,
     runRemoteRequest: SyncRemoteRequestRunner,
-    canStartWork: () => boolean,
   ): Promise<void> {
-    const result = await this._operations.pullPage(state.target, shouldContinue, runRemoteRequest, canStartWork);
+    const result = await (this._options.operations?.pullPage?.(
+      state.target, shouldContinue, runRemoteRequest,
+    ) ?? new SyncNextPullPage(this._agent, this._ledger, runRemoteRequest).consume(state.target, shouldContinue));
     if (result.kind !== 'committed') {
-      if (result.kind === 'aborted') {
-        this.enqueue(state, 'pullPage');
-      } else {
-        state.pullCovered = false;
-      }
       return;
     }
-
     state.pullCovered = !result.hasMore;
     if (result.hasMore) {
       this.enqueue(state, 'pullPage');
@@ -304,27 +266,15 @@ export class SyncNextWorkPump {
     shouldContinue: () => boolean,
     runRemoteRequest: SyncRemoteRequestRunner,
   ): Promise<void> {
-    const logicalKey = this.logicalTargetKey(state.target);
-    const { result, remaining } = await runWithCrossContextLock(
-      `enbox:sync-next-quarantine:${logicalKey}`,
-      async (): Promise<QuarantineAttempt> => {
-        const result = await this._operations.quarantineRetry(state.target, shouldContinue, runRemoteRequest);
-        const remaining = (await this._ledger.getQuarantineForLogicalTarget(
-          state.target.did, state.target.projectionId,
-        )).length;
-        return { result, remaining };
-      },
-    );
-    if (result.kind === 'aborted') {
-      if (this.endpointIsEligible(normalizeDwnEndpoint(state.target.dwnUrl))) {
-        this.enqueue(state, 'quarantine');
-      } else {
-        this.defer(state, 'quarantine');
-      }
-    } else if (result.kind === 'settled' && remaining > 0) {
+    const result = await (this._options.operations?.quarantineRetry?.(
+      state.target, shouldContinue, runRemoteRequest,
+    ) ?? retryOneQuarantinedRoot({
+      agent: this._agent, ledger: this._ledger, target: state.target, shouldContinue, runRemoteRequest,
+    }));
+    if (result.kind === 'settled' && (await this._ledger.getQuarantineForLogicalTarget(
+      state.target.did, state.target.projectionId,
+    )).length > 0) {
       this.enqueue(state, 'quarantine');
-    } else if (result.kind === 'pending' && remaining > 0) {
-      this.deferLogicalQuarantine(state.target);
     }
   }
 
@@ -332,27 +282,22 @@ export class SyncNextWorkPump {
     state: TargetState,
     shouldContinue: () => boolean,
     runRemoteRequest: SyncRemoteRequestRunner,
-    canStartWork: () => boolean,
+    blockedEndpoints: Set<string>,
   ): Promise<void> {
-    const result = await this._operations.pushPage(state.target, shouldContinue, runRemoteRequest, canStartWork);
+    const result = await (this._options.operations?.pushPage?.(
+      state.target, shouldContinue, runRemoteRequest,
+    ) ?? new SyncNextPushPage(this._agent, this._ledger, runRemoteRequest).consume(state.target, shouldContinue));
     if (result.kind !== 'committed') {
-      if (result.kind === 'aborted') {
-        this.enqueue(state, 'pushPage');
-      } else {
-        state.pushCovered = false;
-      }
       return;
     }
-
     state.pushCovered = !result.hasMore;
     if (result.hasMore) {
       this.enqueue(state, 'pushPage');
     }
     if (result.blocked?.blockScope === 'endpoint') {
-      this.coolEndpoint(normalizeDwnEndpoint(state.target.dwnUrl));
+      blockedEndpoints.add(normalizeDwnEndpoint(state.target.dwnUrl));
     }
-    const link = await this._ledger.getLink(syncNextLinkIdentity(state.target));
-    if (link !== undefined && (await this._ledger.getDeliveryForLink(link)).length > 0) {
+    if ((await this._ledger.getDeliveryForLink(syncNextLinkIdentity(state.target))).length > 0) {
       this.enqueue(state, 'delivery');
     }
   }
@@ -361,157 +306,56 @@ export class SyncNextWorkPump {
     state: TargetState,
     shouldContinue: () => boolean,
     runRemoteRequest: SyncRemoteRequestRunner,
+    blockedEndpoints: Set<string>,
   ): Promise<void> {
-    const result = await this._operations.deliveryRetry(state.target, shouldContinue, runRemoteRequest);
-    const link = await this._ledger.getLink(syncNextLinkIdentity(state.target));
-    const remaining = link === undefined ? 0 : (await this._ledger.getDeliveryForLink(link)).length;
-    if (result.kind === 'aborted') {
+    const result = await (this._options.operations?.deliveryRetry?.(
+      state.target, shouldContinue, runRemoteRequest,
+    ) ?? retryOneDeliveryObligation({
+      agent: this._agent, ledger: this._ledger, target: state.target, shouldContinue, runRemoteRequest,
+    }));
+    const remaining = (await this._ledger.getDeliveryForLink(syncNextLinkIdentity(state.target))).length;
+    if (result.kind === 'settled' && remaining > 0) {
       this.enqueue(state, 'delivery');
-    } else if (result.kind === 'settled' && remaining > 0) {
-      this.enqueue(state, 'delivery');
-    } else if (result.kind === 'pending' && remaining > 0) {
-      if (result.outcome.blockScope === 'endpoint') {
-        this.coolEndpoint(normalizeDwnEndpoint(state.target.dwnUrl));
-      }
-      this.defer(state, 'delivery');
+    } else if (result.kind === 'pending' && result.outcome.blockScope === 'endpoint') {
+      blockedEndpoints.add(normalizeDwnEndpoint(state.target.dwnUrl));
     }
   }
 
-  private requestRunner(endpoint: string, budget: WorkBudget): SyncRemoteRequestRunner {
+  private requestRunner(
+    endpoint: string,
+    budget: RequestBudget,
+    blockedEndpoints: Set<string>,
+  ): SyncRemoteRequestRunner {
     return <T>(request: (signal?: AbortSignal) => Promise<T>): Promise<T> =>
       runWithCrossContextLock(`enbox:sync-next-endpoint:${endpoint}`, async (): Promise<T> => {
-        if (!this.endpointIsEligible(endpoint)) {
-          throw new SyncPullAbortedError();
+        if (blockedEndpoints.has(endpoint)) {
+          throw new SyncWorkInterruptedError();
         }
-        if (!budget.startRequest()) {
-          throw new SyncPullAbortedError(budget.cancelled ? 'stopped' : 'budget');
+        if (budget.signal?.aborted === true || budget.requests >= budget.maxRequests) {
+          throw new SyncWorkInterruptedError(budget.signal?.aborted === true ? 'stopped' : 'budget');
         }
-        const signal = budget.requestSignal();
+        budget.requests++;
+        const signal = budget.signal;
         try {
           return await request(signal);
         } catch (error: unknown) {
-          budget.observeRequestError(signal);
-          if (signal.aborted) {
-            throw new SyncPullAbortedError(budget.cancelled ? 'stopped' : 'budget');
+          if (signal?.aborted === true) {
+            throw new SyncWorkInterruptedError();
           }
           if (this.isEndpointFailure(error)) {
-            this.coolEndpoint(endpoint);
+            blockedEndpoints.add(endpoint);
           }
           throw error;
         }
       });
   }
 
-  private async ensureLink(target: SyncTarget): Promise<void> {
-    await this._ledger.getOrCreateLink({
-      ...syncNextLinkIdentity(target),
-      authorization : target.authorization,
-      scope         : target.scope,
-    });
-  }
-
-  private getOrCreateState(target: SyncTarget): TargetState {
-    const key = syncNextLinkKey(syncNextLinkIdentity(target));
-    const existing = this._states.get(key);
-    if (existing !== undefined) {
-      existing.target = target;
-      return existing;
-    }
-    const state: TargetState = {
-      errors      : {},
-      notBefore   : {},
-      pullCovered : false,
-      pushCovered : false,
-      queue       : [],
-      target,
-    };
-    this._states.set(key, state);
-    return state;
-  }
-
-  private enqueue(state: TargetState, kind: SyncNextWorkKind, first = false): void {
-    if (!state.queue.includes(kind)) {
-      if (first) {
-        state.queue.unshift(kind);
-      } else {
-        state.queue.push(kind);
-      }
-    }
-  }
-
-  private defer(state: TargetState, kind: SyncNextWorkKind): void {
-    state.notBefore[kind] = this.now() + (this._options.cooldownMs ?? DEFAULT_COOLDOWN_MS);
-    this.enqueue(state, kind);
-  }
-
-  private takeEligible(
-    state: TargetState,
-    quarantineTargets: Set<string>,
-    endpointReady: boolean,
-  ): SyncNextWorkKind | undefined {
-    for (let index = 0; index < state.queue.length; index++) {
-      const kind = state.queue[index];
-      if ((state.notBefore[kind] ?? 0) > this.now()) {
-        continue;
-      }
-      if (kind !== 'quarantine' && !endpointReady) {
-        continue;
-      }
-      if (kind === 'quarantine') {
-        const logicalKey = this.logicalTargetKey(state.target);
-        if (quarantineTargets.has(logicalKey)) {
-          continue;
-        }
-        quarantineTargets.add(logicalKey);
-      }
-      state.queue.splice(index, 1);
-      delete state.notBefore[kind];
-      return kind;
-    }
-  }
-
-  private async seedSparseWork(): Promise<void> {
-    await Promise.all([...this._states.values()].map(state => this.seedTargetSparseWork(state)));
-  }
-
-  private async seedTargetSparseWork(state: TargetState): Promise<void> {
-    const [quarantine, link] = await Promise.all([
-      state.queue.includes('pullPage')
-        ? this._ledger.getQuarantineForLogicalTarget(state.target.did, state.target.projectionId)
-        : undefined,
-      state.queue.includes('pushPage')
-        ? this._ledger.getLink(syncNextLinkIdentity(state.target))
-        : undefined,
-    ]);
-    if (quarantine !== undefined && quarantine.length > 0) {
-      this.enqueue(state, 'quarantine', true);
-    }
-    if (link !== undefined && (await this._ledger.getDeliveryForLink(link)).length > 0) {
-      this.enqueue(state, 'delivery');
-    }
-  }
-
-  private deferLogicalQuarantine(target: SyncTarget): void {
-    const logicalKey = this.logicalTargetKey(target);
-    for (const state of this._states.values()) {
-      if (this.logicalTargetKey(state.target) === logicalKey) {
-        this.defer(state, 'quarantine');
-      }
-    }
-  }
-
-  private endpointIsEligible(endpoint: string): boolean {
-    return (this._endpointCooldowns.get(endpoint) ?? 0) <= this.now();
-  }
-
-  private coolEndpoint(endpoint: string): void {
-    const until = this.now() + (this._options.cooldownMs ?? DEFAULT_COOLDOWN_MS);
-    this._endpointCooldowns.set(endpoint, Math.max(until, this._endpointCooldowns.get(endpoint) ?? 0));
-  }
-
   private isEndpointFailure(error: unknown): boolean {
-    if (error instanceof SyncPullAbortedError || isAbortError(error)) {
+    if (error instanceof SyncWorkInterruptedError) {
       return false;
+    }
+    if (error instanceof SyncNextFeedQueryError) {
+      return error.statusCode === 408 || error.statusCode === 429 || error.statusCode >= 500;
     }
     if (error instanceof DwnRpcError) {
       return !error.terminal && !isQuotaExceededError(error.message, error.data);
@@ -519,143 +363,58 @@ export class SyncNextWorkPump {
     return error instanceof Error;
   }
 
-  private async buildResult(budget: WorkBudget): Promise<SyncNextWorkPumpResult> {
-    const targets = await Promise.all([...this._states.values()].map(state => this.buildTargetStatus(state)));
-
-    const nextRun = this.nextRunAt();
-    const sparseWork = targets.some(status =>
-      status.pull.pendingQuarantine > 0 || status.push.pendingDelivery > 0
-    );
+  private async buildResult(states: TargetState[], budget: RequestBudget): Promise<SyncNextWorkPumpResult> {
+    const built = await Promise.all(states.map(state => this.buildTargetStatus(state)));
     return {
-      budgetExhausted : budget.exhausted,
-      cancelled       : budget.cancelled,
-      ...(nextRun === undefined ? {} : { nextRunAt: new Date(nextRun).toISOString() }),
+      budgetExhausted : budget.signal?.aborted !== true && budget.requests >= budget.maxRequests,
+      cancelled       : budget.signal?.aborted === true,
       remoteRequests  : budget.requests,
-      targets,
-      workRemaining   : sparseWork || [...this._states.values()].some(state => state.queue.length > 0),
+      targets         : built.map(([status]) => status),
+      workRemaining   : built.some(([, remaining]) => remaining),
     };
   }
 
-  private async buildTargetStatus(state: TargetState): Promise<SyncNextWorkTargetStatus> {
-    const [link, quarantine] = await Promise.all([
-      this._ledger.getLink(syncNextLinkIdentity(state.target)),
+  private async buildTargetStatus(state: TargetState): Promise<[SyncNextWorkTargetStatus, boolean]> {
+    const [quarantine, delivery] = await Promise.all([
       this._ledger.getQuarantineForLogicalTarget(state.target.did, state.target.projectionId),
+      this._ledger.getDeliveryForLink(syncNextLinkIdentity(state.target)),
     ]);
-    const pendingDelivery = link === undefined ? 0 : (await this._ledger.getDeliveryForLink(link)).length;
-    return {
+    const status: SyncNextWorkTargetStatus = {
       authorizationEpoch : state.target.authorizationEpoch,
       projectionId       : state.target.projectionId,
       pull               : {
         ...errorProperty(state.errors.pullPage ?? state.errors.quarantine),
-        feedCovered       : state.pullCovered && !state.queue.includes('pullPage'),
+        feedCovered       : state.pullCovered,
         pendingQuarantine : quarantine.length,
       },
       push: {
-        enabled     : state.target.authorization.kind !== 'role',
+        enabled         : state.target.authorization.kind !== 'role',
         ...errorProperty(state.errors.pushPage ?? state.errors.delivery),
-        feedCovered : state.pushCovered && !state.queue.includes('pushPage'),
-        pendingDelivery,
+        feedCovered     : state.pushCovered,
+        pendingDelivery : delivery.length,
       },
       remoteEndpoint : normalizeDwnEndpoint(state.target.dwnUrl),
       tenantDid      : state.target.did,
     };
+    return [status, state.queue.length > 0 ||
+        (state.pullRequested && (!state.pullCovered || quarantine.length > 0)) ||
+        (state.pushRequested && (!state.pushCovered || delivery.length > 0))];
   }
 
-  private nextRunAt(): number | undefined {
-    if (this.hasEligibleWork()) {
-      return this.now();
+  private enqueue(state: TargetState, kind: SyncNextWorkKind, first = false): void {
+    if (state.queue.includes(kind)) {
+      return;
     }
-    const times = [...this._endpointCooldowns.values()];
-    for (const state of this._states.values()) {
-      times.push(...Object.values(state.notBefore));
+    if (first) {
+      state.queue.unshift(kind);
+    } else {
+      state.queue.push(kind);
     }
-    return times.filter(time => time > this.now()).sort((left, right) => left - right)[0];
-  }
-
-  private get now(): () => number {
-    return this._options.now ?? Date.now;
   }
 
   private logicalTargetKey(target: SyncTarget): string {
     return `${target.did}\n${target.projectionId}`;
   }
-}
-
-class WorkBudget {
-  private readonly deadline: number;
-  private _exhausted = false;
-  private _requests = 0;
-
-  public constructor(
-    private readonly maxRequests: number,
-    maxDurationMs: number,
-    private readonly signal: AbortSignal | undefined,
-    private readonly now: () => number,
-  ) {
-    if (!Number.isSafeInteger(maxRequests) || maxRequests <= 0 ||
-        !Number.isFinite(maxDurationMs) || maxDurationMs <= 0) {
-      throw new RangeError('SyncNextWorkPump: request and duration budgets must be positive.');
-    }
-    this.deadline = now() + maxDurationMs;
-  }
-
-  public get cancelled(): boolean {
-    return this.signal?.aborted === true;
-  }
-
-  public get exhausted(): boolean {
-    return this._exhausted || (!this.cancelled &&
-      (this._requests >= this.maxRequests || this.now() >= this.deadline));
-  }
-
-  public get requests(): number {
-    return this._requests;
-  }
-
-  public canStartWork(): boolean {
-    if (!this.canStartLocalWork()) {
-      return false;
-    }
-    if (this._requests >= this.maxRequests) {
-      this._exhausted = true;
-      return false;
-    }
-    return true;
-  }
-
-  public canStartLocalWork(): boolean {
-    if (this.cancelled) {
-      return false;
-    }
-    if (this.now() >= this.deadline) {
-      this._exhausted = true;
-      return false;
-    }
-    return true;
-  }
-
-  public startRequest(): boolean {
-    if (!this.canStartWork()) {
-      return false;
-    }
-    this._requests++;
-    return true;
-  }
-
-  public requestSignal(): AbortSignal {
-    const timeout = AbortSignal.timeout(Math.max(1, this.deadline - this.now()));
-    return this.signal === undefined ? timeout : AbortSignal.any([this.signal, timeout]);
-  }
-
-  public observeRequestError(requestSignal: AbortSignal): void {
-    if (requestSignal.aborted && !this.cancelled) {
-      this._exhausted = true;
-    }
-  }
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function errorProperty(error: string | undefined): { error?: string } {

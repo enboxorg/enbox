@@ -1,4 +1,4 @@
-import type { Dwn, ProtocolDefinition, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type { Dwn, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import sinon from 'sinon';
@@ -212,63 +212,6 @@ describe('SyncNext pull and quarantine retry integration', () => {
     expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target: syncTarget }))
       .toEqual({ kind: 'empty' });
     expect(send.callCount).toBe(2);
-  });
-
-  it('should checkpoint one completed local root per elapsed-budget run', async () => {
-    const budgetProtocol = { ...protocol, protocol: 'https://sync-next.example/local-budget-prefix' };
-    expect((await harness.agent.dwn.sendRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: budgetProtocol },
-    })).reply.status.code).toBe(202);
-    for (let index = 0; index < 2; index++) {
-      expect((await harness.agent.dwn.sendRequest({
-        author        : tenantDid,
-        target        : tenantDid,
-        messageType   : DwnInterface.RecordsWrite,
-        messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : budgetProtocol.protocol,
-          protocolPath : 'note',
-          schema       : budgetProtocol.types.note.schema,
-        },
-        dataStream: new Blob([`budget-note-${index}`]),
-      })).reply.status.code).toBe(202);
-    }
-
-    const scope = { kind: 'protocolSet' as const, protocols: [budgetProtocol.protocol] as [string] };
-    const syncTarget: SyncTarget = {
-      authorization      : { kind: 'owner' },
-      authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
-      did                : tenantDid,
-      dwnUrl             : remoteEndpoint,
-      projectionId       : await computeProjectionId(tenantDid, scope),
-      scope,
-    };
-    let now = 0;
-    let applications = 0;
-    const originalApply = harness.agent.dwn.applyReplicatedMessage.bind(harness.agent.dwn);
-    harness.agent.dwn.applyReplicatedMessage = async (...params): Promise<ReplicationApplyResult> => {
-      const result = await originalApply(...params);
-      applications++;
-      now += 101;
-      return result;
-    };
-    try {
-      const pump = new SyncNextWorkPump(harness.agent, ledger, { now: (): number => now });
-      const first = await pump.run([syncTarget], 'pull', { maxDurationMs: 100 });
-      const second = await pump.run([syncTarget], 'pull', { maxDurationMs: 100 });
-      const third = await pump.run([syncTarget], 'pull', { maxDurationMs: 100 });
-
-      expect(first).toMatchObject({ budgetExhausted: true, workRemaining: true });
-      expect(second).toMatchObject({ budgetExhausted: true, workRemaining: true });
-      expect(third).toMatchObject({ budgetExhausted: true, workRemaining: false });
-      expect(third.targets[0].pull.feedCovered).toBe(true);
-    } finally {
-      harness.agent.dwn.applyReplicatedMessage = originalApply;
-    }
-    expect(applications).toBe(3);
   });
 
   it('settles a locally completed write after failed settlement and ledger restart without the source', async () => {

@@ -18,18 +18,13 @@ import { orderMessagesForAdmission } from '../sync-admission-order.js';
 import { queryRemoteMessageFeed } from '../sync-messages.js';
 import { syncNextLinkIdentity } from './ledger-key.js';
 import { Cid, Encoder, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
-import { prepareSyncNextFeedPage, sliceSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
+import { prepareSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
 
 type ClassifiedPage = {
-  entryCount: number;
   handledCids: Set<string>;
   quarantine: SyncNextQuarantineInput[];
   settled: SyncNextSourceReceipt[];
 };
-
-type PullDisposition =
-  | { kind: 'quarantine'; input: SyncNextQuarantineInput }
-  | { kind: 'settled'; handledCids: string[]; receipt: SyncNextSourceReceipt };
 
 export type SyncNextPullPageResult =
   | { kind: 'aborted' | 'stale' }
@@ -53,7 +48,6 @@ export class SyncNextPullPage {
   public async consume(
     target: SyncTarget,
     shouldContinue: () => boolean = (): boolean => true,
-    canStartEntry: () => boolean = (): boolean => true,
   ): Promise<SyncNextPullPageResult> {
     const link = await this._ledger.getLink(syncNextLinkIdentity(target));
     if (link === undefined) {
@@ -79,19 +73,15 @@ export class SyncNextPullPage {
       return { kind: 'aborted' };
     }
     const classified = await this.classifyPage(
-      target, feedPage.entries, rootEntries, shouldContinue, canStartEntry,
+      target, feedPage.entries, rootEntries, shouldContinue,
     );
     if (classified === undefined) {
       return { kind: 'aborted' };
     }
-    const handledPage = sliceSyncNextFeedPage(feedPage, classified.entryCount);
-    if (handledPage === undefined) {
-      return { kind: 'aborted' };
-    }
 
     const committed = await this._ledger.commitPullPage(link, {
-      handledThrough : handledPage.handledThrough,
-      pageReceipts   : handledPage.pageReceipts,
+      handledThrough : feedPage.handledThrough,
+      pageReceipts   : feedPage.pageReceipts,
       quarantine     : classified.quarantine,
       settled        : classified.settled,
     });
@@ -100,8 +90,8 @@ export class SyncNextPullPage {
     }
 
     return {
-      handledThrough : handledPage.handledThrough,
-      hasMore        : !handledPage.drained,
+      handledThrough : feedPage.handledThrough,
+      hasMore        : !feedPage.drained,
       kind           : 'committed',
       handledCids    : [...classified.handledCids],
       quarantined    : classified.quarantine.length,
@@ -131,19 +121,13 @@ export class SyncNextPullPage {
     entries: SyncNextPreparedFeedEntry[],
     rootEntries: SyncMessageEntry[],
     shouldContinue: () => boolean,
-    canStartEntry: () => boolean,
   ): Promise<ClassifiedPage | undefined> {
-    const dispositions = new Map<string, PullDisposition>();
-    let entryCount = 0;
-    for (const prepared of orderMessagesForAdmission(entries)) {
-      if (!shouldContinue()) {
-        return undefined;
-      }
-      if (!canStartEntry()) {
-        entryCount = retainFirstPullReceiptOnYield(entries, dispositions, entryCount);
-        break;
-      }
-      const { entry, receipt } = prepared;
+    const classified: ClassifiedPage = {
+      handledCids : new Set<string>(),
+      quarantine  : [],
+      settled     : [],
+    };
+    for (const { entry, receipt } of orderMessagesForAdmission(entries)) {
       const outcome = await admitClosure(entry.messageCid, {
         agent              : this._agent,
         did                : target.did,
@@ -159,13 +143,16 @@ export class SyncNextPullPage {
       if (!shouldContinue()) {
         return undefined;
       }
-      dispositions.set(receipt.source.position, outcome.kind === 'admitted'
-        ? { handledCids: outcome.handledCids, kind: 'settled', receipt }
-        : { input: { entry, ...receipt }, kind: 'quarantine' });
-      entryCount = classifiedPullPrefixLength(entries, dispositions, entryCount);
+      if (outcome.kind === 'admitted') {
+        classified.settled.push(receipt);
+        for (const messageCid of outcome.handledCids) {
+          classified.handledCids.add(messageCid);
+        }
+        continue;
+      }
+      classified.quarantine.push({ entry, ...receipt });
     }
-
-    return buildClassifiedPullPage(entries, dispositions, entryCount);
+    return classified;
   }
 
   private static async prepareAdmissionEntries(
@@ -224,57 +211,4 @@ export class SyncNextPullPage {
       );
     }
   }
-}
-
-function classifiedPullPrefixLength(
-  entries: readonly SyncNextPreparedFeedEntry[],
-  dispositions: ReadonlyMap<string, PullDisposition>,
-  start: number,
-): number {
-  let entryCount = start;
-  while (entryCount < entries.length && dispositions.has(entries[entryCount].receipt.source.position)) {
-    entryCount++;
-  }
-  return entryCount;
-}
-
-function retainFirstPullReceiptOnYield(
-  entries: readonly SyncNextPreparedFeedEntry[],
-  dispositions: Map<string, PullDisposition>,
-  entryCount: number,
-): number {
-  if (entryCount > 0 || dispositions.size === 0) {
-    return entryCount;
-  }
-  const { entry, receipt } = entries[0];
-  dispositions.set(receipt.source.position, {
-    input : { entry, ...receipt },
-    kind  : 'quarantine',
-  });
-  return 1;
-}
-
-function buildClassifiedPullPage(
-  entries: readonly SyncNextPreparedFeedEntry[],
-  dispositions: ReadonlyMap<string, PullDisposition>,
-  entryCount: number,
-): ClassifiedPage {
-  const classified: ClassifiedPage = {
-    entryCount,
-    handledCids : new Set<string>(),
-    quarantine  : [],
-    settled     : [],
-  };
-  for (const prepared of entries.slice(0, entryCount)) {
-    const disposition = dispositions.get(prepared.receipt.source.position)!;
-    if (disposition.kind === 'quarantine') {
-      classified.quarantine.push(disposition.input);
-      continue;
-    }
-    classified.settled.push(disposition.receipt);
-    for (const messageCid of disposition.handledCids) {
-      classified.handledCids.add(messageCid);
-    }
-  }
-  return classified;
 }
