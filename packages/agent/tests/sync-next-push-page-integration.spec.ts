@@ -93,7 +93,7 @@ describe('SyncNext push-page integration', () => {
     await harness?.closeStorage();
   });
 
-  it('should resume an outbound obligation after its ledger reopens', async () => {
+  it('should resume an outbound obligation while new feed work continues', async () => {
     const restartProtocol = { ...protocol, protocol: 'https://sync-next-push.example/work-pump-restart' };
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
@@ -136,13 +136,28 @@ describe('SyncNext push-page integration', () => {
       harness.agent.rpc.applyReplicatedMessage = originalApply;
     }
 
+    for (let index = 0; index < 33; index++) {
+      expect((await harness.agent.dwn.processRequest({
+        author        : tenantDid,
+        target        : tenantDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'application/octet-stream',
+          protocol     : restartProtocol.protocol,
+          protocolPath : 'note',
+          schema       : restartProtocol.types.note.schema,
+        },
+        dataStream: new Blob([`fresh-${index}`]),
+      })).reply.status.code).toBe(202);
+    }
+
     await db.close();
     db = new Level<string, string>(ledgerPath);
     ledger = new SyncNextLedgerStore(db, 'sync-next-push-page-integration');
     const resumed = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'push');
 
-    expect(resumed.remoteRequests).toBe(1);
-    expect(resumed.workRemaining).toBe(false);
+    expect(resumed.remoteRequests).toBe(17);
+    expect(resumed.workRemaining).toBe(true);
     expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(syncTarget))).toEqual([]);
     const remoteRead = await harness.agent.dwn.sendRequest({
       author        : tenantDid,

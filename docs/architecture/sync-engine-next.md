@@ -185,16 +185,18 @@ Every remote feed query, body/dependency read, and replicated apply enters one
 shared keyed endpoint permit. The permit covers the logical RPC, including any
 transport retry or fallback, and is released when the RPC returns; a returned
 body stream does not retain it. A turn has a remote-request budget; page-size
-limits and transport timeouts provide the other bounds. Request exhaustion or
-caller cancellation leaves committed progress and sparse work available to the
-next turn. Without an explicit caller signal, the pump supplies none, preserving
+limits and transport timeouts provide the other bounds. When sparse work exists
+at the start of a turn, the page phase receives roughly half of the request
+budget, leaving the remainder for recovery. Request exhaustion or caller
+cancellation leaves committed progress and sparse work available to the next
+turn. Without an explicit caller signal, the pump supplies none, preserving
 socket-preferred routing for eligible requests.
 
 Endpoint-wide transport/service failures stop that endpoint for the rest of
-the turn while other endpoints continue. Quota, authorization, and
-record-specific failures remain scoped to their work. Inbound quarantine has
-one active retry owner per tenant and projection across all bindings; this adds
-no durable claim or second queue.
+the turn while other endpoints continue. Local validation, ledger, quota,
+authorization, and record-specific failures remain scoped to their work.
+Inbound quarantine has one active retry owner per tenant and projection across
+all bindings; this adds no durable claim or second queue.
 
 The pump resumes from the ledger after restart and returns whether work remains,
 plus the target and operation for any failure. Detailed per-target status belongs

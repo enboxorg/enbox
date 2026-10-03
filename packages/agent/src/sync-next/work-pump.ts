@@ -56,7 +56,7 @@ type TargetState = {
 };
 
 type RequestBudget = {
-  maxRequests: number;
+  limit: number;
   requests: number;
   signal: AbortSignal | undefined;
 };
@@ -82,7 +82,7 @@ export class SyncNextWorkPump {
       throw new RangeError('SyncNextWorkPump: request budget must be a positive integer.');
     }
     const budget: RequestBudget = {
-      maxRequests,
+      limit    : maxRequests,
       requests : 0,
       signal   : options.signal,
     };
@@ -91,8 +91,14 @@ export class SyncNextWorkPump {
     const blockedEndpoints = new Set<string>();
     const page = direction === 'pull' ? 'pullPage' : 'pushPage';
     const retry = direction === 'pull' ? 'quarantine' : 'delivery';
+    const recoveryPending = (await Promise.all(states.map(
+      state => this.hasPendingRecovery(state, direction)
+    ))).some(Boolean);
 
+    // Preserve capacity for existing sparse work without slowing the common queue-empty path.
+    budget.limit = recoveryPending && maxRequests > 1 ? Math.ceil(maxRequests / 2) : maxRequests;
     await this.runPhase(states, page, budget, blockedEndpoints);
+    budget.limit = maxRequests;
     await this.runPhase(states, retry, budget, blockedEndpoints);
 
     return this.buildResult(states, budget, direction);
@@ -134,7 +140,7 @@ export class SyncNextWorkPump {
     budget: RequestBudget,
     blockedEndpoints: Set<string>,
   ): Promise<void> {
-    if (budget.signal?.aborted === true || budget.requests >= budget.maxRequests) {
+    if (budget.signal?.aborted === true || budget.requests >= budget.limit) {
       return;
     }
     await Promise.all(states.map(state => // NOSONAR
@@ -170,7 +176,9 @@ export class SyncNextWorkPump {
       if (!(error instanceof SyncWorkInterruptedError)) {
         state.failures.push({ message: syncErrorMessage(error), target: state.identity, work: kind });
       }
-      if (this.isEndpointFailure(error)) {
+      // Other exceptions can come from local validation or ledger mutation and stay link-scoped.
+      if (kind === 'pullPage' && error instanceof SyncNextFeedQueryError &&
+          (error.statusCode === 408 || error.statusCode === 429 || error.statusCode >= 500)) {
         blockedEndpoints.add(endpoint);
       }
     }
@@ -251,7 +259,7 @@ export class SyncNextWorkPump {
         if (blockedEndpoints.has(endpoint)) {
           throw new SyncWorkInterruptedError();
         }
-        if (budget.signal?.aborted === true || budget.requests >= budget.maxRequests) {
+        if (budget.signal?.aborted === true || budget.requests >= budget.limit) {
           throw new SyncWorkInterruptedError(budget.signal?.aborted === true ? 'stopped' : 'budget');
         }
         budget.requests++;
@@ -262,7 +270,7 @@ export class SyncNextWorkPump {
           if (signal?.aborted === true) {
             throw new SyncWorkInterruptedError();
           }
-          if (this.isEndpointFailure(error)) {
+          if (this.isRemoteRequestFailure(error)) {
             blockedEndpoints.add(endpoint);
           }
           throw error;
@@ -270,12 +278,9 @@ export class SyncNextWorkPump {
       });
   }
 
-  private isEndpointFailure(error: unknown): boolean {
+  private isRemoteRequestFailure(error: unknown): boolean {
     if (error instanceof SyncWorkInterruptedError) {
       return false;
-    }
-    if (error instanceof SyncNextFeedQueryError) {
-      return error.statusCode === 408 || error.statusCode === 429 || error.statusCode >= 500;
     }
     if (error instanceof DwnRpcError) {
       return !error.terminal && !isQuotaExceededError(error.message, error.data);
@@ -300,6 +305,10 @@ export class SyncNextWorkPump {
     if (!state.covered) {
       return true;
     }
+    return this.hasPendingRecovery(state, direction);
+  }
+
+  private async hasPendingRecovery(state: TargetState, direction: SyncDirection): Promise<boolean> {
     const pending = direction === 'pull'
       ? await this._ledger.getQuarantineForLogicalTarget(state.identity.tenantDid, state.identity.projectionId)
       : await this._ledger.getDeliveryForLink(state.identity);

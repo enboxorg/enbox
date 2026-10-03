@@ -253,6 +253,38 @@ describe('SyncNextWorkPump', () => {
     expect(result.workRemaining).toBe(true);
   });
 
+  it('keeps a local ledger failure scoped to its target', async () => {
+    const full = target({ did: 'did:example:full', projectionId: 'full' });
+    const healthy = target({ did: 'did:example:healthy', projectionId: 'healthy' });
+    await retainQuarantine(healthy);
+    let healthyReads = 0;
+    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+      pullPage: async (syncTarget) => {
+        if (syncTarget.did === full.did) {
+          throw new Error('SyncNextLedgerStore: tenant quarantine entry capacity 1 exceeded.');
+        }
+        return {
+          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+        };
+      },
+      quarantineRetry: async (syncTarget, _shouldContinue, runRemoteRequest) => {
+        if (syncTarget.did === healthy.did) {
+          await runRemoteRequest(async () => { healthyReads++; });
+        }
+        return { kind: 'pending' };
+      },
+    }));
+
+    const result = await pump.run([full, healthy], 'pull');
+
+    expect(healthyReads).toBe(1);
+    expect(result.failures).toEqual([{
+      message : 'SyncNextLedgerStore: tenant quarantine entry capacity 1 exceeded.',
+      target  : syncNextLinkIdentity(full),
+      work    : 'pullPage',
+    }]);
+  });
+
   it('allows only one active quarantine retry for a logical target', async () => {
     const first = target({ endpoint: 'https://first.example.com' });
     const second = target({ endpoint: 'https://second.example.com' });
