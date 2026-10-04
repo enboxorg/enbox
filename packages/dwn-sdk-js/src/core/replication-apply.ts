@@ -15,7 +15,7 @@ import { getRoleAudienceContextId, getRoleContextPrefix, isCrossProtocolRef, par
 
 export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
-  /** Request confirmation that an exact duplicate RecordsWrite is current and its data is available. */
+  /** Request confirmation of complete current RecordsWrite state for duplicate or superseded input. */
   includeMaterializationConfirmation?: boolean;
 };
 
@@ -32,7 +32,11 @@ export type ReplicationApplyResult =
       /** True only when requested and confirmed; absence is inconclusive. */
       materialized?: true;
     }
-  | { kind: 'Superseded' }
+  | {
+      kind: 'Superseded';
+      /** True only when requested and a newer current RecordsWrite has its data. */
+      currentWriteMaterialized?: true;
+    }
   | { kind: 'Incomplete'; missing: DependencyRef[] }
   | { kind: 'Invalid'; reason: string }
   | {

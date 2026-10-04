@@ -76,7 +76,7 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     }
 
     const storedReplayState = await getStoredReplayState(context, target, message, hasInboundData);
-    if (storedReplayState === 'superseded') {
+    if (storedReplayState === 'superseded' && includeMaterializationConfirmation !== true) {
       await dataStream?.cancel().catch((): void => {
         // A proven obsolete replay does not need its inbound body.
       });
@@ -293,7 +293,7 @@ async function enforceApplyReplicatedMessageQuota({
   message: GenericMessage;
   target: string;
 }): Promise<ReturnType<typeof validateInboundDwnMessageTransport>> {
-  if (storedReplayState === 'stored') {
+  if (storedReplayState === 'stored' || storedReplayState === 'superseded') {
     return undefined;
   }
 

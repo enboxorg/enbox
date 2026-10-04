@@ -84,7 +84,12 @@ type ReplicationApplyProtocolDefinitionLookup = {
   messageTimestamp?: string;
 };
 
-type ReplicatedDuplicateState = 'materialized' | 'record-data-unavailable' | 'storage-unavailable' | 'unconfirmed';
+type ReplicatedWriteState =
+  | 'materialized'
+  | 'record-data-unavailable'
+  | 'storage-unavailable'
+  | 'superseded-materialized'
+  | 'unconfirmed';
 
 type DwnStorage = {
   dataStore: DataStore;
@@ -306,8 +311,12 @@ export class Dwn {
     const isRecordsWriteWithData = Records.isRecordsWrite(rawMessage) && options.dataStream !== undefined;
     const duplicateState = messageAlreadyStored &&
       (isRecordsWriteWithData || options.includeMaterializationConfirmation === true)
-      ? await this.replicatedDuplicateState(tenant, rawMessage)
+      ? await this.replicatedWriteState(tenant, rawMessage)
       : 'unconfirmed';
+    if (options.includeMaterializationConfirmation === true && duplicateState === 'superseded-materialized') {
+      await options.dataStream?.cancel().catch((): void => {});
+      return { kind: 'Superseded', currentWriteMaterialized: true };
+    }
     if (isRecordsWriteWithData && duplicateState === 'record-data-unavailable') {
       await options.dataStream?.cancel().catch((): void => {});
       return { kind: 'Deferred', reason: 'record-data-unavailable' };
@@ -334,26 +343,42 @@ export class Dwn {
     if (messageAlreadyStored && reply.status.code === 409) {
       return duplicateResult;
     }
-    const replicatedWriteBeatenByDeleteResult = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
-    if (replicatedWriteBeatenByDeleteResult !== undefined) {
-      return replicatedWriteBeatenByDeleteResult;
+    let result = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
+    if (result === undefined) {
+      const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
+      const missingAncestorRecordIds = await this.getReplicationApplyMissingAncestors(tenant, rawMessage, reply);
+      const parentRecordPruned = await this.getReplicationApplyParentPruned(tenant, rawMessage, reply);
+      result = replicationApplyResultFromReply(rawMessage, reply, {
+        protocolDefinition,
+        missingAncestorRecordIds,
+        parentRecordPruned,
+      });
     }
-
-    const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
-    const missingAncestorRecordIds = await this.getReplicationApplyMissingAncestors(tenant, rawMessage, reply);
-    const parentRecordPruned = await this.getReplicationApplyParentPruned(tenant, rawMessage, reply);
-    return replicationApplyResultFromReply(rawMessage, reply, {
-      protocolDefinition,
-      missingAncestorRecordIds,
-      parentRecordPruned,
-    });
+    return this.confirmMaterializedSupersession(
+      tenant, rawMessage, result, options.includeMaterializationConfirmation,
+    );
   }
 
-  /** A stored CID alone does not confirm that a RecordsWrite became queryable with data. */
-  private async replicatedDuplicateState(
+  /** Enrich Superseded only after admission has independently proven that the input is obsolete. */
+  private async confirmMaterializedSupersession(
     tenant: string,
     message: GenericMessage,
-  ): Promise<ReplicatedDuplicateState> {
+    result: ReplicationApplyResult,
+    requested: boolean | undefined,
+  ): Promise<ReplicationApplyResult> {
+    if (requested !== true || result.kind !== 'Superseded' || !Records.isRecordsWrite(message)) {
+      return result;
+    }
+    return await this.replicatedWriteState(tenant, message) === 'superseded-materialized'
+      ? { kind: 'Superseded', currentWriteMaterialized: true }
+      : result;
+  }
+
+  /** Inspect whether this or a superseding current RecordsWrite is queryable with data. */
+  private async replicatedWriteState(
+    tenant: string,
+    message: GenericMessage,
+  ): Promise<ReplicatedWriteState> {
     if (!Records.isRecordsWrite(message)) {
       return 'unconfirmed';
     }
@@ -369,23 +394,24 @@ export class Dwn {
           ? 'unconfirmed'
           : 'record-data-unavailable';
       }
-      if (messages.length !== 1 || await Message.getCid(messages[0]) !== await Message.getCid(message)) {
+      if (messages.length !== 1 || !Records.isRecordsWrite(messages[0])) {
         return 'unconfirmed';
       }
 
       const current = messages[0] as RecordsQueryReplyEntry;
+      const isExactWrite = await Message.getCid(current) === await Message.getCid(message);
       if (current.encodedData === undefined) {
         const data = await this.dataStore.get(tenant, current.recordId, current.descriptor.dataCid);
         if (data === undefined) {
-          return 'record-data-unavailable';
+          return isExactWrite ? 'record-data-unavailable' : 'unconfirmed';
         }
         await data.dataStream.cancel();
         if (data.dataSize !== current.descriptor.dataSize) {
-          return 'record-data-unavailable';
+          return isExactWrite ? 'record-data-unavailable' : 'unconfirmed';
         }
       }
 
-      return 'materialized';
+      return isExactWrite ? 'materialized' : 'superseded-materialized';
     } catch {
       return 'storage-unavailable';
     }
