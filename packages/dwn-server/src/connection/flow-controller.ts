@@ -28,7 +28,7 @@ export class FlowController {
   /** Buffer of events waiting to be sent once the window opens. */
   private buffer: SubscriptionMessage[] = [];
 
-  /** Whether the controller has been closed due to overflow. */
+  /** Whether the controller has been closed. */
   private closed = false;
 
   constructor(
@@ -57,12 +57,17 @@ export class FlowController {
           `FlowController: buffer overflow for subscription ${String(this.subscriptionId)}, ` +
           `closing subscription (buffer=${this.buffer.length}, unacked=${this.unacked.length})`
         );
-        this.closed = true;
-        this.buffer = [];
-        this.unacked = [];
+        this.close();
         this.onOverflow();
       }
     }
+  }
+
+  /** Stops delivery and releases frames on unsubscribe, disconnect, or overflow. */
+  public close(): void {
+    this.closed = true;
+    this.buffer = [];
+    this.unacked = [];
   }
 
   /**

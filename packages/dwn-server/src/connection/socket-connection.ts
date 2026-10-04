@@ -8,7 +8,7 @@ import type { RegistrationStore } from '../registration/registration-store.js';
 import type { RequestContext } from '../lib/json-rpc-router.js';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../http-api.js';
-import type { Dwn, GenericMessage, ProgressToken, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ProgressToken, SubscriptionListener } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcSubscription } from '@enbox/dwn-clients';
 
 import log from 'loglevel';
@@ -21,6 +21,22 @@ import { DEFAULT_MAX_IN_FLIGHT, FlowController } from './flow-controller.js';
 import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
 
 const HEARTBEAT_INTERVAL = 30_000;
+
+/** Local ownership of a pending subscription; never serialized into JSON-RPC. */
+export type SocketSubscription = {
+  subscriptionHandler: SubscriptionListener;
+  signal: AbortSignal;
+  register: (close: JsonRpcSubscription['close']) => Promise<void>;
+  release: () => Promise<void>;
+};
+
+type ConnectionSubscription = {
+  id: JsonRpcId;
+  abortController: AbortController;
+  flowController: FlowController;
+  close?: JsonRpcSubscription['close'];
+  closePromise?: Promise<void>;
+};
 
 /**
  * SocketConnection handles a WebSocket connection to a DWN using JSON RPC.
@@ -38,11 +54,10 @@ export class SocketConnection {
   public readonly connectedAt: number = Date.now();
 
   private readonly heartbeatInterval: ReturnType<typeof setInterval>;
-  private readonly subscriptions: Map<JsonRpcId, JsonRpcSubscription> = new Map();
-  private readonly flowControllers: Map<JsonRpcId, FlowController> = new Map();
+  private readonly subscriptions: Map<JsonRpcId, ConnectionSubscription> = new Map();
+  private readonly subscriptionClosures: Set<Promise<void>> = new Set();
   private isAlive: boolean = true;
   private isClosed: boolean = false;
-  private readonly subscriptionAbortController: AbortController = new AbortController();
   private closePromise?: Promise<void>;
 
   constructor(
@@ -91,22 +106,47 @@ export class SocketConnection {
   }
 
   /**
-   * Adds a reference for the JSON RPC Subscription to this connection.
-   * Used for cleanup if the connection is closed.
+   * Reserves an id before asynchronous validation or replay, keeping pending
+   * and active subscriptions under the same cancellation and flow control.
    */
-  async addSubscription(subscription: JsonRpcSubscription): Promise<void> {
+  public beginSubscription(id: JsonRpcId): SocketSubscription {
     if (this.isClosed) {
-      await subscription.close();
-      throw new DwnServerError(DwnServerErrorCode.ConnectionClosed, 'cannot add a subscription to a closed connection');
+      throw new DwnServerError(DwnServerErrorCode.ConnectionClosed, 'cannot open a subscription on a closed connection');
     }
-    if (this.subscriptions.has(subscription.id)) {
+    if (this.subscriptions.has(id)) {
       throw new DwnServerError(
         DwnServerErrorCode.ConnectionSubscriptionJsonRpcIdExists,
-        `the subscription with id ${subscription.id} already exists`
+        `the subscription with id ${id} already exists`
       );
     }
 
-    this.subscriptions.set(subscription.id, subscription);
+    const abortController = new AbortController();
+    const flowController = new FlowController(
+      id,
+      this.maxInFlight,
+      (response): void => this.send(response),
+      (): void => {
+        void this.closeOwnedSubscription(subscription).catch((error): void => {
+          log.error(`FlowController: error closing subscription ${String(id)} on overflow`, error);
+        });
+      },
+    );
+    const subscription: ConnectionSubscription = { id, abortController, flowController };
+    this.subscriptions.set(id, subscription);
+
+    return {
+      signal              : abortController.signal,
+      subscriptionHandler : (message): void => flowController.push(message),
+      register            : async (close): Promise<void> => {
+        if (abortController.signal.aborted) {
+          await close();
+          abortController.signal.throwIfAborted();
+        }
+        subscription.close = close;
+      },
+      // Failed or rejected opens relinquish only their own lifetime.
+      release: (): Promise<void> => this.closeOwnedSubscription(subscription),
+    };
   }
 
   /**
@@ -115,17 +155,39 @@ export class SocketConnection {
    * @param id the `JsonRpcId` of the JSON RPC subscription request.
    */
   async closeSubscription(id: JsonRpcId): Promise<void> {
-    if (!this.subscriptions.has(id)) {
+    const subscription = this.subscriptions.get(id);
+    if (subscription === undefined) {
       throw new DwnServerError(
         DwnServerErrorCode.ConnectionSubscriptionJsonRpcIdNotFound,
         `the subscription with id ${id} was not found`
       );
     }
 
-    const connection = this.subscriptions.get(id);
-    await connection.close();
-    this.subscriptions.delete(id);
-    this.flowControllers.delete(id);
+    await this.closeOwnedSubscription(subscription);
+  }
+
+  private closeOwnedSubscription(subscription: ConnectionSubscription, reason?: Error): Promise<void> {
+    if (subscription.closePromise !== undefined) {
+      return subscription.closePromise;
+    }
+    if (this.subscriptions.get(subscription.id) === subscription) {
+      this.subscriptions.delete(subscription.id);
+    }
+    subscription.flowController.close();
+    // Publish cleanup before synchronous abort listeners can re-enter it.
+    const closePromise = Promise.resolve().then(async (): Promise<void> => {
+      await subscription.close?.();
+    });
+    subscription.closePromise = closePromise;
+    this.subscriptionClosures.add(closePromise);
+    const forgetClose = (): void => {
+      this.subscriptionClosures.delete(closePromise);
+    };
+    void closePromise.then(forgetClose, forgetClose);
+    subscription.abortController.abort(reason ?? new DwnServerError(
+      DwnServerErrorCode.ConnectionSubscriptionClosed, `subscription ${String(subscription.id)} closed`
+    ));
+    return closePromise;
   }
 
   /**
@@ -133,7 +195,7 @@ export class SocketConnection {
    * the flow-control window for the subscription.
    */
   ackSubscription(id: JsonRpcId, cursor: ProgressToken): void {
-    const fc = this.flowControllers.get(id);
+    const fc = this.subscriptions.get(id)?.flowController;
     if (fc) {
       fc.ack(cursor);
     }
@@ -148,24 +210,18 @@ export class SocketConnection {
     }
     this.isClosed = true;
     clearInterval(this.heartbeatInterval);
-    // Publish ownership before abort dispatch can re-enter close(), and cancel replay before awaiting cleanup.
+    // Publish ownership before abort dispatch can re-enter close().
     this.closePromise = Promise.resolve().then((): Promise<void> => this.closeConnection());
-    this.subscriptionAbortController.abort(new DwnServerError(DwnServerErrorCode.ConnectionClosed, 'socket connection closed'));
+    const reason = new DwnServerError(DwnServerErrorCode.ConnectionClosed, 'socket connection closed');
+    for (const subscription of this.subscriptions.values()) {
+      void this.closeOwnedSubscription(subscription, reason);
+    }
     return this.closePromise;
   }
 
   private async closeConnection(): Promise<void> {
-    const closePromises: Promise<void>[] = [];
-    for (const [id, subscription] of this.subscriptions) {
-      closePromises.push(subscription.close());
-      this.subscriptions.delete(id);
-    }
-
-    // close all of the associated subscriptions
-    await Promise.all(closePromises);
-
-    // clear all flow controllers
-    this.flowControllers.clear();
+    // Include unsubscribes already in progress, and finish all cleanup even if one fails.
+    const results = await Promise.allSettled(this.subscriptionClosures);
 
     // close the socket.
     this.socket.close();
@@ -173,6 +229,10 @@ export class SocketConnection {
     // if there was a close handler passed call it after the connection has been closed
     if (this.onCloseCallback !== undefined) {
       this.onCloseCallback();
+    }
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failure !== undefined) {
+      throw failure.reason;
     }
   }
 
@@ -231,25 +291,25 @@ export class SocketConnection {
    * Returns the number of active subscriptions on this connection.
    */
   get subscriptionCount(): number {
-    return this.subscriptions.size;
+    return Array.from(this.subscriptions.values()).filter(subscription => subscription.close !== undefined).length;
   }
 
   /**
    * Returns a serializable snapshot of this connection for the admin inspector.
    */
   toSnapshot(): AdminConnectionSnapshot {
-    const subscriptions = Array.from(this.flowControllers.entries()).map(
-      ([id, fc]): AdminConnectionSnapshot['subscriptions'][number] => ({
-        id       : id as string | number,
-        inflight : fc.inFlightCount,
-        buffered : fc.bufferCount,
+    const subscriptions = Array.from(this.subscriptions.values()).map(
+      (subscription): AdminConnectionSnapshot['subscriptions'][number] => ({
+        id       : subscription.id as string | number,
+        inflight : subscription.flowController.inFlightCount,
+        buffered : subscription.flowController.bufferCount,
       }),
     );
 
     return {
       id                : this.id,
       connectedAt       : new Date(this.connectedAt).toISOString(),
-      subscriptionCount : this.subscriptions.size,
+      subscriptionCount : this.subscriptionCount,
       subscriptions,
     };
   }
@@ -261,36 +321,6 @@ export class SocketConnection {
     if (!this.isClosed) {
       this.socket.send(JSON.stringify(response));
     }
-  }
-
-  /**
-   * Creates a flow-controlled subscription handler that enforces the
-   * `maxInFlight` window. Returns a `SubscriptionListener` to be passed
-   * to the EventLog, and stores the `FlowController` for later `rpc.ack`
-   * processing.
-   */
-  private createSubscriptionHandler(id: JsonRpcId): (message: SubscriptionMessage) => void {
-    const fc = new FlowController(
-      id,
-      this.maxInFlight,
-      (response) => {
-        this.send(response);
-      },
-      () => {
-        // overflow: close the subscription to prevent OOM
-        this.closeSubscription(id).catch((err) => {
-          log.error(`FlowController: error closing subscription ${String(id)} on overflow`, err);
-        });
-      },
-    );
-
-    this.flowControllers.set(id, fc);
-
-    return (message) => {
-      if (!this.isClosed) {
-        fc.push(message);
-      }
-    };
   }
 
   /**
@@ -312,13 +342,11 @@ export class SocketConnection {
     };
 
     // methods that expect a long-running subscription begin with `rpc.subscribe.`
-    if (method.startsWith('rpc.subscribe.') && subscription) {
-      const { message } = params as { message?: GenericMessage };
-      if (message?.descriptor.method === DwnMethodName.Subscribe) {
+    if (method === 'rpc.subscribe.dwn.processMessage' && subscription) {
+      const message = (params as { message?: GenericMessage } | undefined)?.message;
+      if (message?.descriptor?.method === DwnMethodName.Subscribe) {
         requestContext.subscriptionRequest = {
-          id                  : subscription.id,
-          subscriptionHandler : this.createSubscriptionHandler(subscription.id),
-          signal              : this.subscriptionAbortController.signal,
+          id: subscription.id,
         };
       }
     }

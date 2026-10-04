@@ -1,11 +1,11 @@
 import type { ActivityLog } from '../admin/activity-log.js';
 import type { AdminStore } from '../admin/admin-store.js';
+import type { Dwn } from '@enbox/dwn-sdk-js';
 import type { DwnServerConfig } from '../config.js';
 import type { MessageProcessedHook } from '../message-processed-hook.js';
 import type { RateLimiter } from '../rate-limiter.js';
 import type { RegistrationStore } from '../registration/registration-store.js';
 import type { SocketConnection } from '../connection/socket-connection.js';
-import type { Dwn, SubscriptionListener } from '@enbox/dwn-sdk-js';
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from '@enbox/dwn-clients';
 
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
@@ -18,10 +18,6 @@ export type RequestContext = {
   subscriptionRequest?: {
     /** The JsonRpcId of the subscription handler */
     id: JsonRpcId;
-    /** The `SubscriptionMessage` handler associated with a subscription request, only used in `ws` requests */
-    subscriptionHandler: SubscriptionListener;
-    /** Local connection lifetime; never sent over JSON-RPC. */
-    signal?: AbortSignal;
   }
   /** The `ReadableStream` associated with a `RecordsWrite` request only used in `http` requests */
   dataStream?: ReadableStream<Uint8Array>;

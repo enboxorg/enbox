@@ -27,6 +27,7 @@ export class DwnServerError extends Error {
  */
 export enum DwnServerErrorCode {
   ConnectionClosed = 'ConnectionClosed',
+  ConnectionSubscriptionClosed = 'ConnectionSubscriptionClosed',
   ConnectionSubscriptionJsonRpcIdExists = 'ConnectionSubscriptionJsonRpcIdExists',
   ConnectionSubscriptionJsonRpcIdNotFound = 'ConnectionSubscriptionJsonRpcIdNotFound',
   ProofOfWorkInsufficientSolutionNonce = 'ProofOfWorkInsufficientSolutionNonce',

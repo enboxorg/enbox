@@ -728,6 +728,54 @@ describe('DurableEventLog', () => {
     }
   });
 
+  for (const mode of ['live', 'replay']) {
+    for (const readLimit of [1, 100]) {
+      it(`should retire a replaced ${mode} drain across shutdown (readLimit=${readLimit})`, async (): Promise<void> => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const wakes = new EventEmitterWakePublisher();
+        const entries = [await createLogEntry(alice, '1'), await createLogEntry(alice, '2'), await createLogEntry(alice, '3')];
+        const store = new ScriptedFeedStore(alice.did, mode === 'replay' ? entries : [], wakes);
+        const log = new DurableEventLog(store, wakes, { readLimit, idleRedrainIntervalMs: 0 });
+        const started = createDeliveryGate();
+        const blocked = createDeliveryGate();
+        const received: string[] = [];
+        const drains = sinon.spy(log as any, 'drainSubscription');
+        await log.open();
+        const opening = log.subscribe(alice.did, 'replaced-while-delivering', async (message): Promise<void> => {
+          received.push(`${message.type}:${message.cursor.position}`);
+          started.resolve();
+          await blocked.promise;
+        }, mode === 'replay' ? { cursor: await store.createToken('0') } : {});
+
+        try {
+          if (mode === 'live') {
+            await opening;
+            for (const entry of entries) {
+              store.append(entry);
+            }
+            wakes.publish({ tenant: alice.did, seq: '3' });
+          }
+          await started.promise;
+          await log.subscribe(alice.did, 'replaced-while-delivering', (): void => {});
+          await log.close();
+          const readsAfterClose = store.readCount;
+          blocked.resolve();
+          await opening;
+          if (mode === 'live') {
+            await drains.firstCall.returnValue;
+          }
+          expect(received).toEqual(['event:1']);
+          expect(store.readCount).toBe(readsAfterClose);
+        } finally {
+          blocked.resolve();
+          await (await opening).close();
+          await log.close();
+          drains.restore();
+        }
+      });
+    }
+  }
+
   it('should keep a subscription closed when the event log closes during async EOSE delivery', async (): Promise<void> => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const localWakePublisher = new EventEmitterWakePublisher();

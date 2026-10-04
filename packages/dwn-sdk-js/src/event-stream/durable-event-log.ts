@@ -168,6 +168,10 @@ export class DurableEventLog implements EventLog {
       liveReady        : options.cursor === undefined,
       redrainRequested : false,
     };
+    const previousSubscription = this.subscriptions.get(id);
+    if (previousSubscription !== undefined) {
+      this.closeSubscription(previousSubscription);
+    }
     this.subscriptions.set(id, subscription);
     if (signal !== undefined) {
       const onAbort = (): void => this.closeSubscription(subscription);

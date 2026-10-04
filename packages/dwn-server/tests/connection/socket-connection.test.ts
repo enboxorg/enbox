@@ -1,3 +1,4 @@
+import type { JsonRpcSubscription } from '@enbox/dwn-clients';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../../src/http-api.js';
 import type { Dwn, EventSubscription, ProtocolDefinition } from '@enbox/dwn-sdk-js';
@@ -17,6 +18,11 @@ function createGate(): { promise: Promise<void>; resolve: () => void } {
     resolve = complete;
   });
   return { promise, resolve };
+}
+
+async function registerSubscription(connection: SocketConnection, handle: JsonRpcSubscription): Promise<void> {
+  const subscription = connection.beginSubscription(handle.id);
+  await subscription.register(handle.close);
 }
 
 /** Creates a minimal mock of Bun's ServerWebSocket for unit testing. */
@@ -74,7 +80,7 @@ describe('SocketConnection', () => {
       close  : async ():Promise<void> => {}
     };
 
-    await connection.addSubscription(subscriptionRequest);
+    await registerSubscription(connection, subscriptionRequest);
     expect((connection as any).subscriptions.size).toBe(1);
     await connection.close();
     expect((connection as any).subscriptions.size).toBe(0);
@@ -93,10 +99,10 @@ describe('SocketConnection', () => {
       close  : async ():Promise<void> => {}
     };
 
-    await connection.addSubscription(subscriptionRequest);
+    await registerSubscription(connection, subscriptionRequest);
     expect((connection as any).subscriptions.size).toBe(1);
 
-    const addDuplicatePromise = connection.addSubscription(subscriptionRequest);
+    const addDuplicatePromise = registerSubscription(connection, subscriptionRequest);
     await expect(addDuplicatePromise).rejects.toThrow(`the subscription with id ${id} already exists`);
     expect((connection as any).subscriptions.size).toBe(1);
     await connection.close();
@@ -116,7 +122,7 @@ describe('SocketConnection', () => {
       close  : async ():Promise<void> => {}
     };
 
-    await connection.addSubscription(subscriptionRequest);
+    await registerSubscription(connection, subscriptionRequest);
     expect((connection as any).subscriptions.size).toBe(1);
 
     await connection.closeSubscription(id);
@@ -137,7 +143,7 @@ describe('SocketConnection', () => {
       close  : async ():Promise<void> => {}
     };
 
-    await connection.addSubscription(subscriptionRequest);
+    await registerSubscription(connection, subscriptionRequest);
     expect((connection as any).subscriptions.size).toBe(1);
     expect(connection.hasSubscription(subscriptionRequest.id)).toBe(true);
     expect(connection.hasSubscription('does-not-exist')).toBe(false);
@@ -227,7 +233,7 @@ describe('SocketConnection', () => {
       const socket = createMockSocket();
       const connection = new SocketConnection(socket, dwn);
 
-      await connection.addSubscription({
+      await registerSubscription(connection, {
         id     : 'snap-sub-1',
         method : 'method',
         params : {},
@@ -246,13 +252,7 @@ describe('SocketConnection', () => {
       const socket = createMockSocket();
       const connection = new SocketConnection(socket, dwn, undefined, 10);
 
-      // Populate the flowControllers map directly to simulate an active subscription.
-      const { FlowController } = await import('../../src/connection/flow-controller.js');
-      const fc = new FlowController('fc-sub-1', 10, () => {}, () => {});
-      (connection as any).flowControllers.set('fc-sub-1', fc);
-
-      // Also add a matching subscription entry so subscriptionCount is correct.
-      (connection as any).subscriptions.set('fc-sub-1', {
+      await registerSubscription(connection, {
         id    : 'fc-sub-1',
         close : async (): Promise<void> => {},
       });
@@ -272,8 +272,9 @@ describe('SocketConnection', () => {
     const socket = createMockSocket();
     const connection = new SocketConnection(socket, dwn);
     const close = sinon.stub().resolves();
+    const subscription = connection.beginSubscription('late-handle');
     await connection.close();
-    await expect(connection.addSubscription({ id: 'late-handle', close })).rejects.toThrow(DwnServerErrorCode.ConnectionClosed);
+    await expect(subscription.register(close)).rejects.toThrow(DwnServerErrorCode.ConnectionClosed);
     expect(close.calledOnce).toBe(true);
     expect(connection.subscriptionCount).toBe(0);
   });
@@ -285,7 +286,7 @@ describe('SocketConnection', () => {
     const blocked = createGate();
     const started = createGate();
     let closes = 0;
-    await connection.addSubscription({
+    await registerSubscription(connection, {
       id    : 'slow-close',
       close : async (): Promise<void> => {
         closes++; started.resolve(); await blocked.promise;
