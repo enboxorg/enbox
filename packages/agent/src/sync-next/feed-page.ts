@@ -13,6 +13,17 @@ import { compareSyncNextPosition, isValidSyncNextToken } from './ledger-key.js';
 
 export const SYNC_NEXT_PAGE_SIZE = 100;
 
+/** Successful transport whose remote feed operation returned a non-success status. */
+export class SyncNextFeedQueryError extends Error {
+  public constructor(
+    public readonly statusCode: number,
+    detail: string,
+  ) {
+    super(detail);
+    this.name = 'SyncNextFeedQueryError';
+  }
+}
+
 export type SyncNextPreparedFeedEntry = {
   entry: MessagesQueryReplyEntry;
   message: GenericMessage;
@@ -25,6 +36,28 @@ export type SyncNextPreparedFeedPage = {
   handledThrough: ProgressToken;
   pageReceipts: SyncNextSourceReceipt[];
 };
+
+/** Return a safely checkpointable prefix, or no page when no entry was handled. */
+export function sliceSyncNextFeedPage(
+  page: SyncNextPreparedFeedPage,
+  entryCount: number,
+): SyncNextPreparedFeedPage | undefined {
+  if (entryCount === page.entries.length) {
+    return page;
+  }
+  const pageReceipts = page.pageReceipts.slice(0, entryCount);
+  const handledThrough = pageReceipts.at(-1)?.source;
+  if (handledThrough === undefined) {
+    return undefined;
+  }
+
+  return {
+    drained : false,
+    entries : page.entries.slice(0, entryCount),
+    handledThrough,
+    pageReceipts,
+  };
+}
 
 /** Validate one feed page and bind every verified message to its exact source receipt. */
 export async function prepareSyncNextFeedPage({
@@ -50,6 +83,10 @@ export async function prepareSyncNextFeedPage({
   const pageReceipts: SyncNextSourceReceipt[] = [];
   for (const entry of entries) {
     const receipt = sourceReceipt(previous, handledThrough, entry, positions, label);
+    const priorReceipt = pageReceipts.at(-1);
+    if (priorReceipt !== undefined && compareSyncNextPosition(receipt.source, priorReceipt.source) <= 0) {
+      throw new Error(`${label}: feed entries are not in ascending source order.`);
+    }
     const message = entry.message;
     if (message === undefined || await Message.getCid(message) !== entry.messageCid) {
       throw new Error(`${label}: feed entry ${entry.messageCid} failed CID verification.`);
@@ -57,7 +94,7 @@ export async function prepareSyncNextFeedPage({
     pageReceipts.push(receipt);
     preparedEntries.push({ entry, message, receipt });
   }
-  assertCursorReceipt(handledThrough, pageReceipts, label);
+  assertCursorReceipt(previous, handledThrough, pageReceipts, label);
 
   return { drained, entries: preparedEntries, handledThrough, pageReceipts };
 }
@@ -68,7 +105,10 @@ function successfulPage(
   target: string,
 ): { drained: boolean; entries: MessagesQueryReplyEntry[] } {
   if (reply.status.code !== 200) {
-    throw new Error(`${label}: ${target} failed: ${reply.status.code} ${reply.status.detail}`);
+    throw new SyncNextFeedQueryError(
+      reply.status.code,
+      `${label}: ${target} failed: ${reply.status.code} ${reply.status.detail}`,
+    );
   }
   if (!Array.isArray(reply.entries)) {
     throw new TypeError(`${label}: successful query omitted its entries array.`);
@@ -118,15 +158,24 @@ function sourceReceipt(
 }
 
 function assertCursorReceipt(
+  previous: ProgressToken | undefined,
   cursor: ProgressToken,
   pageReceipts: readonly SyncNextSourceReceipt[],
   label: string,
 ): void {
+  if (previous !== undefined && sameProgressToken(previous, cursor) && pageReceipts.length === 0) {
+    return;
+  }
   if (cursor.messageCid !== undefined && !pageReceipts.some(receipt =>
     receipt.source.position === cursor.position && receipt.messageCid === cursor.messageCid
   )) {
     throw new Error(`${label}: query cursor CID does not identify its page entry.`);
   }
+}
+
+function sameProgressToken(left: ProgressToken, right: ProgressToken): boolean {
+  return left.streamId === right.streamId && left.epoch === right.epoch &&
+    left.position === right.position && left.messageCid === right.messageCid;
 }
 
 function assertCursorProgress(

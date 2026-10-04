@@ -278,6 +278,7 @@ describe('SyncNextPullPage', () => {
 
   it('should reject malformed source accounting before applying any entry', async () => {
     const first = await feedEntry(protocolMessage('first'), 1);
+    const second = await feedEntry(protocolMessage('second'), 2);
     const duplicate = await feedEntry(protocolMessage('duplicate'), 1);
     const future = await feedEntry(protocolMessage('future'), 2);
     const missingLatest = { ...first } as Partial<MessagesQueryReplyEntry>;
@@ -295,6 +296,7 @@ describe('SyncNextPullPage', () => {
       },
       { detail: 'invalid source metadata', reply: page([missingLatest as MessagesQueryReplyEntry]) },
       { detail: 'repeats source position 1', reply: page([first, duplicate]) },
+      { detail: 'not in ascending source order', reply: page([second, first], true, '2') },
       { detail: 'invalid source position', reply: page([future], true, '1') },
       {
         detail : 'cursor CID does not identify',
@@ -533,6 +535,26 @@ describe('SyncNextPullPage', () => {
 
     fixture.send.resolves(page([first], true));
     await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
+    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+  });
+
+  it('should accept an empty drained replay of the exact current cursor', async () => {
+    const first = await feedEntry(protocolMessage('first'), 1);
+    const fixture = fakeAgent(page([first]));
+    await createLink();
+    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    expect(await processor.consume(target())).toMatchObject({ kind: 'committed' });
+    fixture.send.resolves({
+      ...page([], true, '1'),
+      cursor: {
+        epoch      : 'remote-epoch',
+        messageCid : first.messageCid,
+        position   : '1',
+        streamId   : 'remote-stream',
+      },
+    });
+
+    expect(await processor.consume(target())).toMatchObject({ kind: 'committed', hasMore: false });
     expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
   });
 

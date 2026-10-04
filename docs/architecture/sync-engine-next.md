@@ -66,15 +66,16 @@ admits roots using only received or already-local support. Known feed-root
 dependencies are ordered before their dependents, including a parent whose
 completion moved behind its child. Missing bodies and dependencies not resolved
 from feed roots enter quarantine without point reads; the retry slice must
-demonstrate their eventual convergence. A successful reply without an entries
-array, cursor, or boolean `drained` value is rejected before admission.
-CID recomputation proves byte integrity; normal DWN admission still owns signer
-and authorization validation.
+demonstrate their eventual convergence. Feed receipts must be strictly
+ascending; a reordered response is rejected before admission. A successful
+reply without an entries array, cursor, or boolean `drained` value is likewise
+rejected. CID recomputation proves byte integrity; normal DWN admission still
+owns signer and authorization validation.
 
 Every returned root is either settled or retained in quarantine before the
 page token advances. A later independent root in the same page is still
-processed. The primitive returns after this one commit; pagination,
-quarantine retry, wake handling, and scheduling remain runtime concerns.
+processed. The primitive returns after this one commit; pagination, quarantine
+retry, wake handling, and scheduling remain runtime concerns.
 
 ## Sparse recovery state
 
@@ -117,18 +118,19 @@ message CID, and inline data, then reuses normal dependency admission. It
 attempts one root, performs no catch-up pagination of its own, and does not
 schedule itself or purge failed rows. Pending and failed attempts advance their
 timestamp so another row gets the next turn, including when attempts land
-within the same millisecond.
+within the same millisecond. A budget-interrupted attempt also advances its
+timestamp; caller cancellation does not alter retry order.
 
-This slice recovers ordinary owner and delegated roots. A latest data-bearing
-write is removed only after a genuinely fresh apply; Duplicate or Superseded
-remains pending until the later local-completion-proof slice can establish that
-the record is queryable. Applying a dataless, non-latest write also leaves its
-receipt pending for a later body-bearing receipt. A retry settles only its
-selected root CID: dependencies applied along the way never clear their own
-quarantine receipts as a side effect. Role-authorized rows also remain pending
-for the separate exact-or-newer role-support slice. These conservative outcomes
-keep the queue safe while those authority-specific proofs are reviewed
-separately.
+This slice recovers ordinary owner and delegated roots. Before fetching a
+retained data-bearing write from its source, retry asks the local replication
+entry point for materialization confirmation. A genuinely fresh complete apply
+or an exact current duplicate confirmed with data settles the receipt; an
+inconclusive Duplicate or Superseded result remains pending. Applying a
+dataless, non-latest write also leaves its receipt pending for a later
+body-bearing receipt. A retry settles only its selected root CID: dependencies
+applied along the way never clear their own quarantine receipts as a side
+effect. Role-authorized rows remain pending for the separate exact-or-newer
+role-support slice.
 
 ## One-page push intake
 
@@ -137,11 +139,12 @@ It reuses the dependency-aware remote apply path and advances the push token
 only after every returned receipt is acknowledged or retained as an outbound
 obligation. A record-local failure leaves that receipt pending while independent
 entries continue; a link-wide or endpoint-wide failure stops further requests
-and retains the rest of the page. When a current RecordsWrite is handled, the
-same atomic commit also settles older same-record write obligations through
-that source position for this exact link. A RecordsDelete does not provide that
-coverage because the newest pre-delete write can still define tombstone
-visibility.
+and retains the rest of the page. If a pump budget ends first, the page commits
+only its contiguous classified prefix and the next run resumes at the first
+unattempted receipt. When a current RecordsWrite is handled, the same atomic
+commit also settles older same-record write obligations through that source
+position for this exact link. A RecordsDelete does not provide that coverage
+because the newest pre-delete write can still define tombstone visibility.
 
 ## One-row delivery retry
 
@@ -164,6 +167,42 @@ a dataless duplicate alone does not prove it. Deletes settle only their own
 receipt; an older retained write may still be required to reconstruct tombstone
 visibility.
 
-Retry scheduling, subscriptions, catalog, and runtime cutover belong to later
-stack layers. They must preserve this ledger contract when deciding whether a
-source entry is handled or owed.
+## Bounded internal work pump
+
+The internal pump composes the four bounded primitives above for already
+resolved `SyncTarget`s. Each call is one turn reconstructed from durable ledger
+state. A turn handles one explicit direction, giving each link at most one feed
+page and one corresponding sparse retry. Links run concurrently while the
+shared endpoint permit serializes their remote requests. The later runtime owns
+alternating pull and push, wake coalescing, and scheduling additional turns
+rather than duplicating that state inside the pump.
+
+Feed pages run before sparse retries so a pathological retained record cannot
+hold a checkpoint behind it. Each retry remains durable for the next turn when
+the request budget is exhausted.
+
+Every remote feed query, body/dependency read, and replicated apply enters one
+shared keyed endpoint permit. The permit covers the logical RPC, including any
+transport retry or fallback, and is released when the RPC returns; a returned
+body stream does not retain it. A turn has a remote-request budget of at least
+two, allowing both page and recovery capacity; page-size limits and transport
+timeouts provide the other bounds. When sparse work exists at the start of a
+turn, the page phase receives roughly half of the request budget, leaving the
+remainder for recovery. Request exhaustion or caller
+cancellation leaves committed progress and sparse work available to the next
+turn. Without an explicit caller signal, the pump supplies none, preserving
+socket-preferred routing for eligible requests.
+
+Endpoint-wide transport/service failures stop that endpoint for the rest of
+the turn while other endpoints continue. Local validation, ledger, quota,
+authorization, and record-specific failures remain scoped to their work.
+Inbound quarantine has one active retry owner per tenant and projection across
+all bindings; this adds no durable claim or second queue.
+
+The pump resumes from the ledger after restart and returns whether work remains,
+plus the target and operation for any failure. Detailed per-target status belongs
+to the later runtime, which can read authoritative checkpoints and sparse rows
+from the ledger. The pump owns no target discovery, subscription setup, wake
+queue, timer, public status API, or engine selection. Those runtime and cutover
+layers must preserve this ledger contract and treat socket events only as pump
+wakes.
