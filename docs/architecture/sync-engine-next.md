@@ -129,8 +129,9 @@ current write is materialized settles the receipt. An inconclusive Duplicate or
 Superseded result remains pending. Applying a dataless, non-latest write also
 leaves its receipt pending for a later body-bearing receipt. A retry settles only
 its selected root CID: dependencies applied along the way never clear their own
-quarantine receipts as a side effect. Role-authorized rows remain pending for
-the separate exact-or-newer role-support slice.
+quarantine receipts as a side effect. Role-authorized rows can use the same
+confirmed local state without a remote read; authenticated role-support
+hydration remains a separate slice.
 
 ## One-page push intake
 
