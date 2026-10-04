@@ -16,6 +16,7 @@ import type {
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { SyncRemoteRequestRunner } from './sync-request-runner.js';
 import type {
   PushAcknowledgement,
   PushFailure,
@@ -35,6 +36,7 @@ import {
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { resolveDelegatePermissionGrantId } from './delegate-permission-grant.js';
+import { runSyncRemoteRequest } from './sync-request-runner.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import {
   dependencyKey,
@@ -184,11 +186,13 @@ type PushRootOutcome =
  */
 export const MAX_ADMISSION_PASSES = 128;
 
-/** Raised when an in-flight pull is cancelled before local apply can continue. */
-export class SyncPullAbortedError extends Error {
-  constructor() {
-    super('Sync pull aborted because the sync target is no longer current.');
-    this.name = 'SyncPullAbortedError';
+/** Raised when current sync work must stop without classifying the active root. */
+export class SyncWorkInterruptedError extends Error {
+  public constructor(public readonly reason: 'budget' | 'stopped' = 'stopped') {
+    super(reason === 'budget'
+      ? 'Sync work yielded because its run budget was exhausted.'
+      : 'Sync work stopped before the active root could be classified.');
+    this.name = 'SyncWorkInterruptedError';
   }
 }
 
@@ -388,7 +392,8 @@ export async function queryRemoteMessageFeed({
   limit,
   cidsOnly,
   agent,
-}: MessageFeedQuery & { dwnUrl: string }): Promise<MessagesQueryReply> {
+  runRemoteRequest,
+}: MessageFeedQuery & { dwnUrl: string; runRemoteRequest?: SyncRemoteRequestRunner }): Promise<MessagesQueryReply> {
   const messagesQuery = await agent.processDwnRequest({
     store         : false,
     author        : authorDid ?? did,
@@ -406,11 +411,14 @@ export async function queryRemoteMessageFeed({
     })
   });
 
-  return await agent.rpc.sendDwnRequest({
-    dwnUrl,
-    targetDid : did,
-    message   : messagesQuery.message,
-  }) as MessagesQueryReply;
+  return runSyncRemoteRequest(runRemoteRequest, async (signal): Promise<MessagesQueryReply> =>
+    await agent.rpc.sendDwnRequest({
+      dwnUrl,
+      targetDid : did,
+      message   : messagesQuery.message,
+      ...(signal === undefined ? {} : { signal }),
+    }) as MessagesQueryReply
+  );
 }
 
 /**
@@ -451,13 +459,16 @@ export async function queryLocalMessageFeed({
 /**
  * Fetches messages from a remote DWN by their CIDs using MessagesRead.
  */
-export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent }: {
+export async function fetchRemoteMessages({
+  did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent, runRemoteRequest,
+}: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
   permissionGrantIds?: string[];
   messageCids: string[];
   agent: EnboxPlatformAgent;
+  runRemoteRequest?: SyncRemoteRequestRunner;
 }): Promise<SyncMessageEntry[]> {
   const results: SyncMessageEntry[] = [];
 
@@ -483,12 +494,16 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permission
 
       let reply: MessagesReadReply;
       try {
-        reply = await agent.rpc.sendDwnRequest({
-          dwnUrl,
-          targetDid : did,
-          message   : messagesRead.message,
-        }) as MessagesReadReply;
+        reply = await runSyncRemoteRequest(runRemoteRequest, async (signal): Promise<MessagesReadReply> =>
+          await agent.rpc.sendDwnRequest({
+            dwnUrl,
+            targetDid : did,
+            message   : messagesRead.message,
+            ...(signal === undefined ? {} : { signal }),
+          }) as MessagesReadReply
+        );
       } catch (error: any) {
+        rethrowSyncWorkInterruption(error);
         console.error(`SyncMessages: pull - failed to read ${messageCid} from ${dwnUrl}:`, error.message ?? error);
         return undefined;
       }
@@ -649,6 +664,7 @@ export class RemoteApplyPushContext {
     agent: EnboxPlatformAgent;
     permissionsApi?: PermissionsApi;
     onBeforeApply?: (messageCid: string) => void;
+    runRemoteRequest?: SyncRemoteRequestRunner;
   }) {}
 
   public async push(rootCids: string[]): Promise<PushResult> {
@@ -809,14 +825,18 @@ export class RemoteApplyPushContext {
       }
       this.deps.onBeforeApply?.(cid);
       const ancestryOnly = await isAncestryOnlyPush(entry, data);
-      result = await this.deps.agent.rpc.applyReplicatedMessage({
-        dwnUrl    : this.deps.dwnUrl,
-        targetDid : this.deps.did,
-        data,
-        message   : entry.message,
-        ...(ancestryOnly ? { ancestryOnly: true } : {}),
-      });
+      result = await runSyncRemoteRequest(this.deps.runRemoteRequest, (signal) =>
+        this.deps.agent.rpc.applyReplicatedMessage({
+          dwnUrl    : this.deps.dwnUrl,
+          targetDid : this.deps.did,
+          data,
+          message   : entry.message,
+          ...(signal === undefined ? {} : { signal }),
+          ...(ancestryOnly ? { ancestryOnly: true } : {}),
+        })
+      );
     } catch (error: any) {
+      rethrowSyncWorkInterruption(error);
       const detail = error.message ?? String(error);
       if (error instanceof SyncDataSizeLimitExceededError) {
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, 'Invalid') };
@@ -1421,6 +1441,12 @@ export class RemoteApplyPushContext {
     const cid = await Message.getCid(entry.message);
     this.entryCids.set(entry, cid);
     return cid;
+  }
+}
+
+function rethrowSyncWorkInterruption(error: unknown): void {
+  if (error instanceof SyncWorkInterruptedError) {
+    throw error;
   }
 }
 

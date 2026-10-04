@@ -15,12 +15,14 @@ import type {
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncMessageEntry } from './sync-messages.js';
+import type { SyncRemoteRequestRunner } from './sync-request-runner.js';
 import type { SyncScope } from './types/sync.js';
 
 import { classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
 import { orderMessagesForAdmission } from './sync-admission-order.js';
 import { resolveDelegatePermissionGrantId } from './delegate-permission-grant.js';
+import { runSyncRemoteRequest } from './sync-request-runner.js';
 
 import {
   capRecordsWriteDataStream,
@@ -30,7 +32,7 @@ import {
   MAX_ADMISSION_PASSES,
   queryRemoteMessageFeed,
   SyncDataSizeLimitExceededError,
-  SyncPullAbortedError,
+  SyncWorkInterruptedError,
 } from './sync-messages.js';
 import {
   dependencyKey,
@@ -83,6 +85,7 @@ export type AdmitClosureDeps = {
   }>;
   /** Defer missing remote support instead of issuing point reads during page intake. */
   remoteHydration?: 'allow' | 'defer';
+  runRemoteRequest?: SyncRemoteRequestRunner;
   shouldContinue?: () => boolean;
 };
 
@@ -335,6 +338,7 @@ class AdmitClosureContext {
       permissionGrantIds : this.deps.permissionGrantIds,
       messageCids        : [rootCid],
       agent              : this.deps.agent,
+      runRemoteRequest   : this.deps.runRemoteRequest,
     });
     return fetched;
   }
@@ -474,6 +478,7 @@ class AdmitClosureContext {
       permissionGrantIds : this.deps.permissionGrantIds,
       messageCids,
       agent              : this.deps.agent,
+      runRemoteRequest   : this.deps.runRemoteRequest,
     });
     await this.rememberEntries(entries);
     return entries;
@@ -512,11 +517,14 @@ class AdmitClosureContext {
       target      : this.deps.did,
     });
 
-    const reply = await this.deps.agent.rpc.sendDwnRequest({
-      dwnUrl    : this.deps.dwnUrl,
-      message,
-      targetDid : this.deps.did,
-    }) as RecordsQueryReply;
+    const reply = await this.runRemote((signal): Promise<RecordsQueryReply> =>
+      this.deps.agent.rpc.sendDwnRequest({
+        dwnUrl    : this.deps.dwnUrl,
+        message,
+        targetDid : this.deps.did,
+        ...(signal === undefined ? {} : { signal }),
+      }) as Promise<RecordsQueryReply>
+    );
     return this.entriesFromRecordsQueryReply(reply);
   }
 
@@ -532,6 +540,7 @@ class AdmitClosureContext {
         filters            : [{ protocol: ref.protocol, protocolPathPrefix: ref.protocolPath }],
         cursor,
         agent              : this.deps.agent,
+        runRemoteRequest   : this.deps.runRemoteRequest,
       });
       if (reply.status.code !== 200 || reply.entries === undefined) {
         return [];
@@ -605,6 +614,7 @@ class AdmitClosureContext {
           permissionGrantIds : this.deps.permissionGrantIds,
           messageCids        : [entry.messageCid],
           agent              : this.deps.agent,
+          runRemoteRequest   : this.deps.runRemoteRequest,
         });
         return fetched[0]?.dataStream;
       };
@@ -630,11 +640,14 @@ class AdmitClosureContext {
       target      : this.deps.did,
     });
 
-    const reply = await this.deps.agent.rpc.sendDwnRequest({
-      dwnUrl    : this.deps.dwnUrl,
-      message,
-      targetDid : this.deps.did,
-    }) as RecordsReadReply;
+    const reply = await this.runRemote((signal): Promise<RecordsReadReply> =>
+      this.deps.agent.rpc.sendDwnRequest({
+        dwnUrl    : this.deps.dwnUrl,
+        message,
+        targetDid : this.deps.did,
+        ...(signal === undefined ? {} : { signal }),
+      }) as Promise<RecordsReadReply>
+    );
     if (reply.status.code !== 200 || reply.entry?.recordsWrite === undefined || reply.entry.data === undefined) {
       return [];
     }
@@ -671,11 +684,14 @@ class AdmitClosureContext {
       target      : this.deps.did,
     });
 
-    const reply = await this.deps.agent.rpc.sendDwnRequest({
-      dwnUrl    : this.deps.dwnUrl,
-      message,
-      targetDid : this.deps.did,
-    }) as ProtocolsQueryReply;
+    const reply = await this.runRemote((signal): Promise<ProtocolsQueryReply> =>
+      this.deps.agent.rpc.sendDwnRequest({
+        dwnUrl    : this.deps.dwnUrl,
+        message,
+        targetDid : this.deps.did,
+        ...(signal === undefined ? {} : { signal }),
+      }) as Promise<ProtocolsQueryReply>
+    );
     if (reply.status.code !== 200 || reply.entries === undefined) {
       return undefined;
     }
@@ -696,9 +712,13 @@ class AdmitClosureContext {
     return cid;
   }
 
+  private runRemote<T>(request: (signal?: AbortSignal) => Promise<T>): Promise<T> {
+    return runSyncRemoteRequest(this.deps.runRemoteRequest, request);
+  }
+
   private assertShouldContinue(): void {
     if (this.deps.shouldContinue?.() === false) {
-      throw new SyncPullAbortedError();
+      throw new SyncWorkInterruptedError();
     }
   }
 

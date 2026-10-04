@@ -2,6 +2,7 @@ import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncMessageEntry } from '../sync-messages.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextPreparedFeedEntry } from './feed-page.js';
+import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type {
   GenericMessage,
@@ -41,6 +42,7 @@ export class SyncNextPullPage {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
     private readonly _ledger: SyncNextLedgerStore,
+    private readonly _runRemoteRequest?: SyncRemoteRequestRunner,
   ) {}
 
   public async consume(
@@ -110,6 +112,7 @@ export class SyncNextPullPage {
       limit              : SYNC_NEXT_PAGE_SIZE,
       permissionGrantIds : target.permissionGrantIds,
       protocolRole       : role?.protocolRole,
+      runRemoteRequest   : this._runRemoteRequest,
     });
   }
 
@@ -133,6 +136,7 @@ export class SyncNextPullPage {
         permissionGrantIds : target.permissionGrantIds,
         prefetched         : rootEntries,
         remoteHydration    : 'defer',
+        runRemoteRequest   : this._runRemoteRequest,
         scope              : target.scope,
         shouldContinue,
       });
@@ -146,7 +150,6 @@ export class SyncNextPullPage {
         }
         continue;
       }
-
       classified.quarantine.push({ entry, ...receipt });
     }
     return classified;

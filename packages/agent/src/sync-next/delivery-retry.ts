@@ -1,6 +1,7 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { PushResult } from '../types/sync.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
+import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { SyncNextDeliveryObligation, SyncNextDeliveryOutcome, SyncNextLink } from './types.js';
 
@@ -17,11 +18,13 @@ export async function retryOneDeliveryObligation({
   agent,
   ledger,
   target,
+  runRemoteRequest,
   shouldContinue = (): boolean => true,
 }: {
   agent: EnboxPlatformAgent;
   ledger: SyncNextLedgerStore;
   target: SyncTarget;
+  runRemoteRequest?: SyncRemoteRequestRunner;
   shouldContinue?: () => boolean;
 }): Promise<SyncNextDeliveryRetryResult> {
   if (target.authorization.kind === 'role') {
@@ -52,6 +55,7 @@ export async function retryOneDeliveryObligation({
     delegateDid        : target.delegateDid,
     permissionGrantIds : target.permissionGrantIds,
     permissionsApi     : agent.permissions,
+    runRemoteRequest,
   });
   let result: PushResult;
   try {

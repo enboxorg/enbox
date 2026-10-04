@@ -3,6 +3,7 @@ import type { SyncAppliedEntry } from '../sync-admit-closure.js';
 import type { SyncMessageEntry } from '../sync-messages.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextQuarantineEntry } from './types.js';
+import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 
 import { admitClosure } from '../sync-admit-closure.js';
@@ -11,7 +12,7 @@ import { compareSyncNextSparseAttempts } from './ledger-key.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { Cid, DataStream, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { fetchRemoteMessages, SyncPullAbortedError } from '../sync-messages.js';
+import { fetchRemoteMessages, SyncWorkInterruptedError } from '../sync-messages.js';
 
 export type SyncNextQuarantineRetryResult =
   | { kind: 'aborted' | 'empty' | 'pending' }
@@ -27,11 +28,13 @@ export async function retryOneQuarantinedRoot({
   agent,
   ledger,
   target,
+  runRemoteRequest,
   shouldContinue = (): boolean => true,
 }: {
   agent: EnboxPlatformAgent;
   ledger: SyncNextLedgerStore;
   target: SyncTarget;
+  runRemoteRequest?: SyncRemoteRequestRunner;
   shouldContinue?: () => boolean;
 }): Promise<SyncNextQuarantineRetryResult> {
   if (!shouldContinue()) {
@@ -48,7 +51,7 @@ export async function retryOneQuarantinedRoot({
   }
 
   try {
-    const attempt = await retrySelectedRoot(agent, target, selected, shouldContinue);
+    const attempt = await retrySelectedRoot(agent, target, selected, shouldContinue, runRemoteRequest);
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
@@ -64,7 +67,13 @@ export async function retryOneQuarantinedRoot({
     }
     return { kind: 'settled', appliedEntries: attempt.appliedEntries };
   } catch (error: unknown) {
-    if (error instanceof SyncPullAbortedError || !shouldContinue()) {
+    if (error instanceof SyncWorkInterruptedError) {
+      if (error.reason === 'budget' && shouldContinue()) {
+        await ledger.updateQuarantine(selected);
+      }
+      return { kind: 'aborted' };
+    }
+    if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
     await ledger.updateQuarantine(selected);
@@ -77,11 +86,12 @@ async function retrySelectedRoot(
   target: SyncTarget,
   selected: SyncNextQuarantineEntry,
   shouldContinue: () => boolean,
+  runRemoteRequest: SyncRemoteRequestRunner | undefined,
 ): Promise<RetryAttempt> {
   if (target.authorization.kind === 'role') {
     return { appliedEntries: [], kind: 'pending' };
   }
-  const root = await prepareRetainedRoot(agent, target, selected);
+  const root = await prepareRetainedRoot(agent, target, selected, runRemoteRequest);
   if (!shouldContinue()) {
     return { appliedEntries: [], kind: 'pending' };
   }
@@ -99,6 +109,7 @@ async function retrySelectedRoot(
     permissionGrantIds : target.permissionGrantIds,
     permissionsApi     : agent.permissions,
     prefetched         : [root],
+    runRemoteRequest,
     scope              : target.scope,
     shouldContinue,
   });
@@ -161,6 +172,7 @@ async function prepareRetainedRoot(
   agent: EnboxPlatformAgent,
   target: SyncTarget,
   row: SyncNextQuarantineEntry,
+  runRemoteRequest: SyncRemoteRequestRunner | undefined,
 ): Promise<SyncMessageEntry> {
   const entry = row.entry;
   if (new TextEncoder().encode(JSON.stringify(entry)).byteLength !== row.entrySize ||
@@ -194,7 +206,7 @@ async function prepareRetainedRoot(
     recordsWriteRequiresData(entry.message)
   ) {
     root.dataStreamFactory = (): Promise<ReadableStream<Uint8Array> | undefined> =>
-      fetchRootData(agent, target, row.messageCid);
+      fetchRootData(agent, target, row.messageCid, runRemoteRequest);
   }
   return root;
 }
@@ -203,6 +215,7 @@ async function fetchRootData(
   agent: EnboxPlatformAgent,
   target: SyncTarget,
   messageCid: string,
+  runRemoteRequest: SyncRemoteRequestRunner | undefined,
 ): Promise<ReadableStream<Uint8Array> | undefined> {
   const [entry] = await fetchRemoteMessages({
     agent,
@@ -211,6 +224,7 @@ async function fetchRootData(
     dwnUrl             : target.dwnUrl,
     messageCids        : [messageCid],
     permissionGrantIds : target.permissionGrantIds,
+    runRemoteRequest,
   });
   return entry?.dataStream;
 }

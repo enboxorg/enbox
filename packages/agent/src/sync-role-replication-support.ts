@@ -36,7 +36,7 @@ import { DwnInterface } from './types/dwn.js';
 import { isEncryptionControlRecordFor } from './dwn-encryption.js';
 import { isTenantProtocolConfig } from './sync-fetch-helpers.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
-import { capRecordsWriteDataStream, dataStreamFromBytes, SyncPullAbortedError } from './sync-messages.js';
+import { capRecordsWriteDataStream, dataStreamFromBytes, SyncWorkInterruptedError } from './sync-messages.js';
 import { getRecordAuthor, getRecordProtocolRole, resolveDwnSubscriptionUrl as resolveDwnWebSocketUrl } from './utils.js';
 
 /** A role-authorized read, its current protocol definition, and its local-replication prerequisites. */
@@ -660,7 +660,7 @@ function toSyncEntry(entry: RecordsReadReplicationSupportEntry): SyncMessageEntr
 
 function assertCurrent(shouldContinue: (() => boolean) | undefined): void {
   if (shouldContinue?.() === false) {
-    throw new SyncPullAbortedError();
+    throw new SyncWorkInterruptedError();
   }
 }
 

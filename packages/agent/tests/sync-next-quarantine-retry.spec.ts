@@ -12,6 +12,7 @@ import type { SyncNextLink, SyncNextQuarantineEntry } from '../src/sync-next/typ
 
 import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
+import { SyncWorkInterruptedError } from '../src/sync-messages.js';
 import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/ledger-key.js';
 
 function target(endpoint = 'https://dwn.example.com'): SyncTarget {
@@ -560,6 +561,42 @@ describe('retryOneQuarantinedRoot', () => {
     } finally {
       clock.restore();
     }
+  });
+
+  it('rotates a budget-interrupted row so another quarantined root gets a turn', async () => {
+    const firstWrite = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1]) });
+    const secondWrite = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([2]) });
+    const first = await feedEntry(firstWrite.message, 1);
+    const second = await feedEntry(secondWrite.message, 2);
+    const fixture = fakeAgent();
+    await retain(target(), [first, second]);
+    const rows = await ledger.getQuarantineForLink(syncNextLinkIdentity(target()));
+    const firstRow = rows.find(row => row.messageCid === first.messageCid)!;
+    const secondRow = rows.find(row => row.messageCid === second.messageCid)!;
+    await rewriteQuarantine(firstRow, { lastAttemptAt: '2026-01-01T00:00:00.000Z' });
+    await rewriteQuarantine(secondRow, { lastAttemptAt: '2026-01-02T00:00:00.000Z' });
+    const budgetYield = async <T>(): Promise<T> => {
+      throw new SyncWorkInterruptedError('budget');
+    };
+
+    expect(await retryOneQuarantinedRoot({
+      agent            : fixture.agent,
+      ledger,
+      runRemoteRequest : budgetYield,
+      target           : target(),
+    })).toEqual({ kind: 'aborted' });
+    expect(await Message.getCid(fixture.apply.firstCall.args[1])).toBe(first.messageCid);
+    const afterFirst = await ledger.getQuarantineForLink(syncNextLinkIdentity(target()));
+    expect(afterFirst.find(row => row.messageCid === first.messageCid)!.lastAttemptAt > secondRow.lastAttemptAt)
+      .toBe(true);
+
+    expect(await retryOneQuarantinedRoot({
+      agent            : fixture.agent,
+      ledger,
+      runRemoteRequest : budgetYield,
+      target           : target(),
+    })).toEqual({ kind: 'aborted' });
+    expect(await Message.getCid(fixture.apply.secondCall.args[1])).toBe(second.messageCid);
   });
 
   it('aborts after admission without mutating quarantine', async () => {
