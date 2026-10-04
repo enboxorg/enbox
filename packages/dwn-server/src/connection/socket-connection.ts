@@ -136,7 +136,7 @@ export class SocketConnection {
 
     return {
       signal              : abortController.signal,
-      subscriptionHandler : (message): void => flowController.push(message),
+      subscriptionHandler : (message): void | Promise<void> => flowController.push(message),
       register            : async (close): Promise<void> => {
         if (abortController.signal.aborted) {
           await close();

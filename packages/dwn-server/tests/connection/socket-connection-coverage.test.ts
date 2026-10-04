@@ -135,6 +135,34 @@ describe('SocketConnection flow control', () => {
     }
   });
 
+  it('keeps siblings flowing while a producer waits at capacity and cancels only that wait on unsubscribe', async (): Promise<void> => {
+    const socket = createMockSocket();
+    const connection = new SocketConnection(socket, dwn, undefined, 1);
+    const slow = connection.beginSubscription('slow');
+    const healthy = connection.beginSubscription('healthy');
+    await slow.register(async (): Promise<void> => {});
+    await healthy.register(async (): Promise<void> => {});
+    try {
+      slow.subscriptionHandler(makeMessage('1'));
+      for (let index = 0; index < MAX_BUFFER_SIZE - 1; index++) {
+        slow.subscriptionHandler(makeMessage(String(index + 2)));
+      }
+      const waiting = slow.subscriptionHandler(makeMessage(String(MAX_BUFFER_SIZE + 1)));
+      expect(waiting).toBeInstanceOf(Promise);
+      healthy.subscriptionHandler(makeMessage('1'));
+      expect((socket.send as sinon.SinonStub).callCount).toBe(2);
+      expect(connection.toSnapshot().subscriptions.find(subscription => subscription.id === 'slow')?.buffered).toBe(MAX_BUFFER_SIZE);
+      await connection.closeSubscription('slow');
+      await waiting;
+      expect(healthy.signal.aborted).toBe(false);
+      healthy.subscriptionHandler(makeMessage('2'));
+      connection.ackSubscription('healthy', makeMessage('1').cursor);
+      expect((socket.send as sinon.SinonStub).callCount).toBe(3);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it('ignores ACKs for an unknown subscription', async (): Promise<void> => {
     const connection = new SocketConnection(createMockSocket(), dwn);
     try {

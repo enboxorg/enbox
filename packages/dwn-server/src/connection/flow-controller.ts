@@ -8,8 +8,11 @@ import { createJsonRpcSuccessResponse } from '@enbox/dwn-clients';
 /** Default maximum number of unacknowledged events before pausing delivery. */
 export const DEFAULT_MAX_IN_FLIGHT = 32;
 
-/** Maximum buffer size before the subscription is force-closed to prevent OOM. */
+/** Maximum buffer size; awaited producers pause here to prevent unbounded memory growth. */
 export const MAX_BUFFER_SIZE = 1000;
+
+/** Maximum time a full buffer may wait for ACKs before its subscription closes. */
+export const MAX_BUFFER_WAIT_MS = 30_000;
 
 /**
  * Per-subscription flow controller that enforces a sliding window of
@@ -17,9 +20,9 @@ export const MAX_BUFFER_SIZE = 1000;
  * buffered. When the client sends `rpc.ack` with a cursor, events up
  * to that cursor are acknowledged and buffered events are flushed.
  *
- * If the buffer exceeds {@link MAX_BUFFER_SIZE}, the subscription is
- * closed via the provided `onOverflow` callback to prevent unbounded
- * memory growth.
+ * Producers pause at {@link MAX_BUFFER_SIZE} until ACKs free capacity. A
+ * {@link MAX_BUFFER_WAIT_MS} deadline closes stalled subscriptions. Producers
+ * that push past capacity without awaiting are closed immediately.
  */
 export class FlowController {
   /** Ordered list of progress tokens for events that have been sent but not yet acknowledged. */
@@ -31,6 +34,8 @@ export class FlowController {
   /** Whether the controller has been closed. */
   private closed = false;
 
+  private capacityWait?: { resume: () => void; timer: ReturnType<typeof setTimeout> };
+
   constructor(
     private readonly subscriptionId: JsonRpcId,
     private readonly maxInFlight: number,
@@ -40,9 +45,10 @@ export class FlowController {
 
   /**
    * Accept an incoming {@link SubscriptionMessage} from the EventLog listener.
-   * If the window has room, send immediately. Otherwise buffer.
+   * If the window has room, send immediately. Otherwise buffer. At buffer
+   * capacity, the producer must await the returned promise before pushing again.
    */
-  public push(message: SubscriptionMessage): void {
+  public push(message: SubscriptionMessage): void | Promise<void> {
     if (this.closed) {
       return;
     }
@@ -59,6 +65,10 @@ export class FlowController {
         );
         this.close();
         this.onOverflow();
+      } else if (this.buffer.length === MAX_BUFFER_SIZE) {
+        // The EventLog awaits this only at capacity, letting socket ACKs catch up
+        // without adding a promise or a timer to ordinary event delivery.
+        return this.waitForCapacity();
       }
     }
   }
@@ -68,6 +78,30 @@ export class FlowController {
     this.closed = true;
     this.buffer = [];
     this.unacked = [];
+    this.resumeCapacity();
+  }
+
+  private waitForCapacity(): Promise<void> {
+    let resume!: () => void;
+    const promise = new Promise<void>((resolve): void => {
+      resume = resolve;
+    });
+    const timer = setTimeout((): void => {
+      log.warn(`FlowController: timed out waiting for ACKs for subscription ${String(this.subscriptionId)}`);
+      this.close();
+      this.onOverflow();
+    }, MAX_BUFFER_WAIT_MS);
+    this.capacityWait = { resume, timer };
+    return promise;
+  }
+
+  private resumeCapacity(): void {
+    if (this.capacityWait !== undefined) {
+      const { resume, timer } = this.capacityWait;
+      this.capacityWait = undefined;
+      clearTimeout(timer);
+      resume();
+    }
   }
 
   /**
@@ -113,6 +147,9 @@ export class FlowController {
     while (this.buffer.length > 0 && this.unacked.length < this.maxInFlight) {
       const buffered = this.buffer.shift()!;
       this.sendMessage(buffered);
+    }
+    if (this.buffer.length < MAX_BUFFER_SIZE) {
+      this.resumeCapacity();
     }
   }
 

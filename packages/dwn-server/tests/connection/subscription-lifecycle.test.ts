@@ -9,6 +9,7 @@ import { getTestDwn } from '../test-dwn.js';
 import { RateLimiter } from '../../src/rate-limiter.js';
 import { SocketConnection } from '../../src/connection/socket-connection.js';
 import { executeUnlessAborted, MessagesSubscribe, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { MAX_BUFFER_SIZE, MAX_BUFFER_WAIT_MS } from '../../src/connection/flow-controller.js';
 
 function createGate(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -276,94 +277,135 @@ describe('Socket subscription lifetimes', () => {
     expect(connection.toSnapshot().subscriptions).toEqual([]);
   });
 
-  it('cancels native WebSocket replay on buffer overflow before the subscribe reply', async (): Promise<void> => {
-    const { dwn: liveDwn } = await getTestDwn({ withEvents: true });
-    const store = liveDwn.storage.messageStore;
-    const alice = await TestDataGenerator.generateDidKeyPersona();
-    // Seed the actual SQL feed: replay more than the window plus the bounded buffer.
-    for (let index = 0; index < 1_002; index++) {
-      const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
-      await store.put(alice.did, record.message, await record.recordsWrite.constructIndexes(true));
-    }
-    const cursor = (await store.logBounds(alice.did))!.oldest;
-    const opened = createGate();
-    const finished = createGate();
-    const replied = createGate();
-    const responses: Array<{
-      id: string;
-      result?: { reply?: { status: { code: number } }; subscription?: SubscriptionMessage };
-      error?: unknown;
-    }> = [];
-    let connection!: SocketConnection;
-    let pending!: Promise<void>;
-    const server = Bun.serve<WsData>({
-      hostname : '127.0.0.1',
-      port     : 0,
-      fetch    : (request, server): Response | undefined => {
-        if (server.upgrade(request, { data: { connection: null } })) {
-          return;
+  for (const acknowledge of [false, true]) {
+    it(`handles native replay beyond the buffer limit (acknowledge=${acknowledge})`, async (): Promise<void> => {
+      const { dwn: liveDwn } = await getTestDwn({ withEvents: true });
+      const store = liveDwn.storage.messageStore;
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      // Seed the actual SQL feed: replay more than the window plus the bounded buffer.
+      for (let index = 0; index < 1_200; index++) {
+        const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        await store.put(alice.did, record.message, await record.recordsWrite.constructIndexes(true));
+      }
+      const cursor = (await store.logBounds(alice.did))!.oldest;
+      const opened = createGate();
+      const finished = createGate();
+      const replied = createGate();
+      const firstFrame = createGate();
+      const eose = createGate();
+      let clock: sinon.SinonFakeTimers | undefined;
+      const responses: Array<{
+        id: string;
+        result?: { reply?: { status: { code: number } }; subscription?: SubscriptionMessage };
+        error?: unknown;
+      }> = [];
+      let connection!: SocketConnection;
+      let pending!: Promise<void>;
+      const server = Bun.serve<WsData>({
+        hostname : '127.0.0.1',
+        port     : 0,
+        fetch    : (request, server): Response | undefined => {
+          if (server.upgrade(request, { data: { connection: null } })) {
+            return;
+          }
+          return new Response('upgrade required', { status: 400 });
+        },
+        websocket: {
+          open: (socket): void => {
+            connection = new SocketConnection(socket, liveDwn, undefined, acknowledge ? 32 : 1);
+            socket.data.connection = connection;
+          },
+          message: (_socket, data): Promise<void> => {
+            const bytes = typeof data === 'string' ? Buffer.from(data) : data;
+            const processing = connection.message(bytes);
+            if (JSON.parse(bytes.toString()).id === 'request') {
+              pending = processing.finally(finished.resolve);
+            }
+            return processing;
+          },
+          close: async (): Promise<void> => {
+            await connection.close();
+          },
+        },
+      });
+      const client = new WebSocket(`ws://127.0.0.1:${server.port}`);
+      client.addEventListener('open', opened.resolve, { once: true });
+      client.addEventListener('message', (event): void => {
+        const response = JSON.parse(event.data);
+        responses.push(response);
+        if (response.id === 'request') {
+          replied.resolve();
+        } else if (response.id === 'peer') {
+          firstFrame.resolve();
+          if (response.result.subscription.type === 'eose') {
+            eose.resolve();
+          }
+          if (acknowledge) {
+            client.send(JSON.stringify({
+              jsonrpc      : '2.0',
+              method       : 'rpc.ack',
+              params       : { cursor: response.result.subscription.cursor },
+              subscription : { id: 'peer' },
+            }));
+          }
         }
-        return new Response('upgrade required', { status: 400 });
-      },
-      websocket: {
-        open: (socket): void => {
-          connection = new SocketConnection(socket, liveDwn, undefined, 1);
-          socket.data.connection = connection;
-        },
-        message: (_socket, data): Promise<void> => {
-          pending = connection.message(typeof data === 'string' ? Buffer.from(data) : data).finally(finished.resolve);
-          return pending;
-        },
-        close: async (): Promise<void> => {
-          await connection.close();
-        },
-      },
-    });
-    const client = new WebSocket(`ws://127.0.0.1:${server.port}`);
-    client.addEventListener('open', opened.resolve, { once: true });
-    client.addEventListener('message', (event): void => {
-      const response = JSON.parse(event.data);
-      responses.push(response);
-      if (response.id === 'request') {
-        replied.resolve();
+      });
+      const subscribed = sinon.spy(liveDwn.storage.eventLog!, 'subscribe');
+      const reads = sinon.spy(store, 'logRead');
+      try {
+        await opened.promise;
+        if (!acknowledge) {
+          clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        }
+        const subscribe = await MessagesSubscribe.create({ signer: alice.signer, filters: [{ interface: 'Records', method: 'Write' }], cursor });
+        client.send(JSON.stringify({
+          jsonrpc      : '2.0',
+          id           : 'request',
+          method       : 'rpc.subscribe.dwn.processMessage',
+          params       : { target: alice.did, message: subscribe.message },
+          subscription : { id: 'peer' },
+        }));
+        if (!acknowledge) {
+          await firstFrame.promise;
+          expect(connection.toSnapshot().subscriptions[0].buffered).toBe(MAX_BUFFER_SIZE);
+          clock!.tick(MAX_BUFFER_WAIT_MS);
+        }
+        await executeUnlessAborted(Promise.all([finished.promise, replied.promise, acknowledge ? eose.promise : Promise.resolve()]),
+          AbortSignal.timeout(5_000));
+        await pending;
+        if (acknowledge) {
+          const events = responses.filter(response => response.id === 'peer' && response.result?.subscription?.type === 'event');
+          expect(events.map(response => response.result!.subscription!.cursor.position))
+            .toEqual(Array.from({ length: 1_200 }, (_value, index): string => String(index + 1)));
+          expect(connection.subscriptionCount).toBe(1);
+          expect(responses.find(response => response.id === 'request')?.result?.reply?.status.code).toBe(200);
+        } else {
+          expect(connection.subscriptionCount).toBe(0);
+          expect(connection.hasSubscription('peer')).toBe(false);
+          expect(connection.toSnapshot().subscriptions).toEqual([]);
+          expect(subscribed.firstCall.args[3]!.signal!.aborted).toBe(true);
+          expect(responses.filter(response => response.id === 'peer')).toHaveLength(1);
+          const response = responses.find(response => response.id === 'request')!;
+          expect(response.error !== undefined || response.result?.reply?.status.code === 500).toBe(true);
+          const readsAfterCancellation = reads.callCount;
+          const later = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          await store.put(alice.did, later.message, await later.recordsWrite.constructIndexes(true));
+          expect(reads.callCount).toBe(readsAfterCancellation);
+        }
+        // An open socket and a fresh ID remain usable after cancelling only the slow peer.
+        const healthy = connection.beginSubscription('healthy');
+        expect(healthy.signal.aborted).toBe(false);
+        await healthy.release();
+      } finally {
+        clock?.restore();
+        client.close();
+        await connection?.close();
+        await pending?.catch((): void => {});
+        server.stop(true);
+        subscribed.restore();
+        reads.restore();
+        await liveDwn.close();
       }
     });
-    const subscribed = sinon.spy(liveDwn.storage.eventLog!, 'subscribe');
-    const reads = sinon.spy(store, 'logRead');
-    try {
-      await opened.promise;
-      const subscribe = await MessagesSubscribe.create({ signer: alice.signer, filters: [{ interface: 'Records', method: 'Write' }], cursor });
-      client.send(JSON.stringify({
-        jsonrpc      : '2.0',
-        id           : 'request',
-        method       : 'rpc.subscribe.dwn.processMessage',
-        params       : { target: alice.did, message: subscribe.message },
-        subscription : { id: 'slow-peer' },
-      }));
-      await executeUnlessAborted(Promise.all([finished.promise, replied.promise]), AbortSignal.timeout(5_000));
-      await pending;
-      expect(connection.subscriptionCount).toBe(0);
-      expect(connection.hasSubscription('slow-peer')).toBe(false);
-      expect(connection.toSnapshot().subscriptions).toEqual([]);
-      expect(subscribed.firstCall.args[3]!.signal!.aborted).toBe(true);
-      expect(responses.filter(response => response.id === 'slow-peer')).toHaveLength(1);
-      expect(responses.find(response => response.id === 'request')?.result?.reply?.status.code).toBe(500);
-      const readsAfterCancellation = reads.callCount;
-      const later = await TestDataGenerator.generateRecordsWrite({ author: alice });
-      await store.put(alice.did, later.message, await later.recordsWrite.constructIndexes(true));
-      expect(reads.callCount).toBe(readsAfterCancellation);
-      // An open socket and a fresh ID remain usable after cancelling only the slow peer.
-      const healthy = connection.beginSubscription('healthy');
-      expect(healthy.signal.aborted).toBe(false);
-      await healthy.release();
-    } finally {
-      client.close();
-      await connection?.close();
-      await pending?.catch((): void => {});
-      server.stop(true);
-      subscribed.restore();
-      reads.restore();
-      await liveDwn.close();
-    }
-  });
+  }
 });
