@@ -1,5 +1,25 @@
 # @enbox/dwn-server
 
+## 0.1.44
+
+### Patch Changes
+
+- [#1751](https://github.com/enboxorg/enbox/pull/1751) [`8f06093`](https://github.com/enboxorg/enbox/commit/8f0609317f1097e922db0b8a903ecf3454732827) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Allow valid RecordsWrite data to complete an already-admitted ancestry-only initial write, move it to a new durable feed position, and require every MessageStore to expose the ordered replication feed.
+
+- [#1771](https://github.com/enboxorg/enbox/pull/1771) [`b3e12b1`](https://github.com/enboxorg/enbox/commit/b3e12b10323dd0f8d4ed22e44a2a487111ff7862) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Distinguish an indexed replicated write with unavailable record data from a general remote storage failure.
+
+- [#1763](https://github.com/enboxorg/enbox/pull/1763) [`667de4a`](https://github.com/enboxorg/enbox/commit/667de4a8d2df025c9a97391038fab80a0185dc09) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Complete stored ancestry-only RecordsWrites when their data arrives through the replication RPC.
+
+- [#1765](https://github.com/enboxorg/enbox/pull/1765) [`fe33c65`](https://github.com/enboxorg/enbox/commit/fe33c65633c11a8c4b10f11d2751a0406b9c7a0f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Carry opt-in RecordsWrite materialization confirmation through agent remote mode and authenticated local-node HTTP transport.
+
+- [#1767](https://github.com/enboxorg/enbox/pull/1767) [`5d4c035`](https://github.com/enboxorg/enbox/commit/5d4c035563429242cb50b19907091701e373ec9b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose opt-in `includeMaterializationConfirmation` for replicated writes. Report `handledCids` for Applied, Duplicate, and Superseded outcomes, and `appliedEntries` only for Applied outcomes.
+
+- Updated dependencies [[`c92a759`](https://github.com/enboxorg/enbox/commit/c92a759524472fedb266f5eb25760d8ee1359898), [`05b4177`](https://github.com/enboxorg/enbox/commit/05b41776e92bd1f42462726d7a7d4bb2a0fcb9de), [`d435c4f`](https://github.com/enboxorg/enbox/commit/d435c4fadbeb64aae824a4c1f0497ebc49c378b3), [`0bcd330`](https://github.com/enboxorg/enbox/commit/0bcd330cb59649e6fcf3a858f636d286a9c26bf3), [`8f06093`](https://github.com/enboxorg/enbox/commit/8f0609317f1097e922db0b8a903ecf3454732827), [`b3e12b1`](https://github.com/enboxorg/enbox/commit/b3e12b10323dd0f8d4ed22e44a2a487111ff7862), [`fe33c65`](https://github.com/enboxorg/enbox/commit/fe33c65633c11a8c4b10f11d2751a0406b9c7a0f), [`5d4c035`](https://github.com/enboxorg/enbox/commit/5d4c035563429242cb50b19907091701e373ec9b), [`75b3906`](https://github.com/enboxorg/enbox/commit/75b390632e288629d269c66b6fcc8d04b253f140)]:
+  - @enbox/dwn-sdk-js@0.4.28
+  - @enbox/dids@0.1.13
+  - @enbox/dwn-sql-store@0.0.53
+  - @enbox/dwn-clients@0.4.36
+
 ## 0.1.43
 
 ### Patch Changes
