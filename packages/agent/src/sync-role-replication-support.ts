@@ -13,6 +13,7 @@ import type { DwnDataEncodedRecordsWriteMessage } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncMessageEntry } from './sync-messages.js';
+import type { SyncRemoteRequestRunner } from './sync-request-runner.js';
 
 import {
   DwnConstant,
@@ -35,6 +36,7 @@ import {
 import { DwnInterface } from './types/dwn.js';
 import { isEncryptionControlRecordFor } from './dwn-encryption.js';
 import { isTenantProtocolConfig } from './sync-fetch-helpers.js';
+import { runSyncRemoteRequest } from './sync-request-runner.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import { capRecordsWriteDataStream, dataStreamFromBytes, SyncWorkInterruptedError } from './sync-messages.js';
 import { getRecordAuthor, getRecordProtocolRole, resolveDwnSubscriptionUrl as resolveDwnWebSocketUrl } from './utils.js';
@@ -63,6 +65,7 @@ type RoleReplicationSupportParams = DelegatedRoleReadParams & {
   protocolPath: string;
   protocolRole: string;
   rootData?: Uint8Array;
+  runRemoteRequest?: SyncRemoteRequestRunner;
   shouldContinue?: () => boolean;
   sourceDid: string;
 };
@@ -209,6 +212,9 @@ async function requestRoleReplicationSupport(
 }
 
 async function resolveRoleReadUrl(params: RoleReplicationSupportParams): Promise<string> {
+  if (params.runRemoteRequest !== undefined) {
+    return params.dwnUrl;
+  }
   try {
     return await resolveDwnWebSocketUrl(params.dwnUrl, params.agent.rpc);
   } catch {
@@ -221,11 +227,14 @@ function sendRecordsRead(
   dwnUrl: string,
   message: RecordsReadMessage,
 ): Promise<RecordsReadReply> {
-  return params.agent.rpc.sendDwnRequest({
-    dwnUrl,
-    message,
-    targetDid: params.sourceDid,
-  }) as Promise<RecordsReadReply>;
+  return runSyncRemoteRequest(params.runRemoteRequest, (signal): Promise<RecordsReadReply> =>
+    params.agent.rpc.sendDwnRequest({
+      dwnUrl,
+      message,
+      targetDid: params.sourceDid,
+      ...(signal === undefined ? {} : { signal }),
+    }) as Promise<RecordsReadReply>
+  );
 }
 
 async function mergeSplitRoleReadReplies(

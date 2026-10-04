@@ -1,6 +1,9 @@
 import type { BearerDid } from '@enbox/dids';
+import type { SyncRemoteRequestRunner } from '../src/sync-request-runner.js';
+import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type {
   DwnEncryption,
+  GenericMessage,
   MessageSigner,
   RecordsDeleteMessage,
   RecordsReadMessage,
@@ -9,7 +12,11 @@ import type {
   SourceRoleAudienceKeyEncryption,
 } from '@enbox/dwn-sdk-js';
 
+import { Level } from 'level';
+import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
 import sinon from 'sinon';
+import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
+import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
 
 import { beforeAll, describe, expect, it } from 'bun:test';
 import {
@@ -20,6 +27,7 @@ import {
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyAgreementAlgorithm,
+  Message,
   ProtocolsConfigure,
   RecordsDelete,
   RecordsRead,
@@ -68,6 +76,107 @@ describe('readRoleReplicationSupport', () => {
       fixture.configure.message,
       fixture.role.message,
     ]);
+  });
+
+  it('runs both split role reads through caller-owned request coordination', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    agent.rpc.getServerInfo = sinon.stub();
+    let requests = 0;
+    const runRemoteRequest: SyncRemoteRequestRunner = async (request) => {
+      requests++;
+      return request();
+    };
+
+    await readFixture(fixture, agent, undefined, runRemoteRequest);
+
+    expect(requests).toBe(2);
+    expect(agent.rpc.getServerInfo.notCalled).toBe(true);
+  });
+
+  it('hydrates a newer current role root and settles its older quarantine row', async () => {
+    const fixture = await createFixture();
+    const oldRoot = fixture.root;
+    const oldCid = await Message.getCid(oldRoot.message);
+    fixture.rootData = new TextEncoder().encode('newer notebook');
+    fixture.root = await RecordsWrite.createFrom({
+      data                : fixture.rootData,
+      recordsWriteMessage : oldRoot.message,
+      signer              : ownerSigner,
+    });
+    fixture.rootInitialWrite = oldRoot.message;
+    const currentCid = await Message.getCid(fixture.root.message);
+    const agent = responseAgent(fixture) as any;
+    agent.permissions = { getPermissionForRequest: sinon.stub() };
+    let currentMaterialized = false;
+    agent.dwn.applyReplicatedMessage = sinon.stub().callsFake(async (
+      _did: string,
+      message: GenericMessage,
+      options?: { includeMaterializationConfirmation?: boolean },
+    ) => {
+      const cid = await Message.getCid(message);
+      if (options?.includeMaterializationConfirmation === true) {
+        return currentMaterialized && cid === oldCid
+          ? { kind: 'Superseded', currentWriteMaterialized: true }
+          : { kind: 'Superseded' };
+      }
+      if (cid === currentCid) {
+        currentMaterialized = true;
+      }
+      return { kind: 'Applied' };
+    });
+    const target: SyncTarget = {
+      authorization: {
+        actorDid     : actor.uri,
+        kind         : 'role',
+        protocolRole : ROLE_PATH,
+        roleRecordId : fixture.role.message.recordId,
+      },
+      authorizationEpoch : 'role-epoch',
+      did                : owner.uri,
+      dwnUrl             : 'https://owner.example.com',
+      projectionId       : 'role-projection',
+      scope              : {
+        contextId     : oldRoot.message.contextId,
+        kind          : 'context',
+        protocol      : PROTOCOL,
+        protocolPaths : ['notebook'],
+      },
+    };
+    const db = new Level<string, string>(`__TESTDATA__/sync-next-role-retry-${crypto.randomUUID()}`);
+    const ledger = new SyncNextLedgerStore(db, 'sync-next-role-retry');
+    try {
+      const link = await ledger.getOrCreateLink({
+        ...syncNextLinkIdentity(target),
+        authorization : target.authorization,
+        scope         : target.scope,
+      });
+      const source = { epoch: 'source-epoch', position: '1', streamId: 'source-stream', messageCid: oldCid };
+      const entry = { isLatestBaseState: true, message: oldRoot.message, messageCid: oldCid, seq: '1' };
+      expect(await ledger.commitPullPage(link, {
+        handledThrough : source,
+        pageReceipts   : [{ messageCid: oldCid, source }],
+        quarantine     : [{ entry, messageCid: oldCid, source }],
+        settled        : [],
+      })).toBe(true);
+
+      const staleTarget: SyncTarget = {
+        ...target,
+        authorization: { ...target.authorization, roleRecordId: 'replaced-role' },
+      };
+      await expect(retryOneQuarantinedRoot({ agent, ledger, target: staleTarget }))
+        .rejects.toBeInstanceOf(RoleReplicationSupportError);
+      expect(await ledger.getQuarantineForLink(link)).toHaveLength(1);
+
+      expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
+        .toMatchObject({ kind: 'settled' });
+      expect(currentMaterialized).toBe(true);
+      expect(agent.rpc.sendDwnRequest.callCount).toBe(4);
+      expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+    } finally {
+      await ledger.clear();
+      await db.close();
+    }
   });
 
   it('represents an updated role initial write as an ordinary support entry', async () => {
@@ -635,6 +744,7 @@ describe('readRoleReplicationSupport', () => {
     roleData: Uint8Array;
     root: RecordsWrite;
     rootData: Uint8Array;
+    rootInitialWrite?: RecordsWriteMessage;
     support: RecordsReadReplicationSupportEntry[];
   }> {
     const rootData = new TextEncoder().encode('notebook');
@@ -692,6 +802,7 @@ describe('readRoleReplicationSupport', () => {
     fixture: Awaited<ReturnType<typeof createFixture>>,
     agent: any = responseAgent(fixture),
     expectedRoot?: RecordsDeleteMessage | RecordsWriteMessage,
+    runRemoteRequest?: SyncRemoteRequestRunner,
   ): ReturnType<typeof readRoleReplicationSupport> {
     return readRoleReplicationSupport({
       actorDid       : actor.uri,
@@ -703,6 +814,7 @@ describe('readRoleReplicationSupport', () => {
       protocol       : PROTOCOL,
       protocolPath   : fixture.root.message.descriptor.protocolPath!,
       protocolRole   : ROLE_PATH,
+      runRemoteRequest,
       sourceDid      : owner.uri,
     });
   }
@@ -722,6 +834,7 @@ describe('readRoleReplicationSupport', () => {
               ? {}
               : { data: DataStream.fromBytes(fixture.rootData) }),
             recordsWrite: fixture.root.message,
+            ...(fixture.rootInitialWrite === undefined ? {} : { initialWrite: fixture.rootInitialWrite }),
           },
           roleRecordId : fixture.role.message.recordId,
           status       : { code: 200 },
