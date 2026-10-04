@@ -78,8 +78,8 @@ export class SyncNextWorkPump {
     options: { maxRemoteRequests?: number; signal?: AbortSignal } = {},
   ): Promise<SyncNextWorkPumpResult> {
     const maxRequests = options.maxRemoteRequests ?? DEFAULT_MAX_REMOTE_REQUESTS;
-    if (!Number.isSafeInteger(maxRequests) || maxRequests <= 0) {
-      throw new RangeError('SyncNextWorkPump: request budget must be a positive integer.');
+    if (!Number.isSafeInteger(maxRequests) || maxRequests < 2) {
+      throw new RangeError('SyncNextWorkPump: request budget must be an integer of at least 2.');
     }
     const budget: RequestBudget = {
       limit    : maxRequests,
@@ -96,7 +96,7 @@ export class SyncNextWorkPump {
     ))).some(Boolean);
 
     // Preserve capacity for existing sparse work without slowing the common queue-empty path.
-    budget.limit = recoveryPending && maxRequests > 1 ? Math.ceil(maxRequests / 2) : maxRequests;
+    budget.limit = recoveryPending ? Math.ceil(maxRequests / 2) : maxRequests;
     await this.runPhase(states, page, budget, blockedEndpoints);
     budget.limit = maxRequests;
     await this.runPhase(states, retry, budget, blockedEndpoints);

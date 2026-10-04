@@ -184,10 +184,11 @@ the request budget is exhausted.
 Every remote feed query, body/dependency read, and replicated apply enters one
 shared keyed endpoint permit. The permit covers the logical RPC, including any
 transport retry or fallback, and is released when the RPC returns; a returned
-body stream does not retain it. A turn has a remote-request budget; page-size
-limits and transport timeouts provide the other bounds. When sparse work exists
-at the start of a turn, the page phase receives roughly half of the request
-budget, leaving the remainder for recovery. Request exhaustion or caller
+body stream does not retain it. A turn has a remote-request budget of at least
+two, allowing both page and recovery capacity; page-size limits and transport
+timeouts provide the other bounds. When sparse work exists at the start of a
+turn, the page phase receives roughly half of the request budget, leaving the
+remainder for recovery. Request exhaustion or caller
 cancellation leaves committed progress and sparse work available to the next
 turn. Without an explicit caller signal, the pump supplies none, preserving
 socket-preferred routing for eligible requests.

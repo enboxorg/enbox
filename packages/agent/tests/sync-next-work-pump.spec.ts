@@ -354,6 +354,13 @@ describe('SyncNextWorkPump', () => {
     expect(result).toMatchObject({ failures: [], remoteRequests: 2, workRemaining: true });
   });
 
+  it('requires enough request budget for a page and recovery', async () => {
+    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations());
+
+    await expect(pump.run([target()], 'pull', { maxRemoteRequests: 1 }))
+      .rejects.toThrow('request budget must be an integer of at least 2');
+  });
+
   it('passes no signal by default so eligible RPCs retain socket routing', async () => {
     let receivedSignal: AbortSignal | undefined;
     const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
