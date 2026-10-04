@@ -22,6 +22,7 @@ export default defineConfig({
       'tests/sync-next-quarantine-retry.spec.ts',
       'tests/sync-next-work-pump.spec.ts',
       'tests/sync-messages.spec.ts',
+      'tests/sync-role-replication-support.spec.ts',
     ],
     testTimeout : 10_000,
     coverage: {
@@ -34,6 +35,7 @@ export default defineConfig({
         'src/sync-next/quarantine-retry.ts',
         'src/sync-next/work-pump.ts',
         'src/sync-request-runner.ts',
+        'src/sync-role-replication-support.ts',
         'src/sync-messages.ts',
       ],
       provider         : 'istanbul',
