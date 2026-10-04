@@ -84,6 +84,47 @@ describe('createGuardedSubscriptionHandler', () => {
     expect(closeCount).toBe(1);
   });
 
+  for (const terminalError of [false, true]) {
+    it(`should discard a ${terminalError ? 'terminal' : 'successful'} projection completed after cancellation`, async (): Promise<void> => {
+      const controller = new AbortController();
+      const delivered: SubscriptionMessage[] = [];
+      let release!: () => void;
+      let entered!: () => void;
+      const blocked = new Promise<void>((resolve): void => { release = resolve; });
+      const started = new Promise<void>((resolve): void => { entered = resolve; });
+      let closes = 0;
+      const guarded = createGuardedSubscriptionHandler({
+        signal       : controller.signal,
+        listener     : (message): void => { delivered.push(message); },
+        processEvent : async (event, fail): Promise<SubscriptionEvent> => {
+          entered();
+          await blocked;
+          if (terminalError) {
+            fail(DwnErrorCode.MessagesSubscribeDeliveryFailed, 'late projection failure');
+          }
+          return event;
+        },
+      });
+      const pending = guarded.listener(subscriptionEvent('1'));
+      try {
+        await started;
+        controller.abort();
+        release();
+        await pending;
+        await guarded.listener({ type: 'eose', cursor: subscriptionEvent('1').cursor });
+        await guarded.setSubscription({
+          id    : 'late-handle',
+          close : async (): Promise<void> => { closes++; },
+        });
+        expect(delivered).toEqual([]);
+        expect(closes).toBe(1);
+      } finally {
+        release();
+        await pending;
+      }
+    });
+  }
+
   it('should deliver a terminal projection error without waiting for subscription close', async () => {
     let closeCount = 0;
     let processCount = 0;

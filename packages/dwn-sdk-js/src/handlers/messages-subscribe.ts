@@ -36,11 +36,13 @@ export class MessagesSubscribeHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-    subscriptionHandler
+    subscriptionHandler,
+    subscriptionSignal,
   }: {
     tenant: string;
     message: MessagesSubscribeMessage;
     subscriptionHandler: SubscriptionListener;
+    subscriptionSignal?: AbortSignal;
   }): Promise<MessagesSubscribeReply> {
     if (this.deps.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
@@ -78,6 +80,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
       deps: this.deps,
       messagesSubscribe,
       subscriptionHandler,
+      subscriptionSignal,
       tenant,
     });
     const messageCid = await Message.getCid(message);
@@ -86,6 +89,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
       const subscription = await this.deps.eventLog.subscribe(tenant, messageCid, guardedHandler.listener, {
         cursor  : eventLogCursor,
         filters : messagesFilters,
+        signal  : subscriptionSignal,
       });
       await guardedHandler.setSubscription(subscription);
 
@@ -216,6 +220,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
     deps: HandlerDependencies;
     messagesSubscribe: MessagesSubscribe;
     subscriptionHandler: SubscriptionListener;
+    subscriptionSignal?: AbortSignal;
     tenant: string;
   }): GuardedSubscriptionHandler {
     const { authorization, callerMessageFilters, deps, messagesSubscribe, subscriptionHandler, tenant } = input;
@@ -233,6 +238,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
     // split static and dynamic checks explicitly and document any bounded staleness
     // introduced by caching revocation lookups.
     return createGuardedSubscriptionHandler({
+      signal       : input.subscriptionSignal,
       listener     : subscriptionHandler,
       processEvent : async (subMessage, fail): Promise<SubscriptionEvent | undefined> => {
         try {

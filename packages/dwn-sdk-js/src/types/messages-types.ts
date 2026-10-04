@@ -84,6 +84,7 @@ export type MessagesQueryReply = GenericMessageReply & {
 
 export type MessagesSubscribeMessageOptions = {
   subscriptionHandler: SubscriptionListener;
+  subscriptionSignal?: AbortSignal;
 };
 
 export type MessagesSubscribeMessage = {

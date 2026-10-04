@@ -217,7 +217,7 @@ describe('handleDwnProcessMessage', () => {
     });
 
     const { dwn } = await getTestDwn();
-    const context: RequestContext = { dwn, transport: 'http', subscriptionRequest: { id: 'test', subscriptionHandler: () => {} } };
+    const context: RequestContext = { dwn, transport: 'http', subscriptionRequest: { id: 'test' } };
 
     const { jsonRpcResponse } = await handleDwnProcessMessage(
       dwnRequest,

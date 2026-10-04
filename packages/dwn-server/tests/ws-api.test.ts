@@ -495,7 +495,7 @@ describe('websocket api', function () {
     });
 
     expect(response2.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
-    expect(response2.error.message).toContain(`${subscribeId} is in use by an active subscription`);
+    expect(response2.error.message).toContain(`${subscribeId} is in use by a pending or active subscription`);
 
     const write1Message = await TestDataGenerator.generateRecordsWrite({
       author     : alice,

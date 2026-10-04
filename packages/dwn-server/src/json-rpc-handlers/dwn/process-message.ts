@@ -1,9 +1,10 @@
+import type { JsonRpcId } from '@enbox/dwn-clients';
+import type { SocketSubscription } from '../../connection/socket-connection.js';
 import type { GenericMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
 import type {
   HandlerResponse,
   JsonRpcHandler,
 } from '../../lib/json-rpc-router.js';
-import type { JsonRpcId, JsonRpcSubscription } from '@enbox/dwn-clients';
 
 import log from 'loglevel';
 
@@ -56,7 +57,7 @@ function checkSubscriptionRequestPreconditions(
     const jsonRpcResponse = createJsonRpcErrorResponse(
       requestId,
       JsonRpcErrorCodes.InvalidParams,
-      `the subscribe id: ${context.subscriptionRequest.id} is in use by an active subscription`
+      `the subscribe id: ${context.subscriptionRequest.id} is in use by a pending or active subscription`
     );
     return { jsonRpcResponse };
   }
@@ -106,6 +107,8 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
   const { dwn, dataStream, subscriptionRequest, socketConnection, transport } = context;
   const { target, message } = dwnRequest.params as { target: string, message: GenericMessage };
   const requestId = dwnRequest.id ?? crypto.randomUUID();
+  let subscription: SocketSubscription | undefined;
+  let keepSubscription = false;
 
   try {
     const transportResult = validateInboundDwnMessageTransport({ context, message, requestId, target });
@@ -118,14 +121,20 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
       return subscriptionResult;
     }
 
+    if (subscriptionRequest !== undefined) {
+      subscription = socketConnection.beginSubscription(subscriptionRequest.id);
+    }
+
     const limitsResult = await enforceInboundDwnMessageLimits({ context, message, requestId, target });
     if (limitsResult !== undefined) {
       return limitsResult;
     }
 
+    subscription?.signal.throwIfAborted();
     const reply = await dwn.processMessage(target, message, {
       dataStream,
-      subscriptionHandler: subscriptionRequest?.subscriptionHandler,
+      subscriptionHandler : subscription?.subscriptionHandler,
+      subscriptionSignal  : subscription?.signal,
     });
 
 
@@ -138,16 +147,9 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
       delete reply.entry.data; // not serializable via JSON
     }
 
-    if (subscriptionRequest && reply.subscription) {
-      const { close } = reply.subscription;
-      // Subscribe messages return a close function to facilitate closing the subscription
-      // we add a reference to the close function for this subscription request to the socket connection.
-      // this will facilitate closing the subscription later.
-      const subscriptionReply: JsonRpcSubscription = {
-        id: subscriptionRequest.id,
-        close,
-      };
-      await socketConnection.addSubscription(subscriptionReply);
+    if (subscription !== undefined && reply.subscription !== undefined) {
+      await subscription.register(reply.subscription.close);
+      subscription.signal.throwIfAborted();
       delete reply.subscription.close; // delete the close method from the reply as it's not JSON serializable and has a held reference.
     }
 
@@ -162,6 +164,7 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
     }
 
     recordProcessedMessageMetrics(context, target, message, reply, transport);
+    keepSubscription = reply.subscription !== undefined;
 
     return responsePayload;
   } catch (error) {
@@ -176,5 +179,9 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
     );
 
     return { jsonRpcResponse } as HandlerResponse;
+  } finally {
+    if (subscription !== undefined && !keepSubscription) {
+      await subscription.release();
+    }
   }
 };

@@ -376,6 +376,10 @@ describe('WebSocketDwnRpcClient', () => {
       });
       expect(updateReply.status.code).toBe(202);
 
+      // The durable feed retains current state: the next write can prune this
+      // version before a delayed feed read sees it. Observe each update before replacing it.
+      await waitForCondition(() => dataCids.includes(update1.descriptor.dataCid));
+
       // make another update
       const { message: update2, dataBytes: update2Data } = await TestDataGenerator.generateFromRecordsWrite({
         existingWrite : updateWrite,
