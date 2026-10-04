@@ -123,14 +123,14 @@ timestamp; caller cancellation does not alter retry order.
 
 This slice recovers ordinary owner and delegated roots. Before fetching a
 retained data-bearing write from its source, retry asks the local replication
-entry point for materialization confirmation. A genuinely fresh complete apply
-or an exact current duplicate confirmed with data settles the receipt; an
-inconclusive Duplicate or Superseded result remains pending. Applying a
-dataless, non-latest write also leaves its receipt pending for a later
-body-bearing receipt. A retry settles only its selected root CID: dependencies
-applied along the way never clear their own quarantine receipts as a side
-effect. Role-authorized rows remain pending for the separate exact-or-newer
-role-support slice.
+entry point for materialization confirmation. A genuinely fresh complete apply,
+an exact current duplicate confirmed with data, or confirmation that a newer
+current write is materialized settles the receipt. An inconclusive Duplicate or
+Superseded result remains pending. Applying a dataless, non-latest write also
+leaves its receipt pending for a later body-bearing receipt. A retry settles only
+its selected root CID: dependencies applied along the way never clear their own
+quarantine receipts as a side effect. Role-authorized rows remain pending for
+the separate exact-or-newer role-support slice.
 
 ## One-page push intake
 
