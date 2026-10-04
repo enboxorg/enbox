@@ -1060,14 +1060,21 @@ describe('handleDwnApplyReplicatedMessage', () => {
       });
       expect((updateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
 
-      const replay = await handleDwnApplyReplicatedMessage(initialRequest, {
+      const confirmationRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+        includeMaterializationConfirmation : true,
+        message                            : initialWrite.toJSON(),
+        target                             : alice.did,
+      });
+      const replay = await handleDwnApplyReplicatedMessage(confirmationRequest, {
         dwn,
-        transport  : 'http',
-        dataStream : DataStream.fromBytes(initialData),
+        dataStream               : DataStream.fromBytes(initialData),
+        isLocalNodeAuthenticated : true,
+        transport                : 'http',
       });
 
       expect(replay.jsonRpcResponse.error).toBeUndefined();
-      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Superseded' });
+      expect(replay.jsonRpcResponse.result.result)
+        .toEqual({ kind: 'Superseded', currentWriteMaterialized: true });
     } finally {
       await dwn.close();
     }

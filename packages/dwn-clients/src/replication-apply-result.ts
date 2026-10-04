@@ -18,7 +18,7 @@ export function parseReplicationApplyResult(value: unknown): ReplicationApplyRes
     case 'Duplicate':
       return parseDuplicateResult(value);
     case 'Superseded':
-      return { kind: value.kind };
+      return parseSupersededResult(value);
     case 'Incomplete':
       if (!Array.isArray(value.missing) || !value.missing.every(isDependencyRef)) {
         throw malformedReplicationApplyResult('Incomplete result must include missing dependency refs');
@@ -37,6 +37,17 @@ export function parseReplicationApplyResult(value: unknown): ReplicationApplyRes
     default:
       throw malformedReplicationApplyResult(`unknown result kind ${value.kind}`);
   }
+}
+
+function parseSupersededResult(value: Record<string, unknown>): Extract<ReplicationApplyResult, { kind: 'Superseded' }> {
+  if (value.currentWriteMaterialized === undefined) {
+    return { kind: 'Superseded' };
+  }
+  if (value.currentWriteMaterialized !== true) {
+    throw malformedReplicationApplyResult('Superseded result currentWriteMaterialized must be true when present');
+  }
+
+  return { kind: 'Superseded', currentWriteMaterialized: true };
 }
 
 function parseDuplicateResult(value: Record<string, unknown>): Extract<ReplicationApplyResult, { kind: 'Duplicate' }> {
