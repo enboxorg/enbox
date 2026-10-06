@@ -114,7 +114,19 @@ describe('FlowController', () => {
         expect(fc.inFlightCount).toBe(0);
         expect(fc.bufferCount).toBe(0);
         fc.push(makeEvent(MAX_BUFFER_SIZE + 2));
-        expect(sent).toHaveLength(1);
+        expect(sent).toHaveLength(2);
+        expect(sent[1]).toEqual({
+          jsonrpc : '2.0',
+          id      : 'sub-1',
+          result  : { subscription: {
+            type   : 'error',
+            cursor : token(MAX_BUFFER_SIZE + 1),
+            error  : {
+              code   : 'SubscriptionBufferTimeout',
+              detail : 'subscription ACKs did not free buffer capacity before the deadline',
+            },
+          } },
+        });
       } finally {
         fc.close();
         clock.restore();
@@ -178,11 +190,40 @@ describe('FlowController', () => {
       }
 
       expect(overflowed).toBe(true);
+      expect(sent).toHaveLength(2);
+      expect(sent[1].result.subscription.type).toBe('error');
+      expect(sent[1].result.subscription.error.code).toBe('SubscriptionBufferOverflow');
 
       // After overflow, push should be a no-op
       const sentBefore = sent.length;
       fc.push(makeEvent(9999));
       expect(sent).toHaveLength(sentBefore);
+    });
+
+    it('releases capacity and source ownership even if the terminal notification cannot be sent', async (): Promise<void> => {
+      const clock = sinon.useFakeTimers();
+      const overflow = sinon.spy();
+      const fc = new FlowController('sub-1', 1, (response): void => {
+        if (response.result.subscription.type === 'error') {
+          throw new Error('transport closed during notification');
+        }
+      }, overflow);
+      try {
+        fc.push(makeEvent(1));
+        for (let index = 0; index < MAX_BUFFER_SIZE - 1; index++) {
+          fc.push(makeEvent(index + 2));
+        }
+        const paused = fc.push(makeEvent(MAX_BUFFER_SIZE + 1));
+        clock.tick(MAX_BUFFER_WAIT_MS);
+        await paused;
+        expect(overflow.calledOnce).toBe(true);
+        expect(fc.inFlightCount).toBe(0);
+        expect(fc.bufferCount).toBe(0);
+        expect(clock.countTimers()).toBe(0);
+      } finally {
+        fc.close();
+        clock.restore();
+      }
     });
   });
 

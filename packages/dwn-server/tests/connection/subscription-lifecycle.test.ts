@@ -304,7 +304,9 @@ describe('Socket subscription lifetimes', () => {
           expect(connection.hasSubscription('peer')).toBe(false);
           expect(connection.toSnapshot().subscriptions).toEqual([]);
           expect(subscribed.firstCall.args[3]!.signal!.aborted).toBe(true);
-          expect(responses.filter(response => response.id === 'peer')).toHaveLength(1);
+          const frames = responses.filter(response => response.id === 'peer');
+          expect(frames.map(response => response.result.subscription.type)).toEqual(['event', 'error']);
+          expect(frames[1].result.subscription.error.code).toBe('SubscriptionBufferTimeout');
           const response = responses.find(response => response.id === 'request')!;
           expect(response.error !== undefined || response.result?.reply?.status.code === 500).toBe(true);
           const readsAfterCancellation = reads.callCount;

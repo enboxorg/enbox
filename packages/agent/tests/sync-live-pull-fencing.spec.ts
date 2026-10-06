@@ -939,16 +939,18 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     await fixture.controller.dispose();
   });
 
-  it('should repair retryable subscription failures', async () => {
-    const fixture = createEngineFixture(db);
-    expect(await openSubscription(fixture)).toBe(true);
-    await fixture.handlers[0]({
-      type  : 'error',
-      error : { code: 'SubscriptionRecoveryFailed' },
-    });
+  for (const code of ['SubscriptionRecoveryFailed', 'SubscriptionBufferTimeout', 'SubscriptionBufferOverflow']) {
+    it('should repair retryable subscription failures: ' + code, async () => {
+      const fixture = createEngineFixture(db);
+      expect(await openSubscription(fixture)).toBe(true);
+      await fixture.handlers[0]({
+        type  : 'error',
+        error : { code },
+      });
 
-    expect(fixture.repairing.calledOnceWithExactly(fixture.controller)).toBe(true);
-    await fixture.controller.dispose();
-  });
+      expect(fixture.repairing.calledOnceWithExactly(fixture.controller)).toBe(true);
+      await fixture.controller.dispose();
+    });
+  }
 
 });

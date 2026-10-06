@@ -1,5 +1,5 @@
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
-import type { MessageSubscription, ProgressToken, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { MessageSubscription, ProgressToken, ProtocolDefinition, SubscriptionError } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
@@ -8,9 +8,10 @@ import { getTestDwn } from '../test-dwn.js';
 import type { JsonRpcSocket } from '../../../dwn-clients/src/json-rpc-socket.js';
 import { WebSocketDwnRpcClient } from '../../../dwn-clients/src/web-socket-clients.js';
 import { createGate, startSocketServer } from './socket-test-utils.js';
+import { DEFAULT_MAX_IN_FLIGHT, MAX_BUFFER_SIZE, MAX_BUFFER_WAIT_MS } from '../../src/connection/flow-controller.js';
 import { executeUnlessAborted, MessagesQuery, MessagesSubscribe, ProtocolsConfigure, RecordsSubscribe, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
-type ClientConnection = { socket: JsonRpcSocket; subscriptions: Map<string, { lastCursor?: ProgressToken }> };
+type ClientConnection = { socket: JsonRpcSocket; subscriptions: Map<string, { lastCursor?: ProgressToken; closed: boolean }> };
 
 function pooledConnection(url: string): ClientConnection {
   return (WebSocketDwnRpcClient as unknown as { connections: Map<string, ClientConnection> }).connections.get(url)!;
@@ -36,6 +37,105 @@ async function warmConnection(url: string): Promise<{
 }
 
 describe('Bundled client replay lifecycle', () => {
+  it('reports a live ACK deadline and recovers buffered events from the processed cursor', async (): Promise<void> => {
+    const { dwn } = await getTestDwn({ withEvents: true });
+    const server = startSocketServer(dwn);
+    const { client, alice } = await warmConnection(server.url);
+    const store = dwn.storage.messageStore;
+    const blocked = createGate();
+    const released = createGate();
+    const finished = createGate();
+    const errors: SubscriptionError[] = [];
+    const putRecord = async (): Promise<void> => {
+      const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
+      await store.put(alice.did, record.message, await record.recordsWrite.constructIndexes(true));
+    };
+    let initialHandle: MessageSubscription | undefined;
+    let recoveredHandle: MessageSubscription | undefined;
+    let clock: ReturnType<typeof sinon.useFakeTimers> | undefined;
+    try {
+      const subscribe = await MessagesSubscribe.create({ signer: alice.signer, filters: [] });
+      const reply = await client.sendDwnRequest({
+        dwnUrl       : server.url,
+        targetDid    : alice.did,
+        message      : subscribe.message,
+        subscription : { handler: async (message): Promise<void> => {
+          if (message.type === 'error') {
+            errors.push(message);
+          } else if (message.type === 'event' && message.cursor.position === '2') {
+            blocked.resolve();
+            await released.promise;
+            finished.resolve();
+          }
+        } },
+      });
+      initialHandle = reply.subscription;
+      expect(reply.status.code).toBe(200);
+      const connection = pooledConnection(server.url);
+      const tracked = [...connection.subscriptions.values()][0];
+      const serverConnection = server.connections.values().next().value!;
+      await putRecord();
+      await waitUntil(() => tracked.lastCursor?.position === '1' && serverConnection.toSnapshot().subscriptions[0].inflight === 0);
+      const processedCursor = tracked.lastCursor!;
+      clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+      for (let index = 0; index < 1_050; index++) {
+        await putRecord();
+      }
+      await blocked.promise;
+      await waitUntil(() => serverConnection.toSnapshot().subscriptions[0].buffered === MAX_BUFFER_SIZE);
+      expect(serverConnection.toSnapshot().subscriptions[0].inflight).toBe(DEFAULT_MAX_IN_FLIGHT);
+      clock.tick(MAX_BUFFER_WAIT_MS);
+      await waitUntil(() => errors.length === 1 && connection.subscriptions.size === 0 && serverConnection.subscriptionCount === 0);
+      clock.restore();
+      expect(errors[0].error.code).toBe('SubscriptionBufferTimeout');
+      expect(errors[0].cursor.position).toBe('1033');
+      expect(tracked.closed).toBe(true);
+      expect(tracked.lastCursor).toEqual(processedCursor);
+      expect(connection.socket.isConnected).toBe(true);
+      const query = await MessagesQuery.create({ signer: alice.signer, filters: [] });
+      expect((await client.sendDwnRequest({ dwnUrl: server.url, targetDid: alice.did, message: query.message })).status.code).toBe(200);
+
+      // Completion of the cancelled consumer cannot acknowledge or skip the buffered gap.
+      released.resolve();
+      await finished.promise;
+      await Bun.sleep(10);
+      expect(tracked.lastCursor).toEqual(processedCursor);
+      const resumed = await MessagesSubscribe.create({ signer: alice.signer, filters: [], cursor: processedCursor });
+      const positions: string[] = [];
+      const eose = createGate();
+      const recovered = await client.sendDwnRequest({
+        dwnUrl       : server.url,
+        targetDid    : alice.did,
+        message      : resumed.message,
+        subscription : { handler: (message): void => {
+          if (message.type === 'event') {
+            positions.push(message.cursor.position);
+          } else if (message.type === 'eose') {
+            eose.resolve();
+          }
+        } },
+      });
+      recoveredHandle = recovered.subscription;
+      expect(recovered.status.code).toBe(200);
+      await executeUnlessAborted(eose.promise, AbortSignal.timeout(2_000));
+      expect(positions).toEqual(Array.from({ length: 1_050 }, (_, index): string => String(index + 2)));
+      await putRecord();
+      await waitUntil(() => positions.length === 1_051);
+      expect(positions.at(-1)).toBe('1052');
+      expect(errors).toHaveLength(1);
+      expect(serverConnection.subscriptionCount).toBe(1);
+      expect(connection.subscriptions.size).toBe(1);
+    } finally {
+      released.resolve();
+      clock?.restore();
+      await initialHandle?.close();
+      await recoveredHandle?.close();
+      await WebSocketDwnRpcClient.closeAllConnections();
+      await server.close();
+      await dwn.close();
+    }
+  });
+
   it('closes the replacement transport while reconnect replay is blocked', async (): Promise<void> => {
     const { dwn } = await getTestDwn({ withEvents: true });
     const server = startSocketServer(dwn);

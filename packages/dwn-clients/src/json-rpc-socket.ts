@@ -248,7 +248,7 @@ export class JsonRpcSocket {
 
   private async requestWithProgress(
     request: JsonRpcRequest,
-    observeProgress?: (refresh: () => void) => void,
+    onSent?: (refresh: () => void) => void,
   ): Promise<JsonRpcResponse> {
     if (!this._isConnected) {
       throw new SocketUnavailableError('JsonRpcSocket: request refused — socket is not connected');
@@ -269,7 +269,6 @@ export class JsonRpcSocket {
         reject(new Error('request timed out'));
       };
       timeout = setTimeout(expire, this.responseTimeout);
-      observeProgress?.(refresh);
 
       const handleResponse = (event: { data: any }):void => {
         const jsonRpsResponse = parseJson(toText(event.data)) as JsonRpcResponse;
@@ -285,6 +284,7 @@ export class JsonRpcSocket {
       this.messageHandlers.set(request.id!, handleResponse);
       try {
         this.send(request);
+        onSent?.(refresh);
       } catch (error) {
         clearTimeout(timeout);
         this.messageHandlers.delete(request.id!);
@@ -361,9 +361,10 @@ export class JsonRpcSocket {
     };
     let response: JsonRpcResponse;
     try {
-      const opening = this.requestWithProgress(request, (refresh): void => { refreshTimeout = refresh; });
-      onCloseReady?.(close);
-      response = await opening;
+      response = await this.requestWithProgress(request, (refresh): void => {
+        refreshTimeout = refresh;
+        onCloseReady?.(close);
+      });
     } catch (error) {
       restoreHandler();
       if (existingHandler === undefined) {

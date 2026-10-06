@@ -63,12 +63,11 @@ export class FlowController {
           `FlowController: buffer overflow for subscription ${String(this.subscriptionId)}, ` +
           `closing subscription (buffer=${this.buffer.length}, unacked=${this.unacked.length})`
         );
-        this.close();
-        this.onOverflow();
+        this.fail(message, 'SubscriptionBufferOverflow', 'subscription producer exceeded the flow-control buffer capacity');
       } else if (this.buffer.length === MAX_BUFFER_SIZE) {
         // The EventLog awaits this only at capacity, letting socket ACKs catch up
         // without adding a promise or a timer to ordinary event delivery.
-        return this.waitForCapacity();
+        return this.waitForCapacity(message);
       }
     }
   }
@@ -81,18 +80,31 @@ export class FlowController {
     this.resumeCapacity();
   }
 
-  private waitForCapacity(): Promise<void> {
+  private waitForCapacity(message: SubscriptionMessage): Promise<void> {
     let resume!: () => void;
     const promise = new Promise<void>((resolve): void => {
       resume = resolve;
     });
     const timer = setTimeout((): void => {
       log.warn(`FlowController: timed out waiting for ACKs for subscription ${String(this.subscriptionId)}`);
-      this.close();
-      this.onOverflow();
+      this.fail(message, 'SubscriptionBufferTimeout', 'subscription ACKs did not free buffer capacity before the deadline');
     }, MAX_BUFFER_WAIT_MS);
     this.capacityWait = { resume, timer };
     return promise;
+  }
+
+  /** Ends stalled delivery and reports its terminal error outside the full ACK window. */
+  private fail(message: SubscriptionMessage, code: string, detail: string): void {
+    this.close();
+    try {
+      this.send(createJsonRpcSuccessResponse(this.subscriptionId, {
+        subscription: { type: 'error', cursor: message.cursor, error: { code, detail } },
+      }));
+    } catch (error) {
+      log.error('FlowController: unable to send terminal subscription error', error);
+    } finally {
+      this.onOverflow();
+    }
   }
 
   private resumeCapacity(): void {

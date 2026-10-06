@@ -433,12 +433,52 @@ describe('JsonRpcSocket', () => {
   });
 
   describe('subscribe edge cases', () => {
+    it('does not publish close readiness on a closed socket or orphan its rejection', async (): Promise<void> => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+      const ready = mock((): never => { throw new Error('close-ready observer failed'); });
+      const request = createJsonRpcSubscriptionRequest('closed-send', 'rpc.subscribe.test', {}, 'closed-open');
+      client.close();
+      await expect(client.subscribe(request, (): void => {}, ready)).rejects.toBeInstanceOf(SocketUnavailableError);
+      await Bun.sleep(10);
+      expect(ready).not.toHaveBeenCalled();
+      expect(client['messageHandlers'].size).toBe(0);
+      expect(client['subscriptionHandlerIds'].size).toBe(0);
+    });
+
+    it('cleans up a transmitted open when the close-ready observer throws', async (): Promise<void> => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+      const { message } = await TestDataGenerator.generateRecordsSubscribe({ author: alice });
+      const request = createJsonRpcSubscriptionRequest('ready-send', 'rpc.subscribe.dwn.processMessage',
+        { target: alice.did, message }, 'ready-open');
+      const sent = spyOn(client, 'send');
+      const ready = mock((): never => {
+        expect(sent).toHaveBeenCalledTimes(1);
+        expect(sent.mock.calls[0][0]).toBe(request);
+        throw new Error('close-ready observer failed');
+      });
+      try {
+        await expect(client.subscribe(request, (): void => {}, ready)).rejects.toThrow('close-ready observer failed');
+        expect(ready).toHaveBeenCalledTimes(1);
+        expect(client['messageHandlers'].has(request.id!)).toBe(false);
+        expect(client['subscriptionHandlerIds'].has('ready-open')).toBe(false);
+        await client.request(createJsonRpcRequest('post-ready', 'rpc.ping', {}));
+        expect(client['messageHandlers'].size).toBe(0);
+        expect(sent.mock.calls.map(([request]) => request.method)).toEqual([
+          'rpc.subscribe.dwn.processMessage', 'rpc.subscribe.close', 'rpc.ping',
+        ]);
+      } finally {
+        client.close();
+      }
+    });
+
     it('removes a pending subscription handler and request timers when send throws', async (): Promise<void> => {
       const client = await JsonRpcSocket.connect(socketDwnUrl);
       const request = createJsonRpcSubscriptionRequest('failed-send', 'rpc.subscribe.test', {}, 'failed-open');
+      const ready = mock((): never => { throw new Error('close-ready observer failed'); });
       spyOn(client, 'send').mockImplementation((): void => { throw new Error('send failed'); });
       try {
-        await expect(client.subscribe(request, (): void => {})).rejects.toThrow('send failed');
+        await expect(client.subscribe(request, (): void => {}, ready)).rejects.toThrow('send failed');
+        expect(ready).not.toHaveBeenCalled();
         expect(client['messageHandlers'].size).toBe(0);
         expect(client['subscriptionHandlerIds'].has('failed-open')).toBe(false);
       } finally {

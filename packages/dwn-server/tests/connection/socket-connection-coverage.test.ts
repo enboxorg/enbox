@@ -72,7 +72,12 @@ describe('SocketConnection flow control', () => {
       await connection.close();
       expect(close.calledOnce).toBe(true);
       subscription.subscriptionHandler(makeMessage('later'));
-      expect((socket.send as sinon.SinonStub).callCount).toBe(1);
+      const sent = socket.send as sinon.SinonStub;
+      expect(sent.callCount).toBe(2);
+      const terminal = JSON.parse(sent.secondCall.args[0]);
+      expect(terminal.id).toBe('overflow-active');
+      expect(terminal.result.subscription.type).toBe('error');
+      expect(terminal.result.subscription.error.code).toBe('SubscriptionBufferOverflow');
     } finally {
       await connection.close();
     }
@@ -96,7 +101,12 @@ describe('SocketConnection flow control', () => {
       expect(close.calledOnce).toBe(true);
       await subscription.release();
       healthy.subscriptionHandler(makeMessage('1'));
-      expect((socket.send as sinon.SinonStub).callCount).toBe(2);
+      const sent = socket.send as sinon.SinonStub;
+      expect(sent.callCount).toBe(3);
+      const terminal = JSON.parse(sent.secondCall.args[0]);
+      expect(terminal.id).toBe('overflow-pending');
+      expect(terminal.result.subscription.error.code).toBe('SubscriptionBufferOverflow');
+      expect(JSON.parse(sent.thirdCall.args[0]).id).toBe('healthy');
     } finally {
       await connection.close();
     }
