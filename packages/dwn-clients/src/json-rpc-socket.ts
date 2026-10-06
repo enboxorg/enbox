@@ -295,9 +295,14 @@ export class JsonRpcSocket {
 
   /**
    * Sends a JSON-RPC request through the socket and keeps a listener open to read associated responses as they arrive.
-   * Returns a close method to clean up the listener.
+   * Returns a close method to clean up the listener. `onCloseReady` exposes it
+   * after transmission so an existing logical handle can cancel pending replay.
    */
-  public async subscribe(request: JsonRpcRequest, listener: (response: JsonRpcResponse) => void): Promise<{
+  public async subscribe(
+    request: JsonRpcRequest,
+    listener: (response: JsonRpcResponse) => void,
+    onCloseReady?: (close: () => Promise<void>) => void,
+  ): Promise<{
     response: JsonRpcResponse;
     close?: () => Promise<void>;
    }> {
@@ -349,14 +354,21 @@ export class JsonRpcSocket {
     this.messageHandlers.set(subscriptionId, socketEventListener);
     this.subscriptionHandlerIds.add(subscriptionId);
 
+    const close = async (): Promise<void> => {
+      this.messageHandlers.delete(subscriptionId);
+      this.subscriptionHandlerIds.delete(subscriptionId);
+      await this.closeSubscription(subscriptionId);
+    };
     let response: JsonRpcResponse;
     try {
-      response = await this.requestWithProgress(request, (refresh): void => { refreshTimeout = refresh; });
+      const opening = this.requestWithProgress(request, (refresh): void => { refreshTimeout = refresh; });
+      onCloseReady?.(close);
+      response = await opening;
     } catch (error) {
       restoreHandler();
       if (existingHandler === undefined) {
         // Relinquish a pending open without delaying rejection on another RPC deadline.
-        void this.closeSubscription(subscriptionId).catch((): void => {});
+        void close().catch((): void => {});
       }
       throw error;
     } finally {
@@ -367,13 +379,6 @@ export class JsonRpcSocket {
       restoreHandler();
       return { response };
     }
-
-    // clean up listener and create a `rpc.subscribe.close` message to use when closing this JSON RPC subscription
-    const close = async (): Promise<void> => {
-      this.messageHandlers.delete(subscriptionId);
-      this.subscriptionHandlerIds.delete(subscriptionId);
-      await this.closeSubscription(subscriptionId);
-    };
 
     return {
       response,

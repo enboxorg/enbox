@@ -36,6 +36,92 @@ async function warmConnection(url: string): Promise<{
 }
 
 describe('Bundled client replay lifecycle', () => {
+  it('closes the replacement transport while reconnect replay is blocked', async (): Promise<void> => {
+    const { dwn } = await getTestDwn({ withEvents: true });
+    const server = startSocketServer(dwn);
+    const { client, alice } = await warmConnection(server.url);
+    const protocol = 'https://example.com/close-reconnect-replay';
+    const definition: ProtocolDefinition = {
+      protocol,
+      published : true,
+      types     : { note: { dataFormats: ['application/json'] } },
+      structure : { note: { $recordLimit: { max: 1 } } },
+    };
+    const configure = await ProtocolsConfigure.create({ definition, signer: alice.signer });
+    expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+    const first = await TestDataGenerator.generateRecordsWrite({ author: alice, protocol, protocolPath: 'note', dataFormat: 'application/json' });
+    expect((await dwn.processMessage(alice.did, first.message, { dataStream: first.dataStream })).status.code).toBe(202);
+    const store = dwn.storage.messageStore;
+    const cursor = (await store.logBounds(alice.did))!.oldest;
+    const entered = createGate();
+    const released = createGate();
+    const finished = createGate();
+    const originalCount = store.count.bind(store);
+    let replaying = false;
+    const projection = sinon.stub(store, 'count').callsFake(async (...args): Promise<number> => {
+      if (replaying) {
+        replaying = false;
+        entered.resolve();
+        await released.promise;
+        try {
+          return await originalCount(...args);
+        } finally {
+          finished.resolve();
+        }
+      }
+      return originalCount(...args);
+    });
+    const received: string[] = [];
+    const connection = pooledConnection(server.url);
+    const sent = sinon.spy(connection.socket, 'send');
+    let handle: MessageSubscription | undefined;
+    try {
+      const subscribe = await RecordsSubscribe.create({ signer: alice.signer, filter: { protocol }, cursor });
+      const reply = await client.sendDwnRequest({
+        dwnUrl       : server.url,
+        targetDid    : alice.did,
+        message      : subscribe.message,
+        subscription : {
+          handler: (message): void => {
+            received.push(message.type === 'event' || message.type === 'eose' ? `${message.type}:${message.cursor.position}` : message.type);
+          },
+          resubscribeFactory: async (cursor): Promise<typeof subscribe.message> => {
+            replaying = true;
+            return (await RecordsSubscribe.create({ signer: alice.signer, filter: { protocol }, cursor })).message;
+          },
+        },
+      });
+      handle = reply.subscription;
+      expect(reply.status.code).toBe(200);
+      await waitUntil(() => [...connection.subscriptions.values()][0].lastCursor?.position === '2');
+      await server.connections.values().next().value!.close();
+      const second = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: first.recordsWrite });
+      expect((await dwn.processMessage(alice.did, second.message, { dataStream: second.dataStream })).status.code).toBe(202);
+      await executeUnlessAborted(entered.promise, AbortSignal.timeout(3_000));
+      const replacement = sent.args.map(args => args[0] as JsonRpcRequest)
+        .filter(request => request.method === 'rpc.subscribe.dwn.processMessage')[1];
+      const replacementConnection = server.connections.values().next().value!;
+      expect(replacementConnection.hasSubscription(replacement.subscription!.id)).toBe(true);
+      await handle!.close();
+      expect(replacementConnection.hasSubscription(replacement.subscription!.id)).toBe(false);
+      const receivedAfterClose = [...received];
+      released.resolve();
+      await finished.promise;
+      await server.requests.get(replacement.id!);
+      await Bun.sleep(10);
+      expect(received).toEqual(receivedAfterClose);
+      expect(replacementConnection.subscriptionCount).toBe(0);
+    } finally {
+      released.resolve();
+      await handle?.close();
+      projection.restore();
+      sent.restore();
+      await WebSocketDwnRpcClient.closeAllConnections();
+      await server.close();
+      await dwn.close();
+    }
+  });
+
   it('cancels a timed-out pending open and fences its late projection', async (): Promise<void> => {
     const { dwn } = await getTestDwn({ withEvents: true });
     const server = startSocketServer(dwn);

@@ -625,8 +625,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   private static invokeHandler(
     handler: DwnSubscriptionHandler,
     message: Parameters<DwnSubscriptionHandler>[0],
+    isCurrent?: () => boolean,
   ): Promise<void> {
-    const handled = Promise.resolve().then((): void | Promise<void> => handler(message));
+    const handled = Promise.resolve().then((): void | Promise<void> => {
+      if (isCurrent === undefined || isCurrent()) {
+        return handler(message);
+      }
+    });
     handled.catch((): void => {});
     return handled;
   }
@@ -647,15 +652,16 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const { socket, subscriptions } = connection;
     let terminalSubscriptionError = false;
+    let tracked = existingTracked;
 
     const closeTrackedSubscription = (): void => {
       terminalSubscriptionError = true;
-      const tracked = subscriptions.get(subscriptionId);
+      const current = subscriptions.get(subscriptionId) ?? tracked;
       // Generation guard: only tear the logical subscription down when THIS
       // establishment is still its current transport binding — a late error
       // from a superseded establishment must not kill a recovered one.
-      if (tracked && tracked.currentId === subscriptionId) {
-        Promise.resolve(tracked.subscription.close()).catch(() => {});
+      if (current && current.currentId === subscriptionId && current.currentConnection === connection) {
+        Promise.resolve(current.subscription.close()).catch(() => {});
       }
       subscriptions.delete(subscriptionId);
     };
@@ -670,8 +676,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     let ackChain: Promise<void> = Promise.resolve();
     let terminalHandlerFailure = false;
     let pendingCursor: ProgressToken | undefined;
+    const isCurrent = (): boolean => !terminalSubscriptionError && !terminalHandlerFailure &&
+      (tracked === undefined || (!tracked.closed && tracked.currentId === subscriptionId && tracked.currentConnection === connection));
     const { response, close } = await socket.subscribe(request, (response) => {
-      if (terminalHandlerFailure) {
+      if (!isCurrent()) {
         return;
       }
 
@@ -682,7 +690,8 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       }
 
       const subscriptionMessage = result.subscription as SubscriptionMessage;
-      const handled = WebSocketDwnRpcClient.invokeHandler(handler, subscriptionMessage);
+      const handled = WebSocketDwnRpcClient.invokeHandler(handler, subscriptionMessage,
+        subscriptionMessage.type === 'error' ? undefined : isCurrent);
 
       if (subscriptionMessage.type === 'error') {
         closeTrackedSubscription();
@@ -693,7 +702,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         const cursor = subscriptionMessage.cursor;
         ackChain = ackChain
           .then(async (): Promise<void> => {
-            if (terminalHandlerFailure) {
+            if (!isCurrent()) {
               return;
             }
             try {
@@ -713,10 +722,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
               // swallowed, acknowledged, delivery continues.
             }
 
-            const tracked = subscriptions.get(subscriptionId);
-            if (tracked !== undefined) {
-              if (shouldReplaceLastCursor(tracked.lastCursor, cursor)) {
-                tracked.lastCursor = cursor;
+            if (!isCurrent()) {
+              return;
+            }
+            const current = subscriptions.get(subscriptionId);
+            if (current !== undefined) {
+              if (shouldReplaceLastCursor(current.lastCursor, cursor)) {
+                current.lastCursor = cursor;
               }
             } else if (shouldReplaceLastCursor(pendingCursor, cursor)) {
               pendingCursor = cursor;
@@ -726,6 +738,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
             socket.send(createJsonRpcAck(subscriptionId, cursor));
           })
           .catch(() => {});
+      }
+    }, (close): void => {
+      // Bind cleanup as soon as the replacement is sent, before its opening reply.
+      if (tracked !== undefined) {
+        tracked.currentId = subscriptionId;
+        tracked.currentConnection = connection;
+        tracked.currentClose = close;
       }
     });
 
@@ -742,7 +761,6 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const { reply } = result as { reply: UnionMessageReply };
     if (reply.subscription && close) {
-      let tracked: TrackedSubscription;
       if (existingTracked !== undefined) {
         // Re-establishment: the logical subscription (its stable handle and
         // cursor watermark) carries over; only the transport binding changes.
@@ -763,14 +781,15 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // subscription and removes it from whatever map tracks it now, no
         // matter how many re-establishments happened since the caller got
         // this handle.
+        const stableTracked = tracked;
         const stableClose = async (): Promise<void> => {
-          if (tracked.closed) {
+          if (stableTracked.closed) {
             return;
           }
-          tracked.closed = true;
-          tracked.currentConnection.subscriptions.delete(tracked.currentId);
+          stableTracked.closed = true;
+          stableTracked.currentConnection.subscriptions.delete(stableTracked.currentId);
           try {
-            await tracked.currentClose();
+            await stableTracked.currentClose();
           } catch {
             // The transport already died with the subscription — closed is closed.
           }

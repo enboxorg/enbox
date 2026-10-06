@@ -844,14 +844,15 @@ describe('WebSocketDwnRpcClient', () => {
         const closeSpy = spyOn(innerSubscription, 'close');
 
         const tracked = {
-          subscription : innerSubscription,
-          target       : alice.did,
+          subscription      : innerSubscription,
+          target            : alice.did,
           message,
-          handler      : (): void => {},
+          handler           : (): void => {},
           // Current-establishment binding: the generation guard only closes a
           // tracked subscription whose current transport id is this one.
-          currentId    : subscriptionId,
-          closed       : false,
+          currentId         : subscriptionId,
+          currentConnection : connection,
+          closed            : false,
         };
         // add to the subscriptions map
         subscriptions.set(subscriptionId, tracked);
