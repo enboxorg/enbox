@@ -1,3 +1,4 @@
+import type { JsonRpcResponse } from '@enbox/dwn-clients';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../../src/http-api.js';
 import type { Dwn, SubscriptionMessage } from '@enbox/dwn-sdk-js';
@@ -8,16 +9,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { getTestDwn } from '../test-dwn.js';
 import { RateLimiter } from '../../src/rate-limiter.js';
 import { SocketConnection } from '../../src/connection/socket-connection.js';
+import { createGate, openSocket } from './socket-test-utils.js';
+import { createJsonRpcAck, createJsonRpcSubscriptionRequest } from '@enbox/dwn-clients';
 import { executeUnlessAborted, MessagesSubscribe, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { MAX_BUFFER_SIZE, MAX_BUFFER_WAIT_MS } from '../../src/connection/flow-controller.js';
-
-function createGate(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((complete): void => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
 
 function createMockSocket(): ServerWebSocket<WsData> {
   return { send: sinon.stub(), close: sinon.stub(), ping: sinon.stub() } as unknown as ServerWebSocket<WsData>;
@@ -49,13 +44,8 @@ describe('Socket subscription lifetimes', () => {
     try {
       original.subscriptionHandler(makeMessage('1'));
       original.subscriptionHandler(makeMessage('2'));
-      await connection.message(Buffer.from(JSON.stringify({
-        jsonrpc      : '2.0',
-        id           : 'duplicate',
-        method       : 'rpc.subscribe.dwn.processMessage',
-        params       : { target: alice.did, message: subscribe.message },
-        subscription : { id: 'same-id' },
-      })));
+      await connection.message(Buffer.from(JSON.stringify(createJsonRpcSubscriptionRequest('duplicate', 'rpc.subscribe.dwn.processMessage',
+        { target: alice.did, message: subscribe.message }, 'same-id'))));
       const responses = (socket.send as sinon.SinonStub).args.map(args => JSON.parse(args[0]));
       expect(responses.find(response => response.id === 'duplicate').error.code).toBe(-32602);
       expect(processed.called).toBe(false);
@@ -84,13 +74,8 @@ describe('Socket subscription lifetimes', () => {
       await blocked.promise;
       return { status: { code: 200, detail: 'OK' }, subscription: { id: 'source', close: sourceClose } };
     });
-    const request = {
-      jsonrpc      : '2.0',
-      id           : 'opening',
-      method       : 'rpc.subscribe.dwn.processMessage',
-      params       : { target: alice.did, message: subscribe.message },
-      subscription : { id: 'same-id' },
-    };
+    const request = createJsonRpcSubscriptionRequest('opening', 'rpc.subscribe.dwn.processMessage',
+      { target: alice.did, message: subscribe.message }, 'same-id');
     const opening = connection.message(Buffer.from(JSON.stringify(request)));
     try {
       await entered.promise;
@@ -100,12 +85,7 @@ describe('Socket subscription lifetimes', () => {
       expect(processed.callCount).toBe(1);
       connection.ackSubscription('same-id', makeMessage('1').cursor);
       expect(connection.toSnapshot().subscriptions[0]).toEqual({ id: 'same-id', inflight: 1, buffered: 0 });
-      await connection.message(Buffer.from(JSON.stringify({
-        jsonrpc      : '2.0',
-        id           : 'cancel',
-        method       : 'rpc.subscribe.close',
-        subscription : { id: 'same-id' },
-      })));
+      await connection.message(Buffer.from(JSON.stringify(createJsonRpcSubscriptionRequest('cancel', 'rpc.subscribe.close', {}, 'same-id'))));
       expect(processed.firstCall.args[2]!.subscriptionSignal!.aborted).toBe(true);
       const current = connection.beginSubscription('same-id');
       await current.register(async (): Promise<void> => {});
@@ -141,13 +121,8 @@ describe('Socket subscription lifetimes', () => {
         processed.rejects(new Error('source failure'));
       }
       try {
-        await connection.message(Buffer.from(JSON.stringify({
-          jsonrpc      : '2.0',
-          id           : 'request',
-          method       : 'rpc.subscribe.dwn.processMessage',
-          params       : { target: alice.did, message: subscribe.message },
-          subscription : { id: 'retry-id' },
-        })));
+        await connection.message(Buffer.from(JSON.stringify(createJsonRpcSubscriptionRequest('request', 'rpc.subscribe.dwn.processMessage',
+          { target: alice.did, message: subscribe.message }, 'retry-id'))));
         expect(connection.hasSubscription('retry-id')).toBe(false);
         expect(connection.toSnapshot().subscriptions).toEqual([]);
         expect(processed.firstCall.args[2]!.subscriptionSignal!.aborted).toBe(true);
@@ -170,13 +145,8 @@ describe('Socket subscription lifetimes', () => {
     const processed = sinon.spy(dwn, 'processMessage');
     const begun = sinon.spy(connection, 'beginSubscription');
     try {
-      await connection.message(Buffer.from(JSON.stringify({
-        jsonrpc      : '2.0',
-        id           : 'rate-limited',
-        method       : 'rpc.subscribe.dwn.processMessage',
-        params       : { target: alice.did, message: subscribe.message },
-        subscription : { id: 'retry-id' },
-      })));
+      await connection.message(Buffer.from(JSON.stringify(createJsonRpcSubscriptionRequest('rate-limited', 'rpc.subscribe.dwn.processMessage',
+        { target: alice.did, message: subscribe.message }, 'retry-id'))));
       expect(JSON.parse((socket.send as sinon.SinonStub).firstCall.args[0]).error.code).toBe(-50429);
       expect(processed.called).toBe(false);
       expect(begun.firstCall.returnValue.signal.aborted).toBe(true);
@@ -202,7 +172,8 @@ describe('Socket subscription lifetimes', () => {
     const unsubscribing = connection.closeSubscription('same-id');
     try {
       await started.promise;
-      const current = connection.beginSubscription('same-id');
+      expect(() => connection.beginSubscription('same-id')).toThrow('already exists');
+      const current = connection.beginSubscription('sibling');
       await current.register(async (): Promise<void> => {});
       const closing = connection.close();
       expect((socket.close as sinon.SinonStub).called).toBe(false);
@@ -241,13 +212,8 @@ describe('Socket subscription lifetimes', () => {
       };
     });
     try {
-      await connection.message(Buffer.from(JSON.stringify({
-        jsonrpc      : '2.0',
-        id           : 'request',
-        method       : 'rpc.subscribe.dwn.processMessage',
-        params       : { target: alice.did, message: subscribe.message },
-        subscription : { id: 'racing-close' },
-      })));
+      await connection.message(Buffer.from(JSON.stringify(createJsonRpcSubscriptionRequest('request', 'rpc.subscribe.dwn.processMessage',
+        { target: alice.did, message: subscribe.message }, 'racing-close'))));
       await cancelling;
       expect(JSON.parse((socket.send as sinon.SinonStub).firstCall.args[0]).error.code).toBe(-32603);
       expect(sourceClose.calledOnce).toBe(true);
@@ -288,48 +254,13 @@ describe('Socket subscription lifetimes', () => {
         await store.put(alice.did, record.message, await record.recordsWrite.constructIndexes(true));
       }
       const cursor = (await store.logBounds(alice.did))!.oldest;
-      const opened = createGate();
-      const finished = createGate();
       const replied = createGate();
       const firstFrame = createGate();
       const eose = createGate();
       let clock: sinon.SinonFakeTimers | undefined;
-      const responses: Array<{
-        id: string;
-        result?: { reply?: { status: { code: number } }; subscription?: SubscriptionMessage };
-        error?: unknown;
-      }> = [];
-      let connection!: SocketConnection;
-      let pending!: Promise<void>;
-      const server = Bun.serve<WsData>({
-        hostname : '127.0.0.1',
-        port     : 0,
-        fetch    : (request, server): Response | undefined => {
-          if (server.upgrade(request, { data: { connection: null } })) {
-            return;
-          }
-          return new Response('upgrade required', { status: 400 });
-        },
-        websocket: {
-          open: (socket): void => {
-            connection = new SocketConnection(socket, liveDwn, undefined, acknowledge ? 32 : 1);
-            socket.data.connection = connection;
-          },
-          message: (_socket, data): Promise<void> => {
-            const bytes = typeof data === 'string' ? Buffer.from(data) : data;
-            const processing = connection.message(bytes);
-            if (JSON.parse(bytes.toString()).id === 'request') {
-              pending = processing.finally(finished.resolve);
-            }
-            return processing;
-          },
-          close: async (): Promise<void> => {
-            await connection.close();
-          },
-        },
-      });
-      const client = new WebSocket(`ws://127.0.0.1:${server.port}`);
-      client.addEventListener('open', opened.resolve, { once: true });
+      const responses: JsonRpcResponse[] = [];
+      const socket = await openSocket(liveDwn, acknowledge ? 32 : 1);
+      const { client, connection } = socket;
       client.addEventListener('message', (event): void => {
         const response = JSON.parse(event.data);
         responses.push(response);
@@ -341,38 +272,27 @@ describe('Socket subscription lifetimes', () => {
             eose.resolve();
           }
           if (acknowledge) {
-            client.send(JSON.stringify({
-              jsonrpc      : '2.0',
-              method       : 'rpc.ack',
-              params       : { cursor: response.result.subscription.cursor },
-              subscription : { id: 'peer' },
-            }));
+            client.send(JSON.stringify(createJsonRpcAck('peer', response.result.subscription.cursor)));
           }
         }
       });
       const subscribed = sinon.spy(liveDwn.storage.eventLog!, 'subscribe');
       const reads = sinon.spy(store, 'logRead');
       try {
-        await opened.promise;
         if (!acknowledge) {
           clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         }
         const subscribe = await MessagesSubscribe.create({ signer: alice.signer, filters: [{ interface: 'Records', method: 'Write' }], cursor });
-        client.send(JSON.stringify({
-          jsonrpc      : '2.0',
-          id           : 'request',
-          method       : 'rpc.subscribe.dwn.processMessage',
-          params       : { target: alice.did, message: subscribe.message },
-          subscription : { id: 'peer' },
-        }));
+        client.send(JSON.stringify(createJsonRpcSubscriptionRequest('request', 'rpc.subscribe.dwn.processMessage',
+          { target: alice.did, message: subscribe.message }, 'peer')));
         if (!acknowledge) {
           await firstFrame.promise;
           expect(connection.toSnapshot().subscriptions[0].buffered).toBe(MAX_BUFFER_SIZE);
           clock!.tick(MAX_BUFFER_WAIT_MS);
         }
-        await executeUnlessAborted(Promise.all([finished.promise, replied.promise, acknowledge ? eose.promise : Promise.resolve()]),
+        await executeUnlessAborted(Promise.all([replied.promise, acknowledge ? eose.promise : Promise.resolve()]),
           AbortSignal.timeout(5_000));
-        await pending;
+        await socket.requests.get('request');
         if (acknowledge) {
           const events = responses.filter(response => response.id === 'peer' && response.result?.subscription?.type === 'event');
           expect(events.map(response => response.result!.subscription!.cursor.position))
@@ -398,10 +318,7 @@ describe('Socket subscription lifetimes', () => {
         await healthy.release();
       } finally {
         clock?.restore();
-        client.close();
-        await connection?.close();
-        await pending?.catch((): void => {});
-        server.stop(true);
+        await socket.close();
         subscribed.restore();
         reads.restore();
         await liveDwn.close();

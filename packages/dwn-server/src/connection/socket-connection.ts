@@ -55,7 +55,6 @@ export class SocketConnection {
 
   private readonly heartbeatInterval: ReturnType<typeof setInterval>;
   private readonly subscriptions: Map<JsonRpcId, ConnectionSubscription> = new Map();
-  private readonly subscriptionClosures: Set<Promise<void>> = new Set();
   private isAlive: boolean = true;
   private isClosed: boolean = false;
   private closePromise?: Promise<void>;
@@ -170,20 +169,17 @@ export class SocketConnection {
     if (subscription.closePromise !== undefined) {
       return subscription.closePromise;
     }
-    if (this.subscriptions.get(subscription.id) === subscription) {
-      this.subscriptions.delete(subscription.id);
-    }
     subscription.flowController.close();
     // Publish cleanup before synchronous abort listeners can re-enter it.
     const closePromise = Promise.resolve().then(async (): Promise<void> => {
       await subscription.close?.();
+    }).finally((): void => {
+      // Reuse the id only after cleanup settles, including a failed close.
+      if (this.subscriptions.get(subscription.id) === subscription) {
+        this.subscriptions.delete(subscription.id);
+      }
     });
     subscription.closePromise = closePromise;
-    this.subscriptionClosures.add(closePromise);
-    const forgetClose = (): void => {
-      this.subscriptionClosures.delete(closePromise);
-    };
-    void closePromise.then(forgetClose, forgetClose);
     subscription.abortController.abort(reason ?? new DwnServerError(
       DwnServerErrorCode.ConnectionSubscriptionClosed, `subscription ${String(subscription.id)} closed`
     ));
@@ -221,7 +217,8 @@ export class SocketConnection {
 
   private async closeConnection(): Promise<void> {
     // Include unsubscribes already in progress, and finish all cleanup even if one fails.
-    const results = await Promise.allSettled(this.subscriptionClosures);
+    const results = await Promise.allSettled(Array.from(this.subscriptions.values(),
+      (subscription): Promise<void> => this.closeOwnedSubscription(subscription)));
 
     // close the socket.
     this.socket.close();

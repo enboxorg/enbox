@@ -66,6 +66,7 @@ describe('SocketConnection flow control', () => {
         subscription.subscriptionHandler(makeMessage(String(index + 1)));
       }
       expect(subscription.signal.aborted).toBe(true);
+      await subscription.release();
       expect(connection.hasSubscription('overflow-active')).toBe(false);
       expect(connection.toSnapshot().subscriptions).toEqual([]);
       await connection.close();
@@ -89,6 +90,7 @@ describe('SocketConnection flow control', () => {
       }
       expect(subscription.signal.aborted).toBe(true);
       expect(healthy.signal.aborted).toBe(false);
+      await subscription.release();
       expect(connection.hasSubscription('overflow-pending')).toBe(false);
       await expect(subscription.register(close)).rejects.toThrow('closed');
       expect(close.calledOnce).toBe(true);

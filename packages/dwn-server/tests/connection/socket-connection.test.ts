@@ -10,20 +10,8 @@ import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test';
 import { DwnServerErrorCode } from '../../src/dwn-error.js';
 import { getTestDwn } from '../test-dwn.js';
 import { SocketConnection } from '../../src/connection/socket-connection.js';
+import { createGate, openSocket } from './socket-test-utils.js';
 import { executeUnlessAborted, ProtocolsConfigure, RecordsSubscribe, TestDataGenerator } from '@enbox/dwn-sdk-js';
-
-function createGate(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((complete): void => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
-
-async function registerSubscription(connection: SocketConnection, handle: JsonRpcSubscription): Promise<void> {
-  const subscription = connection.beginSubscription(handle.id);
-  await subscription.register(handle.close);
-}
 
 /** Creates a minimal mock of Bun's ServerWebSocket for unit testing. */
 function createMockSocket(): ServerWebSocket<WsData> {
@@ -47,6 +35,11 @@ function createMockSocket(): ServerWebSocket<WsData> {
     readyState    : 1,
     binaryType    : 'arraybuffer',
   } as unknown as ServerWebSocket<WsData>;
+}
+
+async function registerSubscription(connection: SocketConnection, handle: JsonRpcSubscription): Promise<void> {
+  const subscription = connection.beginSubscription(handle.id);
+  await subscription.register(handle.close);
 }
 
 describe('SocketConnection', () => {
@@ -353,45 +346,9 @@ describe('SocketConnection', () => {
       return originalCount(...args);
     });
     const reads = sinon.spy(store, 'logRead');
-    const socketOpened = createGate();
-    const clientOpened = createGate();
-    const socketClosed = createGate();
-    const requestFinished = createGate();
-    let connection!: SocketConnection;
-    let pending!: Promise<void>;
-    const server = Bun.serve<WsData>({
-      hostname : '127.0.0.1',
-      port     : 0,
-      fetch    : (request, server): Response | undefined => {
-        if (server.upgrade(request, { data: { connection: null } })) {
-          return;
-        }
-        return new Response('upgrade required', { status: 400 });
-      },
-      websocket: {
-        open: (socket): void => {
-          connection = new SocketConnection(socket, liveDwn);
-          socket.data.connection = connection;
-          socketOpened.resolve();
-        },
-        message: (_socket, data): Promise<void> => {
-          const bytes = typeof data === 'string' ? Buffer.from(data) : data;
-          pending = connection.message(bytes).finally((): void => {
-            requestFinished.resolve();
-          });
-          return pending;
-        },
-        close: async (): Promise<void> => {
-          await connection.close();
-          socketClosed.resolve();
-        },
-      },
-    });
-    const client = new WebSocket(`ws://127.0.0.1:${server.port}`);
-    client.addEventListener('open', clientOpened.resolve, { once: true });
+    const socket = await openSocket(liveDwn);
+    const { client, connection } = socket;
     try {
-      await clientOpened.promise;
-      await socketOpened.promise;
       const subscribe = await RecordsSubscribe.create({ signer: alice.signer, filter: { protocol }, cursor });
       client.send(JSON.stringify({
         jsonrpc      : '2.0',
@@ -403,10 +360,9 @@ describe('SocketConnection', () => {
       await entered.promise;
       expect(connection.subscriptionCount).toBe(0);
       client.close();
-      await socketClosed.promise;
+      await socket.closed;
       // The database count is still blocked: cancellation must settle the request first.
-      await executeUnlessAborted(requestFinished.promise, AbortSignal.timeout(1_000));
-      await pending;
+      await executeUnlessAborted(socket.requests.get('request')!, AbortSignal.timeout(1_000));
       expect(connection.subscriptionCount).toBe(0);
       const readsAfterClose = reads.callCount;
       blocked.resolve();
@@ -417,10 +373,7 @@ describe('SocketConnection', () => {
       expect(connection.subscriptionCount).toBe(0);
     } finally {
       blocked.resolve();
-      client.close();
-      await connection?.close();
-      await pending?.catch((): void => {});
-      server.stop(true);
+      await socket.close();
       subscription.restore();
       projection.restore();
       reads.restore();
