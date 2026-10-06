@@ -1,6 +1,8 @@
 import type { JsonRpcResponse } from '../src/json-rpc.js';
 import type { Persona } from '@enbox/dwn-sdk-js';
 
+import sinon from 'sinon';
+
 import { CryptoUtils } from '@enbox/crypto';
 import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { SocketUnavailableError } from '../src/dwn-rpc-error.js';
@@ -431,6 +433,44 @@ describe('JsonRpcSocket', () => {
   });
 
   describe('subscribe edge cases', () => {
+    it('removes a pending subscription handler and request timers when send throws', async (): Promise<void> => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+      const request = createJsonRpcSubscriptionRequest('failed-send', 'rpc.subscribe.test', {}, 'failed-open');
+      spyOn(client, 'send').mockImplementation((): void => { throw new Error('send failed'); });
+      try {
+        await expect(client.subscribe(request, (): void => {})).rejects.toThrow('send failed');
+        expect(client['messageHandlers'].size).toBe(0);
+        expect(client['subscriptionHandlerIds'].has('failed-open')).toBe(false);
+      } finally {
+        client.close();
+      }
+    });
+
+    it('restores the original handler when a duplicate open times out without closing it', async (): Promise<void> => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+      const { message } = await TestDataGenerator.generateRecordsSubscribe({ author: alice });
+      const first = await client.subscribe(createJsonRpcSubscriptionRequest('first', 'rpc.subscribe.dwn.processMessage',
+        { target: alice.did, message }, 'shared-id'), (): void => {});
+      const original = client['messageHandlers'].get('shared-id');
+      const send = client.send.bind(client);
+      const sent = spyOn(client, 'send').mockImplementation((request): void => {
+        if (request.id !== 'duplicate') { send(request); }
+      });
+      const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+      try {
+        const failed = client.subscribe(createJsonRpcSubscriptionRequest('duplicate', 'rpc.subscribe.dwn.processMessage',
+          { target: alice.did, message }, 'shared-id'), (): void => {}).catch((error: unknown): unknown => error);
+        clock.tick(30_001);
+        expect(await failed).toBeInstanceOf(Error);
+        expect(client['messageHandlers'].get('shared-id')).toBe(original);
+        expect(sent.mock.calls.some(([request]) => request.method === 'rpc.subscribe.close')).toBe(false);
+      } finally {
+        clock.restore();
+        await first.close?.();
+        client.close();
+      }
+    });
+
     // NOTE: The original version of this test had a conditional assertion that only
     // checked handler preservation inside `if (sub2.response.error)` — meaning
     // the critical assertion would be silently skipped if the server happened to

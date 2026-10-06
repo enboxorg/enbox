@@ -669,6 +669,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     // skipped, so cursor and ack move together or not at all.
     let ackChain: Promise<void> = Promise.resolve();
     let terminalHandlerFailure = false;
+    let pendingCursor: ProgressToken | undefined;
     const { response, close } = await socket.subscribe(request, (response) => {
       if (terminalHandlerFailure) {
         return;
@@ -713,8 +714,12 @@ export class WebSocketDwnRpcClient implements DwnRpc {
             }
 
             const tracked = subscriptions.get(subscriptionId);
-            if (tracked && shouldReplaceLastCursor(tracked.lastCursor, cursor)) {
-              tracked.lastCursor = cursor;
+            if (tracked !== undefined) {
+              if (shouldReplaceLastCursor(tracked.lastCursor, cursor)) {
+                tracked.lastCursor = cursor;
+              }
+            } else if (shouldReplaceLastCursor(pendingCursor, cursor)) {
+              pendingCursor = cursor;
             }
 
             // Send rpc.ack to advance the server's flow-control window.
@@ -776,6 +781,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       tracked.currentId = subscriptionId;
       tracked.currentConnection = connection;
       tracked.currentClose = close;
+      // Replay ACKs can complete before the opening reply installs this transport binding.
+      if (pendingCursor !== undefined && shouldReplaceLastCursor(tracked.lastCursor, pendingCursor)) {
+        tracked.lastCursor = pendingCursor;
+      }
       // Point this establishment's reply at the stable close so any holder of
       // it closes the logical subscription, not a stale transport id.
       reply.subscription.close = tracked.subscription.close;
@@ -788,6 +797,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       } else {
         subscriptions.set(subscriptionId, tracked);
       }
+    } else if (close !== undefined) {
+      // A DWN rejection has no handle for the caller to close.
+      void close().catch((): void => {});
     }
 
     return reply;

@@ -20,13 +20,19 @@ type NativeSocket = {
   close(): Promise<void>;
 };
 
-/** Connects a native client to an ephemeral server and tracks request completion. */
-export async function openSocket(dwn: Dwn, maxInFlight?: number): Promise<NativeSocket> {
-  const opened = createGate();
-  const connected = createGate();
+type SocketServer = {
+  url: string;
+  connections: Set<SocketConnection>;
+  closed: Promise<void>;
+  requests: Map<JsonRpcId, Promise<void>>;
+  close(): Promise<void>;
+};
+
+/** Starts an ephemeral server for native raw or bundled WebSocket clients. */
+export function startSocketServer(dwn: Dwn, maxInFlight?: number): SocketServer {
   const closed = createGate();
+  const connections = new Set<SocketConnection>();
   const requests = new Map<JsonRpcId, Promise<void>>();
-  let connection!: SocketConnection;
   const server = Bun.serve<WsData>({
     hostname : '127.0.0.1',
     port     : 0,
@@ -38,41 +44,59 @@ export async function openSocket(dwn: Dwn, maxInFlight?: number): Promise<Native
     },
     websocket: {
       open: (socket): void => {
-        connection = new SocketConnection(socket, dwn, undefined, maxInFlight);
+        const connection = new SocketConnection(socket, dwn, undefined, maxInFlight);
         socket.data.connection = connection;
-        connected.resolve();
+        connections.add(connection);
       },
-      message: (_socket, data): Promise<void> => {
+      message: (socket, data): Promise<void> => {
         const bytes = typeof data === 'string' ? Buffer.from(data) : data;
         const { id } = JSON.parse(bytes.toString()) as JsonRpcRequest;
-        const processing = connection.message(bytes);
+        const processing = socket.data.connection!.message(bytes);
         if (id !== undefined) {
           requests.set(id, processing);
         }
         return processing;
       },
-      close: async (): Promise<void> => {
+      close: async (socket): Promise<void> => {
+        const connection = socket.data.connection!;
         await connection.close();
+        connections.delete(connection);
         closed.resolve();
       },
     },
   });
-  const client = new WebSocket(`ws://127.0.0.1:${server.port}`);
-  client.addEventListener('open', opened.resolve, { once: true });
-  await Promise.all([opened.promise, connected.promise]);
   return {
-    connection,
-    client,
+    connections,
     requests,
+    url    : `ws://127.0.0.1:${server.port}`,
     closed : closed.promise,
     close  : async (): Promise<void> => {
-      client.close();
       try {
-        await connection.close();
+        await Promise.all(Array.from(connections, (connection): Promise<void> => connection.close()));
         await Promise.allSettled(requests.values());
       } finally {
         server.stop(true);
       }
+    },
+  };
+}
+
+/** Connects a raw native client and tracks request completion. */
+export async function openSocket(dwn: Dwn, maxInFlight?: number): Promise<NativeSocket> {
+  const server = startSocketServer(dwn, maxInFlight);
+  const opened = createGate();
+  const client = new WebSocket(server.url);
+  client.addEventListener('open', opened.resolve, { once: true });
+  await opened.promise;
+  const connection = server.connections.values().next().value!;
+  return {
+    connection,
+    client,
+    requests : server.requests,
+    closed   : server.closed,
+    close    : async (): Promise<void> => {
+      client.close();
+      await server.close();
     },
   };
 }

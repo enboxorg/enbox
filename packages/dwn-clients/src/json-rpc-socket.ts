@@ -43,7 +43,7 @@ const DEFAULT_HEALTH_PROBE_TIMEOUT = 5_000;
 export interface JsonRpcSocketOptions {
   /** socket connection timeout in milliseconds */
   connectTimeout?: number;
-  /** response timeout for rpc requests in milliseconds */
+  /** Response timeout in milliseconds; subscription opens refresh it on incoming replay frames. */
   responseTimeout?: number;
   /** optional connection close handler */
   onclose?: () => void;
@@ -242,17 +242,34 @@ export class JsonRpcSocket {
    * connected. The typed pre-transmission boundary lets an explicit WebSocket
    * caller retry without implying any transport fallback policy.
    */
-  public async request(request: JsonRpcRequest): Promise<JsonRpcResponse> {
+  public request(request: JsonRpcRequest): Promise<JsonRpcResponse> {
+    return this.requestWithProgress(request);
+  }
+
+  private async requestWithProgress(
+    request: JsonRpcRequest,
+    observeProgress?: (refresh: () => void) => void,
+  ): Promise<JsonRpcResponse> {
     if (!this._isConnected) {
       throw new SocketUnavailableError('JsonRpcSocket: request refused — socket is not connected');
     }
 
     return new Promise((resolve, reject) => {
       request.id ??= CryptoUtils.randomUuid();
-      const timeout = setTimeout(() => {
+      let timeout: ReturnType<typeof setTimeout>;
+      let deadline = performance.now() + this.responseTimeout;
+      const refresh = (): void => { deadline = performance.now() + this.responseTimeout; };
+      const expire = (): void => {
+        const remaining = deadline - performance.now();
+        if (remaining > 0) {
+          timeout = setTimeout(expire, remaining);
+          return;
+        }
         this.messageHandlers.delete(request.id!);
         reject(new Error('request timed out'));
-      }, this.responseTimeout);
+      };
+      timeout = setTimeout(expire, this.responseTimeout);
+      observeProgress?.(refresh);
 
       const handleResponse = (event: { data: any }):void => {
         const jsonRpsResponse = parseJson(toText(event.data)) as JsonRpcResponse;
@@ -266,7 +283,13 @@ export class JsonRpcSocket {
 
       // add the listener to the map of message handlers
       this.messageHandlers.set(request.id!, handleResponse);
-      this.send(request);
+      try {
+        this.send(request);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.messageHandlers.delete(request.id!);
+        reject(error);
+      }
     });
   }
 
@@ -292,10 +315,25 @@ export class JsonRpcSocket {
     // Preserve any existing handler for this subscriptionId so that a rejected
     // duplicate-subscribe attempt does not clobber an active subscription.
     const existingHandler = this.messageHandlers.get(subscriptionId);
+    let refreshTimeout: (() => void) | undefined;
+
+    const restoreHandler = (): void => {
+      if (this.messageHandlers.get(subscriptionId) !== socketEventListener) {
+        return;
+      }
+      if (existingHandler !== undefined) {
+        this.messageHandlers.set(subscriptionId, existingHandler);
+      } else {
+        this.messageHandlers.delete(subscriptionId);
+        this.subscriptionHandlerIds.delete(subscriptionId);
+      }
+    };
 
     const socketEventListener = (event: { data: any }):void => {
       const jsonRpcResponse = parseJson(toText(event.data)) as JsonRpcResponse;
       if (jsonRpcResponse.id === subscriptionId) {
+        // Replay may outlast an ordinary RPC deadline while continuing to make progress.
+        refreshTimeout?.();
         if (jsonRpcResponse.error !== undefined) {
           // remove the event listener upon receipt of a JSON RPC Error.
           this.messageHandlers.delete(subscriptionId);
@@ -311,15 +349,22 @@ export class JsonRpcSocket {
     this.messageHandlers.set(subscriptionId, socketEventListener);
     this.subscriptionHandlerIds.add(subscriptionId);
 
-    const response = await this.request(request);
+    let response: JsonRpcResponse;
+    try {
+      response = await this.requestWithProgress(request, (refresh): void => { refreshTimeout = refresh; });
+    } catch (error) {
+      restoreHandler();
+      if (existingHandler === undefined) {
+        // Relinquish a pending open without delaying rejection on another RPC deadline.
+        void this.closeSubscription(subscriptionId).catch((): void => {});
+      }
+      throw error;
+    } finally {
+      refreshTimeout = undefined;
+    }
     if (response.error) {
       // Restore the previous handler if one existed, otherwise clean up.
-      if (existingHandler) {
-        this.messageHandlers.set(subscriptionId, existingHandler);
-      } else {
-        this.messageHandlers.delete(subscriptionId);
-        this.subscriptionHandlerIds.delete(subscriptionId);
-      }
+      restoreHandler();
       return { response };
     }
 
