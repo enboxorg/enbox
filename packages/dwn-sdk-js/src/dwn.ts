@@ -266,7 +266,7 @@ export class Dwn {
       return errorMessageReply;
     }
 
-    const { dataStream, subscriptionHandler } = options;
+    const { dataStream, subscriptionHandler, subscriptionSignal } = options;
 
     const handlerKey = rawMessage.descriptor.interface + rawMessage.descriptor.method;
     const methodHandlerReply = await this.methodHandlers[handlerKey].handle({
@@ -274,6 +274,7 @@ export class Dwn {
       message: rawMessage,
       dataStream,
       subscriptionHandler,
+      subscriptionSignal,
     });
 
     return methodHandlerReply;
@@ -713,6 +714,8 @@ export class Dwn {
 export interface MessageOptions {
   dataStream?: ReadableStream<Uint8Array>;
   subscriptionHandler?: SubscriptionListener;
+  /** Local lifetime for subscription setup and delivery; never serialized into a DWN message. */
+  subscriptionSignal?: AbortSignal;
 };
 
 /**

@@ -19,6 +19,7 @@ import type {
   WakeSubscriber,
 } from '../types/subscriptions.js';
 
+import { executeUnlessAborted } from '../utils/abort.js';
 import { Messages } from '../utils/messages.js';
 import { Records } from '../utils/records.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
@@ -52,7 +53,10 @@ type DurableSubscription = {
   tenant: string;
   listener: SubscriptionListener;
   filters?: Filter[];
-  cursor?: ProgressToken;
+  cursor: ProgressToken;
+  signal?: AbortSignal;
+  unsubscribeAbort?: () => void;
+  retry?: { timer: ReturnType<typeof setTimeout>; resume: () => void };
   closed: boolean;
   draining: boolean;
   liveReady: boolean;
@@ -66,6 +70,7 @@ type CatchUpPageState = {
 
 const DEFAULT_READ_LIMIT = 100;
 const DEFAULT_IDLE_REDRAIN_INTERVAL_MS = 30_000;
+const DRAIN_RETRY_DELAY_MS = 100;
 
 /**
  * EventLog implementation backed by the durable replication feed.
@@ -81,6 +86,7 @@ export class DurableEventLog implements EventLog {
   private unsubscribeWake?: () => void;
   private idleRedrainTimer?: ReturnType<typeof setInterval>;
   private isOpen: boolean = false;
+  private closeGeneration: number = 0;
 
   public constructor(
     private readonly store: DurableEventLogStore,
@@ -111,6 +117,7 @@ export class DurableEventLog implements EventLog {
   }
 
   public async close(): Promise<void> {
+    this.closeGeneration++;
     this.unsubscribeWake?.();
     this.unsubscribeWake = undefined;
 
@@ -120,7 +127,7 @@ export class DurableEventLog implements EventLog {
     }
 
     for (const subscription of this.subscriptions.values()) {
-      subscription.closed = true;
+      this.closeSubscription(subscription);
     }
     this.subscriptions.clear();
     this.isOpen = false;
@@ -140,32 +147,52 @@ export class DurableEventLog implements EventLog {
     listener: SubscriptionListener,
     options: EventLogSubscribeOptions = {},
   ): Promise<EventSubscription> {
+    const { signal } = options;
+    signal?.throwIfAborted();
+    const closeGeneration = this.closeGeneration;
+    const streamId = await executeUnlessAborted(Replication.deriveStreamId(tenant), signal);
+    const cursor = await executeUnlessAborted(this.getInitialCursor(tenant, options.cursor, streamId), signal);
+    if (closeGeneration !== this.closeGeneration) {
+      throw new DwnError(DwnErrorCode.EventLogNotOpenError, 'event log closed during subscription initialization');
+    }
+    signal?.throwIfAborted();
     const subscription: DurableSubscription = {
       id,
       tenant,
       listener,
+      signal,
       filters          : options.filters,
-      cursor           : await this.getInitialCursor(tenant, options.cursor),
+      cursor,
       closed           : false,
       draining         : false,
       liveReady        : options.cursor === undefined,
       redrainRequested : false,
     };
+    const previousSubscription = this.subscriptions.get(id);
+    if (previousSubscription !== undefined) {
+      this.closeSubscription(previousSubscription);
+    }
     this.subscriptions.set(id, subscription);
+    if (signal !== undefined) {
+      const onAbort = (): void => this.closeSubscription(subscription);
+      signal.addEventListener('abort', onAbort, { once: true });
+      subscription.unsubscribeAbort = (): void => signal.removeEventListener('abort', onAbort);
+    }
 
     if (options.cursor !== undefined) {
       try {
         const eoseCursor = await this.catchUpSubscription(subscription, options.cursor);
         if (!subscription.closed) {
-          listener({ type: 'eose', cursor: eoseCursor });
-          subscription.liveReady = true;
-          if (subscription.redrainRequested) {
-            this.scheduleDrain(subscription);
+          await this.deliverMessage(subscription, { type: 'eose', cursor: eoseCursor });
+          if (!subscription.closed) {
+            subscription.liveReady = true;
+            if (subscription.redrainRequested) {
+              this.scheduleDrain(subscription);
+            }
           }
         }
       } catch (error) {
-        subscription.closed = true;
-        this.subscriptions.delete(id);
+        this.closeSubscription(subscription);
         throw error;
       }
     }
@@ -173,8 +200,8 @@ export class DurableEventLog implements EventLog {
     return {
       id,
       close: async (): Promise<void> => {
-        subscription.closed = true;
-        this.subscriptions.delete(id);
+        // Do not wait for the drain: a listener may await its own subscription close.
+        this.closeSubscription(subscription);
       }
     };
   }
@@ -183,13 +210,24 @@ export class DurableEventLog implements EventLog {
     return this.store.logBounds(tenant);
   }
 
-  private async getInitialCursor(tenant: string, cursor: ProgressToken | undefined): Promise<ProgressToken | undefined> {
+  private closeSubscription(subscription: DurableSubscription): void {
+    subscription.closed = true;
+    this.clearRetry(subscription);
+    subscription.unsubscribeAbort?.();
+    subscription.unsubscribeAbort = undefined;
+    // An older handle must not remove a replacement with the same signed message CID.
+    if (this.subscriptions.get(subscription.id) === subscription) {
+      this.subscriptions.delete(subscription.id);
+    }
+  }
+
+  private async getInitialCursor(tenant: string, cursor: ProgressToken | undefined, streamId: string): Promise<ProgressToken> {
     if (cursor !== undefined) {
       return cursor;
     }
 
     const bounds = await this.store.logBounds(tenant);
-    return bounds?.latest;
+    return bounds?.latest ?? { streamId, epoch: await this.store.epoch(), position: '0' };
   }
 
   private handleWake(wake: Wake): void {
@@ -218,34 +256,32 @@ export class DurableEventLog implements EventLog {
       return;
     }
 
-    void this.drainSubscription(subscription).catch((error): void => {
-      this.handleDrainError(subscription, error);
-    });
+    // Wakes remain detached from committed writes; only this subscription waits for its listener.
+    void this.drainSubscription(subscription).catch((error): Promise<void> => this.handleDrainError(subscription, error));
   }
 
-  private handleDrainError(subscription: DurableSubscription, error: unknown): void {
+  private async handleDrainError(subscription: DurableSubscription, error: unknown): Promise<void> {
     if (subscription.closed) {
       return;
     }
 
     if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
       const gapInfo = DurableEventLog.getProgressGapInfo(error);
-      const cursor = gapInfo?.requested ?? subscription.cursor ?? gapInfo?.latestAvailable;
-      if (cursor === undefined) {
-        this.errorHandler(error);
-        return;
-      }
+      const cursor = gapInfo?.requested ?? subscription.cursor;
 
-      subscription.closed = true;
-      this.subscriptions.delete(subscription.id);
-      subscription.listener({
-        type  : 'error',
-        cursor,
-        error : {
-          code   : 'ProgressGap',
-          detail : error.message,
-        },
-      });
+      this.closeSubscription(subscription);
+      try {
+        await this.deliverMessage(subscription, {
+          type  : 'error',
+          cursor,
+          error : {
+            code   : 'ProgressGap',
+            detail : error.message,
+          },
+        });
+      } catch (listenerError) {
+        this.errorHandler(listenerError);
+      }
       return;
     }
 
@@ -253,18 +289,14 @@ export class DurableEventLog implements EventLog {
   }
 
   private async catchUpSubscription(subscription: DurableSubscription, cursor: ProgressToken): Promise<ProgressToken> {
-    const frozenCursor = await this.getCatchUpHighWater(subscription.tenant, cursor);
+    const frozenCursor = await this.getCatchUpHighWater(subscription, cursor);
     const frozenPosition = BigInt(frozenCursor.position);
     let readCursor = cursor;
     subscription.cursor = cursor;
 
     while (!subscription.closed && BigInt(readCursor.position) < frozenPosition) {
-      const result = await this.read(subscription.tenant, {
-        cursor  : readCursor,
-        filters : subscription.filters,
-        limit   : this.readLimit,
-      });
-      const pageState = await this.deliverCatchUpPage(subscription, result.events, readCursor, frozenPosition);
+      const result = await this.readSubscriptionPage(subscription, readCursor);
+      const pageState = await this.deliverCatchUpPage(subscription, result.events, result.cursor ?? readCursor, readCursor, frozenPosition);
       if (subscription.closed) {
         return frozenCursor;
       }
@@ -283,17 +315,18 @@ export class DurableEventLog implements EventLog {
     return frozenCursor;
   }
 
-  private async getCatchUpHighWater(tenant: string, cursor: ProgressToken): Promise<ProgressToken> {
-    const bounds = await this.store.logBounds(tenant);
+  private async getCatchUpHighWater(subscription: DurableSubscription, cursor: ProgressToken): Promise<ProgressToken> {
+    const bounds = await executeUnlessAborted(this.store.logBounds(subscription.tenant), subscription.signal);
     const frozenCursor = bounds?.latest ?? cursor;
 
-    await this.read(tenant, { cursor, limit: 0 });
+    await executeUnlessAborted(this.read(subscription.tenant, { cursor, limit: 0 }), subscription.signal);
     return frozenCursor;
   }
 
   private async deliverCatchUpPage(
     subscription: DurableSubscription,
     entries: EventLogEntry[],
+    pageCursor: ProgressToken,
     readCursor: ProgressToken,
     frozenPosition: bigint,
   ): Promise<CatchUpPageState> {
@@ -304,7 +337,7 @@ export class DurableEventLog implements EventLog {
         return { readCursor: nextCursor, reachedFrozenPosition: true };
       }
 
-      const deliveredCursor = await this.deliverEntry(subscription, entry);
+      const deliveredCursor = await this.deliverEntry(subscription, entry, pageCursor);
       if (subscription.closed) {
         return { readCursor: nextCursor, reachedFrozenPosition: false };
       }
@@ -326,11 +359,53 @@ export class DurableEventLog implements EventLog {
     try {
       do {
         subscription.redrainRequested = false;
-        await this.drainOnce(subscription);
+        try {
+          await this.drainOnce(subscription);
+        } catch (error) {
+          await this.handleDrainError(subscription, error); // NOSONAR: S9382 - settle failure/terminal delivery before retrying this cursor.
+          if (subscription.redrainRequested && !subscription.closed) {
+            // Preserve wakes received during failed delivery without spinning on a poison event.
+            await this.waitForRetry(subscription); // NOSONAR: S9382 - pace this subscription's next attempt to prevent a failure spin.
+          }
+        }
       } while (subscription.redrainRequested && !subscription.closed);
     } finally {
       subscription.draining = false;
     }
+  }
+
+  private async waitForRetry(subscription: DurableSubscription): Promise<void> {
+    const delay = new Promise<void>((resolve): void => {
+      subscription.retry = { timer: setTimeout(resolve, DRAIN_RETRY_DELAY_MS), resume: resolve };
+    });
+    try {
+      await executeUnlessAborted(delay, subscription.signal);
+    } finally {
+      this.clearRetry(subscription);
+    }
+  }
+
+  private clearRetry(subscription: DurableSubscription): void {
+    const retry = subscription.retry;
+    if (retry !== undefined) {
+      subscription.retry = undefined;
+      clearTimeout(retry.timer);
+      retry.resume();
+    }
+  }
+
+  /** Read a page and fence any generation change that occurred within the read itself. */
+  private async readSubscriptionPage(subscription: DurableSubscription, cursor: ProgressToken): Promise<EventLogReadResult> {
+    const { streamId, epoch } = cursor;
+    const result = await executeUnlessAborted(this.read(subscription.tenant, {
+      cursor,
+      filters : subscription.filters,
+      limit   : this.readLimit,
+    }), subscription.signal);
+    if (result.cursor !== undefined && (result.cursor.streamId !== streamId || result.cursor.epoch !== epoch)) {
+      throw new DwnError(DwnErrorCode.EventLogProgressGap, 'progress token gap: stream domain changed during a subscription read');
+    }
+    return result;
   }
 
   private async drainOnce(subscription: DurableSubscription): Promise<void> {
@@ -339,14 +414,11 @@ export class DurableEventLog implements EventLog {
         return;
       }
 
-      const result = await this.read(subscription.tenant, {
-        cursor  : subscription.cursor,
-        filters : subscription.filters,
-        limit   : this.readLimit,
-      });
+      const readCursor = subscription.cursor;
+      const result = await this.readSubscriptionPage(subscription, readCursor);
 
       for (const entry of result.events) {
-        const cursor = await this.deliverEntry(subscription, entry);
+        const cursor = await this.deliverEntry(subscription, entry, result.cursor ?? readCursor);
         if (subscription.closed) {
           return;
         }
@@ -365,15 +437,14 @@ export class DurableEventLog implements EventLog {
     }
   }
 
-  private async deliverEntry(subscription: DurableSubscription, entry: EventLogEntry): Promise<ProgressToken | undefined> {
+  private async deliverEntry(
+    subscription: DurableSubscription, entry: EventLogEntry, pageCursor: ProgressToken,
+  ): Promise<ProgressToken | undefined> {
     if (subscription.closed) {
       return undefined;
     }
 
-    const cursor = await this.buildToken(subscription.tenant, DurableEventLog.getEntryPosition(entry), entry.messageCid);
-    if (subscription.closed) {
-      return undefined;
-    }
+    const cursor = DurableEventLog.buildToken(pageCursor, DurableEventLog.getEntryPosition(entry), entry.messageCid);
 
     const event: SubscriptionEvent = {
       type              : 'event',
@@ -389,8 +460,19 @@ export class DurableEventLog implements EventLog {
       event.encodedData = entry.encodedData;
     }
 
-    subscription.listener(event);
+    // Completion owns cursor advancement and prevents an unbounded queue of pending listeners.
+    await this.deliverMessage(subscription, event);
     return cursor;
+  }
+
+  private deliverMessage(subscription: DurableSubscription, message: Parameters<SubscriptionListener>[0]): void | Promise<void> {
+    subscription.signal?.throwIfAborted();
+    const delivery = subscription.listener(message);
+    if (subscription.signal === undefined) {
+      return delivery;
+    } else {
+      return executeUnlessAborted(Promise.resolve(delivery), subscription.signal);
+    }
   }
 
   private async attachInitialWrites(tenant: string, entries: EventLogEntry[]): Promise<EventLogEntry[]> {
@@ -444,10 +526,11 @@ export class DurableEventLog implements EventLog {
     return typeof descriptorRecordId === 'string' ? descriptorRecordId : undefined;
   }
 
-  private async buildToken(tenant: string, position: string, messageCid: string | undefined): Promise<ProgressToken> {
+  private static buildToken(pageCursor: ProgressToken, position: string, messageCid: string | undefined): ProgressToken {
     const token: ProgressToken = {
-      streamId : await Replication.deriveStreamId(tenant),
-      epoch    : await this.store.epoch(),
+      // Rows retain the stream generation captured by their read page, even if a listener resets storage.
+      streamId : pageCursor.streamId,
+      epoch    : pageCursor.epoch,
       position,
     };
 

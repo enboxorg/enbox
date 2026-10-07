@@ -376,6 +376,10 @@ describe('WebSocketDwnRpcClient', () => {
       });
       expect(updateReply.status.code).toBe(202);
 
+      // The durable feed retains current state: the next write can prune this
+      // version before a delayed feed read sees it. Observe each update before replacing it.
+      await waitForCondition(() => dataCids.includes(update1.descriptor.dataCid));
+
       // make another update
       const { message: update2, dataBytes: update2Data } = await TestDataGenerator.generateFromRecordsWrite({
         existingWrite : updateWrite,
@@ -840,14 +844,15 @@ describe('WebSocketDwnRpcClient', () => {
         const closeSpy = spyOn(innerSubscription, 'close');
 
         const tracked = {
-          subscription : innerSubscription,
-          target       : alice.did,
+          subscription      : innerSubscription,
+          target            : alice.did,
           message,
-          handler      : (): void => {},
+          handler           : (): void => {},
           // Current-establishment binding: the generation guard only closes a
           // tracked subscription whose current transport id is this one.
-          currentId    : subscriptionId,
-          closed       : false,
+          currentId         : subscriptionId,
+          currentConnection : connection,
+          closed            : false,
         };
         // add to the subscriptions map
         subscriptions.set(subscriptionId, tracked);

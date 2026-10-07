@@ -104,6 +104,11 @@ module.exports = [{
     }],
   },
 }, {
+  files: ['src/event-stream/durable-event-log.ts'],
+  rules: {
+    '@typescript-eslint/no-floating-promises': 'error',
+  },
+}, {
   ignores: [
     '**/*.js',
   ],

@@ -856,7 +856,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       setStage(
         el('p', 'stage-caption', 'This wallet can’t connect by phone here.'),
         el('p', 'stage-subline', 'You can continue in this browser instead.'),
-        stageButton('Use this browser', () => { startPopup(); }),
+        stageButton('Use this browser', () => { void startPopup(); }),
       );
     };
 
@@ -882,7 +882,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           ? `Reconnect with ${walletName}`
           : 'Connect with a wallet in this browser'),
         el('p', 'stage-subline', description),
-        stageButton(buttonLabel, () => { startPopup(); }),
+        stageButton(buttonLabel, () => { void startPopup(); }),
       );
     };
 
@@ -899,7 +899,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         el('p', 'stage-caption', blocked
           ? `Your browser blocked the wallet ${popupSurface}.`
           : `The wallet ${popupSurface} was closed.`),
-        stageButton(blocked ? 'Open it now' : `Reopen ${popupSurface}`, () => { startPopup(); }),
+        stageButton(blocked ? 'Open it now' : `Reopen ${popupSurface}`, () => { void startPopup(); }),
         ...(savedRoute !== undefined
           ? [stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute)]
           : [stageLinkButton(isMobile ? 'Use a code instead' : 'Use your phone instead', () => { void switchMethod('phone'); })]),
@@ -1124,7 +1124,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         // popup channel actually buys the visitor is skipping the code.
         alt.textContent = isMobile ? 'Or connect without a code →' : 'No phone? Use this browser →';
         // startPopup runs synchronously in this click handler.
-        alt.addEventListener('click', () => { startPopup(); });
+        alt.addEventListener('click', () => { void startPopup(); });
         row.appendChild(alt);
       } else if (method === 'browser' && savedRoute === undefined) {
         const alt = document.createElement('button');

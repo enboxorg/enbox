@@ -19,6 +19,7 @@ export interface MethodHandler {
     message: GenericMessage;
     dataStream?: ReadableStream<Uint8Array>;
     subscriptionHandler?: SubscriptionListener;
+    subscriptionSignal?: AbortSignal;
   }): Promise<GenericMessageReply>;
 }
 
