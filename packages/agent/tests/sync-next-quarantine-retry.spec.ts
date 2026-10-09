@@ -364,7 +364,7 @@ describe('retryOneQuarantinedRoot', () => {
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
 
-  it('keeps an unavailable or duplicate latest body pending', async () => {
+  it.each(['Duplicate', 'Superseded'] as const)('keeps an unavailable or unconfirmed %s body pending', async (kind) => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
     const entry = await feedEntry(generated.message, 1);
     const fixture = fakeAgent();
@@ -384,11 +384,32 @@ describe('retryOneQuarantinedRoot', () => {
       },
       status: { code: 200, detail: 'OK' },
     });
-    fixture.apply.resolves({ kind: 'Duplicate' });
+    fixture.apply.resolves({ kind });
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
       .toEqual({ kind: 'pending' });
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
   });
+
+  it.each(['owner', 'delegate'] as const)(
+    'settles %s quarantine superseded by a materialized current write without reading the source',
+    async (authorization) => {
+      const syncTarget = authorization === 'owner' ? target() : delegateTarget();
+      const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
+      const entry = await feedEntry(generated.message, 1);
+      const fixture = fakeAgent();
+      fixture.apply.resolves({ kind: 'Superseded', currentWriteMaterialized: true });
+      await retain(syncTarget, [entry]);
+
+      expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: syncTarget }))
+        .toEqual({ kind: 'settled', appliedEntries: [] });
+      expect(fixture.apply.calledOnceWithExactly(syncTarget.did, entry.message, {
+        includeMaterializationConfirmation: true,
+      })).toBe(true);
+      expect(fixture.prepare.notCalled).toBe(true);
+      expect(fixture.send.notCalled).toBe(true);
+      expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(syncTarget))).toEqual([]);
+    },
+  );
 
   it('does not probe or apply an out-of-scope retained write', async () => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
