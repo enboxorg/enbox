@@ -32,6 +32,7 @@ type PlannerFixture = {
   getTargetResolver: SinonStub;
   planner: SyncTargetPlanner;
   setNow: (value: number) => void;
+  withCurrentRoleGrant: SinonStub;
   warn: SinonStub;
 };
 
@@ -119,7 +120,14 @@ function createPlanner({
     authorizationEpoch : 'role-epoch',
     projectionId       : 'role-projection',
   }));
-  const resolver = { buildTargetResolutions, buildTargetsForEndpoint, buildTargetForSource, getEndpointUrls };
+  const withCurrentRoleGrant = sinon.stub().callsFake(async (target: SyncTarget): Promise<SyncTarget> => target);
+  const resolver = {
+    buildTargetResolutions,
+    buildTargetsForEndpoint,
+    buildTargetForSource,
+    getEndpointUrls,
+    withCurrentRoleGrant,
+  };
   const getTargetResolver = sinon.stub().returns(resolver);
   const warn = sinon.stub();
   let currentTime = 1_000;
@@ -144,11 +152,20 @@ function createPlanner({
     getTargetResolver,
     planner,
     setNow      : (value): void => { currentTime = value; },
+    withCurrentRoleGrant,
     warn,
   };
 }
 
 describe('SyncTargetPlanner', () => {
+  it('should refresh transient role grant material through its resolver', async () => {
+    const { planner, withCurrentRoleGrant } = createPlanner();
+    const syncTarget = ownerTarget('did:example:alice', 'https://alice.example.com');
+
+    expect(await planner.withCurrentRoleGrant(syncTarget)).toBe(syncTarget);
+    expect(withCurrentRoleGrant.calledOnceWithExactly(syncTarget)).toBe(true);
+  });
+
   it('should plan and cache a complete target snapshot', async () => {
     const { entries, getEndpointUrls, planner } = createPlanner({
       entries: [validEntry('did:example:alice'), validEntry('did:example:bob')],

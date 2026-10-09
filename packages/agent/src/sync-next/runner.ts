@@ -9,6 +9,7 @@ import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type {
   SyncNextDeliveryObligation,
+  SyncNextLink,
   SyncNextLinkIdentity,
   SyncNextQuarantineEntry,
 } from './types.js';
@@ -23,19 +24,35 @@ import { SyncNextFeedQueryError } from './feed-page.js';
 import { SyncNextPullPage } from './pull-page.js';
 import { SyncNextPushPage } from './push-page.js';
 import { SyncWorkInterruptedError } from '../sync-messages.js';
-import { compareSyncNextRetryOrder, syncNextLinkIdentity, syncNextLinkKey } from './progress-key.js';
+import { compareSyncNextRetryOrder, isSameSyncNextToken, syncNextLinkIdentity, syncNextLinkKey } from './progress-key.js';
 
 type SyncNextWorkKind = 'delivery' | 'pullPage' | 'pushPage' | 'quarantine';
 
 export type SyncNextWorkFailure = {
   message: string;
   target: SyncNextLinkIdentity;
-  work: SyncNextWorkKind;
+  work: SyncNextWorkKind | 'authorityRefresh';
+};
+
+export type SyncNextTargetRunResult = {
+  /** Whether this run reached the target's feed operation before yielding. */
+  feedAttempted: boolean;
+  feedCovered: boolean;
+  identity: SyncNextLinkIdentity;
+  workRemaining: boolean;
 };
 
 export type SyncNextRunResult = {
+  /** Endpoints unavailable for further work during this run. */
+  blockedEndpoints: string[];
   failures: SyncNextWorkFailure[];
+  /** Whether every participating source feed returned a committed drained page. */
+  feedCovered: boolean;
+  /** Whether a direction checkpoint advanced or one pending receipt settled. */
+  madeProgress: boolean;
   remoteRequests: number;
+  targetResults: SyncNextTargetRunResult[];
+  /** Whether a participating feed or its durable pending queue remains incomplete. */
   workRemaining: boolean;
 };
 
@@ -53,9 +70,12 @@ export type SyncNextRunnerOperations = {
 };
 
 type TargetState = {
+  feedAttempted: boolean;
   feedDrained: boolean;
   failures: SyncNextWorkFailure[];
   identity: SyncNextLinkIdentity;
+  link?: SyncNextLink;
+  madeProgress: boolean;
   target: SyncTarget;
 };
 
@@ -114,7 +134,7 @@ export class SyncNextRunner {
     const recovery = await this.getRecoveryCandidates(states, direction);
     await this.runRecoveryPhase(recovery, retry, budget, blockedEndpoints);
 
-    return this.buildResult(states, budget, direction);
+    return this.buildResult(states, budget, direction, blockedEndpoints);
   }
 
   private createStates(targets: readonly SyncTarget[], direction: SyncDirection): TargetState[] {
@@ -129,9 +149,11 @@ export class SyncNextRunner {
         continue;
       }
       const state: TargetState = {
-        feedDrained : false,
-        failures    : [],
+        feedAttempted : false,
+        feedDrained   : false,
+        failures      : [],
         identity,
+        madeProgress  : false,
         target,
       };
       states.set(key, state);
@@ -140,7 +162,7 @@ export class SyncNextRunner {
   }
 
   private async ensureLink(state: TargetState): Promise<void> {
-    await this._progressStore.getOrCreateLink({
+    state.link = await this._progressStore.getOrCreateLink({
       ...state.identity,
       authorization : state.target.authorization,
       scope         : state.target.scope,
@@ -207,7 +229,7 @@ export class SyncNextRunner {
   ): Promise<void> {
     const endpoint = state.identity.remoteEndpoint;
     const shouldContinue = (): boolean => budget.signal?.aborted !== true;
-    const runRemoteRequest = this.requestRunner(endpoint, budget, blockedEndpoints);
+    const runRemoteRequest = this.requestRunner(state, kind, budget, blockedEndpoints);
     try {
       switch (kind) {
         case 'pullPage':
@@ -243,10 +265,12 @@ export class SyncNextRunner {
     const result = await (this._operations.pullPage?.(
       state.target, shouldContinue, runRemoteRequest,
     ) ?? new SyncNextPullPage(this._agent, this._progressStore, runRemoteRequest).run(state.target, shouldContinue));
+    state.feedAttempted = true;
     if (result.kind !== 'committed') {
       return;
     }
     state.feedDrained = result.feedDrained;
+    state.madeProgress ||= !isSameSyncNextToken(state.link?.pullCheckpoint, result.checkpoint);
   }
 
   private async runQuarantine(
@@ -258,11 +282,12 @@ export class SyncNextRunner {
       state.identity.tenantDid, state.identity.projectionId,
     ])}`;
     await runWithCrossContextLock(lock, async (): Promise<void> => {
-      await (this._operations.quarantineRetry?.(
+      const result = await (this._operations.quarantineRetry?.(
         state.target, shouldContinue, runRemoteRequest,
       ) ?? retryOneQuarantinedRoot({
         agent: this._agent, progressStore: this._progressStore, target: state.target, shouldContinue, runRemoteRequest,
       }));
+      state.madeProgress ||= result.kind === 'settled';
     });
   }
 
@@ -275,10 +300,12 @@ export class SyncNextRunner {
     const result = await (this._operations.pushPage?.(
       state.target, shouldContinue, runRemoteRequest,
     ) ?? new SyncNextPushPage(this._agent, this._progressStore, runRemoteRequest).run(state.target, shouldContinue));
+    state.feedAttempted = true;
     if (result.kind !== 'committed') {
       return;
     }
     state.feedDrained = result.feedDrained;
+    state.madeProgress ||= !isSameSyncNextToken(state.link?.pushCheckpoint, result.checkpoint);
     if (result.blocked?.blockScope === 'endpoint') {
       blockedEndpoints.add(state.identity.remoteEndpoint);
     }
@@ -295,16 +322,19 @@ export class SyncNextRunner {
     ) ?? retryOneDeliveryObligation({
       agent: this._agent, progressStore: this._progressStore, target: state.target, shouldContinue, runRemoteRequest,
     }));
+    state.madeProgress ||= result.kind === 'settled';
     if (result.kind === 'pending' && result.outcome.blockScope === 'endpoint') {
       blockedEndpoints.add(state.identity.remoteEndpoint);
     }
   }
 
   private requestRunner(
-    endpoint: string,
+    state: TargetState,
+    kind: SyncNextWorkKind,
     budget: RequestBudget,
     blockedEndpoints: Set<string>,
   ): SyncRemoteRequestRunner {
+    const endpoint = state.identity.remoteEndpoint;
     return <T>(request: (signal?: AbortSignal) => Promise<T>): Promise<T> =>
       runWithCrossContextLock(`enbox:sync-next-endpoint:${endpoint}`, async (): Promise<T> => {
         if (blockedEndpoints.has(endpoint)) {
@@ -314,6 +344,9 @@ export class SyncNextRunner {
           throw new SyncWorkInterruptedError(budget.signal?.aborted === true ? 'stopped' : 'budget');
         }
         budget.requests++;
+        if (kind === 'pullPage' || kind === 'pushPage') {
+          state.feedAttempted = true;
+        }
         const signal = budget.signal;
         try {
           return await request(signal);
@@ -343,12 +376,22 @@ export class SyncNextRunner {
     states: TargetState[],
     budget: RequestBudget,
     direction: SyncDirection,
+    blockedEndpoints: Set<string>,
   ): Promise<SyncNextRunResult> {
     const remaining = await Promise.all(states.map(state => this.hasRemainingWork(state, direction)));
     return {
-      failures       : states.flatMap(state => state.failures),
-      remoteRequests : budget.requests,
-      workRemaining  : remaining.some(Boolean),
+      blockedEndpoints : [...blockedEndpoints].sort((left, right) => left.localeCompare(right)),
+      failures         : states.flatMap(state => state.failures),
+      feedCovered      : states.every(state => state.feedDrained),
+      madeProgress     : states.some(state => state.madeProgress),
+      remoteRequests   : budget.requests,
+      targetResults    : states.map((state, index) => ({
+        feedAttempted : state.feedAttempted,
+        feedCovered   : state.feedDrained,
+        identity      : state.identity,
+        workRemaining : remaining[index],
+      })),
+      workRemaining: remaining.some(Boolean),
     };
   }
 

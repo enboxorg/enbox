@@ -17,6 +17,7 @@ the code, not an entry missing from this table.
 | Browser online and visibility recovery, which probes the transport; verified reconnection reopens cursorless live subscriptions and requests durable passes from persisted checkpoints | **wake health check** — `checkHealth`, `checkAllConnections` | agent-level convergence or integrity check |
 | Reconciling one target's durable feeds | **`reconcileTarget`** | `syncTargetWithDurableFeeds` |
 | One request-bounded next-engine run for one direction across resolved targets | **sync runner** — `SyncNextRunner` | work pump, pass runner, reconciler |
+| One bounded next-engine call that owns target snapshots, exact-link lifecycle, and alternating runner calls | **next sync engine** — `SyncEngineNext` | runtime, scheduler, public engine selector |
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
 | Identity proving that a durable link belongs to the current target plan | **`currentLinkIdentityKey`** — endpoint-specific for role-authorized foreign contexts, endpoint-independent for owned projections | using `durableLinkIdentityKey` as foreign-authority endpoint proof |
