@@ -21,6 +21,7 @@ import { canonicalJsonStringify, runWithCrossContextLock } from '@enbox/common';
 
 import {
   compareSyncNextPosition,
+  isSameSyncNextToken,
   isValidSyncNextToken,
   syncNextLinkKey,
   syncNextLinkRange,
@@ -114,6 +115,15 @@ export class SyncNextProgressStore {
     return this.readValues(this._links.iterator());
   }
 
+  /** Check for durable work outside direction checkpoints without scanning either queue. */
+  public async hasPendingWork(): Promise<{ delivery: boolean; quarantine: boolean }> {
+    const [delivery, quarantine] = await Promise.all([
+      this._delivery.iterator({ limit: 1 }).all(),
+      this._quarantine.iterator({ limit: 1 }).all(),
+    ]);
+    return { delivery: delivery.length > 0, quarantine: quarantine.length > 0 };
+  }
+
   /** Retire an obsolete binding while preserving inbound recovery input owned by its projection. */
   public async retireLink(queriedLink: SyncNextLink): Promise<void> {
     const key = syncNextLinkKey(queriedLink);
@@ -163,7 +173,7 @@ export class SyncNextProgressStore {
         return false;
       }
       await this.assertCompatibleQuarantine(link);
-      if (!SyncNextProgressStore.sameToken(link.pullCheckpoint, queriedLink.pullCheckpoint)) {
+      if (!isSameSyncNextToken(link.pullCheckpoint, queriedLink.pullCheckpoint)) {
         return false;
       }
       if (!SyncNextProgressStore.canAdvance(link.pullCheckpoint, commit.checkpoint)) {
@@ -221,7 +231,7 @@ export class SyncNextProgressStore {
       if (link?.lifetimeId !== queriedLink.lifetimeId) {
         return false;
       }
-      if (!SyncNextProgressStore.sameToken(link.pushCheckpoint, queriedLink.pushCheckpoint)) {
+      if (!isSameSyncNextToken(link.pushCheckpoint, queriedLink.pushCheckpoint)) {
         return false;
       }
       if (!SyncNextProgressStore.canAdvance(link.pushCheckpoint, commit.checkpoint)) {
@@ -715,12 +725,6 @@ export class SyncNextProgressStore {
     return compareSyncNextPosition(incoming, current) > 0;
   }
 
-  private static sameToken(left: ProgressToken | undefined, right: ProgressToken | undefined): boolean {
-    return left === right || (left !== undefined && right !== undefined &&
-      left.streamId === right.streamId && left.epoch === right.epoch &&
-      left.position === right.position && left.messageCid === right.messageCid);
-  }
-
   private static isEmptyReplay(
     current: ProgressToken | undefined,
     incoming: ProgressToken,
@@ -728,7 +732,7 @@ export class SyncNextProgressStore {
     pending: SyncNextSourceReceipt[],
     settled: SyncNextSourceReceipt[],
   ): boolean {
-    return current !== undefined && SyncNextProgressStore.sameToken(current, incoming) &&
+    return current !== undefined && isSameSyncNextToken(current, incoming) &&
       pageReceipts.length === 0 && pending.length === 0 && settled.length === 0;
   }
 
