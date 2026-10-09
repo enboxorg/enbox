@@ -12,6 +12,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { syncNextLinkIdentity } from '../src/sync-next/progress-key.js';
 import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
 import { SyncNextRunner } from '../src/sync-next/runner.js';
+import { SyncWorkInterruptedError } from '../src/sync-messages.js';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -139,13 +140,43 @@ describe('SyncNextRunner', () => {
     const push = await runner.run([target()], 'push');
 
     expect(pull).toMatchObject({
+      feedCovered   : true,
       failures      : [],
+      madeProgress  : true,
       workRemaining : false,
     });
     expect(push).toMatchObject({
+      feedCovered   : true,
       failures      : [],
+      madeProgress  : true,
       workRemaining : false,
     });
+    expect(push.targetResults).toMatchObject([{ feedAttempted: true }]);
+  });
+
+  it('does not report progress for an empty replay at the existing checkpoint', async () => {
+    const syncTarget = target();
+    const checkpoint = { epoch: 'epoch', position: '1', streamId: 'stream' };
+    const link = await progressStore.getOrCreateLink({
+      ...syncNextLinkIdentity(syncTarget),
+      authorization : syncTarget.authorization,
+      scope         : syncTarget.scope,
+    });
+    expect(await progressStore.commitPullPage(link, {
+      checkpoint,
+      pageReceipts : [],
+      quarantine   : [],
+      settled      : [],
+    })).toBe(true);
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
+      pullPage: async () => ({
+        checkpoint, feedDrained: true, handledCids: [], kind: 'committed', quarantined: 0,
+      }),
+    }));
+
+    const result = await runner.run([syncTarget], 'pull');
+
+    expect(result).toMatchObject({ feedCovered: true, madeProgress: false, workRemaining: false });
   });
 
   it('keeps role-authorized targets pull-only without changing their authority', async () => {
@@ -223,6 +254,53 @@ describe('SyncNextRunner', () => {
     expect(result.workRemaining).toBe(true);
   });
 
+  it('reports targets deferred by the shared request budget', async () => {
+    const targets = Array.from({ length: 4 }, (_value, index) => target({
+      did          : `did:example:${index}`,
+      projectionId : `projection-${index}`,
+    }));
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
+      pullPage: async (_target, _shouldContinue, runRemoteRequest) => {
+        await runRemoteRequest(async () => {});
+        return {
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
+        };
+      },
+    }));
+
+    const result = await runner.run(targets, 'pull', { maxRemoteRequests: 3 });
+
+    expect(result.targetResults.map(targetResult => targetResult.feedAttempted))
+      .toEqual([true, true, true, false]);
+  });
+
+  it('does not mark a budget-aborted push page as attempted', async () => {
+    const targets = Array.from({ length: 4 }, (_value, index) => target({
+      did          : `did:example:push-${index}`,
+      projectionId : `push-projection-${index}`,
+    }));
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
+      pushPage: async (_target, _shouldContinue, runRemoteRequest) => {
+        try {
+          await runRemoteRequest(async () => {});
+        } catch (error: unknown) {
+          if (error instanceof SyncWorkInterruptedError) {
+            return { kind: 'aborted' };
+          }
+          throw error;
+        }
+        return {
+          acknowledged: 0, checkpoint: token(1), feedDrained: false, kind: 'committed', retained: 0,
+        };
+      },
+    }));
+
+    const result = await runner.run(targets, 'push', { maxRemoteRequests: 3 });
+
+    expect(result.targetResults.map(targetResult => targetResult.feedAttempted))
+      .toEqual([true, true, true, false]);
+  });
+
   it('keeps a healthy endpoint progressing when another endpoint fails', async () => {
     const offline = target({ endpoint: 'https://offline.example.com' });
     const healthy = target({ endpoint: 'https://healthy.example.com' });
@@ -251,6 +329,9 @@ describe('SyncNextRunner', () => {
       target  : syncNextLinkIdentity(offline),
       work    : 'pullPage',
     }]);
+    expect(result.blockedEndpoints).toEqual([offline.dwnUrl]);
+    expect(result.feedCovered).toBe(false);
+    expect(result.madeProgress).toBe(true);
     expect(result.workRemaining).toBe(true);
   });
 

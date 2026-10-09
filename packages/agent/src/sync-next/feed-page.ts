@@ -9,7 +9,7 @@ import type { SyncNextSourceReceipt } from './types.js';
 
 import { Message } from '@enbox/dwn-sdk-js';
 
-import { compareSyncNextPosition, isValidSyncNextToken } from './progress-key.js';
+import { compareSyncNextPosition, isSameSyncNextToken, isValidSyncNextToken } from './progress-key.js';
 
 export const SYNC_NEXT_PAGE_SIZE = 100;
 
@@ -163,7 +163,7 @@ function assertCursorReceipt(
   pageReceipts: readonly SyncNextSourceReceipt[],
   label: string,
 ): void {
-  if (previous !== undefined && sameProgressToken(previous, cursor) && pageReceipts.length === 0) {
+  if (previous !== undefined && isSameSyncNextToken(previous, cursor) && pageReceipts.length === 0) {
     return;
   }
   if (cursor.messageCid !== undefined && !pageReceipts.some(receipt =>
@@ -171,11 +171,6 @@ function assertCursorReceipt(
   )) {
     throw new Error(`${label}: query cursor CID does not identify its page entry.`);
   }
-}
-
-function sameProgressToken(left: ProgressToken, right: ProgressToken): boolean {
-  return left.streamId === right.streamId && left.epoch === right.epoch &&
-    left.position === right.position && left.messageCid === right.messageCid;
 }
 
 function assertCursorProgress(

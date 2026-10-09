@@ -15,6 +15,8 @@ export default defineConfig({
     include: [
       'tests/sync-durable-feed-reconciler.spec.ts',
       'tests/sync-link-recovery-coordinator.spec.ts',
+      'tests/sync-next-engine-integration.spec.ts',
+      'tests/sync-next-engine.spec.ts',
       'tests/sync-next-progress-store.spec.ts',
       'tests/sync-next-pull-page-integration.spec.ts',
       'tests/sync-next-pull-page.spec.ts',
@@ -29,6 +31,7 @@ export default defineConfig({
       include: [
         'src/sync-durable-feed-reconciler.ts',
         'src/sync-link-recovery-coordinator.ts',
+        'src/sync-next/engine.ts',
         'src/sync-next/progress-key.ts',
         'src/sync-next/progress-store.ts',
         'src/sync-next/pull-page.ts',
