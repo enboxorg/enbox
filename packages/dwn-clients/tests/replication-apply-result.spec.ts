@@ -25,6 +25,16 @@ describe('parseReplicationApplyResult', () => {
     }
   });
 
+  it('preserves only confirmed materialized supersession', () => {
+    expect(parseReplicationApplyResult({ kind: 'Superseded' })).toEqual({ kind: 'Superseded' });
+    expect(parseReplicationApplyResult({ kind: 'Superseded', currentWriteMaterialized: true }))
+      .toEqual({ kind: 'Superseded', currentWriteMaterialized: true });
+    for (const currentWriteMaterialized of [false, 'true', 1]) {
+      expect(() => parseReplicationApplyResult({ kind: 'Superseded', currentWriteMaterialized }))
+        .toThrow('Superseded result currentWriteMaterialized must be true when present');
+    }
+  });
+
   it('should accept encryption control dependency refs for both reserved paths', () => {
     for (const protocolPath of ['$encryption/audience', '$encryption/delivery']) {
       const result = parseReplicationApplyResult({

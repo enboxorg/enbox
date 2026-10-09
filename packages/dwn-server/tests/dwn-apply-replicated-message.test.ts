@@ -8,7 +8,7 @@ import { handleDwnApplyReplicatedMessage } from '../src/json-rpc-handlers/dwn/ap
 import { RateLimiter } from '../src/rate-limiter.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage, expectAppliedResultWithPosition } from './utils.js';
-import { DataStream, DwnErrorCode, Encoder, Jws, RecordsDelete, RecordsRead, RecordsWrite, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnErrorCode, Encoder, Jws, Message, RecordsDelete, RecordsRead, RecordsWrite, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import { describe, expect, it, spyOn } from 'bun:test';
 
 describe('handleDwnApplyReplicatedMessage', () => {
@@ -494,22 +494,24 @@ describe('handleDwnApplyReplicatedMessage', () => {
     }
   });
 
-  it('should enforce quota for a new replicated RecordsWrite before applying it', async () => {
+  it('should enforce quota for a new replicated RecordsWrite confirmation before applying it', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([1, 2, 3, 4]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
     const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
-      message : recordsWrite.toJSON(),
-      target  : alice.did,
+      includeMaterializationConfirmation : true,
+      message                            : recordsWrite.toJSON(),
+      target                             : alice.did,
     });
     const { dwn } = await getTestDwn();
     const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
     const context: RequestContext = {
       dwn,
-      transport  : 'http',
-      dataStream : DataStream.fromBytes(data),
-      adminStore : {
+      transport                : 'http',
+      dataStream               : DataStream.fromBytes(data),
+      isLocalNodeAuthenticated : true,
+      adminStore               : {
         getTenantMessageCount : async (): Promise<number> => 1,
         getTenantStorageSize  : async (): Promise<number> => 0,
       } as any,
@@ -1060,14 +1062,21 @@ describe('handleDwnApplyReplicatedMessage', () => {
       });
       expect((updateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
 
-      const replay = await handleDwnApplyReplicatedMessage(initialRequest, {
+      const confirmationRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+        includeMaterializationConfirmation : true,
+        message                            : initialWrite.toJSON(),
+        target                             : alice.did,
+      });
+      const replay = await handleDwnApplyReplicatedMessage(confirmationRequest, {
         dwn,
-        transport  : 'http',
-        dataStream : DataStream.fromBytes(initialData),
+        dataStream               : DataStream.fromBytes(initialData),
+        isLocalNodeAuthenticated : true,
+        transport                : 'http',
       });
 
       expect(replay.jsonRpcResponse.error).toBeUndefined();
-      expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Superseded' });
+      expect(replay.jsonRpcResponse.result.result)
+        .toEqual({ kind: 'Superseded', currentWriteMaterialized: true });
     } finally {
       await dwn.close();
     }
@@ -1124,6 +1133,75 @@ describe('handleDwnApplyReplicatedMessage', () => {
       expect(replay.jsonRpcResponse.error).toBeUndefined();
       expect(replay.jsonRpcResponse.result.result).toEqual({ kind: 'Superseded' });
       expect(await adminStore.getTenantStorageSize(alice.did)).toBe(updateData.length);
+    } finally {
+      await dwn.close();
+      await adminStore.close();
+    }
+  });
+
+  it('should confirm a displaced update after reaching the message-count quota', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const initialData = new Uint8Array([1]);
+    const firstData = new Uint8Array([2]);
+    const currentData = new Uint8Array([3]);
+    const { recordsWrite: initialWrite } = await createRecordsWriteMessage(alice, { data: initialData });
+    const firstUpdate = await RecordsWrite.createFrom({
+      data                : firstData,
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, initialWrite.message.descriptor.messageTimestamp),
+      recordsWriteMessage : initialWrite.message,
+      signer              : Jws.createSigner(alice),
+    });
+    const currentWrite = await RecordsWrite.createFrom({
+      data                : currentData,
+      messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, firstUpdate.message.descriptor.messageTimestamp),
+      recordsWriteMessage : firstUpdate.message,
+      signer              : Jws.createSigner(alice),
+    });
+    const { dwn, dialect } = await getTestDwn();
+    const adminStore = AdminStore.createFromDialect(dialect, 0);
+
+    try {
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      for (const [write, data] of [
+        [initialWrite, initialData],
+        [firstUpdate, firstData],
+        [currentWrite, currentData],
+      ] as const) {
+        expect(await dwn.applyReplicatedMessage(alice.did, write.message, {
+          dataStream: DataStream.fromBytes(data),
+        })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+      }
+
+      const displacedCid = await Message.getCid(firstUpdate.message);
+      expect(await dwn.storage.messageStore.get(alice.did, displacedCid)).toBeUndefined();
+      const messageCount = await adminStore.getTenantMessageCount(alice.did);
+      const request = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
+        includeMaterializationConfirmation : true,
+        message                            : firstUpdate.toJSON(),
+        target                             : alice.did,
+      });
+      let bodyCancelled = false;
+      const replay = await handleDwnApplyReplicatedMessage(request, {
+        dwn,
+        adminStore,
+        isLocalNodeAuthenticated : true,
+        transport                : 'http',
+        config                   : {
+          quotaMaxMessages     : messageCount,
+          quotaMaxStorageBytes : 0,
+        } as any,
+        dataStream: new ReadableStream<Uint8Array>({
+          cancel(): void {
+            bodyCancelled = true;
+          },
+        }),
+      });
+
+      expect(replay.jsonRpcResponse.error).toBeUndefined();
+      expect(replay.jsonRpcResponse.result.result)
+        .toEqual({ kind: 'Superseded', currentWriteMaterialized: true });
+      expect(bodyCancelled).toBe(true);
+      expect(await adminStore.getTenantMessageCount(alice.did)).toBe(messageCount);
     } finally {
       await dwn.close();
       await adminStore.close();
