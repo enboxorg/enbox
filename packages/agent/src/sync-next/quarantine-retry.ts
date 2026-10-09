@@ -88,9 +88,6 @@ async function retrySelectedRoot(
   shouldContinue: () => boolean,
   runRemoteRequest: SyncRemoteRequestRunner | undefined,
 ): Promise<RetryAttempt> {
-  if (target.authorization.kind === 'role') {
-    return { appliedEntries: [], kind: 'pending' };
-  }
   const root = await prepareRetainedRoot(agent, target, selected, runRemoteRequest);
   if (!shouldContinue()) {
     return { appliedEntries: [], kind: 'pending' };
@@ -99,6 +96,9 @@ async function retrySelectedRoot(
   const localCompletion = await tryEstablishLocalWriteCompletion(agent, target, selected.messageCid, root);
   if (localCompletion !== undefined) {
     return localCompletion;
+  }
+  if (target.authorization.kind === 'role') {
+    return { appliedEntries: [], kind: 'pending' };
   }
 
   const outcome = await admitClosure(selected.messageCid, {
