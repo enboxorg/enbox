@@ -554,6 +554,28 @@ describe('retryOneQuarantinedRoot', () => {
     expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
   });
 
+  it('settles role quarantine from confirmed local current state without remote reads', async () => {
+    const generated = await TestDataGenerator.generateRecordsWrite({
+      data            : new Uint8Array([1, 2, 3]),
+      parentContextId : 'thread',
+      protocol        : 'https://example.com/chat',
+      protocolPath    : 'thread/message',
+    });
+    const entry = await feedEntry(generated.message, 1);
+    const fixture = fakeAgent();
+    fixture.apply.resolves({ kind: 'Superseded', currentWriteMaterialized: true });
+    await retain(roleTarget(), [entry]);
+
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: roleTarget() }))
+      .toEqual({ kind: 'settled', appliedEntries: [] });
+    expect(fixture.apply.calledOnceWithExactly(roleTarget().did, entry.message, {
+      includeMaterializationConfirmation: true,
+    })).toBe(true);
+    expect(fixture.prepare.notCalled).toBe(true);
+    expect(fixture.send.notCalled).toBe(true);
+    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(roleTarget()))).toEqual([]);
+  });
+
   it('keeps role rows pending without owner-shaped reads', async () => {
     const fixture = fakeAgent();
     await retain(roleTarget(), [await feedEntry(protocolMessage('role'), 1)]);
