@@ -104,7 +104,7 @@ describe('Agent remote mode integration', () => {
     })).toEqual({ kind: 'Duplicate', materialized: true });
   });
 
-  it('settles a delegated retry through a paired local DWN after source access is lost', async () => {
+  it('settles a delegated superseded retry through a paired local DWN without source access', async () => {
     context = await setupRemoteModeContext('quarantine-confirmation', { authenticatedLocalNode: true });
     const { alice, bob, remoteServer, testHarness } = context;
     const agent = testHarness.agent;
@@ -179,11 +179,23 @@ describe('Agent remote mode integration', () => {
       expect(await readLocalRecordText(agent, alice.did.uri, write.recordId)).toBe(body);
       expect(await ledger.getQuarantineForLink(link)).toHaveLength(1);
 
+      const newerData = textEncoder.encode('newer local body');
+      const newerWrite = await RecordsWrite.createFrom({
+        recordsWriteMessage : write,
+        data                : newerData,
+        signer              : await (agent.dwn as any).getSigner(alice.did.uri),
+      });
+      expect(await agent.dwn.applyReplicatedMessage(alice.did.uri, newerWrite.message, {
+        dataStream: DataStream.fromBytes(newerData),
+      })).toMatchObject({ kind: 'Applied' });
+
       const send = sinon.stub(agent.rpc, 'sendDwnRequest').rejects(new Error('source offline'));
       expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
         .toEqual({ kind: 'settled', appliedEntries: [] });
       expect(send.notCalled).toBe(true);
       expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+      send.restore();
+      expect(await readLocalRecordText(agent, alice.did.uri, write.recordId)).toBe('newer local body');
     } finally {
       await db.close();
     }

@@ -139,7 +139,7 @@ async function tryEstablishLocalWriteCompletion(
     return undefined;
   }
 
-  // A materialized duplicate needs no source read. A missing write may also be
+  // Confirmed current state needs no source read. A missing write may also be
   // applied here, but only its complete Applied result can settle it.
   const applyResult = await agent.dwn.applyReplicatedMessage(target.did, root.message, {
     includeMaterializationConfirmation: true,
@@ -157,6 +157,9 @@ async function tryEstablishLocalWriteCompletion(
     throw error;
   });
   if (applyResult?.kind === 'Duplicate' && applyResult.materialized === true) {
+    return { appliedEntries: [], kind: 'settled' };
+  }
+  if (applyResult?.kind === 'Superseded' && applyResult.currentWriteMaterialized === true) {
     return { appliedEntries: [], kind: 'settled' };
   }
   if (applyResult?.kind === 'Applied' && applyResult.ancestryOnly !== true) {

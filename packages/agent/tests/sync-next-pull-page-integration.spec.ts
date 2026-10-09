@@ -1,9 +1,9 @@
-import type { Dwn, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { Dwn, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { DataStream, DwnConstant, Message } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
@@ -212,6 +212,76 @@ describe('SyncNext pull and quarantine retry integration', () => {
     expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target: syncTarget }))
       .toEqual({ kind: 'empty' });
     expect(send.callCount).toBe(2);
+  });
+
+  it('settles an older quarantined write after a newer write materializes', async () => {
+    const supersessionProtocol = { ...protocol, protocol: 'https://sync-next.example/pull-supersession' };
+    expect((await harness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: supersessionProtocol },
+    })).reply.status.code).toBe(202);
+    const initialData = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(3);
+    const initial = await harness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        dataFormat   : 'text/plain',
+        protocol     : supersessionProtocol.protocol,
+        protocolPath : 'note',
+        schema       : supersessionProtocol.types.note.schema,
+      },
+      dataStream: new Blob([initialData]),
+    });
+    expect(initial.reply.status.code).toBe(202);
+
+    const scope = { kind: 'protocolSet' as const, protocols: [supersessionProtocol.protocol] as [string] };
+    const syncTarget: SyncTarget = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
+      did                : tenantDid,
+      dwnUrl             : remoteEndpoint,
+      projectionId       : await computeProjectionId(tenantDid, scope),
+      scope,
+    };
+    const link = await ledger.getOrCreateLink({
+      ...syncNextLinkIdentity(syncTarget),
+      authorization: syncTarget.authorization,
+      scope,
+    });
+    const pullPage = new SyncNextPullPage(harness.agent, ledger);
+    expect(await pullPage.consume(syncTarget)).toMatchObject({ kind: 'committed', quarantined: 1 });
+    expect(await harness.agent.dwn.applyReplicatedMessage(tenantDid, initial.message!))
+      .toMatchObject({ ancestryOnly: true, kind: 'Applied' });
+
+    const updateData = new TextEncoder().encode('newer complete data');
+    const update = await RecordsWrite.createFrom({
+      recordsWriteMessage : initial.message! as RecordsWriteMessage,
+      data                : updateData,
+      signer              : await (harness.agent.dwn as any).getSigner(tenantDid),
+    });
+    expect((await remoteDwn.processMessage(tenantDid, update.message, {
+      dataStream: DataStream.fromBytes(updateData),
+    })).status.code).toBe(202);
+    expect(await pullPage.consume(syncTarget)).toMatchObject({ kind: 'committed', quarantined: 0 });
+
+    expect(await ledger.getQuarantineForLink(link)).toHaveLength(1);
+    const sourceRead = sinon.stub(harness.agent.rpc, 'sendDwnRequest').rejects(new Error('source offline'));
+    expect(await retryOneQuarantinedRoot({ agent: harness.agent, ledger, target: syncTarget }))
+      .toEqual({ kind: 'settled', appliedEntries: [] });
+    expect(sourceRead.notCalled).toBe(true);
+    expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+
+    const { reply } = await harness.agent.dwn.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: initial.message!.recordId } },
+    });
+    expect(reply.status.code).toBe(200);
+    expect(await DataStream.toBytes(reply.entry!.data!)).toEqual(updateData);
   });
 
   it('settles a locally completed write after failed settlement and ledger restart without the source', async () => {
