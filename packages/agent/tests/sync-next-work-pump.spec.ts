@@ -6,6 +6,7 @@ import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 import { Level } from 'level';
 import { Message } from '@enbox/dwn-sdk-js';
+import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
@@ -344,21 +345,145 @@ describe('SyncNextWorkPump', () => {
         order.push('quarantine');
         await runRemoteRequest(async () => {});
         await runRemoteRequest(async () => {});
+        await runRemoteRequest(async () => {});
         return { kind: 'pending' };
       },
     }));
 
-    const result = await pump.run([syncTarget], 'pull', { maxRemoteRequests: 2 });
+    const result = await pump.run([syncTarget], 'pull', { maxRemoteRequests: 3 });
 
     expect(order).toEqual(['pullPage', 'quarantine']);
-    expect(result).toMatchObject({ failures: [], remoteRequests: 2, workRemaining: true });
+    expect(result).toMatchObject({ failures: [], remoteRequests: 3, workRemaining: true });
   });
 
-  it('requires enough request budget for a page and recovery', async () => {
+  it('requires a fixed budget that can fund page and role recovery', async () => {
+    const syncTarget = target();
     const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations());
 
-    await expect(pump.run([target()], 'pull', { maxRemoteRequests: 1 }))
-      .rejects.toThrow('request budget must be an integer of at least 2');
+    await expect(pump.run([syncTarget], 'pull', { maxRemoteRequests: 2 }))
+      .rejects.toThrow('request budget must be an integer of at least 3');
+    expect(await ledger.getLink(syncNextLinkIdentity(syncTarget))).toBeUndefined();
+  });
+
+  it('reserves both split reads needed by role recovery', async () => {
+    const syncTarget = roleTarget();
+    await retainQuarantine(syncTarget);
+    const requests: string[] = [];
+    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+      pullPage: async (_target, _shouldContinue, runRemoteRequest) => {
+        await runRemoteRequest(async () => { requests.push('page'); });
+        return {
+          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+        };
+      },
+      quarantineRetry: async (_target, _shouldContinue, runRemoteRequest) => {
+        await runRemoteRequest(async () => { requests.push('support'); });
+        await runRemoteRequest(async () => { requests.push('body'); });
+        return { kind: 'settled', appliedEntries: [] };
+      },
+    }));
+
+    expect(await pump.run([syncTarget], 'pull', { maxRemoteRequests: 3 }))
+      .toMatchObject({ failures: [], remoteRequests: 3 });
+    expect(requests).toEqual(['page', 'support', 'body']);
+  });
+
+  it('does not split the remaining budget across concurrent role recoveries', async () => {
+    const first = { ...roleTarget(), did: 'did:example:first', projectionId: 'first' };
+    const second = { ...roleTarget(), did: 'did:example:second', projectionId: 'second' };
+    await retainQuarantine(first);
+    await retainQuarantine(second);
+    const completed = new Set<string>();
+    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+      pullPage: async (_target, _shouldContinue, runRemoteRequest) => {
+        await runRemoteRequest(async () => {});
+        return {
+          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+        };
+      },
+      quarantineRetry: async (syncTarget, _shouldContinue, runRemoteRequest) => {
+        if (completed.has(syncTarget.did)) {
+          return { kind: 'empty' };
+        }
+        await runRemoteRequest(async () => {});
+        await runRemoteRequest(async () => {});
+        completed.add(syncTarget.did);
+        return { kind: 'settled', appliedEntries: [] };
+      },
+    }));
+
+    expect(await pump.run([first, second], 'pull', { maxRemoteRequests: 4 }))
+      .toMatchObject({ failures: [], remoteRequests: 4 });
+    expect(completed.size).toBe(1);
+
+    expect(await pump.run([first, second], 'pull', { maxRemoteRequests: 4 }))
+      .toMatchObject({ failures: [], remoteRequests: 4 });
+    expect(completed).toEqual(new Set([first.did, second.did]));
+  });
+
+  it('does not let an offline oldest link underfund healthy role recovery', async () => {
+    const clock = sinon.useFakeTimers({
+      now    : Date.parse('2026-10-06T00:00:00.000Z'),
+      toFake : ['Date'],
+    });
+    try {
+      const owned = target({
+        did          : 'did:example:owned',
+        endpoint     : 'https://offline.example.com',
+        projectionId : 'owned',
+      });
+      const role = { ...roleTarget(), did: 'did:example:role', projectionId: 'role' };
+      await retainQuarantine(owned);
+      clock.tick(1);
+      await retainQuarantine(role);
+      const ownerPageAttempted = deferred<void>();
+      const attempts: string[] = [];
+      const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+        pullPage: async (syncTarget, _shouldContinue, runRemoteRequest) => {
+          if (syncTarget.did === owned.did) {
+            try {
+              await runRemoteRequest(async () => { throw new TypeError('offline'); });
+            } finally {
+              ownerPageAttempted.resolve();
+            }
+          } else {
+            await ownerPageAttempted.promise;
+            await runRemoteRequest(async () => {});
+          }
+          return {
+            handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          };
+        },
+        quarantineRetry: async (syncTarget, _shouldContinue, runRemoteRequest) => {
+          attempts.push(syncTarget.did);
+          const [entry] = await ledger.getQuarantineForLogicalTarget(syncTarget.did, syncTarget.projectionId);
+          if (entry === undefined) {
+            return { kind: 'empty' };
+          }
+          await runRemoteRequest(async () => {});
+          if (syncTarget.authorization.kind !== 'role') {
+            return { kind: 'pending' };
+          }
+          await runRemoteRequest(async () => {});
+          await ledger.settleQuarantineForLogicalTarget(syncTarget.did, syncTarget.projectionId, entry.messageCid);
+          return { kind: 'settled', appliedEntries: [] };
+        },
+      }));
+
+      const result = await pump.run([owned, role], 'pull', { maxRemoteRequests: 3 });
+
+      expect(result).toMatchObject({ remoteRequests: 3, workRemaining: true });
+      expect(result.failures).toEqual([{
+        message : 'offline',
+        target  : syncNextLinkIdentity(owned),
+        work    : 'pullPage',
+      }]);
+      expect(attempts).toEqual([owned.did, role.did]);
+      expect(await ledger.getQuarantineForLogicalTarget(owned.did, owned.projectionId)).toHaveLength(1);
+      expect(await ledger.getQuarantineForLogicalTarget(role.did, role.projectionId)).toEqual([]);
+    } finally {
+      clock.restore();
+    }
   });
 
   it('passes no signal by default so eligible RPCs retain socket routing', async () => {

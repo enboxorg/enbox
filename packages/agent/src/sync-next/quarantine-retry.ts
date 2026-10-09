@@ -1,3 +1,5 @@
+import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncAppliedEntry } from '../sync-admit-closure.js';
 import type { SyncMessageEntry } from '../sync-messages.js';
@@ -13,6 +15,7 @@ import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { Cid, DataStream, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { fetchRemoteMessages, SyncWorkInterruptedError } from '../sync-messages.js';
+import { readRoleReplicationSupport, RoleReplicationSupportError } from '../sync-role-replication-support.js';
 
 export type SyncNextQuarantineRetryResult =
   | { kind: 'aborted' | 'empty' | 'pending' }
@@ -98,7 +101,7 @@ async function retrySelectedRoot(
     return localCompletion;
   }
   if (target.authorization.kind === 'role') {
-    return { appliedEntries: [], kind: 'pending' };
+    return retryRoleRoot(agent, target, selected.messageCid, root, shouldContinue, runRemoteRequest);
   }
 
   const outcome = await admitClosure(selected.messageCid, {
@@ -118,13 +121,91 @@ async function retrySelectedRoot(
   }
 
   // A fresh apply establishes completion only when this attempt supplied the body.
-  const rootWasCompleted =
-    (root.bufferedData !== undefined || root.dataStreamFactory !== undefined) &&
-    outcome.appliedEntries.some(entry => entry.messageCid === selected.messageCid);
+  const rootWasCompleted = wasMaterializedWithData(root, outcome.rootResult);
   if (recordsWriteRequiresData(root.message) && !rootWasCompleted) {
     return { appliedEntries: outcome.appliedEntries, kind: 'pending' };
   }
   return { appliedEntries: outcome.appliedEntries, kind: 'settled' };
+}
+
+async function retryRoleRoot(
+  agent: EnboxPlatformAgent,
+  target: SyncTarget,
+  messageCid: string,
+  root: SyncMessageEntry,
+  shouldContinue: () => boolean,
+  runRemoteRequest: SyncRemoteRequestRunner | undefined,
+): Promise<RetryAttempt> {
+  const { authorization, scope } = target;
+  const message = root.message;
+  if (authorization.kind !== 'role' || scope.kind !== 'context' || !Records.isRecordsWrite(message)) {
+    return { appliedEntries: [], kind: 'pending' };
+  }
+  const { protocol, protocolPath } = message.descriptor;
+  if (message.contextId === undefined || protocol !== scope.protocol ||
+      protocolPath === undefined || !scope.protocolPaths.includes(protocolPath)) {
+    return { appliedEntries: [], kind: 'pending' };
+  }
+
+  const support = await readRoleReplicationSupport({
+    actorDid       : authorization.actorDid,
+    agent,
+    contextId      : message.contextId,
+    delegateDid    : target.delegateDid,
+    dwnUrl         : target.dwnUrl,
+    permissionsApi : agent.permissions,
+    protocol,
+    protocolPath,
+    protocolRole   : authorization.protocolRole,
+    runRemoteRequest,
+    shouldContinue,
+    sourceDid      : target.did,
+  });
+  try {
+    if (!shouldContinue()) {
+      return { appliedEntries: [], kind: 'pending' };
+    }
+    if (support.roleRecordId !== authorization.roleRecordId) {
+      throw new RoleReplicationSupportError(
+        `active role '${support.roleRecordId}' does not match target role '${authorization.roleRecordId}'.`,
+      );
+    }
+
+    const outcome = await admitClosure(support.rootCid, {
+      agent,
+      did                     : target.did,
+      dwnUrl                  : target.dwnUrl,
+      delegateDid             : target.delegateDid,
+      fetchReplicationSupport : async () => support,
+      permissionGrantIds      : target.permissionGrantIds,
+      permissionsApi          : agent.permissions,
+      prefetched              : [...support.dependencies, support.root],
+      runRemoteRequest,
+      scope                   : target.scope,
+      shouldContinue,
+    });
+    if (outcome.kind !== 'admitted') {
+      return { appliedEntries: [], kind: 'pending' };
+    }
+    if (support.rootCid === messageCid && wasMaterializedWithData(support.root, outcome.rootResult)) {
+      return { appliedEntries: outcome.appliedEntries, kind: 'settled' };
+    }
+    const completion = await tryEstablishLocalWriteCompletion(agent, target, messageCid, root);
+    return completion?.kind === 'settled'
+      ? { appliedEntries: outcome.appliedEntries, kind: 'settled' }
+      : { appliedEntries: outcome.appliedEntries, kind: 'pending' };
+  } finally {
+    await support.root.dataStream?.cancel().catch((): void => {});
+  }
+}
+
+function wasMaterializedWithData(
+  root: SyncMessageEntry,
+  result: ReplicationApplyResult,
+): boolean {
+  const hasData = root.bufferedData !== undefined || root.dataStream !== undefined || root.dataStreamFactory !== undefined;
+  return hasData && ((result.kind === 'Applied' && result.ancestryOnly !== true) ||
+    (result.kind === 'Duplicate' && result.materialized === true));
 }
 
 /** Try to establish complete local state before fetching a retained write's body from its source. */

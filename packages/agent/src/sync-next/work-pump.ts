@@ -2,12 +2,16 @@ import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncDirection } from '../types/sync.js';
 import type { SyncNextDeliveryRetryResult } from './delivery-retry.js';
 import type { SyncNextLedgerStore } from './ledger-store.js';
-import type { SyncNextLinkIdentity } from './types.js';
 import type { SyncNextPullPageResult } from './pull-page.js';
 import type { SyncNextPushPageResult } from './push-page.js';
 import type { SyncNextQuarantineRetryResult } from './quarantine-retry.js';
 import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
+import type {
+  SyncNextDeliveryObligation,
+  SyncNextLinkIdentity,
+  SyncNextQuarantineEntry,
+} from './types.js';
 
 import { runWithCrossContextLock } from '@enbox/common';
 import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
@@ -19,7 +23,7 @@ import { SyncNextFeedQueryError } from './feed-page.js';
 import { SyncNextPullPage } from './pull-page.js';
 import { SyncNextPushPage } from './push-page.js';
 import { SyncWorkInterruptedError } from '../sync-messages.js';
-import { syncNextLinkIdentity, syncNextLinkKey } from './ledger-key.js';
+import { compareSyncNextSparseAttempts, syncNextLinkIdentity, syncNextLinkKey } from './ledger-key.js';
 
 type SyncNextWorkKind = 'delivery' | 'pullPage' | 'pushPage' | 'quarantine';
 
@@ -55,6 +59,11 @@ type TargetState = {
   target: SyncTarget;
 };
 
+type RecoveryCandidate = {
+  entry: SyncNextDeliveryObligation | SyncNextQuarantineEntry;
+  state: TargetState;
+};
+
 type RequestBudget = {
   limit: number;
   requests: number;
@@ -78,8 +87,8 @@ export class SyncNextWorkPump {
     options: { maxRemoteRequests?: number; signal?: AbortSignal } = {},
   ): Promise<SyncNextWorkPumpResult> {
     const maxRequests = options.maxRemoteRequests ?? DEFAULT_MAX_REMOTE_REQUESTS;
-    if (!Number.isSafeInteger(maxRequests) || maxRequests < 2) {
-      throw new RangeError('SyncNextWorkPump: request budget must be an integer of at least 2.');
+    if (!Number.isSafeInteger(maxRequests) || maxRequests < 3) {
+      throw new RangeError('SyncNextWorkPump: request budget must be an integer of at least 3.');
     }
     const budget: RequestBudget = {
       limit    : maxRequests,
@@ -91,15 +100,19 @@ export class SyncNextWorkPump {
     const blockedEndpoints = new Set<string>();
     const page = direction === 'pull' ? 'pullPage' : 'pushPage';
     const retry = direction === 'pull' ? 'quarantine' : 'delivery';
-    const recoveryPending = (await Promise.all(states.map(
-      state => this.hasPendingRecovery(state, direction)
-    ))).some(Boolean);
-
+    const pendingRecovery = await this.getRecoveryCandidates(states, direction);
+    const recoveryReserve = pendingRecovery.reduce(
+      (reserve, candidate) => Math.max(reserve, this.minimumRecoveryRequests(candidate, retry)),
+      0,
+    );
     // Preserve capacity for existing sparse work without slowing the common queue-empty path.
-    budget.limit = recoveryPending ? Math.ceil(maxRequests / 2) : maxRequests;
+    budget.limit = recoveryReserve > 0
+      ? Math.min(Math.ceil(maxRequests / 2), maxRequests - recoveryReserve)
+      : maxRequests;
     await this.runPhase(states, page, budget, blockedEndpoints);
     budget.limit = maxRequests;
-    await this.runPhase(states, retry, budget, blockedEndpoints);
+    const recovery = await this.getRecoveryCandidates(states, direction);
+    await this.runRecoveryPhase(recovery, retry, budget, blockedEndpoints);
 
     return this.buildResult(states, budget, direction);
   }
@@ -146,6 +159,44 @@ export class SyncNextWorkPump {
     await Promise.all(states.map(state => // NOSONAR
       this.runWork(state, kind, budget, blockedEndpoints)
     ));
+  }
+
+  /** Run sparse recovery oldest-first without starting a partial role attempt. */
+  private async runRecoveryPhase(
+    candidates: RecoveryCandidate[],
+    kind: SyncNextWorkKind,
+    budget: RequestBudget,
+    blockedEndpoints: Set<string>,
+  ): Promise<void> {
+    for (const candidate of candidates) {
+      if (budget.signal?.aborted === true || budget.requests >= budget.limit) {
+        return;
+      }
+      if (budget.limit - budget.requests < this.minimumRecoveryRequests(candidate, kind)) {
+        continue;
+      }
+      await this.runWork(candidate.state, kind, budget, blockedEndpoints);
+    }
+  }
+
+  private async getRecoveryCandidates(
+    states: TargetState[],
+    direction: SyncDirection,
+  ): Promise<RecoveryCandidate[]> {
+    const pending = await Promise.all(states.map(async (state) => {
+      const entries = direction === 'pull'
+        ? await this._ledger.getQuarantineForLogicalTarget(state.identity.tenantDid, state.identity.projectionId)
+        : await this._ledger.getDeliveryForLink(state.identity);
+      entries.sort(compareSyncNextSparseAttempts);
+      return { entry: entries[0], state };
+    }));
+    return pending
+      .flatMap(({ entry, state }) => entry === undefined ? [] : [{ entry, state }])
+      .sort((left, right) => compareSyncNextSparseAttempts(left.entry, right.entry));
+  }
+
+  private minimumRecoveryRequests(candidate: RecoveryCandidate, kind: SyncNextWorkKind): number {
+    return kind === 'quarantine' && candidate.state.target.authorization.kind === 'role' ? 2 : 1;
   }
 
   private async runWork(

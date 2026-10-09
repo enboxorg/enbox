@@ -129,9 +129,11 @@ current write is materialized settles the receipt. An inconclusive Duplicate or
 Superseded result remains pending. Applying a dataless, non-latest write also
 leaves its receipt pending for a later body-bearing receipt. A retry settles only
 its selected root CID: dependencies applied along the way never clear their own
-quarantine receipts as a side effect. Role-authorized rows can use the same
-confirmed local state without a remote read; authenticated role-support
-hydration remains a separate slice.
+quarantine receipts as a side effect. Role-authorized writes first use confirmed
+local state, then may hydrate an exact or newer current write through the signed
+role-support response. The response must retain the target's active role record
+and shares the turn's endpoint gate and request budget. Current role-visible
+deletes remain part of the separate tombstone-recovery slice.
 
 ## One-page push intake
 
@@ -173,23 +175,29 @@ visibility.
 The internal pump composes the four bounded primitives above for already
 resolved `SyncTarget`s. Each call is one turn reconstructed from durable ledger
 state. A turn handles one explicit direction, giving each link at most one feed
-page and one corresponding sparse retry. Links run concurrently while the
-shared endpoint permit serializes their remote requests. The later runtime owns
-alternating pull and push, wake coalescing, and scheduling additional turns
-rather than duplicating that state inside the pump.
+page and one corresponding sparse retry. Feed pages run concurrently across
+links while the shared endpoint permit serializes their remote requests. The
+later runtime owns alternating pull and push, wake coalescing, and scheduling
+additional turns rather than duplicating that state inside the pump.
 
 Feed pages run before sparse retries so a pathological retained record cannot
 hold a checkpoint behind it. Each retry remains durable for the next turn when
-the request budget is exhausted.
+the request budget is exhausted. Sparse recovery is ordered by its durable
+oldest-attempt timestamp across owner, delegate, and role authority. Recovery
+runs sequentially, and a role attempt starts only when both of its possible
+remote reads fit in the remaining budget.
 
 Every remote feed query, body/dependency read, and replicated apply enters one
 shared keyed endpoint permit. The permit covers the logical RPC, including any
 transport retry or fallback, and is released when the RPC returns; a returned
 body stream does not retain it. A turn has a remote-request budget of at least
-two, allowing both page and recovery capacity; page-size limits and transport
+three. This fixed minimum can fund one page request and the two separate verified
+support and body reads used by role recovery. Page-size limits and transport
 timeouts provide the other bounds. When sparse work exists at the start of a
-turn, the page phase receives roughly half of the request budget, leaving the
-remainder for recovery. Request exhaustion or caller
+turn, the page phase receives roughly half of the request budget while preserving
+the largest minimum attempt size among pending recovery work. A row first
+quarantined by that page may wait until the next turn because it was not part of
+the pre-page reservation. Request exhaustion or caller
 cancellation leaves committed progress and sparse work available to the next
 turn. Without an explicit caller signal, the pump supplies none, preserving
 socket-preferred routing for eligible requests.
@@ -203,7 +211,11 @@ all bindings; this adds no durable claim or second queue.
 The pump resumes from the ledger after restart and returns whether work remains,
 plus the target and operation for any failure. Detailed per-target status belongs
 to the later runtime, which can read authoritative checkpoints and sparse rows
-from the ledger. The pump owns no target discovery, subscription setup, wake
-queue, timer, public status API, or engine selection. Those runtime and cutover
-layers must preserve this ledger contract and treat socket events only as pump
-wakes.
+from the ledger. Pending quarantine must schedule another turn and keep the
+runtime from reporting caught up, even after its feed is drained. A retry's
+`appliedEntries` is notification detail, not exhaustive mutation accounting:
+dependencies can be committed before their root remains pending. Runtime
+progress must therefore use durable ledger and DWN state rather than that list
+alone. The pump owns no target discovery, subscription setup, wake queue, timer,
+public status API, or engine selection. Those runtime and cutover layers must
+preserve this ledger contract and treat socket events only as pump wakes.
