@@ -1,5 +1,33 @@
 # @enbox/dwn-server
 
+## 0.1.44
+
+### Patch Changes
+
+- [#1779](https://github.com/enboxorg/enbox/pull/1779) [`7c3ce8d`](https://github.com/enboxorg/enbox/commit/7c3ce8d476bb40d20b843a652c1dc4e9717b0347) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Await durable subscription listeners before advancing cursors, ending replay, or starting live delivery, and report progress-gap notification failures. Pin delivered tokens to their read page's generation and preserve queued wakes across delivery failures with paced retries. Retire replaced event-log drains and own pending WebSocket subscriptions before replay, preserving ACK controllers on duplicate IDs and cancelling on overflow, unsubscribe, or disconnect. Pause producers only at the existing socket buffer limit, resuming on ACK or cancelling on close and after a 30-second ACK deadline. Keep subscription IDs reserved until cleanup settles, allow reuse after unsubscribe confirmation, fence late handles, and finish socket teardown if a subscription close fails. Cursor subscriptions finish opening after their replay listeners complete; replay listeners must not await the returned subscription handle. Popup launches remain synchronous within clicks and explicitly detach the internally handled connect session.
+
+  Refresh the client opening deadline on replay progress, cancel timed-out pending opens, and preserve processed replay cursors through client registration and reconnect. Bind the stable close handle to a replacement immediately after transmission and fence queued delivery and ACKs when the logical subscription closes or that binding is superseded.
+
+  Report a terminal SubscriptionBufferTimeout or SubscriptionBufferOverflow notification outside the full ACK window before releasing a stalled server subscription, allowing consumers to repair from their processed cursor. Publish close readiness only after a successful send and observe callback failures through the opening request's rejection and cleanup.
+
+- [#1780](https://github.com/enboxorg/enbox/pull/1780) [`2d1501b`](https://github.com/enboxorg/enbox/commit/2d1501b4e1f80061ea65f980e3595dc12850277c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Confirm when a replicated RecordsWrite was superseded by a materialized current write.
+
+- [#1751](https://github.com/enboxorg/enbox/pull/1751) [`8f06093`](https://github.com/enboxorg/enbox/commit/8f0609317f1097e922db0b8a903ecf3454732827) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Allow valid RecordsWrite data to complete an already-admitted ancestry-only initial write, move it to a new durable feed position, and require every MessageStore to expose the ordered replication feed.
+
+- [#1771](https://github.com/enboxorg/enbox/pull/1771) [`b3e12b1`](https://github.com/enboxorg/enbox/commit/b3e12b10323dd0f8d4ed22e44a2a487111ff7862) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Distinguish an indexed replicated write with unavailable record data from a general remote storage failure.
+
+- [#1763](https://github.com/enboxorg/enbox/pull/1763) [`667de4a`](https://github.com/enboxorg/enbox/commit/667de4a8d2df025c9a97391038fab80a0185dc09) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Complete stored ancestry-only RecordsWrites when their data arrives through the replication RPC.
+
+- [#1765](https://github.com/enboxorg/enbox/pull/1765) [`fe33c65`](https://github.com/enboxorg/enbox/commit/fe33c65633c11a8c4b10f11d2751a0406b9c7a0f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Carry opt-in RecordsWrite materialization confirmation through agent remote mode and authenticated local-node HTTP transport.
+
+- [#1767](https://github.com/enboxorg/enbox/pull/1767) [`5d4c035`](https://github.com/enboxorg/enbox/commit/5d4c035563429242cb50b19907091701e373ec9b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose opt-in `includeMaterializationConfirmation` for replicated writes. Report `handledCids` for Applied, Duplicate, and Superseded outcomes, and `appliedEntries` only for Applied outcomes.
+
+- Updated dependencies [[`7c3ce8d`](https://github.com/enboxorg/enbox/commit/7c3ce8d476bb40d20b843a652c1dc4e9717b0347), [`c92a759`](https://github.com/enboxorg/enbox/commit/c92a759524472fedb266f5eb25760d8ee1359898), [`2d1501b`](https://github.com/enboxorg/enbox/commit/2d1501b4e1f80061ea65f980e3595dc12850277c), [`05b4177`](https://github.com/enboxorg/enbox/commit/05b41776e92bd1f42462726d7a7d4bb2a0fcb9de), [`d435c4f`](https://github.com/enboxorg/enbox/commit/d435c4fadbeb64aae824a4c1f0497ebc49c378b3), [`0bcd330`](https://github.com/enboxorg/enbox/commit/0bcd330cb59649e6fcf3a858f636d286a9c26bf3), [`8f06093`](https://github.com/enboxorg/enbox/commit/8f0609317f1097e922db0b8a903ecf3454732827), [`b3e12b1`](https://github.com/enboxorg/enbox/commit/b3e12b10323dd0f8d4ed22e44a2a487111ff7862), [`fe33c65`](https://github.com/enboxorg/enbox/commit/fe33c65633c11a8c4b10f11d2751a0406b9c7a0f), [`5d4c035`](https://github.com/enboxorg/enbox/commit/5d4c035563429242cb50b19907091701e373ec9b), [`75b3906`](https://github.com/enboxorg/enbox/commit/75b390632e288629d269c66b6fcc8d04b253f140)]:
+  - @enbox/dwn-sdk-js@0.4.28
+  - @enbox/dwn-clients@0.4.36
+  - @enbox/dids@0.1.13
+  - @enbox/dwn-sql-store@0.0.53
+
 ## 0.1.43
 
 ### Patch Changes

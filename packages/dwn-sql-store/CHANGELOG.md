@@ -1,5 +1,14 @@
 # @enbox/dwn-sql-store
 
+## 0.0.53
+
+### Patch Changes
+
+- [#1751](https://github.com/enboxorg/enbox/pull/1751) [`8f06093`](https://github.com/enboxorg/enbox/commit/8f0609317f1097e922db0b8a903ecf3454732827) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Allow valid RecordsWrite data to complete an already-admitted ancestry-only initial write, move it to a new durable feed position, and require every MessageStore to expose the ordered replication feed.
+
+- Updated dependencies [[`7c3ce8d`](https://github.com/enboxorg/enbox/commit/7c3ce8d476bb40d20b843a652c1dc4e9717b0347), [`c92a759`](https://github.com/enboxorg/enbox/commit/c92a759524472fedb266f5eb25760d8ee1359898), [`2d1501b`](https://github.com/enboxorg/enbox/commit/2d1501b4e1f80061ea65f980e3595dc12850277c), [`d435c4f`](https://github.com/enboxorg/enbox/commit/d435c4fadbeb64aae824a4c1f0497ebc49c378b3), [`8f06093`](https://github.com/enboxorg/enbox/commit/8f0609317f1097e922db0b8a903ecf3454732827), [`b3e12b1`](https://github.com/enboxorg/enbox/commit/b3e12b10323dd0f8d4ed22e44a2a487111ff7862), [`5d4c035`](https://github.com/enboxorg/enbox/commit/5d4c035563429242cb50b19907091701e373ec9b)]:
+  - @enbox/dwn-sdk-js@0.4.28
+
 ## 0.0.52
 
 ### Patch Changes
